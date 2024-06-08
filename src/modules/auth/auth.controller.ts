@@ -11,7 +11,13 @@ import {
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { AuthService } from './auth.service';
-import { LoginDto, RegisterDto } from './dto/auth.dto';
+import {
+  CheckAccountDto,
+  EmailVerificationDto,
+  LoginDto,
+  RegisterDto,
+  ResetPasswordDto,
+} from './dto/auth.dto';
 import { JwtGuard } from './guards/jwt.guard';
 
 @Controller('auth')
@@ -27,6 +33,26 @@ export class AuthController {
   @Post('login')
   async login(@Body(ValidationPipe) args: LoginDto) {
     return this._authService.login(args);
+  }
+
+  @Post('verify-email')
+  async verifyEmail(@Body(ValidationPipe) args: EmailVerificationDto) {
+    return this._authService.verifyEmail(args);
+  }
+
+  @Post('resend-verification-code')
+  async resendVerificationCode(@Body('email', ValidationPipe) email: string) {
+    return this._authService.resendVerificationCode(email);
+  }
+
+  @Post('reset-password')
+  async resetPassword(@Body(ValidationPipe) args: ResetPasswordDto) {
+    return this._authService.resetPassword(args);
+  }
+
+  @Post('check-account')
+  async checkAccount(@Body(ValidationPipe) args: CheckAccountDto) {
+    return this._authService.checkAccount(args);
   }
 
   @Get('me')

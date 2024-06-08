@@ -50,6 +50,12 @@ export class UserModel extends BaseSchema {
   @Prop({ required: true, name: 'password', select: false })
   password: string;
 
+  @Prop({ required: false, name: 'activation_code', select: false })
+  activationCode?: string;
+
+  @Prop({ required: false, name: 'password_reset_code', select: false })
+  passwordResetCode?: string;
+
   // @Prop({
   //   get: (creditCardNumber: string) => {
   //     if (!creditCardNumber) {

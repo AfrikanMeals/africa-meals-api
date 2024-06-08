@@ -8,7 +8,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 
-export class LoginDto {
+export class CheckAccountDto {
   @IsNotEmpty()
   @Trim()
   @IsEnum(['email', 'phoneNumber', 'googleId', 'facebookId'])
@@ -37,7 +37,9 @@ export class LoginDto {
   @Trim()
   @ValidateIf((o) => o.registrationSource === 'googleId')
   googleId?: string;
+}
 
+export class LoginDto extends CheckAccountDto {
   @IsNotEmpty()
   @MinLength(6)
   password: string;
@@ -47,4 +49,27 @@ export class RegisterDto extends LoginDto {
   @IsNotEmpty()
   @Trim()
   fullName: string;
+}
+
+export class EmailVerificationDto {
+  @IsNotEmpty()
+  @Trim()
+  @IsEmail()
+  email: string;
+
+  @IsNotEmpty()
+  @Trim()
+  code: string;
+}
+
+export class ResetPasswordDto {
+  @IsNotEmpty()
+  @Trim()
+  @IsEmail()
+  email: string;
+
+  @IsNotEmpty()
+  @Trim()
+  @MinLength(6)
+  password: string;
 }
