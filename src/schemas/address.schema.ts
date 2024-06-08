@@ -1,0 +1,50 @@
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Schema as MongooseSchema } from 'mongoose';
+import { BaseSchema } from './base.schema';
+
+export enum AddressTypeEnum {
+  USER = 'USER',
+  VENDOR = 'VENDOR',
+}
+
+@Schema({
+  timestamps: true,
+  collection: 'addresses',
+})
+export class AddressModel extends BaseSchema {
+  @Prop({ default: false, name: 'is_default' })
+  isDefault: boolean;
+
+  @Prop({ required: true, name: 'address' })
+  address: string;
+
+  @Prop({ required: true, name: 'country' })
+  country: string;
+
+  @Prop({
+    required: true,
+    name: 'type',
+    enum: AddressTypeEnum,
+    default: AddressTypeEnum.USER,
+  })
+  type: AddressTypeEnum;
+
+  @Prop({
+    type: {
+      type: MongooseSchema.Types.String,
+      enum: ['Point'],
+      default: 'Point',
+    },
+    coordinates: {
+      type: [Number],
+      required: true,
+    },
+  })
+  location: {
+    type: string;
+    coordinates: number[];
+  };
+}
+
+export const AddressSchema = SchemaFactory.createForClass(AddressModel);
+AddressSchema.index({ location: '2dsphere' });
