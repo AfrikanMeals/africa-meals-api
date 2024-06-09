@@ -1,3 +1,4 @@
+import { AddressesModule } from '@modules/addresses/addresses.module';
 import { AuthModule } from '@modules/auth/auth.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -10,6 +11,7 @@ import { UsersService } from './users.service';
   providers: [UsersService],
   imports: [
     AuthModule,
+    AddressesModule,
     MongooseModule.forFeature([
       { name: AddressModel.name, schema: AddressSchema },
     ]),

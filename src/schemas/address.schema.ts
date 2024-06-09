@@ -10,6 +10,10 @@ export enum AddressTypeEnum {
 @Schema({
   timestamps: true,
   collection: 'addresses',
+  toJSON: {
+    getters: true,
+    virtuals: true,
+  },
 })
 export class AddressModel extends BaseSchema {
   @Prop({ default: false, name: 'is_default' })
@@ -20,6 +24,9 @@ export class AddressModel extends BaseSchema {
 
   @Prop({ required: true, name: 'country' })
   country: string;
+
+  @Prop({ required: true, name: 'zip_code' })
+  zipCode: string;
 
   @Prop({
     required: true,
@@ -47,4 +54,7 @@ export class AddressModel extends BaseSchema {
 }
 
 export const AddressSchema = SchemaFactory.createForClass(AddressModel);
+
+export type AddressModelDocument = AddressModel & Document;
+
 AddressSchema.index({ location: '2dsphere' });

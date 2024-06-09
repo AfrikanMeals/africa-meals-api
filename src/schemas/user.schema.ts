@@ -4,6 +4,7 @@ import { Type } from 'class-transformer';
 import { Schema as MongooseSchema } from 'mongoose';
 import { AddressModel } from './address.schema';
 import { BaseSchema } from './base.schema';
+import { StoreModel } from './store.schema';
 
 @Schema({
   timestamps: true,
@@ -47,6 +48,16 @@ export class UserModel extends BaseSchema {
   @Type(() => Array<AddressModel>)
   addresses?: AddressModel[];
 
+  @Prop({
+    required: false,
+    name: 'stores',
+    type: [MongooseSchema.Types.ObjectId],
+    ref: StoreModel.name,
+    default: [],
+  })
+  @Type(() => Array<StoreModel>)
+  stores?: StoreModel[];
+
   @Prop({ required: true, name: 'password', select: false })
   password: string;
 
@@ -72,9 +83,9 @@ export class UserModel extends BaseSchema {
 
 export const UserSchema = SchemaFactory.createForClass(UserModel);
 
-// UserSchema.virtual('id').get(function () {
-//   return (this._id as any).toHexString();
-// });
+UserSchema.virtual('hasStore').get(function () {
+  return (this.stores || []).length > 0;
+});
 
 UserSchema.pre('save', async function (next) {
   try {

@@ -3,9 +3,13 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AddressesModule } from './modules/addresses/addresses.module';
 import { AuthModule } from './modules/auth/auth.module';
-import { UsersModule } from './modules/users/users.module';
 import { MailerModule } from './modules/mailer/mailer.module';
+import { MediasModule } from './modules/medias/medias.module';
+import { RatingsModule } from './modules/ratings/ratings.module';
+import { StoreModule } from './modules/store/store.module';
+import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
@@ -34,6 +38,11 @@ import { MailerModule } from './modules/mailer/mailer.module';
     AuthModule,
     UsersModule,
     MailerModule,
+    StoreModule,
+    RatingsModule,
+    AddressesModule,
+    MediasModule,
+    // SharedModule,
   ],
   controllers: [AppController],
   providers: [AppService],

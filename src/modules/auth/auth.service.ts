@@ -43,7 +43,7 @@ export class AuthService {
       throw new ConflictException(`user_${source}_conflict`);
     }
 
-    const activationCode = await this._generateVerificationCode(5);
+    const activationCode = await this._generateVerificationCode(6);
     const isTestAccount =
       source === 'email' && rest.email && rest.email.includes('test');
 
@@ -62,7 +62,7 @@ export class AuthService {
       ),
       context: {
         name: args.fullName,
-        code: await this._generateVerificationCode(5),
+        code: await this._generateVerificationCode(6),
       },
     });
 
@@ -123,7 +123,7 @@ export class AuthService {
   }
 
   async resendVerificationCode(email: string) {
-    const code = await this._generateVerificationCode(5);
+    const code = await this._generateVerificationCode(6);
     const user = await this._usersModel
       .findOneAndUpdate(
         { email },
@@ -162,7 +162,7 @@ export class AuthService {
   }
 
   async findUserById(id: string) {
-    return this._usersModel.findOne({ _id: id }).exec();
+    return this._usersModel.findOne({ _id: id }).populate('addresses').exec();
   }
 
   async findUserByEmail(email: string) {
