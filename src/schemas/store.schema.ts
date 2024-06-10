@@ -38,6 +38,9 @@ export class StoreModel extends BaseSchema {
   @Prop({ required: false, name: 'profile_image' })
   profileImage?: string;
 
+  @Prop({ default: false, name: 'can_create_products' }) // TODO should be updated when activating the store
+  canCreateProducts?: boolean;
+
   @Prop({
     required: true,
     name: 'status',

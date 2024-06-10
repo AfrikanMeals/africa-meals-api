@@ -1,4 +1,5 @@
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
+import { CreateProductDto } from '@modules/products/dto/products.dto';
 import {
   BadRequestException,
   Body,
@@ -18,6 +19,8 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { memoryStorage } from 'multer';
+import { MultipartToJsonPipe } from './../../pipes/multipart-to-json/multipart-to-json.pipe';
+import { CreateProductExtraDto } from './../products/dto/products.dto';
 import { CreateStoreDto } from './dto/store.dto';
 import { StoreService } from './store.service';
 
@@ -67,6 +70,51 @@ export class StoreController {
     return this._storeService.updateProfileImage(
       id,
       file,
+      req.user as UserModel,
+    );
+  }
+
+  @Post('/:id/product')
+  @UseGuards(JwtGuard)
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: memoryStorage(),
+      limits: { fileSize: 50 * 1024 * 1024, files: 1 }, // 50 MB
+      fileFilter: (req, file, cb) => {
+        if (!file.originalname.match(/\.(jpg|jpeg|png)$/)) {
+          return cb(new Error('invalid_file_type'), false);
+        }
+        cb(null, true);
+      },
+      // preservePath: true,
+    }),
+  )
+  async createProduct(
+    @Req() req: Request,
+    @UploadedFile() file: Express.Multer.File,
+    @Param('id') id: string,
+    @Body(MultipartToJsonPipe, ValidationPipe) args: CreateProductDto,
+  ) {
+    return this._storeService.createProduct(
+      id,
+      args,
+      req.user as UserModel,
+      file,
+    );
+  }
+
+  @Post('/:id/product/:producId/extra')
+  @UseGuards(JwtGuard)
+  async createProductExtra(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('producId') productId: string,
+    @Body(ValidationPipe) args: CreateProductExtraDto,
+  ) {
+    return this._storeService.createProducExtra(
+      productId,
+      id,
+      args,
       req.user as UserModel,
     );
   }

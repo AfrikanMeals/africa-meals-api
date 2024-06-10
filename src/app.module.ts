@@ -10,6 +10,7 @@ import { MediasModule } from './modules/medias/medias.module';
 import { RatingsModule } from './modules/ratings/ratings.module';
 import { StoreModule } from './modules/store/store.module';
 import { UsersModule } from './modules/users/users.module';
+import { ProductsModule } from './modules/products/products.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { UsersModule } from './modules/users/users.module';
     RatingsModule,
     AddressesModule,
     MediasModule,
+    ProductsModule,
     // SharedModule,
   ],
   controllers: [AppController],

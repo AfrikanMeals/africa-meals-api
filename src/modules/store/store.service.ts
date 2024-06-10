@@ -1,10 +1,17 @@
 import { AddressesService } from '@modules/addresses/addresses.service';
 import { MediasService } from '@modules/medias/medias.service';
 import {
+  CreateProductDto,
+  CreateProductExtraDto,
+} from '@modules/products/dto/products.dto';
+import { ProductsService } from '@modules/products/products.service';
+import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { StoreModel } from '@schemas/store.schema';
@@ -22,6 +29,9 @@ export class StoreService {
 
   @Inject(MediasService)
   private readonly _mediasService: MediasService;
+
+  @Inject(ProductsService)
+  private readonly _productsService: ProductsService;
 
   async findOneById(id: string) {
     return this._storeModel
@@ -84,6 +94,81 @@ export class StoreService {
       return { url };
     } catch (e) {
       console.log('🚀 ~ StoreService ~ updateProfileImage ~ e:', e);
+      throw e;
+    }
+  }
+
+  async createProduct(
+    id: string,
+    args: CreateProductDto,
+    user: UserModel,
+    image?: Express.Multer.File,
+  ) {
+    const store = await this._storeModel
+      .findOne({ _id: id, owner: user._id })
+      .exec();
+
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+
+    if (!store.canCreateProducts) {
+      throw new ForbiddenException('can_not_create_products');
+    }
+
+    const exists = await this._productsService.existsInStore(
+      args.title,
+      store._id.toString(),
+    );
+
+    if (exists) {
+      throw new ConflictException('product_already_exists');
+    }
+
+    const product = await this._productsService.create(
+      args,
+      user,
+      store,
+      image,
+    );
+    return this._productsService.findOneById(product._id.toString());
+  }
+
+  async createProducExtra(
+    productId: string,
+    storeId: string,
+    args: CreateProductExtraDto,
+    user: UserModel,
+  ) {
+    const store = await this._storeModel
+      .findOne({ _id: storeId, owner: user._id })
+      .exec();
+
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+
+    if (!store.canCreateProducts) {
+      throw new ForbiddenException('can_not_create_products');
+    }
+
+    const product = await this._productsService.findOneById(productId);
+
+    if (!product) {
+      throw new NotFoundException('product_not_found');
+    }
+
+    try {
+      const extra = await this._productsService.createExtra(
+        args,
+        product,
+        store,
+        user,
+      );
+
+      return this._productsService.findOneById(productId);
+    } catch (e) {
+      console.log('🚀 ~ StoreService ~ e:', e instanceof BadRequestException);
       throw e;
     }
   }

@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { initializeApp } from 'firebase/app';
+import { MultipartToJsonPipe } from 'src/pipes/multipart-to-json/multipart-to-json.pipe';
 
 @Module({
   providers: [
+    MultipartToJsonPipe,
     {
       provide: 'FIREBASE',
       inject: [ConfigService],
@@ -23,6 +25,6 @@ import { initializeApp } from 'firebase/app';
       },
     },
   ],
-  exports: ['FIREBASE'],
+  exports: ['FIREBASE', MultipartToJsonPipe],
 })
 export class SharedModule {}
