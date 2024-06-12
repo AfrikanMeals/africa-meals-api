@@ -12,6 +12,9 @@ export class ProductRatingModel extends BaseSchema {
   @Prop({ required: true, name: 'rate', min: 1, max: 5 })
   rate: number;
 
+  @Prop({ required: false, name: 'comment' })
+  comment?: string;
+
   @Prop({
     required: true,
     name: 'user',
