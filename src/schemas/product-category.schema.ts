@@ -3,7 +3,7 @@ import { BaseSchema } from './base.schema';
 
 @Schema({
   timestamps: true,
-  collection: 'product_catagories',
+  collection: 'product_categories',
   toJSON: {
     getters: true,
     virtuals: true,

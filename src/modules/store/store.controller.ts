@@ -1,5 +1,6 @@
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import { CreateProductDto } from '@modules/products/dto/products.dto';
+import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import {
   BadRequestException,
   Body,
@@ -117,5 +118,15 @@ export class StoreController {
       args,
       req.user as UserModel,
     );
+  }
+
+  @Post(':id/rating')
+  @UseGuards(JwtGuard)
+  async rate(
+    @Param('id') id: string,
+    @Body(ValidationPipe) args: CreateRatingDto,
+    @Req() req: Request,
+  ) {
+    return this._storeService.createRating(id, args, req.user as UserModel);
   }
 }

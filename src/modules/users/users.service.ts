@@ -8,6 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 
@@ -48,5 +49,26 @@ export class UsersService {
       { $push: { addresses: address._id } },
     );
     return address;
+  }
+
+  async hasStore(authUser: UserModel) {
+    const user = await this._userModel
+      .findById(authUser._id)
+      .populate('stores')
+      .exec();
+
+    return user.stores.length;
+  }
+
+  async addStore(store: StoreModel, authUser: UserModel) {
+    // TODO users have only one store for now
+    const hasStore = await this.hasStore(authUser);
+    if (hasStore) {
+      throw new ConflictException('user_has_store');
+    }
+    return this._userModel.updateOne(
+      { _id: authUser._id },
+      { $push: { stores: store._id } },
+    );
   }
 }

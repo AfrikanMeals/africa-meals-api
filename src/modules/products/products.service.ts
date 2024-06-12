@@ -1,4 +1,6 @@
 import { MediasService } from '@modules/medias/medias.service';
+import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
+import { RatingsService } from '@modules/ratings/ratings.service';
 import {
   BadRequestException,
   Inject,
@@ -24,11 +26,27 @@ export class ProductsService {
   @Inject(MediasService)
   private readonly _mediasService: MediasService;
 
+  @Inject(RatingsService)
+  private readonly _ratingsService: RatingsService;
+
+  getProductModel() {
+    return this._productModel;
+  }
+
+  getProductCategoryModel() {
+    return this._productCategoryModel;
+  }
+
   async findOneById(id: string) {
     return this._productModel
       .findOne({ _id: id })
       .populate('category')
-      .populate('ratings')
+      .populate({
+        path: 'ratings',
+        populate: {
+          path: 'user',
+        },
+      })
       .populate('likedBy')
       .populate('store')
       .exec();
@@ -115,5 +133,43 @@ export class ProductsService {
         },
       )
       .exec();
+  }
+
+  async createRating(id: string, args: CreateRatingDto, user: UserModel) {
+    const product = await this._productModel
+      .findOne({ _id: id })
+      // .populate('ratings')
+      .exec();
+    if (!product) {
+      throw new NotFoundException('product_not_found');
+    }
+
+    try {
+      const rating = await this._ratingsService.createProductRating(
+        args,
+        product,
+        user,
+      );
+
+      if (rating) {
+        await this._productModel
+          .updateOne(
+            { _id: product._id },
+            {
+              $push: {
+                ratings: rating._id,
+              },
+            },
+            {
+              new: true,
+              upsert: true,
+            },
+          )
+          .exec();
+      }
+      return this.findOneById(product._id.toString());
+    } catch (e) {
+      throw new BadRequestException('error_creating_rating');
+    }
   }
 }

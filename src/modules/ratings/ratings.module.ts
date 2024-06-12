@@ -1,6 +1,13 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { RatingModel, RatingSchema } from '@schemas/rating.schema';
+import {
+  ProductRatingModel,
+  ProductRatingSchema,
+} from '@schemas/product_rating.schema';
+import {
+  StoreRatingModel,
+  StoreRatingSchema,
+} from '@schemas/store_rating.schema';
 import { RatingsController } from './ratings.controller';
 import { RatingsService } from './ratings.service';
 
@@ -9,7 +16,8 @@ import { RatingsService } from './ratings.service';
   providers: [RatingsService],
   imports: [
     MongooseModule.forFeature([
-      { name: RatingModel.name, schema: RatingSchema },
+      { name: ProductRatingModel.name, schema: ProductRatingSchema },
+      { name: StoreRatingModel.name, schema: StoreRatingSchema },
     ]),
   ],
   exports: [RatingsService, MongooseModule],

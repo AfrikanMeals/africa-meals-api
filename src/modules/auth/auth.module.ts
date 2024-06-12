@@ -8,11 +8,12 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtGuard } from './guards/jwt.guard';
+import { OptionalAuthGuard } from './guards/optional.auth.guard';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
 @Module({
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtGuard],
+  providers: [AuthService, JwtStrategy, JwtGuard, OptionalAuthGuard],
   imports: [
     PassportModule,
     MailerModule,
@@ -27,6 +28,13 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     }),
     MongooseModule.forFeature([{ name: UserModel.name, schema: UserSchema }]),
   ],
-  exports: [AuthService, MongooseModule, JwtModule, JwtStrategy, JwtGuard],
+  exports: [
+    AuthService,
+    MongooseModule,
+    JwtModule,
+    JwtStrategy,
+    JwtGuard,
+    OptionalAuthGuard,
+  ],
 })
 export class AuthModule {}

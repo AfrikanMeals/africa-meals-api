@@ -2,7 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Schema as MongooseSchema } from 'mongoose';
 import { BaseSchema } from './base.schema';
 import { ProductCategoryModel } from './product-category.schema';
-import { RatingModel } from './rating.schema';
+import { ProductRatingModel } from './product_rating.schema';
 import { StoreModel } from './store.schema';
 import { UserModel } from './user.schema';
 
@@ -29,6 +29,8 @@ export class ProductExtraModel extends BaseSchema {
 
   @Prop({ required: true, name: 'price' })
   price: number;
+
+  // TODO add statisc properties(purchass count, ...)
 }
 
 export const ProductExtraSchema =
@@ -79,12 +81,12 @@ export class ProductModel extends BaseSchema {
 
   @Prop({
     name: 'ratings',
-    ref: RatingModel.name,
+    ref: 'ProductRatingModel',
     type: [MongooseSchema.Types.ObjectId],
     select: false,
     default: [],
   })
-  ratings: RatingModel[];
+  ratings: ProductRatingModel[];
 
   @Prop({
     required: true,
@@ -126,8 +128,13 @@ ProductSchema.virtual('averageRating').get(function () {
     return 0;
   }
   return (
-    items.reduce((a: number, b: RatingModel) => a + b.rate, 0) / items.length
+    items.reduce((a: number, b: ProductRatingModel) => a + b.rate, 0) /
+    items.length
   );
+});
+
+ProductSchema.virtual('ordersCount').get(function () {
+  return 0;
 });
 
 export type ProductModelDocument = ProductModel & Document;

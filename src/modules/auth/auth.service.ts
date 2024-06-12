@@ -162,7 +162,11 @@ export class AuthService {
   }
 
   async findUserById(id: string) {
-    return this._usersModel.findOne({ _id: id }).populate('addresses').exec();
+    return this._usersModel
+      .findOne({ _id: id })
+      .populate('addresses')
+      .populate('stores')
+      .exec();
   }
 
   async findUserByEmail(email: string) {

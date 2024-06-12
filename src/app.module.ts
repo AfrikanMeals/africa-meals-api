@@ -11,6 +11,7 @@ import { RatingsModule } from './modules/ratings/ratings.module';
 import { StoreModule } from './modules/store/store.module';
 import { UsersModule } from './modules/users/users.module';
 import { ProductsModule } from './modules/products/products.module';
+import { SearchModule } from './modules/search/search.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { ProductsModule } from './modules/products/products.module';
     AddressesModule,
     MediasModule,
     ProductsModule,
+    SearchModule,
     // SharedModule,
   ],
   controllers: [AppController],

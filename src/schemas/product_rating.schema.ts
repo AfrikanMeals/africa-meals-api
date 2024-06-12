@@ -1,23 +1,16 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Schema as MongooseSchema } from 'mongoose';
 import { BaseSchema } from './base.schema';
+import { ProductModel } from './product.schema';
 import { UserModel } from './user.schema';
-
-export enum RatingTypeEnum {
-  PRODUCT = 'PRODUCT',
-  STORE = 'STORE',
-}
 
 @Schema({
   timestamps: true,
-  collection: 'ratings',
+  collection: 'product_ratings',
 })
-export class RatingModel extends BaseSchema {
+export class ProductRatingModel extends BaseSchema {
   @Prop({ required: true, name: 'rate', min: 1, max: 5 })
   rate: number;
-
-  @Prop({ required: true, name: 'type', enum: RatingTypeEnum })
-  type: RatingTypeEnum;
 
   @Prop({
     required: true,
@@ -26,8 +19,17 @@ export class RatingModel extends BaseSchema {
     type: MongooseSchema.Types.ObjectId,
   })
   user: UserModel;
+
+  @Prop({
+    required: true,
+    name: 'product',
+    ref: 'ProductModel',
+    type: MongooseSchema.Types.ObjectId,
+  })
+  product: ProductModel;
 }
 
-export const RatingSchema = SchemaFactory.createForClass(RatingModel);
+export const ProductRatingSchema =
+  SchemaFactory.createForClass(ProductRatingModel);
 
-export type RatingModelDocument = RatingModel & Document;
+export type ProductRatingModelDocument = ProductRatingModel & Document;

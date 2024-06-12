@@ -5,6 +5,9 @@ import {
   CreateProductExtraDto,
 } from '@modules/products/dto/products.dto';
 import { ProductsService } from '@modules/products/products.service';
+import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
+import { RatingsService } from '@modules/ratings/ratings.service';
+import { UsersService } from '@modules/users/users.service';
 import {
   BadRequestException,
   ConflictException,
@@ -33,6 +36,16 @@ export class StoreService {
   @Inject(ProductsService)
   private readonly _productsService: ProductsService;
 
+  @Inject(UsersService)
+  private readonly _usersService: UsersService;
+
+  @Inject(RatingsService)
+  private readonly _ratingsService: RatingsService;
+
+  getStoreModel() {
+    return this._storeModel;
+  }
+
   async findOneById(id: string) {
     return this._storeModel
       .findOne({ _id: id })
@@ -56,11 +69,23 @@ export class StoreService {
       throw new ConflictException('address_not_found');
     }
 
+    const hasStore = await this._usersService.hasStore(user);
+
+    if (hasStore) {
+      throw new ConflictException('user_has_store');
+    }
+
     const store = await this._storeModel.create({
       ...args,
       address: addr._id,
       owner: user._id,
     });
+
+    if (!store) {
+      throw new BadRequestException('could_not_create_store');
+    }
+
+    await this._usersService.addStore(store, user);
 
     return this.findOneById(store._id.toString());
   }
@@ -170,6 +195,45 @@ export class StoreService {
     } catch (e) {
       console.log('🚀 ~ StoreService ~ e:', e instanceof BadRequestException);
       throw e;
+    }
+  }
+
+  async createRating(id: string, args: CreateRatingDto, user: UserModel) {
+    const store = await this._storeModel
+      .findOne({ _id: id })
+      // .populate('ratings')
+      .exec();
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+
+    try {
+      const rating = await this._ratingsService.createStoreRating(
+        args,
+        store,
+        user,
+      );
+
+      if (rating) {
+        await this._storeModel
+          .updateOne(
+            { _id: store._id },
+            {
+              $push: {
+                ratings: rating._id,
+              },
+            },
+            {
+              new: true,
+              upsert: true,
+            },
+          )
+          .exec();
+      }
+      return this.findOneById(store._id.toString());
+    } catch (e) {
+      console.log('🚀 ~ StoreService ~ createRating ~ e:', e);
+      throw new BadRequestException('error_creating_rating');
     }
   }
 }

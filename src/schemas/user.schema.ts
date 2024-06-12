@@ -87,6 +87,10 @@ UserSchema.virtual('hasStore').get(function () {
   return (this.stores || []).length > 0;
 });
 
+UserSchema.virtual('defaultStore').get(function () {
+  return (this.stores || []).length > 0 ? this.stores[0] : null;
+});
+
 UserSchema.pre('save', async function (next) {
   try {
     if (!this.isModified('password')) {

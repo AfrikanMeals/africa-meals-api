@@ -2,7 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Schema as MongooseSchema } from 'mongoose';
 import { AddressModel } from './address.schema';
 import { BaseSchema } from './base.schema';
-import { RatingModel } from './rating.schema';
+import { StoreRatingModel } from './store_rating.schema';
 import { UserModel } from './user.schema';
 
 export enum StoreStatusEnum {
@@ -60,12 +60,12 @@ export class StoreModel extends BaseSchema {
   @Prop({
     required: true,
     name: 'ratings',
-    ref: RatingModel.name,
+    ref: StoreRatingModel.name,
     type: [MongooseSchema.Types.ObjectId],
     select: false,
     default: [],
   })
-  ratings: RatingModel[];
+  ratings: StoreRatingModel[];
 
   @Prop({
     required: true,
@@ -92,7 +92,8 @@ StoreSchema.virtual('averageRating').get(function () {
     return 0;
   }
   return (
-    items.reduce((a: number, b: RatingModel) => a + b.rate, 0) / items.length
+    items.reduce((a: number, b: StoreRatingModel) => a + b.rate, 0) /
+    items.length
   );
 });
 
