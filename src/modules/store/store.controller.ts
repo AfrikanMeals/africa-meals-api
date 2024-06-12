@@ -106,12 +106,29 @@ export class StoreController {
 
   @Post('/:id/product/:producId/extra')
   @UseGuards(JwtGuard)
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: memoryStorage(),
+      limits: { fileSize: 50 * 1024 * 1024, files: 1 }, // 50 MB
+      fileFilter: (req, file, cb) => {
+        if (!file.originalname.match(/\.(jpg|jpeg|png)$/)) {
+          return cb(new Error('invalid_file_type'), false);
+        }
+        cb(null, true);
+      },
+      // preservePath: true,
+    }),
+  )
   async createProductExtra(
     @Req() req: Request,
     @Param('id') id: string,
     @Param('producId') productId: string,
-    @Body(ValidationPipe) args: CreateProductExtraDto,
+    @Body(MultipartToJsonPipe, ValidationPipe) args: CreateProductExtraDto,
+    @UploadedFile() file: Express.Multer.File,
   ) {
+    if (file) {
+      args.image = file;
+    }
     return this._storeService.createProducExtra(
       productId,
       id,

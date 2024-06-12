@@ -30,6 +30,9 @@ export class ProductExtraModel extends BaseSchema {
   @Prop({ required: true, name: 'price' })
   price: number;
 
+  @Prop({ required: false, name: 'profile_image' })
+  profileImage?: string;
+
   // TODO add statisc properties(purchass count, ...)
 }
 

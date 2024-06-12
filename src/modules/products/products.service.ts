@@ -3,6 +3,7 @@ import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import { RatingsService } from '@modules/ratings/ratings.service';
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -87,11 +88,16 @@ export class ProductsService {
       }
     }
 
+    const originCountry = args.originCountry ?? store.address.country;
+
     const product = await this._productModel.create({
       ...args,
       category: category._id,
       store: store._id,
       currency: store.currency,
+      ...(originCountry && {
+        originCountry,
+      }),
       discountPrice: 0,
       ...(imageUrl && { profileImage: imageUrl }),
     });
@@ -109,7 +115,9 @@ export class ProductsService {
       .findOne({
         _id: product._id,
         store: { _id: store._id },
-        extras: { $elemMatch: { title: args.title } },
+        extras: {
+          $elemMatch: { title: { $regex: new RegExp(`^${args.title}$`, 'i') } },
+        },
       })
       .exec();
 
@@ -133,6 +141,45 @@ export class ProductsService {
         },
       )
       .exec();
+  }
+
+  async deleteExtra(id: string, title: string, user: UserModel) {
+    const product = await this._productModel
+      .findOne({
+        _id: id,
+        extras: {
+          $elemMatch: { title: { $regex: new RegExp(`^${title}$`, 'i') } },
+        },
+      })
+      .populate('store')
+      .exec();
+
+    if (!product) {
+      throw new NotFoundException('product_extra_not_found');
+    }
+
+    if (product.store.owner.toString() !== user._id.toString()) {
+      throw new ForbiddenException('not_allowed');
+    }
+
+    await this._productModel
+      .updateOne(
+        { _id: product._id },
+        {
+          $pull: {
+            extras: {
+              title: { $regex: new RegExp(`^${title}$`, 'i') },
+            },
+          },
+        },
+        {
+          new: true,
+          upsert: true,
+        },
+      )
+      .exec();
+
+    return this.findOneById(id);
   }
 
   async createRating(id: string, args: CreateRatingDto, user: UserModel) {

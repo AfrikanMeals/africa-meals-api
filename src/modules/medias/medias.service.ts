@@ -2,6 +2,7 @@ import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { UserModel } from '@schemas/user.schema';
 import { FirebaseApp } from 'firebase/app';
 import {
+  deleteObject,
   getDownloadURL,
   getStorage,
   ref,
@@ -38,6 +39,17 @@ export class MediasService {
       return getDownloadURL(fileRef);
     } catch (e) {
       console.log('🚀 ~ MediasService ~ upload ~ e:', e);
+      throw e;
+    }
+  }
+
+  async delete(path: string) {
+    try {
+      const storage = getStorage();
+      const fileRef = ref(storage, path);
+      return await deleteObject(fileRef);
+    } catch (e) {
+      console.log('🚀 ~ MediasService ~ delete ~ e:', e);
       throw e;
     }
   }

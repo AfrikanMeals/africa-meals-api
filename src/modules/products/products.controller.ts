@@ -3,6 +3,7 @@ import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Inject,
   Param,
@@ -33,5 +34,15 @@ export class ProductsController {
     @Req() req: Request,
   ) {
     return this._productsService.createRating(id, args, req.user as UserModel);
+  }
+
+  @Delete(':id/extra/:title')
+  @UseGuards(JwtGuard)
+  async deleteExtra(
+    @Param('id') id: string,
+    @Param('title') title: string,
+    @Req() req: Request,
+  ) {
+    return this._productsService.deleteExtra(id, title, req.user as UserModel);
   }
 }

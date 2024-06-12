@@ -39,4 +39,12 @@ export class CreateProductExtraDto {
   @IsNotEmpty()
   @IsNumber()
   price: number;
+
+  @IsOptional()
+  @Trim()
+  image?: Express.Multer.File;
+
+  @IsOptional()
+  @Trim()
+  profileImage?: string;
 }

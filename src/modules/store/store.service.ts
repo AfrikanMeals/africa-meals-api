@@ -95,6 +95,7 @@ export class StoreService {
     file: Express.Multer.File,
     user: UserModel,
   ) {
+    let url: string;
     try {
       const store = await this._storeModel
         .findOne({ _id: id, owner: user._id })
@@ -104,7 +105,7 @@ export class StoreService {
         throw new BadRequestException('store_not_found');
       }
 
-      const url = await this._mediasService.upload(
+      url = await this._mediasService.upload(
         file,
         user,
         `stores/${id}/profile`,
@@ -113,12 +114,19 @@ export class StoreService {
         throw new BadRequestException('image_upload_failed');
       }
 
+      if (store.profileImage) {
+        await this._mediasService.delete(store.profileImage);
+      }
+
       await this._storeModel
         .updateOne({ _id: id }, { profileImage: url })
         .exec();
       return { url };
     } catch (e) {
       console.log('🚀 ~ StoreService ~ updateProfileImage ~ e:', e);
+      if (url) {
+        await this._mediasService.delete(url);
+      }
       throw e;
     }
   }
@@ -131,6 +139,7 @@ export class StoreService {
   ) {
     const store = await this._storeModel
       .findOne({ _id: id, owner: user._id })
+      .populate('address')
       .exec();
 
     if (!store) {
@@ -183,7 +192,20 @@ export class StoreService {
       throw new NotFoundException('product_not_found');
     }
 
+    let url;
+
     try {
+      if (args.image) {
+        url = await this._mediasService.upload(
+          args.image,
+          user,
+          `stores/${storeId}/extras/${productId}`,
+        );
+        if (!url) {
+          throw new BadRequestException('image_upload_failed');
+        }
+        args.profileImage = url;
+      }
       const extra = await this._productsService.createExtra(
         args,
         product,
@@ -193,7 +215,9 @@ export class StoreService {
 
       return this._productsService.findOneById(productId);
     } catch (e) {
-      console.log('🚀 ~ StoreService ~ e:', e instanceof BadRequestException);
+      if (url) {
+        await this._mediasService.delete(url);
+      }
       throw e;
     }
   }
