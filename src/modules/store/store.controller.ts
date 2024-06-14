@@ -1,10 +1,12 @@
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
+import { CreateOfferDto } from '@modules/offers/dto/offers.dto';
 import { CreateProductDto } from '@modules/products/dto/products.dto';
 import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Inject,
   Param,
@@ -104,7 +106,7 @@ export class StoreController {
     );
   }
 
-  @Post('/:id/product/:producId/extra')
+  @Post('/:id/products/:producId/extra')
   @UseGuards(JwtGuard)
   @UseInterceptors(
     FileInterceptor('image', {
@@ -145,5 +147,48 @@ export class StoreController {
     @Req() req: Request,
   ) {
     return this._storeService.createRating(id, args, req.user as UserModel);
+  }
+
+  @Post('/:id/offer')
+  @UseGuards(JwtGuard)
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: memoryStorage(),
+      limits: { fileSize: 50 * 1024 * 1024, files: 1 }, // 50 MB
+      fileFilter: (req, file, cb) => {
+        if (!file.originalname.match(/\.(jpg|jpeg|png)$/)) {
+          return cb(new Error('invalid_file_type'), false);
+        }
+        cb(null, true);
+      },
+      // preservePath: true,
+    }),
+  )
+  async createOffer(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body(MultipartToJsonPipe, ValidationPipe) args: CreateOfferDto,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (file) {
+      args.image = file;
+    }
+    return this._storeService.createOffer(id, args, req.user as UserModel);
+  }
+
+  @Delete('/:id/products/:producId/extra/:extraId')
+  @UseGuards(JwtGuard)
+  async deleteExtra(
+    @Param('id') id: string,
+    @Param('extraId') extraId: string,
+    @Param('producId') productId: string,
+    @Req() req: Request,
+  ) {
+    return this._storeService.deleteProductExtra(
+      id,
+      productId,
+      extraId,
+      req.user as UserModel,
+    );
   }
 }

@@ -45,17 +45,36 @@ export class SearchService {
   ): Promise<SearchResultDto<ProductModel>> {
     const pipeline = [
       {
+        $lookup: {
+          from: 'stores',
+          localField: 'store',
+          foreignField: '_id',
+          as: 'store',
+        },
+      },
+      {
+        $addFields: {
+          store: {
+            $arrayElemAt: ['$store', 0],
+          },
+        },
+      },
+      {
         $match: {
           $and: [
-            // {
-            //   $or: [
-            //     user ? { owner: { $eq: new ObjectId(user.id) } } : null,
-            //     { status: ProductStatusEnum.ACTIVE },
-            //   ].filter(Boolean),
-            // },
             {
-              status: ProductStatusEnum.ACTIVE,
+              $or: [
+                user
+                  ? {
+                      'store.owner': new ObjectId(user.id),
+                    }
+                  : null,
+                { status: ProductStatusEnum.ACTIVE },
+              ].filter(Boolean),
             },
+            // {
+            //   status: ProductStatusEnum.ACTIVE,
+            // },
             args.categoryId && {
               category: { $eq: new ObjectId(args.categoryId) },
             },
@@ -86,9 +105,13 @@ export class SearchService {
     // console.log('🚀 ~ SearchService ~ pipeline:', JSON.stringify(pipeline));
 
     const [count, productsIds] = await Promise.all([
-      this._productsService
-        .getProductModel()
-        .countDocuments(pipeline[0].$match),
+      // this._productsService
+      //   .getProductModel()
+      //   .countDocuments(pipeline[0].$match),
+      this._productsService.getProductModel().aggregate(pipeline).project({
+        _id: 1,
+      }),
+      // .populate('store'),
 
       this._productsService
         .getProductModel()
@@ -159,7 +182,7 @@ export class SearchService {
 
     return {
       items: products ?? [],
-      total: count,
+      total: count.length,
       page: args.page,
       limit: args.take,
     };

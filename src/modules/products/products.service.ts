@@ -13,6 +13,7 @@ import { ProductCategoryModel } from '@schemas/product-category.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
+import { ObjectId } from 'mongodb';
 import { Model } from 'mongoose';
 import { CreateProductDto, CreateProductExtraDto } from './dto/products.dto';
 
@@ -39,7 +40,7 @@ export class ProductsService {
   }
 
   async findOneById(id: string) {
-    return this._productModel
+    return await this._productModel
       .findOne({ _id: id })
       .populate('category')
       .populate({
@@ -125,7 +126,7 @@ export class ProductsService {
       throw new BadRequestException('product_extra_already_exists');
     }
 
-    return await this._productModel
+    await this._productModel
       .updateOne(
         { _id: product._id },
         {
@@ -141,14 +142,18 @@ export class ProductsService {
         },
       )
       .exec();
+
+    return this.findOneById(product._id.toString());
   }
 
-  async deleteExtra(id: string, title: string, user: UserModel) {
+  async deleteExtra(id: string, extraId: string, user: UserModel) {
     const product = await this._productModel
       .findOne({
         _id: id,
         extras: {
-          $elemMatch: { title: { $regex: new RegExp(`^${title}$`, 'i') } },
+          // _id: extraId,
+          // $elemMatch: { title: { $regex: new RegExp(`^${extraId}$`, 'i') } },
+          $elemMatch: { _id: new ObjectId(extraId) },
         },
       })
       .populate('store')
@@ -168,7 +173,7 @@ export class ProductsService {
         {
           $pull: {
             extras: {
-              title: { $regex: new RegExp(`^${title}$`, 'i') },
+              _id: extraId,
             },
           },
         },

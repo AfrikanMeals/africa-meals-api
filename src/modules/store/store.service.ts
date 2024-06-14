@@ -1,5 +1,7 @@
 import { AddressesService } from '@modules/addresses/addresses.service';
 import { MediasService } from '@modules/medias/medias.service';
+import { CreateOfferDto } from '@modules/offers/dto/offers.dto';
+import { OffersService } from '@modules/offers/offers.service';
 import {
   CreateProductDto,
   CreateProductExtraDto,
@@ -41,6 +43,9 @@ export class StoreService {
 
   @Inject(RatingsService)
   private readonly _ratingsService: RatingsService;
+
+  @Inject(OffersService)
+  private readonly _offersService: OffersService;
 
   getStoreModel() {
     return this._storeModel;
@@ -222,6 +227,46 @@ export class StoreService {
     }
   }
 
+  async deleteProductExtra(
+    storeId: string,
+    productId: string,
+    extraId: string,
+    user: UserModel,
+  ) {
+    const product = await this._productsService.findOneById(productId);
+    if (!product) {
+      throw new NotFoundException('product_not_found');
+    }
+
+    if (product.store.id !== storeId) {
+      throw new ForbiddenException('unauthorized_action');
+    }
+
+    const isValidExtra = product.extras.find(
+      (extra) => extra._id.toString() === extraId,
+    );
+    // console.log('🚀 ~ StoreService ~ isValidExtra:', isValidExtra);
+    // console.log('🚀 ~ StoreService ~ product.extras:', product.extras);
+
+    if (!isValidExtra) {
+      throw new NotFoundException('extra_not_found');
+    }
+
+    const isExtraUsedInOffer =
+      await this._offersService.isProductExtraUsedInOffer(
+        productId,
+        extraId,
+        user,
+      );
+
+    if (isExtraUsedInOffer) {
+      throw new ForbiddenException('extra_used_in_offer');
+    }
+
+    await this._productsService.deleteExtra(productId, extraId, user);
+    return this._productsService.findOneById(productId);
+  }
+
   async createRating(id: string, args: CreateRatingDto, user: UserModel) {
     const store = await this._storeModel
       .findOne({ _id: id })
@@ -258,6 +303,43 @@ export class StoreService {
     } catch (e) {
       console.log('🚀 ~ StoreService ~ createRating ~ e:', e);
       throw new BadRequestException('error_creating_rating');
+    }
+  }
+
+  async createOffer(id: string, args: CreateOfferDto, user: UserModel) {
+    const store = await this._storeModel
+      .findOne({ _id: id, owner: user._id })
+      .exec();
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+
+    if (!store.canCreateProducts) {
+      throw new ForbiddenException('can_not_create_products');
+    }
+
+    let url: string;
+
+    try {
+      if (args.image) {
+        url = await this._mediasService.upload(
+          args.image,
+          user,
+          `stores/${id}/offers`,
+        );
+        if (!url) {
+          throw new BadRequestException('image_upload_failed');
+        }
+        args.profileImage = url;
+      }
+
+      const offer = await this._offersService.create(args, store, user);
+      return this._offersService.findOne(offer._id.toString(), user);
+    } catch (e) {
+      if (url) {
+        await this._mediasService.delete(url);
+      }
+      throw e;
     }
   }
 }
