@@ -13,6 +13,7 @@ import { UsersModule } from './modules/users/users.module';
 import { ProductsModule } from './modules/products/products.module';
 import { SearchModule } from './modules/search/search.module';
 import { OffersModule } from './modules/offers/offers.module';
+import { CartModule } from './modules/cart/cart.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { OffersModule } from './modules/offers/offers.module';
     ProductsModule,
     SearchModule,
     OffersModule,
+    CartModule,
     // SharedModule,
   ],
   controllers: [AppController],

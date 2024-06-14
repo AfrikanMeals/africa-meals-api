@@ -1,4 +1,5 @@
 import { AddressesService } from '@modules/addresses/addresses.service';
+import { CartService } from '@modules/cart/cart.service';
 import { MediasService } from '@modules/medias/medias.service';
 import { CreateOfferDto } from '@modules/offers/dto/offers.dto';
 import { OffersService } from '@modules/offers/offers.service';
@@ -19,6 +20,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model } from 'mongoose';
@@ -46,6 +48,9 @@ export class StoreService {
 
   @Inject(OffersService)
   private readonly _offersService: OffersService;
+
+  @Inject(CartService)
+  private readonly _cartService: CartService;
 
   getStoreModel() {
     return this._storeModel;
@@ -264,6 +269,10 @@ export class StoreService {
     }
 
     await this._productsService.deleteExtra(productId, extraId, user);
+    await this._cartService.removeBy({
+      type: CartItemTypeEnum.PRODUCT_EXTRA,
+      itemId: extraId,
+    });
     return this._productsService.findOneById(productId);
   }
 

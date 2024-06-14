@@ -1,4 +1,5 @@
 import { AddressesModule } from '@modules/addresses/addresses.module';
+import { CartModule } from '@modules/cart/cart.module';
 import { MediasModule } from '@modules/medias/medias.module';
 import { OffersModule } from '@modules/offers/offers.module';
 import { ProductsModule } from '@modules/products/products.module';
@@ -21,6 +22,7 @@ import { StoreService } from './store.service';
     // SharedModule,
     UsersModule,
     OffersModule,
+    CartModule,
     MongooseModule.forFeature([{ name: StoreModel.name, schema: StoreSchema }]),
   ],
   exports: [StoreService, MongooseModule],
