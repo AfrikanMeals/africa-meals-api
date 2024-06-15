@@ -12,6 +12,23 @@ export enum StoreStatusEnum {
 }
 
 @Schema({
+  toJSON: {
+    getters: true,
+    virtuals: true,
+  },
+})
+export class StoreShippingZoneModel {
+  @Prop({ required: true, name: 'min_distance' })
+  minDistance: number;
+
+  @Prop({ required: true, name: 'max_distance' })
+  maxDistance: number;
+
+  @Prop({ required: true, name: 'price' })
+  price: number;
+}
+
+@Schema({
   timestamps: true,
   collection: 'stores',
   toJSON: {
@@ -82,6 +99,21 @@ export class StoreModel extends BaseSchema {
     type: [MongooseSchema.Types.ObjectId],
   })
   likedBy: UserModel[];
+
+  @Prop({
+    default: [],
+    name: 'shipping_zones',
+    type: Array<StoreShippingZoneModel>,
+    get: (value: StoreShippingZoneModel[]) => {
+      return (value || []).map((item) => {
+        return {
+          ...item,
+          label: `${item.minDistance} - ${item.maxDistance}KM`,
+        };
+      });
+    },
+  })
+  shippingZones: StoreShippingZoneModel[];
 }
 
 export const StoreSchema = SchemaFactory.createForClass(StoreModel);
