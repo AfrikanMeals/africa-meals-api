@@ -14,6 +14,7 @@ import { ProductsModule } from './modules/products/products.module';
 import { SearchModule } from './modules/search/search.module';
 import { OffersModule } from './modules/offers/offers.module';
 import { CartModule } from './modules/cart/cart.module';
+import { AnnouncementsModule } from './modules/announcements/announcements.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { CartModule } from './modules/cart/cart.module';
     SearchModule,
     OffersModule,
     CartModule,
+    AnnouncementsModule,
     // SharedModule,
   ],
   controllers: [AppController],

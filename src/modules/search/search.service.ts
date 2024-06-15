@@ -1,6 +1,8 @@
+import { OffersService } from '@modules/offers/offers.service';
 import { ProductsService } from '@modules/products/products.service';
 import { StoreService } from '@modules/store/store.service';
 import { Inject, Injectable } from '@nestjs/common';
+import { OfferModel, OfferStatusEnum } from '@schemas/offer.schema';
 import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
@@ -15,6 +17,9 @@ export class SearchService {
   @Inject(StoreService)
   private readonly _storeService: StoreService;
 
+  @Inject(OffersService)
+  private readonly _offersService: OffersService;
+
   async filter(args: SearchDto, user?: UserModel) {
     args.page = args.page ?? 1;
     args.take = args.take ?? 5;
@@ -25,7 +30,8 @@ export class SearchService {
     const response: {
       [key: string]:
         | SearchResultDto<ProductModel>
-        | SearchResultDto<StoreModel>;
+        | SearchResultDto<StoreModel>
+        | SearchResultDto<OfferModel>;
     } = {};
 
     if (searchContent.includes(SearchContent.PRODUCTS)) {
@@ -36,7 +42,85 @@ export class SearchService {
       response.stores = await this._filterStores(args, user);
     }
 
+    if (searchContent.includes(SearchContent.OFFERS)) {
+      response.offers = await this._filterOffers(args, user);
+    }
+
     return response;
+  }
+
+  private async _filterOffers(args: SearchDto, user?: UserModel) {
+    const pipeline = [
+      {
+        $match: {
+          $and: [
+            {
+              $or: [
+                user
+                  ? {
+                      owner: new ObjectId(user.id),
+                    }
+                  : null,
+                { status: OfferStatusEnum.ACTIVE },
+              ].filter(Boolean),
+            },
+            args.storeId && {
+              _id: new ObjectId(args.storeId),
+            },
+            {
+              $or: [
+                { title: { $regex: args.query ?? '', $options: 'i' } },
+                { bio: { $regex: args.query ?? '', $options: 'i' } },
+                { about: { $regex: args.query ?? '', $options: 'i' } },
+              ],
+            },
+          ].filter(Boolean),
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+        },
+      },
+    ];
+
+    const [count, offerIds] = await Promise.all([
+      this._offersService.getModel().countDocuments(pipeline[0].$match).exec(),
+      // this._productsService.getProductModel().aggregate(pipeline).project({
+      //   _id: 1,
+      // }),
+      // .populate('store'),
+
+      this._offersService
+        .getModel()
+        .aggregate(pipeline)
+        .project({
+          _id: 1,
+        })
+        .skip((args.page - 1) * args.take)
+        .limit(args.take)
+        .exec(),
+    ]);
+
+    if (!offerIds.length) {
+      return {
+        items: [],
+        total: 0,
+        page: args.page,
+        limit: args.take,
+      };
+    }
+
+    return {
+      items: await Promise.all(
+        (offerIds ?? []).map((offerId) =>
+          this._offersService.findOne(offerId, user),
+        ),
+      ),
+      total: count,
+      page: args.page,
+      limit: args.take,
+    };
   }
 
   private async _filterProducts(

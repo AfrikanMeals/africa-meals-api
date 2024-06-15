@@ -89,7 +89,10 @@ export class CartService {
       .exec();
     if (item) {
       await this._cartItemModel
-        .updateOne({ _id: item.id }, { $inc: { quantity: 1 } })
+        .updateOne(
+          { _id: item.id },
+          { $inc: { quantity: +(args.quantity ?? 1) } },
+        )
         .exec();
       // return await this.findOneById(item._id.toString(), user);
     } else {
@@ -100,7 +103,7 @@ export class CartService {
           productId: args.productId,
         }),
         type: args.type,
-        quantity: 1,
+        quantity: +(args.quantity ?? 1),
         price: args.price,
       });
     }
@@ -114,7 +117,7 @@ export class CartService {
       .exec();
   }
 
-  async removeById(id: string, user: UserModel) {
+  async removeItemById(id: string, user: UserModel) {
     return await this._cartItemModel
       .deleteOne({ _id: new ObjectId(id), user: new ObjectId(user.id) })
       .exec();

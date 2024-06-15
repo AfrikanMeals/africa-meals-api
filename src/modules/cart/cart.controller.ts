@@ -35,7 +35,7 @@ export class CartController {
   @Delete(':id')
   @UseGuards(JwtGuard)
   async deleteOneById(@Param('id') id: string, @Req() req: Request) {
-    return this._cartService.removeById(id, req.user as UserModel);
+    return this._cartService.removeItemById(id, req.user as UserModel);
   }
 
   @Post('')

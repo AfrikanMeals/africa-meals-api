@@ -24,6 +24,7 @@ export enum SortOrder {
 export enum SearchContent {
   STORES = 'stores',
   PRODUCTS = 'products',
+  OFFERS = 'offers',
 }
 
 export class SearchDto {

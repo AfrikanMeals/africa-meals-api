@@ -6,6 +6,12 @@ import { AddressModel } from './address.schema';
 import { BaseSchema } from './base.schema';
 import { StoreModel } from './store.schema';
 
+export enum UserTypeEnum {
+  USER = 'USER',
+  VENDOR = 'VENDOR',
+  ADMIN = 'ADMIN',
+}
+
 @Schema({
   timestamps: true,
   collection: 'users',
@@ -15,6 +21,9 @@ import { StoreModel } from './store.schema';
   },
 })
 export class UserModel extends BaseSchema {
+  @Prop({ enum: UserTypeEnum, default: UserTypeEnum.USER })
+  type: UserTypeEnum;
+
   @Prop({ required: true, name: 'full_name' })
   fullName: string;
 

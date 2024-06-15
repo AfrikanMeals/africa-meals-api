@@ -30,6 +30,10 @@ export class OffersService {
   @Inject(ProductsService)
   private readonly _productsService: ProductsService;
 
+  getModel() {
+    return this._offerModel;
+  }
+
   async filter(
     args: FilterOffersDto,
     user: UserModel,

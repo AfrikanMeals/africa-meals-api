@@ -1,5 +1,6 @@
 import { CartItemTypeEnum } from '@schemas/cart_item.schema';
-import { IsEnum, IsNotEmpty, ValidateIf } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsEnum, IsNotEmpty, IsNumber, Min, ValidateIf } from 'class-validator';
 
 export class RemoveItemFromCartDto {
   @IsNotEmpty()
@@ -19,9 +20,14 @@ export class AddItemToCartDto {
   itemId: string;
 
   @IsNotEmpty()
+  @IsNumber()
+  @Min(1)
+  @Transform(({ value }) => +value)
   quantity: number;
 
   @IsNotEmpty()
+  @IsNumber()
+  @Transform(({ value }) => +value)
   price: number;
 
   @IsNotEmpty()

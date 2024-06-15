@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { StoreModel } from '@schemas/store.schema';
-import { UserModel } from '@schemas/user.schema';
+import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 
 @Injectable()
@@ -68,7 +68,10 @@ export class UsersService {
     }
     return this._userModel.updateOne(
       { _id: authUser._id },
-      { $push: { stores: store._id } },
+      {
+        $push: { stores: store._id },
+        $set: { type: UserTypeEnum.VENDOR },
+      },
     );
   }
 }
