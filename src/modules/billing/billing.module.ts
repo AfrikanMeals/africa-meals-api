@@ -1,3 +1,4 @@
+import { UsersModule } from '@modules/users/users.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -13,6 +14,7 @@ import { PaypalModule } from './paypal/paypal.module';
   providers: [BillingService],
   imports: [
     PaypalModule,
+    UsersModule,
     MongooseModule.forFeature([
       { name: PaymentMethodModel.name, schema: PaymentMethodSchema },
     ]),

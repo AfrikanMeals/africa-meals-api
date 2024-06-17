@@ -166,6 +166,7 @@ export class AuthService {
       .findOne({ _id: id })
       .populate('addresses')
       .populate('stores')
+      .populate('paymentMethods')
       .exec();
   }
 

@@ -4,6 +4,7 @@ import { Type } from 'class-transformer';
 import { Schema as MongooseSchema } from 'mongoose';
 import { AddressModel } from './address.schema';
 import { BaseSchema } from './base.schema';
+import { PaymentMethodModel } from './payment-method.schema';
 import { StoreModel } from './store.schema';
 
 export enum UserTypeEnum {
@@ -66,6 +67,16 @@ export class UserModel extends BaseSchema {
   })
   @Type(() => Array<StoreModel>)
   stores?: StoreModel[];
+
+  @Prop({
+    required: false,
+    name: 'payment_methods',
+    type: [MongooseSchema.Types.ObjectId],
+    ref: 'PaymentMethodModel',
+    default: [],
+  })
+  @Type(() => Array<PaymentMethodModel>)
+  paymentMethods?: PaymentMethodModel[];
 
   @Prop({ required: true, name: 'password', select: false })
   password: string;

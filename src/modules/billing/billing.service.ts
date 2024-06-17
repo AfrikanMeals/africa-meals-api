@@ -1,3 +1,4 @@
+import { UsersService } from '@modules/users/users.service';
 import {
   HttpException,
   Inject,
@@ -21,6 +22,7 @@ export class BillingService {
   private readonly _paymentMethodModel: Model<PaymentMethodModel>;
 
   @Inject(PaypalService) private readonly _paypalService: PaypalService;
+  @Inject(UsersService) private readonly _usersService: UsersService;
 
   async savePaypalPaymentMethod(setupTokenId: string, user: UserModel) {
     try {
@@ -35,7 +37,7 @@ export class BillingService {
         })
         .exec();
 
-      await this._paymentMethodModel.create({
+      const method = await this._paymentMethodModel.create({
         user,
         isDefault: !hasMaymentMethod,
         provider: token.isCard
@@ -56,6 +58,8 @@ export class BillingService {
         }),
         userId: new ObjectId(user.id),
       });
+
+      await this._usersService.attachPaymentMethod(method, user);
 
       return await this._paymentMethodModel
         .find({
@@ -84,6 +88,8 @@ export class BillingService {
       if (!method) {
         throw new NotFoundException('payment_method_not_found');
       }
+
+      await this._usersService.detachPaymentMethod(method, user);
 
       const response = await this._paypalService.deletePaymentMethod(
         method.providerId,
