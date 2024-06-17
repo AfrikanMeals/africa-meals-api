@@ -30,7 +30,10 @@ export class AddressesService {
     if (!data?.features?.length) {
       throw new NotFoundException('address_not_found');
     }
-    // console.log('🚀 ~ AddressesService ~ create ~ data:', data);
+    // console.log(
+    //   '🚀 ~ AddressesService ~ create ~ data:',
+    //   JSON.stringify(data, null, 2),
+    // );
     // const { lat, lng } = data.results[0].geometry.location;
     // const address = await this.addressModel.create({
     //   ...args,
@@ -46,6 +49,7 @@ export class AddressesService {
         item.name ??
         `${args.address}, ${args.zipCode}, ${args.city}, ${args.country}`,
       country: args.country,
+      countryCode: item.properties.context?.country?.country_code,
       zipCode: args.zipCode,
       city: args.city,
       location: item.geometry.coordinates ?? [0, 0],

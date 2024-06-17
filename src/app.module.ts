@@ -15,6 +15,7 @@ import { SearchModule } from './modules/search/search.module';
 import { OffersModule } from './modules/offers/offers.module';
 import { CartModule } from './modules/cart/cart.module';
 import { AnnouncementsModule } from './modules/announcements/announcements.module';
+import { BillingModule } from './modules/billing/billing.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { AnnouncementsModule } from './modules/announcements/announcements.modul
     OffersModule,
     CartModule,
     AnnouncementsModule,
+    BillingModule,
     // SharedModule,
   ],
   controllers: [AppController],

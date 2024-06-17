@@ -25,6 +25,12 @@ export class AddressModel extends BaseSchema {
   @Prop({ required: true, name: 'country' })
   country: string;
 
+  @Prop({ required: true, name: 'city' })
+  city: string;
+
+  @Prop({ required: true, name: 'country_code' })
+  countryCode: string;
+
   @Prop({ required: true, name: 'zip_code' })
   zipCode: string;
 

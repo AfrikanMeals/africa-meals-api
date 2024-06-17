@@ -31,6 +31,10 @@ export class CreateAddressDto extends SearchAddressDto {
   // type: AddressTypeEnum;
 
   @IsNotEmpty()
+  @Trim()
+  countryCode: string;
+
+  @IsNotEmpty()
   @IsLongitude()
   longitude: number;
 
