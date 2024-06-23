@@ -1,5 +1,6 @@
 import { AddressesService } from '@modules/addresses/addresses.service';
 import { CartService } from '@modules/cart/cart.service';
+import { AddItemToCartDto } from '@modules/cart/dto/cart.dto';
 import { MediasService } from '@modules/medias/medias.service';
 import { CreateOfferDto } from '@modules/offers/dto/offers.dto';
 import { OffersService } from '@modules/offers/offers.service';
@@ -158,6 +159,10 @@ export class StoreService {
 
     if (!store.canCreateProducts) {
       throw new ForbiddenException('can_not_create_products');
+    }
+
+    if ((user.paymentMethods || []).length === 0) {
+      throw new ForbiddenException('no_payment_methods');
     }
 
     const exists = await this._productsService.existsInStore(
@@ -350,5 +355,26 @@ export class StoreService {
       }
       throw e;
     }
+  }
+
+  async addItemToStoreCart(
+    id: string,
+    args: AddItemToCartDto,
+    user: UserModel,
+  ) {
+    const store = await this._storeModel
+      .findOne({ _id: id })
+      .populate('owner')
+      .exec();
+
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+
+    if (store.owner._id.toString() !== user.id.toString()) {
+      throw new ForbiddenException('cannot_add_item_to_your_store_cart');
+    }
+    // const item = await this._cartService.itemExistsInCart(store, args, user);
+    return await this._cartService.addItemToCart(args, user, store);
   }
 }

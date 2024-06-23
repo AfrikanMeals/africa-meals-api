@@ -3,6 +3,7 @@ import { Schema as MongooseSchema } from 'mongoose';
 import { BaseSchema } from './base.schema';
 import { OfferModel } from './offer.schema';
 import { ProductExtraModel, ProductModel } from './product.schema';
+import { StoreModel } from './store.schema';
 
 export enum CartItemTypeEnum {
   PRODUCT = 'product',
@@ -19,6 +20,14 @@ export enum CartItemTypeEnum {
   },
 })
 export class CartItemModel extends BaseSchema {
+  @Prop({
+    required: true,
+    name: 'store',
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'StoreModel',
+  })
+  store: StoreModel;
+
   @Prop({
     required: true,
     name: 'type',

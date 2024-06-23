@@ -1,4 +1,5 @@
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
+import { AddItemToCartDto } from '@modules/cart/dto/cart.dto';
 import { CreateOfferDto } from '@modules/offers/dto/offers.dto';
 import { CreateProductDto } from '@modules/products/dto/products.dto';
 import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
@@ -147,6 +148,20 @@ export class StoreController {
     @Req() req: Request,
   ) {
     return this._storeService.createRating(id, args, req.user as UserModel);
+  }
+
+  @Post(':id/cart')
+  @UseGuards(JwtGuard)
+  async addItemToStoreCart(
+    @Param('id') id: string,
+    @Body(ValidationPipe) args: AddItemToCartDto,
+    @Req() req: Request,
+  ) {
+    return await this._storeService.addItemToStoreCart(
+      id,
+      args,
+      req.user as UserModel,
+    );
   }
 
   @Post('/:id/offer')

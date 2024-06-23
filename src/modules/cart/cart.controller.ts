@@ -1,20 +1,16 @@
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import {
-  Body,
   Controller,
   Delete,
   Get,
   Inject,
   Param,
-  Post,
   Req,
   UseGuards,
-  ValidationPipe,
 } from '@nestjs/common';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { CartService } from './cart.service';
-import { AddItemToCartDto } from './dto/cart.dto';
 
 @Controller('cart')
 export class CartController {
@@ -26,10 +22,10 @@ export class CartController {
     return this._cartService.filter(req.user as UserModel);
   }
 
-  @Get(':id')
+  @Get('/:storeId')
   @UseGuards(JwtGuard)
-  async findOneById(@Param('id') id: string, @Req() req: Request) {
-    return this._cartService.findOneById(id, req.user as UserModel);
+  async findOneByStoreId(@Param('storeId') id: string, @Req() req: Request) {
+    return this._cartService.findOneByStoreId(id, req.user as UserModel);
   }
 
   @Delete(':id')
@@ -38,12 +34,12 @@ export class CartController {
     return this._cartService.removeItemById(id, req.user as UserModel);
   }
 
-  @Post('')
-  @UseGuards(JwtGuard)
-  async addItemToCart(
-    @Body(ValidationPipe) args: AddItemToCartDto,
-    @Req() req: Request,
-  ) {
-    return this._cartService.addItemToCart(args, req.user as UserModel);
-  }
+  // @Post('')
+  // @UseGuards(JwtGuard)
+  // async addItemToCart(
+  //   @Body(ValidationPipe) args: AddItemToCartDto,
+  //   @Req() req: Request,
+  // ) {
+  //   return this._cartService.addItemToCart(args, req.user as UserModel);
+  // }
 }

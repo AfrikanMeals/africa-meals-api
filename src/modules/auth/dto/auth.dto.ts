@@ -11,8 +11,10 @@ import {
 export class CheckAccountDto {
   @IsNotEmpty()
   @Trim()
-  @IsEnum(['email', 'phoneNumber', 'googleId', 'facebookId'])
+  // @IsEnum(['email', 'phoneNumber', 'googleId', 'facebookId'])
+  @IsEnum(['email'])
   source: 'email' | 'phoneNumber' | 'googleId' | 'Idfacebook';
+  // source: 'email' | 'phoneNumber' | 'googleId' | 'Idfacebook';
 
   @IsNotEmpty()
   @IsEmail()

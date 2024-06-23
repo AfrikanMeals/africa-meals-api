@@ -3,6 +3,7 @@ import { ProductsService } from '@modules/products/products.service';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
+import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { ObjectId } from 'mongodb';
 import { Model } from 'mongoose';
@@ -19,9 +20,32 @@ export class CartService {
   @Inject(OffersService)
   private readonly _offersService: OffersService;
 
-  async findOneById(id: string, user: UserModel) {
+  async findOneByStoreId(storeId: string, user: UserModel) {
+    const items = await this._cartItemModel
+      .find({ store: new ObjectId(storeId), user: new ObjectId(user.id) })
+      .populate('store')
+      .exec();
+
+    if (!items?.length) {
+      throw new NotFoundException('cart_not_found');
+    }
+
+    const cart = {
+      store: items[0].store,
+      items: (
+        await Promise.all(
+          items.map(async (item) => await this.findOneByItemId(item.id, user)),
+        )
+      ).map(({ store, ...item }) => ({ ...item })),
+    };
+
+    return cart;
+  }
+
+  async findOneByItemId(id: string, user: UserModel): Promise<CartItemModel> {
     const item = await this._cartItemModel
       .findOne({ _id: new ObjectId(id) })
+      .populate('store')
       .exec();
     if (!item) {
       throw new NotFoundException('cart_item_not_found');
@@ -65,39 +89,96 @@ export class CartService {
   async filter(user: UserModel) {
     const items = await this._cartItemModel
       .find({ user: new ObjectId(user.id) })
-      .populate({
-        path: 'user',
-      })
+      .populate([
+        {
+          path: 'user',
+        },
+        {
+          path: 'store',
+        },
+      ])
       .exec();
 
+    const formatedItems = (items ?? []).reduce(
+      (acc, item) => {
+        if (!acc[item.store.id]) {
+          acc[item.store.id] = {
+            store: item.store,
+            items: [],
+          };
+        }
+        acc[item.store.id].items.push(item);
+        return acc;
+      },
+      {} as {
+        [key: string]: {
+          store: StoreModel;
+          items: CartItemModel[];
+        };
+      },
+    );
+
     return {
-      items: await Promise.all(
-        (items ?? []).map((item) =>
-          this.findOneById(item._id.toString(), user),
-        ),
+      data: await Promise.all(
+        Object.values(formatedItems).map(async (item) => {
+          return {
+            store: item.store,
+            items: (
+              await Promise.all(
+                (item.items ?? []).map((item) =>
+                  this.findOneByItemId(item._id.toString(), user),
+                ),
+              )
+            ).map(({ store, ...rest }) => {
+              return rest;
+            }),
+          };
+        }),
       ),
     };
+
+    // return {
+    //   items: await Promise.all(
+    //     (items ?? []).map((item) =>
+    //       this.findOneById(item._id.toString(), user),
+    //     ),
+    //   ),
+    // };
   }
 
-  async addItemToCart(args: AddItemToCartDto, user: UserModel) {
-    let item = await this._cartItemModel
+  async itemExistsInCart(
+    store: StoreModel,
+    args: AddItemToCartDto,
+    user: UserModel,
+  ): Promise<CartItemModel> {
+    return await this._cartItemModel
       .findOne({
         entityId: args.itemId,
         type: args.type,
         user: new ObjectId(user.id),
+        store: new ObjectId(store.id),
       })
       .exec();
+  }
+
+  async updateQuantity(item: CartItemModel, qty: number) {
+    return await this._cartItemModel
+      .updateOne({ _id: item.id }, { $set: { quantity: +(qty ?? 1) } })
+      .exec();
+  }
+
+  async addItemToCart(
+    args: AddItemToCartDto,
+    user: UserModel,
+    store: StoreModel,
+  ): Promise<CartItemModel> {
+    let item = await this.itemExistsInCart(store, args, user);
     if (item) {
-      await this._cartItemModel
-        .updateOne(
-          { _id: item.id },
-          { $inc: { quantity: +(args.quantity ?? 1) } },
-        )
-        .exec();
-      // return await this.findOneById(item._id.toString(), user);
+      await this.updateQuantity(item, (item.quantity ?? 0) + args.quantity);
     } else {
       item = await this._cartItemModel.create({
         user: new ObjectId(user.id),
+        store: new ObjectId(store.id),
         entityId: args.itemId,
         ...(args.type === CartItemTypeEnum.PRODUCT_EXTRA && {
           productId: args.productId,
@@ -108,7 +189,7 @@ export class CartService {
       });
     }
 
-    return await this.findOneById(item._id.toString(), user);
+    return await this.findOneByItemId(item.id, user);
   }
 
   async removeBy(args: RemoveItemFromCartDto) {

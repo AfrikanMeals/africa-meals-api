@@ -16,6 +16,9 @@ export class AddItemToCartDto {
   @IsEnum(CartItemTypeEnum)
   type: CartItemTypeEnum;
 
+  // @IsNotEmpty()
+  // storeId: string;
+
   @IsNotEmpty()
   itemId: string;
 
