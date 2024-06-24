@@ -4,6 +4,7 @@ import { AddItemToCartDto } from '@modules/cart/dto/cart.dto';
 import { MediasService } from '@modules/medias/medias.service';
 import { CreateOfferDto } from '@modules/offers/dto/offers.dto';
 import { OffersService } from '@modules/offers/offers.service';
+import { OrdersService } from '@modules/orders/orders.service';
 import {
   CreateProductDto,
   CreateProductExtraDto,
@@ -21,6 +22,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { AddressTypeEnum } from '@schemas/address.schema';
 import { CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
@@ -53,6 +55,9 @@ export class StoreService {
   @Inject(CartService)
   private readonly _cartService: CartService;
 
+  @Inject(OrdersService)
+  private readonly _ordersService: OrdersService;
+
   getStoreModel() {
     return this._storeModel;
   }
@@ -74,7 +79,13 @@ export class StoreService {
       throw new ConflictException('store_already_exists');
     }
 
-    const addr = await this._addressesService.create(address, user);
+    const addr = await this._addressesService.create(
+      {
+        ...address,
+        type: AddressTypeEnum.SHOP,
+      },
+      user,
+    );
 
     if (!addr) {
       throw new ConflictException('address_not_found');
@@ -371,10 +382,30 @@ export class StoreService {
       throw new NotFoundException('store_not_found');
     }
 
-    if (store.owner._id.toString() !== user.id.toString()) {
+    if (store.owner._id.toString() === user.id.toString()) {
       throw new ForbiddenException('cannot_add_item_to_your_store_cart');
     }
     // const item = await this._cartService.itemExistsInCart(store, args, user);
     return await this._cartService.addItemToCart(args, user, store);
+  }
+
+  async createOrderFromCart(storeId: string, user: UserModel) {
+    const store = await this.findOneById(storeId);
+
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+
+    if (!store.acceptsOrders) {
+      throw new ForbiddenException('store_does_not_accept_orders');
+    }
+
+    const order = await this._ordersService.createFromCart(storeId, user);
+
+    if (order) {
+      await this._cartService.clearStoreCart(store, user);
+    }
+
+    return order;
   }
 }

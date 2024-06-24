@@ -4,7 +4,7 @@ import { BaseSchema } from './base.schema';
 
 export enum AddressTypeEnum {
   USER = 'USER',
-  VENDOR = 'VENDOR',
+  SHOP = 'SHOP',
 }
 
 @Schema({

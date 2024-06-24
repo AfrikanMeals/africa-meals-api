@@ -1,4 +1,5 @@
-import { CartItemTypeEnum } from '@schemas/cart_item.schema';
+import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
+import { StoreModel } from '@schemas/store.schema';
 import { Transform } from 'class-transformer';
 import { IsEnum, IsNotEmpty, IsNumber, Min, ValidateIf } from 'class-validator';
 
@@ -36,4 +37,10 @@ export class AddItemToCartDto {
   @IsNotEmpty()
   @ValidateIf((o) => o.type === CartItemTypeEnum.PRODUCT_EXTRA)
   productId: string;
+}
+
+export class CartItemApiResponse {
+  store: StoreModel;
+  items: Partial<CartItemModel>[];
+  totalPrice: number;
 }

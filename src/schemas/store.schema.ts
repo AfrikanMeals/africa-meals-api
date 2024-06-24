@@ -18,6 +18,7 @@ export enum StoreStatusEnum {
   },
 })
 export class StoreShippingZoneModel {
+  [x: string]: any;
   @Prop({ required: true, name: 'min_distance' })
   minDistance: number;
 
@@ -26,6 +27,9 @@ export class StoreShippingZoneModel {
 
   @Prop({ required: true, name: 'price' })
   price: number;
+
+  // Computed
+  label?: string;
 }
 
 @Schema({
@@ -55,8 +59,14 @@ export class StoreModel extends BaseSchema {
   @Prop({ required: false, name: 'profile_image' })
   profileImage?: string;
 
+  @Prop({ default: false, name: 'accepts_orders' }) // TODO should be updated when activating the store
+  acceptsOrders?: boolean;
+
   @Prop({ default: false, name: 'can_create_products' }) // TODO should be updated when activating the store
   canCreateProducts?: boolean;
+
+  @Prop({ default: false, name: 'supports_shipping' })
+  supportsShipping?: boolean;
 
   @Prop({
     required: true,

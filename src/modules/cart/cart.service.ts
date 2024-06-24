@@ -7,7 +7,11 @@ import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { ObjectId } from 'mongodb';
 import { Model } from 'mongoose';
-import { AddItemToCartDto, RemoveItemFromCartDto } from './dto/cart.dto';
+import {
+  AddItemToCartDto,
+  CartItemApiResponse,
+  RemoveItemFromCartDto,
+} from './dto/cart.dto';
 
 @Injectable()
 export class CartService {
@@ -20,7 +24,10 @@ export class CartService {
   @Inject(OffersService)
   private readonly _offersService: OffersService;
 
-  async findOneByStoreId(storeId: string, user: UserModel) {
+  async findOneByStoreId(
+    storeId: string,
+    user: UserModel,
+  ): Promise<CartItemApiResponse> {
     const items = await this._cartItemModel
       .find({ store: new ObjectId(storeId), user: new ObjectId(user.id) })
       .populate('store')
@@ -30,19 +37,28 @@ export class CartService {
       throw new NotFoundException('cart_not_found');
     }
 
+    const mappedItems: Partial<CartItemModel>[] = (
+      await Promise.all(
+        items.map(async (item) => await this.findOneByItemId(item.id, user)),
+      )
+    ).map(({ store, ...item }) => ({ ...item }));
+
     const cart = {
       store: items[0].store,
-      items: (
-        await Promise.all(
-          items.map(async (item) => await this.findOneByItemId(item.id, user)),
-        )
-      ).map(({ store, ...item }) => ({ ...item })),
+      items: mappedItems,
+      totalPrice: (mappedItems || []).reduce(
+        (acc, item) => acc + item.price * item.quantity,
+        0,
+      ),
     };
 
     return cart;
   }
 
-  async findOneByItemId(id: string, user: UserModel): Promise<CartItemModel> {
+  async findOneByItemId(
+    id: string,
+    user: UserModel,
+  ): Promise<Partial<CartItemModel>> {
     const item = await this._cartItemModel
       .findOne({ _id: new ObjectId(id) })
       .populate('store')
@@ -71,6 +87,7 @@ export class CartService {
       };
     } else {
       const product = await this._productsService.findOneById(item.productId);
+      // console.log('🚀 ~ CartService ~ product:', product);
       if (!product) {
         throw new NotFoundException('product_not_found');
       }
@@ -121,17 +138,23 @@ export class CartService {
     return {
       data: await Promise.all(
         Object.values(formatedItems).map(async (item) => {
+          const items = (
+            await Promise.all(
+              (item.items ?? []).map((item) =>
+                this.findOneByItemId(item._id.toString(), user),
+              ),
+            )
+          ).map(({ store, ...rest }) => {
+            return rest;
+          });
+
           return {
             store: item.store,
-            items: (
-              await Promise.all(
-                (item.items ?? []).map((item) =>
-                  this.findOneByItemId(item._id.toString(), user),
-                ),
-              )
-            ).map(({ store, ...rest }) => {
-              return rest;
-            }),
+            items,
+            totalPrice: items.reduce(
+              (acc, item) => acc + item.price * item.quantity,
+              0,
+            ),
           };
         }),
       ),
@@ -171,7 +194,7 @@ export class CartService {
     args: AddItemToCartDto,
     user: UserModel,
     store: StoreModel,
-  ): Promise<CartItemModel> {
+  ): Promise<Partial<CartItemModel>> {
     let item = await this.itemExistsInCart(store, args, user);
     if (item) {
       await this.updateQuantity(item, (item.quantity ?? 0) + args.quantity);
@@ -201,6 +224,15 @@ export class CartService {
   async removeItemById(id: string, user: UserModel) {
     return await this._cartItemModel
       .deleteOne({ _id: new ObjectId(id), user: new ObjectId(user.id) })
+      .exec();
+  }
+
+  async clearStoreCart(store: StoreModel, user: UserModel) {
+    return await this._cartItemModel
+      .deleteMany({
+        store: new ObjectId(store.id),
+        user: new ObjectId(user.id),
+      })
       .exec();
   }
 }

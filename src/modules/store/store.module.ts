@@ -2,6 +2,7 @@ import { AddressesModule } from '@modules/addresses/addresses.module';
 import { CartModule } from '@modules/cart/cart.module';
 import { MediasModule } from '@modules/medias/medias.module';
 import { OffersModule } from '@modules/offers/offers.module';
+import { OrdersModule } from '@modules/orders/orders.module';
 import { ProductsModule } from '@modules/products/products.module';
 import { RatingsModule } from '@modules/ratings/ratings.module';
 import { UsersModule } from '@modules/users/users.module';
@@ -23,6 +24,7 @@ import { StoreService } from './store.service';
     UsersModule,
     OffersModule,
     CartModule,
+    OrdersModule,
     MongooseModule.forFeature([{ name: StoreModel.name, schema: StoreSchema }]),
   ],
   exports: [StoreService, MongooseModule],

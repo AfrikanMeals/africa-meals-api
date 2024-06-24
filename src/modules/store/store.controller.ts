@@ -164,6 +164,15 @@ export class StoreController {
     );
   }
 
+  @Post(':id/order')
+  @UseGuards(JwtGuard)
+  async createOrderFromCart(@Param('id') id: string, @Req() req: Request) {
+    return await this._storeService.createOrderFromCart(
+      id,
+      req.user as UserModel,
+    );
+  }
+
   @Post('/:id/offer')
   @UseGuards(JwtGuard)
   @UseInterceptors(

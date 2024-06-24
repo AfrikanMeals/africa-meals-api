@@ -1,7 +1,7 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
-import { AddressModel } from '@schemas/address.schema';
+import { AddressModel, AddressTypeEnum } from '@schemas/address.schema';
 import { UserModel } from '@schemas/user.schema';
 import axios from 'axios';
 import { Model } from 'mongoose';
@@ -52,19 +52,23 @@ export class AddressesService {
       countryCode: item.properties.context?.country?.country_code,
       zipCode: args.zipCode,
       city: args.city,
-      location: item.geometry.coordinates ?? [0, 0],
+      location: item.geometry.coordinates ?? [0, 0], // [Longitude, Latitude]
     };
   }
 
   async create(
-    { latitude, longitude, ...args }: CreateAddressDto,
+    {
+      latitude,
+      longitude,
+      ...args
+    }: CreateAddressDto & { type: AddressTypeEnum },
     user: UserModel,
   ) {
     const address = await this.addressModel.create({
       ...args,
       location: {
         type: 'Point',
-        coordinates: [latitude, longitude],
+        coordinates: [longitude, latitude],
       },
     });
 

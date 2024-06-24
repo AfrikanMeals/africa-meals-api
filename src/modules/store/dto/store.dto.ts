@@ -1,6 +1,8 @@
 import { CreateAddressDto } from '@modules/addresses/dto/addresses.dto';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMinSize,
+  IsBoolean,
   IsNotEmpty,
   IsNumber,
   IsPhoneNumber,
@@ -36,6 +38,10 @@ export class CreateStoreDto {
   email: string;
 
   @IsNotEmpty()
+  @IsBoolean()
+  supportsShipping: boolean;
+
+  @IsNotEmpty()
   @IsPhoneNumber('CA')
   phoneNumber: string;
 
@@ -46,7 +52,8 @@ export class CreateStoreDto {
 
   @IsNotEmpty()
   @ValidateNested()
+  @ArrayMinSize(1)
   @Type(() => StoreShippingZoneDto)
-  @ValidateIf((o) => o.shippingZones?.length > 0)
+  @ValidateIf((o) => o.shippingZones?.length > 0 || o.supportsShipping)
   shippingZones?: StoreShippingZoneDto;
 }

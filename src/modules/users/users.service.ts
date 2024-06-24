@@ -8,6 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { AddressTypeEnum } from '@schemas/address.schema';
 import { PaymentMethodModel } from '@schemas/payment-method.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
@@ -37,7 +38,7 @@ export class UsersService {
     }
 
     const address = await this._addressesService.create(
-      { ...args, isDefault: true },
+      { ...args, isDefault: true, type: AddressTypeEnum.USER },
       user,
     );
 

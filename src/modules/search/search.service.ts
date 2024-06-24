@@ -156,6 +156,9 @@ export class SearchService {
                 { status: ProductStatusEnum.ACTIVE },
               ].filter(Boolean),
             },
+            {
+              'store.acceptsOrders': true,
+            },
             // {
             //   status: ProductStatusEnum.ACTIVE,
             // },
