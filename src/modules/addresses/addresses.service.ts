@@ -30,19 +30,25 @@ export class AddressesService {
     if (!data?.features?.length) {
       throw new NotFoundException('address_not_found');
     }
-    // console.log(
-    //   '🚀 ~ AddressesService ~ create ~ data:',
-    //   JSON.stringify(data, null, 2),
-    // );
-    // const { lat, lng } = data.results[0].geometry.location;
-    // const address = await this.addressModel.create({
-    //   ...args,
-    //   location: {
-    //     type: 'Point',
-    //     coordinates: [lat, lng],
-    //   },
-    // });
-    const item = data?.features[0];
+
+    const formatPostalcode = (code: string) =>
+      code?.split('')?.join('')?.toLowerCase()?.trim();
+
+    const item =
+      (data?.features || []).find(
+        (add) =>
+          formatPostalcode(add?.properties?.context?.postcode?.name) ===
+          formatPostalcode(args.zipCode),
+      ) ?? data?.features[0];
+    // console.log('🚀 ~ AddressesService ~ search ~ item:', JSON.stringify(item));
+
+    if (
+      formatPostalcode(item?.properties?.context?.postcode?.name) !==
+      formatPostalcode(args.zipCode)
+    ) {
+      throw new NotFoundException('invalid_zip_code');
+    }
+
     return {
       address:
         item.properties.full_address ??
@@ -75,5 +81,10 @@ export class AddressesService {
     return this.addressModel.findOne({
       _id: address._id,
     });
+  }
+
+  async update(id: string, args: CreateAddressDto, user: UserModel) {
+    await this.addressModel.updateOne({ _id: id }, args);
+    return this.addressModel.findOne({ _id: id });
   }
 }

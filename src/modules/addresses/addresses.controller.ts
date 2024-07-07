@@ -1,8 +1,11 @@
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import {
+  Body,
   Controller,
   Get,
   Inject,
+  Param,
+  Put,
   Query,
   Req,
   UseGuards,
@@ -11,7 +14,7 @@ import {
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { AddressesService } from './addresses.service';
-import { SearchAddressDto } from './dto/addresses.dto';
+import { CreateAddressDto, SearchAddressDto } from './dto/addresses.dto';
 
 @Controller('addresses')
 export class AddressesController {
@@ -27,12 +30,13 @@ export class AddressesController {
     return this._addressesService.search(args, req.user as UserModel);
   }
 
-  // @Post('')
-  // @UseGuards(JwtGuard)
-  // async create(
-  //   @Req() req: Request,
-  //   @Body(ValidationPipe) args: CreateAddressDto,
-  // ) {
-  //   return this._addressesService.create(args, req.user as UserModel);
-  // }
+  @Put(':id')
+  @UseGuards(JwtGuard)
+  async create(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body(ValidationPipe) args: CreateAddressDto,
+  ) {
+    return this._addressesService.update(id, args, req.user as UserModel);
+  }
 }

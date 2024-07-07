@@ -137,8 +137,9 @@ export class OrdersService {
 
     console.log(
       '🚀 ~ OrdersService ~ calculateShippingPrice ~ distance:',
-      usersAddress.location.coordinates,
-      store.address.location.coordinates,
+      usersAddress.address + (usersAddress.id ? ` (${usersAddress.id})` : ''),
+      '=>',
+      store.address.address + ` (${store.address.id})`,
     );
     const shippingZone = shippingZones.find(
       (zone) => zone.minDistance <= distance && zone.maxDistance >= distance,
