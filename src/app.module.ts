@@ -18,6 +18,7 @@ import { AdsModule } from './modules/ads/ads.module';
 import { AnnouncementsModule } from './modules/announcements/announcements.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { OrdersModule } from './modules/orders/orders.module';
+import { SeedModule } from './modules/seed/seed.module';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { OrdersModule } from './modules/orders/orders.module';
     AnnouncementsModule,
     BillingModule,
     OrdersModule,
+    SeedModule,
     // SharedModule,
   ],
   controllers: [AppController],
