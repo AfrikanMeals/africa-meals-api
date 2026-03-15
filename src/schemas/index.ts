@@ -1,4 +1,5 @@
 export * from './address.schema';
+export * from './ad.schema';
 export * from './announcement.schema';
 export * from './base.schema';
 export * from './cart_item.schema';
