@@ -17,6 +17,7 @@ import {
   CheckAccountDto,
   EmailVerificationDto,
   ForgotPasswordDto,
+  GoogleAuthDto,
   LoginDto,
   RegisterDto,
   ResetPasswordDto,
@@ -69,6 +70,40 @@ export class AuthService {
     });
 
     return this.findUserById(newUser._id.toString());
+  }
+
+  /** Connexion / inscription avec Google : trouve ou crée l'utilisateur, retourne le JWT */
+  async authWithGoogle(args: GoogleAuthDto) {
+    let user = await this._usersModel
+      .findOne({ googleId: args.googleId })
+      .exec();
+    if (user) {
+      return {
+        authToken: this._jwtService.sign({ sub: user._id.toString() }),
+      };
+    }
+    user = await this._usersModel.findOne({ email: args.email }).exec();
+    if (user) {
+      await this._usersModel
+        .updateOne(
+          { _id: user._id },
+          { googleId: args.googleId, emailVerifiedAt: new Date() },
+        )
+        .exec();
+      return {
+        authToken: this._jwtService.sign({ sub: user._id.toString() }),
+      };
+    }
+    const newUser = await this._usersModel.create({
+      email: args.email,
+      fullName: args.fullName,
+      googleId: args.googleId,
+      password: `google_${args.googleId}_${Date.now()}`,
+      emailVerifiedAt: new Date(),
+    });
+    return {
+      authToken: this._jwtService.sign({ sub: newUser._id.toString() }),
+    };
   }
 
   async login(args: LoginDto) {

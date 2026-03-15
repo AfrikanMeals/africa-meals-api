@@ -17,6 +17,7 @@ import {
   CheckAccountDto,
   EmailVerificationDto,
   ForgotPasswordDto,
+  GoogleAuthDto,
   LoginDto,
   RegisterDto,
   ResetPasswordDto,
@@ -41,6 +42,12 @@ export class AuthController {
   async login(@Body(ValidationPipe) args: LoginDto) {
     this.logger.log(`login body: ${JSON.stringify(args)}`);
     return this._authService.login(args);
+  }
+
+  @Post('google')
+  async authWithGoogle(@Body(ValidationPipe) args: GoogleAuthDto) {
+    this.logger.log(`google body: ${JSON.stringify(args)}`);
+    return this._authService.authWithGoogle(args);
   }
 
   @Post('verify-email')

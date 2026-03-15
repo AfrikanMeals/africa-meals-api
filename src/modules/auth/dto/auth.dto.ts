@@ -102,3 +102,22 @@ export class ResetPasswordDto {
   @MinLength(6)
   password: string;
 }
+
+/** Données reçues après Google Sign-In (création ou connexion de compte) */
+export class GoogleAuthDto {
+  @ApiProperty({ description: 'ID Google du compte' })
+  @IsNotEmpty()
+  @Trim()
+  googleId: string;
+
+  @ApiProperty({ format: 'email', example: 'user@gmail.com' })
+  @IsNotEmpty()
+  @Trim()
+  @IsEmail()
+  email: string;
+
+  @ApiProperty({ example: 'Jean Dupont', description: 'Nom affiché Google' })
+  @IsNotEmpty()
+  @Trim()
+  fullName: string;
+}
