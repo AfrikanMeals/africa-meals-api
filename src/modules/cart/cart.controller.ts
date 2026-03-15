@@ -8,17 +8,20 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { CartService } from './cart.service';
 
+@ApiTags('cart')
+@ApiBearerAuth('bearer')
 @Controller('cart')
 export class CartController {
   @Inject(CartService) private readonly _cartService: CartService;
 
   @Get('')
   @UseGuards(JwtGuard)
-  async findAll(@Req() req: Request) {
+  async findAll(@Req() req: Request): Promise<any> {
     return this._cartService.filter(req.user as UserModel);
   }
 
@@ -30,8 +33,11 @@ export class CartController {
 
   @Delete(':id')
   @UseGuards(JwtGuard)
-  async deleteOneById(@Param('id') id: string, @Req() req: Request) {
-    return this._cartService.removeItemById(id, req.user as UserModel);
+  async deleteOneById(
+    @Param('id') id: string,
+    @Req() req: Request,
+  ): Promise<void> {
+    await this._cartService.removeItemById(id, req.user as UserModel);
   }
 
   // @Post('')

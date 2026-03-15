@@ -1,5 +1,7 @@
 import { Controller, Get, HttpCode, HttpStatus } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 
+@ApiTags('billing')
 @Controller('paypal')
 export class PaypalController {
   @Get('success')

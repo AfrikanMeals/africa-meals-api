@@ -11,11 +11,14 @@ import {
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { AddressesService } from './addresses.service';
 import { CreateAddressDto, SearchAddressDto } from './dto/addresses.dto';
 
+@ApiTags('addresses')
+@ApiBearerAuth('bearer')
 @Controller('addresses')
 export class AddressesController {
   @Inject(AddressesService)

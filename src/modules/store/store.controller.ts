@@ -20,6 +20,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { memoryStorage } from 'multer';
@@ -28,6 +29,8 @@ import { CreateProductExtraDto } from './../products/dto/products.dto';
 import { CreateStoreDto } from './dto/store.dto';
 import { StoreService } from './store.service';
 
+@ApiTags('stores')
+@ApiBearerAuth('bearer')
 @Controller('stores')
 export class StoreController {
   @Inject(StoreService)
@@ -193,7 +196,7 @@ export class StoreController {
     @Param('id') id: string,
     @Body(MultipartToJsonPipe, ValidationPipe) args: CreateOfferDto,
     @UploadedFile() file: Express.Multer.File,
-  ) {
+  ): Promise<any> {
     if (file) {
       args.image = file;
     }

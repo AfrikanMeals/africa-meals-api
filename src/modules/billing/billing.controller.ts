@@ -10,12 +10,15 @@ import {
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { BillingService } from './billing.service';
 import { CreatePaymentMethodDto } from './paypal/dto/paypal.dto';
 import { PaypalService } from './paypal/paypal.service';
 
+@ApiTags('billing')
+@ApiBearerAuth('bearer')
 @Controller('billing')
 export class BillingController {
   @Inject(PaypalService) private readonly _paypalService: PaypalService;
@@ -47,8 +50,11 @@ export class BillingController {
 
   @Delete('payment-method/:id')
   @UseGuards(JwtGuard)
-  async deletePaymentToken(@Param('id') id: string, @Req() req: Request) {
-    return await this._billingService.deletePaypalPaymentMethod(
+  async deletePaymentToken(
+    @Param('id') id: string,
+    @Req() req: Request,
+  ): Promise<void> {
+    await this._billingService.deletePaypalPaymentMethod(
       id,
       req.user as UserModel,
     );

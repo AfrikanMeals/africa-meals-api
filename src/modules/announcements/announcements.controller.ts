@@ -12,6 +12,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { memoryStorage } from 'multer';
@@ -19,6 +20,8 @@ import { MultipartToJsonPipe } from 'src/pipes/multipart-to-json/multipart-to-js
 import { AnnouncementsService } from './announcements.service';
 import { CreateAnnouncementDto } from './dto/announcements.dto';
 
+@ApiTags('announcements')
+@ApiBearerAuth('bearer')
 @Controller('announcements')
 export class AnnouncementsController {
   @Inject(AnnouncementsService)

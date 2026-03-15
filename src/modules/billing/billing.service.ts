@@ -78,7 +78,10 @@ export class BillingService {
     }
   }
 
-  async deletePaypalPaymentMethod(id: string, user: UserModel) {
+  async deletePaypalPaymentMethod(
+    id: string,
+    user: UserModel,
+  ): Promise<void> {
     try {
       // TODO should check payment provider
       //! TODO should check if payment method is default ??
@@ -99,7 +102,7 @@ export class BillingService {
         '🚀 ~ BillingService ~ deletePaypalPaymentMethod ~ response:',
         response,
       );
-      return await this._paymentMethodModel
+      await this._paymentMethodModel
         .deleteOne({
           _id: new ObjectId(id),
           user: user.id,

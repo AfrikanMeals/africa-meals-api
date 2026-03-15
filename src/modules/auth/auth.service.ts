@@ -5,6 +5,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -15,6 +16,7 @@ import { Model } from 'mongoose';
 import {
   CheckAccountDto,
   EmailVerificationDto,
+  ForgotPasswordDto,
   LoginDto,
   RegisterDto,
   ResetPasswordDto,
@@ -62,7 +64,7 @@ export class AuthService {
       ),
       context: {
         name: args.fullName,
-        code: await this._generateVerificationCode(6),
+        code: activationCode,
       },
     });
 
@@ -151,14 +153,61 @@ export class AuthService {
     return user;
   }
 
-  async resetPassword({ email, password }: ResetPasswordDto) {
-    const user = await this._usersModel
-      .findOneAndUpdate({ email }, { password }, { new: true })
-      .exec();
+  async forgotPassword({ email }: ForgotPasswordDto) {
+    const user = await this._usersModel.findOne({ email }).exec();
     if (!user) {
       throw new NotFoundException(`user_not_found`);
     }
-    return user;
+    const code = await this._generateVerificationCode(6);
+    await this._usersModel
+      .findOneAndUpdate(
+        { email },
+        { passwordResetCode: code },
+        { new: true },
+      )
+      .exec();
+
+    const appName =
+      this._configService.get<string>('APP_NAME') ?? 'African Meals';
+    const subject = `Réinitialisation de mot de passe - ${appName}`;
+    const html = `
+      <h2>Réinitialisation de mot de passe</h2>
+      <p>Bonjour ${user.fullName},</p>
+      <p>Voici votre code de réinitialisation : <strong>${code}</strong></p>
+      <p>Ce code est valide 15 minutes. Ne le partagez avec personne.</p>
+      <p>Si vous n'avez pas demandé ce code, ignorez cet email.</p>
+      <p>— L'équipe ${appName}</p>
+    `.trim();
+    const text = `Code de réinitialisation : ${code}. Valide 15 min. - ${appName}`;
+
+    try {
+      await this._mailer.sendSimple({
+        to: email,
+        toName: user.fullName,
+        subject,
+        html,
+        text,
+      });
+    } catch (err) {
+      // Éviter 502 : renvoyer une erreur HTTP propre si l'envoi échoue
+      throw new ServiceUnavailableException('email_send_failed');
+    }
+    return { message: 'reset_code_sent' };
+  }
+
+  async resetPassword({ email, code, password }: ResetPasswordDto) {
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await this._usersModel
+      .findOneAndUpdate(
+        { email, passwordResetCode: code },
+        { password: hashed, passwordResetCode: null },
+        { new: true },
+      )
+      .exec();
+    if (!user) {
+      throw new NotFoundException(`user_not_found_or_invalid_code`);
+    }
+    return { message: 'password_reset' };
   }
 
   async findUserById(id: string) {

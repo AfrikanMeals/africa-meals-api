@@ -8,11 +8,13 @@ import {
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { SearchDto } from './dto/search.dto';
 import { SearchService } from './search.service';
 
+@ApiTags('search')
 @Controller('search')
 export class SearchController {
   @Inject(SearchService)

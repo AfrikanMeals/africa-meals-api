@@ -1,3 +1,4 @@
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Trim } from 'class-sanitizer';
 import {
   IsEmail,
@@ -9,32 +10,39 @@ import {
 } from 'class-validator';
 
 export class CheckAccountDto {
+  @ApiProperty({ enum: ['email'], example: 'email' })
   @IsNotEmpty()
   @Trim()
-  // @IsEnum(['email', 'phoneNumber', 'googleId', 'facebookId'])
   @IsEnum(['email'])
   source: 'email' | 'phoneNumber' | 'googleId' | 'Idfacebook';
-  // source: 'email' | 'phoneNumber' | 'googleId' | 'Idfacebook';
 
+  @ApiPropertyOptional({ format: 'email', example: 'user@example.com' })
   @IsNotEmpty()
   @IsEmail()
   @Trim()
   @ValidateIf((o) => o.registrationSource === 'email')
   email: string;
 
+  @ApiPropertyOptional({
+    format: 'tel',
+    example: '+14165551234',
+    description: 'Numéro canadien',
+  })
   @IsNotEmpty()
   @Trim()
   @IsPhoneNumber('CN', {
     message: 'Please enter a valid Canadian phone number.',
-  }) // TODO Restricted to Canada for now
+  })
   @ValidateIf((o) => o.registrationSource === 'phone')
   phoneNumber: string;
 
+  @ApiPropertyOptional()
   @IsNotEmpty()
   @Trim()
   @ValidateIf((o) => o.registrationSource === 'facebookId')
   facebookId?: string;
 
+  @ApiPropertyOptional()
   @IsNotEmpty()
   @Trim()
   @ValidateIf((o) => o.registrationSource === 'googleId')
@@ -42,34 +50,53 @@ export class CheckAccountDto {
 }
 
 export class LoginDto extends CheckAccountDto {
+  @ApiProperty({ minLength: 6, example: 'secret123', format: 'password' })
   @IsNotEmpty()
   @MinLength(6)
   password: string;
 }
 
 export class RegisterDto extends LoginDto {
+  @ApiProperty({ example: 'Jean Dupont' })
   @IsNotEmpty()
   @Trim()
   fullName: string;
 }
 
 export class EmailVerificationDto {
+  @ApiProperty({ format: 'email', example: 'user@example.com' })
   @IsNotEmpty()
   @Trim()
   @IsEmail()
   email: string;
 
+  @ApiProperty({ example: '123456', description: 'Code reçu par email' })
   @IsNotEmpty()
   @Trim()
   code: string;
 }
 
+export class ForgotPasswordDto {
+  @ApiProperty({ format: 'email', example: 'user@example.com' })
+  @IsNotEmpty()
+  @Trim()
+  @IsEmail()
+  email: string;
+}
+
 export class ResetPasswordDto {
+  @ApiProperty({ format: 'email', example: 'user@example.com' })
   @IsNotEmpty()
   @Trim()
   @IsEmail()
   email: string;
 
+  @ApiProperty({ example: '123456', description: 'Code reçu par email' })
+  @IsNotEmpty()
+  @Trim()
+  code: string;
+
+  @ApiProperty({ minLength: 6, example: 'newSecret123', format: 'password' })
   @IsNotEmpty()
   @Trim()
   @MinLength(6)

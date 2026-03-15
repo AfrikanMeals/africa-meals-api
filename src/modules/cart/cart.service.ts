@@ -103,7 +103,7 @@ export class CartService {
     }
   }
 
-  async filter(user: UserModel) {
+  async filter(user: UserModel): Promise<any> {
     const items = await this._cartItemModel
       .find({ user: new ObjectId(user.id) })
       .populate([
@@ -215,20 +215,20 @@ export class CartService {
     return await this.findOneByItemId(item.id, user);
   }
 
-  async removeBy(args: RemoveItemFromCartDto) {
-    return await this._cartItemModel
+  async removeBy(args: RemoveItemFromCartDto): Promise<void> {
+    await this._cartItemModel
       .deleteOne({ entityId: args.itemId, type: args.type })
       .exec();
   }
 
-  async removeItemById(id: string, user: UserModel) {
-    return await this._cartItemModel
+  async removeItemById(id: string, user: UserModel): Promise<void> {
+    await this._cartItemModel
       .deleteOne({ _id: new ObjectId(id), user: new ObjectId(user.id) })
       .exec();
   }
 
-  async clearStoreCart(store: StoreModel, user: UserModel) {
-    return await this._cartItemModel
+  async clearStoreCart(store: StoreModel, user: UserModel): Promise<void> {
+    await this._cartItemModel
       .deleteMany({
         store: new ObjectId(store.id),
         user: new ObjectId(user.id),

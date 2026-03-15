@@ -9,10 +9,13 @@ import {
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { UsersService } from './users.service';
 
+@ApiTags('addresses')
+@ApiBearerAuth('bearer')
 @Controller('users')
 export class UsersController {
   @Inject(UsersService)
