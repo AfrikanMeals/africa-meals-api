@@ -1,5 +1,7 @@
 import { MailerService } from '@modules/mailer/mailer.service';
+import { MediasService } from '@modules/medias/medias.service';
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Inject,
@@ -13,6 +15,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { UserModel } from '@schemas/user.schema';
 import * as bcrypt from 'bcryptjs';
 import { Model } from 'mongoose';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import {
   CheckAccountDto,
   EmailVerificationDto,
@@ -21,12 +24,16 @@ import {
   LoginDto,
   RegisterDto,
   ResetPasswordDto,
+  UpdateProfileDto,
 } from './dto/auth.dto';
 
 @Injectable()
 export class AuthService {
   @InjectModel(UserModel.name)
   private readonly _usersModel: Model<UserModel>;
+
+  @Inject(SupportedCountriesService)
+  private readonly _supportedCountries: SupportedCountriesService;
 
   @Inject(JwtService)
   private readonly _jwtService: JwtService;
@@ -36,6 +43,9 @@ export class AuthService {
 
   @Inject(ConfigService)
   private readonly _configService: ConfigService;
+
+  @Inject(MediasService)
+  private readonly _mediasService: MediasService;
 
   async register(args: RegisterDto) {
     const { source, ...rest } = args;
@@ -254,8 +264,131 @@ export class AuthService {
       .exec();
   }
 
+  /** Score fidélité + historique (plus récent en premier). */
+  async getMyRewards(userId: string) {
+    const u = await this._usersModel
+      .findById(userId)
+      .select('loyaltyPoints rewardHistory')
+      .lean()
+      .exec();
+    if (!u) throw new NotFoundException('user_not_found');
+    const doc = u as Record<string, unknown>;
+    const raw = (doc.rewardHistory as Record<string, unknown>[]) ?? [];
+    const history = [...raw].sort(
+      (a, b) =>
+        new Date(String(b.createdAt)).getTime() -
+        new Date(String(a.createdAt)).getTime(),
+    );
+    return {
+      score: Number(doc.loyaltyPoints ?? 0),
+      history: history.map((h) => ({
+        points: Number(h.points),
+        reason: String(h.reason ?? ''),
+        createdAt: h.createdAt,
+      })),
+    };
+  }
+
+  async updateProfile(userId: string, args: UpdateProfileDto) {
+    const update: Partial<UserModel> = {};
+    if (args.fullName != null) update.fullName = args.fullName;
+    if (args.phoneNumber != null) update.phoneNumber = args.phoneNumber;
+    if (args.appCountryCode != null) {
+      const c = args.appCountryCode.trim().toUpperCase();
+      if (!(await this._supportedCountries.isActiveCode(c))) {
+        throw new BadRequestException('Ce pays n’est pas disponible.');
+      }
+      update.appCountryCode = c;
+    }
+    if (Object.keys(update).length === 0) {
+      return this.findUserById(userId);
+    }
+    const user = await this._usersModel
+      .findOneAndUpdate({ _id: userId }, update, { new: true })
+      .populate('addresses')
+      .populate('stores')
+      .populate('paymentMethods')
+      .exec();
+    if (!user) throw new NotFoundException('user_not_found');
+    return user;
+  }
+
+  async updateProfileImage(
+    userId: string,
+    file: Express.Multer.File,
+    user: UserModel,
+  ) {
+    let url: string | undefined;
+    try {
+      const existing = await this._usersModel
+        .findOne({ _id: userId })
+        .exec();
+      if (!existing) throw new NotFoundException('user_not_found');
+      if (user._id.toString() !== userId) {
+        throw new ForbiddenException('forbidden');
+      }
+      url = await this._mediasService.upload(
+        file,
+        user,
+        `users/${userId}/profile`,
+      );
+      if (!url) throw new BadRequestException('image_upload_failed');
+      if (existing.profileImage) {
+        try {
+          await this._mediasService.delete(existing.profileImage);
+        } catch (_) {
+          // ignore delete errors (e.g. invalid path)
+        }
+      }
+      await this._usersModel
+        .updateOne({ _id: userId }, { profileImage: url })
+        .exec();
+      return this.findUserById(userId);
+    } catch (e) {
+      if (url) {
+        try {
+          await this._mediasService.delete(url);
+        } catch (_) {}
+      }
+      throw e;
+    }
+  }
+
+  /** Supprime la photo de profil (met profileImage à null et supprime le fichier sur Storage si possible). */
+  async removeProfileImage(userId: string, user: UserModel) {
+    if (user._id.toString() !== userId) {
+      throw new ForbiddenException('forbidden');
+    }
+    const existing = await this._usersModel.findOne({ _id: userId }).exec();
+    if (!existing) throw new NotFoundException('user_not_found');
+    if (existing.profileImage) {
+      try {
+        await this._mediasService.delete(existing.profileImage);
+      } catch (_) {
+        // ignore delete errors
+      }
+    }
+    await this._usersModel
+      .updateOne(
+        { _id: userId },
+        { $unset: { profile_image: 1 } },
+      )
+      .exec();
+    return this.findUserById(userId);
+  }
+
   async findUserByEmail(email: string) {
     return this._usersModel.findOne({ email }).exec();
+  }
+
+  /** Supprime le compte utilisateur (irréversible). */
+  async deleteAccount(userId: string) {
+    const user = await this._usersModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('user_not_found');
+    }
+    await this._usersModel.deleteOne({ _id: userId }).exec();
+    return { message: 'account_deleted' };
   }
 
   private async _generateVerificationCode(length: number) {

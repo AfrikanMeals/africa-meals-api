@@ -32,13 +32,13 @@ export class UsersService {
       throw new NotFoundException('user_not_found');
     }
 
-    // TODO users have only one address for now
-    if (user.addresses?.length) {
-      throw new ConflictException('user_has_addresses');
-    }
-
+    const isFirstAddress = !user.addresses?.length;
     const address = await this._addressesService.create(
-      { ...args, isDefault: true, type: AddressTypeEnum.USER },
+      {
+        ...args,
+        isDefault: isFirstAddress,
+        type: AddressTypeEnum.USER,
+      },
       user,
     );
 
@@ -51,6 +51,14 @@ export class UsersService {
       { $push: { addresses: address._id } },
     );
     return address;
+  }
+
+  async findById(id: string) {
+    const user = await this._userModel.findById(id).exec();
+    if (!user) {
+      throw new NotFoundException('user_not_found');
+    }
+    return user;
   }
 
   async hasStore(authUser: UserModel) {

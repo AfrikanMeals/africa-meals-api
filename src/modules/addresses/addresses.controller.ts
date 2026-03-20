@@ -2,9 +2,11 @@ import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Inject,
   Param,
+  Patch,
   Put,
   Query,
   Req,
@@ -35,11 +37,23 @@ export class AddressesController {
 
   @Put(':id')
   @UseGuards(JwtGuard)
-  async create(
+  async update(
     @Req() req: Request,
     @Param('id') id: string,
     @Body(ValidationPipe) args: CreateAddressDto,
   ) {
     return this._addressesService.update(id, args, req.user as UserModel);
+  }
+
+  @Delete(':id')
+  @UseGuards(JwtGuard)
+  async delete(@Req() req: Request, @Param('id') id: string) {
+    await this._addressesService.delete(id, req.user as UserModel);
+  }
+
+  @Patch(':id/default')
+  @UseGuards(JwtGuard)
+  async setDefault(@Req() req: Request, @Param('id') id: string) {
+    return this._addressesService.setDefault(id, req.user as UserModel);
   }
 }

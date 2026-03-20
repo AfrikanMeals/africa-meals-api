@@ -36,6 +36,13 @@ export class StoreController {
   @Inject(StoreService)
   private readonly _storeService: StoreService;
 
+  /** Résumé vendeur (évite la collision avec GET :id = "my-store"). */
+  @Get('vendor/summary')
+  @UseGuards(JwtGuard)
+  async getVendorSummary(@Req() req: Request) {
+    return this._storeService.findMyStoreSummary(req.user as UserModel);
+  }
+
   @Get('/:id')
   async findOneById(@Param('id') id: string) {
     return this._storeService.findOneById(id);
@@ -48,6 +55,18 @@ export class StoreController {
     @Body(ValidationPipe) args: CreateStoreDto,
   ) {
     return this._storeService.create(args, req.user as UserModel);
+  }
+
+  @Patch('vendor/application')
+  @UseGuards(JwtGuard)
+  async patchVendorApplication(
+    @Req() req: Request,
+    @Body(ValidationPipe) args: CreateStoreDto,
+  ) {
+    return this._storeService.updateVendorApplication(
+      req.user as UserModel,
+      args,
+    );
   }
 
   @Patch('/:id/profile-image')

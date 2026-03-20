@@ -34,6 +34,13 @@ export class UserModel extends BaseSchema {
   @Prop({ required: false, name: 'phone_number' })
   phoneNumber?: string;
 
+  /** Pays d’utilisation de l’app (ISO2), ex. CA, SN */
+  @Prop({ required: false, default: 'CA', name: 'app_country_code' })
+  appCountryCode?: string;
+
+  @Prop({ required: false, name: 'profile_image' })
+  profileImage?: string;
+
   @Prop({
     required: false,
     default: null,
@@ -77,6 +84,24 @@ export class UserModel extends BaseSchema {
   })
   @Type(() => Array<PaymentMethodModel>)
   paymentMethods?: PaymentMethodModel[];
+
+  /** Points fidélité cumulés */
+  @Prop({ default: 0, name: 'loyalty_points' })
+  loyaltyPoints?: number;
+
+  /** Historique des gains / débits de points */
+  @Prop({
+    type: [
+      {
+        points: { type: Number, required: true },
+        reason: { type: String, required: true },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
+    default: [],
+    name: 'reward_history',
+  })
+  rewardHistory?: { points: number; reason: string; createdAt: Date }[];
 
   @Prop({ required: true, name: 'password', select: false })
   password: string;

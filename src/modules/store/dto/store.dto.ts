@@ -6,7 +6,8 @@ import {
   IsBoolean,
   IsNotEmpty,
   IsNumber,
-  IsPhoneNumber,
+  IsString,
+  MinLength,
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
@@ -49,9 +50,14 @@ export class CreateStoreDto {
   @IsBoolean()
   supportsShipping: boolean;
 
-  @ApiProperty({ description: 'Téléphone (format Canada)', example: '+14165551234', type: String })
+  @ApiProperty({
+    description: 'Téléphone international (validé selon le pays du restaurant)',
+    example: '+14165551234',
+    type: String,
+  })
   @IsNotEmpty()
-  @IsPhoneNumber('CA')
+  @IsString()
+  @MinLength(8)
   phoneNumber: string;
 
   @ApiProperty({ type: () => CreateAddressDto, description: 'Adresse du magasin' })

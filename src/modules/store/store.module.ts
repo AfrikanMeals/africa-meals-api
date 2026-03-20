@@ -5,6 +5,7 @@ import { OffersModule } from '@modules/offers/offers.module';
 import { OrdersModule } from '@modules/orders/orders.module';
 import { ProductsModule } from '@modules/products/products.module';
 import { RatingsModule } from '@modules/ratings/ratings.module';
+import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { UsersModule } from '@modules/users/users.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -22,6 +23,7 @@ import { StoreService } from './store.service';
     ProductsModule,
     // SharedModule,
     UsersModule,
+    SupportedCountriesModule,
     OffersModule,
     CartModule,
     OrdersModule,

@@ -6,6 +6,8 @@ import {
   IsLongitude,
   IsNotEmpty,
   IsOptional,
+  IsString,
+  MaxLength,
 } from 'class-validator';
 
 export class SearchAddressDto {
@@ -50,4 +52,14 @@ export class CreateAddressDto extends SearchAddressDto {
   @IsOptional()
   @IsBoolean()
   isDefault?: boolean;
+
+  @ApiPropertyOptional({
+    example: 'Domicile',
+    description: 'Type de lieu : Domicile, Bureau, Travail, Autre, etc.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  @Trim()
+  label?: string;
 }

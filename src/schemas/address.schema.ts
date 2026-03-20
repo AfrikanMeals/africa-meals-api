@@ -19,6 +19,10 @@ export class AddressModel extends BaseSchema {
   @Prop({ default: false, name: 'is_default' })
   isDefault: boolean;
 
+  /** Libellé affiché : Domicile, Bureau, Travail, Autre, etc. */
+  @Prop({ default: 'Domicile', name: 'label' })
+  label: string;
+
   @Prop({ required: true, name: 'address' })
   address: string;
 

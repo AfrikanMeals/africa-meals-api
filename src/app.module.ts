@@ -19,6 +19,7 @@ import { AnnouncementsModule } from './modules/announcements/announcements.modul
 import { BillingModule } from './modules/billing/billing.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { SeedModule } from './modules/seed/seed.module';
+import { SupportedCountriesModule } from './modules/supported-countries/supported-countries.module';
 
 @Module({
   imports: [
@@ -60,6 +61,7 @@ import { SeedModule } from './modules/seed/seed.module';
     BillingModule,
     OrdersModule,
     SeedModule,
+    SupportedCountriesModule,
     // SharedModule,
   ],
   controllers: [AppController],

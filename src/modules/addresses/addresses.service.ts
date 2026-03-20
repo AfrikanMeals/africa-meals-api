@@ -1,4 +1,9 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { AddressModel, AddressTypeEnum } from '@schemas/address.schema';
@@ -11,6 +16,9 @@ import { CreateAddressDto, SearchAddressDto } from './dto/addresses.dto';
 export class AddressesService {
   @InjectModel(AddressModel.name)
   private readonly addressModel: Model<AddressModel>;
+
+  @InjectModel(UserModel.name)
+  private readonly userModel: Model<UserModel>;
 
   @Inject(ConfigService)
   private readonly _configService: ConfigService;
@@ -66,12 +74,14 @@ export class AddressesService {
     {
       latitude,
       longitude,
+      label,
       ...args
     }: CreateAddressDto & { type: AddressTypeEnum },
     user: UserModel,
   ) {
     const address = await this.addressModel.create({
       ...args,
+      label: label?.trim() || 'Domicile',
       location: {
         type: 'Point',
         coordinates: [longitude, latitude],
@@ -84,7 +94,60 @@ export class AddressesService {
   }
 
   async update(id: string, args: CreateAddressDto, user: UserModel) {
-    await this.addressModel.updateOne({ _id: id }, args);
+    const { latitude, longitude, label, ...rest } = args;
+    await this.addressModel.updateOne(
+      { _id: id },
+      {
+        ...rest,
+        ...(label !== undefined && {
+          label: label?.trim() || 'Domicile',
+        }),
+        location: {
+          type: 'Point',
+          coordinates: [longitude, latitude],
+        },
+      },
+    );
+    return this.addressModel.findOne({ _id: id });
+  }
+
+  /** Supprime une adresse et la retire de l’utilisateur. */
+  async delete(id: string, user: UserModel) {
+    const u = await this.userModel
+      .findById(user._id)
+      .select('addresses')
+      .lean()
+      .exec();
+    const ids = (u?.addresses ?? []) as unknown as string[];
+    if (!ids.some((aid) => aid.toString() === id)) {
+      throw new ForbiddenException('address_not_owned');
+    }
+    await this.addressModel.deleteOne({ _id: id });
+    await this.userModel.updateOne(
+      { _id: user._id },
+      { $pull: { addresses: id } as any },
+    );
+  }
+
+  /** Définit une adresse comme adresse par défaut (et retire le défaut des autres). */
+  async setDefault(id: string, user: UserModel) {
+    const u = await this.userModel
+      .findById(user._id)
+      .select('addresses')
+      .lean()
+      .exec();
+    const ids = (u?.addresses ?? []) as unknown as string[];
+    if (!ids.some((aid) => aid.toString() === id)) {
+      throw new ForbiddenException('address_not_owned');
+    }
+    await this.addressModel.updateOne(
+      { _id: id },
+      { $set: { is_default: true } },
+    );
+    await this.addressModel.updateMany(
+      { _id: { $in: ids, $ne: id } },
+      { $set: { is_default: false } },
+    );
     return this.addressModel.findOne({ _id: id });
   }
 }

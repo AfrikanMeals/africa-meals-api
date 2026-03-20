@@ -4,7 +4,9 @@ import {
   IsEmail,
   IsEnum,
   IsNotEmpty,
+  IsOptional,
   IsPhoneNumber,
+  Matches,
   MinLength,
   ValidateIf,
 } from 'class-validator';
@@ -101,6 +103,28 @@ export class ResetPasswordDto {
   @Trim()
   @MinLength(6)
   password: string;
+}
+
+/** Mise à jour du profil utilisateur (données personnelles) */
+export class UpdateProfileDto {
+  @ApiPropertyOptional({ example: 'Jean Dupont' })
+  @IsOptional()
+  @Trim()
+  fullName?: string;
+
+  @ApiPropertyOptional({ example: '+237651796157' })
+  @IsOptional()
+  @Trim()
+  phoneNumber?: string;
+
+  @ApiPropertyOptional({
+    description: 'Pays d’utilisation de l’app (ISO2, ex. CA, SN)',
+    example: 'CA',
+  })
+  @IsOptional()
+  @Trim()
+  @Matches(/^[A-Z]{2}$/i, { message: 'Code pays ISO2 requis' })
+  appCountryCode?: string;
 }
 
 /** Données reçues après Google Sign-In (création ou connexion de compte) */
