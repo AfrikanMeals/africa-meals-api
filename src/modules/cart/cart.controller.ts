@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
+import type { DeleteResult } from 'mongodb';
 import { CartService } from './cart.service';
 
 @Controller('cart')
@@ -18,7 +19,7 @@ export class CartController {
 
   @Get('')
   @UseGuards(JwtGuard)
-  async findAll(@Req() req: Request) {
+  async findAll(@Req() req: Request): Promise<any> {
     return this._cartService.filter(req.user as UserModel);
   }
 
@@ -30,7 +31,10 @@ export class CartController {
 
   @Delete(':id')
   @UseGuards(JwtGuard)
-  async deleteOneById(@Param('id') id: string, @Req() req: Request) {
+  async deleteOneById(
+    @Param('id') id: string,
+    @Req() req: Request,
+  ): Promise<DeleteResult> {
     return this._cartService.removeItemById(id, req.user as UserModel);
   }
 

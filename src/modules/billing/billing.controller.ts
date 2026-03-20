@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
+import type { DeleteResult } from 'mongodb';
 import { BillingService } from './billing.service';
 import { CreatePaymentMethodDto } from './paypal/dto/paypal.dto';
 import { PaypalService } from './paypal/paypal.service';
@@ -47,7 +48,10 @@ export class BillingController {
 
   @Delete('payment-method/:id')
   @UseGuards(JwtGuard)
-  async deletePaymentToken(@Param('id') id: string, @Req() req: Request) {
+  async deletePaymentToken(
+    @Param('id') id: string,
+    @Req() req: Request,
+  ): Promise<DeleteResult> {
     return await this._billingService.deletePaypalPaymentMethod(
       id,
       req.user as UserModel,

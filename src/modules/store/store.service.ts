@@ -331,7 +331,11 @@ export class StoreService {
     }
   }
 
-  async createOffer(id: string, args: CreateOfferDto, user: UserModel) {
+  async createOffer(
+    id: string,
+    args: CreateOfferDto,
+    user: UserModel,
+  ): Promise<any> {
     const store = await this._storeModel
       .findOne({ _id: id, owner: user._id })
       .exec();

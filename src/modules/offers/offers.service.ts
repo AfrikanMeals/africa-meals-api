@@ -104,7 +104,11 @@ export class OffersService {
     };
   }
 
-  async findOne(id: string, user: UserModel, skipValidityCheck = false) {
+  async findOne(
+    id: string,
+    user: UserModel,
+    skipValidityCheck = false,
+  ): Promise<any> {
     const offer = await this._offerModel
       .findOne({ _id: id })
       .populate({
@@ -167,7 +171,11 @@ export class OffersService {
     };
   }
 
-  async create(args: CreateOfferDto, store: StoreModel, user: UserModel) {
+  async create(
+    args: CreateOfferDto,
+    store: StoreModel,
+    user: UserModel,
+  ): Promise<any> {
     const existingOffer = await this._offerModel
       .findOne({
         store: {

@@ -193,7 +193,7 @@ export class StoreController {
     @Param('id') id: string,
     @Body(MultipartToJsonPipe, ValidationPipe) args: CreateOfferDto,
     @UploadedFile() file: Express.Multer.File,
-  ) {
+  ): Promise<any> {
     if (file) {
       args.image = file;
     }

@@ -29,7 +29,10 @@ export class OffersController {
 
   @Get(':id')
   @UseGuards(JwtGuard)
-  async findOneById(@Req() req: Request, @Param('id') id: string) {
+  async findOneById(
+    @Req() req: Request,
+    @Param('id') id: string,
+  ): Promise<any> {
     return this._offersService.findOne(id, req.user as UserModel);
   }
 }

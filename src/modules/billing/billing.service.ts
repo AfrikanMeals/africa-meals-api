@@ -11,7 +11,7 @@ import {
   PaymentMetodProviderEnum,
 } from '@schemas/payment-method.schema';
 import { UserModel } from '@schemas/user.schema';
-import { ObjectId } from 'mongodb';
+import { ObjectId, type DeleteResult } from 'mongodb';
 import { Model } from 'mongoose';
 import { PaypalService } from './paypal/paypal.service';
 
@@ -78,7 +78,10 @@ export class BillingService {
     }
   }
 
-  async deletePaypalPaymentMethod(id: string, user: UserModel) {
+  async deletePaypalPaymentMethod(
+    id: string,
+    user: UserModel,
+  ): Promise<DeleteResult> {
     try {
       // TODO should check payment provider
       //! TODO should check if payment method is default ??
