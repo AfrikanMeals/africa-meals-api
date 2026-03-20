@@ -20,6 +20,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { memoryStorage } from 'multer';
@@ -28,10 +29,19 @@ import { CreateProductExtraDto } from './../products/dto/products.dto';
 import { CreateStoreDto } from './dto/store.dto';
 import { StoreService } from './store.service';
 
+@ApiTags('stores')
+@ApiBearerAuth('bearer')
 @Controller('stores')
 export class StoreController {
   @Inject(StoreService)
   private readonly _storeService: StoreService;
+
+  /** Résumé vendeur (évite la collision avec GET :id = "my-store"). */
+  @Get('vendor/summary')
+  @UseGuards(JwtGuard)
+  async getVendorSummary(@Req() req: Request) {
+    return this._storeService.findMyStoreSummary(req.user as UserModel);
+  }
 
   @Get('/:id')
   async findOneById(@Param('id') id: string) {
@@ -45,6 +55,18 @@ export class StoreController {
     @Body(ValidationPipe) args: CreateStoreDto,
   ) {
     return this._storeService.create(args, req.user as UserModel);
+  }
+
+  @Patch('vendor/application')
+  @UseGuards(JwtGuard)
+  async patchVendorApplication(
+    @Req() req: Request,
+    @Body(ValidationPipe) args: CreateStoreDto,
+  ) {
+    return this._storeService.updateVendorApplication(
+      req.user as UserModel,
+      args,
+    );
   }
 
   @Patch('/:id/profile-image')

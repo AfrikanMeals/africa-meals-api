@@ -1,4 +1,6 @@
 import { MailerModule } from '@modules/mailer/mailer.module';
+import { MediasModule } from '@modules/medias/medias.module';
+import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
@@ -17,6 +19,8 @@ import { JwtStrategy } from './strategies/jwt.strategy';
   imports: [
     PassportModule,
     MailerModule,
+    MediasModule,
+    SupportedCountriesModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

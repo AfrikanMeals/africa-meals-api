@@ -8,11 +8,14 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { FilterOrdersDto } from './dto/orders.dto';
 import { OrdersService } from './orders.service';
 
+@ApiTags('orders')
+@ApiBearerAuth('bearer')
 @Controller('orders')
 export class OrdersController {
   @Inject(OrdersService)

@@ -14,9 +14,12 @@ import { ProductsModule } from './modules/products/products.module';
 import { SearchModule } from './modules/search/search.module';
 import { OffersModule } from './modules/offers/offers.module';
 import { CartModule } from './modules/cart/cart.module';
+import { AdsModule } from './modules/ads/ads.module';
 import { AnnouncementsModule } from './modules/announcements/announcements.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { OrdersModule } from './modules/orders/orders.module';
+import { SeedModule } from './modules/seed/seed.module';
+import { SupportedCountriesModule } from './modules/supported-countries/supported-countries.module';
 
 @Module({
   imports: [
@@ -53,9 +56,12 @@ import { OrdersModule } from './modules/orders/orders.module';
     SearchModule,
     OffersModule,
     CartModule,
+    AdsModule,
     AnnouncementsModule,
     BillingModule,
     OrdersModule,
+    SeedModule,
+    SupportedCountriesModule,
     // SharedModule,
   ],
   controllers: [AppController],

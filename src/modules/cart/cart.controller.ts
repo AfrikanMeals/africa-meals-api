@@ -8,11 +8,14 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import type { DeleteResult } from 'mongodb';
 import { CartService } from './cart.service';
 
+@ApiTags('cart')
+@ApiBearerAuth('bearer')
 @Controller('cart')
 export class CartController {
   @Inject(CartService) private readonly _cartService: CartService;

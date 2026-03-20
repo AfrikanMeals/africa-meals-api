@@ -12,6 +12,7 @@ import {
 import { ProductsService } from '@modules/products/products.service';
 import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import { RatingsService } from '@modules/ratings/ratings.service';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { UsersService } from '@modules/users/users.service';
 import {
   BadRequestException,
@@ -24,7 +25,8 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { AddressTypeEnum } from '@schemas/address.schema';
 import { CartItemTypeEnum } from '@schemas/cart_item.schema';
-import { StoreModel } from '@schemas/store.schema';
+import { AddressModel } from '@schemas/address.schema';
+import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 import { CreateStoreDto } from './dto/store.dto';
@@ -45,6 +47,9 @@ export class StoreService {
 
   @Inject(UsersService)
   private readonly _usersService: UsersService;
+
+  @Inject(SupportedCountriesService)
+  private readonly _supportedCountries: SupportedCountriesService;
 
   @Inject(RatingsService)
   private readonly _ratingsService: RatingsService;
@@ -72,7 +77,15 @@ export class StoreService {
       .exec();
   }
 
-  async create({ address, ...args }: CreateStoreDto, user: UserModel) {
+  async create(dto: CreateStoreDto, user: UserModel) {
+    const { address, ...args } = dto;
+    const fullUser = await this._usersService.findById(
+      (user._id as { toString(): string }).toString(),
+    );
+    await this._supportedCountries.assertVendorApplicationCompatible(
+      fullUser,
+      dto,
+    );
     const exists = await this._storeModel.findOne({ name: args.name }).exec();
 
     if (exists) {
@@ -109,7 +122,174 @@ export class StoreService {
 
     await this._usersService.addStore(store, user);
 
+    await this._storeModel.updateOne(
+      { _id: store._id },
+      {
+        $push: {
+          vendorMessages: {
+            message:
+              'Votre dossier a bien été reçu. Notre équipe examine votre demande. Toute mise à jour apparaîtra ici.',
+            from: 'SYSTEM',
+            createdAt: new Date(),
+          },
+        },
+      },
+    );
+
     return this.findOneById(store._id.toString());
+  }
+
+  /** Résumé boutique pour l’écran vendeur (statut + messages + fiche éditable si PENDING/REVISION). */
+  async findMyStoreSummary(user: UserModel) {
+    const store = await this._storeModel
+      .findOne({ owner: user._id })
+      .populate({
+        path: 'address',
+        select: 'address city country zipCode countryCode location',
+      })
+      .select(
+        'name bio email phoneNumber status vendorMessages acceptsOrders canCreateProducts createdAt supportsShipping shippingZones address',
+      )
+      .lean()
+      .exec();
+    if (!store) {
+      return { store: null as null };
+    }
+    const doc = store as Record<string, unknown>;
+    const raw = (doc.vendorMessages as Record<string, unknown>[]) ?? [];
+    const messages = [...raw].sort(
+      (a, b) =>
+        new Date(String(b.createdAt)).getTime() -
+        new Date(String(a.createdAt)).getTime(),
+    );
+    const st = doc.status as StoreStatusEnum;
+    const canEditApplication = [
+      StoreStatusEnum.PENDING,
+      StoreStatusEnum.REVISION,
+    ].includes(st);
+
+    let application: Record<string, unknown> | null = null;
+    if (canEditApplication) {
+      const addr = doc.address as AddressModel & {
+        location?: { coordinates?: number[] };
+      };
+      const coords = addr?.location?.coordinates ?? [0, 0];
+      const zones = (doc.shippingZones as Record<string, unknown>[]) ?? [];
+      application = {
+        name: doc.name,
+        bio: doc.bio,
+        email: doc.email,
+        phoneNumber: doc.phoneNumber,
+        supportsShipping: !!doc.supportsShipping,
+        shippingZones: zones.map((z) => ({
+          minDistance: z.minDistance,
+          maxDistance: z.maxDistance,
+          price: z.price,
+        })),
+        address: {
+          address: addr?.address ?? '',
+          city: addr?.city ?? '',
+          country: addr?.country ?? '',
+          zipCode: addr?.zipCode ?? '',
+          countryCode: addr?.countryCode ?? 'CA',
+          latitude: coords[1] ?? 0,
+          longitude: coords[0] ?? 0,
+        },
+      };
+    }
+
+    return {
+      store: {
+        id: (doc._id as { toString(): string }).toString(),
+        name: doc.name as string,
+        status: doc.status as string,
+        acceptsOrders: !!doc.acceptsOrders,
+        canCreateProducts: !!doc.canCreateProducts,
+        createdAt: doc.createdAt,
+        canEditApplication,
+        application,
+        messages: messages.map((m) => ({
+          message: String(m.message ?? ''),
+          from: String(m.from ?? 'SYSTEM'),
+          createdAt: m.createdAt,
+        })),
+      },
+    };
+  }
+
+  /** Mise à jour fiche vendeur (dossier en PENDING ou REVISION). */
+  async updateVendorApplication(user: UserModel, args: CreateStoreDto) {
+    const fullUser = await this._usersService.findById(
+      (user._id as { toString(): string }).toString(),
+    );
+    await this._supportedCountries.assertVendorApplicationCompatible(
+      fullUser,
+      args,
+    );
+    const store = await this._storeModel
+      .findOne({ owner: user._id })
+      .populate('address')
+      .exec();
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+    if (
+      ![StoreStatusEnum.PENDING, StoreStatusEnum.REVISION].includes(store.status)
+    ) {
+      throw new ForbiddenException('store_not_editable');
+    }
+    const dup = await this._storeModel
+      .findOne({ name: args.name, _id: { $ne: store._id } })
+      .exec();
+    if (dup) {
+      throw new ConflictException('store_already_exists');
+    }
+    const addrDoc = store.address as AddressModel & { _id: { toString(): string } };
+    const addrId = addrDoc._id.toString();
+    await this._addressesService.update(
+      addrId,
+      {
+        ...args.address,
+        latitude: args.address.latitude,
+        longitude: args.address.longitude,
+      },
+      user,
+    );
+
+    const wasRevision = store.status === StoreStatusEnum.REVISION;
+    const shippingZones = args.supportsShipping
+      ? args.shippingZones ?? store.shippingZones ?? []
+      : [];
+
+    await this._storeModel.updateOne(
+      { _id: store._id },
+      {
+        name: args.name,
+        bio: args.bio,
+        email: args.email,
+        phoneNumber: args.phoneNumber,
+        supportsShipping: args.supportsShipping,
+        shippingZones,
+        ...(wasRevision && { status: StoreStatusEnum.PENDING }),
+      },
+    );
+
+    await this._storeModel.updateOne(
+      { _id: store._id },
+      {
+        $push: {
+          vendorMessages: {
+            message: wasRevision
+              ? 'Fiche corrigée. Votre dossier est à nouveau en examen.'
+              : 'Informations établissement mises à jour.',
+            from: 'SYSTEM',
+            createdAt: new Date(),
+          },
+        },
+      },
+    );
+
+    return this.findMyStoreSummary(user);
   }
 
   async updateProfileImage(

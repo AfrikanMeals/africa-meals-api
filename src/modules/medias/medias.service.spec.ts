@@ -6,7 +6,11 @@ describe('MediasService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [MediasService],
+      providers: [
+        MediasService,
+        { provide: 'FIREBASE_ADMIN', useValue: {} },
+        { provide: 'FIREBASE_STORAGE_BUCKET', useValue: 'test-bucket' },
+      ],
     }).compile();
 
     service = module.get<MediasService>(MediasService);

@@ -11,10 +11,12 @@ import {
   UseGuards,
   ValidationPipe
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { ProductsService } from './products.service';
 
+@ApiTags('products')
 @Controller('products')
 export class ProductsController {
   @Inject(ProductsService)
@@ -26,6 +28,7 @@ export class ProductsController {
   }
 
   @Post(':id/rating')
+  @ApiBearerAuth('bearer')
   @UseGuards(JwtGuard)
   async rate(
     @Param('id') id: string,

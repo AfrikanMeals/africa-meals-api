@@ -32,6 +32,13 @@
 $ yarn install
 ```
 
+## Email (Gmail SMTP)
+
+L'envoi d'emails (vérification de compte, reset mot de passe) utilise **Gmail SMTP** via Nodemailer. Pour configurer :
+
+1. Copiez `.env.example` vers `.env` et renseignez les variables `SMTP_*`.
+2. Suivez le guide détaillé : **[docs/MAIL_SETUP.md](docs/MAIL_SETUP.md)** (mot de passe d'application Gmail, 2FA, dépannage).
+
 ## Running the app
 
 ```bash
@@ -71,3 +78,6 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](LICENSE).
+
+
+ngrok http --url=blindly-witty-snake.ngrok-free.app 3000

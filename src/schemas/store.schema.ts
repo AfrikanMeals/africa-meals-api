@@ -7,6 +7,8 @@ import { UserModel } from './user.schema';
 
 export enum StoreStatusEnum {
   PENDING = 'PENDING',
+  /** L’équipe a demandé des corrections sur la fiche */
+  REVISION = 'REVISION',
   ACTIVE = 'ACTIVE',
   INACTIVE = 'INACTIVE',
 }
@@ -75,6 +77,20 @@ export class StoreModel extends BaseSchema {
     default: StoreStatusEnum.PENDING,
   })
   status: StoreStatusEnum;
+
+  /** Fil de discussion admin ↔ vendeur (statut dossier, demandes, etc.) */
+  @Prop({
+    type: [
+      {
+        message: { type: String, required: true },
+        from: { type: String, enum: ['ADMIN', 'SYSTEM'], default: 'SYSTEM' },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
+    default: [],
+    name: 'vendor_messages',
+  })
+  vendorMessages?: { message: string; from: string; createdAt: Date }[];
 
   @Prop({
     required: true,

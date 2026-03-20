@@ -10,6 +10,7 @@ import {
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import type { DeleteResult } from 'mongodb';
@@ -17,6 +18,8 @@ import { BillingService } from './billing.service';
 import { CreatePaymentMethodDto } from './paypal/dto/paypal.dto';
 import { PaypalService } from './paypal/paypal.service';
 
+@ApiTags('billing')
+@ApiBearerAuth('bearer')
 @Controller('billing')
 export class BillingController {
   @Inject(PaypalService) private readonly _paypalService: PaypalService;
