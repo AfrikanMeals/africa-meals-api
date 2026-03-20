@@ -5,6 +5,14 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  const origins = process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()).filter(Boolean);
+  app.enableCors({
+    origin: origins?.length ? origins : true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  });
+
   app.use((req: any, _res, next) => {
     const body = req.body ? JSON.stringify(req.body) : '(no body)';
     console.warn(`[REQ] ${req.method} ${req.originalUrl} body: ${body}`);
@@ -48,6 +56,8 @@ async function bootstrap() {
 
   const port = Number(process.env.NODE_PORT || process.env.PORT || 3000);
   await app.listen(port);
-  console.warn(`🚀 API: http://localhost:${port}/api (ex: /api/auth/verify, /api/auth/login)`);
+  console.warn(
+    `🚀 API: http://localhost:${port}/api (docs: /api/docs)`,
+  );
 }
 bootstrap();

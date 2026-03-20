@@ -17,11 +17,13 @@ export class MailerService {
     const port = this._configService.get<number>('SMTP_PORT', 587);
     const secure = port === 465;
     const user = this._configService.get<string>('SMTP_USER');
-    const pass = this._configService.get<string>('SMTP_APP_PASSWORD');
+    const pass =
+      this._configService.get<string>('SMTP_APP_PASSWORD') ||
+      this._configService.get<string>('SMTP_PASS');
 
     if (!user || !pass) {
       throw new Error(
-        'SMTP_USER and SMTP_APP_PASSWORD must be set in .env for email sending',
+        'SMTP_USER and (SMTP_APP_PASSWORD or SMTP_PASS) must be set in .env for email sending',
       );
     }
 

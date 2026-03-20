@@ -42,7 +42,9 @@ export class AuthController {
 
   @Post('register')
   async register(@Body(ValidationPipe) args: RegisterDto) {
-    this.logger.log(`register body: ${JSON.stringify(args)}`);
+    this.logger.log(
+      `[POST /auth/register] corps validé email=${args.email} fullName=${args.fullName} source=${args.source} signupRole=${args.signupRole ?? '—'}`,
+    );
     return this._authService.register(args);
   }
 
@@ -79,7 +81,7 @@ export class AuthController {
 
   @Post('forgot-password')
   async forgotPassword(@Body(ValidationPipe) args: ForgotPasswordDto) {
-    this.logger.log(`forgot-password body: ${JSON.stringify(args)}`);
+    this.logger.log(`forgot-password email=${args.email}`);
     return this._authService.forgotPassword(args);
   }
 

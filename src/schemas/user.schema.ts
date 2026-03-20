@@ -8,8 +8,12 @@ import { PaymentMethodModel } from './payment-method.schema';
 import { StoreModel } from './store.schema';
 
 export enum UserTypeEnum {
+  /** Client final (inscription « Client ») */
   USER = 'USER',
+  /** Restaurant / vendeur (inscription « Restaurant / Vendeur ») */
   VENDOR = 'VENDOR',
+  /** Livreur (inscription « Livreur ») */
+  DELIVERY = 'DELIVERY',
   ADMIN = 'ADMIN',
 }
 

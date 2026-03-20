@@ -6,13 +6,14 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
-import { UserModel } from '@schemas/user.schema';
+import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import * as bcrypt from 'bcryptjs';
 import { Model } from 'mongoose';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
@@ -29,6 +30,8 @@ import {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   @InjectModel(UserModel.name)
   private readonly _usersModel: Model<UserModel>;
 
@@ -48,37 +51,132 @@ export class AuthService {
   private readonly _mediasService: MediasService;
 
   async register(args: RegisterDto) {
-    const { source, ...rest } = args;
+    const { source, signupRole, ...rest } = args;
+    const userType = this._mapSignupRoleToUserType(signupRole);
+    this.logger.log(
+      `[register] demande source=${source} email=${args.email ?? '—'} fullName=${args.fullName ?? '—'} signupRole=${signupRole ?? '—'} type=${userType}`,
+    );
+
     const user = await this._usersModel.findOne({
       [source]: args[source],
     });
     if (user) {
+      this.logger.warn(
+        `[register] conflit user_${source}_conflict pour ${args.email ?? args[source]}`,
+      );
       throw new ConflictException(`user_${source}_conflict`);
     }
 
-    const activationCode = await this._generateVerificationCode(6);
+    const smtpUser = this._configService.get<string>('SMTP_USER')?.trim();
+    const smtpPass =
+      this._configService.get<string>('SMTP_APP_PASSWORD')?.trim() ||
+      this._configService.get<string>('SMTP_PASS')?.trim();
+    const smtpConfigured = !!(smtpUser && smtpPass);
+    const skipEmailVerification =
+      this._configService.get<string>('SKIP_EMAIL_VERIFICATION') === 'true' ||
+      !smtpConfigured;
+
     const isTestAccount =
       source === 'email' && rest.email && rest.email.includes('test');
 
-    // TODO when registering with FB/GOOGLE, we should check if the user(email/phone) already exists
-    const newUser = await this._usersModel.create({
+    /** Compte vérifié tout de suite : pas d’SMTP / pas d’email à envoyer */
+    const verifyImmediately =
+      skipEmailVerification || isTestAccount;
+
+    const activationCode = verifyImmediately
+      ? undefined
+      : await this._generateVerificationCode(6);
+
+    this.logger.log(
+      `[register] options skipEmailVerification=${skipEmailVerification} isTestAccount=${isTestAccount} verifyImmediately=${verifyImmediately} smtpConfigured=${smtpConfigured}`,
+    );
+
+    const dbName = this._usersModel.db?.name ?? '?';
+    const collectionName =
+      this._usersModel.collection?.collectionName ?? 'users';
+    this.logger.log(
+      `[register] cible MongoDB db="${dbName}" collection="${collectionName}"`,
+    );
+
+    const documentToInsert = {
       ...rest,
-      ...(isTestAccount && { emailVerifiedAt: new Date() }),
-      ...(!isTestAccount && { activationCode }),
-    });
+      type: userType,
+      ...(verifyImmediately
+        ? { emailVerifiedAt: new Date() }
+        : { activationCode }),
+    };
+    this.logger.log(
+      `[register] payload insert (mdp masqué) ${JSON.stringify({
+        ...documentToInsert,
+        password: '***',
+      })}`,
+    );
 
-    await this._mailer.send({
-      to: args.email,
-      subject: 'Bienvenue sur ' + this._configService.get<string>('APP_NAME'),
-      templateId: this._configService.get<string>(
-        'ACCOUNT_VERIFICATION_TEMPLATE_ID',
-      ),
-      context: {
-        name: args.fullName,
-        code: activationCode,
-      },
-    });
+    let newUser: UserModel;
+    try {
+      newUser = await this._usersModel.create(documentToInsert);
+    } catch (err: unknown) {
+      const mongo = err as {
+        code?: number;
+        keyPattern?: Record<string, unknown>;
+        keyValue?: Record<string, unknown>;
+        message?: string;
+      };
+      this.logger.error(
+        `[register] échec Mongoose create code=${mongo.code ?? 'n/a'} keyPattern=${JSON.stringify(mongo.keyPattern)} keyValue=${JSON.stringify(mongo.keyValue)} message=${mongo.message ?? err}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      if (mongo.code === 11000) {
+        throw new ConflictException(
+          `user_${source}_conflict`,
+        );
+      }
+      throw err;
+    }
 
+    this.logger.log(
+      `[register] utilisateur créé id=${newUser._id.toString()} email=${newUser.email} type=${newUser.type} emailVerifiedAt=${verifyImmediately ? newUser.emailVerifiedAt?.toISOString?.() ?? 'oui' : 'non'}`,
+    );
+
+    if (!verifyImmediately && activationCode) {
+      try {
+        const appName =
+          this._configService.get<string>('APP_NAME') ?? 'African Meals';
+        await this._mailer.send({
+          to: args.email,
+          subject: `Bienvenue sur ${appName}`,
+          context: {
+            name: args.fullName,
+            code: activationCode,
+          },
+        });
+        this.logger.log(
+          `[register] email de vérification envoyé vers ${args.email}`,
+        );
+      } catch (err: unknown) {
+        const detail =
+          err && typeof err === 'object' && 'body' in err
+            ? JSON.stringify((err as { body?: unknown }).body)
+            : err instanceof Error
+              ? err.message
+              : String(err);
+        this.logger.warn(
+          `Échec envoi email d'inscription (SMTP) : ${detail}`,
+        );
+        // En local, clé invalide / 401 « Unauthenticated » : on valide quand même le compte pour pouvoir se connecter
+        if (process.env.NODE_ENV !== 'production') {
+          await this._usersModel.findByIdAndUpdate(newUser._id, {
+            $set: { emailVerifiedAt: new Date() },
+            $unset: { activationCode: '' },
+          });
+          this.logger.log(
+            `[register] compte auto-vérifié (non-production) id=${newUser._id.toString()}`,
+          );
+        }
+      }
+    }
+
+    this.logger.log(`[register] terminé id=${newUser._id.toString()}`);
     return this.findUserById(newUser._id.toString());
   }
 
@@ -184,12 +282,11 @@ export class AuthService {
     if (!user) {
       throw new NotFoundException(`user_not_found`);
     }
+    const appName =
+      this._configService.get<string>('APP_NAME') ?? 'African Meals';
     await this._mailer.send({
       to: email,
-      subject: 'Bienvenue sur ' + this._configService.get<string>('APP_NAME'),
-      templateId: this._configService.get<string>(
-        'ACCOUNT_VERIFICATION_TEMPLATE_ID',
-      ),
+      subject: `Bienvenue sur ${appName}`,
       context: {
         name: user.fullName,
         code,
@@ -198,16 +295,31 @@ export class AuthService {
     return user;
   }
 
-  async forgotPassword({ email }: ForgotPasswordDto) {
-    const user = await this._usersModel.findOne({ email }).exec();
+  /**
+   * Demande de réinitialisation : enregistre un code et envoie l’e-mail via SMTP.
+   * Réponse identique si l’email est inconnu (pas d’énumération de comptes).
+   */
+  async forgotPassword({ email: emailRaw }: ForgotPasswordDto) {
+    const email = emailRaw.trim().toLowerCase();
+    const generic = {
+      ok: true as const,
+      message:
+        'Si un compte existe pour cette adresse, un code vous a été envoyé par e-mail.',
+    };
+
+    const user = await this._usersModel
+      .findOne({ email: this._emailMatchExact(email) })
+      .exec();
     if (!user) {
-      throw new NotFoundException(`user_not_found`);
+      this.logger.log(`[forgot-password] aucun utilisateur pour ${email}`);
+      return generic;
     }
+
     const code = await this._generateVerificationCode(6);
     await this._usersModel
       .findOneAndUpdate(
-        { email },
-        { passwordResetCode: code },
+        { _id: user._id },
+        { $set: { passwordResetCode: code } },
         { new: true },
       )
       .exec();
@@ -225,34 +337,59 @@ export class AuthService {
     `.trim();
     const text = `Code de réinitialisation : ${code}. Valide 15 min. - ${appName}`;
 
+    const smtpUser = this._configService.get<string>('SMTP_USER')?.trim();
+    const smtpPass =
+      this._configService.get<string>('SMTP_APP_PASSWORD')?.trim() ||
+      this._configService.get<string>('SMTP_PASS')?.trim();
+    if (!smtpUser || !smtpPass) {
+      if (process.env.NODE_ENV !== 'production') {
+        this.logger.warn(
+          `[forgot-password] SMTP non configuré — code pour ${email} : ${code}`,
+        );
+      } else {
+        this.logger.warn(
+          `[forgot-password] SMTP non configuré pour ${email}`,
+        );
+      }
+      return generic;
+    }
+
     try {
       await this._mailer.sendSimple({
-        to: email,
+        to: user.email,
         toName: user.fullName,
         subject,
         html,
         text,
       });
-    } catch (err) {
-      // Éviter 502 : renvoyer une erreur HTTP propre si l'envoi échoue
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `[forgot-password] échec SMTP : ${msg}`,
+        err instanceof Error ? err.stack : undefined,
+      );
       throw new ServiceUnavailableException('email_send_failed');
     }
-    return { message: 'reset_code_sent' };
+
+    return generic;
   }
 
-  async resetPassword({ email, code, password }: ResetPasswordDto) {
-    const hashed = await bcrypt.hash(password, 10);
+  async resetPassword({ email: emailRaw, code, password }: ResetPasswordDto) {
+    const email = emailRaw.trim().toLowerCase();
     const user = await this._usersModel
-      .findOneAndUpdate(
-        { email, passwordResetCode: code },
-        { password: hashed, passwordResetCode: null },
-        { new: true },
-      )
+      .findOne({ email: this._emailMatchExact(email) })
+      .select('+passwordResetCode')
       .exec();
-    if (!user) {
-      throw new NotFoundException(`user_not_found_or_invalid_code`);
+
+    if (!user?.passwordResetCode || user.passwordResetCode !== code.trim()) {
+      throw new BadRequestException('invalid_reset_code');
     }
-    return { message: 'password_reset' };
+
+    user.password = password;
+    user.set('passwordResetCode', undefined);
+    await user.save();
+
+    return { ok: true as const, message: 'Mot de passe mis à jour.' };
   }
 
   async findUserById(id: string) {
@@ -389,6 +526,26 @@ export class AuthService {
     }
     await this._usersModel.deleteOne({ _id: userId }).exec();
     return { message: 'account_deleted' };
+  }
+
+  /** Rôles du formulaire d’inscription Dashboard → `UserModel.type` */
+  private _mapSignupRoleToUserType(
+    role?: RegisterDto['signupRole'],
+  ): UserTypeEnum {
+    switch (role) {
+      case 'restaurant':
+        return UserTypeEnum.VENDOR;
+      case 'livreur':
+        return UserTypeEnum.DELIVERY;
+      case 'client':
+      default:
+        return UserTypeEnum.USER;
+    }
+  }
+
+  private _emailMatchExact(email: string) {
+    const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`^${escaped}$`, 'i');
   }
 
   private async _generateVerificationCode(length: number) {

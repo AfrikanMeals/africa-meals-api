@@ -1,3 +1,4 @@
+require("node:dns/promises").setServers(["1.1.1.1", "8.8.8.8"]);
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
