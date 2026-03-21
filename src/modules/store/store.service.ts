@@ -36,6 +36,9 @@ export class StoreService {
   @InjectModel(StoreModel.name)
   private readonly _storeModel: Model<StoreModel>;
 
+  @InjectModel(UserModel.name)
+  private readonly _userModel: Model<UserModel>;
+
   @Inject(AddressesService)
   private readonly _addressesService: AddressesService;
 
@@ -148,7 +151,7 @@ export class StoreService {
         select: 'address city country zipCode countryCode location',
       })
       .select(
-        'name bio email phoneNumber status vendorMessages acceptsOrders canCreateProducts createdAt supportsShipping shippingZones address',
+        'name bio email phoneNumber currency status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones address',
       )
       .lean()
       .exec();
@@ -168,35 +171,34 @@ export class StoreService {
       StoreStatusEnum.REVISION,
     ].includes(st);
 
-    let application: Record<string, unknown> | null = null;
-    if (canEditApplication) {
-      const addr = doc.address as AddressModel & {
-        location?: { coordinates?: number[] };
-      };
-      const coords = addr?.location?.coordinates ?? [0, 0];
-      const zones = (doc.shippingZones as Record<string, unknown>[]) ?? [];
-      application = {
-        name: doc.name,
-        bio: doc.bio,
-        email: doc.email,
-        phoneNumber: doc.phoneNumber,
-        supportsShipping: !!doc.supportsShipping,
-        shippingZones: zones.map((z) => ({
-          minDistance: z.minDistance,
-          maxDistance: z.maxDistance,
-          price: z.price,
-        })),
-        address: {
-          address: addr?.address ?? '',
-          city: addr?.city ?? '',
-          country: addr?.country ?? '',
-          zipCode: addr?.zipCode ?? '',
-          countryCode: addr?.countryCode ?? 'CA',
-          latitude: coords[1] ?? 0,
-          longitude: coords[0] ?? 0,
-        },
-      };
-    }
+    const addr = doc.address as AddressModel & {
+      location?: { coordinates?: number[] };
+    };
+    const coords = addr?.location?.coordinates ?? [0, 0];
+    const zones = (doc.shippingZones as Record<string, unknown>[]) ?? [];
+    /** Fiche complète pour l’UI (lecture / édition selon canEditApplication). */
+    const profile = {
+      name: String(doc.name ?? ''),
+      bio: String(doc.bio ?? ''),
+      email: String(doc.email ?? ''),
+      phoneNumber: String(doc.phoneNumber ?? ''),
+      currency: String(doc.currency ?? 'CAD'),
+      supportsShipping: !!doc.supportsShipping,
+      shippingZones: zones.map((z) => ({
+        minDistance: Number(z.minDistance ?? 0),
+        maxDistance: Number(z.maxDistance ?? 0),
+        price: Number(z.price ?? 0),
+      })),
+      address: {
+        address: addr?.address ?? '',
+        city: addr?.city ?? '',
+        country: addr?.country ?? '',
+        zipCode: addr?.zipCode ?? '',
+        countryCode: addr?.countryCode ?? 'CA',
+        latitude: coords[1] ?? 0,
+        longitude: coords[0] ?? 0,
+      },
+    };
 
     return {
       store: {
@@ -205,9 +207,13 @@ export class StoreService {
         status: doc.status as string,
         acceptsOrders: !!doc.acceptsOrders,
         canCreateProducts: !!doc.canCreateProducts,
+        supportsShipping: !!doc.supportsShipping,
         createdAt: doc.createdAt,
+        updatedAt: doc.updatedAt,
+        currency: profile.currency,
         canEditApplication,
-        application,
+        profile,
+        application: canEditApplication ? profile : null,
         messages: messages.map((m) => ({
           message: String(m.message ?? ''),
           from: String(m.from ?? 'SYSTEM'),
@@ -215,6 +221,105 @@ export class StoreService {
         })),
       },
     };
+  }
+
+  /**
+   * Centre de notifications : tous les `vendorMessages` des boutiques dont l’utilisateur est propriétaire,
+   * plus l’historique fidélité `rewardHistory` du document user (seule entrée type « messages » côté users).
+   */
+  async findMyNotificationFeed(user: UserModel) {
+    const uid = user._id;
+    const stores = await this._storeModel
+      .find({ owner: uid })
+      .select('name vendorMessages')
+      .lean()
+      .exec();
+
+    type FeedItem = {
+      id: string;
+      source: 'store' | 'user';
+      message: string;
+      from: string;
+      createdAt: string;
+      storeName?: string;
+      storeId?: string;
+    };
+
+    const items: FeedItem[] = [];
+
+    for (const st of stores) {
+      const sid = String(st._id);
+      const name = String(st.name ?? '');
+      const raw = (
+        st as {
+          vendorMessages?: Array<{
+            _id?: { toString(): string };
+            message?: string;
+            from?: string;
+            createdAt?: Date;
+          }>;
+        }
+      ).vendorMessages ?? [];
+      for (const m of raw) {
+        const mid =
+          m._id != null
+            ? m._id.toString()
+            : `${sid}-${String(m.createdAt)}-${(m.message ?? '').slice(0, 12)}`;
+        const created =
+          m.createdAt instanceof Date
+            ? m.createdAt.toISOString()
+            : String(m.createdAt ?? new Date().toISOString());
+        items.push({
+          id: `store:${sid}:${mid}`,
+          source: 'store',
+          storeName: name,
+          storeId: sid,
+          message: String(m.message ?? ''),
+          from: String(m.from ?? 'SYSTEM'),
+          createdAt: created,
+        });
+      }
+    }
+
+    const udoc = await this._userModel
+      .findById(uid)
+      .select('rewardHistory')
+      .lean()
+      .exec();
+
+    const rewards =
+      (
+        udoc as {
+          rewardHistory?: Array<{
+            points: number;
+            reason: string;
+            createdAt?: Date;
+          }>;
+        } | null
+      )?.rewardHistory ?? [];
+
+    for (const r of rewards) {
+      const pts = Number(r.points ?? 0);
+      const sign = pts > 0 ? '+' : '';
+      const abs = Math.abs(pts);
+      items.push({
+        id: `user:reward:${String(r.createdAt ?? '')}:${String(r.reason ?? '').slice(0, 24)}`,
+        source: 'user',
+        message: `${sign}${pts} point${abs !== 1 ? 's' : ''} fidélité — ${String(r.reason ?? '')}`,
+        from: 'FIDÉLITÉ',
+        createdAt:
+          r.createdAt instanceof Date
+            ? r.createdAt.toISOString()
+            : String(r.createdAt ?? new Date().toISOString()),
+      });
+    }
+
+    items.sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+
+    return { items };
   }
 
   /** Mise à jour fiche vendeur (dossier en PENDING ou REVISION). */

@@ -10,6 +10,7 @@ import { UsersModule } from '@modules/users/users.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
+import { UserModel, UserSchema } from '@schemas/user.schema';
 import { StoreController } from './store.controller';
 import { StoreService } from './store.service';
 
@@ -27,7 +28,10 @@ import { StoreService } from './store.service';
     OffersModule,
     CartModule,
     OrdersModule,
-    MongooseModule.forFeature([{ name: StoreModel.name, schema: StoreSchema }]),
+    MongooseModule.forFeature([
+      { name: StoreModel.name, schema: StoreSchema },
+      { name: UserModel.name, schema: UserSchema },
+    ]),
   ],
   exports: [StoreService, MongooseModule],
 })

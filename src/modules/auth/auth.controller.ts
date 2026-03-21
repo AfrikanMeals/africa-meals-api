@@ -48,6 +48,26 @@ export class AuthController {
     return this._authService.register(args);
   }
 
+  /** Étape 1 : envoi du code — pas encore de ligne dans `users` (sauf mode sans SMTP / compte test). */
+  @Post('register/start')
+  async registerStart(@Body(ValidationPipe) args: RegisterDto) {
+    this.logger.log(
+      `[POST /auth/register/start] email=${args.email} fullName=${args.fullName}`,
+    );
+    return this._authService.registerStart(args);
+  }
+
+  /** Étape 2 : validation du code et création du compte. */
+  @Post('register/complete')
+  async registerComplete(@Body(ValidationPipe) args: EmailVerificationDto) {
+    return this._authService.registerComplete(args);
+  }
+
+  @Post('register/resend-code')
+  async resendPendingSignup(@Body(ValidationPipe) args: ForgotPasswordDto) {
+    return this._authService.resendPendingSignupCode(args.email);
+  }
+
   @Post('login')
   async login(@Body(ValidationPipe) args: LoginDto) {
     this.logger.log(`login body: ${JSON.stringify(args)}`);

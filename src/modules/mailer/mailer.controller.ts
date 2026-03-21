@@ -23,7 +23,7 @@ export class MailerController {
       html: `
         <h2>Email de test</h2>
         <p>Ceci confirme que l'envoi d'emails fonctionne pour <strong>${appName}</strong>.</p>
-        <p>Si vous recevez ce message, la configuration SMTP (Gmail) est correcte.</p>
+        <p>Si vous recevez ce message, la configuration e-mail (SMTP Gmail ou MailerSend) est correcte.</p>
         <p><em>Envoyé à ${new Date().toISOString()}</em></p>
       `.trim(),
       text: `Email de test - ${appName}. Envoi réussi. ${new Date().toISOString()}`,

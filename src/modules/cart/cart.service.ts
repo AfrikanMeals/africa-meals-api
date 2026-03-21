@@ -5,7 +5,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
-import { ObjectId, type DeleteResult } from 'mongodb';
+import { ObjectId } from 'mongodb';
 import { Model } from 'mongoose';
 import {
   AddItemToCartDto,
@@ -215,23 +215,20 @@ export class CartService {
     return await this.findOneByItemId(item.id, user);
   }
 
-  async removeBy(args: RemoveItemFromCartDto): Promise<DeleteResult> {
-    return await this._cartItemModel
+  async removeBy(args: RemoveItemFromCartDto): Promise<void> {
+    await this._cartItemModel
       .deleteOne({ entityId: args.itemId, type: args.type })
       .exec();
   }
 
-  async removeItemById(id: string, user: UserModel): Promise<DeleteResult> {
-    return await this._cartItemModel
+  async removeItemById(id: string, user: UserModel): Promise<void> {
+    await this._cartItemModel
       .deleteOne({ _id: new ObjectId(id), user: new ObjectId(user.id) })
       .exec();
   }
 
-  async clearStoreCart(
-    store: StoreModel,
-    user: UserModel,
-  ): Promise<DeleteResult> {
-    return await this._cartItemModel
+  async clearStoreCart(store: StoreModel, user: UserModel): Promise<void> {
+    await this._cartItemModel
       .deleteMany({
         store: new ObjectId(store.id),
         user: new ObjectId(user.id),

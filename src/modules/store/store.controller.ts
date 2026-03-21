@@ -43,6 +43,13 @@ export class StoreController {
     return this._storeService.findMyStoreSummary(req.user as UserModel);
   }
 
+  /** Fil unique : messages boutique (`stores.vendor_messages`) + fil user (`users.reward_history`). */
+  @Get('vendor/notifications')
+  @UseGuards(JwtGuard)
+  async getVendorNotifications(@Req() req: Request) {
+    return this._storeService.findMyNotificationFeed(req.user as UserModel);
+  }
+
   @Get('/:id')
   async findOneById(@Param('id') id: string) {
     return this._storeService.findOneById(id);

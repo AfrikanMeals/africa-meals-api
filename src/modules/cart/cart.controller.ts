@@ -11,7 +11,6 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
-import type { DeleteResult } from 'mongodb';
 import { CartService } from './cart.service';
 
 @ApiTags('cart')
@@ -37,8 +36,8 @@ export class CartController {
   async deleteOneById(
     @Param('id') id: string,
     @Req() req: Request,
-  ): Promise<DeleteResult> {
-    return this._cartService.removeItemById(id, req.user as UserModel);
+  ): Promise<void> {
+    await this._cartService.removeItemById(id, req.user as UserModel);
   }
 
   // @Post('')

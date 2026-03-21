@@ -6,6 +6,10 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { MongooseModule } from '@nestjs/mongoose';
 import { PassportModule } from '@nestjs/passport';
+import {
+  PendingSignupModel,
+  PendingSignupSchema,
+} from '@schemas/pending-signup.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -30,7 +34,10 @@ import { JwtStrategy } from './strategies/jwt.strategy';
         global: true,
       }),
     }),
-    MongooseModule.forFeature([{ name: UserModel.name, schema: UserSchema }]),
+    MongooseModule.forFeature([
+      { name: UserModel.name, schema: UserSchema },
+      { name: PendingSignupModel.name, schema: PendingSignupSchema },
+    ]),
   ],
   exports: [
     AuthService,

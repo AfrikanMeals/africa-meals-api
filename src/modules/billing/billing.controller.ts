@@ -13,7 +13,6 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
-import type { DeleteResult } from 'mongodb';
 import { BillingService } from './billing.service';
 import { CreatePaymentMethodDto } from './paypal/dto/paypal.dto';
 import { PaypalService } from './paypal/paypal.service';
@@ -54,8 +53,8 @@ export class BillingController {
   async deletePaymentToken(
     @Param('id') id: string,
     @Req() req: Request,
-  ): Promise<DeleteResult> {
-    return await this._billingService.deletePaypalPaymentMethod(
+  ): Promise<void> {
+    await this._billingService.deletePaypalPaymentMethod(
       id,
       req.user as UserModel,
     );

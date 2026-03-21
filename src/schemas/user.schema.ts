@@ -145,7 +145,12 @@ UserSchema.pre('save', async function (next) {
     if (!this.isModified('password')) {
       return next();
     }
-    const hashed = await bcrypt.hash(this['password'], 10);
+    const pwd = String(this['password'] ?? '');
+    /** Déjà hashé (ex. finalisation inscription depuis `pending_signups`). */
+    if (pwd.startsWith('$2a$') || pwd.startsWith('$2b$') || pwd.startsWith('$2y$')) {
+      return next();
+    }
+    const hashed = await bcrypt.hash(pwd, 10);
     this['password'] = hashed;
     return next();
   } catch (error) {

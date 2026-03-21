@@ -13,6 +13,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
+import { PendingSignupModel } from '@schemas/pending-signup.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import * as bcrypt from 'bcryptjs';
 import { Model } from 'mongoose';
@@ -35,6 +36,9 @@ export class AuthService {
   @InjectModel(UserModel.name)
   private readonly _usersModel: Model<UserModel>;
 
+  @InjectModel(PendingSignupModel.name)
+  private readonly _pendingSignupModel: Model<PendingSignupModel>;
+
   @Inject(SupportedCountriesService)
   private readonly _supportedCountries: SupportedCountriesService;
 
@@ -50,7 +54,174 @@ export class AuthService {
   @Inject(MediasService)
   private readonly _mediasService: MediasService;
 
+  /**
+   * Inscription en deux temps : aucune ligne dans `users` tant que le code e-mail
+   * n’est pas validé (`register/complete`), sauf si SMTP désactivé / compte test.
+   */
+  async registerStart(args: RegisterDto) {
+    const { source } = args;
+    if (source !== 'email') {
+      throw new BadRequestException('unsupported_registration_source');
+    }
+
+    const smtpUser = this._configService.get<string>('SMTP_USER')?.trim();
+    const smtpPass =
+      this._configService.get<string>('SMTP_APP_PASSWORD')?.trim() ||
+      this._configService.get<string>('SMTP_PASS')?.trim();
+    const smtpConfigured = !!(smtpUser && smtpPass);
+    const skipEmailVerification =
+      this._configService.get<string>('SKIP_EMAIL_VERIFICATION') === 'true' ||
+      !smtpConfigured;
+    const isTestAccount =
+      source === 'email' && args.email && args.email.includes('test');
+
+    if (skipEmailVerification || isTestAccount) {
+      const user = await this.registerCreateUserDirectly(args);
+      const authToken = this._jwtService.sign({
+        sub: user._id.toString(),
+      });
+      return {
+        step: 'done' as const,
+        authToken,
+        user,
+      };
+    }
+
+    const email = args.email.trim().toLowerCase();
+    const existing = await this._usersModel
+      .findOne({ email: this._emailMatchExact(email) })
+      .exec();
+    if (existing) {
+      throw new ConflictException('user_email_conflict');
+    }
+
+    await this._pendingSignupModel.deleteMany({ email }).exec();
+
+    const code = await this._generateVerificationCode(6);
+    const passwordHash = await bcrypt.hash(args.password, 10);
+    const userType = this._mapSignupRoleToUserType(args.signupRole);
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+
+    await this._pendingSignupModel.create({
+      email,
+      passwordHash,
+      fullName: args.fullName.trim(),
+      userType,
+      verificationCode: code,
+      expiresAt,
+    });
+
+    try {
+      await this._sendSignupVerificationEmail(email, args.fullName.trim(), code);
+    } catch (err: unknown) {
+      await this._pendingSignupModel.deleteMany({ email }).exec();
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`[register/start] échec envoi e-mail : ${msg}`);
+      throw new ServiceUnavailableException('email_send_failed');
+    }
+
+    return {
+      step: 'verify_email' as const,
+      message:
+        'Un code de vérification a été envoyé à votre adresse. Saisissez-le pour finaliser la création du compte.',
+      email,
+    };
+  }
+
+  /** Finalise l’inscription : crée l’utilisateur en base (e-mail déjà vérifié). */
+  async registerComplete({ email: emailRaw, code }: EmailVerificationDto) {
+    const email = emailRaw.trim().toLowerCase();
+    const pending = await this._pendingSignupModel.findOne({ email }).exec();
+    if (!pending) {
+      throw new NotFoundException('invalid_or_expired_signup_code');
+    }
+    if (pending.expiresAt.getTime() < Date.now()) {
+      await this._pendingSignupModel.deleteOne({ _id: pending._id }).exec();
+      throw new BadRequestException('signup_code_expired');
+    }
+    if (pending.verificationCode !== code.trim()) {
+      throw new BadRequestException('invalid_or_expired_signup_code');
+    }
+
+    let newUser: UserModel;
+    try {
+      newUser = await this._usersModel.create({
+        email: pending.email,
+        password: pending.passwordHash,
+        fullName: pending.fullName,
+        type: pending.userType,
+        emailVerifiedAt: new Date(),
+      });
+    } catch (err: unknown) {
+      const mongo = err as { code?: number };
+      if (mongo.code === 11000) {
+        await this._pendingSignupModel.deleteOne({ _id: pending._id }).exec();
+        throw new ConflictException('user_email_conflict');
+      }
+      throw err;
+    }
+
+    await this._pendingSignupModel.deleteOne({ _id: pending._id }).exec();
+    const authToken = this._jwtService.sign({
+      sub: newUser._id.toString(),
+    });
+    const user = await this.findUserById(newUser._id.toString());
+    return { authToken, user };
+  }
+
+  async resendPendingSignupCode(emailRaw: string) {
+    const email = emailRaw.trim().toLowerCase();
+    const pending = await this._pendingSignupModel.findOne({ email }).exec();
+    if (!pending) {
+      throw new NotFoundException('pending_signup_not_found');
+    }
+    if (pending.expiresAt.getTime() < Date.now()) {
+      await this._pendingSignupModel.deleteOne({ _id: pending._id }).exec();
+      throw new BadRequestException('signup_code_expired');
+    }
+    const code = await this._generateVerificationCode(6);
+    pending.verificationCode = code;
+    pending.expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    await pending.save();
+    await this._sendSignupVerificationEmail(email, pending.fullName, code);
+    return {
+      ok: true as const,
+      message: 'Un nouveau code a été envoyé.',
+    };
+  }
+
+  private async _sendSignupVerificationEmail(
+    toEmail: string,
+    fullName: string,
+    code: string,
+  ) {
+    const appName =
+      this._configService.get<string>('APP_NAME') ?? 'African Meals';
+    const subject = `Vérifiez votre courriel - ${appName}`;
+    const html = `
+      <h2>Finalisez votre inscription</h2>
+      <p>Bonjour ${fullName},</p>
+      <p>Votre code de vérification : <strong>${code}</strong></p>
+      <p>Il est valable 30 minutes. Après validation, votre compte sera créé.</p>
+      <p>Si vous n’avez pas demandé d’inscription, ignorez ce message.</p>
+      <p>— L’équipe ${appName}</p>
+    `.trim();
+    const text = `Code d’inscription ${appName} : ${code} (30 min).`;
+    await this._mailer.sendSimple({
+      to: toEmail,
+      toName: fullName,
+      subject,
+      html,
+      text,
+    });
+  }
+
+  /** Ancienne inscription : utilisateur créé tout de suite (avec ou sans code d’activation). */
   async register(args: RegisterDto) {
+    return this.registerCreateUserDirectly(args);
+  }
+
+  private async registerCreateUserDirectly(args: RegisterDto) {
     const { source, signupRole, ...rest } = args;
     const userType = this._mapSignupRoleToUserType(signupRole);
     this.logger.log(
