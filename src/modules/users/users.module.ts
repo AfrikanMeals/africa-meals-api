@@ -3,6 +3,8 @@ import { AuthModule } from '@modules/auth/auth.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AddressModel, AddressSchema } from '@schemas/address.schema';
+import { OrderModel, OrderSchema } from '@schemas/order.schema';
+import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 
@@ -14,6 +16,8 @@ import { UsersService } from './users.service';
     AddressesModule,
     MongooseModule.forFeature([
       { name: AddressModel.name, schema: AddressSchema },
+      { name: StoreModel.name, schema: StoreSchema },
+      { name: OrderModel.name, schema: OrderSchema },
     ]),
   ],
   exports: [UsersService, MongooseModule],

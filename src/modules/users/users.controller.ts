@@ -3,6 +3,7 @@ import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import {
   Body,
   Controller,
+  Get,
   Inject,
   Post,
   Req,
@@ -14,12 +15,23 @@ import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { UsersService } from './users.service';
 
-@ApiTags('addresses')
+@ApiTags('users', 'addresses')
 @ApiBearerAuth('bearer')
 @Controller('users')
 export class UsersController {
   @Inject(UsersService)
   private readonly _usersService: UsersService;
+
+  /**
+   * Clients finaux (`type: USER`).
+   * - Administrateur : liste complète.
+   * - Restaurant (`VENDOR`) : uniquement les clients ayant au moins une commande sur une de ses boutiques.
+   */
+  @Get('clients')
+  @UseGuards(JwtGuard)
+  async listClients(@Req() req: Request) {
+    return this._usersService.listEndUserClients(req.user as UserModel);
+  }
 
   @Post('address')
   @UseGuards(JwtGuard)

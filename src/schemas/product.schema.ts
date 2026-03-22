@@ -74,6 +74,30 @@ export class ProductModel extends BaseSchema {
   @Prop({ required: false, name: 'profile_image' })
   profileImage?: string;
 
+  /** Image stockée en base (base64) — alternative au fichier distant `profile_image`. */
+  @Prop({ required: false, name: 'image_mime_type' })
+  imageMimeType?: string;
+
+  @Prop({ required: false, name: 'image_base64' })
+  imageBase64?: string;
+
+  /** Jusqu’à 2 images supplémentaires (en plus de l’image principale). Base64 (legacy) ou URL Firebase. */
+  @Prop({
+    type: [
+      {
+        imageMimeType: { type: String, required: false },
+        imageBase64: { type: String, required: false },
+        imageUrl: { type: String, required: false },
+      },
+    ],
+    default: [],
+  })
+  galleryImages?: Array<{
+    imageMimeType?: string;
+    imageBase64?: string;
+    imageUrl?: string;
+  }>;
+
   @Prop({
     required: true,
     name: 'status',
