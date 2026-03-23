@@ -1,120 +1,143 @@
-import { Inject, Injectable } from '@nestjs/common';
+import {
+  BadGatewayException,
+  Inject,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EmailParams, MailerSend, Recipient, Sender } from 'mailersend';
 import * as nodemailer from 'nodemailer';
-import type { Transporter } from 'nodemailer';
 import { SendMailDto } from './dto/mailer.dto';
 
+export type SendSimpleMailDto = {
+  to: string;
+  toName?: string;
+  subject: string;
+  html: string;
+  text?: string;
+};
+
+// https://github.com/mailersend/mailersend-nodejs?tab=readme-ov-file#send-a-template-based-email
 @Injectable()
 export class MailerService {
-  private _transport: Transporter | null = null;
+  private readonly _logger = new Logger(MailerService.name);
 
-  constructor(private readonly _configService: ConfigService) {}
+  @Inject('MAILER') private readonly _mailer: MailerSend;
 
-  private _getTransport(): Transporter {
-    if (this._transport) return this._transport;
+  @Inject(ConfigService) private readonly _configService: ConfigService;
 
-    const host = this._configService.get<string>('SMTP_HOST', 'smtp.gmail.com');
-    const port = this._configService.get<number>('SMTP_PORT', 587);
-    const secure = port === 465;
-    const user = this._configService.get<string>('SMTP_USER');
-    const pass = this._configService.get<string>('SMTP_APP_PASSWORD');
+  /** Gmail / SMTP (voir docs MAIL_SETUP.md) — prioritaire sur MailerSend pour les e-mails simples. */
+  private smtpConfigured(): boolean {
+    const u = this._configService.get<string>('SMTP_USER')?.trim();
+    const p =
+      this._configService.get<string>('SMTP_APP_PASSWORD')?.trim() ||
+      this._configService.get<string>('SMTP_PASS')?.trim();
+    return Boolean(u && p);
+  }
 
-    if (!user || !pass) {
-      throw new Error(
-        'SMTP_USER and SMTP_APP_PASSWORD must be set in .env for email sending',
-      );
-    }
+  private async sendSimpleSmtp(args: SendSimpleMailDto): Promise<void> {
+    const host =
+      this._configService.get<string>('SMTP_HOST')?.trim() || 'smtp.gmail.com';
+    const portRaw = this._configService.get<string>('SMTP_PORT')?.trim() || '587';
+    const port = parseInt(portRaw, 10) || 587;
+    const user = this._configService.get<string>('SMTP_USER')!.trim();
+    const passRaw =
+      this._configService.get<string>('SMTP_APP_PASSWORD')?.trim() ||
+      this._configService.get<string>('SMTP_PASS')?.trim() ||
+      '';
+    const pass = passRaw.replace(/\s/g, '');
+    const from =
+      this._configService.get<string>('SMTP_FROM')?.trim() || user;
+    const appName = this._configService.get<string>('APP_NAME') ?? 'Africa Meals';
 
-    this._transport = nodemailer.createTransport({
+    const transporter = nodemailer.createTransport({
       host,
       port,
-      secure,
+      secure: port === 465,
       auth: { user, pass },
     });
 
-    return this._transport;
-  }
-
-  /**
-   * Envoi d'un email avec contexte (utilisé pour vérification de compte, etc.).
-   * Avec Gmail SMTP il n'y a pas de templates externes : le HTML est généré ici.
-   */
-  async send(args: SendMailDto) {
-    const appName =
-      this._configService.get<string>('APP_NAME') ?? 'African Meals';
-    const supportEmail =
-      this._configService.get<string>('SUPPORT_EMAIL') ?? '';
-    const { name, code, ...rest } = args.context || {};
-    const html = this._buildHtmlFromContext({
-      name: name ?? 'Utilisateur',
-      code: code ?? '',
-      support_email: supportEmail,
-      app_name: appName,
-      ...rest,
-    });
-    const text = `Bonjour ${name ?? 'Utilisateur'}, votre code : ${code ?? ''}. Support : ${supportEmail}`;
-
-    return this.sendSimple({
+    await transporter.sendMail({
+      from: `"${appName}" <${from}>`,
       to: args.to,
-      toName: args.toName,
-      subject: args.subject,
-      html,
-      text,
-    });
-  }
-
-  private _buildHtmlFromContext(ctx: Record<string, unknown>): string {
-    const name = (ctx.name as string) ?? 'Utilisateur';
-    const code = (ctx.code as string) ?? '';
-    const supportEmail = (ctx.support_email as string) ?? '';
-    const appName = (ctx.app_name as string) ?? 'African Meals';
-
-    return `
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>${appName}</title></head>
-<body style="font-family: sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-  <h2 style="color: #393828;">Bienvenue sur ${appName}</h2>
-  <p>Bonjour <strong>${name}</strong>,</p>
-  <p>Votre code de vérification est : <strong style="font-size: 1.2em; letter-spacing: 2px;">${code}</strong>.</p>
-  <p>Entrez ce code dans l'application pour activer votre compte.</p>
-  <p>Si vous n'avez pas créé de compte, ignorez cet email.</p>
-  <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-  <p style="font-size: 12px; color: #666;">Support : ${supportEmail}</p>
-</body>
-</html>
-    `.trim();
-  }
-
-  /**
-   * Envoi d'un email simple (HTML et/ou texte).
-   */
-  async sendSimple(args: {
-    to: string;
-    toName?: string;
-    subject: string;
-    html?: string;
-    text?: string;
-  }) {
-    const appName =
-      this._configService.get<string>('APP_NAME') ?? 'African Meals';
-    const from = this._configService.get<string>('SMTP_FROM');
-    const user = this._configService.get<string>('SMTP_USER');
-
-    const transport = this._getTransport();
-    const fromAddress = from || user;
-    if (!fromAddress) {
-      throw new Error('SMTP_FROM or SMTP_USER must be set');
-    }
-
-    const mailOptions: nodemailer.SendMailOptions = {
-      from: `"${appName}" <${fromAddress}>`,
-      to: args.toName ? `"${args.toName}" <${args.to}>` : args.to,
       subject: args.subject,
       html: args.html,
-      text: args.text ?? args.html?.replace(/<[^>]*>/g, '') ?? args.subject,
-    };
+      text: args.text?.trim() || undefined,
+    });
+  }
 
-    return transport.sendMail(mailOptions);
+  async send(args: SendMailDto) {
+    const sentFrom = new Sender(
+      this._configService.get<string>('MAILER_SENDER') ?? '',
+      this._configService.get<string>('APP_NAME') ?? 'App',
+    );
+
+    const recipients = [new Recipient(args.to, args.toName)];
+
+    const paramsBuilder = new EmailParams()
+      .setFrom(sentFrom)
+      .setTo(recipients)
+      .setReplyTo(sentFrom)
+      .setSubject(args.subject)
+      .setTemplateId(args.templateId)
+      .setPersonalization([
+        {
+          email: args.to,
+          data: {
+            ...args.context,
+            support_email: this._configService.get<string>('SUPPORT_EMAIL'),
+          },
+        },
+      ]);
+
+    return this._mailer.email.send(paramsBuilder);
+  }
+
+  /** E-mail HTML/text sans template (ex. reset password, test). */
+  async sendSimple(args: SendSimpleMailDto) {
+    if (this.smtpConfigured()) {
+      try {
+        await this.sendSimpleSmtp(args);
+        return;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this._logger.error(`SMTP sendSimple failed: ${msg}`);
+        throw new BadGatewayException(`email_send_failed — ${msg}`);
+      }
+    }
+
+    const apiKey = this._configService.get<string>('MAILER_API_KEY')?.trim();
+    const senderEmail = this._configService.get<string>('MAILER_SENDER')?.trim();
+    if (!apiKey) {
+      throw new BadGatewayException(
+        'email_not_configured — SMTP_USER + SMTP_APP_PASSWORD ou MAILER_API_KEY + MAILER_SENDER',
+      );
+    }
+    if (!senderEmail) {
+      throw new BadGatewayException(
+        'email_not_configured — MAILER_SENDER requis (expéditeur MailerSend vérifié)',
+      );
+    }
+
+    const appName = this._configService.get<string>('APP_NAME') ?? 'App';
+    const sentFrom = new Sender(senderEmail, appName);
+    const recipients = [new Recipient(args.to, args.toName ?? args.to)];
+    const paramsBuilder = new EmailParams()
+      .setFrom(sentFrom)
+      .setTo(recipients)
+      .setReplyTo(sentFrom)
+      .setSubject(args.subject)
+      .setHtml(args.html);
+    if (args.text?.trim()) {
+      paramsBuilder.setText(args.text);
+    }
+
+    try {
+      return await this._mailer.email.send(paramsBuilder);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this._logger.error(`MailerSend sendSimple failed: ${msg}`);
+      throw new BadGatewayException(`email_send_failed — ${msg}`);
+    }
   }
 }

@@ -1,5 +1,24 @@
-import { Controller, Get, Inject } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { JwtGuard } from '@modules/auth/guards/jwt.guard';
+import { UserModel } from '@schemas/user.schema';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Inject,
+  Param,
+  Patch,
+  Post,
+  Req,
+  UseGuards,
+  ValidationPipe,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Request } from 'express';
+import {
+  CreateProductCategoryDto,
+  PatchProductCategoryDto,
+} from './dto/product-category.dto';
 import { ProductCategoryService } from './product-category.service';
 
 @ApiTags('products')
@@ -11,5 +30,36 @@ export class ProductCategoryController {
   @Get('')
   async filter() {
     return this._productCategoryService.filter();
+  }
+
+  @Post('')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async create(
+    @Body(ValidationPipe) body: CreateProductCategoryDto,
+    @Req() req: Request,
+  ) {
+    return this._productCategoryService.create(
+      body,
+      req.user as UserModel,
+    );
+  }
+
+  @Patch(':id')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async patch(
+    @Param('id') id: string,
+    @Body(ValidationPipe) body: PatchProductCategoryDto,
+    @Req() req: Request,
+  ) {
+    return this._productCategoryService.update(id, body, req.user as UserModel);
+  }
+
+  @Delete(':id')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async remove(@Param('id') id: string, @Req() req: Request) {
+    await this._productCategoryService.remove(id, req.user as UserModel);
   }
 }

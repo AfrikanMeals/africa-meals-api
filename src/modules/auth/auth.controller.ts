@@ -42,8 +42,30 @@ export class AuthController {
 
   @Post('register')
   async register(@Body(ValidationPipe) args: RegisterDto) {
-    this.logger.log(`register body: ${JSON.stringify(args)}`);
+    this.logger.log(
+      `[POST /auth/register] corps validé email=${args.email} fullName=${args.fullName} source=${args.source} signupRole=${args.signupRole ?? '—'}`,
+    );
     return this._authService.register(args);
+  }
+
+  /** Étape 1 : envoi du code — pas encore de ligne dans `users` (sauf mode sans SMTP / compte test). */
+  @Post('register/start')
+  async registerStart(@Body(ValidationPipe) args: RegisterDto) {
+    this.logger.log(
+      `[POST /auth/register/start] email=${args.email} fullName=${args.fullName}`,
+    );
+    return this._authService.registerStart(args);
+  }
+
+  /** Étape 2 : validation du code et création du compte. */
+  @Post('register/complete')
+  async registerComplete(@Body(ValidationPipe) args: EmailVerificationDto) {
+    return this._authService.registerComplete(args);
+  }
+
+  @Post('register/resend-code')
+  async resendPendingSignup(@Body(ValidationPipe) args: ForgotPasswordDto) {
+    return this._authService.resendPendingSignupCode(args.email);
   }
 
   @Post('login')
@@ -79,7 +101,7 @@ export class AuthController {
 
   @Post('forgot-password')
   async forgotPassword(@Body(ValidationPipe) args: ForgotPasswordDto) {
-    this.logger.log(`forgot-password body: ${JSON.stringify(args)}`);
+    this.logger.log(`forgot-password email=${args.email}`);
     return this._authService.forgotPassword(args);
   }
 

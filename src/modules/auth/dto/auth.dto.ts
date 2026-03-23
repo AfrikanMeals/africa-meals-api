@@ -3,6 +3,7 @@ import { Trim } from 'class-sanitizer';
 import {
   IsEmail,
   IsEnum,
+  IsIn,
   IsNotEmpty,
   IsOptional,
   IsPhoneNumber,
@@ -63,6 +64,11 @@ export class RegisterDto extends LoginDto {
   @IsNotEmpty()
   @Trim()
   fullName: string;
+
+  /** Valeurs alignées sur le sélecteur du Dashboard (signup) */
+  @IsOptional()
+  @IsIn(['restaurant', 'livreur', 'client'])
+  signupRole?: 'restaurant' | 'livreur' | 'client';
 }
 
 export class EmailVerificationDto {
@@ -93,7 +99,7 @@ export class ResetPasswordDto {
   @IsEmail()
   email: string;
 
-  @ApiProperty({ example: '123456', description: 'Code reçu par email' })
+  @ApiProperty({ example: 'ABC12XYZ', description: 'Code reçu par email' })
   @IsNotEmpty()
   @Trim()
   code: string;

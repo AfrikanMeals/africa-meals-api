@@ -1,9 +1,20 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ProductCategoryModel } from '@schemas/product-category.schema';
 import { ProductModel } from '@schemas/product.schema';
-import { Model } from 'mongoose';
+import { UserModel, UserTypeEnum } from '@schemas/user.schema';
+import { Model, Types } from 'mongoose';
 import { DEFAULT_CATEGORIES } from './data/categories';
+import {
+  CreateProductCategoryDto,
+  PatchProductCategoryDto,
+} from './dto/product-category.dto';
 
 @Injectable()
 export class ProductCategoryService implements OnModuleInit {
@@ -12,6 +23,106 @@ export class ProductCategoryService implements OnModuleInit {
 
   @InjectModel(ProductModel.name)
   private readonly _productModel: Model<ProductModel>;
+
+  private assertCanManageCategories(user: UserModel) {
+    if (
+      user.type !== UserTypeEnum.VENDOR &&
+      user.type !== UserTypeEnum.ADMIN
+    ) {
+      throw new ForbiddenException('forbidden');
+    }
+  }
+
+  private mapLeanCategory(
+    cat: Record<string, unknown>,
+    productCount: number,
+  ) {
+    return {
+      id: cat._id,
+      _id: cat._id,
+      title: cat.title,
+      icon: cat.icon,
+      isEnabled: (cat.is_enabled as boolean) ?? true,
+      productCount,
+      createdAt: cat.createdAt,
+      updatedAt: cat.updatedAt,
+    };
+  }
+
+  async create(args: CreateProductCategoryDto, user: UserModel) {
+    this.assertCanManageCategories(user);
+    const title = args.title.trim();
+    const dup = await this._productCategoryModel
+      .findOne({ title: new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') })
+      .exec();
+    if (dup) {
+      throw new ConflictException('category_title_exists');
+    }
+    const doc = await this._productCategoryModel.create({
+      title,
+      icon: args.icon.trim(),
+      isEnabled: args.isEnabled ?? true,
+    });
+    const lean = doc.toObject() as Record<string, unknown>;
+    return this.mapLeanCategory(lean, 0);
+  }
+
+  async update(id: string, args: PatchProductCategoryDto, user: UserModel) {
+    this.assertCanManageCategories(user);
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('category_not_found');
+    }
+    const existing = await this._productCategoryModel.findById(id).exec();
+    if (!existing) {
+      throw new NotFoundException('category_not_found');
+    }
+    if (args.title !== undefined) {
+      const title = args.title.trim();
+      const dup = await this._productCategoryModel
+        .findOne({
+          _id: { $ne: id },
+          title: new RegExp(
+            `^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+            'i',
+          ),
+        })
+        .exec();
+      if (dup) {
+        throw new ConflictException('category_title_exists');
+      }
+      existing.title = title;
+    }
+    if (args.icon !== undefined) {
+      existing.icon = args.icon.trim();
+    }
+    if (args.isEnabled !== undefined) {
+      existing.isEnabled = args.isEnabled;
+    }
+    await existing.save();
+    const productCount = await this._productModel
+      .countDocuments({ category: existing._id })
+      .exec();
+    const lean = existing.toObject() as Record<string, unknown>;
+    return this.mapLeanCategory(lean, productCount);
+  }
+
+  async remove(id: string, user: UserModel) {
+    this.assertCanManageCategories(user);
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('category_not_found');
+    }
+    const existing = await this._productCategoryModel.findById(id).exec();
+    if (!existing) {
+      throw new NotFoundException('category_not_found');
+    }
+    const productCount = await this._productModel
+      .countDocuments({ category: existing._id })
+      .exec();
+    if (productCount > 0) {
+      throw new ConflictException('category_has_products');
+    }
+    await existing.deleteOne();
+  }
 
   async filter() {
     try {

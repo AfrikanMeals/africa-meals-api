@@ -9,7 +9,7 @@ async function bootstrap() {
   const port = Number(process.env.NODE_PORT || process.env.PORT || 3000);
   await app.listen(port);
   console.warn(
-    `🚀 API: http://localhost:${port}/api (ex: /api/auth/verify, /api/auth/login)`,
+    `🚀 API: http://localhost:/api (docs: /api/docs)`,
   );
 }
 bootstrap();
