@@ -1,0 +1,67 @@
+# Déploiement sur Firebase Cloud Functions (NestJS)
+
+## Prérequis
+
+- Compte Firebase / projet GCP
+- CLI : `npm i -g firebase-tools` puis `firebase login`
+- Copier `.firebaserc.example` vers `.firebaserc` et remplacer `VOTRE_PROJECT_ID_FIREBASE`
+
+## Build & déploiement
+
+```bash
+cd africa-meals-api
+npm install
+firebase deploy --only functions
+```
+
+Le `predeploy` exécute `npm run build` (compilation Nest → `dist/`).
+
+## Point d’entrée
+
+- **`package.json` → `main`** : `dist/firebase-main.js` (export de la fonction HTTP `api`)
+- **Local (sans Firebase)** : `npm run start:prod` → `dist/main.js` (préfixe global `/api`)
+
+## URLs
+
+- Fonction nommée **`api`** (Gen 2) :  
+  `https://<region>-<project>.cloudfunctions.net/api/<route>`
+- Sur Cloud Functions, le préfixe Nest est **vide** pour éviter `/api/api/...`.  
+  Exemple : `.../api/auth/login` (et non `.../api/api/auth/login`).
+
+## Variables d’environnement
+
+En production, ne pas s’appuyer sur un fichier `.env` déployé (il est ignoré par `firebase.json`).
+
+Options recommandées :
+
+1. **Secret Manager** (recommandé pour la base, JWT, clés) :  
+   `firebase functions:secrets:set MONGODB_URI` puis lier le secret à la fonction dans la console Firebase ou via `runWith({ secrets: [...] })`.
+2. **Paramètres Firebase** : `firebase functions:config:set` (legacy) ou **params** (`defineString`, etc.) pour Firebase Functions v2.
+
+Variables utiles (alignées sur l’existant) :
+
+| Variable | Rôle |
+|----------|------|
+| `MONGODB_URI` ou `MONGO_URI` | URI MongoDB complète (prioritaire sur `DB_*`) |
+| `DB_USERNAME`, `DB_PASSWORD`, `DB_HOST`, `DB_DATABASE` | Construction de l’URI si pas d’URI complète |
+| `MONGOOSE_MAX_POOL` | Taille du pool (défaut `10`) |
+| `MONGOOSE_SERVER_SELECTION_MS` | Timeout sélection serveur (défaut `8000`) |
+| `DISABLE_SWAGGER` | `true` pour désactiver Swagger (cold start plus léger) |
+| `FUNCTION_REGION` | Région (défaut `europe-west1` dans le code) |
+| `FUNCTION_TIMEOUT_SEC`, `FUNCTION_MEMORY` | Surcharge optionnelle des options de la fonction |
+
+Après définition des secrets, ajoutez-les dans `src/firebase-main.ts` via l’option `secrets` de `onRequest` / `setGlobalOptions` si vous utilisez l’API Secrets de Firebase Functions v2.
+
+## Émulateur local
+
+```bash
+npm run serve:functions
+```
+
+Configurer les mêmes variables (fichier `.env` local ou export shell) pour MongoDB, JWT, etc.
+
+## Mobile / clients
+
+En prod, la base URL API est celle de la fonction **`api`** **sans** segment `/api` supplémentaire dans le chemin (les routes correspondent à celles définies dans les contrôleurs Nest, ex. `/auth/login`).
+
+En développement local avec `start:prod`, conserver le préfixe **`/api`** (ex. `http://localhost:3000/api/auth/login`).

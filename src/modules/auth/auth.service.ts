@@ -333,11 +333,15 @@ export class AuthService {
         `users/${userId}/profile`,
       );
       if (!url) throw new BadRequestException('image_upload_failed');
+      // Libérer l’espace Firebase : supprimer l’ancienne photo après succès du nouvel upload
       if (existing.profileImage) {
         try {
           await this._mediasService.delete(existing.profileImage);
         } catch (_) {
-          // ignore delete errors (e.g. invalid path)
+          await this._mediasService.deleteFilesWithPrefixExcept(
+            `users/${userId}/profile`,
+            url,
+          );
         }
       }
       await this._usersModel
@@ -361,13 +365,18 @@ export class AuthService {
     }
     const existing = await this._usersModel.findOne({ _id: userId }).exec();
     if (!existing) throw new NotFoundException('user_not_found');
-    if (existing.profileImage) {
+    const previousUrl = existing.profileImage;
+    if (previousUrl) {
       try {
-        await this._mediasService.delete(existing.profileImage);
+        await this._mediasService.delete(previousUrl);
       } catch (_) {
-        // ignore delete errors
+        // URL obsolète ou fichier déjà supprimé
       }
     }
+    // Dossier profil : supprime aussi d’éventuels fichiers orphelins (anciens uploads)
+    await this._mediasService.deleteFilesWithPrefix(
+      `users/${userId}/profile`,
+    );
     await this._usersModel
       .updateOne(
         { _id: userId },
@@ -387,6 +396,16 @@ export class AuthService {
     if (!user) {
       throw new NotFoundException('user_not_found');
     }
+    if (user.profileImage) {
+      try {
+        await this._mediasService.delete(user.profileImage);
+      } catch (_) {
+        // ignore
+      }
+    }
+    await this._mediasService.deleteFilesWithPrefix(
+      `users/${userId}/profile`,
+    );
     await this._usersModel.deleteOne({ _id: userId }).exec();
     return { message: 'account_deleted' };
   }
