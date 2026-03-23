@@ -55,6 +55,7 @@ export async function configureApplication(
     .addTag('search', 'Recherche')
     .addTag('mailer', 'Envoi d’emails (test)')
     .addTag('supported-countries', 'Pays supportés')
+    .addTag('health', 'Santé de l’API')
     .build();
 
   const document = SwaggerModule.createDocument(app, config, {

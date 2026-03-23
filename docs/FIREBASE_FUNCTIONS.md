@@ -25,6 +25,28 @@ Le `predeploy` exécute `npm run build` (compilation Nest → `dist/`).
 
 - Fonction nommée **`api`** (Gen 2) :  
   `https://<region>-<project>.cloudfunctions.net/api/<route>`
+
+### Health check
+
+- **Production (exemple)** :  
+  `GET https://europe-west1-afrikanmeals.cloudfunctions.net/api/health`  
+  (remplacez `europe-west1` / `afrikanmeals` si votre région ou projet diffère.)
+
+Réponse JSON typique :
+
+```json
+{
+  "status": "ok",
+  "service": "africa-meals-api",
+  "version": "0.0.1",
+  "timestamp": "2026-03-08T12:00:00.000Z",
+  "uptimeSeconds": 123.456
+}
+```
+
+- **En local** (avec préfixe `api`) :  
+  `GET http://localhost:3000/api/health`  
+  ou `http://localhost:<NODE_PORT>/api/health` si `NODE_PORT` / `PORT` est défini.
 - Sur Cloud Functions, le préfixe Nest est **vide** pour éviter `/api/api/...`.  
   Exemple : `.../api/auth/login` (et non `.../api/api/auth/login`).
 

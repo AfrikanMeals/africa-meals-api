@@ -58,6 +58,8 @@ Déploiement HTTP (Gen 2) : voir **[docs/FIREBASE_FUNCTIONS.md](docs/FIREBASE_FU
 Résumé : copier `.firebaserc.example` → `.firebaserc`, puis `firebase deploy --only functions` (le build Nest est lancé en `predeploy`).  
 Le point d’entrée Cloud Functions est **`dist/firebase-main.js`** (`package.json` → `main`).
 
+**Santé de l’API** : `GET …/api/health` (JSON : `status`, `version`, `uptimeSeconds`, etc.). Voir les URLs exactes dans [docs/FIREBASE_FUNCTIONS.md](docs/FIREBASE_FUNCTIONS.md#health-check).
+
 ## Test
 
 ```bash
