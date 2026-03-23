@@ -24,7 +24,8 @@ import { SupportedCountriesModule } from './modules/supported-countries/supporte
 @Module({
   imports: [
     ConfigModule.forRoot({
-      envFilePath: ['.env', '../.env'],
+      // `.env.local` est chargé en premier (secrets locaux) ; souvent absent du dépôt.
+      envFilePath: ['.env.local', '.env', '../.env'],
       isGlobal: true,
     }),
     MongooseModule.forRootAsync({

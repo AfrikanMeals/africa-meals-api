@@ -8,7 +8,8 @@ import { v4 as uuid } from 'uuid';
 /**
  * Firebase Storage service for image and file uploads.
  * Uses Firebase Admin SDK (service account) so uploads are not blocked by Storage security rules.
- * Requires FIREBASE_STORAGE_BUCKET and either GOOGLE_APPLICATION_CREDENTIALS or FIREBASE_SERVICE_ACCOUNT_JSON.
+ * Requires AM_FIREBASE_STORAGE_BUCKET (ou bucket dérivé du project id) et
+ * GOOGLE_APPLICATION_CREDENTIALS ou AM_FIREBASE_SERVICE_ACCOUNT_JSON.
  */
 @Injectable()
 export class MediasService {

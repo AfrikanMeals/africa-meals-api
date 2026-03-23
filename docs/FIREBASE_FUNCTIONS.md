@@ -28,6 +28,22 @@ Le `predeploy` exécute `npm run build` (compilation Nest → `dist/`).
 - Sur Cloud Functions, le préfixe Nest est **vide** pour éviter `/api/api/...`.  
   Exemple : `.../api/auth/login` (et non `.../api/api/auth/login`).
 
+## ⚠️ Préfixe `FIREBASE_` interdit dans `.env` (déploiement)
+
+Le CLI Firebase charge le fichier **`.env`** à la racine du projet lors de l’analyse du code. Les clés dont le nom **commence par** `FIREBASE_`, `X_GOOGLE_` ou `EXT_` sont **réservées** et provoquent :
+
+`Error: Failed to load environment variables from .env`  
+`Key FIREBASE_… starts with a reserved prefix`
+
+**Correctif :**
+
+1. **Admin SDK (Nest / Storage)** — utiliser exclusivement :
+   - `AM_FIREBASE_PROJECT_ID`
+   - `AM_FIREBASE_STORAGE_BUCKET`
+   - `AM_FIREBASE_SERVICE_ACCOUNT_JSON` ou `AM_FIREBASE_SERVICE_ACCOUNT_PATH`  
+   (le code lit ces noms ; renommez les anciennes `FIREBASE_*` dans votre `.env` local.)
+2. **Clés « client »** (API key, App ID, etc., copiées pour Flutter) — ne les mettez **pas** dans ce `.env` avec le préfixe `FIREBASE_`, ou renommez-les (ex. `AM_WEB_API_KEY`, `AM_WEB_AUTH_DOMAIN`, …). Elles ne sont en général **pas** utilisées par l’API Nest.
+
 ## Variables d’environnement
 
 En production, ne pas s’appuyer sur un fichier `.env` déployé (il est ignoré par `firebase.json`).
@@ -49,6 +65,10 @@ Variables utiles (alignées sur l’existant) :
 | `DISABLE_SWAGGER` | `true` pour désactiver Swagger (cold start plus léger) |
 | `FUNCTION_REGION` | Région (défaut `europe-west1` dans le code) |
 | `FUNCTION_TIMEOUT_SEC`, `FUNCTION_MEMORY` | Surcharge optionnelle des options de la fonction |
+| `AM_FIREBASE_PROJECT_ID` | ID projet Firebase / GCP (Admin SDK) |
+| `AM_FIREBASE_STORAGE_BUCKET` | Bucket Storage (sinon `<project_id>.appspot.com`) |
+| `AM_FIREBASE_SERVICE_ACCOUNT_JSON` | JSON compte de service (une ligne) |
+| `AM_FIREBASE_SERVICE_ACCOUNT_PATH` | Chemin vers le fichier JSON (alternative) |
 
 Après définition des secrets, ajoutez-les dans `src/firebase-main.ts` via l’option `secrets` de `onRequest` / `setGlobalOptions` si vous utilisez l’API Secrets de Firebase Functions v2.
 
