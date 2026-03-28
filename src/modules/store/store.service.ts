@@ -838,6 +838,7 @@ export class StoreService {
     if (!doc) {
       throw new NotFoundException('store_not_found');
     }
+    const previousStatus = doc.status;
     doc.status = status;
     if (status === StoreStatusEnum.INACTIVE) {
       doc.acceptsOrders = false;
@@ -845,6 +846,18 @@ export class StoreService {
     } else {
       doc.acceptsOrders = true;
       doc.canCreateProducts = true;
+    }
+
+    if (previousStatus !== status) {
+      const statusLabel = status === StoreStatusEnum.ACTIVE ? 'actif' : 'inactif';
+      doc.vendorMessages = [
+        ...(doc.vendorMessages || []),
+        {
+          message: `Le statut de votre restaurant a changé : ${statusLabel}.`,
+          from: 'ADMIN',
+          createdAt: new Date(),
+        },
+      ];
     }
     await doc.save();
     const lean = await this._storeModel

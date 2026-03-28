@@ -21,24 +21,25 @@ export class OrdersController {
   @Inject(OrdersService)
   private readonly _ordersService: OrdersService;
 
-  @Get('/:id')
-  @UseGuards(JwtGuard)
-  async findOneById(@Req() req: Request, @Param('id') id: string) {
-    return this._ordersService.findOneById(id, req.user as UserModel);
-  }
-
-  @Get('')
+  /** Liste des commandes — doit être déclaré avant les routes `/:id`. */
+  @Get()
   @UseGuards(JwtGuard)
   async filter(@Req() req: Request, @Query() args: FilterOrdersDto) {
     return this._ordersService.filter(args, req.user as UserModel);
   }
 
-  @Get('/:id/shipping-price')
+  @Get(':id/shipping-price')
   @UseGuards(JwtGuard)
   async calculateShippingPrice(@Req() req: Request, @Param('id') id: string) {
     return this._ordersService.calculateShippingPrice(
       id,
       req.user as UserModel,
     );
+  }
+
+  @Get(':id')
+  @UseGuards(JwtGuard)
+  async findOneById(@Req() req: Request, @Param('id') id: string) {
+    return this._ordersService.findOneById(id, req.user as UserModel);
   }
 }

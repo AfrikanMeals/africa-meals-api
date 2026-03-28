@@ -18,6 +18,7 @@ import { CartModule } from './modules/cart/cart.module';
 import { AnnouncementsModule } from './modules/announcements/announcements.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { OrdersModule } from './modules/orders/orders.module';
+import { SupportChatModule } from './modules/support-chat/support-chat.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { OrdersModule } from './modules/orders/orders.module';
     AnnouncementsModule,
     BillingModule,
     OrdersModule,
+    SupportChatModule,
     // SharedModule,
   ],
   controllers: [AppController],

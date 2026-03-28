@@ -6,7 +6,7 @@ import {
   OrderModel,
   OrderStatusEnum,
 } from '@schemas/order.schema';
-import { UserModel } from '@schemas/user.schema';
+import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 import { haversineDistance } from 'src/utils/helpers';
 import { FilterOrdersDto } from './dto/orders.dto';
@@ -23,17 +23,50 @@ export class OrdersService {
     args: FilterOrdersDto,
     user: UserModel,
   ): Promise<{ data: OrderModel[] }> {
-    const filter = { user: { _id: user.id } };
-    if (args.storeId) {
-      filter['store'] = { _id: args.storeId };
+    const filter: Record<string, unknown> = {};
+
+    if (user.type === UserTypeEnum.ADMIN) {
+      if (args.storeId) {
+        filter['store'] = { _id: args.storeId };
+      }
+    } else if (user.type === UserTypeEnum.VENDOR) {
+      const rawStores = user.stores || [];
+      const storeIds = rawStores.map((s: unknown) => {
+        if (typeof s === 'object' && s !== null && '_id' in s) {
+          return String((s as { _id: { toString: () => string } })._id);
+        }
+        return String(s);
+      });
+      if (!storeIds.length) {
+        return { data: [] };
+      }
+      if (args.storeId) {
+        if (!storeIds.includes(args.storeId)) {
+          return { data: [] };
+        }
+        filter['store'] = { _id: args.storeId };
+      } else {
+        filter['store'] = { $in: storeIds };
+      }
+    } else {
+      filter['user'] = { _id: user.id };
+      if (args.storeId) {
+        filter['store'] = { _id: args.storeId };
+      }
     }
 
     if (args.status) {
       filter['status'] = args.status;
     }
-    return {
-      data: await this._orderModel.find(filter).populate('store').exec(),
-    };
+
+    const data = await this._orderModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .populate('store')
+      .populate('user', 'fullName email profileImage')
+      .exec();
+
+    return { data };
   }
 
   async findOneById(id: string, user: UserModel) {
