@@ -28,9 +28,7 @@ export class SearchService {
   async filter(args: SearchDto, user?: UserModel) {
     args.page = args.page ?? 1;
     args.take = args.take ?? 5;
-    const searchContent = (args.searchContent as any as string).split(
-      ',',
-    ) as SearchContent[];
+    const searchContent = args.searchContent;
     // console.log('🚀 ~ SearchService ~ filter ~ args:', searchContent);
     const response: {
       [key: string]:
