@@ -11,6 +11,11 @@ import { SearchContent, SearchDto, SearchResultDto } from './dto/search.dto';
 
 @Injectable()
 export class SearchService {
+  /** Évite qu’un caractère spécial dans la requête casse le regex Mongo. */
+  private _escapeRegex(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
   @Inject(ProductsService)
   private readonly _productsService: ProductsService;
 
@@ -285,19 +290,36 @@ export class SearchService {
           $and: [
             {
               $or: [
-                // user ? { owner: { $eq: new ObjectId(user.id) } } : null,
                 user ? { owner: new ObjectId(user.id) } : null,
-                { status: StoreStatusEnum.ACTIVE },
+                {
+                  status: {
+                    $in: [
+                      StoreStatusEnum.ACTIVE,
+                      StoreStatusEnum.PENDING,
+                      StoreStatusEnum.REVISION,
+                    ],
+                  },
+                },
               ].filter(Boolean),
             },
             args.query
               ? {
                   $or: [
-                    { name: { $regex: args.query, $options: 'i' } },
-                    { bio: { $regex: args.query, $options: 'i' } },
+                    {
+                      name: {
+                        $regex: this._escapeRegex(args.query.trim()),
+                        $options: 'i',
+                      },
+                    },
+                    {
+                      bio: {
+                        $regex: this._escapeRegex(args.query.trim()),
+                        $options: 'i',
+                      },
+                    },
                   ],
                 }
-              : {}, // If query is empty, this will match everything
+              : {},
           ],
         },
       },
