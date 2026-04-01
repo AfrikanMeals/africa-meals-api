@@ -71,6 +71,13 @@ Réponse JSON typique :
 - Sur Cloud Functions, le préfixe Nest est **vide** pour éviter `/api/api/...`.  
   Exemple : `.../api/auth/login` (et non `.../api/api/auth/login`).
 
+### Documentation OpenAPI (Swagger)
+
+- **API principale** (`africa-meals-api`) : UI **`/api/docs`** en local (`npm run start:prod` → ex. `http://localhost:3000/api/docs`).  
+  Sur Cloud Functions, l’URL publique est `https://<hôte-de-la-fonction>/api/docs` (sans préfixe Nest en double sur le path applicatif — voir ci‑dessus).  
+  Désactivation : `DISABLE_SWAGGER=true` (déjà documenté dans le tableau des variables).
+- **Service chat / WebSocket** (`africa-meals-ws`, Cloud Run **`ws`**) : même convention — **`/api/docs`**, JWT identique. Détails : voir le README du dépôt **`africa-meals-ws`** (section OpenAPI / déploiement Cloud Run).
+
 ## ⚠️ Préfixe `FIREBASE_` interdit dans `.env` (déploiement)
 
 Le CLI Firebase charge le fichier **`.env`** à la racine du projet lors de l’analyse du code. Les clés dont le nom **commence par** `FIREBASE_`, `X_GOOGLE_` ou `EXT_` sont **réservées** et provoquent :

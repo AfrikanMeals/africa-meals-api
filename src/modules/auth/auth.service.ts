@@ -621,6 +621,30 @@ export class AuthService {
     return user;
   }
 
+  /** Upload audio pour messages vocaux (chat). Retourne l’URL publique Firebase. */
+  async uploadChatVoiceFile(
+    userId: string,
+    file: Express.Multer.File,
+    user: UserModel,
+  ): Promise<{ fileUrl: string; mimeType: string; sizeBytes: number }> {
+    if (user._id.toString() !== userId) {
+      throw new ForbiddenException('forbidden');
+    }
+    const existing = await this._usersModel.findOne({ _id: userId }).exec();
+    if (!existing) throw new NotFoundException('user_not_found');
+    const url = await this._mediasService.upload(
+      file,
+      user,
+      `users/${userId}/chat-voice`,
+    );
+    if (!url) throw new BadRequestException('voice_upload_failed');
+    return {
+      fileUrl: url,
+      mimeType: file.mimetype,
+      sizeBytes: file.size,
+    };
+  }
+
   async updateProfileImage(
     userId: string,
     file: Express.Multer.File,

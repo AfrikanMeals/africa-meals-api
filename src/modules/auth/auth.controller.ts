@@ -150,6 +150,41 @@ export class AuthController {
     return this._authService.updateProfile(user._id.toString(), args);
   }
 
+  @Post('me/chat-voice')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 15 * 1024 * 1024, files: 1 },
+      fileFilter: (req, file, cb) => {
+        if (
+          !file.mimetype.match(
+            /^(audio\/(mpeg|mp4|webm|wav|x-m4a|aac|3gpp)|video\/webm)$/i,
+          ) &&
+          !file.originalname.match(/\.(m4a|mp3|aac|wav|webm|ogg)$/i)
+        ) {
+          return cb(new Error('invalid_file_type'), false);
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async uploadChatVoice(
+    @Req() req: Request,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('file_not_provided');
+    }
+    const user = req.user as UserModel;
+    return this._authService.uploadChatVoiceFile(
+      user._id.toString(),
+      file,
+      user,
+    );
+  }
+
   @Patch('me/profile-image')
   @ApiBearerAuth('bearer')
   @UseGuards(JwtGuard)

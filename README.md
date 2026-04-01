@@ -60,6 +60,8 @@ Le point d’entrée Cloud Functions est **`dist/firebase-main.js`** (`package.j
 
 **Santé de l’API** : `GET …/api/health` (JSON : `status`, `version`, `uptimeSeconds`, etc.). Voir les URLs exactes dans [docs/FIREBASE_FUNCTIONS.md](docs/FIREBASE_FUNCTIONS.md#health-check).
 
+**Documentation OpenAPI** : UI Swagger sur **`/api/docs`** (local ou URL Cloud Functions). Variable `DISABLE_SWAGGER=true` pour la désactiver. Le service **chat** (`africa-meals-ws` / Cloud Run `ws`) expose la même convention **`/api/docs`** ; voir [docs/FIREBASE_FUNCTIONS.md](docs/FIREBASE_FUNCTIONS.md#documentation-openapi-swagger).
+
 ## Test
 
 ```bash
