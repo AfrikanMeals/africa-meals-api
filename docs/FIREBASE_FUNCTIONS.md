@@ -32,6 +32,11 @@ Après le déploiement, le CLI tente de supprimer d’anciennes images (GCR / Ar
 3. **Compte qui lance `firebase deploy`** : sur la console GCP → IAM, vérifier le rôle **Artifact Registry Administrator** (`roles/artifactregistry.admin`) ou au minimum les permissions de suppression sur le dépôt `gcf-artifacts` (projet `afrikanmeals`, région `europe-west1`).
 4. **Images orphelines** : lien indiqué dans le message (ex. `console.cloud.google.com/gcr/images/.../gcf`) pour suppression manuelle si besoin.
 
+### Build Cloud Functions (Yarn) et BSON
+
+Le build GCP utilise souvent **Yarn** (`…/yarn_modules/…`). Les **`overrides`** du `package.json` sont **npm uniquement** ; pour forcer **bson 6.x** partout, le projet définit aussi **`resolutions`** (Yarn).  
+En application : n’utilisez pas `ObjectId` depuis le paquet `mongodb` avec **Mongoose 8** — préférez **`Types.ObjectId`** depuis `mongoose`, sinon erreur en prod : `BSONVersionError: bson types must be from bson 6.x.x`.
+
 ## Point d’entrée
 
 - **`package.json` → `main`** : `dist/firebase-main.js` (export de la fonction HTTP `api`)

@@ -5,8 +5,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
-import { ObjectId } from 'mongodb';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import {
   AddItemToCartDto,
   CartItemApiResponse,
@@ -29,7 +28,7 @@ export class CartService {
     user: UserModel,
   ): Promise<CartItemApiResponse> {
     const items = await this._cartItemModel
-      .find({ store: new ObjectId(storeId), user: new ObjectId(user.id) })
+      .find({ store: new Types.ObjectId(storeId), user: new Types.ObjectId(user.id) })
       .populate('store')
       .exec();
 
@@ -60,7 +59,7 @@ export class CartService {
     user: UserModel,
   ): Promise<Partial<CartItemModel>> {
     const item = await this._cartItemModel
-      .findOne({ _id: new ObjectId(id) })
+      .findOne({ _id: new Types.ObjectId(id) })
       .populate('store')
       .exec();
     if (!item) {
@@ -105,7 +104,7 @@ export class CartService {
 
   async filter(user: UserModel): Promise<any> {
     const items = await this._cartItemModel
-      .find({ user: new ObjectId(user.id) })
+      .find({ user: new Types.ObjectId(user.id) })
       .populate([
         {
           path: 'user',
@@ -178,8 +177,8 @@ export class CartService {
       .findOne({
         entityId: args.itemId,
         type: args.type,
-        user: new ObjectId(user.id),
-        store: new ObjectId(store.id),
+        user: new Types.ObjectId(user.id),
+        store: new Types.ObjectId(store.id),
       })
       .exec();
   }
@@ -200,8 +199,8 @@ export class CartService {
       await this.updateQuantity(item, (item.quantity ?? 0) + args.quantity);
     } else {
       item = await this._cartItemModel.create({
-        user: new ObjectId(user.id),
-        store: new ObjectId(store.id),
+        user: new Types.ObjectId(user.id),
+        store: new Types.ObjectId(store.id),
         entityId: args.itemId,
         ...(args.type === CartItemTypeEnum.PRODUCT_EXTRA && {
           productId: args.productId,
@@ -223,15 +222,15 @@ export class CartService {
 
   async removeItemById(id: string, user: UserModel): Promise<void> {
     await this._cartItemModel
-      .deleteOne({ _id: new ObjectId(id), user: new ObjectId(user.id) })
+      .deleteOne({ _id: new Types.ObjectId(id), user: new Types.ObjectId(user.id) })
       .exec();
   }
 
   async clearStoreCart(store: StoreModel, user: UserModel): Promise<void> {
     await this._cartItemModel
       .deleteMany({
-        store: new ObjectId(store.id),
-        user: new ObjectId(user.id),
+        store: new Types.ObjectId(store.id),
+        user: new Types.ObjectId(user.id),
       })
       .exec();
   }

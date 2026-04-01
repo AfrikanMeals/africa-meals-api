@@ -6,7 +6,7 @@ import { OfferModel, OfferStatusEnum } from '@schemas/offer.schema';
 import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
-import { ObjectId } from 'mongodb';
+import { Types } from 'mongoose';
 import { SearchContent, SearchDto, SearchResultDto } from './dto/search.dto';
 
 @Injectable()
@@ -20,16 +20,16 @@ export class SearchService {
    * `req.user` peut ne pas exposer le virtual `id` selon le contexte ; `_id` est fiable.
    * Sinon `new ObjectId(undefined)` lève et produit un 500 (ex. search avec Bearer, sans user en navigateur).
    */
-  private _userObjectId(user?: UserModel): ObjectId | null {
+  private _userObjectId(user?: UserModel): Types.ObjectId | null {
     if (!user) return null;
-    const u = user as unknown as { _id?: ObjectId | string; id?: string };
+    const u = user as unknown as { _id?: Types.ObjectId | string; id?: string };
     const raw = u._id ?? u.id;
     if (raw == null || raw === '') return null;
     try {
-      if (raw instanceof ObjectId) return raw;
+      if (raw instanceof Types.ObjectId) return raw;
       const s = String(raw);
-      if (!ObjectId.isValid(s)) return null;
-      return new ObjectId(s);
+      if (!Types.ObjectId.isValid(s)) return null;
+      return new Types.ObjectId(s);
     } catch {
       return null;
     }
@@ -84,7 +84,7 @@ export class SearchService {
               ].filter(Boolean),
             },
             args.storeId && {
-              _id: new ObjectId(args.storeId),
+              _id: new Types.ObjectId(args.storeId),
             },
             {
               $or: [
@@ -179,7 +179,7 @@ export class SearchService {
             //   status: ProductStatusEnum.ACTIVE,
             // },
             args.categoryId && {
-              category: { $eq: new ObjectId(args.categoryId) },
+              category: { $eq: new Types.ObjectId(args.categoryId) },
             },
             {
               $or: [
@@ -189,7 +189,7 @@ export class SearchService {
               ],
             },
             args.storeId && {
-              store: { $eq: new ObjectId(args.storeId) },
+              store: { $eq: new Types.ObjectId(args.storeId) },
             },
             args.minPrice &&
               args.minPrice !== undefined &&
@@ -269,7 +269,7 @@ export class SearchService {
 
     const products = await this._productsService
       .getProductModel()
-      .find({ _id: { $in: productsIds.map((p) => new ObjectId(p._id)) } })
+      .find({ _id: { $in: productsIds.map((p) => new Types.ObjectId(p._id)) } })
       .populate('category')
 
       .populate({
