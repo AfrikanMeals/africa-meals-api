@@ -246,6 +246,8 @@ export class StoreController {
     );
   }
 
+  /** POST en plus de PATCH : certains proxys / runtimes tronquent le corps multipart sur PATCH. */
+  @Post('/:id/profile-image')
   @Patch('/:id/profile-image')
   @UseGuards(JwtGuard)
   @UseInterceptors(
@@ -253,7 +255,7 @@ export class StoreController {
       storage: memoryStorage(),
       limits: { fileSize: 50 * 1024 * 1024, files: 1 }, // 50 MB
       fileFilter: (req, file, cb) => {
-        if (!file.originalname.match(/\.(jpg|jpeg|png)$/)) {
+        if (!file.originalname.match(/\.(jpg|jpeg|png)$/i)) {
           return cb(new Error('invalid_file_type'), false);
         }
         cb(null, true);
