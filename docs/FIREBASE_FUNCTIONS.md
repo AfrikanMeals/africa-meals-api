@@ -11,10 +11,26 @@
 ```bash
 cd africa-meals-api
 npm install
-firebase deploy --only functions
+npm run deploy:functions
 ```
 
-Le `predeploy` exécute `npm run build` (compilation Nest → `dist/`).
+Le `predeploy` exécute `npm run build` (compilation Nest → `dist/`).  
+**Utilisez `npm run deploy:functions`** (et non un `firebase` global ancien) : le dépôt pin `firebase-tools` en devDependency pour un comportement de nettoyage des images aligné avec GCP.
+
+### Avertissement « Unhandled error cleaning up build images »
+
+Après le déploiement, le CLI tente de supprimer d’anciennes images (GCR / Artifact Registry). Un **404** (dépôt inexistant ou déjà nettoyé) ou des **droits IAM** insuffisants produisent ce message ; le déploiement peut quand même être **réussi**.
+
+**À faire :**
+
+1. **Mettre à jour les deps** : `npm install` dans `africa-meals-api` (firebase-tools ≥ 15 dans ce projet).
+2. **Politique de rétention Artifact Registry** (recommandé, une fois par région utilisée, ex. `europe-west1`) :
+   ```bash
+   npm run functions:artifacts-policy
+   ```
+   Cela configure un nettoyage automatique des images obsolètes dans `gcf-artifacts`.
+3. **Compte qui lance `firebase deploy`** : sur la console GCP → IAM, vérifier le rôle **Artifact Registry Administrator** (`roles/artifactregistry.admin`) ou au minimum les permissions de suppression sur le dépôt `gcf-artifacts` (projet `afrikanmeals`, région `europe-west1`).
+4. **Images orphelines** : lien indiqué dans le message (ex. `console.cloud.google.com/gcr/images/.../gcf`) pour suppression manuelle si besoin.
 
 ## Point d’entrée
 

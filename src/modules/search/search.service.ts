@@ -16,6 +16,25 @@ export class SearchService {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
+  /**
+   * `req.user` peut ne pas exposer le virtual `id` selon le contexte ; `_id` est fiable.
+   * Sinon `new ObjectId(undefined)` lève et produit un 500 (ex. search avec Bearer, sans user en navigateur).
+   */
+  private _userObjectId(user?: UserModel): ObjectId | null {
+    if (!user) return null;
+    const u = user as unknown as { _id?: ObjectId | string; id?: string };
+    const raw = u._id ?? u.id;
+    if (raw == null || raw === '') return null;
+    try {
+      if (raw instanceof ObjectId) return raw;
+      const s = String(raw);
+      if (!ObjectId.isValid(s)) return null;
+      return new ObjectId(s);
+    } catch {
+      return null;
+    }
+  }
+
   @Inject(ProductsService)
   private readonly _productsService: ProductsService;
 
@@ -53,17 +72,14 @@ export class SearchService {
   }
 
   private async _filterOffers(args: SearchDto, user?: UserModel) {
+    const ownerOid = this._userObjectId(user);
     const pipeline = [
       {
         $match: {
           $and: [
             {
               $or: [
-                user
-                  ? {
-                      owner: new ObjectId(user.id),
-                    }
-                  : null,
+                ownerOid ? { owner: ownerOid } : null,
                 { status: OfferStatusEnum.ACTIVE },
               ].filter(Boolean),
             },
@@ -130,6 +146,7 @@ export class SearchService {
     args: SearchDto,
     user?: UserModel,
   ): Promise<SearchResultDto<ProductModel>> {
+    const ownerOid = this._userObjectId(user);
     const pipeline = [
       {
         $lookup: {
@@ -151,11 +168,7 @@ export class SearchService {
           $and: [
             {
               $or: [
-                user
-                  ? {
-                      'store.owner': new ObjectId(user.id),
-                    }
-                  : null,
+                ownerOid ? { 'store.owner': ownerOid } : null,
                 { status: ProductStatusEnum.ACTIVE },
               ].filter(Boolean),
             },
@@ -282,43 +295,37 @@ export class SearchService {
     args: SearchDto,
     user?: UserModel,
   ): Promise<SearchResultDto<StoreModel>> {
+    const ownerOid = this._userObjectId(user);
+    const q = args.query?.trim();
+    const andParts: Record<string, unknown>[] = [
+      {
+        $or: [
+          ownerOid ? { owner: ownerOid } : null,
+          {
+            status: {
+              $in: [
+                StoreStatusEnum.ACTIVE,
+                StoreStatusEnum.PENDING,
+                StoreStatusEnum.REVISION,
+              ],
+            },
+          },
+        ].filter(Boolean),
+      },
+    ];
+    if (q) {
+      const esc = this._escapeRegex(q);
+      andParts.push({
+        $or: [
+          { name: { $regex: esc, $options: 'i' } },
+          { bio: { $regex: esc, $options: 'i' } },
+        ],
+      });
+    }
     const pipeline = [
       {
         $match: {
-          $and: [
-            {
-              $or: [
-                user ? { owner: new ObjectId(user.id) } : null,
-                {
-                  status: {
-                    $in: [
-                      StoreStatusEnum.ACTIVE,
-                      StoreStatusEnum.PENDING,
-                      StoreStatusEnum.REVISION,
-                    ],
-                  },
-                },
-              ].filter(Boolean),
-            },
-            args.query
-              ? {
-                  $or: [
-                    {
-                      name: {
-                        $regex: this._escapeRegex(args.query.trim()),
-                        $options: 'i',
-                      },
-                    },
-                    {
-                      bio: {
-                        $regex: this._escapeRegex(args.query.trim()),
-                        $options: 'i',
-                      },
-                    },
-                  ],
-                }
-              : {},
-          ],
+          $and: andParts,
         },
       },
       // {
