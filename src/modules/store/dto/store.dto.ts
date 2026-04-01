@@ -6,6 +6,7 @@ import {
   IsBoolean,
   IsNotEmpty,
   IsNumber,
+  IsOptional,
   IsString,
   MinLength,
   ValidateIf,
@@ -77,4 +78,19 @@ export class CreateStoreDto {
   @Type(() => StoreShippingZoneDto)
   @ValidateIf((o) => o.shippingZones?.length > 0 || o.supportsShipping)
   shippingZones?: StoreShippingZoneDto[];
+}
+
+/** Logo boutique : évite multipart (souvent cassé derrière Cloud Functions / certains proxys). */
+export class StoreProfileImageJsonDto {
+  @ApiProperty({
+    description: 'Image en base64 (pur ou préfixe data:image/...;base64,)',
+  })
+  @IsNotEmpty()
+  @IsString()
+  imageBase64: string;
+
+  @ApiPropertyOptional({ example: 'logo.png' })
+  @IsOptional()
+  @IsString()
+  filename?: string;
 }
