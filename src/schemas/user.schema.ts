@@ -116,6 +116,22 @@ export class UserModel extends BaseSchema {
   @Prop({ required: false, name: 'password_reset_code', select: false })
   passwordResetCode?: string;
 
+  /**
+   * Jetons FCM (mobile / web) pour les notifications push — plusieurs appareils par utilisateur.
+   */
+  @Prop({
+    type: [
+      {
+        token: { type: String, required: true },
+        platform: { type: String, required: true },
+        updatedAt: { type: Date, default: () => new Date() },
+      },
+    ],
+    default: [],
+    name: 'fcm_tokens',
+  })
+  fcmTokens?: { token: string; platform: string; updatedAt: Date }[];
+
   // @Prop({
   //   get: (creditCardNumber: string) => {
   //     if (!creditCardNumber) {

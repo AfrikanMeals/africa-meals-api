@@ -12,10 +12,12 @@ import {
   UploadedFile,
   UseGuards,
   UseInterceptors,
+  UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { NotificationsService } from '@modules/notifications/notifications.service';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { memoryStorage } from 'multer';
@@ -29,6 +31,8 @@ import {
   GoogleAuthDto,
   LoginDto,
   RegisterDto,
+  RegisterFcmTokenDto,
+  RemoveFcmTokenDto,
   ResetPasswordDto,
   UpdateProfileDto,
 } from './dto/auth.dto';
@@ -41,6 +45,9 @@ export class AuthController {
 
   @Inject(AuthService)
   private readonly _authService: AuthService;
+
+  @Inject(NotificationsService)
+  private readonly _notifications: NotificationsService;
 
   @Post('register')
   async register(@Body(ValidationPipe) args: RegisterDto) {
@@ -131,6 +138,41 @@ export class AuthController {
   @UseGuards(JwtGuard)
   async getMe(@Req() req: Request) {
     return req.user as UserModel;
+  }
+
+  @Post('me/fcm-token')
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Enregistrer un jeton FCM (notifications push)' })
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async registerFcmToken(
+    @Req() req: Request,
+    @Body() body: RegisterFcmTokenDto,
+  ) {
+    const user = req.user as UserModel;
+    await this._notifications.registerUserFcmToken(
+      user._id.toString(),
+      body.token,
+      body.platform,
+    );
+    return { ok: true };
+  }
+
+  @Delete('me/fcm-token')
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Retirer un jeton FCM' })
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async removeFcmToken(
+    @Req() req: Request,
+    @Body() body: RemoveFcmTokenDto,
+  ) {
+    const user = req.user as UserModel;
+    await this._notifications.removeUserFcmToken(
+      user._id.toString(),
+      body.token,
+    );
+    return { ok: true };
   }
 
   @Delete('me')

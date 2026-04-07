@@ -13,6 +13,25 @@ import {
   ValidateIf,
 } from 'class-validator';
 
+/** Enregistrement d’un jeton FCM (app mobile ou admin web). */
+export class RegisterFcmTokenDto {
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  token: string;
+
+  @ApiProperty({ enum: ['android', 'ios', 'web'] })
+  @IsIn(['android', 'ios', 'web'])
+  platform: 'android' | 'ios' | 'web';
+}
+
+export class RemoveFcmTokenDto {
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  token: string;
+}
+
 export class CheckAccountDto {
   @ApiProperty({ enum: ['email'], example: 'email' })
   @IsNotEmpty()
