@@ -21,6 +21,8 @@ export class NotificationsService {
     title: string;
     body: string;
     conversationId?: string;
+    storeId?: string;
+    storeName?: string;
   }): Promise<{ sent: number; failures: number }> {
     const oids = args.recipientUserIds
       .filter((id) => Types.ObjectId.isValid(id))
@@ -60,6 +62,12 @@ export class NotificationsService {
     };
     if (args.conversationId) {
       data.conversationId = args.conversationId;
+    }
+    if (args.storeId?.trim()) {
+      data.storeId = args.storeId.trim();
+    }
+    if (args.storeName?.trim()) {
+      data.storeName = args.storeName.trim();
     }
 
     const messages = tokenRows.map((row) => ({

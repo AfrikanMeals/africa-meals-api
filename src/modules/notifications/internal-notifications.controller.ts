@@ -20,6 +20,8 @@ export class InternalNotificationsController {
       title: body.title,
       body: body.body,
       conversationId: body.conversationId,
+      storeId: body.storeId,
+      storeName: body.storeName,
     });
     return { ok: true };
   }

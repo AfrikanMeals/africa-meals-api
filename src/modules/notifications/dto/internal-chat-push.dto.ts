@@ -19,4 +19,14 @@ export class InternalChatPushDto {
   @IsOptional()
   @IsString()
   conversationId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  storeId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  storeName?: string;
 }
