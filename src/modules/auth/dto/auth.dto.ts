@@ -134,7 +134,6 @@ export class UpdateProfileDto {
   appCountryCode?: string;
 }
 
-/** Données reçues après Google Sign-In (création ou connexion de compte) */
 /**
  * Vocal chat : JSON + base64 — fiable quand multipart échoue (Firebase / CF / proxys).
  * @see StoreProfileImageJsonDto
@@ -158,6 +157,27 @@ export class ChatVoiceJsonDto {
   mimeType?: string;
 }
 
+/** Image / pièce jointe chat : JSON + base64 — aligné sur [ChatVoiceJsonDto]. */
+export class ChatMediaJsonDto {
+  @ApiProperty({
+    description: 'Fichier en base64 (pur ou préfixe data:...;base64,)',
+  })
+  @IsNotEmpty()
+  @IsString()
+  fileBase64: string;
+
+  @ApiProperty({ example: 'photo.jpg' })
+  @IsNotEmpty()
+  @IsString()
+  filename: string;
+
+  @ApiPropertyOptional({ example: 'image/jpeg' })
+  @IsOptional()
+  @IsString()
+  mimeType?: string;
+}
+
+/** Données reçues après Google Sign-In (création ou connexion de compte) */
 export class GoogleAuthDto {
   @ApiProperty({ description: 'ID Google du compte' })
   @IsNotEmpty()

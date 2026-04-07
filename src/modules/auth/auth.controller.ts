@@ -21,6 +21,7 @@ import { Request } from 'express';
 import { memoryStorage } from 'multer';
 import { AuthService } from './auth.service';
 import {
+  ChatMediaJsonDto,
   ChatVoiceJsonDto,
   CheckAccountDto,
   EmailVerificationDto,
@@ -291,6 +292,62 @@ export class AuthController {
     );
   }
 
+  /** Même effet que `chat-media` mais corps JSON — évite multipart tronqué (Firebase / CF / proxys). */
+  @Post('me/chat-media-json')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async uploadChatMediaJson(
+    @Req() req: Request,
+    @Body(ValidationPipe) body: ChatMediaJsonDto,
+  ) {
+    const raw = body.fileBase64
+      .replace(/\s/g, '')
+      .replace(/^data:[^;]+;base64,/i, '');
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(raw, 'base64');
+    } catch {
+      throw new BadRequestException('invalid_base64');
+    }
+    if (!buffer.length) {
+      throw new BadRequestException('empty_file');
+    }
+    const max = 20 * 1024 * 1024;
+    if (buffer.length > max) {
+      throw new BadRequestException('file_too_large');
+    }
+    const name = (body.filename || 'file').trim() || 'file';
+    let mimetype = (body.mimeType || '').trim();
+    if (!mimetype) {
+      const inferred = inferChatMediaMimeFromFilename(name);
+      if (!inferred) {
+        throw new BadRequestException('invalid_file_type');
+      }
+      mimetype = inferred;
+    }
+    if (!isAllowedChatMediaMime(mimetype)) {
+      throw new BadRequestException('invalid_file_type');
+    }
+    const file = {
+      fieldname: 'file',
+      originalname: name,
+      encoding: '7bit',
+      mimetype,
+      buffer,
+      size: buffer.length,
+      destination: '',
+      filename: '',
+      path: '',
+      stream: undefined,
+    } as Express.Multer.File;
+    const user = req.user as UserModel;
+    return this._authService.uploadChatMediaFile(
+      user._id.toString(),
+      file,
+      user,
+    );
+  }
+
   @Patch('me/profile-image')
   @ApiBearerAuth('bearer')
   @UseGuards(JwtGuard)
@@ -328,4 +385,46 @@ export class AuthController {
     const user = req.user as UserModel;
     return this._authService.removeProfileImage(user._id.toString(), user);
   }
+}
+
+function inferChatMediaMimeFromFilename(name: string): string | null {
+  const lower = name.toLowerCase();
+  if (/\.(jpe?g)$/i.test(lower)) return 'image/jpeg';
+  if (/\.png$/i.test(lower)) return 'image/png';
+  if (/\.gif$/i.test(lower)) return 'image/gif';
+  if (/\.webp$/i.test(lower)) return 'image/webp';
+  if (/\.heic$/i.test(lower)) return 'image/heic';
+  if (/\.heif$/i.test(lower)) return 'image/heif';
+  if (/\.pdf$/i.test(lower)) return 'application/pdf';
+  if (/\.zip$/i.test(lower)) return 'application/zip';
+  if (/\.txt$/i.test(lower)) return 'text/plain';
+  if (/\.doc$/i.test(lower)) return 'application/msword';
+  if (/\.docx$/i.test(lower)) {
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  }
+  if (/\.xlsx$/i.test(lower)) {
+    return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  }
+  if (/\.xls$/i.test(lower)) return 'application/vnd.ms-excel';
+  if (/\.pptx$/i.test(lower)) {
+    return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  }
+  if (/\.ppt$/i.test(lower)) return 'application/vnd.ms-powerpoint';
+  return null;
+}
+
+function isAllowedChatMediaMime(mime: string): boolean {
+  const m = mime.toLowerCase();
+  return (
+    /^image\/(jpeg|png|gif|webp|heic|heif)$/i.test(m) ||
+    /^application\/pdf$/i.test(m) ||
+    /^application\/(zip|x-zip-compressed)$/i.test(m) ||
+    /^text\/plain$/i.test(m) ||
+    /^application\/msword$/i.test(m) ||
+    /^application\/vnd\.ms-excel$/i.test(m) ||
+    /^application\/vnd\.ms-powerpoint$/i.test(m) ||
+    /^application\/vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)$/i.test(
+      m,
+    )
+  );
 }
