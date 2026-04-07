@@ -185,6 +185,46 @@ export class AuthController {
     );
   }
 
+  @Post('me/chat-media')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 20 * 1024 * 1024, files: 1 },
+      fileFilter: (req, file, cb) => {
+        const mime = (file.mimetype || '').toLowerCase();
+        const ok =
+          /^image\/(jpeg|png|gif|webp|heic|heif)$/i.test(mime) ||
+          /^application\/pdf$/i.test(mime) ||
+          /^application\/(zip|x-zip-compressed)$/i.test(mime) ||
+          /^text\/plain$/i.test(mime) ||
+          /^application\/msword$/i.test(mime) ||
+          /^application\/vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)$/i.test(
+            mime,
+          );
+        if (!ok) {
+          return cb(new Error('invalid_file_type'), false);
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async uploadChatMedia(
+    @Req() req: Request,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('file_not_provided');
+    }
+    const user = req.user as UserModel;
+    return this._authService.uploadChatMediaFile(
+      user._id.toString(),
+      file,
+      user,
+    );
+  }
+
   @Patch('me/profile-image')
   @ApiBearerAuth('bearer')
   @UseGuards(JwtGuard)

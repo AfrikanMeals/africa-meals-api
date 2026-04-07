@@ -645,6 +645,36 @@ export class AuthService {
     };
   }
 
+  /** Images et pièces jointes pour le chat (Firebase Storage). */
+  async uploadChatMediaFile(
+    userId: string,
+    file: Express.Multer.File,
+    user: UserModel,
+  ): Promise<{
+    fileUrl: string;
+    mimeType: string;
+    sizeBytes: number;
+    fileName: string;
+  }> {
+    if (user._id.toString() !== userId) {
+      throw new ForbiddenException('forbidden');
+    }
+    const existing = await this._usersModel.findOne({ _id: userId }).exec();
+    if (!existing) throw new NotFoundException('user_not_found');
+    const url = await this._mediasService.upload(
+      file,
+      user,
+      `users/${userId}/chat-media`,
+    );
+    if (!url) throw new BadRequestException('chat_media_upload_failed');
+    return {
+      fileUrl: url,
+      mimeType: file.mimetype,
+      sizeBytes: file.size,
+      fileName: file.originalname || 'file',
+    };
+  }
+
   async updateProfileImage(
     userId: string,
     file: Express.Multer.File,
