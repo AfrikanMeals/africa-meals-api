@@ -21,6 +21,7 @@ import { Request } from 'express';
 import { memoryStorage } from 'multer';
 import { AuthService } from './auth.service';
 import {
+  ChatVoiceJsonDto,
   CheckAccountDto,
   EmailVerificationDto,
   ForgotPasswordDto,
@@ -177,6 +178,71 @@ export class AuthController {
     if (!file) {
       throw new BadRequestException('file_not_provided');
     }
+    const user = req.user as UserModel;
+    return this._authService.uploadChatVoiceFile(
+      user._id.toString(),
+      file,
+      user,
+    );
+  }
+
+  /** Même effet que `chat-voice` mais corps JSON — évite multipart tronqué derrière certains hébergeurs. */
+  @Post('me/chat-voice-json')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async uploadChatVoiceJson(
+    @Req() req: Request,
+    @Body(ValidationPipe) body: ChatVoiceJsonDto,
+  ) {
+    const raw = body.audioBase64
+      .replace(/\s/g, '')
+      .replace(/^data:audio\/[^;]+;base64,/i, '');
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(raw, 'base64');
+    } catch {
+      throw new BadRequestException('invalid_base64');
+    }
+    if (!buffer.length) {
+      throw new BadRequestException('empty_audio');
+    }
+    const max = 15 * 1024 * 1024;
+    if (buffer.length > max) {
+      throw new BadRequestException('file_too_large');
+    }
+    const name = (body.filename || 'recording.webm').trim() || 'recording.webm';
+    const mimeIn = (body.mimeType || '').trim();
+    const nameOk = /\.(m4a|mp3|aac|wav|webm|ogg)$/i.test(name);
+    const mimeOk =
+      /^(audio\/(mpeg|mp4|webm|wav|x-m4a|aac|3gpp)|video\/webm)$/i.test(
+        mimeIn,
+      );
+    if (!nameOk && !mimeOk) {
+      throw new BadRequestException('invalid_file_type');
+    }
+    let mimetype = mimeIn;
+    if (!mimetype) {
+      const lower = name.toLowerCase();
+      if (lower.endsWith('.webm')) mimetype = 'audio/webm';
+      else if (lower.endsWith('.m4a')) mimetype = 'audio/mp4';
+      else if (lower.endsWith('.mp3')) mimetype = 'audio/mpeg';
+      else if (lower.endsWith('.wav')) mimetype = 'audio/wav';
+      else if (lower.endsWith('.ogg')) mimetype = 'audio/ogg';
+      else if (lower.endsWith('.aac')) mimetype = 'audio/aac';
+      else mimetype = 'audio/webm';
+    }
+    const file = {
+      fieldname: 'file',
+      originalname: name,
+      encoding: '7bit',
+      mimetype,
+      buffer,
+      size: buffer.length,
+      destination: '',
+      filename: '',
+      path: '',
+      stream: undefined,
+    } as Express.Multer.File;
     const user = req.user as UserModel;
     return this._authService.uploadChatVoiceFile(
       user._id.toString(),

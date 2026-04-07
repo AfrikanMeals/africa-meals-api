@@ -7,6 +7,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsPhoneNumber,
+  IsString,
   Matches,
   MinLength,
   ValidateIf,
@@ -134,6 +135,29 @@ export class UpdateProfileDto {
 }
 
 /** Données reçues après Google Sign-In (création ou connexion de compte) */
+/**
+ * Vocal chat : JSON + base64 — fiable quand multipart échoue (Firebase / CF / proxys).
+ * @see StoreProfileImageJsonDto
+ */
+export class ChatVoiceJsonDto {
+  @ApiProperty({
+    description: 'Audio en base64 (pur ou préfixe data:audio/...;base64,)',
+  })
+  @IsNotEmpty()
+  @IsString()
+  audioBase64: string;
+
+  @ApiPropertyOptional({ example: 'recording.webm' })
+  @IsOptional()
+  @IsString()
+  filename?: string;
+
+  @ApiPropertyOptional({ example: 'audio/webm' })
+  @IsOptional()
+  @IsString()
+  mimeType?: string;
+}
+
 export class GoogleAuthDto {
   @ApiProperty({ description: 'ID Google du compte' })
   @IsNotEmpty()
