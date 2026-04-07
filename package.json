@@ -5,13 +5,17 @@
   "author": "connect@codesphere.com",
   "private": true,
   "license": "UNLICENSED",
+  "main": "dist/firebase-main.js",
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/main",
+    "start:prod": "node dist/main.js",
+    "serve:functions": "npm run build && npx firebase emulators:start --only functions",
+    "deploy:functions": "npx firebase deploy --only functions",
+    "functions:artifacts-policy": "npx firebase functions:artifacts:setpolicy",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -35,11 +39,12 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "dayjs": "^1.11.11",
+    "express": "^4.21.0",
     "firebase": "^10.12.2",
     "firebase-admin": "^12.0.0",
+    "firebase-functions": "^7.2.2",
     "libphonenumber-js": "^1.12.40",
     "mailersend": "^2.2.0",
-    "mongodb": "^5.9.2",
     "mongoose": "^8.4.1",
     "nodemailer": "^8.0.3",
     "passport": "^0.7.0",
@@ -67,6 +72,7 @@
     "eslint": "^8.0.1",
     "eslint-config-prettier": "^8.3.0",
     "eslint-plugin-prettier": "^4.0.0",
+    "firebase-tools": "^15.12.0",
     "jest": "29.5.0",
     "prettier": "^2.3.2",
     "source-map-support": "^0.5.20",
@@ -80,8 +86,11 @@
   "overrides": {
     "bson": "^6.7.0"
   },
+  "resolutions": {
+    "bson": "^6.7.0"
+  },
   "engines": {
-    "node": ">=16.20.0",
+    "node": ">=20.0.0",
     "npm": ">=8.0.0"
   },
   "jest": {

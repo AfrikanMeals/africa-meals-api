@@ -7,10 +7,30 @@ import {
   IsNotEmpty,
   IsOptional,
   IsPhoneNumber,
+  IsString,
   Matches,
   MinLength,
   ValidateIf,
 } from 'class-validator';
+
+/** Enregistrement d’un jeton FCM (app mobile ou admin web). */
+export class RegisterFcmTokenDto {
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  token: string;
+
+  @ApiProperty({ enum: ['android', 'ios', 'web'] })
+  @IsIn(['android', 'ios', 'web'])
+  platform: 'android' | 'ios' | 'web';
+}
+
+export class RemoveFcmTokenDto {
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  token: string;
+}
 
 export class CheckAccountDto {
   @ApiProperty({ enum: ['email'], example: 'email' })
@@ -131,6 +151,49 @@ export class UpdateProfileDto {
   @Trim()
   @Matches(/^[A-Z]{2}$/i, { message: 'Code pays ISO2 requis' })
   appCountryCode?: string;
+}
+
+/**
+ * Vocal chat : JSON + base64 — fiable quand multipart échoue (Firebase / CF / proxys).
+ * @see StoreProfileImageJsonDto
+ */
+export class ChatVoiceJsonDto {
+  @ApiProperty({
+    description: 'Audio en base64 (pur ou préfixe data:audio/...;base64,)',
+  })
+  @IsNotEmpty()
+  @IsString()
+  audioBase64: string;
+
+  @ApiPropertyOptional({ example: 'recording.webm' })
+  @IsOptional()
+  @IsString()
+  filename?: string;
+
+  @ApiPropertyOptional({ example: 'audio/webm' })
+  @IsOptional()
+  @IsString()
+  mimeType?: string;
+}
+
+/** Image / pièce jointe chat : JSON + base64 — aligné sur [ChatVoiceJsonDto]. */
+export class ChatMediaJsonDto {
+  @ApiProperty({
+    description: 'Fichier en base64 (pur ou préfixe data:...;base64,)',
+  })
+  @IsNotEmpty()
+  @IsString()
+  fileBase64: string;
+
+  @ApiProperty({ example: 'photo.jpg' })
+  @IsNotEmpty()
+  @IsString()
+  filename: string;
+
+  @ApiPropertyOptional({ example: 'image/jpeg' })
+  @IsOptional()
+  @IsString()
+  mimeType?: string;
 }
 
 /** Données reçues après Google Sign-In (création ou connexion de compte) */

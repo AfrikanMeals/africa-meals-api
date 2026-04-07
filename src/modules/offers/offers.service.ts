@@ -18,8 +18,7 @@ import { ProductModel } from '@schemas/product.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import dayjs from 'dayjs';
-import { ObjectId } from 'mongodb';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { CreateOfferDto, FilterOffersDto } from './dto/offers.dto';
 
 @Injectable()
@@ -60,7 +59,7 @@ export class OffersService {
       {
         $match: {
           $and: [
-            args.storeId ? { store: new ObjectId(args.storeId) } : null,
+            args.storeId ? { store: new Types.ObjectId(args.storeId) } : null,
             args.status ? { status: args.status } : null,
           ].filter(Boolean),
         },

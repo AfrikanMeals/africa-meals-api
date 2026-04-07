@@ -72,16 +72,31 @@ export class SearchDto {
   sortDirection?: SortOrder;
 
   @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === '' || value === null) return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+  })
   @IsNumber()
   @Min(1)
   page?: number;
 
   @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === '' || value === null) return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+  })
   @IsNumber()
   @Min(1)
   take?: number;
 
   @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === '' || value === null) return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+  })
   @IsNumber()
   @Min(0)
   skip?: number;

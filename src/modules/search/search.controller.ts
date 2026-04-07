@@ -22,7 +22,17 @@ export class SearchController {
 
   @Get('')
   @UseGuards(OptionalAuthGuard)
-  async filter(@Req() req: Request, @Query(ValidationPipe) args: SearchDto) {
+  async filter(
+    @Req() req: Request,
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: false,
+      }),
+    )
+    args: SearchDto,
+  ) {
     return this._searchService.filter(args, req.user as UserModel);
   }
 }

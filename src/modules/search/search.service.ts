@@ -6,11 +6,35 @@ import { OfferModel, OfferStatusEnum } from '@schemas/offer.schema';
 import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
-import { ObjectId } from 'mongodb';
+import { Types } from 'mongoose';
 import { SearchContent, SearchDto, SearchResultDto } from './dto/search.dto';
 
 @Injectable()
 export class SearchService {
+  /** Évite qu’un caractère spécial dans la requête casse le regex Mongo. */
+  private _escapeRegex(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  /**
+   * `req.user` peut ne pas exposer le virtual `id` selon le contexte ; `_id` est fiable.
+   * Sinon `new ObjectId(undefined)` lève et produit un 500 (ex. search avec Bearer, sans user en navigateur).
+   */
+  private _userObjectId(user?: UserModel): Types.ObjectId | null {
+    if (!user) return null;
+    const u = user as unknown as { _id?: Types.ObjectId | string; id?: string };
+    const raw = u._id ?? u.id;
+    if (raw == null || raw === '') return null;
+    try {
+      if (raw instanceof Types.ObjectId) return raw;
+      const s = String(raw);
+      if (!Types.ObjectId.isValid(s)) return null;
+      return new Types.ObjectId(s);
+    } catch {
+      return null;
+    }
+  }
+
   @Inject(ProductsService)
   private readonly _productsService: ProductsService;
 
@@ -23,9 +47,7 @@ export class SearchService {
   async filter(args: SearchDto, user?: UserModel) {
     args.page = args.page ?? 1;
     args.take = args.take ?? 5;
-    const searchContent = (args.searchContent as any as string).split(
-      ',',
-    ) as SearchContent[];
+    const searchContent = args.searchContent;
     // console.log('🚀 ~ SearchService ~ filter ~ args:', searchContent);
     const response: {
       [key: string]:
@@ -50,22 +72,19 @@ export class SearchService {
   }
 
   private async _filterOffers(args: SearchDto, user?: UserModel) {
+    const ownerOid = this._userObjectId(user);
     const pipeline = [
       {
         $match: {
           $and: [
             {
               $or: [
-                user
-                  ? {
-                      owner: new ObjectId(user.id),
-                    }
-                  : null,
+                ownerOid ? { owner: ownerOid } : null,
                 { status: OfferStatusEnum.ACTIVE },
               ].filter(Boolean),
             },
             args.storeId && {
-              _id: new ObjectId(args.storeId),
+              _id: new Types.ObjectId(args.storeId),
             },
             {
               $or: [
@@ -127,6 +146,7 @@ export class SearchService {
     args: SearchDto,
     user?: UserModel,
   ): Promise<SearchResultDto<ProductModel>> {
+    const ownerOid = this._userObjectId(user);
     const pipeline = [
       {
         $lookup: {
@@ -148,11 +168,7 @@ export class SearchService {
           $and: [
             {
               $or: [
-                user
-                  ? {
-                      'store.owner': new ObjectId(user.id),
-                    }
-                  : null,
+                ownerOid ? { 'store.owner': ownerOid } : null,
                 { status: ProductStatusEnum.ACTIVE },
               ].filter(Boolean),
             },
@@ -163,7 +179,7 @@ export class SearchService {
             //   status: ProductStatusEnum.ACTIVE,
             // },
             args.categoryId && {
-              category: { $eq: new ObjectId(args.categoryId) },
+              category: { $eq: new Types.ObjectId(args.categoryId) },
             },
             {
               $or: [
@@ -173,7 +189,7 @@ export class SearchService {
               ],
             },
             args.storeId && {
-              store: { $eq: new ObjectId(args.storeId) },
+              store: { $eq: new Types.ObjectId(args.storeId) },
             },
             args.minPrice &&
               args.minPrice !== undefined &&
@@ -253,7 +269,7 @@ export class SearchService {
 
     const products = await this._productsService
       .getProductModel()
-      .find({ _id: { $in: productsIds.map((p) => new ObjectId(p._id)) } })
+      .find({ _id: { $in: productsIds.map((p) => new Types.ObjectId(p._id)) } })
       .populate('category')
 
       .populate({
@@ -279,26 +295,37 @@ export class SearchService {
     args: SearchDto,
     user?: UserModel,
   ): Promise<SearchResultDto<StoreModel>> {
+    const ownerOid = this._userObjectId(user);
+    const q = args.query?.trim();
+    const andParts: Record<string, unknown>[] = [
+      {
+        $or: [
+          ownerOid ? { owner: ownerOid } : null,
+          {
+            status: {
+              $in: [
+                StoreStatusEnum.ACTIVE,
+                StoreStatusEnum.PENDING,
+                StoreStatusEnum.REVISION,
+              ],
+            },
+          },
+        ].filter(Boolean),
+      },
+    ];
+    if (q) {
+      const esc = this._escapeRegex(q);
+      andParts.push({
+        $or: [
+          { name: { $regex: esc, $options: 'i' } },
+          { bio: { $regex: esc, $options: 'i' } },
+        ],
+      });
+    }
     const pipeline = [
       {
         $match: {
-          $and: [
-            {
-              $or: [
-                // user ? { owner: { $eq: new ObjectId(user.id) } } : null,
-                user ? { owner: new ObjectId(user.id) } : null,
-                { status: StoreStatusEnum.ACTIVE },
-              ].filter(Boolean),
-            },
-            args.query
-              ? {
-                  $or: [
-                    { name: { $regex: args.query, $options: 'i' } },
-                    { bio: { $regex: args.query, $options: 'i' } },
-                  ],
-                }
-              : {}, // If query is empty, this will match everything
-          ],
+          $and: andParts,
         },
       },
       // {

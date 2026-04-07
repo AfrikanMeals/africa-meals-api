@@ -161,7 +161,7 @@ export class StoreService {
         select: 'address city country zipCode countryCode location',
       })
       .select(
-        'name bio email phoneNumber currency status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones address',
+        'name bio email phoneNumber currency status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones address profileImage',
       )
       .lean()
       .exec();
@@ -210,6 +210,11 @@ export class StoreService {
       },
     };
 
+    const profileImage =
+      typeof doc.profileImage === 'string' && doc.profileImage
+        ? doc.profileImage
+        : undefined;
+
     return {
       store: {
         id: (doc._id as { toString(): string }).toString(),
@@ -229,6 +234,7 @@ export class StoreService {
           from: String(m.from ?? 'SYSTEM'),
           createdAt: m.createdAt,
         })),
+        profileImage,
       },
     };
   }

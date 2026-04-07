@@ -12,21 +12,27 @@ import {
   UploadedFile,
   UseGuards,
   UseInterceptors,
+  UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { NotificationsService } from '@modules/notifications/notifications.service';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { memoryStorage } from 'multer';
 import { AuthService } from './auth.service';
 import {
+  ChatMediaJsonDto,
+  ChatVoiceJsonDto,
   CheckAccountDto,
   EmailVerificationDto,
   ForgotPasswordDto,
   GoogleAuthDto,
   LoginDto,
   RegisterDto,
+  RegisterFcmTokenDto,
+  RemoveFcmTokenDto,
   ResetPasswordDto,
   UpdateProfileDto,
 } from './dto/auth.dto';
@@ -39,6 +45,9 @@ export class AuthController {
 
   @Inject(AuthService)
   private readonly _authService: AuthService;
+
+  @Inject(NotificationsService)
+  private readonly _notifications: NotificationsService;
 
   @Post('register')
   async register(@Body(ValidationPipe) args: RegisterDto) {
@@ -131,6 +140,41 @@ export class AuthController {
     return req.user as UserModel;
   }
 
+  @Post('me/fcm-token')
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Enregistrer un jeton FCM (notifications push)' })
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async registerFcmToken(
+    @Req() req: Request,
+    @Body() body: RegisterFcmTokenDto,
+  ) {
+    const user = req.user as UserModel;
+    await this._notifications.registerUserFcmToken(
+      user._id.toString(),
+      body.token,
+      body.platform,
+    );
+    return { ok: true };
+  }
+
+  @Delete('me/fcm-token')
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Retirer un jeton FCM' })
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async removeFcmToken(
+    @Req() req: Request,
+    @Body() body: RemoveFcmTokenDto,
+  ) {
+    const user = req.user as UserModel;
+    await this._notifications.removeUserFcmToken(
+      user._id.toString(),
+      body.token,
+    );
+    return { ok: true };
+  }
+
   @Delete('me')
   @ApiBearerAuth('bearer')
   @UseGuards(JwtGuard)
@@ -148,6 +192,202 @@ export class AuthController {
   ) {
     const user = req.user as UserModel;
     return this._authService.updateProfile(user._id.toString(), args);
+  }
+
+  @Post('me/chat-voice')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 15 * 1024 * 1024, files: 1 },
+      fileFilter: (req, file, cb) => {
+        if (
+          !file.mimetype.match(
+            /^(audio\/(mpeg|mp4|webm|wav|x-m4a|aac|3gpp)|video\/webm)$/i,
+          ) &&
+          !file.originalname.match(/\.(m4a|mp3|aac|wav|webm|ogg)$/i)
+        ) {
+          return cb(new Error('invalid_file_type'), false);
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async uploadChatVoice(
+    @Req() req: Request,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('file_not_provided');
+    }
+    const user = req.user as UserModel;
+    return this._authService.uploadChatVoiceFile(
+      user._id.toString(),
+      file,
+      user,
+    );
+  }
+
+  /** Même effet que `chat-voice` mais corps JSON — évite multipart tronqué derrière certains hébergeurs. */
+  @Post('me/chat-voice-json')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async uploadChatVoiceJson(
+    @Req() req: Request,
+    @Body(ValidationPipe) body: ChatVoiceJsonDto,
+  ) {
+    const raw = body.audioBase64
+      .replace(/\s/g, '')
+      .replace(/^data:audio\/[^;]+;base64,/i, '');
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(raw, 'base64');
+    } catch {
+      throw new BadRequestException('invalid_base64');
+    }
+    if (!buffer.length) {
+      throw new BadRequestException('empty_audio');
+    }
+    const max = 15 * 1024 * 1024;
+    if (buffer.length > max) {
+      throw new BadRequestException('file_too_large');
+    }
+    const name = (body.filename || 'recording.webm').trim() || 'recording.webm';
+    const mimeIn = (body.mimeType || '').trim();
+    const nameOk = /\.(m4a|mp3|aac|wav|webm|ogg)$/i.test(name);
+    const mimeOk =
+      /^(audio\/(mpeg|mp4|webm|wav|x-m4a|aac|3gpp)|video\/webm)$/i.test(
+        mimeIn,
+      );
+    if (!nameOk && !mimeOk) {
+      throw new BadRequestException('invalid_file_type');
+    }
+    let mimetype = mimeIn;
+    if (!mimetype) {
+      const lower = name.toLowerCase();
+      if (lower.endsWith('.webm')) mimetype = 'audio/webm';
+      else if (lower.endsWith('.m4a')) mimetype = 'audio/mp4';
+      else if (lower.endsWith('.mp3')) mimetype = 'audio/mpeg';
+      else if (lower.endsWith('.wav')) mimetype = 'audio/wav';
+      else if (lower.endsWith('.ogg')) mimetype = 'audio/ogg';
+      else if (lower.endsWith('.aac')) mimetype = 'audio/aac';
+      else mimetype = 'audio/webm';
+    }
+    const file = {
+      fieldname: 'file',
+      originalname: name,
+      encoding: '7bit',
+      mimetype,
+      buffer,
+      size: buffer.length,
+      destination: '',
+      filename: '',
+      path: '',
+      stream: undefined,
+    } as Express.Multer.File;
+    const user = req.user as UserModel;
+    return this._authService.uploadChatVoiceFile(
+      user._id.toString(),
+      file,
+      user,
+    );
+  }
+
+  @Post('me/chat-media')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 20 * 1024 * 1024, files: 1 },
+      fileFilter: (req, file, cb) => {
+        const mime = (file.mimetype || '').toLowerCase();
+        const ok =
+          /^image\/(jpeg|png|gif|webp|heic|heif)$/i.test(mime) ||
+          /^application\/pdf$/i.test(mime) ||
+          /^application\/(zip|x-zip-compressed)$/i.test(mime) ||
+          /^text\/plain$/i.test(mime) ||
+          /^application\/msword$/i.test(mime) ||
+          /^application\/vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)$/i.test(
+            mime,
+          );
+        if (!ok) {
+          return cb(new Error('invalid_file_type'), false);
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async uploadChatMedia(
+    @Req() req: Request,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('file_not_provided');
+    }
+    const user = req.user as UserModel;
+    return this._authService.uploadChatMediaFile(
+      user._id.toString(),
+      file,
+      user,
+    );
+  }
+
+  /** Même effet que `chat-media` mais corps JSON — évite multipart tronqué (Firebase / CF / proxys). */
+  @Post('me/chat-media-json')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async uploadChatMediaJson(
+    @Req() req: Request,
+    @Body(ValidationPipe) body: ChatMediaJsonDto,
+  ) {
+    const raw = body.fileBase64
+      .replace(/\s/g, '')
+      .replace(/^data:[^;]+;base64,/i, '');
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(raw, 'base64');
+    } catch {
+      throw new BadRequestException('invalid_base64');
+    }
+    if (!buffer.length) {
+      throw new BadRequestException('empty_file');
+    }
+    const max = 20 * 1024 * 1024;
+    if (buffer.length > max) {
+      throw new BadRequestException('file_too_large');
+    }
+    const name = (body.filename || 'file').trim() || 'file';
+    let mimetype = (body.mimeType || '').trim();
+    if (!mimetype) {
+      const inferred = inferChatMediaMimeFromFilename(name);
+      if (!inferred) {
+        throw new BadRequestException('invalid_file_type');
+      }
+      mimetype = inferred;
+    }
+    if (!isAllowedChatMediaMime(mimetype)) {
+      throw new BadRequestException('invalid_file_type');
+    }
+    const file = {
+      fieldname: 'file',
+      originalname: name,
+      encoding: '7bit',
+      mimetype,
+      buffer,
+      size: buffer.length,
+      destination: '',
+      filename: '',
+      path: '',
+      stream: undefined,
+    } as Express.Multer.File;
+    const user = req.user as UserModel;
+    return this._authService.uploadChatMediaFile(
+      user._id.toString(),
+      file,
+      user,
+    );
   }
 
   @Patch('me/profile-image')
@@ -187,4 +427,46 @@ export class AuthController {
     const user = req.user as UserModel;
     return this._authService.removeProfileImage(user._id.toString(), user);
   }
+}
+
+function inferChatMediaMimeFromFilename(name: string): string | null {
+  const lower = name.toLowerCase();
+  if (/\.(jpe?g)$/i.test(lower)) return 'image/jpeg';
+  if (/\.png$/i.test(lower)) return 'image/png';
+  if (/\.gif$/i.test(lower)) return 'image/gif';
+  if (/\.webp$/i.test(lower)) return 'image/webp';
+  if (/\.heic$/i.test(lower)) return 'image/heic';
+  if (/\.heif$/i.test(lower)) return 'image/heif';
+  if (/\.pdf$/i.test(lower)) return 'application/pdf';
+  if (/\.zip$/i.test(lower)) return 'application/zip';
+  if (/\.txt$/i.test(lower)) return 'text/plain';
+  if (/\.doc$/i.test(lower)) return 'application/msword';
+  if (/\.docx$/i.test(lower)) {
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  }
+  if (/\.xlsx$/i.test(lower)) {
+    return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  }
+  if (/\.xls$/i.test(lower)) return 'application/vnd.ms-excel';
+  if (/\.pptx$/i.test(lower)) {
+    return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  }
+  if (/\.ppt$/i.test(lower)) return 'application/vnd.ms-powerpoint';
+  return null;
+}
+
+function isAllowedChatMediaMime(mime: string): boolean {
+  const m = mime.toLowerCase();
+  return (
+    /^image\/(jpeg|png|gif|webp|heic|heif)$/i.test(m) ||
+    /^application\/pdf$/i.test(m) ||
+    /^application\/(zip|x-zip-compressed)$/i.test(m) ||
+    /^text\/plain$/i.test(m) ||
+    /^application\/msword$/i.test(m) ||
+    /^application\/vnd\.ms-excel$/i.test(m) ||
+    /^application\/vnd\.ms-powerpoint$/i.test(m) ||
+    /^application\/vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation)$/i.test(
+      m,
+    )
+  );
 }

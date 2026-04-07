@@ -1,63 +1,21 @@
 import { NestFactory } from '@nestjs/core';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import * as express from 'express';
 import { AppModule } from './app.module';
+import { configureApplication } from './configure-app';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-
-  const origins = process.env.CORS_ORIGIN?.split(',').map((o) => o.trim()).filter(Boolean);
-  app.enableCors({
-    origin: origins?.length ? origins : true,
-    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bodyParser: false,
   });
-
-  app.use((req: any, _res, next) => {
-    const body = req.body ? JSON.stringify(req.body) : '(no body)';
-    console.warn(`[REQ] ${req.method} ${req.originalUrl} body: ${body}`);
-    next();
-  });
-
-  app.setGlobalPrefix('api');
-
-  const config = new DocumentBuilder()
-    .setTitle('Africa Meals API')
-    .setDescription('Documentation de l\'API Africa Meals')
-    .setVersion('1.0')
-    .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'bearer')
-    .addTag('auth', 'Authentification et inscription')
-    .addTag('stores', 'Restaurants / magasins')
-    .addTag('products', 'Produits et catégories')
-    .addTag('cart', 'Panier')
-    .addTag('orders', 'Commandes')
-    .addTag('addresses', 'Adresses')
-    .addTag('offers', 'Offres et promos')
-    .addTag('announcements', 'Annonces')
-    .addTag('billing', 'Paiement')
-    .addTag('search', 'Recherche')
-    .addTag('mailer', 'Envoi d’emails (test)')
-    .build();
-  const document = SwaggerModule.createDocument(app, config, {
-    operationIdFactory: (controllerKey: string, methodKey: string) =>
-      methodKey,
-  });
-  SwaggerModule.setup('docs', app, document, {
-    useGlobalPrefix: true,
-    swaggerOptions: {
-      persistAuthorization: true,
-      docExpansion: 'list',
-      filter: true,
-      showRequestDuration: true,
-      tryItOutEnabled: true,
-    },
-    customSiteTitle: 'Africa Meals API Docs',
-  });
+  app.use(express.json({ limit: '60mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '60mb' }));
+  await configureApplication(app);
 
   const port = Number(process.env.NODE_PORT || process.env.PORT || 3000);
   await app.listen(port);
   console.warn(
-    `🚀 API: http://localhost:${port}/api (docs: /api/docs)`,
+    `🚀 API: http://localhost:/api (docs: /api/docs)`,
   );
 }
 bootstrap();

@@ -23,24 +23,34 @@ import { SupportChatModule } from './modules/support-chat/support-chat.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
-      envFilePath: ['.env', '../.env'],
+      // `.env.local` est chargé en premier (secrets locaux) ; souvent absent du dépôt.
+      envFilePath: ['.env.local', '.env', '../.env'],
       isGlobal: true,
     }),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
-        // Logger.warn('🚀 ~ DB Setup ...', 'MAIN');
-        // Logger.warn(config.get<string>('MONGO_URI'), 'MAIN');
-        const uri = `mongodb+srv://${config.get<string>(
+        const fullUri =
+          config.get<string>('MONGODB_URI') ||
+          config.get<string>('MONGO_URI') ||
+          '';
+        const builtUri = `mongodb+srv://${config.get<string>(
           'DB_USERNAME',
         )}:${config.get<string>('DB_PASSWORD')}@${config.get<string>(
           'DB_HOST',
         )}?retryWrites=true&w=majority&appName=Main`;
-        // console.log('🚀 ~ uri:', uri);
+
+        const uri = fullUri || builtUri;
+        const dbName = config.get<string>('DB_DATABASE');
+
         return {
           uri,
-          dbName: config.get<string>('DB_DATABASE'),
+          ...(dbName ? { dbName } : {}),
+          maxPoolSize: Number(config.get<string>('MONGOOSE_MAX_POOL') || 10),
+          serverSelectionTimeoutMS: Number(
+            config.get<string>('MONGOOSE_SERVER_SELECTION_MS') || 8000,
+          ),
         };
       },
     }),

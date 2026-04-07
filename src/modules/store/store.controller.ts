@@ -36,7 +36,7 @@ import {
 } from '@modules/stock-items/dto/stock-item.dto';
 import { StockItemsService } from '@modules/stock-items/stock-items.service';
 import { AdminVendorStoreStatusDto } from './dto/admin-vendor-store.dto';
-import { CreateStoreDto } from './dto/store.dto';
+import { CreateStoreDto, StoreProfileImageJsonDto } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { StoreService } from './store.service';
 
@@ -246,6 +246,59 @@ export class StoreController {
     );
   }
 
+  /** JSON + base64 : fiable sur Firebase / CF où multipart peut échouer (« Unexpected end of form »). */
+  @Post('/:id/profile-image-json')
+  @UseGuards(JwtGuard)
+  async uploadProfileImageJson(
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: StoreProfileImageJsonDto,
+    @Req() req: Request,
+  ) {
+    const raw = body.imageBase64
+      .replace(/\s/g, '')
+      .replace(/^data:image\/[^;]+;base64,/i, '');
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(raw, 'base64');
+    } catch {
+      throw new BadRequestException('invalid_base64');
+    }
+    if (!buffer.length) {
+      throw new BadRequestException('empty_image');
+    }
+    const max = 50 * 1024 * 1024;
+    if (buffer.length > max) {
+      throw new BadRequestException('file_too_large');
+    }
+    const name = (body.filename || 'photo.jpg').trim() || 'photo.jpg';
+    if (!/\.(jpe?g|png)$/i.test(name)) {
+      throw new BadRequestException('invalid_file_type');
+    }
+    const mime = name.toLowerCase().endsWith('.png')
+      ? 'image/png'
+      : 'image/jpeg';
+    const file = {
+      fieldname: 'image',
+      originalname: name,
+      encoding: '7bit',
+      mimetype: mime,
+      buffer,
+      size: buffer.length,
+      destination: '',
+      filename: '',
+      path: '',
+      stream: undefined,
+    } as Express.Multer.File;
+    return this._storeService.updateProfileImage(
+      id,
+      file,
+      req.user as UserModel,
+    );
+  }
+
+  /** POST en plus de PATCH : certains proxys / runtimes tronquent le corps multipart sur PATCH. */
+  @Post('/:id/profile-image')
   @Patch('/:id/profile-image')
   @UseGuards(JwtGuard)
   @UseInterceptors(
@@ -253,7 +306,7 @@ export class StoreController {
       storage: memoryStorage(),
       limits: { fileSize: 50 * 1024 * 1024, files: 1 }, // 50 MB
       fileFilter: (req, file, cb) => {
-        if (!file.originalname.match(/\.(jpg|jpeg|png)$/)) {
+        if (!file.originalname.match(/\.(jpg|jpeg|png)$/i)) {
           return cb(new Error('invalid_file_type'), false);
         }
         cb(null, true);

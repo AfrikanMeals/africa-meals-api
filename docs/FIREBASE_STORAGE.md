@@ -19,8 +19,9 @@ Using the Admin SDK avoids the `storage/unauthorized` (403) error: uploads are d
 
 In your `.env` (see `.env.example`), set:
 
-- **`FIREBASE_PROJECT_ID`** – your Firebase project ID.
-- **`FIREBASE_STORAGE_BUCKET`** – Storage bucket name (e.g. `your-project-id.appspot.com` or `your-project-id.firebasestorage.app`).
+- **`AM_FIREBASE_PROJECT_ID`** – Firebase / GCP project ID.  
+  (Do **not** use `FIREBASE_PROJECT_ID` — that prefix is reserved when using Firebase Cloud Functions deploy.)
+- **`AM_FIREBASE_STORAGE_BUCKET`** – Storage bucket (e.g. `your-project-id.appspot.com` or `your-project-id.firebasestorage.app`).
 
 Then **choose one** of these for the service account credential:
 
@@ -35,7 +36,7 @@ The path is **relative to the project root** (directory from which you start the
 **Option B – JSON in env (e.g. Docker / CI)**
 
 ```env
-FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"...",...}
+AM_FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"...",...}
 ```
 
 Paste the **entire** content of the service account JSON as a single line. Useful when you cannot mount a file.

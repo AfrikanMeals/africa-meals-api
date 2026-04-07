@@ -14,8 +14,7 @@ import { ProductCategoryModel } from '@schemas/product-category.schema';
 import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
-import { ObjectId } from 'mongodb';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import {
   CreateProductDto,
   CreateProductExtraDto,
@@ -480,7 +479,7 @@ export class ProductsService {
         extras: {
           // _id: extraId,
           // $elemMatch: { title: { $regex: new RegExp(`^${extraId}$`, 'i') } },
-          $elemMatch: { _id: new ObjectId(extraId) },
+          $elemMatch: { _id: new Types.ObjectId(extraId) },
         },
       })
       .populate('store')

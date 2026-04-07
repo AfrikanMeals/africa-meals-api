@@ -11,8 +11,7 @@ import {
   PaymentMetodProviderEnum,
 } from '@schemas/payment-method.schema';
 import { UserModel } from '@schemas/user.schema';
-import { ObjectId } from 'mongodb';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { PaypalService } from './paypal/paypal.service';
 
 // TODO: For payouts, create a table to store payout transactions for every order
@@ -33,7 +32,7 @@ export class BillingService {
 
       const hasMaymentMethod = await this._paymentMethodModel
         .findOne({
-          user: new ObjectId(user.id),
+          user: new Types.ObjectId(user.id),
         })
         .exec();
 
@@ -56,7 +55,7 @@ export class BillingService {
         ...(!token.isCard && {
           prodiderUserName: token.emailId,
         }),
-        userId: new ObjectId(user.id),
+        userId: new Types.ObjectId(user.id),
       });
 
       await this._usersService.attachPaymentMethod(method, user);
@@ -86,7 +85,7 @@ export class BillingService {
       // TODO should check payment provider
       //! TODO should check if payment method is default ??
       const method = await this._paymentMethodModel.findOne({
-        _id: new ObjectId(id),
+        _id: new Types.ObjectId(id),
       });
       if (!method) {
         throw new NotFoundException('payment_method_not_found');
@@ -104,7 +103,7 @@ export class BillingService {
       );
       await this._paymentMethodModel
         .deleteOne({
-          _id: new ObjectId(id),
+          _id: new Types.ObjectId(id),
           user: user.id,
         })
         .exec();

@@ -52,6 +52,16 @@ $ yarn run start:dev
 $ yarn run start:prod
 ```
 
+## Firebase Cloud Functions
+
+Déploiement HTTP (Gen 2) : voir **[docs/FIREBASE_FUNCTIONS.md](docs/FIREBASE_FUNCTIONS.md)**.  
+Résumé : copier `.firebaserc.example` → `.firebaserc`, puis `firebase deploy --only functions` (le build Nest est lancé en `predeploy`).  
+Le point d’entrée Cloud Functions est **`dist/firebase-main.js`** (`package.json` → `main`).
+
+**Santé de l’API** : `GET …/api/health` (JSON : `status`, `version`, `uptimeSeconds`, etc.). Voir les URLs exactes dans [docs/FIREBASE_FUNCTIONS.md](docs/FIREBASE_FUNCTIONS.md#health-check).
+
+**Documentation OpenAPI** : UI Swagger sur **`/api/docs`** (local ou URL Cloud Functions). Variable `DISABLE_SWAGGER=true` pour la désactiver. Le service **chat** (`africa-meals-ws` / Cloud Run `ws`) expose la même convention **`/api/docs`** ; voir [docs/FIREBASE_FUNCTIONS.md](docs/FIREBASE_FUNCTIONS.md#documentation-openapi-swagger).
+
 ## Test
 
 ```bash
@@ -80,4 +90,4 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 Nest is [MIT licensed](LICENSE).
 
 
-ngrok http --url=blindly-witty-snake.ngrok-free.app 3000
+ngrok http --url=blindly-witty-snake.ngrok-free.app 9000
