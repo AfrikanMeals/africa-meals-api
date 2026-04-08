@@ -865,6 +865,21 @@ export class StoreService {
       doc.canCreateProducts = true;
     }
     await doc.save();
+
+    const ownerIdForWs = (() => {
+      const o = doc.owner as unknown;
+      if (o && typeof o === 'object' && '_id' in o) {
+        return String((o as { _id: { toString(): string } })._id);
+      }
+      if (o != null && typeof (o as { toString?: () => string }).toString === 'function') {
+        return String(o);
+      }
+      return '';
+    })();
+    if (ownerIdForWs) {
+      this._wsInboxNotify.notifyUserInboxRefresh(ownerIdForWs);
+    }
+
     const lean = await this._storeModel
       .findById(storeId)
       .populate({ path: 'owner', select: 'fullName email' })
