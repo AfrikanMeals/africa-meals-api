@@ -4,6 +4,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { EnvDebugController } from './env-debug.controller';
 import { AddressesModule } from './modules/addresses/addresses.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { MailerModule } from './modules/mailer/mailer.module';
@@ -69,7 +70,7 @@ import { OrdersModule } from './modules/orders/orders.module';
     OrdersModule,
     // SharedModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, EnvDebugController],
   providers: [AppService],
   // exports: [ConfigModule],
 })
