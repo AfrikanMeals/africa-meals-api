@@ -378,6 +378,8 @@ export class NotificationsService {
     title: string;
     body: string;
     data: Record<string, string>;
+    /** Canal Android (Flutter : même id que [FlutterLocalNotifications] côté app). */
+    androidChannelId?: string;
   }): Promise<{ sent: number; failures: number; deviceCount: number }> {
     const oids = args.recipientUserIds
       .filter((id) => Types.ObjectId.isValid(id))
@@ -415,6 +417,17 @@ export class NotificationsService {
     const messaging = getMessaging(this.firebaseApp);
     const data = { ...args.data };
 
+    const androidChannelId = args.androidChannelId?.trim();
+    const androidCfg = androidChannelId
+      ? {
+          priority: 'high' as const,
+          notification: {
+            channelId: androidChannelId,
+            sound: 'default' as const,
+          },
+        }
+      : { priority: 'high' as const };
+
     const messages = tokenRows.map((row) => ({
       token: row.token,
       notification: {
@@ -422,7 +435,7 @@ export class NotificationsService {
         body: args.body,
       },
       data,
-      android: { priority: 'high' as const },
+      android: androidCfg,
       apns: {
         payload: {
           aps: {
@@ -506,6 +519,7 @@ export class NotificationsService {
       title: displayTitle,
       body: args.body,
       data,
+      androidChannelId: 'african_meals_chat',
     });
     return { sent: r.sent, failures: r.failures };
   }
