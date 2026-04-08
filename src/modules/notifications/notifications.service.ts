@@ -499,9 +499,11 @@ export class NotificationsService {
     if (args.storeName?.trim()) {
       data.storeName = args.storeName.trim();
     }
+    const displayTitle =
+      args.storeName?.trim() || args.title?.trim() || 'African Meals';
     const r = await this.sendMulticastNotification({
       recipientUserIds: args.recipientUserIds,
-      title: args.title,
+      title: displayTitle,
       body: args.body,
       data,
     });
