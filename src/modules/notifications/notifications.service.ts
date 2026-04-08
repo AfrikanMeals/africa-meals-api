@@ -16,19 +16,20 @@ export class NotificationsService {
     @InjectModel(UserModel.name) private readonly userModel: Model<UserModel>,
   ) {}
 
-  async sendChatMessagePush(args: {
+  /**
+   * Envoie une notification + payload `data` à tous les jetons FCM des utilisateurs ciblés.
+   */
+  async sendMulticastNotification(args: {
     recipientUserIds: string[];
     title: string;
     body: string;
-    conversationId?: string;
-    storeId?: string;
-    storeName?: string;
-  }): Promise<{ sent: number; failures: number }> {
+    data: Record<string, string>;
+  }): Promise<{ sent: number; failures: number; deviceCount: number }> {
     const oids = args.recipientUserIds
       .filter((id) => Types.ObjectId.isValid(id))
       .map((id) => new Types.ObjectId(id));
     if (oids.length === 0) {
-      return { sent: 0, failures: 0 };
+      return { sent: 0, failures: 0, deviceCount: 0 };
     }
 
     const users = await this.userModel
@@ -52,23 +53,13 @@ export class NotificationsService {
       }
     }
 
-    if (tokenRows.length === 0) {
-      return { sent: 0, failures: 0 };
+    const deviceCount = tokenRows.length;
+    if (deviceCount === 0) {
+      return { sent: 0, failures: 0, deviceCount: 0 };
     }
 
     const messaging = getMessaging(this.firebaseApp);
-    const data: Record<string, string> = {
-      type: 'chat',
-    };
-    if (args.conversationId) {
-      data.conversationId = args.conversationId;
-    }
-    if (args.storeId?.trim()) {
-      data.storeId = args.storeId.trim();
-    }
-    if (args.storeName?.trim()) {
-      data.storeName = args.storeName.trim();
-    }
+    const data = { ...args.data };
 
     const messages = tokenRows.map((row) => ({
       token: row.token,
@@ -131,7 +122,55 @@ export class NotificationsService {
       );
     }
 
-    return { sent, failures };
+    return { sent, failures, deviceCount };
+  }
+
+  async sendChatMessagePush(args: {
+    recipientUserIds: string[];
+    title: string;
+    body: string;
+    conversationId?: string;
+    storeId?: string;
+    storeName?: string;
+  }): Promise<{ sent: number; failures: number }> {
+    const data: Record<string, string> = {
+      type: 'chat',
+    };
+    if (args.conversationId) {
+      data.conversationId = args.conversationId;
+    }
+    if (args.storeId?.trim()) {
+      data.storeId = args.storeId.trim();
+    }
+    if (args.storeName?.trim()) {
+      data.storeName = args.storeName.trim();
+    }
+    const r = await this.sendMulticastNotification({
+      recipientUserIds: args.recipientUserIds,
+      title: args.title,
+      body: args.body,
+      data,
+    });
+    return { sent: r.sent, failures: r.failures };
+  }
+
+  /**
+   * Notification de test (Swagger / diagnostic) — `data.type` = `fcm_test`.
+   */
+  async sendFcmTestPush(args: {
+    recipientUserId: string;
+    title: string;
+    body: string;
+  }): Promise<{ sent: number; failures: number; deviceCount: number }> {
+    return this.sendMulticastNotification({
+      recipientUserIds: [args.recipientUserId],
+      title: args.title,
+      body: args.body,
+      data: {
+        type: 'fcm_test',
+        source: 'api',
+      },
+    });
   }
 
   async registerUserFcmToken(
