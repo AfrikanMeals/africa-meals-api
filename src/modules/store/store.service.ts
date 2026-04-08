@@ -34,6 +34,7 @@ import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 import { CreateStoreDto } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
+import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 
 @Injectable()
 export class StoreService {
@@ -75,6 +76,9 @@ export class StoreService {
 
   @Inject(MailerService)
   private readonly _mailerService: MailerService;
+
+  @Inject(WsInboxNotifyService)
+  private readonly _wsInboxNotify: WsInboxNotifyService;
 
   getStoreModel() {
     return this._storeModel;
@@ -147,6 +151,10 @@ export class StoreService {
           },
         },
       },
+    );
+
+    this._wsInboxNotify.notifyUserInboxRefresh(
+      (user._id as { toString(): string }).toString(),
     );
 
     return this.findOneById(store._id.toString());
@@ -408,6 +416,10 @@ export class StoreService {
           },
         },
       },
+    );
+
+    this._wsInboxNotify.notifyUserInboxRefresh(
+      (user._id as { toString(): string }).toString(),
     );
 
     return this.findMyStoreSummary(user);

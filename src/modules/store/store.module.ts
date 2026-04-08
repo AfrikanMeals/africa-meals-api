@@ -9,6 +9,7 @@ import { StockItemsModule } from '@modules/stock-items/stock-items.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { UsersModule } from '@modules/users/users.module';
+import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
@@ -20,6 +21,7 @@ import { StoreService } from './store.service';
   controllers: [StoreController],
   providers: [StoreService],
   imports: [
+    WsNotifyModule,
     MailerModule,
     RatingsModule,
     AddressesModule,
