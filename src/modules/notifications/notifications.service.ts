@@ -492,6 +492,57 @@ export class NotificationsService {
     return { sent, failures, deviceCount };
   }
 
+  /**
+   * Une entrée par destinataire dans `app_notifications` (in-app + compteur non lu).
+   * Les accusés de lecture restent sur `notification_read_receipts`.
+   */
+  private async persistChatInboxNotifications(args: {
+    recipientUserIds: string[];
+    title: string;
+    body: string;
+    conversationId?: string;
+    storeId?: string;
+    storeName?: string;
+  }): Promise<void> {
+    const valid = [...new Set(args.recipientUserIds)].filter((id) =>
+      Types.ObjectId.isValid(id),
+    );
+    if (valid.length === 0) {
+      return;
+    }
+
+    const data: Record<string, unknown> = {
+      type: 'chat',
+    };
+    const cid = args.conversationId?.trim();
+    if (cid) {
+      data.conversationId = cid;
+    }
+    const sid = args.storeId?.trim();
+    if (sid) {
+      data.storeId = sid;
+    }
+    const sname = args.storeName?.trim();
+    if (sname) {
+      data.storeName = sname;
+    }
+
+    const displayTitle =
+      sname || args.title?.trim() || 'African Meals';
+
+    await this.appNotificationModel.insertMany(
+      valid.map((uid) => ({
+        scope: AppNotificationScopeEnum.USER,
+        recipientUserId: new Types.ObjectId(uid),
+        title: displayTitle,
+        body: (args.body ?? '').trim(),
+        type: 'chat',
+        data,
+      })),
+      { ordered: false },
+    );
+  }
+
   async sendChatMessagePush(args: {
     recipientUserIds: string[];
     title: string;
@@ -500,6 +551,13 @@ export class NotificationsService {
     storeId?: string;
     storeName?: string;
   }): Promise<{ sent: number; failures: number }> {
+    try {
+      await this.persistChatInboxNotifications(args);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`persistChatInboxNotifications failed: ${msg}`);
+    }
+
     const data: Record<string, string> = {
       type: 'chat',
     };
