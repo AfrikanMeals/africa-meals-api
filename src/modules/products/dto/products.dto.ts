@@ -3,11 +3,14 @@ import { ProductStatusEnum } from '@schemas/product.schema';
 import { Trim } from 'class-sanitizer';
 import { Transform } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsEnum,
   IsNotEmpty,
   IsNumber,
   IsOptional,
+  IsString,
   Min,
 } from 'class-validator';
 
@@ -119,6 +122,71 @@ export class PatchProductDto {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   clearGallery?: boolean;
+}
+
+/**
+ * Création produit en JSON + base64 (évite multipart tronqué derrière Firebase / proxys).
+ */
+export class CreateProductJsonDto extends CreateProductDto {
+  @ApiPropertyOptional({
+    description: 'Image principale (base64 pur ou préfixe data:image/...;base64,)',
+  })
+  @IsOptional()
+  @IsString()
+  imageBase64?: string;
+
+  @ApiPropertyOptional({ example: 'plat.jpg' })
+  @IsOptional()
+  @IsString()
+  imageFilename?: string;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Jusqu’à 2 images galerie (base64 chacune)',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(2)
+  @IsString({ each: true })
+  galleryBase64?: string[];
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(2)
+  @IsString({ each: true })
+  galleryFilenames?: string[];
+}
+
+/**
+ * Mise à jour produit (métadonnées + images) en JSON + base64.
+ */
+export class PatchProductJsonDto extends PatchProductDto {
+  @ApiPropertyOptional({
+    description: 'Nouvelle image principale (base64 pur ou préfixe data:image/...;base64,)',
+  })
+  @IsOptional()
+  @IsString()
+  imageBase64?: string;
+
+  @ApiPropertyOptional({ example: 'plat.jpg' })
+  @IsOptional()
+  @IsString()
+  imageFilename?: string;
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(2)
+  @IsString({ each: true })
+  galleryBase64?: string[];
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(2)
+  @IsString({ each: true })
+  galleryFilenames?: string[];
 }
 
 export class CreateProductExtraDto {
