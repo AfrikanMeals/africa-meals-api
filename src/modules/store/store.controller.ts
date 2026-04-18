@@ -168,6 +168,29 @@ export class StoreController {
     return { ok: true };
   }
 
+  /**
+   * Mise à jour produit **sans fichiers** (JSON).
+   * Contourne les échecs multipart (« Unexpected end of form ») derrière Firebase / proxys.
+   */
+  @Patch('/:id/products/:productId/metadata')
+  @UseGuards(JwtGuard)
+  async updateStoreProductMetadata(
+    @Param('id') id: string,
+    @Param('productId') productId: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    args: PatchProductDto,
+    @Req() req: Request,
+  ) {
+    return this._storeService.updateStoreProduct(
+      id,
+      productId,
+      args,
+      req.user as UserModel,
+      undefined,
+      undefined,
+    );
+  }
+
   @Patch('/:id/products/:productId')
   @UseGuards(JwtGuard)
   @UseInterceptors(
