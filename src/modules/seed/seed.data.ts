@@ -3,18 +3,32 @@ import { StoreStatusEnum } from '@schemas/store.schema';
 import { ProductStatusEnum } from '@schemas/product.schema';
 import { UserTypeEnum } from '@schemas/user.schema';
 
+/** Villes du Saguenay–Lac-Saint-Jean (adresses de démo Canada / CAD). */
 const CITIES = [
-  'Montréal',
-  'Québec',
-  'Laval',
-  'Toronto',
-  'Ottawa',
-  'Calgary',
-  'Vancouver',
-  'Dakar',
-  'Douala',
-  'Abidjan',
-];
+  'Chicoutimi',
+  'Jonquière',
+  'Alma',
+  'Roberval',
+  'Dolbeau-Mistassini',
+  'La Baie',
+  'Saint-Ambroise',
+  'Normandin',
+  'Métabetchouan-Lac-à-la-Croix',
+  'Hébertville',
+] as const;
+
+const SAGUENAY_POSTAL_CODES = [
+  'G7H 1R2',
+  'G7X 4K8',
+  'G8B 1N1',
+  'G8H 2T3',
+  'G8L 1E5',
+  'G7B 3M2',
+  'G0W 1A0',
+  'G8G 2P4',
+  'G8N 1Y7',
+  'G8J 3R6',
+] as const;
 
 const STORE_NAMES = [
   'Le Ndolè Express',
@@ -105,16 +119,19 @@ function randomPrice(min: number, max: number): number {
 }
 
 export function getMockAddresses(): MockAddress[] {
+  /** Centre approximatif Saguenay + léger décalage par index (lng, lat). */
+  const baseLng = -71.06;
+  const baseLat = 48.43;
   return CITIES.map((city, i) => ({
-    address: `${100 + i * 10} rue Commerce`,
+    address: `${150 + i * 12} rue Bossé`,
     country: 'Canada',
     city,
     countryCode: 'CA',
-    zipCode: `H2X ${1 + i}Y4`,
+    zipCode: SAGUENAY_POSTAL_CODES[i] ?? 'G7H 1R2',
     type: AddressTypeEnum.SHOP,
     location: {
       type: 'Point' as const,
-      coordinates: [-73.5 + i * 0.01, 45.5 + i * 0.01],
+      coordinates: [baseLng + i * 0.035, baseLat + i * 0.018],
     },
   }));
 }

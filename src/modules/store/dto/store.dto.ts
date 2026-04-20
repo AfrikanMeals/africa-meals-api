@@ -3,11 +3,15 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
+  IsArray,
   IsBoolean,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
+  Max,
+  Min,
   MinLength,
   ValidateIf,
   ValidateNested,
@@ -78,6 +82,27 @@ export class CreateStoreDto {
   @Type(() => StoreShippingZoneDto)
   @ValidateIf((o) => o.shippingZones?.length > 0 || o.supportsShipping)
   shippingZones?: StoreShippingZoneDto[];
+}
+
+export class DailyMenuSlotDto {
+  @ApiProperty({ description: '0 = dimanche … 6 = samedi (comme Date.getDay())', minimum: 0, maximum: 6 })
+  @IsInt()
+  @Min(0)
+  @Max(6)
+  dayOfWeek: number;
+
+  @ApiProperty({ type: [String], description: 'Identifiants des produits du catalogue de la boutique' })
+  @IsArray()
+  @IsString({ each: true })
+  productIds: string[];
+}
+
+export class PatchDailyMenuDto {
+  @ApiProperty({ type: [DailyMenuSlotDto] })
+  @ValidateNested({ each: true })
+  @Type(() => DailyMenuSlotDto)
+  @IsArray()
+  slots: DailyMenuSlotDto[];
 }
 
 /** Logo boutique : évite multipart (souvent cassé derrière Cloud Functions / certains proxys). */

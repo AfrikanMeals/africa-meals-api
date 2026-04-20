@@ -19,6 +19,7 @@ import { AnnouncementsModule } from './modules/announcements/announcements.modul
 import { BillingModule } from './modules/billing/billing.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { SupportChatModule } from './modules/support-chat/support-chat.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -69,6 +70,7 @@ import { SupportChatModule } from './modules/support-chat/support-chat.module';
     BillingModule,
     OrdersModule,
     SupportChatModule,
+    DashboardModule,
     // SharedModule,
   ],
   controllers: [AppController],

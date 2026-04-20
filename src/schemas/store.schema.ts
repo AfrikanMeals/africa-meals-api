@@ -140,6 +140,23 @@ export class StoreModel extends BaseSchema {
     },
   })
   shippingZones: StoreShippingZoneModel[];
+
+  /**
+   * Menu du jour : plats proposés par jour de la semaine (0 = dimanche … 6 = samedi, comme `Date.getDay()`).
+   */
+  @Prop({
+    type: [
+      {
+        dayOfWeek: { type: Number, required: true, min: 0, max: 6 },
+        productIds: [
+          { type: MongooseSchema.Types.ObjectId, ref: 'ProductModel' },
+        ],
+      },
+    ],
+    default: [],
+    name: 'daily_menu_by_weekday',
+  })
+  dailyMenuByWeekday?: Array<{ dayOfWeek: number; productIds: unknown[] }>;
 }
 
 export const StoreSchema = SchemaFactory.createForClass(StoreModel);

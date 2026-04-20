@@ -29,6 +29,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { AddressTypeEnum } from '@schemas/address.schema';
 import { CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { AddressModel } from '@schemas/address.schema';
+import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
@@ -42,6 +43,9 @@ export class StoreService {
 
   @InjectModel(UserModel.name)
   private readonly _userModel: Model<UserModel>;
+
+  @InjectModel(ProductModel.name)
+  private readonly _productModel: Model<ProductModel>;
 
   @Inject(AddressesService)
   private readonly _addressesService: AddressesService;
@@ -161,7 +165,7 @@ export class StoreService {
         select: 'address city country zipCode countryCode location',
       })
       .select(
-        'name bio email phoneNumber currency status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones address profileImage',
+        'name bio email phoneNumber currency status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones address profileImage dailyMenuByWeekday',
       )
       .lean()
       .exec();
@@ -215,6 +219,19 @@ export class StoreService {
         ? doc.profileImage
         : undefined;
 
+    const rawMenu =
+      (doc.dailyMenuByWeekday as
+        | Array<{ dayOfWeek?: number; productIds?: unknown[] }>
+        | undefined) ?? [];
+    const dailyMenuByWeekday = rawMenu.map((row) => ({
+      dayOfWeek: Number(row.dayOfWeek ?? 0),
+      productIds: (row.productIds ?? []).map((id) =>
+        typeof id === 'object' && id !== null && 'toString' in id
+          ? (id as { toString: () => string }).toString()
+          : String(id),
+      ),
+    }));
+
     return {
       store: {
         id: (doc._id as { toString(): string }).toString(),
@@ -235,8 +252,60 @@ export class StoreService {
           createdAt: m.createdAt,
         })),
         profileImage,
+        dailyMenuByWeekday,
       },
     };
+  }
+
+  async updateVendorDailyMenu(
+    storeId: string,
+    user: UserModel,
+    slots: { dayOfWeek: number; productIds: string[] }[],
+  ) {
+    const store = await this._storeModel
+      .findOne({ _id: storeId, owner: user._id })
+      .exec();
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+
+    const merged = new Map<number, string[]>();
+    for (let d = 0; d <= 6; d++) {
+      merged.set(d, []);
+    }
+    for (const s of slots) {
+      const d = Math.min(6, Math.max(0, Math.floor(Number(s.dayOfWeek))));
+      const ids = [
+        ...new Set((s.productIds || []).map(String).filter(Boolean)),
+      ];
+      merged.set(d, ids);
+    }
+
+    const allIds = [...new Set([...merged.values()].flat())];
+    if (allIds.length) {
+      const n = await this._productModel
+        .countDocuments({
+          store: storeId,
+          _id: { $in: allIds },
+        })
+        .exec();
+      if (n !== allIds.length) {
+        throw new BadRequestException('daily_menu_product_not_in_store');
+      }
+    }
+
+    const dailyMenuByWeekday = [...merged.entries()].map(
+      ([dayOfWeek, productIds]) => ({
+        dayOfWeek,
+        productIds,
+      }),
+    );
+
+    await this._storeModel
+      .updateOne({ _id: storeId }, { $set: { dailyMenuByWeekday } })
+      .exec();
+
+    return this.findMyStoreSummary(user);
   }
 
   /**

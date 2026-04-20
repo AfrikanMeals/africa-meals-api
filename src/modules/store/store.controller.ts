@@ -34,9 +34,15 @@ import {
   CreateStockItemDto,
   PatchStockItemDto,
 } from '@modules/stock-items/dto/stock-item.dto';
+import { CreateDrinkDto, PatchDrinkDto } from '@modules/drinks/dto/drink.dto';
+import { DrinksService } from '@modules/drinks/drinks.service';
 import { StockItemsService } from '@modules/stock-items/stock-items.service';
 import { AdminVendorStoreStatusDto } from './dto/admin-vendor-store.dto';
-import { CreateStoreDto, StoreProfileImageJsonDto } from './dto/store.dto';
+import {
+  CreateStoreDto,
+  PatchDailyMenuDto,
+  StoreProfileImageJsonDto,
+} from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { StoreService } from './store.service';
 
@@ -49,6 +55,9 @@ export class StoreController {
 
   @Inject(StockItemsService)
   private readonly _stockItemsService: StockItemsService;
+
+  @Inject(DrinksService)
+  private readonly _drinksService: DrinksService;
 
   /** Résumé vendeur (évite la collision avec GET :id = "my-store"). */
   @Get('vendor/summary')
@@ -168,6 +177,94 @@ export class StoreController {
     return { ok: true };
   }
 
+  /** Boissons (table `drinks`) — propriétaire de la boutique. */
+  @Get(':id/drinks')
+  @UseGuards(JwtGuard)
+  async listDrinks(@Param('id') id: string, @Req() req: Request) {
+    return this._drinksService.findByStoreForOwner(id, req.user as UserModel);
+  }
+
+  @Post(':id/drinks')
+  @UseGuards(JwtGuard)
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+      fileFilter: (req, file, cb) => {
+        if (!file.originalname.match(/\.(jpg|jpeg|png|webp)$/i)) {
+          return cb(new Error('invalid_file_type'), false);
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async createDrink(
+    @Param('id') id: string,
+    @Body(
+      MultipartToJsonPipe,
+      new ValidationPipe({ transform: true, whitelist: true }),
+    )
+    body: CreateDrinkDto,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Req() req: Request,
+  ) {
+    return this._drinksService.createForStore(
+      id,
+      body,
+      req.user as UserModel,
+      file,
+    );
+  }
+
+  @Patch(':id/drinks/:drinkId')
+  @UseGuards(JwtGuard)
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+      fileFilter: (req, file, cb) => {
+        if (!file.originalname.match(/\.(jpg|jpeg|png|webp)$/i)) {
+          return cb(new Error('invalid_file_type'), false);
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async patchDrink(
+    @Param('id') id: string,
+    @Param('drinkId') drinkId: string,
+    @Body(
+      MultipartToJsonPipe,
+      new ValidationPipe({ transform: true, whitelist: true }),
+    )
+    body: PatchDrinkDto,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Req() req: Request,
+  ) {
+    return this._drinksService.updateForStore(
+      id,
+      drinkId,
+      body,
+      req.user as UserModel,
+      file,
+    );
+  }
+
+  @Delete(':id/drinks/:drinkId')
+  @UseGuards(JwtGuard)
+  async deleteDrink(
+    @Param('id') id: string,
+    @Param('drinkId') drinkId: string,
+    @Req() req: Request,
+  ) {
+    await this._drinksService.deleteForStore(
+      id,
+      drinkId,
+      req.user as UserModel,
+    );
+    return { ok: true };
+  }
+
   @Patch('/:id/products/:productId')
   @UseGuards(JwtGuard)
   @UseInterceptors(
@@ -243,6 +340,22 @@ export class StoreController {
     return this._storeService.updateVendorApplication(
       req.user as UserModel,
       args,
+    );
+  }
+
+  /** Menu du jour : plats proposés par jour de la semaine (propriétaire de la boutique). */
+  @Patch(':id/daily-menu')
+  @UseGuards(JwtGuard)
+  async patchDailyMenu(
+    @Param('id') storeId: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: PatchDailyMenuDto,
+    @Req() req: Request,
+  ) {
+    return this._storeService.updateVendorDailyMenu(
+      storeId,
+      req.user as UserModel,
+      body.slots,
     );
   }
 

@@ -38,6 +38,10 @@ export class OrdeLineItem {
 
   @Prop({ required: true, name: 'quantity' })
   quantity: number;
+
+  /** Libellé de la catégorie produit au moment de la commande (ex. menu / plat). */
+  @Prop({ required: false, name: 'category_title' })
+  categoryTitle?: string;
 }
 
 @Schema({
