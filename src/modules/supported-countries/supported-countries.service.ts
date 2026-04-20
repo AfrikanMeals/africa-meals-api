@@ -80,7 +80,8 @@ export class SupportedCountriesService implements OnModuleInit {
   }
 
   /**
-   * Vendeur : pays du restaurant = pays d’utilisation de l’app, tous deux dans la liste opérationnelle.
+   * Vendeur : pays du restaurant dans la liste opérationnelle ; téléphone valide pour ce pays.
+   * Le pays d’utilisation du profil doit rester dans la liste active (réglages utilisateur).
    */
   async assertVendorApplicationCompatible(
     user: UserModel,
@@ -104,11 +105,6 @@ export class SupportedCountriesService implements OnModuleInit {
     if (!activeCodes.has(appCode)) {
       throw new BadRequestException(
         'Choisissez un pays d’utilisation valide dans votre profil.',
-      );
-    }
-    if (addrCode !== appCode) {
-      throw new BadRequestException(
-        'L’adresse du restaurant doit être dans le même pays que celui sélectionné pour l’application.',
       );
     }
     const region = await this.getPhoneRegion(addrCode);

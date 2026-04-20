@@ -13,13 +13,14 @@ import {
 } from '@schemas/pending-signup.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import { AuthController } from './auth.controller';
+import { FcmTestController } from './fcm-test.controller';
 import { AuthService } from './auth.service';
 import { JwtGuard } from './guards/jwt.guard';
 import { OptionalAuthGuard } from './guards/optional.auth.guard';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
 @Module({
-  controllers: [AuthController],
+  controllers: [AuthController, FcmTestController],
   providers: [AuthService, JwtStrategy, JwtGuard, OptionalAuthGuard],
   imports: [
     PassportModule,

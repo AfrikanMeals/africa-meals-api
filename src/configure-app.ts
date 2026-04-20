@@ -63,6 +63,7 @@ export async function configureApplication(
     .addTag('mailer', 'Envoi d’emails (test)')
     .addTag('supported-countries', 'Pays supportés')
     .addTag('health', 'Santé de l’API')
+    .addTag('notifications', 'Notifications push (FCM)')
     .build();
 
   const document = SwaggerModule.createDocument(app, config, {
