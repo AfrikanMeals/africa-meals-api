@@ -32,6 +32,18 @@ function trendPercent(current: number, previous: number): number | null {
   return Math.round(((current - previous) / previous) * 100);
 }
 
+function avg(nums: number[]): number | null {
+  if (!nums.length) return null;
+  const s = nums.reduce((a, b) => a + b, 0);
+  return s / nums.length;
+}
+
+function trendPercentAvg(current: number, previous: number): number | null {
+  if (previous === 0 && current === 0) return null;
+  if (previous === 0) return current > 0 ? 100 : null;
+  return Math.round(((current - previous) / previous) * 100);
+}
+
 /** Délai max (minutes) depuis la création avant de considérer la livraison en retard (pas d’ETA en base). */
 const DELIVERY_SLA_MINUTES = 45;
 /** Note ≤ seuil = avis négatif (échelle 1–5). */
@@ -99,6 +111,44 @@ export type AdminDashboardKpis = {
   deliveryTargetMinutes: number;
 };
 
+export type DashboardProductReviewRow = {
+  id: string;
+  rate: number;
+  comment: string | null;
+  createdAt: string;
+  user: {
+    id: string;
+    fullName: string;
+    email: string | null;
+    profileImage: string | null;
+  };
+  product: { id: string; title: string };
+  store: { id: string; name: string };
+};
+
+export type DashboardProductReviewsSummary = {
+  averageRating: number | null;
+  totalCount: number;
+  distribution: { 1: number; 2: number; 3: number; 4: number; 5: number };
+  /** Notes ≤ 2 — suivi qualité */
+  negativeCount: number;
+};
+
+export type DashboardProductReviewByStore = {
+  storeId: string;
+  storeName: string;
+  averageRating: number;
+  reviewCount: number;
+  /** Moyenne 14 derniers jours vs 14 jours précédents (pourcentage d’écart). */
+  trendPercent: number | null;
+};
+
+export type DashboardProductReviewsPayload = {
+  reviews: DashboardProductReviewRow[];
+  summary: DashboardProductReviewsSummary;
+  byStore: DashboardProductReviewByStore[];
+};
+
 @Injectable()
 export class DashboardService {
   constructor(
@@ -149,6 +199,190 @@ export class DashboardService {
       ]);
 
     return { delayedDeliveries, negativeReviewStores, stockAlerts };
+  }
+
+  /**
+   * Avis sur les plats (collection `product_ratings`) : client auteur, plat, restaurant (boutique du plat).
+   * Vendeur : uniquement les avis dont le plat appartient à l’une de ses boutiques.
+   */
+  async getProductReviewsDashboard(
+    user: UserModel,
+  ): Promise<DashboardProductReviewsPayload> {
+    if (
+      user.type !== UserTypeEnum.ADMIN &&
+      user.type !== UserTypeEnum.VENDOR
+    ) {
+      throw new ForbiddenException('dashboard_reviews_access_denied');
+    }
+
+    const vendorIds =
+      user.type === UserTypeEnum.VENDOR ? vendorStoreObjectIds(user) : null;
+
+    if (user.type === UserTypeEnum.VENDOR && !vendorIds?.length) {
+      return {
+        reviews: [],
+        summary: {
+          averageRating: null,
+          totalCount: 0,
+          distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+          negativeCount: 0,
+        },
+        byStore: [],
+      };
+    }
+
+    const WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    const raw = await this.productRatingModel
+      .find({})
+      .populate({
+        path: 'user',
+        select: 'fullName email profileImage',
+      })
+      .populate({
+        path: 'product',
+        select: 'title store',
+        populate: { path: 'store', select: 'name' },
+      })
+      .sort({ createdAt: -1 })
+      .limit(2000)
+      .lean()
+      .exec();
+
+    type LeanUser = {
+      _id?: unknown;
+      fullName?: string;
+      email?: string;
+      profileImage?: string;
+    };
+    type LeanStore = { _id?: unknown; name?: string };
+    type LeanProduct = {
+      _id?: unknown;
+      title?: string;
+      store?: LeanStore | null;
+    };
+
+    const allowStore = (storeId: string) =>
+      !vendorIds?.length ||
+      vendorIds.some((id) => id.toString() === storeId);
+
+    const reviews: DashboardProductReviewRow[] = [];
+    const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    let negativeCount = 0;
+
+    const storeAcc = new Map<
+      string,
+      {
+        storeName: string;
+        all: number[];
+        currentWindow: number[];
+        previousWindow: number[];
+      }
+    >();
+
+    for (const r of raw) {
+      const prod = r.product as LeanProduct | null;
+      const usr = r.user as LeanUser | null;
+      if (!prod?._id || !prod.store?._id || !usr?._id) continue;
+
+      const storeId = String(prod.store._id);
+      if (!allowStore(storeId)) continue;
+
+      const rawRate = Number(r.rate);
+      if (!Number.isFinite(rawRate)) continue;
+      const rate = Math.min(5, Math.max(1, Math.round(rawRate)));
+
+      distribution[rate as 1 | 2 | 3 | 4 | 5] += 1;
+      if (rate <= 2) negativeCount += 1;
+
+      const createdMs = r.createdAt
+        ? new Date(r.createdAt as Date | string).getTime()
+        : now;
+      const storeName = prod.store.name?.trim() || 'Restaurant';
+
+      if (!storeAcc.has(storeId)) {
+        storeAcc.set(storeId, {
+          storeName,
+          all: [],
+          currentWindow: [],
+          previousWindow: [],
+        });
+      }
+      const acc = storeAcc.get(storeId)!;
+      acc.all.push(rate);
+      if (createdMs >= now - WINDOW_MS) {
+        acc.currentWindow.push(rate);
+      } else if (createdMs >= now - 2 * WINDOW_MS) {
+        acc.previousWindow.push(rate);
+      }
+
+      reviews.push({
+        id: String(r._id),
+        rate,
+        comment:
+          typeof r.comment === 'string' && r.comment.trim()
+            ? r.comment.trim()
+            : null,
+        createdAt: (r.createdAt
+          ? new Date(r.createdAt as Date | string).toISOString()
+          : new Date().toISOString()) as string,
+        user: {
+          id: String(usr._id),
+          fullName: usr.fullName?.trim() || 'Client',
+          email: usr.email?.trim() || null,
+          profileImage: usr.profileImage?.trim() || null,
+        },
+        product: {
+          id: String(prod._id),
+          title: prod.title?.trim() || 'Plat',
+        },
+        store: { id: storeId, name: storeName },
+      });
+    }
+
+    const totalCount = reviews.length;
+    const averageRating =
+      totalCount > 0
+        ? Math.round(
+            (reviews.reduce((a, x) => a + x.rate, 0) / totalCount) * 10,
+          ) / 10
+        : null;
+
+    const byStore: DashboardProductReviewByStore[] = [...storeAcc.entries()]
+      .map(([storeId, acc]) => {
+        const reviewCount = acc.all.length;
+        const averageRatingStore =
+          reviewCount > 0
+            ? Math.round(
+                (acc.all.reduce((a, b) => a + b, 0) / reviewCount) * 10,
+              ) / 10
+            : 0;
+        const cur = avg(acc.currentWindow);
+        const prev = avg(acc.previousWindow);
+        const trendPercent =
+          cur != null && prev != null ? trendPercentAvg(cur, prev) : null;
+        return {
+          storeId,
+          storeName: acc.storeName,
+          averageRating: averageRatingStore,
+          reviewCount,
+          trendPercent,
+        };
+      })
+      .sort((a, b) => b.reviewCount - a.reviewCount)
+      .slice(0, 20);
+
+    return {
+      reviews,
+      summary: {
+        averageRating,
+        totalCount,
+        distribution,
+        negativeCount,
+      },
+      byStore,
+    };
   }
 
   /**
