@@ -110,8 +110,11 @@ Variables utiles (alignées sur l’existant) :
 |----------|------|
 | `MONGODB_URI` ou `MONGO_URI` | URI MongoDB complète (prioritaire sur `DB_*`) |
 | `DB_USERNAME`, `DB_PASSWORD`, `DB_HOST`, `DB_DATABASE` | Construction de l’URI si pas d’URI complète |
-| `MONGOOSE_MAX_POOL` | Taille du pool (défaut `10`) |
+| `MONGOOSE_MAX_POOL` | Taille max du pool par instance (défaut `5` ; chaque conteneur Functions a son propre pool) |
+| `MONGOOSE_MIN_POOL`, `MONGOOSE_MAX_IDLE_MS`, `MONGOOSE_WAIT_QUEUE_MS` | Affinage pool / fermeture des sockets inactives |
 | `MONGOOSE_SERVER_SELECTION_MS` | Timeout sélection serveur (défaut `8000`) |
+| `MONGODB_APP_NAME` | Libellé client Atlas (défaut `africa-meals-api` si URI construite depuis `DB_*`) |
+| `FUNCTION_MAX_INSTANCES` | Plafond d’instances HTTP concurrentes (défaut `10` dans le code — impact direct sur connexions Mongo cumulées) |
 | `DISABLE_SWAGGER` | `true` pour désactiver Swagger (cold start plus léger) |
 | `FUNCTION_REGION` | Région (défaut `europe-west1` dans le code) |
 | `FUNCTION_TIMEOUT_SEC`, `FUNCTION_MEMORY` | Surcharge optionnelle des options de la fonction |

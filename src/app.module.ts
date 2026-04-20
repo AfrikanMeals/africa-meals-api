@@ -21,6 +21,7 @@ import { BillingModule } from './modules/billing/billing.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { SupportChatModule } from './modules/support-chat/support-chat.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
 
 @Module({
   imports: [
@@ -32,29 +33,8 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => {
-        const fullUri =
-          config.get<string>('MONGODB_URI') ||
-          config.get<string>('MONGO_URI') ||
-          '';
-        const builtUri = `mongodb+srv://${config.get<string>(
-          'DB_USERNAME',
-        )}:${config.get<string>('DB_PASSWORD')}@${config.get<string>(
-          'DB_HOST',
-        )}?retryWrites=true&w=majority&appName=Main`;
-
-        const uri = fullUri || builtUri;
-        const dbName = config.get<string>('DB_DATABASE');
-
-        return {
-          uri,
-          ...(dbName ? { dbName } : {}),
-          maxPoolSize: Number(config.get<string>('MONGOOSE_MAX_POOL') || 10),
-          serverSelectionTimeoutMS: Number(
-            config.get<string>('MONGOOSE_SERVER_SELECTION_MS') || 8000,
-          ),
-        };
-      },
+      useFactory: (config: ConfigService) =>
+        buildMongooseRootOptions(config, 'africa-meals-api'),
     }),
     AuthModule,
     UsersModule,
