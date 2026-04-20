@@ -664,6 +664,18 @@ export class StoreController {
     return this._storeService.createRating(id, args, req.user as UserModel);
   }
 
+  @Post(':id/favorite')
+  @UseGuards(JwtGuard)
+  async addToFavorites(@Param('id') id: string, @Req() req: Request) {
+    return this._storeService.addToFavorites(id, req.user as UserModel);
+  }
+
+  @Delete(':id/favorite')
+  @UseGuards(JwtGuard)
+  async removeFromFavorites(@Param('id') id: string, @Req() req: Request) {
+    return this._storeService.removeFromFavorites(id, req.user as UserModel);
+  }
+
   @Post(':id/cart')
   @UseGuards(JwtGuard)
   async addItemToStoreCart(
