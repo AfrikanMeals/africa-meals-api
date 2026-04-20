@@ -24,4 +24,13 @@ export class DashboardController {
   adminKpis(@Req() req: Request) {
     return this._dashboardService.getAdminKpis(req.user as UserModel);
   }
+
+  /** Avis sur les plats (notes produit), avec client, plat et restaurant — admin ou vendeur. */
+  @Get('product-reviews')
+  @UseGuards(JwtGuard)
+  productReviews(@Req() req: Request) {
+    return this._dashboardService.getProductReviewsDashboard(
+      req.user as UserModel,
+    );
+  }
 }

@@ -8,21 +8,33 @@ import {
   ProductCategorySchema,
 } from '@schemas/product-category.schema';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
+import { ProductModel, ProductSchema } from '@schemas/product.schema';
+import {
+  ProductRatingModel,
+  ProductRatingSchema,
+} from '@schemas/product_rating.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import { OrdersDemoSeedService } from './orders-demo-seed.service';
+import { ProductRatingsDemoSeedService } from './product-ratings-demo-seed.service';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 
 @Module({
   controllers: [OrdersController],
-  providers: [OrdersService, OrdersDemoSeedService],
+  providers: [
+    OrdersService,
+    OrdersDemoSeedService,
+    ProductRatingsDemoSeedService,
+  ],
   exports: [OrdersService],
   imports: [
     CartModule,
     ProductsModule,
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
+      { name: ProductModel.name, schema: ProductSchema },
+      { name: ProductRatingModel.name, schema: ProductRatingSchema },
       { name: StoreModel.name, schema: StoreSchema },
       { name: UserModel.name, schema: UserSchema },
       { name: AddressModel.name, schema: AddressSchema },
