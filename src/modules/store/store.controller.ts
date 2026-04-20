@@ -3,7 +3,9 @@ import { AddItemToCartDto } from '@modules/cart/dto/cart.dto';
 import { CreateOfferDto } from '@modules/offers/dto/offers.dto';
 import {
   CreateProductDto,
+  CreateProductJsonDto,
   PatchProductDto,
+  PatchProductJsonDto,
 } from '@modules/products/dto/products.dto';
 import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import {
@@ -45,6 +47,74 @@ import {
 } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { StoreService } from './store.service';
+
+const VENDOR_PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+function multerFileFromVendorProductBase64(
+  imageBase64: string | undefined,
+  filename: string | undefined,
+  fieldname: 'image' | 'gallery',
+): Express.Multer.File | undefined {
+  if (imageBase64 == null || String(imageBase64).trim() === '') {
+    return undefined;
+  }
+  const raw = String(imageBase64)
+    .replace(/\s/g, '')
+    .replace(/^data:image\/[^;]+;base64,/i, '');
+  let buffer: Buffer;
+  try {
+    buffer = Buffer.from(raw, 'base64');
+  } catch {
+    throw new BadRequestException('invalid_base64');
+  }
+  if (!buffer.length) {
+    throw new BadRequestException('empty_image');
+  }
+  if (buffer.length > VENDOR_PRODUCT_IMAGE_MAX_BYTES) {
+    throw new BadRequestException('image_too_large');
+  }
+  const name = (filename || 'photo.jpg').trim() || 'photo.jpg';
+  if (!/\.(jpe?g|png)$/i.test(name)) {
+    throw new BadRequestException('invalid_file_type');
+  }
+  const mime = name.toLowerCase().endsWith('.png')
+    ? 'image/png'
+    : 'image/jpeg';
+  return {
+    fieldname,
+    originalname: name,
+    encoding: '7bit',
+    mimetype: mime,
+    buffer,
+    size: buffer.length,
+    destination: '',
+    filename: '',
+    path: '',
+    stream: undefined,
+  } as Express.Multer.File;
+}
+
+function galleryMulterFilesFromJson(
+  galleryBase64: string[] | undefined,
+  galleryFilenames: string[] | undefined,
+): Express.Multer.File[] | undefined {
+  if (!galleryBase64?.length) {
+    return undefined;
+  }
+  const out: Express.Multer.File[] = [];
+  const n = Math.min(2, galleryBase64.length);
+  for (let i = 0; i < n; i++) {
+    const f = multerFileFromVendorProductBase64(
+      galleryBase64[i],
+      galleryFilenames?.[i],
+      'gallery',
+    );
+    if (f) {
+      out.push(f);
+    }
+  }
+  return out.length ? out : undefined;
+}
 
 @ApiTags('stores')
 @ApiBearerAuth('bearer')
@@ -476,6 +546,78 @@ export class StoreController {
       req.user as UserModel,
       files?.image?.[0],
       files?.gallery,
+    );
+  }
+
+  /** JSON + base64 : fiable sur Firebase / CF où multipart peut échouer (« Unexpected end of form »). */
+  @Post('/:id/product-json')
+  @UseGuards(JwtGuard)
+  async createProductJson(
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: CreateProductJsonDto,
+    @Req() req: Request,
+  ) {
+    const args: CreateProductDto = {
+      title: body.title,
+      bio: body.bio,
+      about: body.about,
+      originCountry: body.originCountry,
+      price: body.price,
+      discountPrice: body.discountPrice,
+      category: body.category,
+      currency: body.currency,
+      status: body.status,
+    };
+    const imageFile = multerFileFromVendorProductBase64(
+      body.imageBase64,
+      body.imageFilename,
+      'image',
+    );
+    const galleryFiles = galleryMulterFilesFromJson(
+      body.galleryBase64,
+      body.galleryFilenames,
+    );
+    return this._storeService.createProduct(
+      id,
+      args,
+      req.user as UserModel,
+      imageFile,
+      galleryFiles,
+    );
+  }
+
+  /** JSON + base64 (POST) : évite multipart tronqué sur PATCH / derrière proxys. */
+  @Post('/:id/products/:productId/json')
+  @UseGuards(JwtGuard)
+  async updateStoreProductJson(
+    @Param('id') id: string,
+    @Param('productId') productId: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: PatchProductJsonDto,
+    @Req() req: Request,
+  ) {
+    const imageFile = multerFileFromVendorProductBase64(
+      body.imageBase64,
+      body.imageFilename,
+      'image',
+    );
+    const galleryFiles = galleryMulterFilesFromJson(
+      body.galleryBase64,
+      body.galleryFilenames,
+    );
+    const patch = { ...body } as PatchProductJsonDto & Record<string, unknown>;
+    delete patch.imageBase64;
+    delete patch.imageFilename;
+    delete patch.galleryBase64;
+    delete patch.galleryFilenames;
+    return this._storeService.updateStoreProduct(
+      id,
+      productId,
+      patch as PatchProductDto,
+      req.user as UserModel,
+      imageFile,
+      galleryFiles,
     );
   }
 

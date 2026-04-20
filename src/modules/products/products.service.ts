@@ -550,4 +550,71 @@ export class ProductsService {
       throw new BadRequestException('error_creating_rating');
     }
   }
+
+  async listFavoriteProducts(user: UserModel) {
+    const userId = user?._id;
+    if (!userId) {
+      throw new BadRequestException('user_not_found');
+    }
+    return this._productModel
+      .find({
+        likedBy: userId,
+        status: ProductStatusEnum.ACTIVE,
+      })
+      .populate('category')
+      .populate({
+        path: 'ratings',
+        populate: {
+          path: 'user',
+        },
+      })
+      .populate('likedBy')
+      .populate('store')
+      .sort({ updatedAt: -1 })
+      .exec();
+  }
+
+  async addToFavorites(productId: string, user: UserModel) {
+    if (!Types.ObjectId.isValid(productId)) {
+      throw new NotFoundException('product_not_found');
+    }
+    const product = await this._productModel
+      .findOne({ _id: productId, status: ProductStatusEnum.ACTIVE })
+      .exec();
+    if (!product) {
+      throw new NotFoundException('product_not_found');
+    }
+    await this._productModel
+      .updateOne(
+        { _id: productId },
+        {
+          $addToSet: {
+            likedBy: user._id,
+          },
+        },
+      )
+      .exec();
+    return this.findOneById(productId);
+  }
+
+  async removeFromFavorites(productId: string, user: UserModel) {
+    if (!Types.ObjectId.isValid(productId)) {
+      throw new NotFoundException('product_not_found');
+    }
+    const product = await this._productModel.findOne({ _id: productId }).exec();
+    if (!product) {
+      throw new NotFoundException('product_not_found');
+    }
+    await this._productModel
+      .updateOne(
+        { _id: productId },
+        {
+          $pull: {
+            likedBy: user._id,
+          },
+        },
+      )
+      .exec();
+    return this.findOneById(productId);
+  }
 }
