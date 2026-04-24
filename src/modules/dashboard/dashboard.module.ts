@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
+import { ProductModel, ProductSchema } from '@schemas/product.schema';
 import {
   ProductRatingModel,
   ProductRatingSchema,
@@ -13,7 +14,15 @@ import {
   StoreRatingModel,
   StoreRatingSchema,
 } from '@schemas/store_rating.schema';
+import {
+  DeliveryDriverModel,
+  DeliveryDriverSchema,
+} from '@schemas/delivery-driver.schema';
+import { AddressModel, AddressSchema } from '@schemas/address.schema';
+import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
+import { DeliveryDriversCityMigrationService } from './delivery-drivers-city-migration.service';
+import { DeliveryDriversSeedService } from './delivery-drivers-seed.service';
 import { DashboardController } from './dashboard.controller';
 import { DashboardService } from './dashboard.service';
 
@@ -23,11 +32,19 @@ import { DashboardService } from './dashboard.service';
       { name: OrderModel.name, schema: OrderSchema },
       { name: StoreRatingModel.name, schema: StoreRatingSchema },
       { name: ProductRatingModel.name, schema: ProductRatingSchema },
+      { name: ProductModel.name, schema: ProductSchema },
       { name: StockItemModel.name, schema: StockItemSchema },
       { name: UserModel.name, schema: UserSchema },
+      { name: DeliveryDriverModel.name, schema: DeliveryDriverSchema },
+      { name: StoreModel.name, schema: StoreSchema },
+      { name: AddressModel.name, schema: AddressSchema },
     ]),
   ],
   controllers: [DashboardController],
-  providers: [DashboardService],
+  providers: [
+    DashboardService,
+    DeliveryDriversSeedService,
+    DeliveryDriversCityMigrationService,
+  ],
 })
 export class DashboardModule {}

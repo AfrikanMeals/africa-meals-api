@@ -859,7 +859,7 @@ export class StoreService {
       .populate({ path: 'owner', select: 'fullName email' })
       .populate({
         path: 'address',
-        select: 'address city country countryCode zipCode',
+        select: 'address city country countryCode zipCode location',
       })
       .sort({ updatedAt: -1 })
       .lean()
@@ -888,6 +888,23 @@ export class StoreService {
       adresse = city ? `${line}, ${city}` : line;
     }
 
+    let latitude: number | null = null;
+    let longitude: number | null = null;
+    const loc = addr?.location as { coordinates?: number[] } | undefined;
+    const coords = loc?.coordinates;
+    if (
+      Array.isArray(coords) &&
+      coords.length >= 2 &&
+      !(Number(coords[0]) === 0 && Number(coords[1]) === 0)
+    ) {
+      longitude = Number(coords[0]);
+      latitude = Number(coords[1]);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        latitude = null;
+        longitude = null;
+      }
+    }
+
     const createdRaw = s.createdAt ?? s.created_at;
     const updatedRaw = s.updatedAt ?? s.updated_at;
     const toIso = (raw: unknown) => {
@@ -907,6 +924,8 @@ export class StoreService {
       ownerNom,
       ownerPrenom,
       adresse,
+      latitude,
+      longitude,
       createdAt: toIso(createdRaw),
       updatedAt: toIso(updatedRaw),
     };
