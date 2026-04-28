@@ -1,4 +1,5 @@
 require("node:dns/promises").setServers(["1.1.1.1", "8.8.8.8"]);
+import { CacheModule } from '@nestjs/cache-manager';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -21,6 +22,7 @@ import { BillingModule } from './modules/billing/billing.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { SupportChatModule } from './modules/support-chat/support-chat.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { GraphqlApiModule } from './graphql/graphql.module';
 import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
 
 @Module({
@@ -29,6 +31,11 @@ import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
       // `.env.local` est chargé en premier (secrets locaux) ; souvent absent du dépôt.
       envFilePath: ['.env.local', '.env', '../.env'],
       isGlobal: true,
+    }),
+    CacheModule.register({
+      isGlobal: true,
+      ttl: Number(process.env.FAVORITES_CACHE_TTL_MS) || 25_000,
+      max: Number(process.env.CACHE_MAX_ITEMS) || 300,
     }),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
@@ -52,6 +59,7 @@ import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
     OrdersModule,
     SupportChatModule,
     DashboardModule,
+    GraphqlApiModule,
     // SharedModule,
   ],
   controllers: [AppController, EnvDebugController],

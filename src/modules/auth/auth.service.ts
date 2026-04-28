@@ -386,20 +386,37 @@ export class AuthService {
       emailRaw.split('@')[0] ||
       'Utilisateur';
 
+    const pictureRaw = decoded.picture;
+    const pictureFromGoogle =
+      typeof pictureRaw === 'string' &&
+      (pictureRaw.startsWith('https://') || pictureRaw.startsWith('http://'))
+        ? pictureRaw.trim()
+        : undefined;
+
     let user = await this._usersModel.findOne({ googleId }).exec();
     if (user) {
+      if (pictureFromGoogle && !user.profileImage) {
+        await this._usersModel
+          .updateOne(
+            { _id: user._id },
+            { $set: { profileImage: pictureFromGoogle } },
+          )
+          .exec();
+      }
       return {
         authToken: this._jwtService.sign({ sub: user._id.toString() }),
       };
     }
     user = await this._usersModel.findOne({ email: emailRaw }).exec();
     if (user) {
-      await this._usersModel
-        .updateOne(
-          { _id: user._id },
-          { googleId, emailVerifiedAt: new Date() },
-        )
-        .exec();
+      const setDoc: Record<string, unknown> = {
+        googleId,
+        emailVerifiedAt: new Date(),
+      };
+      if (pictureFromGoogle && !user.profileImage) {
+        setDoc.profileImage = pictureFromGoogle;
+      }
+      await this._usersModel.updateOne({ _id: user._id }, { $set: setDoc }).exec();
       return {
         authToken: this._jwtService.sign({ sub: user._id.toString() }),
       };
@@ -410,6 +427,7 @@ export class AuthService {
       googleId,
       password: `google_${googleId}_${Date.now()}`,
       emailVerifiedAt: new Date(),
+      ...(pictureFromGoogle ? { profileImage: pictureFromGoogle } : {}),
     });
     return {
       authToken: this._jwtService.sign({ sub: newUser._id.toString() }),

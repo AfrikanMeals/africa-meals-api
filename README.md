@@ -62,6 +62,10 @@ Le point d’entrée Cloud Functions est **`dist/firebase-main.js`** (`package.j
 
 **Documentation OpenAPI** : UI Swagger sur **`/api/docs`** (local ou URL Cloud Functions). Variable `DISABLE_SWAGGER=true` pour la désactiver. Le service **chat** (`africa-meals-ws` / Cloud Run `ws`) expose la même convention **`/api/docs`** ; voir [docs/FIREBASE_FUNCTIONS.md](docs/FIREBASE_FUNCTIONS.md#documentation-openapi-swagger).
 
+## Cloud Run (service `api`)
+
+Mémoire **1 GiB**, **2** vCPU, quota **CpuAllocPerProjectRegion** partagé entre tous les services de la région : voir **[docs/CLOUD_RUN.md](docs/CLOUD_RUN.md)**, le script **`scripts/update-cloud-run-api-resources.sh`** et le diagnostic **`scripts/cloud-run-regional-cpu-footprint.py`**.
+
 ## Test
 
 ```bash

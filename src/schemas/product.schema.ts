@@ -149,6 +149,9 @@ export class ProductModel extends BaseSchema {
 
 export const ProductSchema = SchemaFactory.createForClass(ProductModel);
 
+/** Liste « mes favoris » : filtre fréquent likedBy + status + tri. */
+ProductSchema.index({ likedBy: 1, status: 1, updatedAt: -1 });
+
 ProductSchema.virtual('averageRating').get(function () {
   const items = this.ratings || [];
   if (!items.length) {
