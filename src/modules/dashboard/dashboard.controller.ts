@@ -4,6 +4,8 @@ import {
   Controller,
   Get,
   Inject,
+  Param,
+  Patch,
   Post,
   Req,
   UseGuards,
@@ -13,7 +15,9 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
+import { AssignDashboardOrderDto } from './dto/assign-dashboard-order.dto';
 import { CreateDashboardLivreurDto } from './dto/create-dashboard-livreur.dto';
+import { UpdateDashboardLivreurStatutDto } from './dto/update-dashboard-livreur-statut.dto';
 import { DashboardService } from './dashboard.service';
 
 @ApiTags('dashboard')
@@ -113,6 +117,36 @@ export class DashboardController {
     return this._dashboardService.createDashboardLivreur(
       req.user as UserModel,
       body,
+    );
+  }
+
+  /** Assigne une commande en attente à un livreur disponible puis passe la commande en `shipped`. */
+  @Post('livreurs/assign-order')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  assignOrderToLivreur(
+    @Req() req: Request,
+    @Body() body: AssignDashboardOrderDto,
+  ) {
+    return this._dashboardService.assignOrderToLivreur(
+      req.user as UserModel,
+      body,
+    );
+  }
+
+  /** Met le livreur hors ligne (suspend) ou le repasse disponible (réactivation). */
+  @Patch('livreurs/:id/statut')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  updateLivreurStatut(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: UpdateDashboardLivreurStatutDto,
+  ) {
+    return this._dashboardService.updateDashboardLivreurStatut(
+      req.user as UserModel,
+      id,
+      body.statut,
     );
   }
 }

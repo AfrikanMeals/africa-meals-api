@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 /** dayjs est en CJS ; sans `esModuleInterop`, `import dayjs from 'dayjs'` vaut `undefined` au runtime. */
@@ -22,6 +23,7 @@ import { StoreRatingModel } from '@schemas/store_rating.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { CreateDashboardLivreurDto } from './dto/create-dashboard-livreur.dto';
+import { AssignDashboardOrderDto } from './dto/assign-dashboard-order.dto';
 import {
   coordsFromLngLat,
   lngLatFromPercentCoords,
@@ -1614,6 +1616,159 @@ export class DashboardService {
     });
     return this.toDashboardLivreurRow(
       created.toObject() as unknown as DeliveryDriverLean,
+    );
+  }
+
+  async assignOrderToLivreur(
+    user: UserModel,
+    dto: AssignDashboardOrderDto,
+  ): Promise<DashboardLivreurRow> {
+    if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('livreurs_access_denied');
+    }
+    if (
+      !Types.ObjectId.isValid(dto.livreurId) ||
+      !Types.ObjectId.isValid(dto.orderId)
+    ) {
+      throw new BadRequestException('invalid_ids');
+    }
+
+    const livreurId = new Types.ObjectId(dto.livreurId);
+    const orderId = new Types.ObjectId(dto.orderId);
+    const vendorStoreIds =
+      user.type === UserTypeEnum.VENDOR ? vendorStoreObjectIds(user) : null;
+    if (user.type === UserTypeEnum.VENDOR && !vendorStoreIds?.length) {
+      throw new ForbiddenException('vendor_no_store');
+    }
+
+    const livreurDoc = await this.deliveryDriverModel.findById(livreurId).exec();
+    if (!livreurDoc) throw new NotFoundException('livreur_not_found');
+    const livreurStoreId = livreurDoc.store ? String(livreurDoc.store) : '';
+    if (vendorStoreIds?.length) {
+      if (!vendorStoreIds.some((s) => s.toString() === livreurStoreId)) {
+        throw new ForbiddenException('store_forbidden');
+      }
+    }
+    if (
+      livreurDoc.statut !== DeliveryDriverStatutEnum.DISPONIBLE ||
+      livreurDoc.commande_en_cours
+    ) {
+      throw new BadRequestException('livreur_not_available');
+    }
+
+    const orderDoc = await this.orderModel
+      .findById(orderId)
+      .populate('store', 'name')
+      .populate({
+        path: 'user',
+        select: 'fullName addresses',
+        populate: { path: 'addresses' },
+      })
+      .exec();
+    if (!orderDoc) throw new NotFoundException('order_not_found');
+    const orderStoreId =
+      orderDoc.store &&
+      typeof orderDoc.store === 'object' &&
+      '_id' in orderDoc.store
+        ? String((orderDoc.store as { _id: unknown })._id)
+        : '';
+    if (!orderStoreId) throw new BadRequestException('order_store_missing');
+    if (vendorStoreIds?.length) {
+      if (!vendorStoreIds.some((s) => s.toString() === orderStoreId)) {
+        throw new ForbiddenException('store_forbidden');
+      }
+    }
+    if (livreurStoreId && orderStoreId && livreurStoreId !== orderStoreId) {
+      throw new BadRequestException('store_mismatch');
+    }
+    if (
+      ![
+        OrderStatusEnum.CREATED,
+        OrderStatusEnum.PAIED,
+        OrderStatusEnum.APPROVED,
+      ].includes(orderDoc.status as OrderStatusEnum)
+    ) {
+      throw new BadRequestException('order_not_assignable');
+    }
+
+    const userAny = orderDoc.user as
+      | {
+          fullName?: string;
+          addresses?: Array<{
+            isDefault?: boolean;
+            address?: string;
+            city?: string;
+            zipCode?: string;
+          }>;
+        }
+      | null
+      | undefined;
+    const clientName = userAny?.fullName?.trim() || 'Client';
+    const addr =
+      userAny?.addresses?.find((a) => a?.isDefault) ||
+      userAny?.addresses?.[0] ||
+      null;
+    const adresse = [addr?.address, addr?.city, addr?.zipCode]
+      .filter((x) => typeof x === 'string' && x.trim().length > 0)
+      .join(', ');
+    const tail = String(orderDoc._id).slice(-6).toUpperCase();
+
+    livreurDoc.statut = DeliveryDriverStatutEnum.EN_LIVRAISON;
+    livreurDoc.commande_en_cours = {
+      id: `#AE-${tail}`,
+      client: clientName,
+      adresse: adresse || '—',
+      eta: '30 min',
+    };
+    await livreurDoc.save();
+
+    orderDoc.status = OrderStatusEnum.SHIPPED;
+    await orderDoc.save();
+
+    return this.toDashboardLivreurRow(
+      livreurDoc.toObject() as unknown as DeliveryDriverLean,
+    );
+  }
+
+  async updateDashboardLivreurStatut(
+    user: UserModel,
+    livreurId: string,
+    statut: 'disponible' | 'hors_ligne',
+  ): Promise<DashboardLivreurRow> {
+    if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('livreurs_access_denied');
+    }
+    if (!Types.ObjectId.isValid(livreurId)) {
+      throw new BadRequestException('invalid_livreur_id');
+    }
+    const vendorStoreIds =
+      user.type === UserTypeEnum.VENDOR ? vendorStoreObjectIds(user) : null;
+    if (user.type === UserTypeEnum.VENDOR && !vendorStoreIds?.length) {
+      throw new ForbiddenException('vendor_no_store');
+    }
+
+    const oid = new Types.ObjectId(livreurId);
+    const livreurDoc = await this.deliveryDriverModel.findById(oid).exec();
+    if (!livreurDoc) throw new NotFoundException('livreur_not_found');
+    const livreurStoreId = livreurDoc.store ? String(livreurDoc.store) : '';
+    if (vendorStoreIds?.length) {
+      if (!vendorStoreIds.some((s) => s.toString() === livreurStoreId)) {
+        throw new ForbiddenException('store_forbidden');
+      }
+    }
+
+    if (statut === 'hors_ligne') {
+      livreurDoc.statut = DeliveryDriverStatutEnum.HORS_LIGNE;
+      livreurDoc.commande_en_cours = null;
+    } else {
+      if (livreurDoc.statut !== DeliveryDriverStatutEnum.HORS_LIGNE) {
+        throw new BadRequestException('livreur_reactivate_only_when_offline');
+      }
+      livreurDoc.statut = DeliveryDriverStatutEnum.DISPONIBLE;
+    }
+    await livreurDoc.save();
+    return this.toDashboardLivreurRow(
+      livreurDoc.toObject() as unknown as DeliveryDriverLean,
     );
   }
 
