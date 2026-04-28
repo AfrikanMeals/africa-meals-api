@@ -1,6 +1,7 @@
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { MediasModule } from '@modules/medias/medias.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
+import { SharedModule } from '@modules/shared/shared.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -24,6 +25,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
   providers: [AuthService, JwtStrategy, JwtGuard, OptionalAuthGuard],
   imports: [
     PassportModule,
+    SharedModule,
     MailerModule,
     MediasModule,
     NotificationsModule,

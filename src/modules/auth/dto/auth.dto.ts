@@ -196,21 +196,15 @@ export class ChatMediaJsonDto {
   mimeType?: string;
 }
 
-/** Données reçues après Google Sign-In (création ou connexion de compte) */
+/** Jeton Firebase ID (utilisateur connecté via Google dans Firebase Auth), vérifié côté serveur. */
 export class GoogleAuthDto {
-  @ApiProperty({ description: 'ID Google du compte' })
+  @ApiProperty({
+    description:
+      'ID token JWT émis par Firebase après connexion Google (Firebase Auth).',
+    example: 'eyJhbGciOiJSUzI1NiIs...',
+  })
   @IsNotEmpty()
   @Trim()
-  googleId: string;
-
-  @ApiProperty({ format: 'email', example: 'user@gmail.com' })
-  @IsNotEmpty()
-  @Trim()
-  @IsEmail()
-  email: string;
-
-  @ApiProperty({ example: 'Jean Dupont', description: 'Nom affiché Google' })
-  @IsNotEmpty()
-  @Trim()
-  fullName: string;
+  @IsString()
+  idToken: string;
 }

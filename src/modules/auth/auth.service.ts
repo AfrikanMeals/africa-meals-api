@@ -9,6 +9,7 @@ import {
   Logger,
   NotFoundException,
   ServiceUnavailableException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -17,6 +18,8 @@ import { PendingSignupModel } from '@schemas/pending-signup.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import * as bcrypt from 'bcryptjs';
 import { Model } from 'mongoose';
+import { App } from 'firebase-admin/app';
+import { DecodedIdToken, getAuth } from 'firebase-admin/auth';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import {
   CheckAccountDto,
@@ -53,6 +56,9 @@ export class AuthService {
 
   @Inject(MediasService)
   private readonly _mediasService: MediasService;
+
+  @Inject('FIREBASE_ADMIN')
+  private readonly _firebaseApp: App;
 
   /**
    * Inscription en deux temps : aucune ligne dans `users` tant que le code e-mail
@@ -351,22 +357,47 @@ export class AuthService {
     return this.findUserById(newUser._id.toString());
   }
 
-  /** Connexion / inscription avec Google : trouve ou crée l'utilisateur, retourne le JWT */
+  /**
+   * Connexion / inscription Google : vérifie le jeton Firebase (provider Google),
+   * puis trouve ou crée l’utilisateur Mongo (googleId = identifiant Google dans le jeton).
+   */
   async authWithGoogle(args: GoogleAuthDto) {
-    let user = await this._usersModel
-      .findOne({ googleId: args.googleId })
-      .exec();
+    let decoded: DecodedIdToken;
+    try {
+      decoded = await getAuth(this._firebaseApp).verifyIdToken(args.idToken);
+    } catch (err) {
+      this.logger.warn(`verifyIdToken Google: ${String(err)}`);
+      throw new UnauthorizedException('invalid_google_token');
+    }
+
+    if (decoded.firebase?.sign_in_provider !== 'google.com') {
+      throw new UnauthorizedException('invalid_google_token');
+    }
+
+    const googleId =
+      decoded.firebase?.identities?.['google.com']?.[0] ?? decoded.sub;
+    const emailRaw = decoded.email?.trim().toLowerCase();
+    if (!emailRaw) {
+      throw new BadRequestException('google_email_required');
+    }
+
+    const fullName =
+      (typeof decoded.name === 'string' && decoded.name.trim()) ||
+      emailRaw.split('@')[0] ||
+      'Utilisateur';
+
+    let user = await this._usersModel.findOne({ googleId }).exec();
     if (user) {
       return {
         authToken: this._jwtService.sign({ sub: user._id.toString() }),
       };
     }
-    user = await this._usersModel.findOne({ email: args.email }).exec();
+    user = await this._usersModel.findOne({ email: emailRaw }).exec();
     if (user) {
       await this._usersModel
         .updateOne(
           { _id: user._id },
-          { googleId: args.googleId, emailVerifiedAt: new Date() },
+          { googleId, emailVerifiedAt: new Date() },
         )
         .exec();
       return {
@@ -374,10 +405,10 @@ export class AuthService {
       };
     }
     const newUser = await this._usersModel.create({
-      email: args.email,
-      fullName: args.fullName,
-      googleId: args.googleId,
-      password: `google_${args.googleId}_${Date.now()}`,
+      email: emailRaw,
+      fullName,
+      googleId,
+      password: `google_${googleId}_${Date.now()}`,
       emailVerifiedAt: new Date(),
     });
     return {

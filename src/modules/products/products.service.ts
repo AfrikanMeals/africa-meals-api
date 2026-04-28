@@ -551,16 +551,20 @@ export class ProductsService {
     }
   }
 
-  async listFavoriteProducts(user: UserModel) {
+  async listFavoriteProducts(
+    user: UserModel,
+    pagination?: { page: number; take: number },
+  ) {
     const userId = user?._id;
     if (!userId) {
       throw new BadRequestException('user_not_found');
     }
-    return this._productModel
-      .find({
-        likedBy: userId,
-        status: ProductStatusEnum.ACTIVE,
-      })
+    const filter = {
+      likedBy: userId,
+      status: ProductStatusEnum.ACTIVE,
+    };
+    const baseQuery = this._productModel
+      .find(filter)
       .populate('category')
       .populate({
         path: 'ratings',
@@ -570,8 +574,24 @@ export class ProductsService {
       })
       .populate('likedBy')
       .populate('store')
-      .sort({ updatedAt: -1 })
-      .exec();
+      .sort({ updatedAt: -1 });
+
+    if (pagination) {
+      const { page, take } = pagination;
+      const skip = (page - 1) * take;
+      const [data, total] = await Promise.all([
+        baseQuery.clone().skip(skip).limit(take).exec(),
+        this._productModel.countDocuments(filter).exec(),
+      ]);
+      return {
+        data,
+        total,
+        page,
+        limit: take,
+      };
+    }
+
+    return baseQuery.exec();
   }
 
   async addToFavorites(productId: string, user: UserModel) {

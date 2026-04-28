@@ -8,6 +8,7 @@ import {
   Inject,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
   ValidationPipe,
@@ -26,7 +27,24 @@ export class ProductsController {
   @Get('favorites/me')
   @ApiBearerAuth('bearer')
   @UseGuards(JwtGuard)
-  async myFavorites(@Req() req: Request) {
+  async myFavorites(
+    @Req() req: Request,
+    @Query('page') pageRaw?: string,
+    @Query('take') takeRaw?: string,
+  ) {
+    if (pageRaw != null && pageRaw !== '') {
+      const parsed = parseInt(pageRaw, 10);
+      if (Number.isFinite(parsed) && parsed >= 1) {
+        const take = Math.min(
+          100,
+          Math.max(1, parseInt(takeRaw ?? '20', 10) || 20),
+        );
+        return this._productsService.listFavoriteProducts(
+          req.user as UserModel,
+          { page: parsed, take },
+        );
+      }
+    }
     return this._productsService.listFavoriteProducts(req.user as UserModel);
   }
 
