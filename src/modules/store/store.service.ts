@@ -32,8 +32,9 @@ import { AddressModel } from '@schemas/address.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
+import { Model } from 'mongoose';
 import { Model, Types } from 'mongoose';
-import { CreateStoreDto } from './dto/store.dto';
+import { CreateStoreDto, PatchVendorShippingZonesDto } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 
@@ -494,6 +495,59 @@ export class StoreService {
     return this.findMyStoreSummary(user);
   }
 
+  /**
+   * Enregistre `supportsShipping` et `shippingZones` sans repasser par la fiche complète
+   * (nécessaire pour les boutiques ACTIVE, car `updateVendorApplication` est réservé au dossier).
+   */
+  async updateVendorShippingZones(
+    user: UserModel,
+    args: PatchVendorShippingZonesDto,
+  ) {
+    const store = await this._storeModel.findOne({ owner: user._id }).exec();
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+    if (store.status === StoreStatusEnum.INACTIVE) {
+      throw new ForbiddenException('store_not_editable');
+    }
+    const shippingZones = args.supportsShipping
+      ? args.shippingZones ?? []
+      : [];
+    if (args.supportsShipping) {
+      if (!shippingZones.length) {
+        throw new BadRequestException('shipping_zones_required');
+      }
+      for (const z of shippingZones) {
+        if (z.minDistance > z.maxDistance) {
+          throw new BadRequestException('invalid_shipping_zone_distances');
+        }
+      }
+    }
+    await this._storeModel.updateOne(
+      { _id: store._id },
+      {
+        supportsShipping: args.supportsShipping,
+        shippingZones,
+      },
+    );
+    await this._storeModel.updateOne(
+      { _id: store._id },
+      {
+        $push: {
+          vendorMessages: {
+            message: 'Zones de livraison enregistrées.',
+            from: 'SYSTEM',
+            createdAt: new Date(),
+          },
+        },
+      },
+    );
+    this._wsInboxNotify.notifyUserInboxRefresh(
+      (user._id as { toString(): string }).toString(),
+    );
+    return this.findMyStoreSummary(user);
+  }
+
   async updateProfileImage(
     id: string,
     file: Express.Multer.File,
@@ -901,7 +955,7 @@ export class StoreService {
       .populate({ path: 'owner', select: 'fullName email' })
       .populate({
         path: 'address',
-        select: 'address city country countryCode zipCode',
+        select: 'address city country countryCode zipCode location',
       })
       .sort({ updatedAt: -1 })
       .lean()
@@ -930,6 +984,23 @@ export class StoreService {
       adresse = city ? `${line}, ${city}` : line;
     }
 
+    let latitude: number | null = null;
+    let longitude: number | null = null;
+    const loc = addr?.location as { coordinates?: number[] } | undefined;
+    const coords = loc?.coordinates;
+    if (
+      Array.isArray(coords) &&
+      coords.length >= 2 &&
+      !(Number(coords[0]) === 0 && Number(coords[1]) === 0)
+    ) {
+      longitude = Number(coords[0]);
+      latitude = Number(coords[1]);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        latitude = null;
+        longitude = null;
+      }
+    }
+
     const createdRaw = s.createdAt ?? s.created_at;
     const updatedRaw = s.updatedAt ?? s.updated_at;
     const toIso = (raw: unknown) => {
@@ -949,6 +1020,8 @@ export class StoreService {
       ownerNom,
       ownerPrenom,
       adresse,
+      latitude,
+      longitude,
       createdAt: toIso(createdRaw),
       updatedAt: toIso(updatedRaw),
     };

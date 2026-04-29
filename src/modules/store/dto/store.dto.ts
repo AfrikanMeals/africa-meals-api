@@ -105,6 +105,24 @@ export class PatchDailyMenuDto {
   slots: DailyMenuSlotDto[];
 }
 
+/** Mise à jour des zones de livraison (tous statuts sauf INACTIVE). */
+export class PatchVendorShippingZonesDto {
+  @ApiProperty({ description: 'Livraison assurée par le restaurant' })
+  @IsBoolean()
+  supportsShipping: boolean;
+
+  @ApiPropertyOptional({
+    type: () => [StoreShippingZoneDto],
+    description: 'Obligatoire d’avoir au moins une entrée si supportsShipping est true',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => StoreShippingZoneDto)
+  shippingZones?: StoreShippingZoneDto[];
+}
+
+
 /** Logo boutique : évite multipart (souvent cassé derrière Cloud Functions / certains proxys). */
 export class StoreProfileImageJsonDto {
   @ApiProperty({

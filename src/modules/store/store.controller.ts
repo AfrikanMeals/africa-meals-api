@@ -43,6 +43,7 @@ import { AdminVendorStoreStatusDto } from './dto/admin-vendor-store.dto';
 import {
   CreateStoreDto,
   PatchDailyMenuDto,
+  PatchVendorShippingZonesDto,
   StoreProfileImageJsonDto,
 } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
@@ -410,6 +411,20 @@ export class StoreController {
     return this._storeService.updateVendorApplication(
       req.user as UserModel,
       args,
+    );
+  }
+
+  /** Zones de livraison / livraison par le restaurant (boutique ACTIVE ou dossier en cours). */
+  @Patch('vendor/shipping-zones')
+  @UseGuards(JwtGuard)
+  async patchVendorShippingZones(
+    @Req() req: Request,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: PatchVendorShippingZonesDto,
+  ) {
+    return this._storeService.updateVendorShippingZones(
+      req.user as UserModel,
+      body,
     );
   }
 
