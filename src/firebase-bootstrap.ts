@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ExpressAdapter } from '@nestjs/platform-express';
+import compression from 'compression';
 import * as express from 'express';
 import { AppModule } from './app.module';
 import { configureApplication } from './configure-app';
@@ -14,6 +15,7 @@ export async function getExpressServer(): Promise<express.Express> {
     return cachedServer;
   }
   const expressApp = express();
+  expressApp.use(compression({ threshold: 1024 }));
   expressApp.use(express.json({ limit: '60mb' }));
   expressApp.use(express.urlencoded({ extended: true, limit: '60mb' }));
   const adapter = new ExpressAdapter(expressApp);

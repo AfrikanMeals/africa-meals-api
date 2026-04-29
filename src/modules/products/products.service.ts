@@ -1,6 +1,7 @@
 import { MediasService } from '@modules/medias/medias.service';
 import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import { RatingsService } from '@modules/ratings/ratings.service';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import {
   BadRequestException,
   ConflictException,
@@ -9,12 +10,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Cache } from 'cache-manager';
 import { InjectModel } from '@nestjs/mongoose';
 import { ProductCategoryModel } from '@schemas/product-category.schema';
 import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
-import { Model, Types } from 'mongoose';
+import { Model, PipelineStage, Types } from 'mongoose';
+import type { FavoriteListingPagePayload } from './dto/favorite-listing.payload';
 import {
   CreateProductDto,
   CreateProductExtraDto,
@@ -34,6 +37,12 @@ export class ProductsService {
 
   @Inject(RatingsService)
   private readonly _ratingsService: RatingsService;
+
+  @Inject(CACHE_MANAGER)
+  private readonly _cacheManager: Cache;
+
+  /** Incrémenté à chaque ajout/retrait favori : invalide les clés cache mémoire (TTL + génération). */
+  private readonly _favoriteListRevision = new Map<string, number>();
 
   /** Taille max fichier image avant encodage base64 (5 Mo). */
   private static readonly MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -551,27 +560,354 @@ export class ProductsService {
     }
   }
 
-  async listFavoriteProducts(user: UserModel) {
-    const userId = user?._id;
+  private bumpFavoriteListCache(userId: Types.ObjectId | string) {
+    const id =
+      typeof userId === 'string' ? userId : (userId as Types.ObjectId).toString();
+    this._favoriteListRevision.set(
+      id,
+      (this._favoriteListRevision.get(id) ?? 0) + 1,
+    );
+  }
+
+  private favoritesCacheKey(
+    userId: string,
+    pagination?: { page: number; take: number },
+  ) {
+    const gen = this._favoriteListRevision.get(userId) ?? 0;
+    if (pagination) {
+      return `favlist:${userId}:${gen}:${pagination.page}:${pagination.take}`;
+    }
+    return `favlist:${userId}:${gen}:all`;
+  }
+
+  private favoritesGraphqlCacheKey(
+    userId: string,
+    pagination: { page: number; take: number },
+  ) {
+    const gen = this._favoriteListRevision.get(userId) ?? 0;
+    return `favlistgql:${userId}:${gen}:${pagination.page}:${pagination.take}`;
+  }
+
+  /**
+   * Agrégation Mongo : une passe paginée, lookups limités (pas de populate Mongoose lourd),
+   * champs alignés sur l’écran liste favoris uniquement.
+   */
+  async listFavoriteProductsListingForGraphql(
+    user: UserModel,
+    page: number,
+    take: number,
+  ): Promise<FavoriteListingPagePayload> {
+    const userId = user?._id as Types.ObjectId | undefined;
     if (!userId) {
       throw new BadRequestException('user_not_found');
     }
+    const uid = userId.toString();
+    const cacheKey = this.favoritesGraphqlCacheKey(uid, { page, take });
+    const hit = await this._cacheManager.get<FavoriteListingPagePayload>(
+      cacheKey,
+    );
+    if (hit != null) {
+      return hit;
+    }
+
+    const skip = (page - 1) * take;
+    const pipeline: PipelineStage[] = [
+      { $match: { likedBy: userId, status: ProductStatusEnum.ACTIVE } },
+      {
+        $facet: {
+          meta: [{ $count: 'total' }],
+          data: [
+            { $sort: { updatedAt: -1 } },
+            { $skip: skip },
+            { $limit: take },
+            {
+              $lookup: {
+                from: 'product_categories',
+                localField: 'category',
+                foreignField: '_id',
+                as: '_cat',
+              },
+            },
+            {
+              $lookup: {
+                from: 'stores',
+                localField: 'store',
+                foreignField: '_id',
+                as: '_st',
+              },
+            },
+            {
+              $lookup: {
+                from: 'product_ratings',
+                let: { pid: '$_id' },
+                pipeline: [
+                  {
+                    $match: {
+                      $expr: { $eq: ['$product', '$$pid'] },
+                    },
+                  },
+                  { $project: { _id: 0, rate: 1 } },
+                ],
+                as: '_rates',
+              },
+            },
+            {
+              $addFields: {
+                likesCount: { $size: { $ifNull: ['$likedBy', []] } },
+                averageRating: {
+                  $let: {
+                    vars: {
+                      sz: { $size: { $ifNull: ['$_rates', []] } },
+                      sumRates: {
+                        $sum: {
+                          $map: {
+                            input: '$_rates',
+                            as: 'r',
+                            in: '$$r.rate',
+                          },
+                        },
+                      },
+                    },
+                    in: {
+                      $cond: [
+                        { $gt: ['$$sz', 0] },
+                        { $divide: ['$$sumRates', '$$sz'] },
+                        0,
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+            {
+              $addFields: {
+                categoryPayload: {
+                  $cond: [
+                    { $gt: [{ $size: { $ifNull: ['$_cat', []] } }, 0] },
+                    {
+                      id: {
+                        $toString: { $arrayElemAt: ['$_cat._id', 0] },
+                      },
+                      title: { $arrayElemAt: ['$_cat.title', 0] },
+                      icon: { $arrayElemAt: ['$_cat.icon', 0] },
+                      isEnabled: {
+                        $ifNull: [
+                          { $arrayElemAt: ['$_cat.isEnabled', 0] },
+                          true,
+                        ],
+                      },
+                    },
+                    null,
+                  ],
+                },
+                storePayload: {
+                  $cond: [
+                    { $gt: [{ $size: { $ifNull: ['$_st', []] } }, 0] },
+                    {
+                      id: {
+                        $toString: { $arrayElemAt: ['$_st._id', 0] },
+                      },
+                      name: { $arrayElemAt: ['$_st.name', 0] },
+                      status: {
+                        $toString: { $arrayElemAt: ['$_st.status', 0] },
+                      },
+                    },
+                    null,
+                  ],
+                },
+              },
+            },
+            {
+              $project: {
+                _id: 1,
+                title: 1,
+                profileImage: 1,
+                price: 1,
+                discountPrice: { $ifNull: ['$discountPrice', 0] },
+                currency: 1,
+                bio: 1,
+                originCountry: { $ifNull: ['$originCountry', ''] },
+                likesCount: 1,
+                averageRating: { $ifNull: ['$averageRating', 0] },
+                inCart: { $literal: false },
+                category: '$categoryPayload',
+                store: '$storePayload',
+              },
+            },
+          ],
+        },
+      },
+      {
+        $project: {
+          total: {
+            $ifNull: [
+              {
+                $let: {
+                  vars: { m: { $arrayElemAt: ['$meta', 0] } },
+                  in: '$$m.total',
+                },
+              },
+              0,
+            ],
+          },
+          data: 1,
+        },
+      },
+    ];
+
+    const agg = await this._productModel.aggregate(pipeline).exec();
+    const pack = agg[0] as { total?: number; data?: Record<string, unknown>[] };
+    const total = typeof pack?.total === 'number' ? pack.total : 0;
+    const rawItems = Array.isArray(pack?.data) ? pack.data : [];
+
+    const items = rawItems.map((doc) => {
+      const cat = doc.category as Record<string, unknown> | null | undefined;
+      const st = doc.store as Record<string, unknown> | null | undefined;
+      return {
+        id: String(doc._id),
+        title: String(doc.title ?? ''),
+        profileImage:
+          typeof doc.profileImage === 'string' ? doc.profileImage : '',
+        price: Number(doc.price ?? 0),
+        discountPrice: Number(doc.discountPrice ?? 0),
+        currency: String(doc.currency ?? 'CAD'),
+        bio: String(doc.bio ?? ''),
+        originCountry: String(doc.originCountry ?? ''),
+        likesCount: Number(doc.likesCount ?? 0),
+        averageRating: Number(doc.averageRating ?? 0),
+        inCart: Boolean(doc.inCart),
+        category:
+          cat && typeof cat.id === 'string'
+            ? {
+                id: cat.id,
+                title: String(cat.title ?? ''),
+                icon: String(cat.icon ?? ''),
+                isEnabled: cat.isEnabled !== false,
+              }
+            : null,
+        store:
+          st && typeof st.id === 'string'
+            ? {
+                id: st.id,
+                name: String(st.name ?? ''),
+                status: String(st.status ?? ''),
+              }
+            : null,
+      };
+    });
+
+    const result: FavoriteListingPagePayload = {
+      items,
+      total,
+      page,
+      limit: take,
+    };
+
+    const ttlEnv = Number(process.env.FAVORITES_CACHE_TTL_MS);
+    const ttlMs = Number.isFinite(ttlEnv) && ttlEnv > 0 ? ttlEnv : 25_000;
+    await this._cacheManager.set(cacheKey, result, ttlMs);
+    return result;
+  }
+
+  /**
+   * Requête allégée pour la liste favoris : pas de populate `likedBy` ni `ratings.user`,
+   * médias base64 exclus, galerie réduite aux URLs (payload JSON plus léger + moins d’I/O Mongo).
+   */
+  private baseFavoriteProductsQuery(userId: Types.ObjectId) {
+    const filter = {
+      likedBy: userId,
+      status: ProductStatusEnum.ACTIVE,
+    };
     return this._productModel
-      .find({
-        likedBy: userId,
-        status: ProductStatusEnum.ACTIVE,
+      .find(filter)
+      .select('-imageBase64 -imageMimeType')
+      .populate({
+        path: 'category',
+        select: 'title icon isEnabled createdAt updatedAt',
       })
-      .populate('category')
       .populate({
         path: 'ratings',
-        populate: {
-          path: 'user',
-        },
+        select: '_id rate createdAt updatedAt product',
       })
-      .populate('likedBy')
-      .populate('store')
+      .populate({ path: 'store' })
       .sort({ updatedAt: -1 })
-      .exec();
+      .lean({ virtuals: true });
+  }
+
+  private stripHeavyFavoriteProductFields(
+    rows: Record<string, unknown>[],
+  ): Record<string, unknown>[] {
+    return rows.map((row) => {
+      const out: Record<string, unknown> = { ...row };
+      const g = out['galleryImages'];
+      if (Array.isArray(g) && g.length) {
+        out['galleryImages'] = g
+          .map((item: unknown) => {
+            if (item && typeof item === 'object' && 'imageUrl' in item) {
+              const u = String(
+                (item as { imageUrl?: string }).imageUrl ?? '',
+              ).trim();
+              return u ? { imageUrl: u } : null;
+            }
+            return null;
+          })
+          .filter(Boolean);
+      }
+      delete out['imageBase64'];
+      delete out['imageMimeType'];
+      return out;
+    });
+  }
+
+  async listFavoriteProducts(
+    user: UserModel,
+    pagination?: { page: number; take: number },
+  ) {
+    const userId = user?._id as Types.ObjectId | undefined;
+    if (!userId) {
+      throw new BadRequestException('user_not_found');
+    }
+    const uid = userId.toString();
+    const cacheKey = this.favoritesCacheKey(uid, pagination);
+    const cached = await this._cacheManager.get<unknown>(cacheKey);
+    if (cached !== undefined && cached !== null) {
+      return cached;
+    }
+
+    const filter = {
+      likedBy: userId,
+      status: ProductStatusEnum.ACTIVE,
+    };
+    const baseQuery = this.baseFavoriteProductsQuery(userId);
+
+    const ttlEnv = Number(process.env.FAVORITES_CACHE_TTL_MS);
+    const ttlMs = Number.isFinite(ttlEnv) && ttlEnv > 0 ? ttlEnv : 25_000;
+
+    let result: unknown;
+    if (pagination) {
+      const { page, take } = pagination;
+      const skip = (page - 1) * take;
+      const [data, total] = await Promise.all([
+        baseQuery.clone().skip(skip).limit(take).exec(),
+        this._productModel.countDocuments(filter).exec(),
+      ]);
+      result = {
+        data: this.stripHeavyFavoriteProductFields(
+          data as unknown as Record<string, unknown>[],
+        ),
+        total,
+        page,
+        limit: take,
+      };
+    } else {
+      const raw = await baseQuery.clone().limit(500).exec();
+      result = this.stripHeavyFavoriteProductFields(
+        raw as unknown as Record<string, unknown>[],
+      );
+    }
+
+    await this._cacheManager.set(cacheKey, result, ttlMs);
+    return result;
   }
 
   async addToFavorites(productId: string, user: UserModel) {
@@ -594,6 +930,7 @@ export class ProductsService {
         },
       )
       .exec();
+    this.bumpFavoriteListCache(user._id as Types.ObjectId);
     return this.findOneById(productId);
   }
 
@@ -615,6 +952,7 @@ export class ProductsService {
         },
       )
       .exec();
+    this.bumpFavoriteListCache(user._id as Types.ObjectId);
     return this.findOneById(productId);
   }
 }

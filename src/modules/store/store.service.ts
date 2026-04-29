@@ -32,8 +32,8 @@ import { AddressModel } from '@schemas/address.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
-import { Model } from 'mongoose';
-import { CreateStoreDto, PatchVendorShippingZonesDto } from './dto/store.dto';
+import { Model, Types } from 'mongoose';
+import { CreateStoreDto } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 
@@ -818,6 +818,48 @@ export class StoreService {
       console.log('🚀 ~ StoreService ~ createRating ~ e:', e);
       throw new BadRequestException('error_creating_rating');
     }
+  }
+
+  async addToFavorites(storeId: string, user: UserModel) {
+    if (!Types.ObjectId.isValid(storeId)) {
+      throw new NotFoundException('store_not_found');
+    }
+    const store = await this._storeModel.findOne({ _id: storeId }).exec();
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+    await this._storeModel
+      .updateOne(
+        { _id: storeId },
+        {
+          $addToSet: {
+            likedBy: user._id,
+          },
+        },
+      )
+      .exec();
+    return this.findOneById(storeId);
+  }
+
+  async removeFromFavorites(storeId: string, user: UserModel) {
+    if (!Types.ObjectId.isValid(storeId)) {
+      throw new NotFoundException('store_not_found');
+    }
+    const store = await this._storeModel.findOne({ _id: storeId }).exec();
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+    await this._storeModel
+      .updateOne(
+        { _id: storeId },
+        {
+          $pull: {
+            likedBy: user._id,
+          },
+        },
+      )
+      .exec();
+    return this.findOneById(storeId);
   }
 
   async createOffer(

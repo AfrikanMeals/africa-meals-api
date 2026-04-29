@@ -1,4 +1,5 @@
 require("node:dns/promises").setServers(["1.1.1.1", "8.8.8.8"]);
+import { CacheModule } from '@nestjs/cache-manager';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -21,6 +22,8 @@ import { BillingModule } from './modules/billing/billing.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { SupportChatModule } from './modules/support-chat/support-chat.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { GraphqlApiModule } from './graphql/graphql.module';
+import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
 
 @Module({
   imports: [
@@ -29,32 +32,16 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
       envFilePath: ['.env.local', '.env', '../.env'],
       isGlobal: true,
     }),
+    CacheModule.register({
+      isGlobal: true,
+      ttl: Number(process.env.FAVORITES_CACHE_TTL_MS) || 25_000,
+      max: Number(process.env.CACHE_MAX_ITEMS) || 300,
+    }),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => {
-        const fullUri =
-          config.get<string>('MONGODB_URI') ||
-          config.get<string>('MONGO_URI') ||
-          '';
-        const builtUri = `mongodb+srv://${config.get<string>(
-          'DB_USERNAME',
-        )}:${config.get<string>('DB_PASSWORD')}@${config.get<string>(
-          'DB_HOST',
-        )}?retryWrites=true&w=majority&appName=Main`;
-
-        const uri = fullUri || builtUri;
-        const dbName = config.get<string>('DB_DATABASE');
-
-        return {
-          uri,
-          ...(dbName ? { dbName } : {}),
-          maxPoolSize: Number(config.get<string>('MONGOOSE_MAX_POOL') || 10),
-          serverSelectionTimeoutMS: Number(
-            config.get<string>('MONGOOSE_SERVER_SELECTION_MS') || 8000,
-          ),
-        };
-      },
+      useFactory: (config: ConfigService) =>
+        buildMongooseRootOptions(config, 'africa-meals-api'),
     }),
     AuthModule,
     UsersModule,
@@ -72,6 +59,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
     OrdersModule,
     SupportChatModule,
     DashboardModule,
+    GraphqlApiModule,
     // SharedModule,
   ],
   controllers: [AppController, EnvDebugController],
