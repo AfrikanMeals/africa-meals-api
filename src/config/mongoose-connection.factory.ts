@@ -1,11 +1,30 @@
 import { ConfigService } from '@nestjs/config';
 
+function parsePositiveInt(
+  raw: string | undefined,
+  fallback: number,
+  max?: number,
+): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    return fallback;
+  }
+  return max != null ? Math.min(max, Math.floor(n)) : Math.floor(n);
+}
+
 /**
  * Options de connexion MongoDB partagées par `AppModule`.
  *
- * Sur Atlas M0, la limite est ~500 connexions **cluster** : chaque réplica API/WS
- * ou chaque instance Cloud Functions a son **propre** pool. Il faut donc garder
- * `maxPoolSize` modeste et limiter `FUNCTION_MAX_INSTANCES` en prod.
+ * Sur Atlas, la métrique « Connections » sur un nœud = **somme de tous les clients**
+ * (API, WS, Functions, shells, etc.) : chaque processus a son **pool** (`maxPoolSize`).
+ * Ex. 6 réplicas Cloud Run × 5 connexions ≈ 30 sur le graphique.
+ *
+ * Pour **minimiser** les sockets ouvertes :
+ * - `maxPoolSize` bas (3–8 par instance Cloud Run / API)
+ * - `minPoolSize` à 0 (pas de connexions « au chaud » inutiles)
+ * - `maxIdleTimeMS` modéré : le pilote ferme les connexions inactives du pool
+ * - `socketTimeoutMS` : évite les opérations bloquées indéfiniment
+ * - `enableShutdownHooks()` côté Nest (voir `main.ts`) pour couper proprement au SIGTERM
  */
 export function buildMongooseRootOptions(
   config: ConfigService,
@@ -26,29 +45,63 @@ export function buildMongooseRootOptions(
   const uri = fullUri || builtUri;
   const dbName = config.get<string>('DB_DATABASE');
 
-  const rawMax = Number(config.get<string>('MONGOOSE_MAX_POOL') ?? 5);
-  const maxPoolSize = Number.isFinite(rawMax)
-    ? Math.max(1, Math.min(50, rawMax))
-    : 5;
+  const maxPoolSize = parsePositiveInt(
+    config.get<string>('MONGOOSE_MAX_POOL'),
+    5,
+    30,
+  );
 
-  const rawMin = Number(config.get<string>('MONGOOSE_MIN_POOL') ?? 0);
-  const minPoolSize = Number.isFinite(rawMin)
-    ? Math.max(0, Math.min(maxPoolSize, rawMin))
-    : 0;
+  const minPoolSize = Math.min(
+    maxPoolSize,
+    parsePositiveInt(config.get<string>('MONGOOSE_MIN_POOL'), 0, maxPoolSize),
+  );
+
+  const maxIdleTimeMS = parsePositiveInt(
+    config.get<string>('MONGOOSE_MAX_IDLE_MS'),
+    45_000,
+    600_000,
+  );
+
+  const serverSelectionTimeoutMS = parsePositiveInt(
+    config.get<string>('MONGOOSE_SERVER_SELECTION_MS'),
+    8000,
+    120_000,
+  );
+
+  const waitQueueTimeoutMS = parsePositiveInt(
+    config.get<string>('MONGOOSE_WAIT_QUEUE_MS'),
+    10_000,
+    120_000,
+  );
+
+  const socketTimeoutMS = parsePositiveInt(
+    config.get<string>('MONGOOSE_SOCKET_TIMEOUT_MS'),
+    45_000,
+    300_000,
+  );
+
+  const heartbeatFrequencyMS = parsePositiveInt(
+    config.get<string>('MONGOOSE_HEARTBEAT_FREQ_MS'),
+    30_000,
+    120_000,
+  );
+
+  const maxConnecting = parsePositiveInt(
+    config.get<string>('MONGOOSE_MAX_CONNECTING'),
+    2,
+    5,
+  );
 
   return {
     uri,
     ...(dbName ? { dbName } : {}),
     maxPoolSize,
     minPoolSize,
-    maxIdleTimeMS: Number(
-      config.get<string>('MONGOOSE_MAX_IDLE_MS') || 60_000,
-    ),
-    serverSelectionTimeoutMS: Number(
-      config.get<string>('MONGOOSE_SERVER_SELECTION_MS') || 8000,
-    ),
-    waitQueueTimeoutMS: Number(
-      config.get<string>('MONGOOSE_WAIT_QUEUE_MS') || 10_000,
-    ),
+    maxIdleTimeMS,
+    serverSelectionTimeoutMS,
+    waitQueueTimeoutMS,
+    socketTimeoutMS,
+    heartbeatFrequencyMS,
+    maxConnecting,
   };
 }

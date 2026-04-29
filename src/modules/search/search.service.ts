@@ -6,7 +6,7 @@ import { OfferModel, OfferStatusEnum } from '@schemas/offer.schema';
 import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
-import { Types } from 'mongoose';
+import { PipelineStage, Types } from 'mongoose';
 import { SearchContent, SearchDto, SearchResultDto } from './dto/search.dto';
 
 @Injectable()
@@ -295,6 +295,220 @@ export class SearchService {
       page: args.page,
       limit: args.take,
     };
+  }
+
+  /**
+   * Produits pour l’accueil boutique : une seule agrégation, champs minimaux (pas de populate lourd).
+   * Même filtre métier que la recherche produits « vides » + tri récent.
+   */
+  async homeFeedProducts(
+    user?: UserModel,
+    limit = 48,
+  ): Promise<Record<string, unknown>[]> {
+    const ownerOid = this._userObjectId(user);
+    const safeLimit = Math.min(120, Math.max(1, Math.floor(limit)));
+    const pipeline: PipelineStage[] = [
+      {
+        $lookup: {
+          from: 'stores',
+          localField: 'store',
+          foreignField: '_id',
+          as: 'store',
+        },
+      },
+      {
+        $addFields: {
+          store: { $arrayElemAt: ['$store', 0] },
+        },
+      },
+      {
+        $match: {
+          $and: [
+            {
+              $or: [
+                ownerOid ? { 'store.owner': ownerOid } : null,
+                { status: ProductStatusEnum.ACTIVE },
+              ].filter(Boolean),
+            },
+            { 'store.acceptsOrders': true },
+            {
+              $or: [
+                { title: { $regex: '', $options: 'i' } },
+                { bio: { $regex: '', $options: 'i' } },
+                { about: { $regex: '', $options: 'i' } },
+              ],
+            },
+          ],
+        },
+      },
+      { $sort: { createdAt: -1 } },
+      { $limit: safeLimit },
+      {
+        $lookup: {
+          from: 'product_categories',
+          localField: 'category',
+          foreignField: '_id',
+          as: '_cat',
+        },
+      },
+      {
+        $lookup: {
+          from: 'product_ratings',
+          let: { pid: '$_id' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$product', '$$pid'] } } },
+            { $project: { _id: 0, rate: 1 } },
+          ],
+          as: '_rates',
+        },
+      },
+      {
+        $addFields: {
+          likesCount: { $size: { $ifNull: ['$likedBy', []] } },
+          averageRating: {
+            $let: {
+              vars: {
+                sz: { $size: { $ifNull: ['$_rates', []] } },
+                sumRates: {
+                  $sum: {
+                    $map: {
+                      input: '$_rates',
+                      as: 'r',
+                      in: '$$r.rate',
+                    },
+                  },
+                },
+              },
+              in: {
+                $cond: [
+                  { $gt: ['$$sz', 0] },
+                  { $divide: ['$$sumRates', '$$sz'] },
+                  0,
+                ],
+              },
+            },
+          },
+          _category: { $arrayElemAt: ['$_cat', 0] },
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          title: 1,
+          bio: 1,
+          originCountry: { $ifNull: ['$originCountry', ''] },
+          price: 1,
+          discountPrice: { $ifNull: ['$discountPrice', 0] },
+          currency: { $ifNull: ['$currency', 'CAD'] },
+          profileImage: { $ifNull: ['$profileImage', ''] },
+          status: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          likesCount: 1,
+          averageRating: { $ifNull: ['$averageRating', 0] },
+          category: {
+            $cond: [
+              { $gt: [{ $size: { $ifNull: ['$_cat', []] } }, 0] },
+              {
+                id: { $toString: '$_category._id' },
+                _id: '$_category._id',
+                title: '$_category.title',
+                icon: '$_category.icon',
+                isEnabled: { $ifNull: ['$_category.is_enabled', true] },
+                createdAt: '$_category.createdAt',
+                updatedAt: '$_category.updatedAt',
+              },
+              null,
+            ],
+          },
+          store: {
+            id: { $toString: '$store._id' },
+            _id: '$store._id',
+            name: '$store.name',
+            status: { $toString: '$store.status' },
+            bio: { $ifNull: ['$store.bio', ''] },
+            acceptsOrders: { $ifNull: ['$store.acceptsOrders', true] },
+            supportsShipping: { $ifNull: ['$store.supportsShipping', false] },
+            currency: { $ifNull: ['$store.currency', 'CAD'] },
+            email: { $ifNull: ['$store.email', ''] },
+            phoneNumber: { $ifNull: ['$store.phoneNumber', ''] },
+            profileImage: { $ifNull: ['$store.profileImage', ''] },
+            owner: { $ifNull: ['$store.owner', null] },
+            createdAt: '$store.createdAt',
+            updatedAt: '$store.updatedAt',
+            canCreateProducts: { $ifNull: ['$store.canCreateProducts', false] },
+            shippingZones: { $ifNull: ['$store.shippingZones', []] },
+            averageRating: { $ifNull: ['$store.averageRating', 0] },
+          },
+        },
+      },
+    ];
+
+    const raw = await this._productsService
+      .getProductModel()
+      .aggregate(pipeline)
+      .exec();
+
+    return (raw as Record<string, unknown>[]).map((doc) => {
+      const likes = Number(doc.likesCount ?? 0);
+      const cat = doc.category as Record<string, unknown> | null;
+      const st = doc.store as Record<string, unknown> | null;
+      const owner = st?.['owner'];
+      const ownerStr =
+        owner != null && typeof owner === 'object' && 'toString' in owner
+          ? (owner as Types.ObjectId).toString()
+          : owner != null
+            ? String(owner)
+            : '';
+      return {
+        ...doc,
+        id: String(doc._id),
+        likedBy: likes > 0 ? Array.from({ length: likes }, () => '') : [],
+        ratings: [],
+        extras: [],
+        galleryImages: [],
+        ordersCount: 0,
+        inCart: false,
+        category:
+          cat && cat['title'] != null
+            ? {
+                ...cat,
+                isEnabled: cat['isEnabled'] !== false,
+              }
+            : {
+                id: '',
+                title: '',
+                icon: '',
+                isEnabled: true,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              },
+        store: st && st['name'] != null
+            ? {
+                ...st,
+                owner: ownerStr,
+              }
+            : {
+                id: '',
+                name: '',
+                status: 'INACTIVE',
+                bio: '',
+                acceptsOrders: false,
+                supportsShipping: false,
+                currency: 'CAD',
+                email: '',
+                phoneNumber: '',
+                profileImage: '',
+                owner: '',
+                likedBy: [],
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                canCreateProducts: false,
+                shippingZones: [],
+                averageRating: 0.0,
+              },
+      };
+    });
   }
 
   private async _filterStores(

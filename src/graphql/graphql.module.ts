@@ -1,10 +1,13 @@
 import { AuthModule } from '@modules/auth/auth.module';
 import { ProductsModule } from '@modules/products/products.module';
+import { ShopHomeModule } from '@modules/shop-home/shop-home.module';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { Module } from '@nestjs/common';
 import { GraphQLModule } from '@nestjs/graphql';
 import { FavoritesListingResolver } from './favorites-listing.resolver';
 import { GqlJwtGuard } from './guards/gql-jwt.guard';
+import { OptionalGqlAuthGuard } from './guards/optional-gql-auth.guard';
+import { ShopHomeResolver } from './shop-home.resolver';
 
 @Module({
   imports: [
@@ -19,7 +22,13 @@ import { GqlJwtGuard } from './guards/gql-jwt.guard';
     }),
     AuthModule,
     ProductsModule,
+    ShopHomeModule,
   ],
-  providers: [FavoritesListingResolver, GqlJwtGuard],
+  providers: [
+    FavoritesListingResolver,
+    ShopHomeResolver,
+    GqlJwtGuard,
+    OptionalGqlAuthGuard,
+  ],
 })
 export class GraphqlApiModule {}

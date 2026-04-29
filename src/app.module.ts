@@ -1,6 +1,7 @@
 require("node:dns/promises").setServers(["1.1.1.1", "8.8.8.8"]);
 import { CacheModule } from '@nestjs/cache-manager';
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AppController } from './app.controller';
@@ -35,8 +36,9 @@ import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
     CacheModule.register({
       isGlobal: true,
       ttl: Number(process.env.FAVORITES_CACHE_TTL_MS) || 25_000,
-      max: Number(process.env.CACHE_MAX_ITEMS) || 300,
+      max: Number(process.env.CACHE_MAX_ITEMS) || 500,
     }),
+    ScheduleModule.forRoot(),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

@@ -2,6 +2,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
@@ -9,7 +10,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { ProductCategoryModel } from '@schemas/product-category.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
-import { Model, Types } from 'mongoose';
+import { Model, PipelineStage, Types } from 'mongoose';
 import { DEFAULT_CATEGORIES } from './data/categories';
 import {
   CreateProductCategoryDto,
@@ -18,6 +19,8 @@ import {
 
 @Injectable()
 export class ProductCategoryService implements OnModuleInit {
+  private readonly _logger = new Logger(ProductCategoryService.name);
+
   @InjectModel(ProductCategoryModel.name)
   private readonly _productCategoryModel: Model<ProductCategoryModel>;
 
@@ -124,41 +127,75 @@ export class ProductCategoryService implements OnModuleInit {
     await existing.deleteOne();
   }
 
+  /**
+   * Liste publique des catégories + compteur produits.
+   * L’ancien `$lookup` chargeait **tous** les produits par catégorie en RAM → risque de timeout / 500 sur gros catalogues.
+   */
   async filter() {
     try {
-      const raw = await this._productCategoryModel
-        .aggregate([
-          { $sort: { createdAt: 1 } },
-          {
-            $lookup: {
-              from: 'products',
-              localField: '_id',
-              foreignField: 'category',
-              as: '_products',
+      const pipeline: PipelineStage[] = [
+        { $sort: { createdAt: 1 } },
+        {
+          $lookup: {
+            from: 'products',
+            let: { catId: '$_id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ['$category', '$$catId'] },
+                },
+              },
+              { $group: { _id: null, n: { $sum: 1 } } },
+            ],
+            as: '_cnt',
+          },
+        },
+        {
+          $addFields: {
+            productCount: {
+              $let: {
+                vars: { row: { $arrayElemAt: ['$_cnt', 0] } },
+                in: { $ifNull: ['$$row.n', 0] },
+              },
             },
           },
-          {
-            $addFields: {
-              productCount: { $size: '$_products' },
-            },
-          },
-          { $project: { _products: 0 } },
-        ])
-        .exec();
+        },
+        { $project: { _cnt: 0 } },
+      ];
 
-      return raw.map((doc: Record<string, unknown>) => ({
-        id: doc._id,
-        _id: doc._id,
-        title: doc.title,
-        icon: doc.icon,
-        isEnabled: doc.is_enabled ?? true,
-        productCount: doc.productCount ?? 0,
-        createdAt: doc.createdAt,
-        updatedAt: doc.updatedAt,
-      }));
-    } catch {
-      return this._filterWithCounts();
+      const raw = await this._productCategoryModel.aggregate(pipeline).exec();
+
+      return raw.map((doc: Record<string, unknown>) =>
+        this.serializeCategoryRow(doc),
+      );
+    } catch (e) {
+      this._logger.warn(
+        `filter aggregate fallback: ${(e as Error).message}`,
+      );
+      try {
+        return await this._filterWithCounts();
+      } catch (e2) {
+        this._logger.error(
+          `filter failed completely: ${(e2 as Error).message}`,
+        );
+        return [];
+      }
     }
+  }
+
+  /** Objet JSON strict (ids string) pour éviter les soucis de sérialisation côté client. */
+  private serializeCategoryRow(doc: Record<string, unknown>) {
+    const id = String(doc._id ?? '');
+    return {
+      id,
+      _id: id,
+      title: String(doc.title ?? ''),
+      icon: String(doc.icon ?? ''),
+      isEnabled: Boolean(doc.is_enabled ?? doc.isEnabled ?? true),
+      productCount: Number(doc.productCount ?? 0),
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+    };
   }
 
   private async _filterWithCounts() {
@@ -172,16 +209,10 @@ export class ProductCategoryService implements OnModuleInit {
         const productCount = await this._productModel
           .countDocuments({ category: cat._id })
           .exec();
-        return {
-          id: cat._id,
-          _id: cat._id,
-          title: cat.title,
-          icon: cat.icon,
-          isEnabled: (cat.is_enabled as boolean) ?? true,
+        return this.serializeCategoryRow({
+          ...cat,
           productCount,
-          createdAt: cat.createdAt,
-          updatedAt: cat.updatedAt,
-        };
+        });
       }),
     );
     return result;
