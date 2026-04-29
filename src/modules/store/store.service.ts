@@ -32,8 +32,9 @@ import { AddressModel } from '@schemas/address.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
+import { Model } from 'mongoose';
 import { Model, Types } from 'mongoose';
-import { CreateStoreDto } from './dto/store.dto';
+import { CreateStoreDto, PatchVendorShippingZonesDto } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 
