@@ -64,7 +64,7 @@ export class OrdersService {
       filter['status'] = args.status;
     }
 
-    const data = await this._orderModel
+    let query = this._orderModel
       .find(filter)
       .sort({ createdAt: -1 })
       .populate('store')
@@ -72,8 +72,13 @@ export class OrdersService {
         path: 'user',
         select: 'fullName email profileImage addresses',
         populate: { path: 'addresses' },
-      })
-      .exec();
+      });
+
+    if (typeof args.limit === 'number' && args.limit > 0) {
+      query = query.limit(args.limit);
+    }
+
+    const data = await query.exec();
 
     return { data };
   }

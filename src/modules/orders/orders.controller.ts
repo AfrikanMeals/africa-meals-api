@@ -7,6 +7,7 @@ import {
   Query,
   Req,
   UseGuards,
+  ValidationPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
@@ -24,7 +25,11 @@ export class OrdersController {
   /** Liste des commandes — doit être déclaré avant les routes `/:id`. */
   @Get()
   @UseGuards(JwtGuard)
-  async filter(@Req() req: Request, @Query() args: FilterOrdersDto) {
+  async filter(
+    @Req() req: Request,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    args: FilterOrdersDto,
+  ) {
     return this._ordersService.filter(args, req.user as UserModel);
   }
 
