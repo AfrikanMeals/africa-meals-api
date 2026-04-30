@@ -1,4 +1,5 @@
 import {
+  AdBannerImageJsonDto,
   CreateAdManagementDto,
   PatchAdManagementDto,
 } from '@modules/ads/dto/ad-management.dto';
@@ -120,6 +121,54 @@ export class AdsService implements OnModuleInit {
     if (!file?.buffer?.length) {
       throw new BadRequestException('empty_image');
     }
+    const url = await this._mediasService.upload(file, user, 'marketing/ads');
+    return { url };
+  }
+
+  /** Même destination Storage que multipart ; corps JSON pour proxys qui coupent multipart. */
+  async uploadBannerImageJson(
+    user: UserModel,
+    dto: AdBannerImageJsonDto,
+  ): Promise<{ url: string }> {
+    this.assertVendorOrAdmin(user);
+    const raw = dto.imageBase64
+      .replace(/\s/g, '')
+      .replace(/^data:image\/[^;]+;base64,/i, '');
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(raw, 'base64');
+    } catch {
+      throw new BadRequestException('invalid_base64');
+    }
+    if (!buffer.length) {
+      throw new BadRequestException('empty_image');
+    }
+    const max = 5 * 1024 * 1024;
+    if (buffer.length > max) {
+      throw new BadRequestException('file_too_large');
+    }
+    const name = (dto.filename || 'banner.jpg').trim() || 'banner.jpg';
+    if (!/\.(jpe?g|png|webp)$/i.test(name)) {
+      throw new BadRequestException('invalid_file_type');
+    }
+    const lower = name.toLowerCase();
+    const mime = lower.endsWith('.png')
+      ? 'image/png'
+      : lower.endsWith('.webp')
+        ? 'image/webp'
+        : 'image/jpeg';
+    const file = {
+      fieldname: 'file',
+      originalname: name,
+      encoding: '7bit',
+      mimetype: mime,
+      buffer,
+      size: buffer.length,
+      destination: '',
+      filename: '',
+      path: '',
+      stream: undefined,
+    } as Express.Multer.File;
     const url = await this._mediasService.upload(file, user, 'marketing/ads');
     return { url };
   }

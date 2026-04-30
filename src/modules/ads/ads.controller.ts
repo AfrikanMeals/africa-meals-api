@@ -1,4 +1,5 @@
 import {
+  AdBannerImageJsonDto,
   CreateAdManagementDto,
   PatchAdManagementDto,
 } from '@modules/ads/dto/ad-management.dto';
@@ -68,6 +69,18 @@ export class AdsController {
     @UploadedFile() file: Express.Multer.File,
   ) {
     return this.adsService.uploadBannerImage(req.user as UserModel, file);
+  }
+
+  /** JSON + base64 : recommandé derrière Firebase / CF (multipart « Unexpected end of form »). */
+  @Post('manage/image-json')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  async uploadBannerImageJson(
+    @Req() req: Request,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: AdBannerImageJsonDto,
+  ) {
+    return this.adsService.uploadBannerImageJson(req.user as UserModel, body);
   }
 
   @Post('manage')
