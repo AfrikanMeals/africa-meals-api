@@ -1,4 +1,5 @@
 import { AuthModule } from '@modules/auth/auth.module';
+import { MediasModule } from '@modules/medias/medias.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AdEventModel, AdEventSchema } from '@schemas/ad-event.schema';
@@ -14,6 +15,7 @@ import { AdsService } from './ads.service';
   providers: [AdsService],
   imports: [
     AuthModule,
+    MediasModule,
     MongooseModule.forFeature([
       { name: AdModel.name, schema: AdSchema },
       { name: AdEventModel.name, schema: AdEventSchema },

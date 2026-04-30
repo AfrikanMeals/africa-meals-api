@@ -14,12 +14,16 @@ import {
   Patch,
   Post,
   Req,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
   ValidationPipe,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
+import { memoryStorage } from 'multer';
 import { AdsService } from './ads.service';
 
 @ApiTags('ads')
@@ -39,6 +43,31 @@ export class AdsController {
   @ApiBearerAuth('bearer')
   async listManage(@Req() req: Request) {
     return this.adsService.listForManagement(req.user as UserModel);
+  }
+
+  /** Image bannière → Firebase Storage (SDK Admin), dossier `marketing/ads`. */
+  @Post('manage/image')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+      fileFilter: (_req, file, cb) => {
+        const extOk = /\.(jpe?g|png|webp)$/i.test(file.originalname);
+        const mimeOk = /^(image\/(jpeg|png|webp))$/i.test(file.mimetype);
+        if (!extOk || !mimeOk) {
+          return cb(new Error('invalid_file_type'), false);
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async uploadBannerImage(
+    @Req() req: Request,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.adsService.uploadBannerImage(req.user as UserModel, file);
   }
 
   @Post('manage')

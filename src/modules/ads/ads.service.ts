@@ -3,9 +3,11 @@ import {
   PatchAdManagementDto,
 } from '@modules/ads/dto/ad-management.dto';
 import { TrackAdEventDto } from '@modules/ads/dto/ad-tracking.dto';
+import { MediasService } from '@modules/medias/medias.service';
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
   OnModuleInit,
@@ -90,6 +92,9 @@ export class AdsService implements OnModuleInit {
   @InjectModel(ProductModel.name)
   private readonly _productModel: Model<ProductModel>;
 
+  @Inject(MediasService)
+  private readonly _mediasService: MediasService;
+
   async onModuleInit() {
     await this.seedIfEmpty();
   }
@@ -105,6 +110,18 @@ export class AdsService implements OnModuleInit {
     ) {
       throw new ForbiddenException('vendor_or_admin_only');
     }
+  }
+
+  async uploadBannerImage(
+    user: UserModel,
+    file?: Express.Multer.File,
+  ): Promise<{ url: string }> {
+    this.assertVendorOrAdmin(user);
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('empty_image');
+    }
+    const url = await this._mediasService.upload(file, user, 'marketing/ads');
+    return { url };
   }
 
   private async assertUserCanManageStore(
