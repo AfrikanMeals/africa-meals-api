@@ -249,6 +249,7 @@ export class SearchService {
     const facetAgg = await this._productsService
       .getProductModel()
       .aggregate(facetPipeline)
+      .option({ allowDiskUse: true })
       .exec();
 
     const facet = facetAgg[0] as
@@ -449,6 +450,7 @@ export class SearchService {
     const raw = await this._productsService
       .getProductModel()
       .aggregate(pipeline)
+      .option({ allowDiskUse: true })
       .exec();
 
     return (raw as Record<string, unknown>[]).map((doc) => {

@@ -45,6 +45,17 @@ export class ShopHomeService {
     return Number.isFinite(n) && n > 0 ? n : 45_000;
   }
 
+  /** Évite `JSON.parse(JSON.stringify)` sur les documents Mongoose (coûteux). */
+  private _docsToPlainJson(docs: unknown[]): Record<string, unknown>[] {
+    return docs.map((d) => {
+      const toJson = (d as { toJSON?: () => Record<string, unknown> })?.toJSON;
+      if (typeof toJson === 'function') {
+        return toJson.call(d);
+      }
+      return JSON.parse(JSON.stringify(d)) as Record<string, unknown>;
+    });
+  }
+
   /**
    * Bundle accueil : annonces + pubs + catégories + produits (léger).
    * Mis en cache par utilisateur (anon vs vendeur connecté).
@@ -65,18 +76,8 @@ export class ShopHomeService {
       this._search.homeFeedProducts(user, take),
     ]);
 
-    const announcements = announcementDocs.map((d) =>
-      typeof (d as { toJSON?: () => Record<string, unknown> }).toJSON ===
-      'function'
-        ? (d as { toJSON: () => Record<string, unknown> }).toJSON()
-        : (JSON.parse(JSON.stringify(d)) as Record<string, unknown>),
-    );
-    const ads = adDocs.map((d) =>
-      typeof (d as { toJSON?: () => Record<string, unknown> }).toJSON ===
-      'function'
-        ? (d as { toJSON: () => Record<string, unknown> }).toJSON()
-        : (JSON.parse(JSON.stringify(d)) as Record<string, unknown>),
-    );
+    const announcements = this._docsToPlainJson(announcementDocs);
+    const ads = this._docsToPlainJson(adDocs);
 
     const payload: ShopHomePayload = {
       announcements,

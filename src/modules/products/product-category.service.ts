@@ -203,7 +203,10 @@ export class ProductCategoryService implements OnModuleInit {
         { $project: { _cnt: 0 } },
       ];
 
-      const raw = await this._productCategoryModel.aggregate(pipeline).exec();
+      const raw = await this._productCategoryModel
+        .aggregate(pipeline)
+        .option({ allowDiskUse: true })
+        .exec();
 
       const result = raw.map((doc: Record<string, unknown>) =>
         this.serializeCategoryRow(doc),
