@@ -11,6 +11,7 @@ import {
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 import { haversineDistance } from 'src/utils/helpers';
+import { mapInChunks } from '@utils/map-in-chunks';
 import { FilterOrdersDto } from './dto/orders.dto';
 
 @Injectable()
@@ -136,16 +137,14 @@ export class OrdersService {
     //   throw new ForbiddenException('store_does_not_accept_orders');
     // }
 
-    const items: OrdeLineItem[] = await Promise.all(
-      cart.items.map(async (item) => ({
-        label: item.entity?.title ?? 'Article',
-        itemType: item.type!,
-        pictureUrl: item.entity?.profileImage,
-        quantity: item.quantity!,
-        price: item.price!,
-        categoryTitle: await this.categoryTitleForCartLine(item),
-      })),
-    );
+    const items: OrdeLineItem[] = await mapInChunks(cart.items, 4, async (item) => ({
+      label: item.entity?.title ?? 'Article',
+      itemType: item.type!,
+      pictureUrl: item.entity?.profileImage,
+      quantity: item.quantity!,
+      price: item.price!,
+      categoryTitle: await this.categoryTitleForCartLine(item),
+    }));
 
     const calculatedPrice = items.reduce((acc, item) => acc + item.price, 0);
 

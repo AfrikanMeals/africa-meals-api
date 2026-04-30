@@ -14,6 +14,7 @@ import {
   SortBy,
   SortOrder,
 } from './dto/search.dto';
+import { mapInChunks } from '@utils/map-in-chunks';
 
 @Injectable()
 export class SearchService {
@@ -156,10 +157,8 @@ export class SearchService {
     }
 
     return {
-      items: await Promise.all(
-        (offerIds ?? []).map((offerId) =>
-          this._offersService.findOne(offerId, user),
-        ),
+      items: await mapInChunks(offerIds ?? [], 4, (row) =>
+        this._offersService.findOne(row._id.toString(), user),
       ),
       total: count,
       page: args.page,

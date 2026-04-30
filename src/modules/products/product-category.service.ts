@@ -19,6 +19,7 @@ import {
   CreateProductCategoryDto,
   PatchProductCategoryDto,
 } from './dto/product-category.dto';
+import { mapInChunks } from '@utils/map-in-chunks';
 
 /** Ligne JSON renvoyée par [filter] / REST / GraphQL public. */
 export type PublicProductCategoryRow = {
@@ -263,18 +264,16 @@ export class ProductCategoryService implements OnModuleInit {
       .sort({ createdAt: 1 })
       .lean()
       .exec();
-    const result = await Promise.all(
-      categories.map(async (cat: Record<string, unknown>) => {
-        const productCount = await this._productModel
-          .countDocuments({ category: cat._id })
-          .exec();
-        return this.serializeCategoryRow({
-          ...cat,
-          productCount,
-        });
-      }),
-    );
-    return result;
+    /** Ne pas lancer un `countDocuments` par catégorie en parallèle (pic connexions Atlas). */
+    return mapInChunks(categories, 3, async (cat: Record<string, unknown>) => {
+      const productCount = await this._productModel
+        .countDocuments({ category: cat._id })
+        .exec();
+      return this.serializeCategoryRow({
+        ...cat,
+        productCount,
+      });
+    });
   }
 
   async onModuleInit() {
