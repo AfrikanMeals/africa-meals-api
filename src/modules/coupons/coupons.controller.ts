@@ -28,15 +28,16 @@ export class CouponsController {
   @Inject(CouponsService)
   private readonly _coupons: CouponsService;
 
-  @Get('admin')
+  /** Liste : admin = tout, vendeur = ses boutiques uniquement. */
+  @Get()
   @UseGuards(JwtGuard)
-  async listAdmin(@Req() req: Request) {
-    return this._coupons.listForAdmin(req.user as UserModel);
+  async list(@Req() req: Request) {
+    return this._coupons.listForUser(req.user as UserModel);
   }
 
-  @Post('admin')
+  @Post()
   @UseGuards(JwtGuard)
-  async createAdmin(
+  async create(
     @Req() req: Request,
     @Body(new ValidationPipe({ transform: true, whitelist: true }))
     body: CreateStoreCouponDto,
@@ -44,9 +45,9 @@ export class CouponsController {
     return this._coupons.create(req.user as UserModel, body);
   }
 
-  @Patch('admin/:id')
+  @Patch(':id')
   @UseGuards(JwtGuard)
-  async patchAdmin(
+  async patch(
     @Param('id') id: string,
     @Req() req: Request,
     @Body(new ValidationPipe({ transform: true, whitelist: true }))
@@ -55,9 +56,9 @@ export class CouponsController {
     return this._coupons.patch(req.user as UserModel, id, body);
   }
 
-  @Delete('admin/:id')
+  @Delete(':id')
   @UseGuards(JwtGuard)
-  async deleteAdmin(@Param('id') id: string, @Req() req: Request) {
+  async delete(@Param('id') id: string, @Req() req: Request) {
     await this._coupons.remove(req.user as UserModel, id);
   }
 }

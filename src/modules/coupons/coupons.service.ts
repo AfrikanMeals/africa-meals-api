@@ -43,13 +43,39 @@ export class CouponsService {
     private readonly _storeModel: Model<StoreModel>,
   ) {}
 
-  private assertAdmin(user: UserModel) {
-    if (user.type !== UserTypeEnum.ADMIN) {
-      throw new ForbiddenException('admin_only');
+  /** Admin : toutes les boutiques. Vendeur : uniquement les siennes. */
+  private async assertUserCanManageStore(
+    user: UserModel,
+    storeId: string,
+  ): Promise<void> {
+    if (user.type === UserTypeEnum.ADMIN) {
+      return;
+    }
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_or_admin_only');
+    }
+    const sid = new Types.ObjectId(storeId);
+    const n = await this._storeModel
+      .countDocuments({ _id: sid, owner: user._id })
+      .exec();
+    if (!n) {
+      throw new ForbiddenException('store_not_owned');
     }
   }
 
-  private validateValue(discountType: StoreCouponDiscountTypeEnum, value: number) {
+  private assertVendorOrAdmin(user: UserModel) {
+    if (
+      user.type !== UserTypeEnum.ADMIN &&
+      user.type !== UserTypeEnum.VENDOR
+    ) {
+      throw new ForbiddenException('vendor_or_admin_only');
+    }
+  }
+
+  private validateValue(
+    discountType: StoreCouponDiscountTypeEnum,
+    value: number,
+  ) {
     if (discountType === StoreCouponDiscountTypeEnum.FIXED) {
       if (value < 0.01 || value > 999_999) {
         throw new BadRequestException('invalid_fixed_discount');
@@ -119,10 +145,32 @@ export class CouponsService {
     };
   }
 
-  async listForAdmin(user: UserModel): Promise<StoreCouponApiRow[]> {
-    this.assertAdmin(user);
+  private async vendorStoreIds(user: UserModel): Promise<Types.ObjectId[]> {
+    const docs = await this._storeModel
+      .find({ owner: user._id })
+      .select('_id')
+      .lean()
+      .exec();
+    return docs.map((d) => d._id as Types.ObjectId);
+  }
+
+  async listForUser(user: UserModel): Promise<StoreCouponApiRow[]> {
+    this.assertVendorOrAdmin(user);
+    if (user.type === UserTypeEnum.ADMIN) {
+      const docs = await this._couponModel
+        .find()
+        .populate('store', 'name')
+        .sort({ createdAt: -1 })
+        .lean()
+        .exec();
+      return docs.map((d) => this.toRow(d as Record<string, unknown>));
+    }
+    const ids = await this.vendorStoreIds(user);
+    if (!ids.length) {
+      return [];
+    }
     const docs = await this._couponModel
-      .find()
+      .find({ store: { $in: ids } })
       .populate('store', 'name')
       .sort({ createdAt: -1 })
       .lean()
@@ -131,7 +179,7 @@ export class CouponsService {
   }
 
   async create(user: UserModel, dto: CreateStoreCouponDto): Promise<StoreCouponApiRow> {
-    this.assertAdmin(user);
+    this.assertVendorOrAdmin(user);
     this.validateValue(dto.discountType, dto.value);
     const validFrom = new Date(dto.validFrom);
     const validUntil = new Date(dto.validUntil);
@@ -139,12 +187,13 @@ export class CouponsService {
 
     const store = await this._storeModel
       .findById(new Types.ObjectId(dto.storeId))
-      .select('_id name')
+      .select('_id name owner')
       .lean()
       .exec();
     if (!store) {
       throw new NotFoundException('store_not_found');
     }
+    await this.assertUserCanManageStore(user, dto.storeId);
 
     const code = dto.code.trim().toUpperCase();
     try {
@@ -179,12 +228,14 @@ export class CouponsService {
     id: string,
     dto: PatchStoreCouponDto,
   ): Promise<StoreCouponApiRow> {
-    this.assertAdmin(user);
+    this.assertVendorOrAdmin(user);
     const oid = new Types.ObjectId(id);
     const existing = await this._couponModel.findById(oid).exec();
     if (!existing) {
       throw new NotFoundException('coupon_not_found');
     }
+    const storeRef = existing.store as Types.ObjectId | { toString(): string };
+    await this.assertUserCanManageStore(user, String(storeRef));
 
     const nextType = dto.discountType ?? existing.discountType;
     const nextValue = dto.value ?? existing.value;
@@ -240,8 +291,16 @@ export class CouponsService {
   }
 
   async remove(user: UserModel, id: string): Promise<void> {
-    this.assertAdmin(user);
-    const res = await this._couponModel.deleteOne({ _id: new Types.ObjectId(id) }).exec();
+    this.assertVendorOrAdmin(user);
+    const oid = new Types.ObjectId(id);
+    const existing = await this._couponModel.findById(oid).exec();
+    if (!existing) {
+      throw new NotFoundException('coupon_not_found');
+    }
+    const storeRef = existing.store as Types.ObjectId | { toString(): string };
+    await this.assertUserCanManageStore(user, String(storeRef));
+
+    const res = await this._couponModel.deleteOne({ _id: oid }).exec();
     if (res.deletedCount === 0) {
       throw new NotFoundException('coupon_not_found');
     }
