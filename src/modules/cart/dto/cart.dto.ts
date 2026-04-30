@@ -2,7 +2,15 @@ import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEnum, IsNotEmpty, IsNumber, Min, ValidateIf } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsNotEmpty,
+  IsNumber,
+  Max,
+  Min,
+  ValidateIf,
+} from 'class-validator';
 
 export class RemoveItemFromCartDto {
   @ApiProperty({ example: '507f1f77bcf86cd799439011' })
@@ -48,4 +56,15 @@ export class CartItemApiResponse {
   store: StoreModel;
   items: Partial<CartItemModel>[];
   totalPrice: number;
+}
+
+/** `PATCH /cart/:id/quantity` — quantité absolue pour une ligne panier. */
+export class UpdateCartLineQuantityDto {
+  @ApiProperty({ minimum: 1, maximum: 999, example: 2 })
+  @IsNotEmpty()
+  @IsInt()
+  @Min(1)
+  @Max(999)
+  @Transform(({ value }) => +value)
+  quantity: number;
 }

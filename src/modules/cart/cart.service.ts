@@ -221,6 +221,24 @@ export class CartService {
       .exec();
   }
 
+  /** Met à jour la quantité d’une ligne (vérifie que la ligne appartient à l’utilisateur). */
+  async setLineQuantity(
+    lineId: string,
+    quantity: number,
+    user: UserModel,
+  ): Promise<void> {
+    const item = await this._cartItemModel
+      .findOne({
+        _id: new Types.ObjectId(lineId),
+        user: new Types.ObjectId(user.id),
+      })
+      .exec();
+    if (!item) {
+      throw new NotFoundException('cart_item_not_found');
+    }
+    await this.updateQuantity(item, quantity);
+  }
+
   async clearStoreCart(store: StoreModel, user: UserModel): Promise<void> {
     await this._cartItemModel
       .deleteMany({
