@@ -45,7 +45,7 @@ function normalizeBase(raw) {
   let u = (
     raw ||
     process.env.API_BASE_URL ||
-    'https://api.afrikan-meals.com/api'
+    'https://api.afrikan-meals.com'
   ).trim();
   if (!u.endsWith('/')) u += '/';
   return u;
@@ -291,7 +291,7 @@ Options:
   const baseUrl = normalizeBase(args.base || process.env.API_BASE_URL);
   const iterations = Number.isFinite(args.iterations)
     ? Math.max(1, Math.floor(args.iterations))
-    : Math.max(1, Math.floor(Number(process.env.BENCH_ITERATIONS) || 5));
+    : Math.max(1, Math.floor(Number(process.env.BENCH_ITERATIONS) || 10));
   const useWarmup =
     args.warmup === 0 ? false : Number(process.env.BENCH_WARMUP) !== 0;
 

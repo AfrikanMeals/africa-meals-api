@@ -42,7 +42,7 @@ export class ShopHomeService {
 
   private ttlMs() {
     const n = Number(process.env.SHOP_HOME_CACHE_TTL_MS);
-    return Number.isFinite(n) && n > 0 ? n : 45_000;
+    return Number.isFinite(n) && n > 0 ? n : 90_000;
   }
 
   /** Évite `JSON.parse(JSON.stringify)` sur les documents Mongoose (coûteux). */

@@ -273,17 +273,24 @@ export class SearchService {
     const products = await this._productsService
       .getProductModel()
       .find({ _id: { $in: productsIds.map((p) => new Types.ObjectId(p._id)) } })
+      .select('-imageBase64 -imageMimeType')
       .populate('category')
-
       .populate({
         path: 'ratings',
+        select: 'rate product user createdAt updatedAt',
         populate: {
           path: 'user',
+          select: '_id fullName profileImage',
         },
       })
-      .populate('likedBy')
+      .populate({
+        path: 'likedBy',
+        select: '_id',
+      })
       .populate({
         path: 'store',
+        select:
+          'name bio email phoneNumber profileImage status acceptsOrders supportsShipping currency canCreateProducts owner createdAt updatedAt address',
         populate: {
           path: 'address',
           select: 'label address city country location',
@@ -414,7 +421,7 @@ export class SearchService {
               { $gt: [{ $size: { $ifNull: ['$_cat', []] } }, 0] },
               {
                 id: { $toString: '$_category._id' },
-                _id: '$_category._id',
+                _id: { $toString: '$_category._id' },
                 title: '$_category.title',
                 icon: '$_category.icon',
                 isEnabled: { $ifNull: ['$_category.is_enabled', true] },
@@ -426,7 +433,7 @@ export class SearchService {
           },
           store: {
             id: { $toString: '$store._id' },
-            _id: '$store._id',
+            _id: { $toString: '$store._id' },
             name: '$store.name',
             status: { $toString: '$store.status' },
             bio: { $ifNull: ['$store.bio', ''] },
@@ -436,7 +443,14 @@ export class SearchService {
             email: { $ifNull: ['$store.email', ''] },
             phoneNumber: { $ifNull: ['$store.phoneNumber', ''] },
             profileImage: { $ifNull: ['$store.profileImage', ''] },
-            owner: { $ifNull: ['$store.owner', null] },
+            owner: {
+              $convert: {
+                input: '$store.owner',
+                to: 'string',
+                onError: '',
+                onNull: '',
+              },
+            },
             createdAt: '$store.createdAt',
             updatedAt: '$store.updatedAt',
             canCreateProducts: { $ifNull: ['$store.canCreateProducts', false] },
@@ -453,47 +467,92 @@ export class SearchService {
       .option({ allowDiskUse: true })
       .exec();
 
+    const toIso = (v: unknown): string => {
+      if (v instanceof Date) return v.toISOString();
+      if (typeof v === 'string' || typeof v === 'number') return String(v);
+      return new Date().toISOString();
+    };
+
     return (raw as Record<string, unknown>[]).map((doc) => {
       const likes = Number(doc.likesCount ?? 0);
       const cat = doc.category as Record<string, unknown> | null;
       const st = doc.store as Record<string, unknown> | null;
-      const owner = st?.['owner'];
+      const ownerRaw = st?.['owner'];
       const ownerStr =
-        owner != null && typeof owner === 'object' && 'toString' in owner
-          ? (owner as Types.ObjectId).toString()
-          : owner != null
-            ? String(owner)
+        ownerRaw != null && typeof ownerRaw === 'object' && 'toString' in ownerRaw
+          ? (ownerRaw as Types.ObjectId).toString()
+          : ownerRaw != null
+            ? String(ownerRaw)
             : '';
+
+      /** Pas de `...doc` : évite ObjectId / types BSON dans la réponse GraphQL `JSONObject`. */
       return {
-        ...doc,
+        _id: String(doc._id),
         id: String(doc._id),
+        title: String(doc.title ?? ''),
+        bio: String(doc.bio ?? ''),
+        originCountry: String(doc.originCountry ?? ''),
+        price: Number(doc.price ?? 0),
+        discountPrice: Number(doc.discountPrice ?? 0),
+        currency: String(doc.currency ?? 'CAD'),
+        profileImage: String(doc.profileImage ?? ''),
+        status: String(doc.status ?? ''),
+        createdAt: toIso(doc.createdAt),
+        updatedAt: toIso(doc.updatedAt),
+        likesCount: likes,
+        averageRating: Number(doc.averageRating ?? 0),
         likedBy: likes > 0 ? Array.from({ length: likes }, () => '') : [],
-        ratings: [],
-        extras: [],
-        galleryImages: [],
+        ratings: [] as unknown[],
+        extras: [] as unknown[],
+        galleryImages: [] as unknown[],
         ordersCount: 0,
         inCart: false,
         category:
           cat && cat['title'] != null
             ? {
-                ...cat,
-                isEnabled: cat['isEnabled'] !== false,
+                id: String(cat['id'] ?? cat['_id'] ?? ''),
+                _id: String(cat['_id'] ?? cat['id'] ?? ''),
+                title: String(cat['title'] ?? ''),
+                icon: String(cat['icon'] ?? ''),
+                isEnabled: cat['isEnabled'] !== false && cat['is_enabled'] !== false,
+                createdAt: toIso(cat['createdAt']),
+                updatedAt: toIso(cat['updatedAt']),
               }
             : {
                 id: '',
+                _id: '',
                 title: '',
                 icon: '',
                 isEnabled: true,
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
               },
-        store: st && st['name'] != null
+        store:
+          st && st['name'] != null
             ? {
-                ...st,
+                id: String(st['id'] ?? st['_id'] ?? ''),
+                _id: String(st['_id'] ?? st['id'] ?? ''),
+                name: String(st['name'] ?? ''),
+                status: String(st['status'] ?? ''),
+                bio: String(st['bio'] ?? ''),
+                acceptsOrders: st['acceptsOrders'] !== false,
+                supportsShipping: st['supportsShipping'] === true,
+                currency: String(st['currency'] ?? 'CAD'),
+                email: String(st['email'] ?? ''),
+                phoneNumber: String(st['phoneNumber'] ?? ''),
+                profileImage: String(st['profileImage'] ?? ''),
                 owner: ownerStr,
+                createdAt: toIso(st['createdAt']),
+                updatedAt: toIso(st['updatedAt']),
+                canCreateProducts: st['canCreateProducts'] === true,
+                shippingZones: Array.isArray(st['shippingZones'])
+                  ? (st['shippingZones'] as unknown[])
+                  : [],
+                averageRating: Number(st['averageRating'] ?? 0),
               }
             : {
                 id: '',
+                _id: '',
                 name: '',
                 status: 'INACTIVE',
                 bio: '',
@@ -504,11 +563,10 @@ export class SearchService {
                 phoneNumber: '',
                 profileImage: '',
                 owner: '',
-                likedBy: [],
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
                 canCreateProducts: false,
-                shippingZones: [],
+                shippingZones: [] as unknown[],
                 averageRating: 0.0,
               },
       };

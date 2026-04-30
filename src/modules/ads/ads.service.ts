@@ -5,6 +5,9 @@ import { AdModel } from '@schemas/ad.schema';
 
 @Injectable()
 export class AdsService implements OnModuleInit {
+  private static readonly _LIST_TTL_MS = 30_000;
+  private _listCache: { at: number; data: AdModel[] } | null = null;
+
   @InjectModel(AdModel.name)
   private readonly adModel: Model<AdModel>;
 
@@ -13,10 +16,19 @@ export class AdsService implements OnModuleInit {
   }
 
   async list() {
-    return this.adModel
+    const now = Date.now();
+    if (
+      this._listCache &&
+      now - this._listCache.at < AdsService._LIST_TTL_MS
+    ) {
+      return this._listCache.data;
+    }
+    const data = await this.adModel
       .find({ isActive: true })
       .sort({ sortOrder: 1 })
       .exec();
+    this._listCache = { at: now, data };
+    return data;
   }
 
   async seedIfEmpty() {
