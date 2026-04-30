@@ -13,18 +13,20 @@ export async function configureApplication(
   app: INestApplication,
   options?: ConfigureAppOptions,
 ): Promise<void> {
-  app.use((req: any, _res, next) => {
-    const ct = req.headers['content-type'];
-    const isMultipart =
-      typeof ct === 'string' && ct.includes('multipart/form-data');
-    const body = isMultipart
-      ? '(multipart)'
-      : req.body
-        ? JSON.stringify(req.body)
-        : '(no body)';
-    console.warn(`[REQ] ${req.method} ${req.originalUrl} body: ${body}`);
-    next();
-  });
+  if (process.env.LOG_HTTP_BODIES === 'true') {
+    app.use((req: any, _res, next) => {
+      const ct = req.headers['content-type'];
+      const isMultipart =
+        typeof ct === 'string' && ct.includes('multipart/form-data');
+      const body = isMultipart
+        ? '(multipart)'
+        : req.body
+          ? JSON.stringify(req.body)
+          : '(no body)';
+      console.warn(`[REQ] ${req.method} ${req.originalUrl} body: ${body}`);
+      next();
+    });
+  }
 
   const prefix = options?.globalPrefix ?? 'api';
   if (prefix.length > 0) {

@@ -1,12 +1,15 @@
 import {
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { InjectModel } from '@nestjs/mongoose';
+import { Cache } from 'cache-manager';
 import { ProductCategoryModel } from '@schemas/product-category.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
@@ -17,15 +20,42 @@ import {
   PatchProductCategoryDto,
 } from './dto/product-category.dto';
 
+/** Ligne JSON renvoyée par [filter] / REST / GraphQL public. */
+export type PublicProductCategoryRow = {
+  id: string;
+  _id: string;
+  title: string;
+  icon: string;
+  isEnabled: boolean;
+  productCount: number;
+  createdAt: unknown;
+  updatedAt: unknown;
+};
+
 @Injectable()
 export class ProductCategoryService implements OnModuleInit {
   private readonly _logger = new Logger(ProductCategoryService.name);
+
+  /** Cache liste publique catégories (invalidé à chaque mutation admin). */
+  private static readonly _publicListCacheKey = 'product-categories:public:v1';
+
+  @Inject(CACHE_MANAGER)
+  private readonly _cache: Cache;
 
   @InjectModel(ProductCategoryModel.name)
   private readonly _productCategoryModel: Model<ProductCategoryModel>;
 
   @InjectModel(ProductModel.name)
   private readonly _productModel: Model<ProductModel>;
+
+  private _categoriesListTtlMs() {
+    const n = Number(process.env.PRODUCT_CATEGORIES_CACHE_TTL_MS);
+    return Number.isFinite(n) && n > 0 ? n : 120_000;
+  }
+
+  private async _bustPublicCategoriesCache() {
+    await this._cache.del(ProductCategoryService._publicListCacheKey);
+  }
 
   private assertCanManageCategories(user: UserModel) {
     if (
@@ -66,6 +96,7 @@ export class ProductCategoryService implements OnModuleInit {
       icon: args.icon.trim(),
       isEnabled: args.isEnabled ?? true,
     });
+    await this._bustPublicCategoriesCache();
     const lean = doc.toObject() as Record<string, unknown>;
     return this.mapLeanCategory(lean, 0);
   }
@@ -102,6 +133,7 @@ export class ProductCategoryService implements OnModuleInit {
       existing.isEnabled = args.isEnabled;
     }
     await existing.save();
+    await this._bustPublicCategoriesCache();
     const productCount = await this._productModel
       .countDocuments({ category: existing._id })
       .exec();
@@ -125,13 +157,21 @@ export class ProductCategoryService implements OnModuleInit {
       throw new ConflictException('category_has_products');
     }
     await existing.deleteOne();
+    await this._bustPublicCategoriesCache();
   }
 
   /**
    * Liste publique des catégories + compteur produits.
    * L’ancien `$lookup` chargeait **tous** les produits par catégorie en RAM → risque de timeout / 500 sur gros catalogues.
    */
-  async filter() {
+  async filter(): Promise<PublicProductCategoryRow[]> {
+    const cached = await this._cache.get<PublicProductCategoryRow[]>(
+      ProductCategoryService._publicListCacheKey,
+    );
+    if (cached != null && cached.length > 0) {
+      return cached;
+    }
+
     try {
       const pipeline: PipelineStage[] = [
         { $sort: { createdAt: 1 } },
@@ -165,15 +205,31 @@ export class ProductCategoryService implements OnModuleInit {
 
       const raw = await this._productCategoryModel.aggregate(pipeline).exec();
 
-      return raw.map((doc: Record<string, unknown>) =>
+      const result = raw.map((doc: Record<string, unknown>) =>
         this.serializeCategoryRow(doc),
       );
+      if (result.length > 0) {
+        await this._cache.set(
+          ProductCategoryService._publicListCacheKey,
+          result,
+          this._categoriesListTtlMs(),
+        );
+      }
+      return result;
     } catch (e) {
       this._logger.warn(
         `filter aggregate fallback: ${(e as Error).message}`,
       );
       try {
-        return await this._filterWithCounts();
+        const fallback = await this._filterWithCounts();
+        if (fallback.length > 0) {
+          await this._cache.set(
+            ProductCategoryService._publicListCacheKey,
+            fallback,
+            this._categoriesListTtlMs(),
+          );
+        }
+        return fallback;
       } catch (e2) {
         this._logger.error(
           `filter failed completely: ${(e2 as Error).message}`,
@@ -184,7 +240,7 @@ export class ProductCategoryService implements OnModuleInit {
   }
 
   /** Objet JSON strict (ids string) pour éviter les soucis de sérialisation côté client. */
-  private serializeCategoryRow(doc: Record<string, unknown>) {
+  private serializeCategoryRow(doc: Record<string, unknown>): PublicProductCategoryRow {
     const id = String(doc._id ?? '');
     return {
       id,

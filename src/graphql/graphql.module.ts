@@ -7,6 +7,7 @@ import { GraphQLModule } from '@nestjs/graphql';
 import { FavoritesListingResolver } from './favorites-listing.resolver';
 import { GqlJwtGuard } from './guards/gql-jwt.guard';
 import { OptionalGqlAuthGuard } from './guards/optional-gql-auth.guard';
+import { ProductCategoryResolver } from './product-category.resolver';
 import { ShopHomeResolver } from './shop-home.resolver';
 
 @Module({
@@ -26,6 +27,7 @@ import { ShopHomeResolver } from './shop-home.resolver';
   ],
   providers: [
     FavoritesListingResolver,
+    ProductCategoryResolver,
     ShopHomeResolver,
     GqlJwtGuard,
     OptionalGqlAuthGuard,

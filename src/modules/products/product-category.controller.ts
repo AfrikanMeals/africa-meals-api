@@ -5,6 +5,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Inject,
   Param,
   Patch,
@@ -28,6 +29,10 @@ export class ProductCategoryController {
   private readonly _productCategoryService: ProductCategoryService;
 
   @Get('')
+  @Header(
+    'Cache-Control',
+    'public, max-age=60, stale-while-revalidate=300',
+  )
   async filter() {
     return this._productCategoryService.filter();
   }

@@ -152,6 +152,10 @@ export const ProductSchema = SchemaFactory.createForClass(ProductModel);
 /** Liste « mes favoris » : filtre fréquent likedBy + status + tri. */
 ProductSchema.index({ likedBy: 1, status: 1, updatedAt: -1 });
 
+/** Recherche catalogue : jointure store + filtre actif + tri récent. */
+ProductSchema.index({ store: 1, status: 1, createdAt: -1 });
+ProductSchema.index({ category: 1, status: 1, createdAt: -1 });
+
 ProductSchema.virtual('averageRating').get(function () {
   const items = this.ratings || [];
   if (!items.length) {

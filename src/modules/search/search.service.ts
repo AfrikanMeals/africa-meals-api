@@ -7,7 +7,13 @@ import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { PipelineStage, Types } from 'mongoose';
-import { SearchContent, SearchDto, SearchResultDto } from './dto/search.dto';
+import {
+  SearchContent,
+  SearchDto,
+  SearchResultDto,
+  SortBy,
+  SortOrder,
+} from './dto/search.dto';
 
 @Injectable()
 export class SearchService {
@@ -32,6 +38,25 @@ export class SearchService {
       return new Types.ObjectId(s);
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Tri agrégation / find produits : noms Mongo réels (évite les virtuals non stockés).
+   */
+  private _productSortKeys(args: SearchDto): Record<string, 1 | -1> {
+    const dir = args.sortDirection === SortOrder.ASC ? 1 : -1;
+    switch (args.sortBy) {
+      case SortBy.PRICE:
+        return { price: dir };
+      case SortBy.NAME:
+        return { title: dir };
+      case SortBy.RATING:
+        // `averageRating` n’est pas un champ stocké — tri stable par fraîcheur
+        return { updatedAt: dir };
+      case SortBy.CREATED_AT:
+      default:
+        return { createdAt: dir };
     }
   }
 
@@ -205,63 +230,40 @@ export class SearchService {
         },
       },
     ];
-    // console.log('🚀 ~ SearchService ~ pipeline:', JSON.stringify(pipeline));
+    const sortKeys = this._productSortKeys(args);
+    const facetPipeline: PipelineStage[] = [
+      ...pipeline,
+      {
+        $facet: {
+          rows: [
+            { $sort: sortKeys },
+            { $skip: (args.page! - 1) * args.take! },
+            { $limit: args.take! },
+            { $project: { _id: 1 } },
+          ],
+          total: [{ $count: 'n' }],
+        },
+      },
+    ];
 
-    const [count, productsIds] = await Promise.all([
-      // this._productsService
-      //   .getProductModel()
-      //   .countDocuments(pipeline[0].$match),
-      this._productsService.getProductModel().aggregate(pipeline).project({
-        _id: 1,
-      }),
-      // .populate('store'),
+    const facetAgg = await this._productsService
+      .getProductModel()
+      .aggregate(facetPipeline)
+      .exec();
 
-      this._productsService
-        .getProductModel()
-        .aggregate(pipeline)
-        .project({
-          _id: 1,
-        })
-        // .lookup({
-        //   from: 'product_categories',
-        //   localField: 'category',
-        //   foreignField: '_id',
-        //   as: 'categoryInfo',
-        // })
-        // .addFields({
-        //   category: { $arrayElemAt: ['$categoryInfo', 0] },
-        // })
-        // .lookup({
-        //   from: 'stores',
-        //   localField: 'store',
-        //   foreignField: '_id',
-        //   as: 'storeInfo',
-        // })
-        // .addFields({
-        //   store: { $arrayElemAt: ['$storeInfo', 0] },
-        // })
-        // .project({
-        //   categoryInfo: 0, // Removing the categoryInfo array from the output
-        //   storeInfo: 0,
-        // })
-        // .populate('category')
-        //
-        // .populate('likedBy')
-        // .populate('store')
-        // .sort({ [args.sortBy ?? 'createdAt']: args.sortDirection ?? 'desc' })
-        .skip((args.page - 1) * args.take)
-        .limit(args.take)
-        .exec(),
-    ]);
-    // console.log(
-    //   '🚀 ~ SearchService ~ productsIds:',
-    //   JSON.stringify(productsIds),
-    // );
+    const facet = facetAgg[0] as
+      | {
+          rows: { _id: Types.ObjectId }[];
+          total: { n: number }[];
+        }
+      | undefined;
+    const productsIds = facet?.rows ?? [];
+    const total = facet?.total?.[0]?.n ?? 0;
 
     if (!productsIds.length) {
       return {
         items: [],
-        total: 0,
+        total,
         page: args.page,
         limit: args.take,
       };
@@ -286,12 +288,12 @@ export class SearchService {
           select: 'label address city country location',
         },
       })
-      .sort({ [args.sortBy ?? 'createdAt']: args.sortDirection ?? 'desc' })
+      .sort(sortKeys)
       .exec();
 
     return {
       items: products ?? [],
-      total: count.length,
+      total,
       page: args.page,
       limit: args.take,
     };
