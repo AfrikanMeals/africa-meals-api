@@ -2,7 +2,9 @@ import {
   CreateAdManagementDto,
   PatchAdManagementDto,
 } from '@modules/ads/dto/ad-management.dto';
+import { TrackAdEventDto } from '@modules/ads/dto/ad-tracking.dto';
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
+import { OptionalAuthGuard } from '@modules/auth/guards/optional.auth.guard';
 import {
   Body,
   Controller,
@@ -24,6 +26,13 @@ import { AdsService } from './ads.service';
 @Controller('ads')
 export class AdsController {
   constructor(private readonly adsService: AdsService) {}
+
+  @Get('manage/:id/stats')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  async adStats(@Param('id') id: string, @Req() req: Request) {
+    return this.adsService.getAdStats(req.user as UserModel, id);
+  }
 
   @Get('manage')
   @UseGuards(JwtGuard)
@@ -60,6 +69,18 @@ export class AdsController {
   @ApiBearerAuth('bearer')
   async deleteManage(@Param('id') id: string, @Req() req: Request) {
     await this.adsService.removeManagement(req.user as UserModel, id);
+  }
+
+  /** Suivi mobile : impression ou clic (JWT optionnel pour rattacher l’utilisateur). */
+  @Post('track')
+  @UseGuards(OptionalAuthGuard)
+  @ApiBearerAuth('bearer')
+  async track(
+    @Req() req: Request,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: TrackAdEventDto,
+  ) {
+    return this.adsService.trackEvent(req.user as UserModel | undefined, body);
   }
 
   /** Bannières globales (sans boutique), pour l’accueil public. */

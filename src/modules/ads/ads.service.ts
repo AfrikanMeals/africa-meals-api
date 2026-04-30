@@ -2,6 +2,7 @@ import {
   CreateAdManagementDto,
   PatchAdManagementDto,
 } from '@modules/ads/dto/ad-management.dto';
+import { TrackAdEventDto } from '@modules/ads/dto/ad-tracking.dto';
 import {
   BadRequestException,
   ForbiddenException,
@@ -10,6 +11,10 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import {
+  AdEventModel,
+  AdEventTypeEnum,
+} from '@schemas/ad-event.schema';
 import {
   AdModel,
   StoreAdActionTypeEnum,
@@ -42,6 +47,32 @@ export type AdManagementRow = {
   updatedAt?: string;
 };
 
+export type AdStatsRecentEvent = {
+  eventType: AdEventTypeEnum;
+  createdAt: string;
+  userId: string | null;
+  userEmail: string | null;
+  userFullName: string | null;
+  clientInstallId: string | null;
+};
+
+export type AdStatsDayBucket = {
+  date: string;
+  impressions: number;
+  clicks: number;
+};
+
+export type AdStatsPayload = {
+  adId: string;
+  impressionsTotal: number;
+  clicksTotal: number;
+  uniqueUsersImpressions: number;
+  uniqueUsersClicks: number;
+  uniqueClientDevices: number;
+  last7Days: AdStatsDayBucket[];
+  recentEvents: AdStatsRecentEvent[];
+};
+
 @Injectable()
 export class AdsService implements OnModuleInit {
   private static readonly _LIST_TTL_MS = 30_000;
@@ -49,6 +80,9 @@ export class AdsService implements OnModuleInit {
 
   @InjectModel(AdModel.name)
   private readonly adModel: Model<AdModel>;
+
+  @InjectModel(AdEventModel.name)
+  private readonly _adEventModel: Model<AdEventModel>;
 
   @InjectModel(StoreModel.name)
   private readonly _storeModel: Model<StoreModel>;
@@ -224,6 +258,8 @@ export class AdsService implements OnModuleInit {
         isActive: true,
         $or: [{ store: null }, { store: { $exists: false } }],
       })
+      .populate('store', 'name profileImage')
+      .populate('product', 'title')
       .sort({ sortOrder: 1 })
       .lean()
       .exec();
@@ -465,6 +501,200 @@ export class AdsService implements OnModuleInit {
       throw new NotFoundException('ad_not_found');
     }
     this.invalidateListCache();
+  }
+
+  private async assertAdTrackableForClient(adId: string): Promise<void> {
+    const oid = new Types.ObjectId(adId);
+    const doc = await this.adModel.findById(oid).lean().exec();
+    if (!doc || !doc.isActive) {
+      throw new NotFoundException('ad_not_found');
+    }
+    const t = new Date();
+    if (
+      !this.passesDateWindow(
+        doc.validFrom as Date | undefined,
+        doc.validUntil as Date | undefined,
+        t,
+      )
+    ) {
+      throw new BadRequestException('ad_not_trackable');
+    }
+  }
+
+  async trackEvent(
+    user: UserModel | undefined | null,
+    dto: TrackAdEventDto,
+  ): Promise<{ ok: true }> {
+    await this.assertAdTrackableForClient(dto.adId);
+    const oid = new Types.ObjectId(dto.adId);
+    const uid =
+      user && (user as UserModel)._id
+        ? ((user as UserModel)._id as Types.ObjectId)
+        : undefined;
+    const install = dto.clientInstallId?.trim().slice(0, 128);
+    await this._adEventModel.create({
+      ad: oid,
+      user: uid,
+      eventType: dto.eventType,
+      ...(install ? { clientInstallId: install } : {}),
+    });
+    return { ok: true };
+  }
+
+  private async assertUserCanManageAdById(
+    user: UserModel,
+    adId: string,
+  ): Promise<void> {
+    const oid = new Types.ObjectId(adId);
+    const existing = await this.adModel.findById(oid).exec();
+    if (!existing) {
+      throw new NotFoundException('ad_not_found');
+    }
+    const storeRef = existing.store;
+    const storeIdStr = storeRef != null ? String(storeRef) : null;
+    if (storeIdStr) {
+      await this.assertUserCanManageStore(user, storeIdStr);
+    } else if (user.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('global_ad_vendor_forbidden');
+    }
+  }
+
+  async getAdStats(user: UserModel, adId: string): Promise<AdStatsPayload> {
+    this.assertVendorOrAdmin(user);
+    await this.assertUserCanManageAdById(user, adId);
+    const oid = new Types.ObjectId(adId);
+
+    const since = new Date();
+    since.setUTCDate(since.getUTCDate() - 6);
+    since.setUTCHours(0, 0, 0, 0);
+
+    const [
+      impressionsTotal,
+      clicksTotal,
+      impUsers,
+      clkUsers,
+      deviceIds,
+      byDay,
+      recentDocs,
+    ] = await Promise.all([
+      this._adEventModel
+        .countDocuments({ ad: oid, eventType: AdEventTypeEnum.IMPRESSION })
+        .exec(),
+      this._adEventModel
+        .countDocuments({ ad: oid, eventType: AdEventTypeEnum.CLICK })
+        .exec(),
+      this._adEventModel.distinct('user', {
+        ad: oid,
+        eventType: AdEventTypeEnum.IMPRESSION,
+        user: { $exists: true, $ne: null },
+      }),
+      this._adEventModel.distinct('user', {
+        ad: oid,
+        eventType: AdEventTypeEnum.CLICK,
+        user: { $exists: true, $ne: null },
+      }),
+      this._adEventModel.distinct('clientInstallId', {
+        ad: oid,
+        clientInstallId: { $exists: true, $nin: [null, ''] },
+      }),
+      this._adEventModel
+        .aggregate<{
+          _id: string;
+          impressions: number;
+          clicks: number;
+        }>([
+          {
+            $match: {
+              ad: oid,
+              createdAt: { $gte: since },
+            },
+          },
+          {
+            $group: {
+              _id: {
+                $dateToString: {
+                  format: '%Y-%m-%d',
+                  date: '$createdAt',
+                  timezone: 'UTC',
+                },
+              },
+              impressions: {
+                $sum: {
+                  $cond: [
+                    { $eq: ['$eventType', AdEventTypeEnum.IMPRESSION] },
+                    1,
+                    0,
+                  ],
+                },
+              },
+              clicks: {
+                $sum: {
+                  $cond: [
+                    { $eq: ['$eventType', AdEventTypeEnum.CLICK] },
+                    1,
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+          { $sort: { _id: 1 } },
+        ])
+        .exec(),
+      this._adEventModel
+        .find({ ad: oid })
+        .sort({ createdAt: -1 })
+        .limit(80)
+        .populate('user', 'email fullName')
+        .lean()
+        .exec(),
+    ]);
+
+    const recentEvents: AdStatsRecentEvent[] = recentDocs.map((row) => {
+      const r = row as Record<string, unknown>;
+      const u = r.user as
+        | { _id?: Types.ObjectId; email?: string; fullName?: string }
+        | Types.ObjectId
+        | null
+        | undefined;
+      let userId: string | null = null;
+      let userEmail: string | null = null;
+      let userFullName: string | null = null;
+      if (u && typeof u === 'object' && '_id' in u) {
+        const pop = u as { _id?: Types.ObjectId; email?: string; fullName?: string };
+        userId = pop._id ? pop._id.toString() : null;
+        userEmail = pop.email != null ? String(pop.email) : null;
+        userFullName = pop.fullName != null ? String(pop.fullName) : null;
+      }
+      const ca = r.createdAt as Date | string | undefined;
+      return {
+        eventType: r.eventType as AdEventTypeEnum,
+        createdAt:
+          ca instanceof Date ? ca.toISOString() : String(ca ?? new Date()),
+        userId,
+        userEmail,
+        userFullName,
+        clientInstallId:
+          r.clientInstallId != null ? String(r.clientInstallId) : null,
+      };
+    });
+
+    const last7Days: AdStatsDayBucket[] = byDay.map((d) => ({
+      date: d._id,
+      impressions: d.impressions,
+      clicks: d.clicks,
+    }));
+
+    return {
+      adId,
+      impressionsTotal,
+      clicksTotal,
+      uniqueUsersImpressions: impUsers.filter(Boolean).length,
+      uniqueUsersClicks: clkUsers.filter(Boolean).length,
+      uniqueClientDevices: deviceIds.filter(Boolean).length,
+      last7Days,
+      recentEvents,
+    };
   }
 
   async seedIfEmpty() {

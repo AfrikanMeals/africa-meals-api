@@ -1,5 +1,6 @@
 export * from './address.schema';
 export * from './ad.schema';
+export * from './ad-event.schema';
 export * from './announcement.schema';
 export * from './app-notification.schema';
 export * from './base.schema';
