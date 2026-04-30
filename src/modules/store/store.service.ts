@@ -589,6 +589,16 @@ export class StoreService {
   }
 
   async listStoreProducts(storeId: string, user: UserModel) {
+    if (user.type === UserTypeEnum.ADMIN) {
+      const exists = await this._storeModel
+        .findById(storeId)
+        .select('_id')
+        .exec();
+      if (!exists) {
+        throw new NotFoundException('store_not_found');
+      }
+      return this._productsService.findByStoreId(storeId);
+    }
     const store = await this._storeModel
       .findOne({ _id: storeId, owner: user._id })
       .select('_id')

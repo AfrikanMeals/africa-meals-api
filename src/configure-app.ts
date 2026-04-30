@@ -60,6 +60,7 @@ export async function configureApplication(
     .addTag('addresses', 'Adresses')
     .addTag('offers', 'Offres et promos')
     .addTag('announcements', 'Annonces')
+    .addTag('ads', 'Bannières accueil & gestion (admin / vendeur)')
     .addTag('billing', 'Paiement')
     .addTag('coupons', 'Codes promo boutique (admin & vendeur)')
     .addTag('search', 'Recherche')
