@@ -18,6 +18,7 @@ import { ProductsModule } from './modules/products/products.module';
 import { SearchModule } from './modules/search/search.module';
 import { OffersModule } from './modules/offers/offers.module';
 import { CartModule } from './modules/cart/cart.module';
+import { CouponsModule } from './modules/coupons/coupons.module';
 import { AnnouncementsModule } from './modules/announcements/announcements.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { OrdersModule } from './modules/orders/orders.module';
@@ -56,6 +57,7 @@ import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
     SearchModule,
     OffersModule,
     CartModule,
+    CouponsModule,
     AnnouncementsModule,
     BillingModule,
     OrdersModule,

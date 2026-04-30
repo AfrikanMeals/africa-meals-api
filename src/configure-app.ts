@@ -61,6 +61,7 @@ export async function configureApplication(
     .addTag('offers', 'Offres et promos')
     .addTag('announcements', 'Annonces')
     .addTag('billing', 'Paiement')
+    .addTag('coupons', 'Codes promo boutique (admin)')
     .addTag('search', 'Recherche')
     .addTag('mailer', 'Envoi d’emails (test)')
     .addTag('supported-countries', 'Pays supportés')
