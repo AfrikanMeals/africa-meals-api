@@ -98,6 +98,34 @@ export class StoreService {
       .exec();
   }
 
+  /**
+   * Fiche minimale pour l’écran « menu boutique » app (sans populate) — beaucoup plus rapide que {@link findOneById}.
+   */
+  async findPublicStoreMenuMeta(
+    id: string,
+  ): Promise<Record<string, unknown> | null> {
+    if (!Types.ObjectId.isValid(id)) {
+      return null;
+    }
+    const doc = await this._storeModel
+      .findById(id)
+      .select('bio profileImage averageRating name status')
+      .lean()
+      .exec();
+    if (doc == null) {
+      return null;
+    }
+    const o = doc as unknown as Record<string, unknown>;
+    const plain: Record<string, unknown> = { ...o };
+    const oid = o['_id'];
+    if (oid != null && typeof (oid as { toString?: () => string }).toString === 'function') {
+      plain['id'] = (oid as { toString: () => string }).toString();
+    }
+    delete plain['_id'];
+    delete plain['__v'];
+    return plain;
+  }
+
   async create(dto: CreateStoreDto, user: UserModel) {
     const { address, ...args } = dto;
     const fullUser = await this._usersService.findById(

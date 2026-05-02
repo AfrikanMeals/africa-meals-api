@@ -11,6 +11,7 @@ import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import {
   BadRequestException,
   Body,
+  NotFoundException,
   Controller,
   Delete,
   Get,
@@ -386,6 +387,19 @@ export class StoreController {
       productId,
       req.user as UserModel,
     );
+  }
+
+  /**
+   * Méta en-tête pour l’app (menu boutique) : léger, sans populate lourd.
+   * Doit rester avant `GET /:id` pour que le segment `menu-meta` soit résolu correctement.
+   */
+  @Get(':id/menu-meta')
+  async getStoreMenuMeta(@Param('id') id: string) {
+    const meta = await this._storeService.findPublicStoreMenuMeta(id);
+    if (meta == null) {
+      throw new NotFoundException('store_not_found');
+    }
+    return meta;
   }
 
   @Get('/:id')
