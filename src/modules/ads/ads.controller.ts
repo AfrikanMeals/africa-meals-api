@@ -125,7 +125,7 @@ export class AdsController {
     return this.adsService.trackEvent(req.user as UserModel | undefined, body);
   }
 
-  /** Bannières globales (sans boutique), pour l’accueil public. */
+  /** Bannières accueil : globales + boutiques ACTIVE (fenêtre de validité, `isActive`). */
   @Get()
   async list() {
     const items = await this.adsService.listPublic();

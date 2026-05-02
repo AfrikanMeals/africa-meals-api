@@ -23,7 +23,7 @@ import {
   StoreAdActionTypeEnum,
 } from '@schemas/ad.schema';
 import { ProductModel } from '@schemas/product.schema';
-import { StoreModel } from '@schemas/store.schema';
+import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 
@@ -308,8 +308,8 @@ export class AdsService implements OnModuleInit {
   }
 
   /**
-   * Bannières pour l’accueil public : globales uniquement (sans boutique),
-   * actives et dans la fenêtre de dates si renseignée.
+   * Bannières pour l’accueil public : globales (sans boutique) +
+   * publicités boutiques actives (boutique ACTIVE, dates valides).
    */
   async listPublic(): Promise<AdModel[]> {
     const now = Date.now();
@@ -320,23 +320,36 @@ export class AdsService implements OnModuleInit {
       return this._listCache.data;
     }
     const raw = await this.adModel
-      .find({
-        isActive: true,
-        $or: [{ store: null }, { store: { $exists: false } }],
-      })
-      .populate('store', 'name profileImage')
+      .find({ isActive: true })
+      .populate('store', 'name profileImage status')
       .populate('product', 'title')
       .sort({ sortOrder: 1 })
       .lean()
       .exec();
     const t = new Date();
-    const data = raw.filter((d) =>
-      this.passesDateWindow(
-        d.validFrom as Date | undefined,
-        d.validUntil as Date | undefined,
-        t,
-      ),
-    ) as unknown as AdModel[];
+    const data = raw.filter((d) => {
+      if (
+        !this.passesDateWindow(
+          d.validFrom as Date | undefined,
+          d.validUntil as Date | undefined,
+          t,
+        )
+      ) {
+        return false;
+      }
+      const st = d.store as
+        | { status?: string }
+        | Types.ObjectId
+        | null
+        | undefined;
+      if (st == null) return true;
+      if (st instanceof Types.ObjectId) return false;
+      if (typeof st === 'object') {
+        const status = (st as { status?: string }).status;
+        return String(status) === StoreStatusEnum.ACTIVE;
+      }
+      return false;
+    }) as unknown as AdModel[];
     this._listCache = { at: now, data };
     return data;
   }
