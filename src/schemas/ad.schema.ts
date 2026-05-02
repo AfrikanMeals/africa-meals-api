@@ -37,7 +37,7 @@ export class AdModel extends BaseSchema {
   @Prop({ default: 0, name: 'sort_order' })
   sortOrder: number;
 
-  /** Si absent : bannière globale (accueil). Sinon : boutique propriétaire. */
+  /** Si absent : pub générale créée par l’admin (accueil). Sinon : pub liée à une boutique (vendeur / admin ciblé). */
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: StoreModel.name,
