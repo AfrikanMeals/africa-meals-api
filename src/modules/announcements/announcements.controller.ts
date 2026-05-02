@@ -17,6 +17,7 @@ import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { memoryStorage } from 'multer';
 import { MultipartToJsonPipe } from 'src/pipes/multipart-to-json/multipart-to-json.pipe';
+import { slimAnnouncementForClient } from '@utils/public-client-shapes';
 import { AnnouncementsService } from './announcements.service';
 import { CreateAnnouncementDto } from './dto/announcements.dto';
 
@@ -30,9 +31,16 @@ export class AnnouncementsController {
   @Get('')
   @UseGuards(JwtGuard)
   async list() {
-    return {
-      items: await this._announcementsService.list(),
-    };
+    const docs = await this._announcementsService.list();
+    const items = docs.map((d) => {
+      const toJson = (d as { toJSON?: () => Record<string, unknown> })?.toJSON;
+      const row =
+        typeof toJson === 'function'
+          ? toJson.call(d)
+          : (JSON.parse(JSON.stringify(d)) as Record<string, unknown>);
+      return slimAnnouncementForClient(row);
+    });
+    return { items };
   }
 
   @Post('')

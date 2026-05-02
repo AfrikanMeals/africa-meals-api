@@ -168,8 +168,6 @@ export class SearchService {
             acceptsOrders: { $ifNull: ['$store.acceptsOrders', true] },
             supportsShipping: { $ifNull: ['$store.supportsShipping', false] },
             currency: { $ifNull: ['$store.currency', 'CAD'] },
-            email: { $ifNull: ['$store.email', ''] },
-            phoneNumber: { $ifNull: ['$store.phoneNumber', ''] },
             profileImage: { $ifNull: ['$store.profileImage', ''] },
             owner: {
               $convert: {
@@ -182,7 +180,6 @@ export class SearchService {
             createdAt: '$store.createdAt',
             updatedAt: '$store.updatedAt',
             canCreateProducts: { $ifNull: ['$store.canCreateProducts', false] },
-            shippingZones: { $ifNull: ['$store.shippingZones', []] },
             averageRating: { $ifNull: ['$store.averageRating', 0] },
           },
         },
@@ -645,8 +642,6 @@ export class SearchService {
             acceptsOrders: { $ifNull: ['$store.acceptsOrders', true] },
             supportsShipping: { $ifNull: ['$store.supportsShipping', false] },
             currency: { $ifNull: ['$store.currency', 'CAD'] },
-            email: { $ifNull: ['$store.email', ''] },
-            phoneNumber: { $ifNull: ['$store.phoneNumber', ''] },
             profileImage: { $ifNull: ['$store.profileImage', ''] },
             owner: {
               $convert: {
@@ -659,7 +654,6 @@ export class SearchService {
             createdAt: '$store.createdAt',
             updatedAt: '$store.updatedAt',
             canCreateProducts: { $ifNull: ['$store.canCreateProducts', false] },
-            shippingZones: { $ifNull: ['$store.shippingZones', []] },
             averageRating: { $ifNull: ['$store.averageRating', 0] },
           },
         },

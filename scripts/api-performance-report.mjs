@@ -175,13 +175,15 @@ const PRODUCT_CATEGORIES_BODY = JSON.stringify({
 });
 
 function storeMenuBody(storeId) {
+  // `store` / `products` sont des scalaires `GraphQLJSONObject` : pas de sous-sélection `{ … }`
+  // (sinon validation GraphQL → HTTP 400). Aligné sur `gqlStoreMenu` (app mobile).
   return JSON.stringify({
     query: `query StoreMenu($storeId: String!, $productsTake: Int, $productsPage: Int) {
       storeMenu(storeId: $storeId, productsTake: $productsTake, productsPage: $productsPage) {
         productsCount
         productsTotal
-        store { id name }
-        products { id title }
+        store
+        products
       }
     }`,
     variables: {

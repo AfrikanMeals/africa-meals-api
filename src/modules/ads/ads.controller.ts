@@ -25,6 +25,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { memoryStorage } from 'multer';
+import { slimAdForPublicClient } from '@utils/public-client-shapes';
 import { AdsService } from './ads.service';
 
 @ApiTags('ads')
@@ -128,7 +129,10 @@ export class AdsController {
   /** Bannières accueil : globales + boutiques ACTIVE (fenêtre de validité, `isActive`). */
   @Get()
   async list() {
-    const items = await this.adsService.listPublic();
+    const raw = await this.adsService.listPublic();
+    const items = (raw as unknown as Record<string, unknown>[]).map((row) =>
+      slimAdForPublicClient(row),
+    );
     return { items };
   }
 }

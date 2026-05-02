@@ -6,6 +6,11 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { UserModel } from '@schemas/user.schema';
 import { Cache } from 'cache-manager';
+import {
+  slimAdForPublicClient,
+  slimAnnouncementForClient,
+  slimProductCategoryForPublicClient,
+} from '@utils/public-client-shapes';
 
 export type ShopHomePayload = {
   announcements: Record<string, unknown>[];
@@ -76,13 +81,20 @@ export class ShopHomeService {
       this._search.homeFeedProducts(user, take),
     ]);
 
-    const announcements = this._docsToPlainJson(announcementDocs);
-    const ads = this._docsToPlainJson(adDocs);
+    const announcements = this._docsToPlainJson(announcementDocs).map((row) =>
+      slimAnnouncementForClient(row),
+    );
+    const ads = this._docsToPlainJson(adDocs).map((row) =>
+      slimAdForPublicClient(row),
+    );
+    const categoriesSlim = (categories as Record<string, unknown>[]).map(
+      (row) => slimProductCategoryForPublicClient(row),
+    );
 
     const payload: ShopHomePayload = {
       announcements,
       ads,
-      categories: categories as Record<string, unknown>[],
+      categories: categoriesSlim,
       products,
     };
 
