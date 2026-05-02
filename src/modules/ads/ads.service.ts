@@ -1,6 +1,7 @@
 import {
   AdBannerImageJsonDto,
   CreateAdManagementDto,
+  isAdLinkActionType,
   PatchAdManagementDto,
 } from '@modules/ads/dto/ad-management.dto';
 import { TrackAdEventDto } from '@modules/ads/dto/ad-tracking.dto';
@@ -44,6 +45,8 @@ export type AdManagementRow = {
   validFrom: string | null;
   validUntil: string | null;
   actionType: StoreAdActionTypeEnum;
+  /** Numéro, e-mail ou URL selon `actionType`. */
+  actionTarget: string | null;
   productId: string | null;
   productTitle: string | null;
   createdAt?: string;
@@ -199,6 +202,43 @@ export class AdsService implements OnModuleInit {
     return docs.map((d) => d._id as Types.ObjectId);
   }
 
+  /** Valide et normalise la cible pour les actions « lien / contact ». */
+  private assertActionTargetValue(
+    actionType: StoreAdActionTypeEnum,
+    raw: string | undefined | null,
+  ): string {
+    if (!isAdLinkActionType(actionType)) {
+      return '';
+    }
+    const t = (raw ?? '').trim();
+    if (!t) {
+      throw new BadRequestException('action_target_required');
+    }
+    if (actionType === StoreAdActionTypeEnum.EMAIL) {
+      const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t);
+      if (!ok) {
+        throw new BadRequestException('invalid_action_target_email');
+      }
+      return t;
+    }
+    if (actionType === StoreAdActionTypeEnum.WEBSITE) {
+      try {
+        const u = new URL(/^[a-z]+:/i.test(t) ? t : `https://${t}`);
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+          throw new BadRequestException('invalid_action_target_url');
+        }
+        return u.toString();
+      } catch {
+        throw new BadRequestException('invalid_action_target_url');
+      }
+    }
+    const digits = t.replace(/\D/g, '');
+    if (digits.length < 6) {
+      throw new BadRequestException('invalid_action_target_phone');
+    }
+    return t;
+  }
+
   private assertDateRange(validFrom: Date, validUntil: Date) {
     if (!(validFrom instanceof Date) || Number.isNaN(validFrom.getTime())) {
       throw new BadRequestException('invalid_valid_from');
@@ -262,6 +302,10 @@ export class AdsService implements OnModuleInit {
         : vu instanceof Date
           ? vu.toISOString()
           : String(vu);
+    const actTarget =
+      doc.actionTarget != null && String(doc.actionTarget).trim() !== ''
+        ? String(doc.actionTarget).trim()
+        : null;
     return {
       id,
       storeId,
@@ -275,6 +319,7 @@ export class AdsService implements OnModuleInit {
       validFrom: validFromIso,
       validUntil: validUntilIso,
       actionType: at,
+      actionTarget: actTarget,
       productId,
       productTitle,
       createdAt:
@@ -437,6 +482,10 @@ export class AdsService implements OnModuleInit {
       await this.assertProductBelongsToStore(dto.productId, storeOid.toString());
     }
 
+    const linkTarget = isAdLinkActionType(dto.actionType)
+      ? this.assertActionTargetValue(dto.actionType, dto.actionTarget)
+      : undefined;
+
     const created = await this.adModel.create({
       isActive: dto.isActive !== false,
       title: dto.title.trim(),
@@ -448,6 +497,7 @@ export class AdsService implements OnModuleInit {
       validFrom,
       validUntil,
       actionType: dto.actionType,
+      actionTarget: linkTarget || undefined,
       product:
         dto.actionType === StoreAdActionTypeEnum.PRODUCT && dto.productId
           ? productRefId(dto.productId)
@@ -528,15 +578,29 @@ export class AdsService implements OnModuleInit {
     const effectiveStoreId = storeIdStr;
     if (dto.actionType === StoreAdActionTypeEnum.SHOP) {
       existing.product = undefined;
-    }
-    if (dto.actionType === StoreAdActionTypeEnum.PRODUCT) {
+      existing.actionTarget = undefined;
+    } else if (dto.actionType === StoreAdActionTypeEnum.PRODUCT) {
+      existing.actionTarget = undefined;
       const pid = dto.productId;
       if (!pid || !effectiveStoreId) {
         throw new BadRequestException('product_required_for_action');
       }
       await this.assertProductBelongsToStore(pid, effectiveStoreId);
       existing.product = productRefId(pid);
-    } else if (dto.productId === null) {
+    } else if (dto.actionType != null && isAdLinkActionType(dto.actionType)) {
+      existing.product = undefined;
+      if (dto.actionTarget !== undefined) {
+        existing.actionTarget =
+          dto.actionTarget === null || dto.actionTarget === ''
+            ? undefined
+            : this.assertActionTargetValue(
+                dto.actionType,
+                dto.actionTarget,
+              );
+      }
+    }
+
+    if (dto.productId === null) {
       existing.product = undefined;
     } else if (
       dto.productId &&
@@ -546,6 +610,34 @@ export class AdsService implements OnModuleInit {
     ) {
       await this.assertProductBelongsToStore(dto.productId, effectiveStoreId);
       existing.product = productRefId(dto.productId);
+    }
+
+    if (
+      dto.actionTarget !== undefined &&
+      dto.actionType == null &&
+      isAdLinkActionType(
+        existing.actionType as StoreAdActionTypeEnum,
+      )
+    ) {
+      existing.actionTarget =
+        dto.actionTarget === null || dto.actionTarget === ''
+          ? undefined
+          : this.assertActionTargetValue(
+              existing.actionType as StoreAdActionTypeEnum,
+              dto.actionTarget,
+            );
+    }
+
+    const finalType =
+      (existing.actionType as StoreAdActionTypeEnum) ??
+      StoreAdActionTypeEnum.SHOP;
+    if (isAdLinkActionType(finalType)) {
+      existing.actionTarget = this.assertActionTargetValue(
+        finalType,
+        existing.actionTarget,
+      );
+    } else {
+      existing.actionTarget = undefined;
     }
 
     await existing.save();

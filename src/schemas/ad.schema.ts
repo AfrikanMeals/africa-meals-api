@@ -4,10 +4,14 @@ import { BaseSchema } from './base.schema';
 import { ProductModel } from './product.schema';
 import { StoreModel } from './store.schema';
 
-/** Cible du tap sur la bannière (boutique ou fiche produit). */
+/** Cible du tap sur la bannière (navigation, contact, lien externe). */
 export enum StoreAdActionTypeEnum {
   SHOP = 'SHOP',
   PRODUCT = 'PRODUCT',
+  WHATSAPP = 'WHATSAPP',
+  CALL = 'CALL',
+  EMAIL = 'EMAIL',
+  WEBSITE = 'WEBSITE',
 }
 
 @Schema({
@@ -56,6 +60,13 @@ export class AdModel extends BaseSchema {
     enum: StoreAdActionTypeEnum,
   })
   actionType?: StoreAdActionTypeEnum;
+
+  /**
+   * Cible pour WHATSAPP / CALL / EMAIL / WEBSITE (numéro, e-mail, URL).
+   * Non utilisé pour SHOP / PRODUCT.
+   */
+  @Prop({ required: false, name: 'action_target' })
+  actionTarget?: string;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,

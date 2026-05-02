@@ -15,6 +15,17 @@ import {
   ValidateIf,
 } from 'class-validator';
 
+export const AD_LINK_ACTION_TYPES: StoreAdActionTypeEnum[] = [
+  StoreAdActionTypeEnum.WHATSAPP,
+  StoreAdActionTypeEnum.CALL,
+  StoreAdActionTypeEnum.EMAIL,
+  StoreAdActionTypeEnum.WEBSITE,
+];
+
+export function isAdLinkActionType(t: StoreAdActionTypeEnum): boolean {
+  return AD_LINK_ACTION_TYPES.includes(t);
+}
+
 export class CreateAdManagementDto {
   @ApiPropertyOptional({
     description:
@@ -74,6 +85,16 @@ export class CreateAdManagementDto {
   @IsNotEmpty()
   @IsMongoId()
   productId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Obligatoire si actionType = WHATSAPP, CALL, EMAIL ou WEBSITE (numéro, e-mail ou URL).',
+  })
+  @ValidateIf((o) => isAdLinkActionType(o.actionType))
+  @IsNotEmpty()
+  @IsString()
+  @MaxLength(2000)
+  actionTarget?: string;
 }
 
 export class PatchAdManagementDto {
@@ -133,6 +154,15 @@ export class PatchAdManagementDto {
   @IsOptional()
   @IsMongoId()
   productId?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Cible pour WHATSAPP / CALL / EMAIL / WEBSITE. Vide pour retirer (si le type le permet).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  actionTarget?: string | null;
 }
 
 /** Bannière pub : JSON + base64 — fiable quand multipart est tronqué (Firebase / CF / proxys). */
