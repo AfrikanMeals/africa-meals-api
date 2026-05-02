@@ -370,12 +370,33 @@ async function runOnce(baseUrl, c, timeoutMs) {
   if (c.path === 'health' && bodyAnalysis.kind === 'json-object' && bodyText) {
     try {
       const h = JSON.parse(bodyText);
+      const mem = h.process?.memory;
+      const cg = h.runtime?.cgroupMemoryLimitBytes;
       healthSlice = {
         status: h.status,
         service: h.service,
         version: h.version,
         uptimeSeconds: h.uptimeSeconds,
         timestamp: h.timestamp,
+        mongoReachable: h.mongodb?.reachable,
+        mongoPingMs: h.mongodb?.pingMs,
+        mongoReadyState: h.mongodb?.readyState,
+        mongoError: h.mongodb?.error,
+        heapUsedMb:
+          mem?.heapUsedBytes != null
+            ? (mem.heapUsedBytes / 1024 / 1024).toFixed(2)
+            : undefined,
+        rssMb:
+          mem?.rssBytes != null
+            ? (mem.rssBytes / 1024 / 1024).toFixed(2)
+            : undefined,
+        cgroupLimitMb:
+          cg != null && Number.isFinite(cg)
+            ? (cg / 1024 / 1024).toFixed(0)
+            : undefined,
+        cloudRunService: h.runtime?.cloudRun?.service,
+        cloudRunRevision: h.runtime?.cloudRun?.revision,
+        nodeEnv: h.runtime?.nodeEnv,
       };
     } catch {
       healthSlice = null;
@@ -509,7 +530,8 @@ function mdReport({
         : '';
       let bodyLines = '';
       if (o?.healthSlice) {
-        bodyLines = `### Données « process » (GET /health, extrait JSON)\n\n| Champ | Valeur |\n|-------|--------|\n| service | \`${o.healthSlice.service ?? ''}\` |\n| version | \`${o.healthSlice.version ?? ''}\` |\n| uptimeSeconds | ${o.healthSlice.uptimeSeconds ?? '—'} |\n| timestamp API | ${o.healthSlice.timestamp ?? '—'} |\n\n> Proxy léger d’état du **process Node** (pas CPU/RAM conteneur ni latence Mongo).\n`;
+        const hs = o.healthSlice;
+        bodyLines = `### Données \`GET /health\` (extrait rapport)\n\n| Champ | Valeur |\n|-------|--------|\n| status | \`${hs.status ?? ''}\` *(ok = Mongo ping OK, degraded = base indisponible)* |\n| service | \`${hs.service ?? ''}\` |\n| version | \`${hs.version ?? ''}\` |\n| uptimeSeconds | ${hs.uptimeSeconds ?? '—'} |\n| timestamp API | \`${hs.timestamp ?? '—'}\` |\n| Mongo reachable | ${hs.mongoReachable === true ? 'oui' : hs.mongoReachable === false ? 'non' : '—'} |\n| Mongo ping (ms) | ${hs.mongoPingMs != null ? hs.mongoPingMs : '—'} |\n| Mongo readyState | ${hs.mongoReadyState != null ? hs.mongoReadyState : '—'} |\n| heapUsed (Mo) | ${hs.heapUsedMb != null ? hs.heapUsedMb : '—'} |\n| RSS (Mo) | ${hs.rssMb != null ? hs.rssMb : '—'} |\n| cgroup memory limit (Mo) | ${hs.cgroupLimitMb != null ? hs.cgroupLimitMb : '—'} |\n| Cloud Run service | ${hs.cloudRunService != null ? `\`${hs.cloudRunService}\`` : '—'} |\n| Cloud Run revision | ${hs.cloudRunRevision != null ? `\`${hs.cloudRunRevision}\`` : '—'} |\n| NODE_ENV | ${hs.nodeEnv != null ? `\`${hs.nodeEnv}\`` : '—'} |\n${hs.mongoError ? `| Mongo erreur | \`${String(hs.mongoError).slice(0, 200)}\` |\n` : ''}\n> **Process Node** (RSS / heap) et **ping Mongo** sont mesurés dans le process API. La limite **cgroup** reflète souvent la RAM max du conteneur (Cloud Run, Kubernetes). Ce n’est **pas** un APM complet — voir Cloud Trace / \`/metrics\` pour la charge réelle.\n`;
       } else if (o?.bodyAnalysis) {
         const ba = o.bodyAnalysis;
         bodyLines = `### Analyse du corps de réponse (dernier tir)\n\n- **Type:** \`${ba.kind}\`\n${ba.keys?.length ? `- **Clés racine (objet):** ${ba.keys.map((k) => `\`${k}\``).join(', ')}\n` : ''}`;
@@ -553,15 +575,11 @@ ${warnBlock}## Paramètres du benchmark
 
 ## Conteneur, base de données et système **côté serveur**
 
-Ce script **ne peut pas** mesurer depuis l’extérieur :
+Ce script **ne peut pas** tout mesurer depuis l’extérieur (p.ex. CPU réel du conteneur, nombre de sockets MongoDB actifs, taille des documents, files internes Nest).
 
-- CPU / mémoire du conteneur Cloud Run (ou autre) ;
-- nombre de connexions MongoDB, temps de requêtes SQL/NoSQL, taille des documents ;
-- files d’attente internes Nest.
+**Complément via \`GET /health\` (côté API)** : la réponse inclut désormais la **mémoire du process Node** (RSS, heap), un **ping MongoDB** (latence \`pingMs\`), l’état \`mongodb.readyState\`, et si possible la **limite mémoire cgroup** + métadonnées **Cloud Run** (\`K_SERVICE\`, \`K_REVISION\`). Le champ \`status\` vaut \`degraded\` si le ping base échoue (HTTP reste 200).
 
-**Recommandations** pour enrichir ces sections : activer **Cloud Trace** / **APM**, ajouter un middleware \`Server-Timing\` (ex. \`db;dur=12\`), ou exposer un endpoint interne de métriques (\`/metrics\`) réservé au réseau privé.
-
-Les champs **uptime** et **version** issus de \`GET /health\` donnent un indicateur minimal sur le **process** API (voir la section détaillée de cette requête ci-dessous).
+**Aller plus loin** : **Cloud Trace** / **APM**, en-têtes \`Server-Timing\` (ex. \`db;dur=12\`), endpoint \`/metrics\` (Prometheus) sur réseau privé.
 
 ${slowSection}## Synthèse (latence ms, taille Ko)
 
