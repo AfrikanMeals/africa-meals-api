@@ -61,6 +61,135 @@ export class SearchService {
     }
   }
 
+  /** Tri liste boutiques (champs Mongo réels). */
+  private _storeSortKeys(args: SearchDto): Record<string, 1 | -1> {
+    const dir = args.sortDirection === SortOrder.ASC ? 1 : -1;
+    switch (args.sortBy) {
+      case SortBy.NAME:
+        return { name: dir };
+      case SortBy.PRICE:
+      case SortBy.RATING:
+      case SortBy.CREATED_AT:
+      default:
+        return { createdAt: dir };
+    }
+  }
+
+  /**
+   * Enrichissement « liste produit » : catégorie + note moyenne via `product_ratings`,
+   * sans populate de toutes les notes (évite payloads ~300 Ko+ et scans lourds).
+   */
+  private _productLeanEnrichmentStages(): PipelineStage[] {
+    return [
+      {
+        $lookup: {
+          from: 'product_categories',
+          localField: 'category',
+          foreignField: '_id',
+          as: '_cat',
+        },
+      },
+      {
+        $lookup: {
+          from: 'product_ratings',
+          let: { pid: '$_id' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$product', '$$pid'] } } },
+            { $project: { _id: 0, rate: 1 } },
+          ],
+          as: '_rates',
+        },
+      },
+      {
+        $addFields: {
+          likesCount: { $size: { $ifNull: ['$likedBy', []] } },
+          averageRating: {
+            $let: {
+              vars: {
+                sz: { $size: { $ifNull: ['$_rates', []] } },
+                sumRates: {
+                  $sum: {
+                    $map: {
+                      input: '$_rates',
+                      as: 'r',
+                      in: '$$r.rate',
+                    },
+                  },
+                },
+              },
+              in: {
+                $cond: [
+                  { $gt: ['$$sz', 0] },
+                  { $divide: ['$$sumRates', '$$sz'] },
+                  0,
+                ],
+              },
+            },
+          },
+          _category: { $arrayElemAt: ['$_cat', 0] },
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          title: 1,
+          bio: 1,
+          originCountry: { $ifNull: ['$originCountry', ''] },
+          price: 1,
+          discountPrice: { $ifNull: ['$discountPrice', 0] },
+          currency: { $ifNull: ['$currency', 'CAD'] },
+          profileImage: { $ifNull: ['$profileImage', ''] },
+          status: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          likesCount: 1,
+          averageRating: { $ifNull: ['$averageRating', 0] },
+          category: {
+            $cond: [
+              { $gt: [{ $size: { $ifNull: ['$_cat', []] } }, 0] },
+              {
+                id: { $toString: '$_category._id' },
+                _id: { $toString: '$_category._id' },
+                title: '$_category.title',
+                icon: '$_category.icon',
+                isEnabled: { $ifNull: ['$_category.is_enabled', true] },
+                createdAt: '$_category.createdAt',
+                updatedAt: '$_category.updatedAt',
+              },
+              null,
+            ],
+          },
+          store: {
+            id: { $toString: '$store._id' },
+            _id: { $toString: '$store._id' },
+            name: '$store.name',
+            status: { $toString: '$store.status' },
+            bio: { $ifNull: ['$store.bio', ''] },
+            acceptsOrders: { $ifNull: ['$store.acceptsOrders', true] },
+            supportsShipping: { $ifNull: ['$store.supportsShipping', false] },
+            currency: { $ifNull: ['$store.currency', 'CAD'] },
+            email: { $ifNull: ['$store.email', ''] },
+            phoneNumber: { $ifNull: ['$store.phoneNumber', ''] },
+            profileImage: { $ifNull: ['$store.profileImage', ''] },
+            owner: {
+              $convert: {
+                input: '$store.owner',
+                to: 'string',
+                onError: '',
+                onNull: '',
+              },
+            },
+            createdAt: '$store.createdAt',
+            updatedAt: '$store.updatedAt',
+            canCreateProducts: { $ifNull: ['$store.canCreateProducts', false] },
+            shippingZones: { $ifNull: ['$store.shippingZones', []] },
+            averageRating: { $ifNull: ['$store.averageRating', 0] },
+          },
+        },
+      },
+    ];
+  }
+
   @Inject(ProductsService)
   private readonly _productsService: ProductsService;
 
@@ -213,7 +342,7 @@ export class SearchService {
               ],
             },
             args.storeId && {
-              store: { $eq: new Types.ObjectId(args.storeId) },
+              'store._id': { $eq: new Types.ObjectId(args.storeId) },
             },
             args.minPrice &&
               args.minPrice !== undefined &&
@@ -238,8 +367,8 @@ export class SearchService {
             { $sort: sortKeys },
             { $skip: (args.page! - 1) * args.take! },
             { $limit: args.take! },
-            { $project: { _id: 1 } },
-          ],
+            ...this._productLeanEnrichmentStages(),
+          ] as any[],
           total: [{ $count: 'n' }],
         },
       },
@@ -257,10 +386,10 @@ export class SearchService {
           total: { n: number }[];
         }
       | undefined;
-    const productsIds = facet?.rows ?? [];
+    const leanRows = (facet?.rows ?? []) as Record<string, unknown>[];
     const total = facet?.total?.[0]?.n ?? 0;
 
-    if (!productsIds.length) {
+    if (!leanRows.length) {
       return {
         items: [],
         total,
@@ -269,37 +398,10 @@ export class SearchService {
       };
     }
 
-    const products = await this._productsService
-      .getProductModel()
-      .find({ _id: { $in: productsIds.map((p) => new Types.ObjectId(p._id)) } })
-      .select('-imageBase64 -imageMimeType')
-      .populate('category')
-      .populate({
-        path: 'ratings',
-        select: 'rate product user createdAt updatedAt',
-        populate: {
-          path: 'user',
-          select: '_id fullName profileImage',
-        },
-      })
-      .populate({
-        path: 'likedBy',
-        select: '_id',
-      })
-      .populate({
-        path: 'store',
-        select:
-          'name bio email phoneNumber profileImage status acceptsOrders supportsShipping currency canCreateProducts owner createdAt updatedAt address',
-        populate: {
-          path: 'address',
-          select: 'label address city country location',
-        },
-      })
-      .sort(sortKeys)
-      .exec();
+    const items = leanRows.map((doc) => this._mapHomeFeedLeanDoc(doc));
 
     return {
-      items: products ?? [],
+      items: items as unknown as ProductModel[],
       total,
       page: args.page,
       limit: args.take,
@@ -594,115 +696,6 @@ export class SearchService {
     const safePage = Math.max(1, Math.floor(page));
     const skip = (safePage - 1) * safeTake;
 
-    const postSliceStages: PipelineStage[] = [
-      {
-        $lookup: {
-          from: 'product_categories',
-          localField: 'category',
-          foreignField: '_id',
-          as: '_cat',
-        },
-      },
-      {
-        $lookup: {
-          from: 'product_ratings',
-          let: { pid: '$_id' },
-          pipeline: [
-            { $match: { $expr: { $eq: ['$product', '$$pid'] } } },
-            { $project: { _id: 0, rate: 1 } },
-          ],
-          as: '_rates',
-        },
-      },
-      {
-        $addFields: {
-          likesCount: { $size: { $ifNull: ['$likedBy', []] } },
-          averageRating: {
-            $let: {
-              vars: {
-                sz: { $size: { $ifNull: ['$_rates', []] } },
-                sumRates: {
-                  $sum: {
-                    $map: {
-                      input: '$_rates',
-                      as: 'r',
-                      in: '$$r.rate',
-                    },
-                  },
-                },
-              },
-              in: {
-                $cond: [
-                  { $gt: ['$$sz', 0] },
-                  { $divide: ['$$sumRates', '$$sz'] },
-                  0,
-                ],
-              },
-            },
-          },
-          _category: { $arrayElemAt: ['$_cat', 0] },
-        },
-      },
-      {
-        $project: {
-          _id: 1,
-          title: 1,
-          bio: 1,
-          originCountry: { $ifNull: ['$originCountry', ''] },
-          price: 1,
-          discountPrice: { $ifNull: ['$discountPrice', 0] },
-          currency: { $ifNull: ['$currency', 'CAD'] },
-          profileImage: { $ifNull: ['$profileImage', ''] },
-          status: 1,
-          createdAt: 1,
-          updatedAt: 1,
-          likesCount: 1,
-          averageRating: { $ifNull: ['$averageRating', 0] },
-          category: {
-            $cond: [
-              { $gt: [{ $size: { $ifNull: ['$_cat', []] } }, 0] },
-              {
-                id: { $toString: '$_category._id' },
-                _id: { $toString: '$_category._id' },
-                title: '$_category.title',
-                icon: '$_category.icon',
-                isEnabled: { $ifNull: ['$_category.is_enabled', true] },
-                createdAt: '$_category.createdAt',
-                updatedAt: '$_category.updatedAt',
-              },
-              null,
-            ],
-          },
-          store: {
-            id: { $toString: '$store._id' },
-            _id: { $toString: '$store._id' },
-            name: '$store.name',
-            status: { $toString: '$store.status' },
-            bio: { $ifNull: ['$store.bio', ''] },
-            acceptsOrders: { $ifNull: ['$store.acceptsOrders', true] },
-            supportsShipping: { $ifNull: ['$store.supportsShipping', false] },
-            currency: { $ifNull: ['$store.currency', 'CAD'] },
-            email: { $ifNull: ['$store.email', ''] },
-            phoneNumber: { $ifNull: ['$store.phoneNumber', ''] },
-            profileImage: { $ifNull: ['$store.profileImage', ''] },
-            owner: {
-              $convert: {
-                input: '$store.owner',
-                to: 'string',
-                onError: '',
-                onNull: '',
-              },
-            },
-            createdAt: '$store.createdAt',
-            updatedAt: '$store.updatedAt',
-            canCreateProducts: { $ifNull: ['$store.canCreateProducts', false] },
-            shippingZones: { $ifNull: ['$store.shippingZones', []] },
-            averageRating: { $ifNull: ['$store.averageRating', 0] },
-          },
-        },
-      },
-    ];
-
     const pipeline: PipelineStage[] = [
       {
         $lookup: {
@@ -745,7 +738,7 @@ export class SearchService {
             { $sort: { createdAt: -1 } },
             { $skip: skip },
             { $limit: safeTake },
-            ...postSliceStages,
+            ...this._productLeanEnrichmentStages(),
           ] as any[],
         },
       },
@@ -812,48 +805,135 @@ export class SearchService {
       // },
     ];
 
-    const [count, storesIds] = await Promise.all([
-      this._storeService.getStoreModel().countDocuments(pipeline[0].$match),
-
-      this._storeService
-        .getStoreModel()
-        .aggregate(pipeline)
-        .project({
-          _id: 1,
-        })
-        // .sort({ [args.sortBy ?? 'createdAt']: args.sortDirection ?? 'desc' })
-        .skip((args.page - 1) * args.take)
-        .limit(args.take)
-        .exec(),
-    ]);
-
-    if (!storesIds.length) {
-      return {
-        items: [],
-        total: 0,
-        page: args.page,
-        limit: args.take,
-      };
-    }
-
-    const stores = await this._storeService
-      .getStoreModel()
-      .find({ _id: { $in: storesIds.map((s) => s._id) } })
-      .populate('address')
-      .populate('owner')
-      .populate({
-        path: 'ratings',
-        populate: {
-          path: 'user',
+    const sortKeys = this._storeSortKeys(args);
+    const facetPipeline: PipelineStage[] = [
+      ...pipeline,
+      {
+        $facet: {
+          rows: [
+            { $sort: sortKeys },
+            { $skip: (args.page! - 1) * args.take! },
+            { $limit: args.take! },
+            {
+              $lookup: {
+                from: 'store_ratings',
+                let: { sid: '$_id' },
+                pipeline: [
+                  { $match: { $expr: { $eq: ['$store', '$$sid'] } } },
+                  { $project: { _id: 0, rate: 1 } },
+                ],
+                as: '_rates',
+              },
+            },
+            {
+              $lookup: {
+                from: 'addresses',
+                localField: 'address',
+                foreignField: '_id',
+                as: '_addr',
+              },
+            },
+            {
+              $addFields: {
+                averageRating: {
+                  $let: {
+                    vars: {
+                      sz: { $size: { $ifNull: ['$_rates', []] } },
+                      sumRates: {
+                        $sum: {
+                          $map: {
+                            input: '$_rates',
+                            as: 'r',
+                            in: '$$r.rate',
+                          },
+                        },
+                      },
+                    },
+                    in: {
+                      $cond: [
+                        { $gt: ['$$sz', 0] },
+                        { $divide: ['$$sumRates', '$$sz'] },
+                        0,
+                      ],
+                    },
+                  },
+                },
+                _address: { $arrayElemAt: ['$_addr', 0] },
+              },
+            },
+            {
+              $project: {
+                _id: 1,
+                name: 1,
+                bio: 1,
+                email: 1,
+                phoneNumber: 1,
+                currency: 1,
+                profileImage: 1,
+                status: 1,
+                acceptsOrders: 1,
+                supportsShipping: 1,
+                canCreateProducts: 1,
+                shippingZones: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                __v: 1,
+                likedBy: { $ifNull: ['$likedBy', []] },
+                averageRating: 1,
+                owner: {
+                  $convert: {
+                    input: '$owner',
+                    to: 'string',
+                    onError: '',
+                    onNull: '',
+                  },
+                },
+                address: {
+                  $cond: [
+                    { $gt: [{ $size: { $ifNull: ['$_addr', []] } }, 0] },
+                    {
+                      _id: { $toString: '$_address._id' },
+                      isDefault: { $ifNull: ['$_address.is_default', false] },
+                      label: { $ifNull: ['$_address.label', ''] },
+                      address: { $ifNull: ['$_address.address', ''] },
+                      country: { $ifNull: ['$_address.country', ''] },
+                      city: { $ifNull: ['$_address.city', ''] },
+                      countryCode: { $ifNull: ['$_address.country_code', ''] },
+                      zipCode: { $ifNull: ['$_address.zip_code', ''] },
+                      type: { $ifNull: ['$_address.type', 'USER'] },
+                      location: { $ifNull: ['$_address.location', null] },
+                      createdAt: '$_address.createdAt',
+                      updatedAt: '$_address.updatedAt',
+                    },
+                    null,
+                  ],
+                },
+              },
+            },
+          ] as any[],
+          total: [{ $count: 'n' }],
         },
-      })
-      .populate('likedBy')
-      .sort({ [args.sortBy ?? 'createdAt']: args.sortDirection ?? 'desc' })
+      },
+    ];
+
+    const agg = await this._storeService
+      .getStoreModel()
+      .aggregate(facetPipeline)
+      .option({ allowDiskUse: true })
       .exec();
 
+    const bucket = agg[0] as
+      | {
+          rows: Record<string, unknown>[];
+          total: { n: number }[];
+        }
+      | undefined;
+    const rows = bucket?.rows ?? [];
+    const total = bucket?.total?.[0]?.n ?? 0;
+
     return {
-      items: stores ?? [],
-      total: count,
+      items: rows as unknown as StoreModel[],
+      total,
       page: args.page,
       limit: args.take,
     };
