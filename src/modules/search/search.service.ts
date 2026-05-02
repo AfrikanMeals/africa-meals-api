@@ -306,6 +306,110 @@ export class SearchService {
     };
   }
 
+  /** Normalise une ligne d’agrégation « home feed » / menu boutique (JSON client, sans BSON). */
+  private _mapHomeFeedLeanDoc(doc: Record<string, unknown>): Record<string, unknown> {
+    const toIso = (v: unknown): string => {
+      if (v instanceof Date) return v.toISOString();
+      if (typeof v === 'string' || typeof v === 'number') return String(v);
+      return new Date().toISOString();
+    };
+    const likes = Number(doc.likesCount ?? 0);
+    const cat = doc.category as Record<string, unknown> | null;
+    const st = doc.store as Record<string, unknown> | null;
+    const ownerRaw = st?.['owner'];
+    const ownerStr =
+      ownerRaw != null && typeof ownerRaw === 'object' && 'toString' in ownerRaw
+        ? (ownerRaw as Types.ObjectId).toString()
+        : ownerRaw != null
+          ? String(ownerRaw)
+          : '';
+
+    return {
+      _id: String(doc._id),
+      id: String(doc._id),
+      title: String(doc.title ?? ''),
+      bio: String(doc.bio ?? ''),
+      originCountry: String(doc.originCountry ?? ''),
+      price: Number(doc.price ?? 0),
+      discountPrice: Number(doc.discountPrice ?? 0),
+      currency: String(doc.currency ?? 'CAD'),
+      profileImage: String(doc.profileImage ?? ''),
+      status: String(doc.status ?? ''),
+      createdAt: toIso(doc.createdAt),
+      updatedAt: toIso(doc.updatedAt),
+      likesCount: likes,
+      averageRating: Number(doc.averageRating ?? 0),
+      likedBy: likes > 0 ? Array.from({ length: likes }, () => '') : [],
+      ratings: [] as unknown[],
+      extras: [] as unknown[],
+      galleryImages: [] as unknown[],
+      ordersCount: 0,
+      inCart: false,
+      category:
+        cat && cat['title'] != null
+          ? {
+              id: String(cat['id'] ?? cat['_id'] ?? ''),
+              _id: String(cat['_id'] ?? cat['id'] ?? ''),
+              title: String(cat['title'] ?? ''),
+              icon: String(cat['icon'] ?? ''),
+              isEnabled: cat['isEnabled'] !== false && cat['is_enabled'] !== false,
+              createdAt: toIso(cat['createdAt']),
+              updatedAt: toIso(cat['updatedAt']),
+            }
+          : {
+              id: '',
+              _id: '',
+              title: '',
+              icon: '',
+              isEnabled: true,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+      store:
+        st && st['name'] != null
+          ? {
+              id: String(st['id'] ?? st['_id'] ?? ''),
+              _id: String(st['_id'] ?? st['id'] ?? ''),
+              name: String(st['name'] ?? ''),
+              status: String(st['status'] ?? ''),
+              bio: String(st['bio'] ?? ''),
+              acceptsOrders: st['acceptsOrders'] !== false,
+              supportsShipping: st['supportsShipping'] === true,
+              currency: String(st['currency'] ?? 'CAD'),
+              email: String(st['email'] ?? ''),
+              phoneNumber: String(st['phoneNumber'] ?? ''),
+              profileImage: String(st['profileImage'] ?? ''),
+              owner: ownerStr,
+              createdAt: toIso(st['createdAt']),
+              updatedAt: toIso(st['updatedAt']),
+              canCreateProducts: st['canCreateProducts'] === true,
+              shippingZones: Array.isArray(st['shippingZones'])
+                ? (st['shippingZones'] as unknown[])
+                : [],
+              averageRating: Number(st['averageRating'] ?? 0),
+            }
+          : {
+              id: '',
+              _id: '',
+              name: '',
+              status: 'INACTIVE',
+              bio: '',
+              acceptsOrders: false,
+              supportsShipping: false,
+              currency: 'CAD',
+              email: '',
+              phoneNumber: '',
+              profileImage: '',
+              owner: '',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              canCreateProducts: false,
+              shippingZones: [] as unknown[],
+              averageRating: 0.0,
+            },
+    };
+  }
+
   /**
    * Produits pour l’accueil boutique : une seule agrégation, champs minimaux (pas de populate lourd).
    * Même filtre métier que la recherche produits « vides » + tri récent.
@@ -466,110 +570,202 @@ export class SearchService {
       .option({ allowDiskUse: true })
       .exec();
 
-    const toIso = (v: unknown): string => {
-      if (v instanceof Date) return v.toISOString();
-      if (typeof v === 'string' || typeof v === 'number') return String(v);
-      return new Date().toISOString();
+    return (raw as Record<string, unknown>[]).map((doc) =>
+      this._mapHomeFeedLeanDoc(doc),
+    );
+  }
+
+  /**
+   * Menu boutique paginé : **une seule** agrégation ($facet), sans second `find` + `populate`
+   * (réduit fortement la charge par rapport à `_filterProducts`).
+   */
+  async storeMenuProductsLeanPage(
+    storeId: string,
+    page: number,
+    take: number,
+    user?: UserModel,
+  ): Promise<{ items: Record<string, unknown>[]; total: number }> {
+    if (!Types.ObjectId.isValid(storeId)) {
+      return { items: [], total: 0 };
+    }
+    const storeOid = new Types.ObjectId(storeId);
+    const ownerOid = this._userObjectId(user);
+    const safeTake = Math.min(120, Math.max(1, Math.floor(take)));
+    const safePage = Math.max(1, Math.floor(page));
+    const skip = (safePage - 1) * safeTake;
+
+    const postSliceStages: PipelineStage[] = [
+      {
+        $lookup: {
+          from: 'product_categories',
+          localField: 'category',
+          foreignField: '_id',
+          as: '_cat',
+        },
+      },
+      {
+        $lookup: {
+          from: 'product_ratings',
+          let: { pid: '$_id' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$product', '$$pid'] } } },
+            { $project: { _id: 0, rate: 1 } },
+          ],
+          as: '_rates',
+        },
+      },
+      {
+        $addFields: {
+          likesCount: { $size: { $ifNull: ['$likedBy', []] } },
+          averageRating: {
+            $let: {
+              vars: {
+                sz: { $size: { $ifNull: ['$_rates', []] } },
+                sumRates: {
+                  $sum: {
+                    $map: {
+                      input: '$_rates',
+                      as: 'r',
+                      in: '$$r.rate',
+                    },
+                  },
+                },
+              },
+              in: {
+                $cond: [
+                  { $gt: ['$$sz', 0] },
+                  { $divide: ['$$sumRates', '$$sz'] },
+                  0,
+                ],
+              },
+            },
+          },
+          _category: { $arrayElemAt: ['$_cat', 0] },
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          title: 1,
+          bio: 1,
+          originCountry: { $ifNull: ['$originCountry', ''] },
+          price: 1,
+          discountPrice: { $ifNull: ['$discountPrice', 0] },
+          currency: { $ifNull: ['$currency', 'CAD'] },
+          profileImage: { $ifNull: ['$profileImage', ''] },
+          status: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          likesCount: 1,
+          averageRating: { $ifNull: ['$averageRating', 0] },
+          category: {
+            $cond: [
+              { $gt: [{ $size: { $ifNull: ['$_cat', []] } }, 0] },
+              {
+                id: { $toString: '$_category._id' },
+                _id: { $toString: '$_category._id' },
+                title: '$_category.title',
+                icon: '$_category.icon',
+                isEnabled: { $ifNull: ['$_category.is_enabled', true] },
+                createdAt: '$_category.createdAt',
+                updatedAt: '$_category.updatedAt',
+              },
+              null,
+            ],
+          },
+          store: {
+            id: { $toString: '$store._id' },
+            _id: { $toString: '$store._id' },
+            name: '$store.name',
+            status: { $toString: '$store.status' },
+            bio: { $ifNull: ['$store.bio', ''] },
+            acceptsOrders: { $ifNull: ['$store.acceptsOrders', true] },
+            supportsShipping: { $ifNull: ['$store.supportsShipping', false] },
+            currency: { $ifNull: ['$store.currency', 'CAD'] },
+            email: { $ifNull: ['$store.email', ''] },
+            phoneNumber: { $ifNull: ['$store.phoneNumber', ''] },
+            profileImage: { $ifNull: ['$store.profileImage', ''] },
+            owner: {
+              $convert: {
+                input: '$store.owner',
+                to: 'string',
+                onError: '',
+                onNull: '',
+              },
+            },
+            createdAt: '$store.createdAt',
+            updatedAt: '$store.updatedAt',
+            canCreateProducts: { $ifNull: ['$store.canCreateProducts', false] },
+            shippingZones: { $ifNull: ['$store.shippingZones', []] },
+            averageRating: { $ifNull: ['$store.averageRating', 0] },
+          },
+        },
+      },
+    ];
+
+    const pipeline: PipelineStage[] = [
+      {
+        $lookup: {
+          from: 'stores',
+          localField: 'store',
+          foreignField: '_id',
+          as: 'store',
+        },
+      },
+      {
+        $addFields: {
+          store: { $arrayElemAt: ['$store', 0] },
+        },
+      },
+      {
+        $match: {
+          $and: [
+            {
+              $or: [
+                ownerOid ? { 'store.owner': ownerOid } : null,
+                { status: ProductStatusEnum.ACTIVE },
+              ].filter(Boolean),
+            },
+            { 'store.acceptsOrders': true },
+            { 'store._id': storeOid },
+            {
+              $or: [
+                { title: { $regex: '', $options: 'i' } },
+                { bio: { $regex: '', $options: 'i' } },
+                { about: { $regex: '', $options: 'i' } },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        $facet: {
+          total: [{ $count: 'n' }],
+          rows: [
+            { $sort: { createdAt: -1 } },
+            { $skip: skip },
+            { $limit: safeTake },
+            ...postSliceStages,
+          ] as any[],
+        },
+      },
+    ];
+
+    const agg = await this._productsService
+      .getProductModel()
+      .aggregate(pipeline)
+      .option({ allowDiskUse: true })
+      .exec();
+
+    const bucket = agg[0] as
+      | { total?: { n?: number }[]; rows?: Record<string, unknown>[] }
+      | undefined;
+    const total = bucket?.total?.[0]?.n ?? 0;
+    const rows = bucket?.rows ?? [];
+    return {
+      items: rows.map((d) => this._mapHomeFeedLeanDoc(d)),
+      total,
     };
-
-    return (raw as Record<string, unknown>[]).map((doc) => {
-      const likes = Number(doc.likesCount ?? 0);
-      const cat = doc.category as Record<string, unknown> | null;
-      const st = doc.store as Record<string, unknown> | null;
-      const ownerRaw = st?.['owner'];
-      const ownerStr =
-        ownerRaw != null && typeof ownerRaw === 'object' && 'toString' in ownerRaw
-          ? (ownerRaw as Types.ObjectId).toString()
-          : ownerRaw != null
-            ? String(ownerRaw)
-            : '';
-
-      /** Pas de `...doc` : évite ObjectId / types BSON dans la réponse GraphQL `JSONObject`. */
-      return {
-        _id: String(doc._id),
-        id: String(doc._id),
-        title: String(doc.title ?? ''),
-        bio: String(doc.bio ?? ''),
-        originCountry: String(doc.originCountry ?? ''),
-        price: Number(doc.price ?? 0),
-        discountPrice: Number(doc.discountPrice ?? 0),
-        currency: String(doc.currency ?? 'CAD'),
-        profileImage: String(doc.profileImage ?? ''),
-        status: String(doc.status ?? ''),
-        createdAt: toIso(doc.createdAt),
-        updatedAt: toIso(doc.updatedAt),
-        likesCount: likes,
-        averageRating: Number(doc.averageRating ?? 0),
-        likedBy: likes > 0 ? Array.from({ length: likes }, () => '') : [],
-        ratings: [] as unknown[],
-        extras: [] as unknown[],
-        galleryImages: [] as unknown[],
-        ordersCount: 0,
-        inCart: false,
-        category:
-          cat && cat['title'] != null
-            ? {
-                id: String(cat['id'] ?? cat['_id'] ?? ''),
-                _id: String(cat['_id'] ?? cat['id'] ?? ''),
-                title: String(cat['title'] ?? ''),
-                icon: String(cat['icon'] ?? ''),
-                isEnabled: cat['isEnabled'] !== false && cat['is_enabled'] !== false,
-                createdAt: toIso(cat['createdAt']),
-                updatedAt: toIso(cat['updatedAt']),
-              }
-            : {
-                id: '',
-                _id: '',
-                title: '',
-                icon: '',
-                isEnabled: true,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              },
-        store:
-          st && st['name'] != null
-            ? {
-                id: String(st['id'] ?? st['_id'] ?? ''),
-                _id: String(st['_id'] ?? st['id'] ?? ''),
-                name: String(st['name'] ?? ''),
-                status: String(st['status'] ?? ''),
-                bio: String(st['bio'] ?? ''),
-                acceptsOrders: st['acceptsOrders'] !== false,
-                supportsShipping: st['supportsShipping'] === true,
-                currency: String(st['currency'] ?? 'CAD'),
-                email: String(st['email'] ?? ''),
-                phoneNumber: String(st['phoneNumber'] ?? ''),
-                profileImage: String(st['profileImage'] ?? ''),
-                owner: ownerStr,
-                createdAt: toIso(st['createdAt']),
-                updatedAt: toIso(st['updatedAt']),
-                canCreateProducts: st['canCreateProducts'] === true,
-                shippingZones: Array.isArray(st['shippingZones'])
-                  ? (st['shippingZones'] as unknown[])
-                  : [],
-                averageRating: Number(st['averageRating'] ?? 0),
-              }
-            : {
-                id: '',
-                _id: '',
-                name: '',
-                status: 'INACTIVE',
-                bio: '',
-                acceptsOrders: false,
-                supportsShipping: false,
-                currency: 'CAD',
-                email: '',
-                phoneNumber: '',
-                profileImage: '',
-                owner: '',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-                canCreateProducts: false,
-                shippingZones: [] as unknown[],
-                averageRating: 0.0,
-              },
-      };
-    });
   }
 
   private async _filterStores(

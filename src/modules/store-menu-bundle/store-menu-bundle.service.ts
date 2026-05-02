@@ -1,10 +1,4 @@
 import { SearchService } from '@modules/search/search.service';
-import {
-  SearchContent,
-  SearchDto,
-  SortBy,
-  SortOrder,
-} from '@modules/search/dto/search.dto';
 import { StoreService } from '@modules/store/store.service';
 import { Inject, Injectable } from '@nestjs/common';
 import { UserModel } from '@schemas/user.schema';
@@ -43,26 +37,15 @@ export class StoreMenuBundleService {
   ): Promise<StoreMenuBundlePayload> {
     const take = Math.min(120, Math.max(8, Math.floor(productsTake)));
     const page = Math.max(1, Math.floor(productsPage));
-    const dto: SearchDto = {
-      searchContent: [SearchContent.PRODUCTS],
-      query: '',
-      storeId,
-      page,
-      take,
-      sortBy: SortBy.CREATED_AT,
-      sortDirection: SortOrder.DESC,
-    };
-    const [meta, searchOut] = await Promise.all([
+    const [meta, pageOut] = await Promise.all([
       this._stores.findPublicStoreMenuMeta(storeId),
-      this._search.filter(dto, user),
+      this._search.storeMenuProductsLeanPage(storeId, page, take, user),
     ]);
-    const pr = searchOut.products;
-    const items = pr?.items ?? [];
-    const products = items.map((p) => this._productToPlain(p));
-    const productsTotal =
-      typeof pr?.total === 'number' && Number.isFinite(pr.total)
-        ? pr.total
-        : products.length;
-    return { store: meta, products, productsTotal };
+    const products = pageOut.items.map((p) => this._productToPlain(p));
+    return {
+      store: meta,
+      products,
+      productsTotal: pageOut.total,
+    };
   }
 }

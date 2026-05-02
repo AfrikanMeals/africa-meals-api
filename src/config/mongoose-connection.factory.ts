@@ -17,7 +17,8 @@ function parsePositiveInt(
  *
  * Sur Atlas, la métrique « Connections » sur un nœud = **somme de tous les clients**
  * (API, WS, Functions, shells, etc.) : chaque processus a son **pool** (`maxPoolSize`).
- * Ex. 6 réplicas Cloud Run × 5 connexions ≈ 30 sur le graphique.
+ * Ex. 20 réplicas × 10 connexions max = 200 : proche d’un plafond Atlas (ex. 216).
+ * Garder `MONGOOSE_MAX_POOL` **bas** si plusieurs services (API, WS, scripts) pointent sur le même cluster.
  *
  * Pour **minimiser** les sockets ouvertes :
  * - `maxPoolSize` bas (3–8 par instance Cloud Run / API)
@@ -48,7 +49,7 @@ export function buildMongooseRootOptions(
   const maxPoolSize = parsePositiveInt(
     config.get<string>('MONGOOSE_MAX_POOL'),
     5,
-    30,
+    12,
   );
 
   const minPoolSize = Math.min(
