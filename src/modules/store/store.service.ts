@@ -32,8 +32,8 @@ import { AddressModel } from '@schemas/address.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
-import { Model } from 'mongoose';
-import { CreateStoreDto, PatchVendorShippingZonesDto } from './dto/store.dto';
+import { Model, Types } from 'mongoose';
+import { CreateStoreDto, DailyMenuSlotDto, PatchVendorShippingZonesDto } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 
@@ -89,13 +89,20 @@ export class StoreService {
   }
 
   async findOneById(id: string) {
-    return this._storeModel
+    const store = await this._storeModel
       .findOne({ _id: id })
       .populate('address')
       .populate('owner')
       .populate('ratings')
       .populate('likedBy')
       .exec();
+    if (store?.dailyMenuByWeekday?.length) {
+      (store as unknown as { dailyMenuByWeekday: unknown }).dailyMenuByWeekday =
+        this.normalizeDailyMenuForApi(
+          store.dailyMenuByWeekday as Record<string, unknown>[],
+        );
+    }
+    return store;
   }
 
   async create(dto: CreateStoreDto, user: UserModel) {
@@ -229,16 +236,9 @@ export class StoreService {
 
     const rawMenu =
       (doc.dailyMenuByWeekday as
-        | Array<{ dayOfWeek?: number; productIds?: unknown[] }>
+        | Array<Record<string, unknown>>
         | undefined) ?? [];
-    const dailyMenuByWeekday = rawMenu.map((row) => ({
-      dayOfWeek: Number(row.dayOfWeek ?? 0),
-      productIds: (row.productIds ?? []).map((id) =>
-        typeof id === 'object' && id !== null && 'toString' in id
-          ? (id as { toString: () => string }).toString()
-          : String(id),
-      ),
-    }));
+    const dailyMenuByWeekday = this.normalizeDailyMenuForApi(rawMenu);
 
     return {
       store: {
@@ -268,7 +268,7 @@ export class StoreService {
   async updateVendorDailyMenu(
     storeId: string,
     user: UserModel,
-    slots: { dayOfWeek: number; productIds: string[] }[],
+    slots: DailyMenuSlotDto[],
   ) {
     const store = await this._storeModel
       .findOne({ _id: storeId, owner: user._id })
@@ -277,19 +277,29 @@ export class StoreService {
       throw new NotFoundException('store_not_found');
     }
 
-    const merged = new Map<number, string[]>();
+    const merged = new Map<
+      number,
+      { productId: string; stockUnlimited: boolean; stockRemaining: number }[]
+    >();
     for (let d = 0; d <= 6; d++) {
       merged.set(d, []);
     }
     for (const s of slots) {
       const d = Math.min(6, Math.max(0, Math.floor(Number(s.dayOfWeek))));
-      const ids = [
-        ...new Set((s.productIds || []).map(String).filter(Boolean)),
-      ];
-      merged.set(d, ids);
+      const entries = this.dailyMenuEntriesFromSlotDto(s);
+      const byPid = new Map<
+        string,
+        { productId: string; stockUnlimited: boolean; stockRemaining: number }
+      >();
+      for (const e of entries) {
+        byPid.set(e.productId, e);
+      }
+      merged.set(d, [...byPid.values()]);
     }
 
-    const allIds = [...new Set([...merged.values()].flat())];
+    const allIds = [
+      ...new Set([...merged.values()].flat().map((e) => e.productId)),
+    ];
     if (allIds.length) {
       const n = await this._productModel
         .countDocuments({
@@ -303,9 +313,13 @@ export class StoreService {
     }
 
     const dailyMenuByWeekday = [...merged.entries()].map(
-      ([dayOfWeek, productIds]) => ({
+      ([dayOfWeek, itemList]) => ({
         dayOfWeek,
-        productIds,
+        items: itemList.map((it) => ({
+          productId: new Types.ObjectId(it.productId),
+          stockUnlimited: it.stockUnlimited,
+          stockRemaining: it.stockUnlimited ? 0 : Math.max(0, it.stockRemaining),
+        })),
       }),
     );
 
@@ -314,6 +328,248 @@ export class StoreService {
       .exec();
 
     return this.findMyStoreSummary(user);
+  }
+
+  private stringifyIdLike(value: unknown): string {
+    if (value == null) return '';
+    if (typeof value === 'object' && value !== null && 'toString' in value) {
+      return (value as { toString(): string }).toString();
+    }
+    return String(value);
+  }
+
+  /** Menu du jour normalisé pour l’API (app mobile + dashboard). */
+  private normalizeDailyMenuForApi(
+    rows: Array<Record<string, unknown>> | undefined | null,
+  ): Array<{
+    dayOfWeek: number;
+    items: Array<{
+      productId: string;
+      stockUnlimited: boolean;
+      stockRemaining: number;
+      soldOut: boolean;
+    }>;
+  }> {
+    if (!rows?.length) return [];
+    return rows.map((row) => {
+      const dayOfWeek = Math.min(
+        6,
+        Math.max(0, Number((row as { dayOfWeek?: number }).dayOfWeek ?? 0)),
+      );
+      const items: Array<{
+        productId: string;
+        stockUnlimited: boolean;
+        stockRemaining: number;
+        soldOut: boolean;
+      }> = [];
+      const rawItems = (row as { items?: unknown[] }).items;
+      if (Array.isArray(rawItems) && rawItems.length) {
+        for (const it of rawItems) {
+          const o = it as Record<string, unknown>;
+          const pid = this.stringifyIdLike(o.productId);
+          if (!pid) continue;
+          const stockUnlimited = Boolean(o.stockUnlimited ?? true);
+          const stockRemaining = stockUnlimited
+            ? 0
+            : Math.max(0, Math.floor(Number(o.stockRemaining ?? 0)));
+          items.push({
+            productId: pid,
+            stockUnlimited,
+            stockRemaining,
+            soldOut: !stockUnlimited && stockRemaining <= 0,
+          });
+        }
+      } else {
+        const pids = (row as { productIds?: unknown[] }).productIds;
+        if (Array.isArray(pids)) {
+          for (const id of pids) {
+            const pid = this.stringifyIdLike(id);
+            if (!pid) continue;
+            items.push({
+              productId: pid,
+              stockUnlimited: true,
+              stockRemaining: 0,
+              soldOut: false,
+            });
+          }
+        }
+      }
+      return { dayOfWeek, items };
+    });
+  }
+
+  private dailyMenuEntriesFromSlotDto(s: DailyMenuSlotDto): {
+    productId: string;
+    stockUnlimited: boolean;
+    stockRemaining: number;
+  }[] {
+    if (s.items?.length) {
+      return s.items.map((i) => ({
+        productId: String(i.productId).trim(),
+        stockUnlimited: !!i.stockUnlimited,
+        stockRemaining: i.stockUnlimited
+          ? 0
+          : Math.max(0, Math.floor(Number(i.stockRemaining ?? 0))),
+      }));
+    }
+    return (s.productIds ?? [])
+      .map(String)
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .map((productId) => ({
+        productId,
+        stockUnlimited: true,
+        stockRemaining: 0,
+      }));
+  }
+
+  private async dailyMenuNeedsLimitedDecrement(
+    storeId: string,
+    dayOfWeek: number,
+    productId: string,
+  ): Promise<boolean> {
+    const doc = await this._storeModel
+      .findById(storeId)
+      .select('dailyMenuByWeekday')
+      .lean()
+      .exec();
+    const rows = this.normalizeDailyMenuForApi(
+      (doc?.dailyMenuByWeekday as Record<string, unknown>[]) ?? [],
+    );
+    const entry = rows
+      .find((r) => r.dayOfWeek === dayOfWeek)
+      ?.items.find((i) => i.productId === productId);
+    return !!entry && !entry.stockUnlimited;
+  }
+
+  private async doAtomicDecrementDailyMenuProductStock(
+    storeId: string,
+    dayOfWeek: number,
+    productId: string,
+    qty: number,
+  ): Promise<boolean> {
+    const dow = Math.min(6, Math.max(0, dayOfWeek));
+    const pid = new Types.ObjectId(productId);
+    const res = await this._storeModel.updateOne(
+      {
+        _id: storeId,
+        dailyMenuByWeekday: {
+          $elemMatch: {
+            dayOfWeek: dow,
+            items: {
+              $elemMatch: {
+                productId: pid,
+                stockUnlimited: false,
+                stockRemaining: { $gte: qty },
+              },
+            },
+          },
+        },
+      },
+      {
+        $inc: { 'dailyMenuByWeekday.$[slot].items.$[it].stockRemaining': -qty },
+      },
+      {
+        arrayFilters: [
+          { 'slot.dayOfWeek': dow },
+          { 'it.productId': pid, 'it.stockUnlimited': false },
+        ],
+      },
+    );
+    return res.modifiedCount === 1;
+  }
+
+  private async atomicIncrementDailyMenuProductStock(
+    storeId: string,
+    dayOfWeek: number,
+    productId: string,
+    qty: number,
+  ): Promise<void> {
+    const dow = Math.min(6, Math.max(0, dayOfWeek));
+    const pid = new Types.ObjectId(productId);
+    await this._storeModel.updateOne(
+      { _id: storeId },
+      {
+        $inc: { 'dailyMenuByWeekday.$[slot].items.$[it].stockRemaining': qty },
+      },
+      {
+        arrayFilters: [
+          { 'slot.dayOfWeek': dow },
+          { 'it.productId': pid, 'it.stockUnlimited': false },
+        ],
+      },
+    );
+  }
+
+  private async tryConsumeDailyMenuStock(
+    storeId: string,
+    dayOfWeek: number,
+    productId: string,
+    qty: number,
+  ): Promise<'skip' | 'ok' | 'fail'> {
+    if (!(await this.dailyMenuNeedsLimitedDecrement(storeId, dayOfWeek, productId))) {
+      return 'skip';
+    }
+    const ok = await this.doAtomicDecrementDailyMenuProductStock(
+      storeId,
+      dayOfWeek,
+      productId,
+      qty,
+    );
+    return ok ? 'ok' : 'fail';
+  }
+
+  private async assertDailyMenuProductAddAllowed(
+    storeId: string,
+    user: UserModel,
+    args: AddItemToCartDto,
+  ): Promise<void> {
+    if (args.type !== CartItemTypeEnum.PRODUCT) return;
+    const dow = new Date().getDay();
+    const doc = await this._storeModel
+      .findById(storeId)
+      .select('dailyMenuByWeekday')
+      .lean()
+      .exec();
+    const rows = this.normalizeDailyMenuForApi(
+      (doc?.dailyMenuByWeekday as Record<string, unknown>[]) ?? [],
+    );
+    const entry = rows
+      .find((r) => r.dayOfWeek === dow)
+      ?.items.find((i) => i.productId === args.itemId);
+    if (!entry || entry.stockUnlimited) return;
+    const inCart = await this._cartService.sumQuantityForProductInCart(
+      storeId,
+      user.id.toString(),
+      args.itemId,
+    );
+    if (inCart + args.quantity > entry.stockRemaining) {
+      throw new BadRequestException('daily_menu_insufficient_stock');
+    }
+  }
+
+  private async assertDailyMenuStockForCart(
+    store: StoreModel,
+    cart: { items: Array<{ type?: string; entityId?: string; quantity?: number }> },
+  ): Promise<void> {
+    const dow = new Date().getDay();
+    const raw = (store as { dailyMenuByWeekday?: unknown }).dailyMenuByWeekday;
+    const rows = this.normalizeDailyMenuForApi(
+      Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [],
+    );
+    const slot = rows.find((r) => r.dayOfWeek === dow);
+    if (!slot) return;
+    for (const line of cart.items) {
+      if (line.type !== CartItemTypeEnum.PRODUCT) continue;
+      const pid = String(line.entityId ?? '');
+      if (!pid) continue;
+      const entry = slot.items.find((i) => i.productId === pid);
+      if (!entry || entry.stockUnlimited) continue;
+      const qty = Math.max(0, Number(line.quantity ?? 0));
+      if (qty > entry.stockRemaining) {
+        throw new BadRequestException('daily_menu_insufficient_stock');
+      }
+    }
   }
 
   /**
@@ -878,7 +1134,9 @@ export class StoreService {
     if (store.owner._id.toString() === user.id.toString()) {
       throw new ForbiddenException('cannot_add_item_to_your_store_cart');
     }
-    // const item = await this._cartService.itemExistsInCart(store, args, user);
+
+    await this.assertDailyMenuProductAddAllowed(id, user, args);
+
     return await this._cartService.addItemToCart(args, user, store);
   }
 
@@ -893,13 +1151,54 @@ export class StoreService {
       throw new ForbiddenException('store_does_not_accept_orders');
     }
 
-    const order = await this._ordersService.createFromCart(storeId, user);
-
-    if (order) {
-      await this._cartService.clearStoreCart(store, user);
+    let cart;
+    try {
+      cart = await this._cartService.findOneByStoreId(storeId, user);
+    } catch {
+      throw new NotFoundException('cart_is_empty');
+    }
+    if (!cart?.items?.length) {
+      throw new NotFoundException('cart_is_empty');
     }
 
-    return order;
+    await this.assertDailyMenuStockForCart(store, cart);
+
+    const dow = new Date().getDay();
+    const consumed: { productId: string; qty: number }[] = [];
+
+    try {
+      for (const line of cart.items) {
+        if (line.type !== CartItemTypeEnum.PRODUCT) continue;
+        const pid = String(line.entityId ?? '');
+        const qty = Math.max(0, Number(line.quantity ?? 0));
+        if (qty <= 0 || !pid) continue;
+        const r = await this.tryConsumeDailyMenuStock(storeId, dow, pid, qty);
+        if (r === 'fail') {
+          throw new BadRequestException('daily_menu_insufficient_stock');
+        }
+        if (r === 'ok') {
+          consumed.push({ productId: pid, qty });
+        }
+      }
+
+      const order = await this._ordersService.createFromCart(storeId, user);
+
+      if (order) {
+        await this._cartService.clearStoreCart(store, user);
+      }
+
+      return order;
+    } catch (e) {
+      for (const c of consumed.reverse()) {
+        await this.atomicIncrementDailyMenuProductStock(
+          storeId,
+          dow,
+          c.productId,
+          c.qty,
+        ).catch(() => undefined);
+      }
+      throw e;
+    }
   }
 
   /** Liste des boutiques (admin) — pour tableau vendeurs. */

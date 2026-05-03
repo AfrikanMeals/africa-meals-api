@@ -183,6 +183,28 @@ export class CartService {
       .exec();
   }
 
+  /** Quantité totale déjà dans le panier pour un produit (lignes `product`). */
+  async sumQuantityForProductInCart(
+    storeId: string,
+    userId: string,
+    productId: string,
+  ): Promise<number> {
+    const rows = await this._cartItemModel
+      .find({
+        store: new Types.ObjectId(storeId),
+        user: new Types.ObjectId(userId),
+        type: CartItemTypeEnum.PRODUCT,
+        entityId: productId,
+      })
+      .select('quantity')
+      .lean()
+      .exec();
+    return (rows ?? []).reduce(
+      (acc, r) => acc + Math.max(0, Number((r as { quantity?: number }).quantity ?? 0)),
+      0,
+    );
+  }
+
   async updateQuantity(item: CartItemModel, qty: number) {
     return await this._cartItemModel
       .updateOne({ _id: item.id }, { $set: { quantity: +(qty ?? 1) } })

@@ -143,6 +143,7 @@ export class StoreModel extends BaseSchema {
 
   /**
    * Menu du jour : plats proposés par jour de la semaine (0 = dimanche … 6 = samedi, comme `Date.getDay()`).
+   * `productIds` reste toléré en lecture pour les anciennes données ; l’API normalise vers `items`.
    */
   @Prop({
     type: [
@@ -151,12 +152,40 @@ export class StoreModel extends BaseSchema {
         productIds: [
           { type: MongooseSchema.Types.ObjectId, ref: 'ProductModel' },
         ],
+        items: [
+          {
+            productId: {
+              type: MongooseSchema.Types.ObjectId,
+              ref: 'ProductModel',
+              required: true,
+            },
+            stockUnlimited: {
+              type: Boolean,
+              required: true,
+              default: true,
+            },
+            stockRemaining: {
+              type: Number,
+              required: false,
+              min: 0,
+              default: 0,
+            },
+          },
+        ],
       },
     ],
     default: [],
     name: 'daily_menu_by_weekday',
   })
-  dailyMenuByWeekday?: Array<{ dayOfWeek: number; productIds: unknown[] }>;
+  dailyMenuByWeekday?: Array<{
+    dayOfWeek: number;
+    productIds?: unknown[];
+    items?: Array<{
+      productId: unknown;
+      stockUnlimited: boolean;
+      stockRemaining: number;
+    }>;
+  }>;
 }
 
 export const StoreSchema = SchemaFactory.createForClass(StoreModel);
