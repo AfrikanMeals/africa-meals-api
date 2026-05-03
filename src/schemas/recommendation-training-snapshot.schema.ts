@@ -32,6 +32,10 @@ export class RecommendationTrainingSnapshotModel extends BaseSchema {
   @Prop({ type: [String], default: [], name: 'trend_drink_ids' })
   trendDrinkIds: string[];
 
+  /** Requêtes de recherche les plus fréquentes (texte normalisé). */
+  @Prop({ type: [String], default: [], name: 'trend_search_queries' })
+  trendSearchQueries: string[];
+
   @Prop({
     type: Object,
     default: {},

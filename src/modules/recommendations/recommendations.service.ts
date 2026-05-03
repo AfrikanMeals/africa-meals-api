@@ -17,6 +17,10 @@ import {
 import { UserRecommendationDigestModel } from '@schemas/user-recommendation-digest.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
+import {
+  normalizeRecommendationSearchTerm,
+  searchTermToRefObjectId,
+} from '@utils/recommendation-search.util';
 import { TrackRecommendationDto } from './dto/track-recommendation.dto';
 
 const PAID_LIKE_STATUSES: OrderStatusEnum[] = [
@@ -66,18 +70,38 @@ export class RecommendationsService {
   async track(user: UserModel, dto: TrackRecommendationDto): Promise<void> {
     const userOid = this._userOid(user);
     if (!userOid) throw new BadRequestException('invalid_user');
-    if (!Types.ObjectId.isValid(dto.refId)) {
-      throw new BadRequestException('invalid_ref');
+
+    let refOid: Types.ObjectId;
+    let searchStored: string | undefined;
+
+    if (dto.kind === UserRecommendationSignalKind.SEARCH_QUERY) {
+      const normalized = normalizeRecommendationSearchTerm(
+        dto.searchTerm ?? '',
+      );
+      if (normalized.length < 2) {
+        throw new BadRequestException('invalid_search_term');
+      }
+      refOid = searchTermToRefObjectId(normalized);
+      searchStored = normalized;
+    } else {
+      if (!dto.refId || !Types.ObjectId.isValid(dto.refId)) {
+        throw new BadRequestException('invalid_ref');
+      }
+      refOid = new Types.ObjectId(dto.refId);
     }
-    const refOid = new Types.ObjectId(dto.refId);
+
     const dedupeProductMs =
       Number(process.env.RECOMMENDATION_TRACK_DEDUPE_PRODUCT_MS) || 120_000;
     const dedupeStoreMs =
       Number(process.env.RECOMMENDATION_TRACK_DEDUPE_STORE_MS) || 180_000;
+    const dedupeSearchMs =
+      Number(process.env.RECOMMENDATION_TRACK_DEDUPE_SEARCH_MS) || 60_000;
     const windowMs =
       dto.kind === UserRecommendationSignalKind.STORE_VIEW
         ? dedupeStoreMs
-        : dedupeProductMs;
+        : dto.kind === UserRecommendationSignalKind.SEARCH_QUERY
+          ? dedupeSearchMs
+          : dedupeProductMs;
     const since = new Date(Date.now() - Math.max(5_000, windowMs));
     const recent = await this._signalModel
       .findOne({
@@ -96,6 +120,7 @@ export class RecommendationsService {
       user: userOid,
       kind: dto.kind,
       refId: refOid,
+      ...(searchStored != null ? { searchTerm: searchStored } : {}),
     });
   }
 
@@ -114,6 +139,8 @@ export class RecommendationsService {
     digestStore: number;
     trendProductMax: number;
     trendProductDecay: number;
+    searchDigestMatch: number;
+    searchGlobalMatch: number;
   } {
     const n = (key: string, def: number, min = 0): number => {
       const v = Number(process.env[key]);
@@ -133,6 +160,8 @@ export class RecommendationsService {
       digestStore: n('RECO_WEIGHT_DIGEST_STORE', 18),
       trendProductMax: n('RECO_TREND_PRODUCT_BOOST_MAX', 38),
       trendProductDecay: n('RECO_TREND_PRODUCT_BOOST_DECAY', 0.15),
+      searchDigestMatch: n('RECO_WEIGHT_SEARCH_DIGEST', 6),
+      searchGlobalMatch: n('RECO_WEIGHT_SEARCH_GLOBAL', 3),
     };
   }
 
@@ -178,6 +207,32 @@ export class RecommendationsService {
     const digestStoreBoost = new Set(
       (digestDoc?.topViewedStoreIds ?? []).map((x) => String(x)),
     );
+
+    const digestSearchTerms =
+      ((digestDoc as Record<string, unknown> | null)?.['topSearchTerms'] as
+        | string[]
+        | undefined) ?? [];
+    const globalSearchTerms =
+      ((snapshot as Record<string, unknown> | null)?.['trendSearchQueries'] as
+        | string[]
+        | undefined) ?? [];
+
+    const searchBoostFor = (
+      title: string,
+      bio: string,
+      terms: string[],
+      weight: number,
+    ): number => {
+      if (!terms.length || weight <= 0) return 0;
+      const hay = `${title} ${bio}`.toLowerCase();
+      for (const t of terms) {
+        const s = (t ?? '').trim().toLowerCase();
+        if (s.length >= 2 && hay.includes(s)) {
+          return weight;
+        }
+      }
+      return 0;
+    };
 
     const favProductIds = new Set<string>();
     const favStoreIds = new Set<string>();
@@ -265,6 +320,24 @@ export class RecommendationsService {
       score += trendProductBoost.get(id) ?? 0;
       if (digestProductBoost.has(id)) score += W.digestProduct;
       if (storeId && digestStoreBoost.has(storeId)) score += W.digestStore;
+
+      const title = String(p.title ?? '');
+      const bio = String(p.bio ?? '');
+      let sb = searchBoostFor(
+        title,
+        bio,
+        digestSearchTerms,
+        W.searchDigestMatch,
+      );
+      if (sb === 0) {
+        sb = searchBoostFor(
+          title,
+          bio,
+          globalSearchTerms,
+          W.searchGlobalMatch,
+        );
+      }
+      score += sb;
 
       return score;
     };

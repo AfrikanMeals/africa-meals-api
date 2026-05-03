@@ -6,6 +6,8 @@ import { UserModel } from './user.schema';
 export enum UserRecommendationSignalKind {
   PRODUCT_VIEW = 'product_view',
   STORE_VIEW = 'store_view',
+  /** Recherche texte (terme normalisé dans `searchTerm`). */
+  SEARCH_QUERY = 'search_query',
 }
 
 @Schema({
@@ -27,8 +29,12 @@ export class UserRecommendationSignalModel extends BaseSchema {
   })
   kind: UserRecommendationSignalKind;
 
+  /** Pour `search_query` : dérivé du hash du terme (voir utilitaire). Sinon produit / boutique. */
   @Prop({ required: true, type: MongooseSchema.Types.ObjectId })
   refId: Types.ObjectId;
+
+  @Prop({ required: false, name: 'search_term' })
+  searchTerm?: string;
 }
 
 export const UserRecommendationSignalSchema = SchemaFactory.createForClass(
@@ -56,4 +62,9 @@ const _signalTtlSeconds = (): number => {
 UserRecommendationSignalSchema.index(
   { createdAt: 1 },
   { expireAfterSeconds: _signalTtlSeconds() },
+);
+
+UserRecommendationSignalSchema.index(
+  { kind: 1, searchTerm: 1, createdAt: -1 },
+  { sparse: true },
 );

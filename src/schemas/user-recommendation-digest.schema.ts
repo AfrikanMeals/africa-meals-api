@@ -30,6 +30,9 @@ export class UserRecommendationDigestModel extends BaseSchema {
 
   @Prop({ type: [String], default: [], name: 'top_viewed_store_ids' })
   topViewedStoreIds: string[];
+
+  @Prop({ type: [String], default: [], name: 'top_search_terms' })
+  topSearchTerms: string[];
 }
 
 export const UserRecommendationDigestSchema = SchemaFactory.createForClass(

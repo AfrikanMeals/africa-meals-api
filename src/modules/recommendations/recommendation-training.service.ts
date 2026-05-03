@@ -221,6 +221,24 @@ export class RecommendationTrainingService {
       String((d as unknown as { _id: Types.ObjectId })._id),
     );
 
+    const topGlobalSearches = await this._signalModel
+      .aggregate<{ _id: string; c: number }>([
+        {
+          $match: {
+            kind: UserRecommendationSignalKind.SEARCH_QUERY,
+            createdAt: { $gte: sinceSignal },
+            searchTerm: { $type: 'string', $ne: '' },
+          },
+        },
+        { $group: { _id: '$searchTerm', c: { $sum: 1 } } },
+        { $sort: { c: -1 } },
+        { $limit: 40 },
+      ])
+      .exec();
+    const trendSearchQueries = topGlobalSearches
+      .map((r) => String(r._id ?? '').trim())
+      .filter((s) => s.length >= 2);
+
     const digestUserRows = await this._signalModel
       .aggregate<{ _id: Types.ObjectId; n: number }>([
         { $match: { createdAt: { $gte: sinceDigest } } },
@@ -259,6 +277,7 @@ export class RecommendationTrainingService {
           trendProductIds,
           trendStoreIds,
           trendDrinkIds,
+          trendSearchQueries,
           runMeta: {
             durationMs,
             signalDays,
@@ -268,6 +287,7 @@ export class RecommendationTrainingService {
             topViewedProducts: topViewedProducts.length,
             topLikedProducts: topLikedProducts.length,
             topOrderStores: topOrderStores.length,
+            globalSearchSignals: topGlobalSearches.length,
           },
         },
       },
@@ -283,7 +303,7 @@ export class RecommendationTrainingService {
     userOid: Types.ObjectId,
     since: Date,
   ): Promise<void> {
-    const [prods, stores] = await Promise.all([
+    const [prods, stores, searches] = await Promise.all([
       this._signalModel
         .aggregate<{ _id: Types.ObjectId; c: number }>([
           {
@@ -312,7 +332,26 @@ export class RecommendationTrainingService {
           { $limit: 16 },
         ])
         .exec(),
+      this._signalModel
+        .aggregate<{ _id: string; c: number }>([
+          {
+            $match: {
+              user: userOid,
+              kind: UserRecommendationSignalKind.SEARCH_QUERY,
+              createdAt: { $gte: since },
+              searchTerm: { $type: 'string', $ne: '' },
+            },
+          },
+          { $group: { _id: '$searchTerm', c: { $sum: 1 } } },
+          { $sort: { c: -1 } },
+          { $limit: 16 },
+        ])
+        .exec(),
     ]);
+
+    const topSearchTerms = searches
+      .map((x) => String(x._id ?? '').trim())
+      .filter((s) => s.length >= 2);
 
     await this._digestModel.updateOne(
       { user: userOid },
@@ -322,6 +361,7 @@ export class RecommendationTrainingService {
           computedAt: new Date(),
           topViewedProductIds: prods.map((x) => String(x._id)),
           topViewedStoreIds: stores.map((x) => String(x._id)),
+          topSearchTerms,
         },
       },
       { upsert: true },

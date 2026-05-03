@@ -10,6 +10,7 @@ import { FavoritesListingResolver } from './favorites-listing.resolver';
 import { GqlJwtGuard } from './guards/gql-jwt.guard';
 import { OptionalGqlAuthGuard } from './guards/optional-gql-auth.guard';
 import { ProductCategoryResolver } from './product-category.resolver';
+import { RecommendationsGraphqlResolver } from './recommendations.resolver';
 import { ShopHomeResolver } from './shop-home.resolver';
 import { StoreMenuResolver } from './store-menu.resolver';
 
@@ -34,6 +35,7 @@ import { StoreMenuResolver } from './store-menu.resolver';
     FavoritesListingResolver,
     ProductCategoryResolver,
     ShopHomeResolver,
+    RecommendationsGraphqlResolver,
     StoreMenuResolver,
     GqlJwtGuard,
     OptionalGqlAuthGuard,
