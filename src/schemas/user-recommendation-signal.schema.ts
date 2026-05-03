@@ -36,8 +36,24 @@ export const UserRecommendationSignalSchema = SchemaFactory.createForClass(
 );
 
 UserRecommendationSignalSchema.index({ user: 1, createdAt: -1 });
-/** Rétention ~90 j pour limiter la croissance ; les signaux récents suffisent au scoring. */
+/** Anti-spam + requêtes « dernier signal » pour dédoublonnage. */
+UserRecommendationSignalSchema.index({
+  user: 1,
+  kind: 1,
+  refId: 1,
+  createdAt: -1,
+});
+
+const _signalTtlSeconds = (): number => {
+  const raw = Number(process.env.RECOMMENDATION_SIGNAL_TTL_SECONDS);
+  if (Number.isFinite(raw) && raw >= 86_400) {
+    return Math.floor(raw);
+  }
+  return 90 * 24 * 60 * 60;
+};
+
+/** Rétention configurable (`RECOMMENDATION_SIGNAL_TTL_SECONDS`, min 1j). */
 UserRecommendationSignalSchema.index(
   { createdAt: 1 },
-  { expireAfterSeconds: 90 * 24 * 60 * 60 },
+  { expireAfterSeconds: _signalTtlSeconds() },
 );

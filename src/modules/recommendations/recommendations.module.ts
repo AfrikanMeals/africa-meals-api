@@ -57,5 +57,6 @@ import { RecommendationsService } from './recommendations.service';
     RecommendationTrainingService,
     RecommendationTrainingCron,
   ],
+  exports: [RecommendationsService],
 })
 export class RecommendationsModule {}

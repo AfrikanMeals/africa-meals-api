@@ -1,5 +1,6 @@
 import { Field, Int, ObjectType } from '@nestjs/graphql';
 import { GraphQLJSONObject } from 'graphql-scalars';
+import { ShopHomeRecommendationsGql } from './shop-home-recommendations.types';
 
 @ObjectType({
   description:
@@ -22,4 +23,10 @@ export class ShopHomePayloadGql {
     description: 'Nombre de produits renvoyés (plafonné côté serveur).',
   })
   productsCount: number;
+
+  @Field(() => ShopHomeRecommendationsGql, {
+    description:
+      'Recommandations (JWT optionnel) : même logique que `GET /recommendations/feed`.',
+  })
+  recommendations: ShopHomeRecommendationsGql;
 }

@@ -1,3 +1,4 @@
+import { RecommendationsService } from '@modules/recommendations/recommendations.service';
 import { ShopHomeService } from '@modules/shop-home/shop-home.service';
 import { UserModel } from '@schemas/user.schema';
 import { Inject, UseGuards } from '@nestjs/common';
@@ -10,6 +11,9 @@ import { ShopHomePayloadGql } from './types/shop-home.types';
 export class ShopHomeResolver {
   @Inject(ShopHomeService)
   private readonly _shopHome: ShopHomeService;
+
+  @Inject(RecommendationsService)
+  private readonly _recommendations: RecommendationsService;
 
   @Query(() => ShopHomePayloadGql, {
     name: 'shopHome',
@@ -26,12 +30,28 @@ export class ShopHomeResolver {
       description: 'Nombre max de produits (8–120).',
     })
     productsTake?: number,
+    @Args('recommendationsTake', {
+      type: () => Int,
+      nullable: true,
+      defaultValue: 24,
+      description: 'Taille du fil recommandations (4–48).',
+    })
+    recommendationsTake?: number,
   ): Promise<ShopHomePayloadGql> {
     const take = productsTake ?? 48;
-    const data = await this._shopHome.load(user, take);
+    const recTake = recommendationsTake ?? 24;
+    const [data, rec] = await Promise.all([
+      this._shopHome.load(user, take),
+      this._recommendations.getFeed(user, String(recTake)),
+    ]);
     return {
       ...data,
       productsCount: data.products.length,
+      recommendations: {
+        products: rec.products,
+        stores: rec.stores,
+        drinks: rec.drinks,
+      },
     };
   }
 }

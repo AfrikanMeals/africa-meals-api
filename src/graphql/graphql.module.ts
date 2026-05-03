@@ -1,5 +1,6 @@
 import { AuthModule } from '@modules/auth/auth.module';
 import { ProductsModule } from '@modules/products/products.module';
+import { RecommendationsModule } from '@modules/recommendations/recommendations.module';
 import { ShopHomeModule } from '@modules/shop-home/shop-home.module';
 import { StoreMenuBundleModule } from '@modules/store-menu-bundle/store-menu-bundle.module';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
@@ -26,6 +27,7 @@ import { StoreMenuResolver } from './store-menu.resolver';
     AuthModule,
     ProductsModule,
     ShopHomeModule,
+    RecommendationsModule,
     StoreMenuBundleModule,
   ],
   providers: [

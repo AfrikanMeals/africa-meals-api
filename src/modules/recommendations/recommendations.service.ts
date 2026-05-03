@@ -69,11 +69,71 @@ export class RecommendationsService {
     if (!Types.ObjectId.isValid(dto.refId)) {
       throw new BadRequestException('invalid_ref');
     }
+    const refOid = new Types.ObjectId(dto.refId);
+    const dedupeProductMs =
+      Number(process.env.RECOMMENDATION_TRACK_DEDUPE_PRODUCT_MS) || 120_000;
+    const dedupeStoreMs =
+      Number(process.env.RECOMMENDATION_TRACK_DEDUPE_STORE_MS) || 180_000;
+    const windowMs =
+      dto.kind === UserRecommendationSignalKind.STORE_VIEW
+        ? dedupeStoreMs
+        : dedupeProductMs;
+    const since = new Date(Date.now() - Math.max(5_000, windowMs));
+    const recent = await this._signalModel
+      .findOne({
+        user: userOid,
+        kind: dto.kind,
+        refId: refOid,
+        createdAt: { $gte: since },
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    if (recent) {
+      return;
+    }
     await this._signalModel.create({
       user: userOid,
       kind: dto.kind,
-      refId: new Types.ObjectId(dto.refId),
+      refId: refOid,
     });
+  }
+
+  /** Poids du scoring fil (surcharge via variables d’environnement). */
+  private _scoreWeights(): {
+    perLike: number;
+    perRating: number;
+    recencyDivisor: number;
+    favProduct: number;
+    favStore: number;
+    viewedStore: number;
+    viewedProduct: number;
+    favCategory: number;
+    ratedProduct: number;
+    digestProduct: number;
+    digestStore: number;
+    trendProductMax: number;
+    trendProductDecay: number;
+  } {
+    const n = (key: string, def: number, min = 0): number => {
+      const v = Number(process.env[key]);
+      return Number.isFinite(v) && v >= min ? v : def;
+    };
+    return {
+      perLike: n('RECO_SCORE_PER_LIKE', 0.12),
+      perRating: n('RECO_SCORE_PER_RATING', 2.8),
+      recencyDivisor: Math.max(1, n('RECO_SCORE_RECENCY_DIVISOR', 400, 1)),
+      favProduct: n('RECO_WEIGHT_FAV_PRODUCT', 85),
+      favStore: n('RECO_WEIGHT_FAV_STORE', 42),
+      viewedStore: n('RECO_WEIGHT_VIEWED_STORE', 28),
+      viewedProduct: n('RECO_WEIGHT_VIEWED_PRODUCT', 22),
+      favCategory: n('RECO_WEIGHT_FAV_CATEGORY', 24),
+      ratedProduct: n('RECO_WEIGHT_RATED_PRODUCT', 32),
+      digestProduct: n('RECO_WEIGHT_DIGEST_PRODUCT', 14),
+      digestStore: n('RECO_WEIGHT_DIGEST_STORE', 18),
+      trendProductMax: n('RECO_TREND_PRODUCT_BOOST_MAX', 38),
+      trendProductDecay: n('RECO_TREND_PRODUCT_BOOST_DECAY', 0.15),
+    };
   }
 
   async getFeed(
@@ -100,12 +160,16 @@ export class RecommendationsService {
         : Promise.resolve(null),
     ]);
 
+    const W = this._scoreWeights();
     const trendProductBoost = new Map<string, number>();
     const trendIds = snapshot?.trendProductIds ?? [];
     for (let i = 0; i < trendIds.length; i++) {
       const id = String(trendIds[i] ?? '').trim();
       if (!id) continue;
-      trendProductBoost.set(id, Math.max(0, 38 - i * 0.15));
+      trendProductBoost.set(
+        id,
+        Math.max(0, W.trendProductMax - i * W.trendProductDecay),
+      );
     }
 
     const digestProductBoost = new Set(
@@ -185,22 +249,22 @@ export class RecommendationsService {
 
       const likes = Number(p.likesCount ?? 0);
       const rating = Number(p.averageRating ?? 0);
-      let score = likes * 0.12 + rating * 2.8;
+      let score = likes * W.perLike + rating * W.perRating;
       const created = Date.parse(String(p.createdAt ?? ''));
       if (!Number.isNaN(created)) {
-        score += created / (86400000 * 400);
+        score += created / (86400000 * W.recencyDivisor);
       }
 
-      if (favProductIds.has(id)) score += 85;
-      if (storeId && favStoreIds.has(storeId)) score += 42;
-      if (storeId && viewedStoreIds.has(storeId)) score += 28;
-      if (viewedProductIds.has(id)) score += 22;
-      if (catId && favCategoryIds.has(catId)) score += 24;
-      if (reviewedProductIds.has(id)) score += 32;
+      if (favProductIds.has(id)) score += W.favProduct;
+      if (storeId && favStoreIds.has(storeId)) score += W.favStore;
+      if (storeId && viewedStoreIds.has(storeId)) score += W.viewedStore;
+      if (viewedProductIds.has(id)) score += W.viewedProduct;
+      if (catId && favCategoryIds.has(catId)) score += W.favCategory;
+      if (reviewedProductIds.has(id)) score += W.ratedProduct;
 
       score += trendProductBoost.get(id) ?? 0;
-      if (digestProductBoost.has(id)) score += 14;
-      if (storeId && digestStoreBoost.has(storeId)) score += 18;
+      if (digestProductBoost.has(id)) score += W.digestProduct;
+      if (storeId && digestStoreBoost.has(storeId)) score += W.digestStore;
 
       return score;
     };
