@@ -11,6 +11,7 @@ import {
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 import { haversineDistance } from 'src/utils/helpers';
+import { mapInChunks } from '@utils/map-in-chunks';
 import { FilterOrdersDto } from './dto/orders.dto';
 
 @Injectable()
@@ -64,23 +65,29 @@ export class OrdersService {
       filter['status'] = args.status;
     }
 
-    let query = this._orderModel
+    /** Liste mobile / admin : plafond par défaut (évite charger tout l’historique + populate profond). */
+    const lim =
+      typeof args.limit === 'number' && args.limit > 0
+        ? Math.min(200, Math.max(1, args.limit))
+        : 80;
+
+    const data = await this._orderModel
       .find(filter)
       .sort({ createdAt: -1 })
-      .populate('store')
+      .limit(lim)
+      .populate({
+        path: 'store',
+        select:
+          'name profileImage status currency acceptsOrders supportsShipping bio',
+      })
       .populate({
         path: 'user',
-        select: 'fullName email profileImage addresses',
-        populate: { path: 'addresses' },
-      });
+        select: 'fullName email profileImage',
+      })
+      .lean()
+      .exec();
 
-    if (typeof args.limit === 'number' && args.limit > 0) {
-      query = query.limit(args.limit);
-    }
-
-    const data = await query.exec();
-
-    return { data };
+    return { data: data as unknown as OrderModel[] };
   }
 
   async findOneById(id: string, user: UserModel) {
@@ -136,16 +143,14 @@ export class OrdersService {
     //   throw new ForbiddenException('store_does_not_accept_orders');
     // }
 
-    const items: OrdeLineItem[] = await Promise.all(
-      cart.items.map(async (item) => ({
-        label: item.entity?.title ?? 'Article',
-        itemType: item.type!,
-        pictureUrl: item.entity?.profileImage,
-        quantity: item.quantity!,
-        price: item.price!,
-        categoryTitle: await this.categoryTitleForCartLine(item),
-      })),
-    );
+    const items: OrdeLineItem[] = await mapInChunks(cart.items, 4, async (item) => ({
+      label: item.entity?.title ?? 'Article',
+      itemType: item.type!,
+      pictureUrl: item.entity?.profileImage,
+      quantity: item.quantity!,
+      price: item.price!,
+      categoryTitle: await this.categoryTitleForCartLine(item),
+    }));
 
     const calculatedPrice = items.reduce((acc, item) => acc + item.price, 0);
 

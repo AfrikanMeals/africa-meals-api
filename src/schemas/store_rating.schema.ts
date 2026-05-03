@@ -34,4 +34,7 @@ export class StoreRatingModel extends BaseSchema {
 
 export const StoreRatingSchema = SchemaFactory.createForClass(StoreRatingModel);
 
+/** Liste boutiques / recherche : moyenne via `$lookup` sur `store`. */
+StoreRatingSchema.index({ store: 1 });
+
 export type StoreRatingModelDocument = StoreRatingModel & Document;

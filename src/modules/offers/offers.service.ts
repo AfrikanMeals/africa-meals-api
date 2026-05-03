@@ -19,6 +19,7 @@ import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import dayjs from 'dayjs';
 import { Model, Types } from 'mongoose';
+import { mapInChunks } from '@utils/map-in-chunks';
 import { CreateOfferDto, FilterOffersDto } from './dto/offers.dto';
 
 @Injectable()
@@ -91,8 +92,8 @@ export class OffersService {
       };
     }
 
-    const items = await Promise.all(
-      offers.map((offer) => this.findOne(offer._id.toString(), user, true)),
+    const items = await mapInChunks(offers, 4, (offer) =>
+      this.findOne(offer._id.toString(), user, true),
     );
 
     return {
@@ -142,31 +143,28 @@ export class OffersService {
     //   JSON.stringify(obj, null, 2),
     // );
 
+    const rawItems = obj.items || [];
+    const items = await mapInChunks(rawItems, 4, async (item) => {
+      if (item.type === OfferItemTypeEnum.PRODUCT) {
+        const product = await this._productsService.findOneById(item.entityId);
+        item.entity = product;
+      } else {
+        const product = await this._productsService.findOneById(item.productId);
+        const extra = product.extras.find(
+          (extra) => extra._id.toString() === item.entityId,
+        );
+        if (extra) {
+          item.entity = extra;
+        }
+      }
+      delete item.productId;
+      delete item.entityId;
+      return item;
+    });
+
     return {
       ...obj,
-      items: await Promise.all(
-        (obj.items || []).map(async (item) => {
-          if (item.type === OfferItemTypeEnum.PRODUCT) {
-            const product = await this._productsService.findOneById(
-              item.entityId,
-            );
-            item.entity = product;
-          } else {
-            const product = await this._productsService.findOneById(
-              item.productId,
-            );
-            const extra = product.extras.find(
-              (extra) => extra._id.toString() === item.entityId,
-            );
-            if (extra) {
-              item.entity = extra;
-            }
-          }
-          delete item.productId;
-          delete item.entityId;
-          return item;
-        }),
-      ),
+      items,
     };
   }
 

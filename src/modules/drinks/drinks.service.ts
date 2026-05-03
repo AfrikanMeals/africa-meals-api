@@ -77,6 +77,32 @@ export class DrinksService {
     return rows.map((r) => mapDrinkDoc(r as Record<string, unknown>));
   }
 
+  /**
+   * Liste catalogue client (sans JWT) : boutique existante + boissons encore en stock.
+   */
+  async findByStoreForCatalog(storeId: string) {
+    if (!Types.ObjectId.isValid(storeId)) {
+      return [];
+    }
+    const store = await this._storeModel
+      .findById(storeId)
+      .select('_id')
+      .lean()
+      .exec();
+    if (store == null) {
+      return [];
+    }
+    const rows = await this._drinkModel
+      .find({
+        store: new Types.ObjectId(storeId),
+        quantite: { $gt: 0 },
+      })
+      .sort({ updatedAt: -1 })
+      .lean()
+      .exec();
+    return rows.map((r) => mapDrinkDoc(r as Record<string, unknown>));
+  }
+
   async createForStore(
     storeId: string,
     dto: CreateDrinkDto,

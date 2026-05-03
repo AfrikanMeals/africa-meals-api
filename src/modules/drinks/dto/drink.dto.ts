@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Trim } from 'class-sanitizer';
 import { Transform, Type } from 'class-transformer';
+import { PartialType } from '@nestjs/mapped-types';
 import {
   IsBoolean,
   IsNotEmpty,
@@ -49,6 +50,21 @@ export class CreateDrinkDto {
   priceCad: number;
 }
 
+/** Création boisson : JSON + image base64 optionnelle (évite multipart tronqué). */
+export class CreateDrinkJsonDto extends CreateDrinkDto {
+  @ApiPropertyOptional({
+    description: 'Image optionnelle (base64 pur ou préfixe data:image/...;base64,)',
+  })
+  @IsOptional()
+  @IsString()
+  imageBase64?: string;
+
+  @ApiPropertyOptional({ example: 'boisson.jpg' })
+  @IsOptional()
+  @IsString()
+  filename?: string;
+}
+
 export class PatchDrinkDto {
   @ApiPropertyOptional()
   @IsOptional()
@@ -93,4 +109,25 @@ export class PatchDrinkDto {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   clearImage?: boolean;
+}
+
+/** Mise à jour boisson : JSON partiel + image base64 optionnelle. */
+export class PatchDrinkJsonDto extends PartialType(CreateDrinkDto) {
+  @ApiPropertyOptional({
+    description: 'Retirer l’image existante (sans envoyer imageBase64)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  clearImage?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  imageBase64?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  filename?: string;
 }

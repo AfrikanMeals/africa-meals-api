@@ -115,12 +115,17 @@ export class ProductsService {
       .populate('category')
       .populate({
         path: 'ratings',
+        options: { limit: 120, sort: { createdAt: -1 } },
         populate: {
           path: 'user',
+          select: 'fullName profileImage',
         },
       })
       .populate('likedBy')
-      .populate('store')
+      .populate({
+        path: 'store',
+        populate: { path: 'address' },
+      })
       .exec();
   }
 

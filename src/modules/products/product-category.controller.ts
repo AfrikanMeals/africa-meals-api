@@ -5,6 +5,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Inject,
   Param,
   Patch,
@@ -19,6 +20,7 @@ import {
   CreateProductCategoryDto,
   PatchProductCategoryDto,
 } from './dto/product-category.dto';
+import { slimProductCategoryForPublicClient } from '@utils/public-client-shapes';
 import { ProductCategoryService } from './product-category.service';
 
 @ApiTags('products')
@@ -28,8 +30,15 @@ export class ProductCategoryController {
   private readonly _productCategoryService: ProductCategoryService;
 
   @Get('')
+  @Header(
+    'Cache-Control',
+    'public, max-age=60, stale-while-revalidate=300',
+  )
   async filter() {
-    return this._productCategoryService.filter();
+    const rows = await this._productCategoryService.filter();
+    return rows.map((r) =>
+      slimProductCategoryForPublicClient(r as unknown as Record<string, unknown>),
+    );
   }
 
   @Post('')

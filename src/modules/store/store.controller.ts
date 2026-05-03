@@ -11,6 +11,7 @@ import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import {
   BadRequestException,
   Body,
+  NotFoundException,
   Controller,
   Delete,
   Get,
@@ -36,7 +37,12 @@ import {
   CreateStockItemDto,
   PatchStockItemDto,
 } from '@modules/stock-items/dto/stock-item.dto';
-import { CreateDrinkDto, PatchDrinkDto } from '@modules/drinks/dto/drink.dto';
+import {
+  CreateDrinkDto,
+  CreateDrinkJsonDto,
+  PatchDrinkDto,
+  PatchDrinkJsonDto,
+} from '@modules/drinks/dto/drink.dto';
 import { DrinksService } from '@modules/drinks/drinks.service';
 import { StockItemsService } from '@modules/stock-items/stock-items.service';
 import { AdminVendorStoreStatusDto } from './dto/admin-vendor-store.dto';
@@ -115,6 +121,55 @@ function galleryMulterFilesFromJson(
     }
   }
   return out.length ? out : undefined;
+}
+
+const DRINK_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+/** Image boisson depuis JSON (WebP autorisé, comme le multipart boissons). */
+function multerFileFromDrinkImageJson(
+  imageBase64: string | undefined,
+  filename: string | undefined,
+): Express.Multer.File | undefined {
+  if (imageBase64 == null || String(imageBase64).trim() === '') {
+    return undefined;
+  }
+  const raw = String(imageBase64)
+    .replace(/\s/g, '')
+    .replace(/^data:image\/[^;]+;base64,/i, '');
+  let buffer: Buffer;
+  try {
+    buffer = Buffer.from(raw, 'base64');
+  } catch {
+    throw new BadRequestException('invalid_base64');
+  }
+  if (!buffer.length) {
+    throw new BadRequestException('empty_image');
+  }
+  if (buffer.length > DRINK_IMAGE_MAX_BYTES) {
+    throw new BadRequestException('file_too_large');
+  }
+  const name = (filename || 'drink.jpg').trim() || 'drink.jpg';
+  if (!/\.(jpe?g|png|webp)$/i.test(name)) {
+    throw new BadRequestException('invalid_file_type');
+  }
+  const lower = name.toLowerCase();
+  const mime = lower.endsWith('.png')
+    ? 'image/png'
+    : lower.endsWith('.webp')
+      ? 'image/webp'
+      : 'image/jpeg';
+  return {
+    fieldname: 'image',
+    originalname: name,
+    encoding: '7bit',
+    mimetype: mime,
+    buffer,
+    size: buffer.length,
+    destination: '',
+    filename: '',
+    path: '',
+    stream: undefined,
+  } as Express.Multer.File;
 }
 
 @ApiTags('stores')
@@ -255,6 +310,48 @@ export class StoreController {
     return this._drinksService.findByStoreForOwner(id, req.user as UserModel);
   }
 
+  /**
+   * Création boisson en JSON (+ image base64 optionnelle) — fiable derrière
+   * Firebase / CF où le multipart est souvent tronqué (« Unexpected end of form »).
+   */
+  @Post(':id/drinks-json')
+  @UseGuards(JwtGuard)
+  async createDrinkJson(
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: CreateDrinkJsonDto,
+    @Req() req: Request,
+  ) {
+    const { imageBase64, filename, ...createDto } = body;
+    const file = multerFileFromDrinkImageJson(imageBase64, filename);
+    return this._drinksService.createForStore(
+      id,
+      createDto as CreateDrinkDto,
+      req.user as UserModel,
+      file,
+    );
+  }
+
+  @Patch(':id/drinks/:drinkId/json')
+  @UseGuards(JwtGuard)
+  async patchDrinkJson(
+    @Param('id') id: string,
+    @Param('drinkId') drinkId: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: PatchDrinkJsonDto,
+    @Req() req: Request,
+  ) {
+    const { imageBase64, filename, ...patch } = body;
+    const file = multerFileFromDrinkImageJson(imageBase64, filename);
+    return this._drinksService.updateForStore(
+      id,
+      drinkId,
+      patch as PatchDrinkDto,
+      req.user as UserModel,
+      file,
+    );
+  }
+
   @Post(':id/drinks')
   @UseGuards(JwtGuard)
   @UseInterceptors(
@@ -386,6 +483,25 @@ export class StoreController {
       productId,
       req.user as UserModel,
     );
+  }
+
+  /**
+   * Méta en-tête pour l’app (menu boutique) : léger, sans populate lourd.
+   * Doit rester avant `GET /:id` pour que le segment `menu-meta` soit résolu correctement.
+   */
+  @Get(':id/menu-meta')
+  async getStoreMenuMeta(@Param('id') id: string) {
+    const meta = await this._storeService.findPublicStoreMenuMeta(id);
+    if (meta == null) {
+      throw new NotFoundException('store_not_found');
+    }
+    return meta;
+  }
+
+  /** Boissons (`drinks`) visibles client — sans auth (même source que l’admin, filtrées stock > 0). */
+  @Get(':id/drinks-catalog')
+  async listDrinksCatalog(@Param('id') id: string) {
+    return this._drinksService.findByStoreForCatalog(id);
   }
 
   @Get('/:id')

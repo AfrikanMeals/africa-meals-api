@@ -20,6 +20,36 @@ export class SearchController {
   @Inject(SearchService)
   private readonly _searchService: SearchService;
 
+  /**
+   * Menu boutique paginé (même payload que `GET /search` côté `products`, mais **sans** 2e requête populate).
+   */
+  @Get('store-menu-products')
+  @UseGuards(OptionalAuthGuard)
+  async storeMenuProducts(
+    @Req() req: Request,
+    @Query('storeId') storeId: string,
+    @Query('page') pageRaw?: string,
+    @Query('take') takeRaw?: string,
+  ) {
+    const sid = (storeId ?? '').trim();
+    const page = Math.max(1, parseInt(pageRaw ?? '1', 10) || 1);
+    const take = Math.min(120, Math.max(8, parseInt(takeRaw ?? '24', 10) || 24));
+    const { items, total } = await this._searchService.storeMenuProductsLeanPage(
+      sid,
+      page,
+      take,
+      req.user as UserModel,
+    );
+    return {
+      products: {
+        items,
+        total,
+        page,
+        limit: take,
+      },
+    };
+  }
+
   @Get('')
   @UseGuards(OptionalAuthGuard)
   async filter(

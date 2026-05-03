@@ -190,6 +190,9 @@ export class StoreModel extends BaseSchema {
 
 export const StoreSchema = SchemaFactory.createForClass(StoreModel);
 
+/** Recherche / liste boutiques par statut + tri. */
+StoreSchema.index({ status: 1, createdAt: -1 });
+
 StoreSchema.virtual('averageRating').get(function () {
   const items = this.ratings || [];
   if (!items.length) {

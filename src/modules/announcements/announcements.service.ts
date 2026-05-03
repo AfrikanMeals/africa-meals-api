@@ -19,9 +19,10 @@ export class AnnouncementsService {
 
   async list() {
     return this._announcementModel
-      .find({
-        isActive: true,
-      })
+      .find({ isActive: true })
+      .sort({ updatedAt: -1 })
+      .limit(40)
+      .lean()
       .exec();
   }
 

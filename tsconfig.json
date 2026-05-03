@@ -26,6 +26,9 @@
       ],
       "@models/*": [
         "src/schema/*"
+      ],
+      "@utils/*": [
+        "src/utils/*"
       ]
     }
   }

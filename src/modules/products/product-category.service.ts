@@ -1,28 +1,62 @@
 import {
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { InjectModel } from '@nestjs/mongoose';
+import { Cache } from 'cache-manager';
 import { ProductCategoryModel } from '@schemas/product-category.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
-import { Model, Types } from 'mongoose';
+import { Model, PipelineStage, Types } from 'mongoose';
 import { DEFAULT_CATEGORIES } from './data/categories';
 import {
   CreateProductCategoryDto,
   PatchProductCategoryDto,
 } from './dto/product-category.dto';
+import { mapInChunks } from '@utils/map-in-chunks';
+
+/** Ligne JSON renvoyée par [filter] / REST / GraphQL public. */
+export type PublicProductCategoryRow = {
+  id: string;
+  _id: string;
+  title: string;
+  icon: string;
+  isEnabled: boolean;
+  productCount: number;
+  createdAt: unknown;
+  updatedAt: unknown;
+};
 
 @Injectable()
 export class ProductCategoryService implements OnModuleInit {
+  private readonly _logger = new Logger(ProductCategoryService.name);
+
+  /** Cache liste publique catégories (invalidé à chaque mutation admin). */
+  private static readonly _publicListCacheKey = 'product-categories:public:v1';
+
+  @Inject(CACHE_MANAGER)
+  private readonly _cache: Cache;
+
   @InjectModel(ProductCategoryModel.name)
   private readonly _productCategoryModel: Model<ProductCategoryModel>;
 
   @InjectModel(ProductModel.name)
   private readonly _productModel: Model<ProductModel>;
+
+  private _categoriesListTtlMs() {
+    const n = Number(process.env.PRODUCT_CATEGORIES_CACHE_TTL_MS);
+    return Number.isFinite(n) && n > 0 ? n : 120_000;
+  }
+
+  private async _bustPublicCategoriesCache() {
+    await this._cache.del(ProductCategoryService._publicListCacheKey);
+  }
 
   private assertCanManageCategories(user: UserModel) {
     if (
@@ -63,6 +97,7 @@ export class ProductCategoryService implements OnModuleInit {
       icon: args.icon.trim(),
       isEnabled: args.isEnabled ?? true,
     });
+    await this._bustPublicCategoriesCache();
     const lean = doc.toObject() as Record<string, unknown>;
     return this.mapLeanCategory(lean, 0);
   }
@@ -99,6 +134,7 @@ export class ProductCategoryService implements OnModuleInit {
       existing.isEnabled = args.isEnabled;
     }
     await existing.save();
+    await this._bustPublicCategoriesCache();
     const productCount = await this._productModel
       .countDocuments({ category: existing._id })
       .exec();
@@ -122,43 +158,104 @@ export class ProductCategoryService implements OnModuleInit {
       throw new ConflictException('category_has_products');
     }
     await existing.deleteOne();
+    await this._bustPublicCategoriesCache();
   }
 
-  async filter() {
+  /**
+   * Liste publique des catégories + compteur produits.
+   * L’ancien `$lookup` chargeait **tous** les produits par catégorie en RAM → risque de timeout / 500 sur gros catalogues.
+   */
+  async filter(): Promise<PublicProductCategoryRow[]> {
+    const cached = await this._cache.get<PublicProductCategoryRow[]>(
+      ProductCategoryService._publicListCacheKey,
+    );
+    if (cached != null && cached.length > 0) {
+      return cached;
+    }
+
     try {
+      const pipeline: PipelineStage[] = [
+        { $sort: { createdAt: 1 } },
+        {
+          $lookup: {
+            from: 'products',
+            let: { catId: '$_id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ['$category', '$$catId'] },
+                },
+              },
+              { $group: { _id: null, n: { $sum: 1 } } },
+            ],
+            as: '_cnt',
+          },
+        },
+        {
+          $addFields: {
+            productCount: {
+              $let: {
+                vars: { row: { $arrayElemAt: ['$_cnt', 0] } },
+                in: { $ifNull: ['$$row.n', 0] },
+              },
+            },
+          },
+        },
+        { $project: { _cnt: 0 } },
+      ];
+
       const raw = await this._productCategoryModel
-        .aggregate([
-          { $sort: { createdAt: 1 } },
-          {
-            $lookup: {
-              from: 'products',
-              localField: '_id',
-              foreignField: 'category',
-              as: '_products',
-            },
-          },
-          {
-            $addFields: {
-              productCount: { $size: '$_products' },
-            },
-          },
-          { $project: { _products: 0 } },
-        ])
+        .aggregate(pipeline)
+        .option({ allowDiskUse: true })
         .exec();
 
-      return raw.map((doc: Record<string, unknown>) => ({
-        id: doc._id,
-        _id: doc._id,
-        title: doc.title,
-        icon: doc.icon,
-        isEnabled: doc.is_enabled ?? true,
-        productCount: doc.productCount ?? 0,
-        createdAt: doc.createdAt,
-        updatedAt: doc.updatedAt,
-      }));
-    } catch {
-      return this._filterWithCounts();
+      const result = raw.map((doc: Record<string, unknown>) =>
+        this.serializeCategoryRow(doc),
+      );
+      if (result.length > 0) {
+        await this._cache.set(
+          ProductCategoryService._publicListCacheKey,
+          result,
+          this._categoriesListTtlMs(),
+        );
+      }
+      return result;
+    } catch (e) {
+      this._logger.warn(
+        `filter aggregate fallback: ${(e as Error).message}`,
+      );
+      try {
+        const fallback = await this._filterWithCounts();
+        if (fallback.length > 0) {
+          await this._cache.set(
+            ProductCategoryService._publicListCacheKey,
+            fallback,
+            this._categoriesListTtlMs(),
+          );
+        }
+        return fallback;
+      } catch (e2) {
+        this._logger.error(
+          `filter failed completely: ${(e2 as Error).message}`,
+        );
+        return [];
+      }
     }
+  }
+
+  /** Objet JSON strict (ids string) pour éviter les soucis de sérialisation côté client. */
+  private serializeCategoryRow(doc: Record<string, unknown>): PublicProductCategoryRow {
+    const id = String(doc._id ?? '');
+    return {
+      id,
+      _id: id,
+      title: String(doc.title ?? ''),
+      icon: String(doc.icon ?? ''),
+      isEnabled: Boolean(doc.is_enabled ?? doc.isEnabled ?? true),
+      productCount: Number(doc.productCount ?? 0),
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+    };
   }
 
   private async _filterWithCounts() {
@@ -167,24 +264,16 @@ export class ProductCategoryService implements OnModuleInit {
       .sort({ createdAt: 1 })
       .lean()
       .exec();
-    const result = await Promise.all(
-      categories.map(async (cat: Record<string, unknown>) => {
-        const productCount = await this._productModel
-          .countDocuments({ category: cat._id })
-          .exec();
-        return {
-          id: cat._id,
-          _id: cat._id,
-          title: cat.title,
-          icon: cat.icon,
-          isEnabled: (cat.is_enabled as boolean) ?? true,
-          productCount,
-          createdAt: cat.createdAt,
-          updatedAt: cat.updatedAt,
-        };
-      }),
-    );
-    return result;
+    /** Ne pas lancer un `countDocuments` par catégorie en parallèle (pic connexions Atlas). */
+    return mapInChunks(categories, 3, async (cat: Record<string, unknown>) => {
+      const productCount = await this._productModel
+        .countDocuments({ category: cat._id })
+        .exec();
+      return this.serializeCategoryRow({
+        ...cat,
+        productCount,
+      });
+    });
   }
 
   async onModuleInit() {

@@ -17,9 +17,9 @@ export class AppController {
   @ApiOperation({
     summary: 'Health check',
     description:
-      'Vérifie que l’API répond (uptime, version). Sans authentification.',
+      'État du process Node (mémoire, CPU cumulatif), ping MongoDB, indices d’exécution (cgroup mémoire, Cloud Run). HTTP 200 même en `degraded` si la base ne répond pas — utiliser le champ `status` pour l’alerting. Sans authentification.',
   })
-  getHealth() {
+  async getHealth() {
     return this.appService.getHealth();
   }
 }

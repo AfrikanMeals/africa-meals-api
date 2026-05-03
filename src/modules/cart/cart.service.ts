@@ -11,6 +11,7 @@ import {
   CartItemApiResponse,
   RemoveItemFromCartDto,
 } from './dto/cart.dto';
+import { mapInChunks } from '@utils/map-in-chunks';
 
 @Injectable()
 export class CartService {
@@ -37,9 +38,7 @@ export class CartService {
     }
 
     const mappedItems: Partial<CartItemModel>[] = (
-      await Promise.all(
-        items.map(async (item) => await this.findOneByItemId(item.id, user)),
-      )
+      await mapInChunks(items, 4, (item) => this.findOneByItemId(item.id, user))
     ).map(({ store, ...item }) => ({ ...item }));
 
     const cart = {
@@ -134,30 +133,26 @@ export class CartService {
       },
     );
 
-    return {
-      data: await Promise.all(
-        Object.values(formatedItems).map(async (item) => {
-          const items = (
-            await Promise.all(
-              (item.items ?? []).map((item) =>
-                this.findOneByItemId(item._id.toString(), user),
-              ),
-            )
-          ).map(({ store, ...rest }) => {
-            return rest;
-          });
+    const storeGroups = Object.values(formatedItems);
+    const data = await mapInChunks(storeGroups, 2, async (group) => {
+      const lineItems = await mapInChunks(
+        group.items ?? [],
+        4,
+        (line) => this.findOneByItemId(line._id.toString(), user),
+      );
+      const items = lineItems.map(({ store, ...rest }) => rest);
 
-          return {
-            store: item.store,
-            items,
-            totalPrice: items.reduce(
-              (acc, item) => acc + item.price * item.quantity,
-              0,
-            ),
-          };
-        }),
-      ),
-    };
+      return {
+        store: group.store,
+        items,
+        totalPrice: items.reduce(
+          (acc, line) => acc + line.price * line.quantity,
+          0,
+        ),
+      };
+    });
+
+    return { data };
 
     // return {
     //   items: await Promise.all(
@@ -246,6 +241,24 @@ export class CartService {
     await this._cartItemModel
       .deleteOne({ _id: new Types.ObjectId(id), user: new Types.ObjectId(user.id) })
       .exec();
+  }
+
+  /** Met à jour la quantité d’une ligne (vérifie que la ligne appartient à l’utilisateur). */
+  async setLineQuantity(
+    lineId: string,
+    quantity: number,
+    user: UserModel,
+  ): Promise<void> {
+    const item = await this._cartItemModel
+      .findOne({
+        _id: new Types.ObjectId(lineId),
+        user: new Types.ObjectId(user.id),
+      })
+      .exec();
+    if (!item) {
+      throw new NotFoundException('cart_item_not_found');
+    }
+    await this.updateQuantity(item, quantity);
   }
 
   async clearStoreCart(store: StoreModel, user: UserModel): Promise<void> {

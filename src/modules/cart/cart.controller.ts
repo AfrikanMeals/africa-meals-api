@@ -1,16 +1,20 @@
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import {
+  Body,
   Controller,
   Delete,
   Get,
   Inject,
   Param,
+  Patch,
   Req,
   UseGuards,
+  ValidationPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
+import { UpdateCartLineQuantityDto } from './dto/cart.dto';
 import { CartService } from './cart.service';
 
 @ApiTags('cart')
@@ -29,6 +33,20 @@ export class CartController {
   @UseGuards(JwtGuard)
   async findOneByStoreId(@Param('storeId') id: string, @Req() req: Request) {
     return this._cartService.findOneByStoreId(id, req.user as UserModel);
+  }
+
+  @Patch(':id/quantity')
+  @UseGuards(JwtGuard)
+  async updateLineQuantity(
+    @Param('id') id: string,
+    @Body(ValidationPipe) dto: UpdateCartLineQuantityDto,
+    @Req() req: Request,
+  ): Promise<void> {
+    await this._cartService.setLineQuantity(
+      id,
+      dto.quantity,
+      req.user as UserModel,
+    );
   }
 
   @Delete(':id')

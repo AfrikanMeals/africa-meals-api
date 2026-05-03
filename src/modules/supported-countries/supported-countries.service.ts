@@ -30,6 +30,11 @@ export const DEFAULT_SUPPORTED_COUNTRIES: Array<{
 
 @Injectable()
 export class SupportedCountriesService implements OnModuleInit {
+  private static readonly _LIST_ACTIVE_TTL_MS = 60_000;
+  private _listActiveCache:
+    | { at: number; data: Array<{ code: string; name: string; phoneRegion: string }> }
+    | null = null;
+
   @InjectModel(SupportedCountryModel.name)
   private readonly _model: Model<SupportedCountryModel>;
 
@@ -53,16 +58,25 @@ export class SupportedCountriesService implements OnModuleInit {
   async listActive(): Promise<
     Array<{ code: string; name: string; phoneRegion: string }>
   > {
+    const now = Date.now();
+    if (
+      this._listActiveCache &&
+      now - this._listActiveCache.at < SupportedCountriesService._LIST_ACTIVE_TTL_MS
+    ) {
+      return this._listActiveCache.data;
+    }
     const docs = await this._model
       .find({ active: true })
       .sort({ name: 1 })
       .lean()
       .exec();
-    return docs.map((d) => ({
+    const data = docs.map((d) => ({
       code: d.code,
       name: d.name,
       phoneRegion: d.phoneRegion,
     }));
+    this._listActiveCache = { at: now, data };
+    return data;
   }
 
   async isActiveCode(code: string): Promise<boolean> {

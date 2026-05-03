@@ -35,4 +35,7 @@ export class ProductRatingModel extends BaseSchema {
 export const ProductRatingSchema =
   SchemaFactory.createForClass(ProductRatingModel);
 
+/** Agrégations recherche / menu : `$lookup` filtré par plat. */
+ProductRatingSchema.index({ product: 1 });
+
 export type ProductRatingModelDocument = ProductRatingModel & Document;

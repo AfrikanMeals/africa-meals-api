@@ -1,6 +1,7 @@
 require("node:dns/promises").setServers(["1.1.1.1", "8.8.8.8"]);
 import { CacheModule } from '@nestjs/cache-manager';
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AppController } from './app.controller';
@@ -17,12 +18,14 @@ import { ProductsModule } from './modules/products/products.module';
 import { SearchModule } from './modules/search/search.module';
 import { OffersModule } from './modules/offers/offers.module';
 import { CartModule } from './modules/cart/cart.module';
+import { CouponsModule } from './modules/coupons/coupons.module';
 import { AnnouncementsModule } from './modules/announcements/announcements.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { SupportChatModule } from './modules/support-chat/support-chat.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { GraphqlApiModule } from './graphql/graphql.module';
+import { RecommendationsModule } from './modules/recommendations/recommendations.module';
 import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
 
 @Module({
@@ -35,8 +38,9 @@ import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
     CacheModule.register({
       isGlobal: true,
       ttl: Number(process.env.FAVORITES_CACHE_TTL_MS) || 25_000,
-      max: Number(process.env.CACHE_MAX_ITEMS) || 300,
+      max: Number(process.env.CACHE_MAX_ITEMS) || 500,
     }),
+    ScheduleModule.forRoot(),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -54,12 +58,14 @@ import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
     SearchModule,
     OffersModule,
     CartModule,
+    CouponsModule,
     AnnouncementsModule,
     BillingModule,
     OrdersModule,
     SupportChatModule,
     DashboardModule,
     GraphqlApiModule,
+    RecommendationsModule,
     // SharedModule,
   ],
   controllers: [AppController, EnvDebugController],

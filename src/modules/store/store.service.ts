@@ -105,6 +105,34 @@ export class StoreService {
     return store;
   }
 
+  /**
+   * Fiche minimale pour l’écran « menu boutique » app (sans populate) — beaucoup plus rapide que {@link findOneById}.
+   */
+  async findPublicStoreMenuMeta(
+    id: string,
+  ): Promise<Record<string, unknown> | null> {
+    if (!Types.ObjectId.isValid(id)) {
+      return null;
+    }
+    const doc = await this._storeModel
+      .findById(id)
+      .select('bio profileImage averageRating name status')
+      .lean()
+      .exec();
+    if (doc == null) {
+      return null;
+    }
+    const o = doc as unknown as Record<string, unknown>;
+    const plain: Record<string, unknown> = { ...o };
+    const oid = o['_id'];
+    if (oid != null && typeof (oid as { toString?: () => string }).toString === 'function') {
+      plain['id'] = (oid as { toString: () => string }).toString();
+    }
+    delete plain['_id'];
+    delete plain['__v'];
+    return plain;
+  }
+
   async create(dto: CreateStoreDto, user: UserModel) {
     const { address, ...args } = dto;
     const fullUser = await this._usersService.findById(
@@ -845,6 +873,16 @@ export class StoreService {
   }
 
   async listStoreProducts(storeId: string, user: UserModel) {
+    if (user.type === UserTypeEnum.ADMIN) {
+      const exists = await this._storeModel
+        .findById(storeId)
+        .select('_id')
+        .exec();
+      if (!exists) {
+        throw new NotFoundException('store_not_found');
+      }
+      return this._productsService.findByStoreId(storeId);
+    }
     const store = await this._storeModel
       .findOne({ _id: storeId, owner: user._id })
       .select('_id')
