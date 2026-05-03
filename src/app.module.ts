@@ -25,6 +25,7 @@ import { OrdersModule } from './modules/orders/orders.module';
 import { SupportChatModule } from './modules/support-chat/support-chat.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { GraphqlApiModule } from './graphql/graphql.module';
+import { RecommendationsModule } from './modules/recommendations/recommendations.module';
 import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
 
 @Module({
@@ -64,6 +65,7 @@ import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
     SupportChatModule,
     DashboardModule,
     GraphqlApiModule,
+    RecommendationsModule,
     // SharedModule,
   ],
   controllers: [AppController, EnvDebugController],
