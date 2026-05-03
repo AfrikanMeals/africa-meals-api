@@ -84,6 +84,31 @@ export class CreateStoreDto {
   shippingZones?: StoreShippingZoneDto[];
 }
 
+export class DailyMenuItemDto {
+  @ApiProperty({ description: 'Identifiant du plat (produit) dans le catalogue' })
+  @IsNotEmpty()
+  @IsString()
+  productId: string;
+
+  @ApiProperty({
+    description:
+      'Si true, le plat reste disponible sans limite de portions pour ce jour (côté menu du jour).',
+  })
+  @IsBoolean()
+  stockUnlimited: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Portions restantes pour ce jour (obligatoire si stockUnlimited = false). À 0 le plat est indisponible sur l’app.',
+    minimum: 0,
+    type: Number,
+  })
+  @ValidateIf((o) => !o.stockUnlimited)
+  @IsInt()
+  @Min(0)
+  stockRemaining?: number;
+}
+
 export class DailyMenuSlotDto {
   @ApiProperty({ description: '0 = dimanche … 6 = samedi (comme Date.getDay())', minimum: 0, maximum: 6 })
   @IsInt()
@@ -91,10 +116,25 @@ export class DailyMenuSlotDto {
   @Max(6)
   dayOfWeek: number;
 
-  @ApiProperty({ type: [String], description: 'Identifiants des produits du catalogue de la boutique' })
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Ancien format (IDs seuls). Utilisé seulement si `items` est absent ; chaque plat est alors traité comme illimité.',
+  })
+  @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  productIds: string[];
+  productIds?: string[];
+
+  @ApiPropertyOptional({
+    type: () => [DailyMenuItemDto],
+    description: 'Plats du jour avec stock illimité ou nombre de portions restantes.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DailyMenuItemDto)
+  items?: DailyMenuItemDto[];
 }
 
 export class PatchDailyMenuDto {
