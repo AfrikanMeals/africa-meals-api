@@ -85,7 +85,9 @@ export class AuthController {
 
   @Post('google')
   async authWithGoogle(@Body(ValidationPipe) args: GoogleAuthDto) {
-    this.logger.log(`google body: ${JSON.stringify(args)}`);
+    this.logger.log(
+      `google auth: idToken présent (longueur=${args.idToken?.length ?? 0})`,
+    );
     return this._authService.authWithGoogle(args);
   }
 

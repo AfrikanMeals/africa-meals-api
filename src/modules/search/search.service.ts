@@ -279,7 +279,13 @@ export class SearchService {
         },
       })
       .populate('likedBy')
-      .populate('store')
+      .populate({
+        path: 'store',
+        populate: {
+          path: 'address',
+          select: 'label address city country location',
+        },
+      })
       .sort({ [args.sortBy ?? 'createdAt']: args.sortDirection ?? 'desc' })
       .exec();
 

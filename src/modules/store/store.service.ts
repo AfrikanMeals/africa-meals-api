@@ -1076,6 +1076,48 @@ export class StoreService {
     }
   }
 
+  async addToFavorites(storeId: string, user: UserModel) {
+    if (!Types.ObjectId.isValid(storeId)) {
+      throw new NotFoundException('store_not_found');
+    }
+    const store = await this._storeModel.findOne({ _id: storeId }).exec();
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+    await this._storeModel
+      .updateOne(
+        { _id: storeId },
+        {
+          $addToSet: {
+            likedBy: user._id,
+          },
+        },
+      )
+      .exec();
+    return this.findOneById(storeId);
+  }
+
+  async removeFromFavorites(storeId: string, user: UserModel) {
+    if (!Types.ObjectId.isValid(storeId)) {
+      throw new NotFoundException('store_not_found');
+    }
+    const store = await this._storeModel.findOne({ _id: storeId }).exec();
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+    await this._storeModel
+      .updateOne(
+        { _id: storeId },
+        {
+          $pull: {
+            likedBy: user._id,
+          },
+        },
+      )
+      .exec();
+    return this.findOneById(storeId);
+  }
+
   async createOffer(
     id: string,
     args: CreateOfferDto,

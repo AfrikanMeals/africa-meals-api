@@ -15,7 +15,9 @@ const region = process.env.FUNCTION_REGION || 'europe-west1';
 
 setGlobalOptions({
   region,
-  maxInstances: Number(process.env.FUNCTION_MAX_INSTANCES || 20),
+  // Chaque instance warm garde un pool Mongo (`MONGOOSE_MAX_POOL`) : trop
+  // d’instances × pool ≈ limite Atlas M0 (~500 connexions cluster).
+  maxInstances: Number(process.env.FUNCTION_MAX_INSTANCES || 10),
 });
 
 export const api = onRequest(
