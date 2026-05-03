@@ -40,10 +40,12 @@ export class ShopHomeResolver {
   ): Promise<ShopHomePayloadGql> {
     const take = productsTake ?? 48;
     const recTake = recommendationsTake ?? 24;
-    const [data, rec] = await Promise.all([
-      this._shopHome.load(user, take),
-      this._recommendations.getFeed(user, String(recTake)),
-    ]);
+    const data = await this._shopHome.load(user, take);
+    const rec = await this._recommendations.getFeed(
+      user,
+      String(recTake),
+      data.products,
+    );
     return {
       ...data,
       productsCount: data.products.length,

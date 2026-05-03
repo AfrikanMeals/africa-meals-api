@@ -519,7 +519,11 @@ export class SearchService {
   ): Promise<Record<string, unknown>[]> {
     const ownerOid = this._userObjectId(user);
     const safeLimit = Math.min(120, Math.max(1, Math.floor(limit)));
+    /** Fenêtre récente avant `$lookup` stores — évite un scan joint sur toute la collection `products`. */
+    const candidateCap = Math.min(900, Math.max(safeLimit * 12, 200));
     const pipeline: PipelineStage[] = [
+      { $sort: { createdAt: -1 } },
+      { $limit: candidateCap },
       {
         $lookup: {
           from: 'stores',

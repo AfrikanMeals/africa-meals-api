@@ -168,6 +168,8 @@ export class RecommendationsService {
   async getFeed(
     user: UserModel | undefined,
     takeRaw?: string,
+    /** Si fourni (ex. bundle `shopHome`), évite un second `homeFeedProducts` identique. */
+    productCandidates?: Record<string, unknown>[],
   ): Promise<{
     products: Record<string, unknown>[];
     stores: Record<string, unknown>[];
@@ -179,7 +181,9 @@ export class RecommendationsService {
     const userOid = this._userOid(user);
 
     const [candidates, snapshot, digestDoc] = await Promise.all([
-      this._search.homeFeedProducts(user, poolLimit),
+      productCandidates != null && productCandidates.length > 0
+        ? Promise.resolve(productCandidates)
+        : this._search.homeFeedProducts(user, poolLimit),
       this._trainingSnapshotModel
         .findOne({ docKey: RECOMMENDATION_GLOBAL_SNAPSHOT_KEY })
         .lean()
@@ -404,6 +408,9 @@ export class RecommendationsService {
             acceptsOrders: { $ne: false },
           },
         },
+        { $sort: { averageRating: -1, updatedAt: -1 } },
+        /** Borne avant `$lookup` commandes — coût O(n×orders) sinon sur tout le parc boutiques. */
+        { $limit: 160 },
         {
           $lookup: {
             from: 'orders',

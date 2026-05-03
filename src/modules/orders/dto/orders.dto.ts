@@ -13,7 +13,12 @@ export class FilterOrdersDto {
   @IsOptional()
   storeId?: string;
 
-  @ApiPropertyOptional({ description: 'Nombre max de commandes (tri par date décroissante).', minimum: 1, maximum: 200 })
+  @ApiPropertyOptional({
+    description:
+      'Nombre max de commandes (tri par date décroissante). Défaut **80** si absent (liste mobile). Max 200.',
+    minimum: 1,
+    maximum: 200,
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()

@@ -12,8 +12,16 @@
  *   BENCH_ITERATIONS           Mesures par endpoint (défaut: 5)
  *   BENCH_WARMUP               0 = pas de warmup (défaut: 1 = 1er tir ignoré)
  *   BENCH_JWT | BENCH_TOKEN    Bearer JWT optionnel (routes protégées)
- *   BENCH_STORE_ID             Mongo ObjectId boutique pour storeMenu / store-menu-products
+ *   BENCH_STORE_ID             Mongo ObjectId boutique (menu GraphQL, menu-meta, drinks-catalog, store GET…)
+ *   BENCH_PRODUCT_ID           Mongo ObjectId plat pour GET /products/:id (défaut: même valeur que store si absent)
  *   BENCH_TIMEOUT_MS           Timeout client fetch ms (défaut: 120000)
+ *
+ * Couverture bench (REST public + GraphQL public + routes JWT si token) :
+ *   health, product-categories, ads, supported-countries, search (products/stores),
+ *   search/store-menu-products, recommendations/feed, stores/:id, stores/:id/menu-meta,
+ *   stores/:id/drinks-catalog, products/:id, GraphQL: shopHome, productCategories, storeMenu,
+ *   myFavoriteProductsListing (JWT), recommendationTrack (JWT), REST: auth/me, announcements,
+ *   cart, orders, products/favorites/me (JWT).
  *
  * Limites (honnêtes dans le rapport MD):
  *   Métriques conteneur / CPU / mémoire process et temps base de données ne sont pas
@@ -29,7 +37,18 @@ import os from 'node:os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-/** @typedef {{ id: string, method: string, path: string, headers?: Record<string,string>, body?: string, skip?: boolean, skipReason?: string }} BenchCase */
+/**
+ * @typedef {{
+ *   id: string,
+ *   method: string,
+ *   path: string,
+ *   headers?: Record<string, string>,
+ *   body?: string,
+ *   skip?: boolean,
+ *   skipReason?: string,
+ *   category?: string,
+ * }} BenchCase
+ */
 
 function parseArgs(argv) {
   const out = {
@@ -39,6 +58,7 @@ function parseArgs(argv) {
     warmup: null,
     timeoutMs: null,
     storeId: null,
+    productId: null,
     help: false,
     positionals: [],
   };
@@ -54,6 +74,8 @@ function parseArgs(argv) {
       out.timeoutMs = Number(argv[++i]);
     } else if (a === '--store-id' || a === '--store') {
       out.storeId = (argv[++i] || '').trim();
+    } else if (a === '--product-id' || a === '--product') {
+      out.productId = (argv[++i] || '').trim();
     } else if (a === '--no-warmup') {
       out.warmup = 0;
     } else if (a === '--help' || a === '-h') {
@@ -206,10 +228,26 @@ function favoritesListingBody() {
   });
 }
 
+/** Mutation GraphQL `recommendationTrack` — alignée sur `RecommendationsGraphqlResolver` (JWT). */
+function recommendationTrackBodyStoreView(storeId) {
+  // Nest `registerEnumType` expose les **clés** TS en noms d’enum GraphQL (`STORE_VIEW`), pas `store_view`.
+  return JSON.stringify({
+    query: `mutation RecommendationTrack($input: RecommendationTrackInput!) {
+      recommendationTrack(input: $input)
+    }`,
+    variables: {
+      input: {
+        kind: 'STORE_VIEW',
+        refId: storeId,
+      },
+    },
+  });
+}
+
 /**
  * @param {string} baseUrl
  * @param {string | null} authHeader
- * @param {{ storeId: string | null; includeStoreMenu: boolean }} opts
+ * @param {{ storeId: string | null; productId: string | null }} opts
  * @returns {BenchCase[]}
  */
 function buildCases(baseUrl, authHeader, opts) {
@@ -217,6 +255,11 @@ function buildCases(baseUrl, authHeader, opts) {
     opts.storeId?.trim() ||
     process.env.BENCH_STORE_ID?.trim() ||
     '000000000000000000000001';
+
+  const pid =
+    (opts.productId && opts.productId.trim()) ||
+    process.env.BENCH_PRODUCT_ID?.trim() ||
+    sid;
 
   /** @type {BenchCase[]} */
   const cases = [
@@ -232,6 +275,12 @@ function buildCases(baseUrl, authHeader, opts) {
       id: 'GET supported-countries',
       method: 'GET',
       path: 'supported-countries',
+      category: 'data',
+    },
+    {
+      id: 'GET recommendations/feed (optional user)',
+      method: 'GET',
+      path: 'recommendations/feed?take=24',
       category: 'data',
     },
     {
@@ -252,6 +301,30 @@ function buildCases(baseUrl, authHeader, opts) {
       id: `GET search/store-menu-products (storeId=${sid.slice(0, 8)}…)`,
       method: 'GET',
       path: `search/store-menu-products?storeId=${encodeURIComponent(sid)}&page=1&take=24`,
+      category: 'data',
+    },
+    {
+      id: `GET stores/:id (storeId=${sid.slice(0, 8)}…)`,
+      method: 'GET',
+      path: `stores/${encodeURIComponent(sid)}`,
+      category: 'stores',
+    },
+    {
+      id: `GET stores/:id/menu-meta (storeId=${sid.slice(0, 8)}…)`,
+      method: 'GET',
+      path: `stores/${encodeURIComponent(sid)}/menu-meta`,
+      category: 'stores',
+    },
+    {
+      id: `GET stores/:id/drinks-catalog (storeId=${sid.slice(0, 8)}…)`,
+      method: 'GET',
+      path: `stores/${encodeURIComponent(sid)}/drinks-catalog`,
+      category: 'stores',
+    },
+    {
+      id: `GET products/:id (productId=${pid.slice(0, 8)}…)`,
+      method: 'GET',
+      path: `products/${encodeURIComponent(pid)}`,
       category: 'data',
     },
     {
@@ -297,6 +370,27 @@ function buildCases(baseUrl, authHeader, opts) {
         category: 'data',
       },
       {
+        id: 'GET cart (JWT)',
+        method: 'GET',
+        path: 'cart',
+        headers: { Authorization: authHeader },
+        category: 'data',
+      },
+      {
+        id: 'GET orders (JWT)',
+        method: 'GET',
+        path: 'orders',
+        headers: { Authorization: authHeader },
+        category: 'data',
+      },
+      {
+        id: 'GET products/favorites/me (JWT)',
+        method: 'GET',
+        path: 'products/favorites/me?page=1&take=10',
+        headers: { Authorization: authHeader },
+        category: 'data',
+      },
+      {
         id: 'POST graphql myFavoriteProductsListing (JWT)',
         method: 'POST',
         path: 'graphql',
@@ -305,6 +399,17 @@ function buildCases(baseUrl, authHeader, opts) {
           Authorization: authHeader,
         },
         body: favoritesListingBody(),
+        category: 'graphql',
+      },
+      {
+        id: `POST graphql recommendationTrack STORE_VIEW (JWT, storeId=${sid.slice(0, 8)}…)`,
+        method: 'POST',
+        path: 'graphql',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: authHeader,
+        },
+        body: recommendationTrackBodyStoreView(sid),
         category: 'graphql',
       },
     );
@@ -610,6 +715,7 @@ Options:
   --iterations, -n N   nombre de mesures par endpoint (défaut: env BENCH_ITERATIONS ou 5)
   --token, -t JWT      Authorization Bearer (env BENCH_JWT / BENCH_TOKEN)
   --store-id ID        Mongo ObjectId boutique (env BENCH_STORE_ID)
+  --product-id ID      Mongo ObjectId plat pour GET /products/:id (env BENCH_PRODUCT_ID)
   --timeout-ms N       timeout client fetch (défaut: env BENCH_TIMEOUT_MS ou 120000)
   --no-warmup          inclure la première requête dans les stats
   -h, --help
@@ -654,11 +760,13 @@ Variables d'environnement: API_BASE_URL, BASE_URL, BENCH_*
   const storeId =
     (args.storeId || process.env.BENCH_STORE_ID || '').trim() ||
     '000000000000000000000001';
-  const storeIdNote = `\`${storeId}\` *(défaut bidon si non fourni — menu souvent vide ou 404 GraphQL)*`;
+  const benchProductId =
+    (args.productId || process.env.BENCH_PRODUCT_ID || '').trim() || storeId;
+  const storeIdNote = `\`${storeId}\` *(boutique : menu-meta, drinks-catalog, storeMenu, etc.)* · produit \`${benchProductId}\` *(GET \`products/:id\` — défaut = même id que boutique si \`BENCH_PRODUCT_ID\` absent)*`;
 
   const cases = buildCases(baseUrl, authHeader, {
     storeId,
-    includeStoreMenu: true,
+    productId: (args.productId || process.env.BENCH_PRODUCT_ID || '').trim() || null,
   });
 
   const clientEnv = clientEnvironment(timeoutMs, iterations, useWarmup);
@@ -692,6 +800,7 @@ Variables d'environnement: API_BASE_URL, BASE_URL, BENCH_*
       warmup: useWarmup,
       clientTimeoutMs: timeoutMs,
       storeId,
+      benchProductId,
       startedAt,
       durationMs,
       hasAuth: Boolean(authHeader),
