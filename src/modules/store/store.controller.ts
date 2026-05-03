@@ -498,6 +498,12 @@ export class StoreController {
     return meta;
   }
 
+  /** Boissons (`drinks`) visibles client — sans auth (même source que l’admin, filtrées stock > 0). */
+  @Get(':id/drinks-catalog')
+  async listDrinksCatalog(@Param('id') id: string) {
+    return this._drinksService.findByStoreForCatalog(id);
+  }
+
   @Get('/:id')
   async findOneById(@Param('id') id: string) {
     return this._storeService.findOneById(id);
