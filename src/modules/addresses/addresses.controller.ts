@@ -7,6 +7,7 @@ import {
   Inject,
   Param,
   Patch,
+  Post,
   Put,
   Query,
   Req,
@@ -26,6 +27,28 @@ export class AddressesController {
   @Inject(AddressesService)
   private readonly _addressesService: AddressesService;
 
+  /** Liste légère des adresses livraison du client (sans `GET /auth/me` complet). */
+  @Get('me')
+  @UseGuards(JwtGuard)
+  async listMine(@Req() req: Request) {
+    const user = req.user as UserModel;
+    return {
+      addresses: await this._addressesService.listUserAddresses(
+        user._id.toString(),
+      ),
+    };
+  }
+
+  /** Création client — corps `{ address, addresses }` pour MAJ cache sans `GET /me`. */
+  @Post()
+  @UseGuards(JwtGuard)
+  async createMine(
+    @Req() req: Request,
+    @Body(ValidationPipe) args: CreateAddressDto,
+  ) {
+    return this._addressesService.createAndAttach(args, req.user as UserModel);
+  }
+
   @Get('')
   @UseGuards(JwtGuard)
   async search(
@@ -42,13 +65,17 @@ export class AddressesController {
     @Param('id') id: string,
     @Body(ValidationPipe) args: CreateAddressDto,
   ) {
-    return this._addressesService.update(id, args, req.user as UserModel);
+    return this._addressesService.updateUserAddress(
+      id,
+      args,
+      req.user as UserModel,
+    );
   }
 
   @Delete(':id')
   @UseGuards(JwtGuard)
   async delete(@Req() req: Request, @Param('id') id: string) {
-    await this._addressesService.delete(id, req.user as UserModel);
+    return this._addressesService.delete(id, req.user as UserModel);
   }
 
   @Patch(':id/default')

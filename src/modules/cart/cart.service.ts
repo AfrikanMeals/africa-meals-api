@@ -269,4 +269,11 @@ export class CartService {
       })
       .exec();
   }
+
+  /** Supprime toutes les lignes panier du client (ex. déconnexion). */
+  async clearAllForUser(user: UserModel): Promise<void> {
+    await this._cartItemModel
+      .deleteMany({ user: new Types.ObjectId(user.id) })
+      .exec();
+  }
 }

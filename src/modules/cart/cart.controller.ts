@@ -35,6 +35,13 @@ export class CartController {
     return this._cartService.findOneByStoreId(id, req.user as UserModel);
   }
 
+  /** Vide tout le panier du client connecté (doit rester avant `DELETE :id`). */
+  @Delete('me')
+  @UseGuards(JwtGuard)
+  async clearMine(@Req() req: Request): Promise<void> {
+    await this._cartService.clearAllForUser(req.user as UserModel);
+  }
+
   @Patch(':id/quantity')
   @UseGuards(JwtGuard)
   async updateLineQuantity(

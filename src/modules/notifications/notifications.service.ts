@@ -610,19 +610,39 @@ export class NotificationsService {
     if (!t) {
       return;
     }
-    const p = (platform || 'unknown').toLowerCase();
-    const user = await this.userModel.findById(userId).exec();
-    if (!user) {
+    if (!Types.ObjectId.isValid(userId)) {
       return;
     }
-    const list = (user.fcmTokens ?? []).filter((x) => x.token !== t);
-    list.unshift({
-      token: t,
-      platform: p,
-      updatedAt: new Date(),
-    });
-    user.fcmTokens = list.slice(0, MAX_TOKENS_PER_USER);
-    await user.save();
+    const p = (platform || 'unknown').toLowerCase();
+    const now = new Date();
+    // Mise à jour atomique (évite VersionError si d’autres requêtes modifient l’utilisateur en parallèle).
+    // Champ MongoDB = `fcm_tokens` (@Prop name), pas `fcmTokens`.
+    await this.userModel.updateOne(
+      { _id: new Types.ObjectId(userId) },
+      [
+        {
+          $set: {
+            fcm_tokens: {
+              $slice: [
+                {
+                  $concatArrays: [
+                    [{ token: t, platform: p, updatedAt: now }],
+                    {
+                      $filter: {
+                        input: { $ifNull: ['$fcm_tokens', []] },
+                        as: 'x',
+                        cond: { $ne: ['$$x.token', t] },
+                      },
+                    },
+                  ],
+                },
+                MAX_TOKENS_PER_USER,
+              ],
+            },
+          },
+        },
+      ],
+    );
   }
 
   async removeUserFcmToken(userId: string, token: string): Promise<void> {

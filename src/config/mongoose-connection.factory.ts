@@ -20,12 +20,17 @@ function parsePositiveInt(
  * Ex. 20 réplicas × 10 connexions max = 200 : proche d’un plafond Atlas (ex. 216).
  * Garder `MONGOOSE_MAX_POOL` **bas** si plusieurs services (API, WS, scripts) pointent sur le même cluster.
  *
- * Pour **minimiser** les sockets ouvertes :
- * - `maxPoolSize` bas (3–8 par instance Cloud Run / API)
- * - `minPoolSize` à 0 (pas de connexions « au chaud » inutiles)
- * - `maxIdleTimeMS` modéré : le pilote ferme les connexions inactives du pool
- * - `socketTimeoutMS` : évite les opérations bloquées indéfiniment
- * - `enableShutdownHooks()` côté Nest (voir `main.ts`) pour couper proprement au SIGTERM
+ * **Défaut `maxPoolSize`** : assez haut pour éviter `MongoWaitQueueTimeoutError` en dev
+ * (Nest watch + mobile + agrégations), tout en laissant `MONGOOSE_MAX_POOL` surcharger.
+ * Sur Atlas, vérifier le plafond de connexions du tier ; baisser le pool si plusieurs services
+ * partagent le même cluster.
+ *
+ * Autres réglages utiles :
+ * - `minPoolSize` à 0 : pas de connexions « au chaud » inutiles
+ * - `maxIdleTimeMS` : fermeture des sockets inactives dans le pool
+ * - `waitQueueTimeoutMS` : temps max en file d’attente d’une socket du pool
+ * - `socketTimeoutMS` : limite la durée d’une opération sur une socket
+ * - `enableShutdownHooks()` côté Nest (`main.ts`) pour couper proprement au SIGTERM
  */
 export function buildMongooseRootOptions(
   config: ConfigService,
@@ -48,8 +53,8 @@ export function buildMongooseRootOptions(
 
   const maxPoolSize = parsePositiveInt(
     config.get<string>('MONGOOSE_MAX_POOL'),
-    5,
-    12,
+    20,
+    100,
   );
 
   const minPoolSize = Math.min(
@@ -71,7 +76,7 @@ export function buildMongooseRootOptions(
 
   const waitQueueTimeoutMS = parsePositiveInt(
     config.get<string>('MONGOOSE_WAIT_QUEUE_MS'),
-    10_000,
+    30_000,
     120_000,
   );
 
@@ -89,8 +94,8 @@ export function buildMongooseRootOptions(
 
   const maxConnecting = parsePositiveInt(
     config.get<string>('MONGOOSE_MAX_CONNECTING'),
-    2,
-    5,
+    3,
+    8,
   );
 
   return {

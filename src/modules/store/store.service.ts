@@ -728,15 +728,11 @@ export class StoreService {
     }
     const addrDoc = store.address as AddressModel & { _id: { toString(): string } };
     const addrId = addrDoc._id.toString();
-    await this._addressesService.update(
-      addrId,
-      {
-        ...args.address,
-        latitude: args.address.latitude,
-        longitude: args.address.longitude,
-      },
-      user,
-    );
+    await this._addressesService.patchById(addrId, {
+      ...args.address,
+      latitude: args.address.latitude,
+      longitude: args.address.longitude,
+    });
 
     const wasRevision = store.status === StoreStatusEnum.REVISION;
     const shippingZones = args.supportsShipping
