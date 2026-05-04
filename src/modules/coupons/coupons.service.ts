@@ -13,7 +13,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import {
   StoreCouponDiscountTypeEnum,
   StoreCouponModel,
-} from '@schemas/store-coupon.schema';
+} from '@schemas/store_coupon.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
