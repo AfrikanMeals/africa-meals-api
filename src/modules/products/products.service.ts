@@ -935,52 +935,179 @@ export class ProductsService {
         {
           $addFields: {
             category: {
-              $cond: [
-                { $gt: [{ $size: { $ifNull: ['$_cat', []] } }, 0] },
-                {
-                  _id: { $arrayElemAt: ['$_cat._id', 0] },
-                  id: {
-                    $toString: { $arrayElemAt: ['$_cat._id', 0] },
-                  },
-                  title: {
-                    $ifNull: [{ $arrayElemAt: ['$_cat.title', 0] }, ''],
-                  },
-                  icon: {
-                    $ifNull: [{ $arrayElemAt: ['$_cat.icon', 0] }, ''],
-                  },
-                  isEnabled: {
-                    $ifNull: [
-                      { $arrayElemAt: ['$_cat.isEnabled', 0] },
-                      true,
-                    ],
-                  },
-                  createdAt: { $arrayElemAt: ['$_cat.createdAt', 0] },
-                  updatedAt: { $arrayElemAt: ['$_cat.updatedAt', 0] },
+              $let: {
+                vars: { c0: { $arrayElemAt: ['$_cat', 0] } },
+                in: {
+                  $cond: [
+                    { $ne: ['$$c0', null] },
+                    {
+                      _id: '$$c0._id',
+                      id: { $toString: '$$c0._id' },
+                      title: { $ifNull: ['$$c0.title', ''] },
+                      icon: { $ifNull: ['$$c0.icon', ''] },
+                      isEnabled: {
+                        $ifNull: [
+                          {
+                            $ifNull: ['$$c0.isEnabled', '$$c0.is_enabled'],
+                          },
+                          true,
+                        ],
+                      },
+                      createdAt: '$$c0.createdAt',
+                      updatedAt: '$$c0.updatedAt',
+                    },
+                    {
+                      id: '',
+                      title: '',
+                      icon: '',
+                      isEnabled: true,
+                      createdAt: null,
+                      updatedAt: null,
+                    },
+                  ],
                 },
-                {
-                  id: '',
-                  title: '',
-                  icon: '',
-                  isEnabled: true,
-                  createdAt: null,
-                  updatedAt: null,
-                },
-              ],
+              },
             },
             store: {
               $cond: [
                 { $gt: [{ $size: { $ifNull: ['$_st', []] } }, 0] },
                 {
-                  $mergeObjects: [
-                    { $arrayElemAt: ['$_st', 0] },
-                    {
-                      id: {
-                        $toString: { $arrayElemAt: ['$_st._id', 0] },
+                  $let: {
+                    vars: { st0: { $arrayElemAt: ['$_st', 0] } },
+                    in: {
+                      _id: '$$st0._id',
+                      id: { $toString: '$$st0._id' },
+                      name: { $ifNull: ['$$st0.name', ''] },
+                      bio: { $ifNull: ['$$st0.bio', ''] },
+                      email: { $ifNull: ['$$st0.email', ''] },
+                      phoneNumber: {
+                        $ifNull: [
+                          {
+                            $ifNull: [
+                              '$$st0.phoneNumber',
+                              '$$st0.phone_number',
+                            ],
+                          },
+                          '',
+                        ],
                       },
+                      currency: { $ifNull: ['$$st0.currency', 'CAD'] },
+                      profileImage: {
+                        $ifNull: [
+                          {
+                            $ifNull: [
+                              '$$st0.profileImage',
+                              '$$st0.profile_image',
+                            ],
+                          },
+                          '',
+                        ],
+                      },
+                      acceptsOrders: {
+                        $ifNull: [
+                          {
+                            $ifNull: [
+                              '$$st0.acceptsOrders',
+                              '$$st0.accepts_orders',
+                            ],
+                          },
+                          false,
+                        ],
+                      },
+                      canCreateProducts: {
+                        $ifNull: [
+                          {
+                            $ifNull: [
+                              '$$st0.canCreateProducts',
+                              '$$st0.can_create_products',
+                            ],
+                          },
+                          false,
+                        ],
+                      },
+                      supportsShipping: {
+                        $ifNull: [
+                          {
+                            $ifNull: [
+                              '$$st0.supportsShipping',
+                              '$$st0.supports_shipping',
+                            ],
+                          },
+                          false,
+                        ],
+                      },
+                      status: {
+                        $toString: {
+                          $ifNull: ['$$st0.status', 'INACTIVE'],
+                        },
+                      },
+                      address: '$$st0.address',
+                      owner: '$$st0.owner',
+                      likedBy: {
+                        $ifNull: [
+                          {
+                            $ifNull: ['$$st0.likedBy', '$$st0.liked_by'],
+                          },
+                          [],
+                        ],
+                      },
+                      shippingZones: {
+                        $map: {
+                          input: {
+                            $ifNull: [
+                              {
+                                $ifNull: [
+                                  '$$st0.shippingZones',
+                                  '$$st0.shipping_zones',
+                                ],
+                              },
+                              [],
+                            ],
+                          },
+                          as: 'z',
+                          in: {
+                            minDistance: {
+                              $ifNull: [
+                                {
+                                  $ifNull: [
+                                    '$$z.minDistance',
+                                    '$$z.min_distance',
+                                  ],
+                                },
+                                0,
+                              ],
+                            },
+                            maxDistance: {
+                              $ifNull: [
+                                {
+                                  $ifNull: [
+                                    '$$z.maxDistance',
+                                    '$$z.max_distance',
+                                  ],
+                                },
+                                0,
+                              ],
+                            },
+                            price: { $ifNull: ['$$z.price', 0] },
+                          },
+                        },
+                      },
+                      averageRating: {
+                        $ifNull: ['$$st0.averageRating', 0],
+                      },
+                      latitude: {
+                        $ifNull: ['$$st0.latitude', null],
+                      },
+                      longitude: {
+                        $ifNull: ['$$st0.longitude', null],
+                      },
+                      createdAt: '$$st0.createdAt',
+                      updatedAt: '$$st0.updatedAt',
                     },
-                  ],
+                  },
                 },
                 {
+                  _id: null,
                   acceptsOrders: false,
                   supportsShipping: false,
                   id: '',
@@ -999,6 +1126,8 @@ export class ProductsService {
                   canCreateProducts: false,
                   shippingZones: [],
                   averageRating: 0,
+                  latitude: null,
+                  longitude: null,
                 },
               ],
             },
