@@ -219,6 +219,64 @@ export class SearchService {
                 null,
               ],
             },
+            latitude: {
+              $cond: [
+                {
+                  $and: [
+                    { $gt: [{ $size: { $ifNull: ['$_storeAddr', []] } }, 0] },
+                    {
+                      $gte: [
+                        {
+                          $size: {
+                            $ifNull: [
+                              '$_storeResolvedAddr.location.coordinates',
+                              [],
+                            ],
+                          },
+                        },
+                        2,
+                      ],
+                    },
+                  ],
+                },
+                {
+                  $arrayElemAt: [
+                    '$_storeResolvedAddr.location.coordinates',
+                    1,
+                  ],
+                },
+                null,
+              ],
+            },
+            longitude: {
+              $cond: [
+                {
+                  $and: [
+                    { $gt: [{ $size: { $ifNull: ['$_storeAddr', []] } }, 0] },
+                    {
+                      $gte: [
+                        {
+                          $size: {
+                            $ifNull: [
+                              '$_storeResolvedAddr.location.coordinates',
+                              [],
+                            ],
+                          },
+                        },
+                        2,
+                      ],
+                    },
+                  ],
+                },
+                {
+                  $arrayElemAt: [
+                    '$_storeResolvedAddr.location.coordinates',
+                    0,
+                  ],
+                },
+                null,
+              ],
+            },
           },
         },
       },
@@ -494,6 +552,34 @@ export class SearchService {
           }
         : null;
 
+    let storeLatNum: number | undefined;
+    let storeLngNum: number | undefined;
+    const rawLat = st?.['latitude'];
+    const rawLng = st?.['longitude'];
+    if (rawLat != null && rawLng != null) {
+      const la = Number(rawLat);
+      const ln = Number(rawLng);
+      if (Number.isFinite(la) && Number.isFinite(ln)) {
+        storeLatNum = la;
+        storeLngNum = ln;
+      }
+    }
+    if (
+      (storeLatNum === undefined || storeLngNum === undefined) &&
+      storeAddress != null
+    ) {
+      const loc = storeAddress.location as Record<string, unknown> | null;
+      const coords = loc?.['coordinates'];
+      if (Array.isArray(coords) && coords.length >= 2) {
+        const ln = Number(coords[0]);
+        const la = Number(coords[1]);
+        if (Number.isFinite(la) && Number.isFinite(ln)) {
+          storeLatNum = la;
+          storeLngNum = ln;
+        }
+      }
+    }
+
     return {
       _id: String(doc._id),
       id: String(doc._id),
@@ -559,6 +645,12 @@ export class SearchService {
                 ? (st['shippingZones'] as unknown[])
                 : [],
               averageRating: Number(st['averageRating'] ?? 0),
+              ...(storeLatNum !== undefined && storeLngNum !== undefined
+                ? {
+                    latitude: storeLatNum,
+                    longitude: storeLngNum,
+                  }
+                : {}),
             }
           : {
               id: '',
@@ -768,6 +860,64 @@ export class SearchService {
                   location: { $ifNull: ['$_storeResolvedAddr.location', null] },
                   createdAt: '$_storeResolvedAddr.createdAt',
                   updatedAt: '$_storeResolvedAddr.updatedAt',
+                },
+                null,
+              ],
+            },
+            latitude: {
+              $cond: [
+                {
+                  $and: [
+                    { $gt: [{ $size: { $ifNull: ['$_storeAddr', []] } }, 0] },
+                    {
+                      $gte: [
+                        {
+                          $size: {
+                            $ifNull: [
+                              '$_storeResolvedAddr.location.coordinates',
+                              [],
+                            ],
+                          },
+                        },
+                        2,
+                      ],
+                    },
+                  ],
+                },
+                {
+                  $arrayElemAt: [
+                    '$_storeResolvedAddr.location.coordinates',
+                    1,
+                  ],
+                },
+                null,
+              ],
+            },
+            longitude: {
+              $cond: [
+                {
+                  $and: [
+                    { $gt: [{ $size: { $ifNull: ['$_storeAddr', []] } }, 0] },
+                    {
+                      $gte: [
+                        {
+                          $size: {
+                            $ifNull: [
+                              '$_storeResolvedAddr.location.coordinates',
+                              [],
+                            ],
+                          },
+                        },
+                        2,
+                      ],
+                    },
+                  ],
+                },
+                {
+                  $arrayElemAt: [
+                    '$_storeResolvedAddr.location.coordinates',
+                    0,
+                  ],
                 },
                 null,
               ],
