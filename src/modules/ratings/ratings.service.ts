@@ -5,12 +5,17 @@ import { ProductRatingModel } from '@schemas/product_rating.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { StoreRatingModel } from '@schemas/store_rating.schema';
 import { UserModel } from '@schemas/user.schema';
-import { Model } from 'mongoose';
+import { Model, PipelineStage, Types } from 'mongoose';
+import { DEMO_PRODUCT_RATER_EMAIL_RE } from './demo-product-rating-users';
 import { CreateRatingDto } from './dto/ratings.dto';
 import type {
   LandingProductReviewItem,
   LandingProductReviewsResponse,
 } from './dto/landing-product-review.dto';
+import type {
+  ProductReviewPublicRow,
+  ProductReviewsPageResponse,
+} from './dto/product-reviews-page.dto';
 
 @Injectable()
 export class RatingsService {
@@ -73,6 +78,109 @@ export class RatingsService {
    * Avis produits (notes ≥ 4, commentaire lisible) pour le site vitrine — sans JWT.
    * Noms légers (prénom + initiale) ; pas d’e-mail ; exclut les comptes de seed démo.
    */
+  /**
+   * Avis d’un plat, tri récents d’abord — **public** (fiche produit app / web).
+   * Pagination seule : pas de populate lourd hors `user` minimal.
+   */
+  async listProductReviewsPaginated(
+    productId: string,
+    opts: { page: number; take: number },
+  ): Promise<ProductReviewsPageResponse> {
+    const { page, take } = opts;
+    if (!Types.ObjectId.isValid(productId)) {
+      return { items: [], total: 0, page, take, hasMore: false };
+    }
+    const oid = new Types.ObjectId(productId);
+    const skip = (page - 1) * take;
+
+    /** Avis réels uniquement : exclut les comptes démo seed (`demo-product-rating-users`). */
+    const pipeline: PipelineStage[] = [
+      { $match: { product: oid } },
+      {
+        $lookup: {
+          from: 'users',
+          let: { uid: '$user' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$_id', '$$uid'] } } },
+            {
+              $match: {
+                $or: [
+                  { email: { $exists: false } },
+                  { email: null },
+                  { email: { $not: DEMO_PRODUCT_RATER_EMAIL_RE } },
+                ],
+              },
+            },
+          ],
+          as: '_u',
+        },
+      },
+      { $unwind: { path: '$_u' } },
+      { $sort: { createdAt: -1 } },
+      {
+        $facet: {
+          meta: [{ $count: 'n' }],
+          pageRows: [{ $skip: skip }, { $limit: take }],
+        },
+      },
+    ];
+
+    type AggOut = {
+      meta?: { n: number }[];
+      pageRows?: Record<string, unknown>[];
+    };
+    const agg = await this._productRatingModel
+      .aggregate<AggOut>(pipeline)
+      .exec();
+    const bucket = agg[0] ?? { meta: [], pageRows: [] };
+    const total = bucket.meta?.[0]?.n ?? 0;
+    const raw = bucket.pageRows ?? [];
+
+    type LeanUser = {
+      _id?: unknown;
+      fullName?: string;
+      profileImage?: string;
+    };
+
+    const items: ProductReviewPublicRow[] = raw.map((r) => {
+      const usr = r._u as LeanUser | null | undefined;
+      const commentRaw =
+        typeof r.comment === 'string' ? r.comment.trim() : '';
+      const uid =
+        usr && typeof usr === 'object' && usr._id != null
+          ? String(usr._id)
+          : '';
+      const rate = Math.min(5, Math.max(1, Math.round(Number(r.rate) || 0)));
+      const createdAt =
+        r.createdAt instanceof Date
+          ? r.createdAt.toISOString()
+          : String(r.createdAt ?? new Date().toISOString());
+      const updatedAt =
+        r.updatedAt instanceof Date
+          ? r.updatedAt.toISOString()
+          : String(r.updatedAt ?? createdAt);
+      return {
+        id: String(r._id),
+        rate,
+        comment: commentRaw.length > 0 ? commentRaw : null,
+        createdAt,
+        updatedAt,
+        product: productId,
+        user: {
+          id: uid,
+          fullName: (usr?.fullName ?? '').trim(),
+          profileImage:
+            typeof usr?.profileImage === 'string' && usr.profileImage.trim()
+              ? usr.profileImage.trim()
+              : null,
+        },
+      };
+    });
+
+    const hasMore = skip + items.length < total;
+    return { items, total, page, take, hasMore };
+  }
+
   async listLandingProductReviews(maxRaw?: number): Promise<LandingProductReviewsResponse> {
     const max = Math.min(10, Math.max(1, Math.round(Number(maxRaw)) || 10));
 

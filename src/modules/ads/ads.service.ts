@@ -353,8 +353,136 @@ export class AdsService implements OnModuleInit {
   }
 
   /**
+   * Complète `store` quand `.populate` laisse un ObjectId (ref, version driver, etc.) :
+   * sans ça, le filtre public excluait toutes les pubs boutique.
+   */
+  private async hydrateStoresForPublicAds(
+    docs: Record<string, unknown>[],
+  ): Promise<void> {
+    const needHydration: { index: number; id: Types.ObjectId }[] = [];
+
+    for (let i = 0; i < docs.length; i++) {
+      const st = docs[i]['store'];
+      if (st == null) continue;
+      if (st instanceof Types.ObjectId) {
+        needHydration.push({ index: i, id: st });
+        continue;
+      }
+      if (typeof st === 'object' && !Array.isArray(st)) {
+        const o = st as Record<string, unknown>;
+        const hasPopulatedFields =
+          typeof o['status'] === 'string' || typeof o['name'] === 'string';
+        if (!hasPopulatedFields) {
+          const idRaw = o['_id'] ?? o['id'];
+          try {
+            const id =
+              idRaw instanceof Types.ObjectId
+                ? idRaw
+                : new Types.ObjectId(String(idRaw));
+            needHydration.push({ index: i, id });
+          } catch {
+            // id invalide
+          }
+        }
+      }
+    }
+
+    if (!needHydration.length) return;
+
+    const uniqueIds = [
+      ...new Map(needHydration.map((x) => [x.id.toString(), x.id])).values(),
+    ];
+
+    const stores = await this._storeModel
+      .find({
+        _id: { $in: uniqueIds },
+        status: StoreStatusEnum.ACTIVE,
+      })
+      .select('name profileImage status')
+      .lean()
+      .exec();
+
+    const byId = new Map(
+      stores.map((s) => {
+        const sid = String((s as { _id?: unknown })._id ?? '');
+        return [sid, s] as const;
+      }),
+    );
+
+    for (const { index, id } of needHydration) {
+      const full = byId.get(id.toString());
+      if (full != null) {
+        docs[index]['store'] = full as unknown;
+      }
+    }
+  }
+
+  /**
+   * Pub « liée boutique » : `store` peuplé (pas une simple ref orpheline) — distincte des bannières globales admin.
+   */
+  private isShopRelatedPublicAd(d: AdModel): boolean {
+    const st = d.store as
+      | { status?: string }
+      | Types.ObjectId
+      | null
+      | undefined;
+    if (st == null) return false;
+    if (st instanceof Types.ObjectId) return false;
+    return typeof st === 'object';
+  }
+
+  /**
+   * Réordonne les pubs pour qu’au moins **2/3** des entrées soient des pubs liées boutique,
+   * lorsque la base contient assez de telles pubs. Sinon : toutes les pubs boutique en tête, puis les globales.
+   * (Même ensemble d’éléments, ordre seulement.)
+   */
+  private orderPublicAdsByMinTwoThirdsShop(orderedAll: AdModel[]): AdModel[] {
+    const shopAds: AdModel[] = [];
+    const globalAds: AdModel[] = [];
+    for (const d of orderedAll) {
+      if (this.isShopRelatedPublicAd(d)) {
+        shopAds.push(d);
+      } else {
+        globalAds.push(d);
+      }
+    }
+    const n = shopAds.length + globalAds.length;
+    if (n === 0) {
+      return [];
+    }
+    const minShopSlots = Math.ceil((2 * n) / 3);
+    if (shopAds.length < minShopSlots) {
+      return [...shopAds, ...globalAds];
+    }
+    const remainingShops = [...shopAds];
+    const remainingGlobals = [...globalAds];
+    const out: AdModel[] = [];
+    while (out.length < n) {
+      for (let k = 0; k < 2 && remainingShops.length > 0 && out.length < n; k++) {
+        out.push(remainingShops.shift()!);
+      }
+      if (out.length >= n) break;
+      if (remainingGlobals.length > 0) {
+        out.push(remainingGlobals.shift()!);
+      } else {
+        while (remainingShops.length > 0 && out.length < n) {
+          out.push(remainingShops.shift()!);
+        }
+      }
+    }
+    while (remainingGlobals.length > 0 && out.length < n) {
+      out.push(remainingGlobals.shift()!);
+    }
+    while (remainingShops.length > 0 && out.length < n) {
+      out.push(remainingShops.shift()!);
+    }
+    return out;
+  }
+
+  /**
    * Bannières pour l’accueil public : globales (sans boutique) +
    * publicités boutiques actives (boutique ACTIVE, dates valides).
+   * Ordre renvoyé : au moins 2/3 de pubs **liées boutique** (`store` défini) quand le stock le permet.
    */
   async listPublic(): Promise<AdModel[]> {
     const now = Date.now();
@@ -371,8 +499,10 @@ export class AdsService implements OnModuleInit {
       .sort({ sortOrder: 1 })
       .lean()
       .exec();
+    const docs = raw as unknown as Record<string, unknown>[];
+    await this.hydrateStoresForPublicAds(docs);
     const t = new Date();
-    const data = raw.filter((d) => {
+    const data = docs.filter((d) => {
       if (
         !this.passesDateWindow(
           d.validFrom as Date | undefined,
@@ -395,8 +525,9 @@ export class AdsService implements OnModuleInit {
       }
       return false;
     }) as unknown as AdModel[];
-    this._listCache = { at: now, data };
-    return data;
+    const ordered = this.orderPublicAdsByMinTwoThirdsShop(data);
+    this._listCache = { at: now, data: ordered };
+    return ordered;
   }
 
   /** @deprecated Utiliser `listPublic` (même comportement). */

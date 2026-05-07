@@ -1,4 +1,4 @@
-import { Controller, Get, Header, Query } from '@nestjs/common';
+import { Controller, Get, Header, Param, Query } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { RatingsService } from './ratings.service';
 
@@ -6,6 +6,28 @@ import { RatingsService } from './ratings.service';
 @Controller('ratings')
 export class RatingsController {
   constructor(private readonly ratingsService: RatingsService) {}
+
+  /**
+   * Avis d’un plat (pagination) — public, pour la fiche produit mobile / web.
+   */
+  @Get('products/:productId/reviews')
+  @ApiOperation({
+    summary: 'Avis paginés par plat',
+    description:
+      '`page` ≥ 1, `take` 1–50 (défaut 20). Tri : plus récents en premier.',
+  })
+  listProductReviews(
+    @Param('productId') productId: string,
+    @Query('page') pageRaw?: string,
+    @Query('take') takeRaw?: string,
+  ) {
+    const page = Math.max(1, parseInt(pageRaw ?? '1', 10) || 1);
+    const take = Math.min(50, Math.max(1, parseInt(takeRaw ?? '20', 10) || 20));
+    return this.ratingsService.listProductReviewsPaginated(productId, {
+      page,
+      take,
+    });
+  }
 
   /**
    * Avis produits récents (note ≥ 4) pour la landing web — public, sans authentification.

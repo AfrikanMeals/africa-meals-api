@@ -1,5 +1,6 @@
 import { MediasService } from '@modules/medias/medias.service';
 import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
+import { isDemoProductRaterEmail } from '@modules/ratings/demo-product-rating-users';
 import { RatingsService } from '@modules/ratings/ratings.service';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import {
@@ -110,7 +111,7 @@ export class ProductsService {
   }
 
   async findOneById(id: string) {
-    return await this._productModel
+    const doc = await this._productModel
       .findOne({ _id: id })
       .populate('category')
       .populate({
@@ -118,7 +119,7 @@ export class ProductsService {
         options: { limit: 120, sort: { createdAt: -1 } },
         populate: {
           path: 'user',
-          select: 'fullName profileImage',
+          select: 'fullName profileImage email',
         },
       })
       .populate('likedBy')
@@ -127,6 +128,14 @@ export class ProductsService {
         populate: { path: 'address' },
       })
       .exec();
+    if (doc?.ratings?.length) {
+      type RWithUser = { user?: { email?: string } };
+      const kept = (doc.ratings as unknown as RWithUser[]).filter(
+        (r) => !isDemoProductRaterEmail(r?.user?.email),
+      );
+      doc.set('ratings', kept as typeof doc.ratings);
+    }
+    return doc;
   }
 
   async existsInStore(title: string, storeId: string) {
@@ -561,6 +570,9 @@ export class ProductsService {
       }
       return this.findOneById(product._id.toString());
     } catch (e) {
+      if (e instanceof ConflictException || e instanceof NotFoundException) {
+        throw e;
+      }
       throw new BadRequestException('error_creating_rating');
     }
   }

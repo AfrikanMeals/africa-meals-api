@@ -1,3 +1,4 @@
+import { DrinksModule } from '@modules/drinks/drinks.module';
 import { OffersModule } from '@modules/offers/offers.module';
 import { ProductsModule } from '@modules/products/products.module';
 import { Module } from '@nestjs/common';
@@ -12,6 +13,7 @@ import { CartService } from './cart.service';
   imports: [
     ProductsModule,
     OffersModule,
+    DrinksModule,
     MongooseModule.forFeature([
       { name: CartItemModel.name, schema: CartItemSchema },
     ]),

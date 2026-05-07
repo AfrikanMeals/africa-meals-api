@@ -68,11 +68,16 @@ export class ShopHomeService {
   async load(user?: UserModel, productsTake = 48): Promise<ShopHomePayload> {
     const key = this.cacheKey(user);
     const hit = await this._cache.get<ShopHomePayload>(key);
-    if (hit != null) {
-      return hit;
-    }
 
     const take = Math.min(120, Math.max(8, Math.floor(productsTake)));
+
+    const mapAds = (adDocs: unknown[]) =>
+      this._docsToPlainJson(adDocs).map((row) => slimAdForPublicClient(row));
+
+    if (hit != null) {
+      const adDocs = await this._ads.list();
+      return { ...hit, ads: mapAds(adDocs) };
+    }
 
     const [announcementDocs, adDocs, categories, products] = await Promise.all([
       this._announcements.list(),
@@ -84,9 +89,7 @@ export class ShopHomeService {
     const announcements = this._docsToPlainJson(announcementDocs).map((row) =>
       slimAnnouncementForClient(row),
     );
-    const ads = this._docsToPlainJson(adDocs).map((row) =>
-      slimAdForPublicClient(row),
-    );
+    const ads = mapAds(adDocs);
     const categoriesSlim = (categories as Record<string, unknown>[]).map(
       (row) => slimProductCategoryForPublicClient(row),
     );

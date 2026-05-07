@@ -1,6 +1,12 @@
+import { DrinksService } from '@modules/drinks/drinks.service';
 import { OffersService } from '@modules/offers/offers.service';
 import { ProductsService } from '@modules/products/products.service';
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { StoreModel } from '@schemas/store.schema';
@@ -13,6 +19,44 @@ import {
 } from './dto/cart.dto';
 import { mapInChunks } from '@utils/map-in-chunks';
 
+function storeIdFromPopulatedCartItem(item: {
+  store?: unknown;
+}): string {
+  const s = item.store;
+  if (s && typeof s === 'object') {
+    const o = s as { _id?: unknown; id?: unknown };
+    if (o._id != null) {
+      return String(o._id);
+    }
+    if (o.id != null) {
+      return String(o.id);
+    }
+  }
+  return '';
+}
+
+/** Forme proche d’un produit pour les clients (ex. app mobile `Entity`). */
+function drinkEntityForCartApi(drink: {
+  id: string;
+  name: string;
+  description: string;
+  priceCad: number;
+  imageUrl?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}) {
+  const now = new Date().toISOString();
+  return {
+    _id: drink.id,
+    title: drink.name,
+    description: drink.description ?? '',
+    price: drink.priceCad,
+    profileImage: drink.imageUrl,
+    createdAt: drink.createdAt ?? now,
+    updatedAt: drink.updatedAt ?? now,
+  };
+}
+
 @Injectable()
 export class CartService {
   @InjectModel(CartItemModel.name)
@@ -23,6 +67,9 @@ export class CartService {
 
   @Inject(OffersService)
   private readonly _offersService: OffersService;
+
+  @Inject(DrinksService)
+  private readonly _drinksService: DrinksService;
 
   async findOneByStoreId(
     storeId: string,
@@ -82,6 +129,19 @@ export class CartService {
       return {
         ...item.toJSON(),
         entity: product,
+      };
+    } else if (item.type === CartItemTypeEnum.DRINK) {
+      const storeId = storeIdFromPopulatedCartItem(item);
+      const drink = await this._drinksService.findOneInStoreCatalog(
+        storeId,
+        item.entityId,
+      );
+      if (!drink) {
+        throw new NotFoundException('drink_not_found');
+      }
+      return {
+        ...item.toJSON(),
+        entity: drinkEntityForCartApi(drink),
       };
     } else {
       const product = await this._productsService.findOneById(item.productId);
@@ -211,9 +271,33 @@ export class CartService {
     user: UserModel,
     store: StoreModel,
   ): Promise<Partial<CartItemModel>> {
+    const qtyReq = +(args.quantity ?? 1);
+    let priceForLine = args.price;
+
+    if (args.type === CartItemTypeEnum.DRINK) {
+      const drink = await this._drinksService.findOneInStoreCatalog(
+        store.id,
+        args.itemId,
+      );
+      if (!drink) {
+        throw new NotFoundException('drink_not_found');
+      }
+      priceForLine = drink.priceCad;
+      const existing = await this.itemExistsInCart(store, args, user);
+      const newTotalQty = (existing?.quantity ?? 0) + qtyReq;
+      if (drink.quantite < newTotalQty) {
+        throw new BadRequestException('drink_insufficient_stock');
+      }
+    }
+
     let item = await this.itemExistsInCart(store, args, user);
     if (item) {
-      await this.updateQuantity(item, (item.quantity ?? 0) + args.quantity);
+      await this.updateQuantity(item, (item.quantity ?? 0) + qtyReq);
+      if (args.type === CartItemTypeEnum.DRINK) {
+        await this._cartItemModel
+          .updateOne({ _id: item.id }, { $set: { price: priceForLine } })
+          .exec();
+      }
     } else {
       item = await this._cartItemModel.create({
         user: new Types.ObjectId(user.id),
@@ -223,8 +307,8 @@ export class CartService {
           productId: args.productId,
         }),
         type: args.type,
-        quantity: +(args.quantity ?? 1),
-        price: args.price,
+        quantity: qtyReq,
+        price: priceForLine,
       });
     }
 

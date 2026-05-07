@@ -103,6 +103,30 @@ export class DrinksService {
     return rows.map((r) => mapDrinkDoc(r as Record<string, unknown>));
   }
 
+  /**
+   * Une boisson du catalogue client (boutique + stock > 0), ou `null`.
+   */
+  async findOneInStoreCatalog(
+    storeId: string,
+    drinkId: string,
+  ): Promise<ReturnType<typeof mapDrinkDoc> | null> {
+    if (!Types.ObjectId.isValid(storeId) || !Types.ObjectId.isValid(drinkId)) {
+      return null;
+    }
+    const row = await this._drinkModel
+      .findOne({
+        _id: new Types.ObjectId(drinkId),
+        store: new Types.ObjectId(storeId),
+        quantite: { $gt: 0 },
+      })
+      .lean()
+      .exec();
+    if (!row) {
+      return null;
+    }
+    return mapDrinkDoc(row as Record<string, unknown>);
+  }
+
   async createForStore(
     storeId: string,
     dto: CreateDrinkDto,
