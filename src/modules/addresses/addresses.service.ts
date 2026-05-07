@@ -178,19 +178,21 @@ export class AddressesService {
    */
   async patchById(id: string, args: CreateAddressDto) {
     const { latitude, longitude, label, ...rest } = args;
-    await this.addressModel.updateOne(
-      { _id: id },
-      {
-        ...rest,
-        ...(label !== undefined && {
-          label: label?.trim() || 'Domicile',
-        }),
-        location: {
-          type: 'Point',
-          coordinates: [longitude, latitude],
-        },
-      },
-    );
+    const patch: Record<string, unknown> = { ...rest };
+    if (label !== undefined) {
+      patch.label = label?.trim() || 'Domicile';
+    }
+    const lat =
+      latitude !== undefined && latitude !== null ? Number(latitude) : NaN;
+    const lon =
+      longitude !== undefined && longitude !== null ? Number(longitude) : NaN;
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      patch.location = {
+        type: 'Point',
+        coordinates: [lon, lat],
+      };
+    }
+    await this.addressModel.updateOne({ _id: id }, { $set: patch });
     return this.addressModel.findOne({ _id: id });
   }
 

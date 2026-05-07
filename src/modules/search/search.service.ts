@@ -130,6 +130,19 @@ export class SearchService {
         },
       },
       {
+        $lookup: {
+          from: 'addresses',
+          localField: 'store.address',
+          foreignField: '_id',
+          as: '_storeAddr',
+        },
+      },
+      {
+        $addFields: {
+          _storeResolvedAddr: { $arrayElemAt: ['$_storeAddr', 0] },
+        },
+      },
+      {
         $project: {
           _id: 1,
           title: 1,
@@ -165,10 +178,13 @@ export class SearchService {
             name: '$store.name',
             status: { $toString: '$store.status' },
             bio: { $ifNull: ['$store.bio', ''] },
+            email: { $ifNull: ['$store.email', ''] },
+            phoneNumber: { $ifNull: ['$store.phoneNumber', ''] },
             acceptsOrders: { $ifNull: ['$store.acceptsOrders', true] },
             supportsShipping: { $ifNull: ['$store.supportsShipping', false] },
             currency: { $ifNull: ['$store.currency', 'CAD'] },
             profileImage: { $ifNull: ['$store.profileImage', ''] },
+            likedBy: { $ifNull: ['$store.likedBy', []] },
             owner: {
               $convert: {
                 input: '$store.owner',
@@ -181,6 +197,28 @@ export class SearchService {
             updatedAt: '$store.updatedAt',
             canCreateProducts: { $ifNull: ['$store.canCreateProducts', false] },
             averageRating: { $ifNull: ['$store.averageRating', 0] },
+            address: {
+              $cond: [
+                { $gt: [{ $size: { $ifNull: ['$_storeAddr', []] } }, 0] },
+                {
+                  _id: { $toString: '$_storeResolvedAddr._id' },
+                  isDefault: { $ifNull: ['$_storeResolvedAddr.is_default', false] },
+                  label: { $ifNull: ['$_storeResolvedAddr.label', ''] },
+                  address: { $ifNull: ['$_storeResolvedAddr.address', ''] },
+                  country: { $ifNull: ['$_storeResolvedAddr.country', ''] },
+                  city: { $ifNull: ['$_storeResolvedAddr.city', ''] },
+                  countryCode: {
+                    $ifNull: ['$_storeResolvedAddr.country_code', ''],
+                  },
+                  zipCode: { $ifNull: ['$_storeResolvedAddr.zip_code', ''] },
+                  type: { $ifNull: ['$_storeResolvedAddr.type', 'USER'] },
+                  location: { $ifNull: ['$_storeResolvedAddr.location', null] },
+                  createdAt: '$_storeResolvedAddr.createdAt',
+                  updatedAt: '$_storeResolvedAddr.updatedAt',
+                },
+                null,
+              ],
+            },
           },
         },
       },
@@ -423,6 +461,39 @@ export class SearchService {
           ? String(ownerRaw)
           : '';
 
+    const likedByRaw = st?.['likedBy'];
+    const storeLikedBy = Array.isArray(likedByRaw)
+      ? likedByRaw.map((x) =>
+          x != null && typeof x === 'object' && 'toString' in x
+            ? (x as Types.ObjectId).toString()
+            : String(x),
+        )
+      : [];
+
+    const addrRaw = st?.['address'] as Record<string, unknown> | null | undefined;
+    const storeAddress =
+      addrRaw != null &&
+      typeof addrRaw === 'object' &&
+      (addrRaw['address'] != null ||
+        addrRaw['city'] != null ||
+        addrRaw['location'] != null)
+        ? {
+            _id: String(addrRaw['_id'] ?? ''),
+            label: String(addrRaw['label'] ?? ''),
+            address: String(addrRaw['address'] ?? ''),
+            country: String(addrRaw['country'] ?? ''),
+            city: String(addrRaw['city'] ?? ''),
+            countryCode: String(addrRaw['countryCode'] ?? ''),
+            zipCode: String(addrRaw['zipCode'] ?? ''),
+            type: String(addrRaw['type'] ?? 'USER'),
+            location: addrRaw['location'] ?? null,
+            createdAt:
+              addrRaw['createdAt'] != null ? toIso(addrRaw['createdAt']) : '',
+            updatedAt:
+              addrRaw['updatedAt'] != null ? toIso(addrRaw['updatedAt']) : '',
+          }
+        : null;
+
     return {
       _id: String(doc._id),
       id: String(doc._id),
@@ -478,6 +549,8 @@ export class SearchService {
               email: String(st['email'] ?? ''),
               phoneNumber: String(st['phoneNumber'] ?? ''),
               profileImage: String(st['profileImage'] ?? ''),
+              likedBy: storeLikedBy,
+              address: storeAddress,
               owner: ownerStr,
               createdAt: toIso(st['createdAt']),
               updatedAt: toIso(st['updatedAt']),
@@ -499,6 +572,8 @@ export class SearchService {
               email: '',
               phoneNumber: '',
               profileImage: '',
+              likedBy: [] as string[],
+              address: null,
               owner: '',
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
@@ -608,6 +683,19 @@ export class SearchService {
         },
       },
       {
+        $lookup: {
+          from: 'addresses',
+          localField: 'store.address',
+          foreignField: '_id',
+          as: '_storeAddr',
+        },
+      },
+      {
+        $addFields: {
+          _storeResolvedAddr: { $arrayElemAt: ['$_storeAddr', 0] },
+        },
+      },
+      {
         $project: {
           _id: 1,
           title: 1,
@@ -643,10 +731,13 @@ export class SearchService {
             name: '$store.name',
             status: { $toString: '$store.status' },
             bio: { $ifNull: ['$store.bio', ''] },
+            email: { $ifNull: ['$store.email', ''] },
+            phoneNumber: { $ifNull: ['$store.phoneNumber', ''] },
             acceptsOrders: { $ifNull: ['$store.acceptsOrders', true] },
             supportsShipping: { $ifNull: ['$store.supportsShipping', false] },
             currency: { $ifNull: ['$store.currency', 'CAD'] },
             profileImage: { $ifNull: ['$store.profileImage', ''] },
+            likedBy: { $ifNull: ['$store.likedBy', []] },
             owner: {
               $convert: {
                 input: '$store.owner',
@@ -659,6 +750,28 @@ export class SearchService {
             updatedAt: '$store.updatedAt',
             canCreateProducts: { $ifNull: ['$store.canCreateProducts', false] },
             averageRating: { $ifNull: ['$store.averageRating', 0] },
+            address: {
+              $cond: [
+                { $gt: [{ $size: { $ifNull: ['$_storeAddr', []] } }, 0] },
+                {
+                  _id: { $toString: '$_storeResolvedAddr._id' },
+                  isDefault: { $ifNull: ['$_storeResolvedAddr.is_default', false] },
+                  label: { $ifNull: ['$_storeResolvedAddr.label', ''] },
+                  address: { $ifNull: ['$_storeResolvedAddr.address', ''] },
+                  country: { $ifNull: ['$_storeResolvedAddr.country', ''] },
+                  city: { $ifNull: ['$_storeResolvedAddr.city', ''] },
+                  countryCode: {
+                    $ifNull: ['$_storeResolvedAddr.country_code', ''],
+                  },
+                  zipCode: { $ifNull: ['$_storeResolvedAddr.zip_code', ''] },
+                  type: { $ifNull: ['$_storeResolvedAddr.type', 'USER'] },
+                  location: { $ifNull: ['$_storeResolvedAddr.location', null] },
+                  createdAt: '$_storeResolvedAddr.createdAt',
+                  updatedAt: '$_storeResolvedAddr.updatedAt',
+                },
+                null,
+              ],
+            },
           },
         },
       },
