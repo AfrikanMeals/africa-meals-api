@@ -13,7 +13,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { StripeProcessedCheckoutModel } from '@schemas/stripe-processed-checkout.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
-import Stripe from 'stripe';
+import Stripe = require('stripe');
 import { GroupedStripeCheckoutDto } from './dto/grouped-stripe-checkout.dto';
 
 type StripeClient = InstanceType<typeof Stripe>;
@@ -54,9 +54,11 @@ export class StripeGroupedCheckoutService {
   ) {}
 
   private stripe() {
-    const key = this.config.get<string>('STRIPE_SECRET_KEY');
+    const key = this.config.get<string>('STRIPE_SECRET_KEY')?.trim();
     if (!key) {
-      throw new BadRequestException('stripe_not_configured');
+      throw new BadRequestException(
+        'Paiement indisponible : ajoutez STRIPE_SECRET_KEY dans le .env de l’API (africa-meals-api), puis redémarrez le serveur.',
+      );
     }
     return new Stripe(key);
   }
@@ -187,6 +189,18 @@ export class StripeGroupedCheckoutService {
 
     if (!lineItems.length) {
       throw new BadRequestException('cart_is_empty');
+    }
+
+    // Deuxième passage (stocks + promos) juste avant Stripe : le panier peut
+    // avoir changé pendant les appels preview / devis livraison.
+    const recheck = await this.cartService.validateCheckoutReadiness(user, {
+      coupons,
+    });
+    if (!recheck.ok) {
+      throw new BadRequestException({
+        message: 'checkout_validation_failed',
+        ...recheck,
+      });
     }
 
     const server =
