@@ -43,6 +43,19 @@ export type PlatformShippingSettingsForQuote = {
   ranges: { minKm: number; maxKm: number; fee: number }[];
 };
 
+/** Sous ce seuil (bruit GPS / coordonnées), la distance est traitée comme 0 pour le tarif. */
+const MIN_BILLABLE_DISTANCE_KM = 0.05;
+
+export function snapDistanceForShippingBillingKm(distanceKm: number): number {
+  if (!Number.isFinite(distanceKm) || distanceKm < 0) {
+    return distanceKm;
+  }
+  if (distanceKm < MIN_BILLABLE_DISTANCE_KM) {
+    return 0;
+  }
+  return distanceKm;
+}
+
 /**
  * Frais plateforme : **total = distance × perKmRate** (dans le rayon max).
  * Les tranches `ranges` ne modulent plus le montant (compat : `rangeFlat` reste 0).
@@ -59,11 +72,12 @@ export function computePlatformShippingFeeFromDistance(
   if (!Number.isFinite(distanceKm) || distanceKm < 0) {
     return { deliverable: false, rangeFlat: 0, perKmComponent: 0, total: 0 };
   }
-  if (distanceKm > settings.maxDeliveryRadiusKm + 1e-9) {
+  const d = snapDistanceForShippingBillingKm(distanceKm);
+  if (d > settings.maxDeliveryRadiusKm + 1e-9) {
     return { deliverable: false, rangeFlat: 0, perKmComponent: 0, total: 0 };
   }
   const perKmRate = Number(settings.perKmRate) || 0;
-  const perKmComponent = distanceKm * perKmRate;
+  const perKmComponent = d * perKmRate;
   const total = Math.round((perKmComponent + Number.EPSILON) * 100) / 100;
   const perKmRounded =
     Math.round((perKmComponent + Number.EPSILON) * 100) / 100;
