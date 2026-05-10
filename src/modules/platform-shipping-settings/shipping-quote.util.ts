@@ -1,0 +1,84 @@
+/** Grande distance terrestre approximative (km) via formule de Haversine. */
+export function haversineDistanceKm(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+): number {
+  const R = 6371;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/** GeoJSON Point : `coordinates` = [longitude, latitude]. */
+export function extractLatLonFromGeoPoint(
+  location: { type?: string; coordinates?: number[] } | null | undefined,
+): { lat: number; lon: number } | null {
+  if (!location?.coordinates || location.coordinates.length < 2) {
+    return null;
+  }
+  const lon = Number(location.coordinates[0]);
+  const lat = Number(location.coordinates[1]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return null;
+  }
+  if (lat === 0 && lon === 0) {
+    return null;
+  }
+  return { lat, lon };
+}
+
+export type PlatformShippingSettingsForQuote = {
+  perKmRate: number;
+  maxDeliveryRadiusKm: number;
+  ranges: { minKm: number; maxKm: number; fee: number }[];
+};
+
+/**
+ * Tranches [minKm, maxKm) ; total = forfait tranche + distance × perKmRate.
+ */
+export function computePlatformShippingFeeFromDistance(
+  settings: PlatformShippingSettingsForQuote,
+  distanceKm: number,
+): {
+  deliverable: boolean;
+  rangeFlat: number;
+  perKmComponent: number;
+  total: number;
+} {
+  if (!Number.isFinite(distanceKm) || distanceKm < 0) {
+    return { deliverable: false, rangeFlat: 0, perKmComponent: 0, total: 0 };
+  }
+  if (distanceKm > settings.maxDeliveryRadiusKm + 1e-9) {
+    return { deliverable: false, rangeFlat: 0, perKmComponent: 0, total: 0 };
+  }
+  const sorted = [...(settings.ranges ?? [])].sort((a, b) => a.minKm - b.minKm);
+  let rangeFlat = 0;
+  for (const r of sorted) {
+    if (distanceKm >= r.minKm && distanceKm < r.maxKm) {
+      rangeFlat = r.fee;
+      break;
+    }
+  }
+  const perKmRate = Number(settings.perKmRate) || 0;
+  const perKmComponent = distanceKm * perKmRate;
+  const raw = rangeFlat + perKmComponent;
+  const total = Math.round((raw + Number.EPSILON) * 100) / 100;
+  const perKmRounded =
+    Math.round((perKmComponent + Number.EPSILON) * 100) / 100;
+  return {
+    deliverable: true,
+    rangeFlat,
+    perKmComponent: perKmRounded,
+    total,
+  };
+}

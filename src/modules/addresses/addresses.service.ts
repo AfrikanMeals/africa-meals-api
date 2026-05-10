@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -12,6 +13,12 @@ import axios from 'axios';
 import { Model } from 'mongoose';
 import { CreateAddressDto, SearchAddressDto } from './dto/addresses.dto';
 
+/** Réponse enrichie pour éviter un `GET /auth/me` après chaque mutation (mobile). */
+export type UserAddressesMutationResult = {
+  address: Record<string, unknown> | null;
+  addresses: Record<string, unknown>[];
+};
+
 @Injectable()
 export class AddressesService {
   @InjectModel(AddressModel.name)
@@ -22,6 +29,79 @@ export class AddressesService {
 
   @Inject(ConfigService)
   private readonly _configService: ConfigService;
+
+  /** Liste des adresses du client (populate léger, sans le reste du profil). */
+  async listUserAddresses(userId: string): Promise<Record<string, unknown>[]> {
+    const u = await this.userModel
+      .findById(userId)
+      .select('addresses')
+      .populate({ path: 'addresses' })
+      .lean()
+      .exec();
+    if (!u) {
+      return [];
+    }
+    const raw = u.addresses as Record<string, unknown>[] | undefined;
+    return Array.isArray(raw) ? raw : [];
+  }
+
+  private async ensureUserOwnsAddress(user: UserModel, addressId: string) {
+    const doc = await this.userModel
+      .findById(user._id)
+      .select('addresses')
+      .lean()
+      .exec();
+    const ids = (doc?.addresses ?? []) as unknown[];
+    if (!ids.some((aid) => aid.toString() === addressId)) {
+      throw new ForbiddenException('address_not_owned');
+    }
+  }
+
+  /**
+   * Crée une adresse client, l’attache à l’utilisateur, retourne le document créé + liste à jour.
+   * Utilisé par `POST /users/address` (corps = adresse seule) et `POST /addresses` (bundle).
+   */
+  async createAndAttach(
+    dto: CreateAddressDto,
+    authUser: UserModel,
+  ): Promise<UserAddressesMutationResult> {
+    const user = await this.userModel
+      .findById(authUser._id)
+      .select('addresses')
+      .lean()
+      .exec();
+    if (!user) {
+      throw new NotFoundException('user_not_found');
+    }
+    const ids = (user.addresses ?? []) as unknown[];
+    const isFirstAddress = ids.length === 0;
+    const created = await this.create(
+      {
+        ...dto,
+        isDefault: isFirstAddress,
+        type: AddressTypeEnum.USER,
+      },
+      authUser,
+    );
+    if (!created) {
+      throw new BadRequestException('address_not_found');
+    }
+    await this.userModel.updateOne(
+      { _id: authUser._id },
+      { $push: { addresses: created._id } },
+    );
+    const address = await this.addressModel
+      .findById(created._id)
+      .lean()
+      .exec();
+    const addresses = await this.listUserAddresses(authUser._id.toString());
+    return {
+      address: address
+        ? (address as unknown as Record<string, unknown>)
+        : null,
+      addresses,
+    };
+  }
 
   async search(args: SearchAddressDto, user: UserModel) {
     const q = encodeURIComponent(
@@ -93,26 +173,49 @@ export class AddressesService {
     });
   }
 
-  async update(id: string, args: CreateAddressDto, user: UserModel) {
+  /**
+   * Mise à jour des champs d’une adresse (ex. adresse **boutique**) — ne vérifie pas `user.addresses`.
+   */
+  async patchById(id: string, args: CreateAddressDto) {
     const { latitude, longitude, label, ...rest } = args;
-    await this.addressModel.updateOne(
-      { _id: id },
-      {
-        ...rest,
-        ...(label !== undefined && {
-          label: label?.trim() || 'Domicile',
-        }),
-        location: {
-          type: 'Point',
-          coordinates: [longitude, latitude],
-        },
-      },
-    );
+    const patch: Record<string, unknown> = { ...rest };
+    if (label !== undefined) {
+      patch.label = label?.trim() || 'Domicile';
+    }
+    const lat =
+      latitude !== undefined && latitude !== null ? Number(latitude) : NaN;
+    const lon =
+      longitude !== undefined && longitude !== null ? Number(longitude) : NaN;
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      patch.location = {
+        type: 'Point',
+        coordinates: [lon, lat],
+      };
+    }
+    await this.addressModel.updateOne({ _id: id }, { $set: patch });
     return this.addressModel.findOne({ _id: id });
   }
 
+  /** Mise à jour d’une adresse **livraison client** + bundle pour le mobile. */
+  async updateUserAddress(
+    id: string,
+    args: CreateAddressDto,
+    user: UserModel,
+  ): Promise<UserAddressesMutationResult> {
+    await this.ensureUserOwnsAddress(user, id);
+    await this.patchById(id, args);
+    const address = await this.addressModel.findById(id).lean().exec();
+    const addresses = await this.listUserAddresses(user._id.toString());
+    return {
+      address: address
+        ? (address as unknown as Record<string, unknown>)
+        : null,
+      addresses,
+    };
+  }
+
   /** Supprime une adresse et la retire de l’utilisateur. */
-  async delete(id: string, user: UserModel) {
+  async delete(id: string, user: UserModel): Promise<UserAddressesMutationResult> {
     const u = await this.userModel
       .findById(user._id)
       .select('addresses')
@@ -127,10 +230,15 @@ export class AddressesService {
       { _id: user._id },
       { $pull: { addresses: id } as any },
     );
+    const addresses = await this.listUserAddresses(user._id.toString());
+    return { address: null, addresses };
   }
 
   /** Définit une adresse comme adresse par défaut (et retire le défaut des autres). */
-  async setDefault(id: string, user: UserModel) {
+  async setDefault(
+    id: string,
+    user: UserModel,
+  ): Promise<UserAddressesMutationResult> {
     const u = await this.userModel
       .findById(user._id)
       .select('addresses')
@@ -148,6 +256,13 @@ export class AddressesService {
       { _id: { $in: ids, $ne: id } },
       { $set: { is_default: false } },
     );
-    return this.addressModel.findOne({ _id: id });
+    const address = await this.addressModel.findById(id).lean().exec();
+    const addresses = await this.listUserAddresses(user._id.toString());
+    return {
+      address: address
+        ? (address as unknown as Record<string, unknown>)
+        : null,
+      addresses,
+    };
   }
 }

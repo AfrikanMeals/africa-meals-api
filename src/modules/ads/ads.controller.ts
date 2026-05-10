@@ -21,7 +21,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { memoryStorage } from 'multer';
@@ -126,8 +126,13 @@ export class AdsController {
     return this.adsService.trackEvent(req.user as UserModel | undefined, body);
   }
 
-  /** Bannières accueil : globales + boutiques ACTIVE (fenêtre de validité, `isActive`). */
+  /**
+   * Bannières accueil : globales + pubs `store` dont la boutique est **ACTIVE**.
+   * Champs `validFrom` / `validUntil` : une date `validUntil` passée exclut la pub (Atlas : repousser la date ou laisser vide).
+   * Réponse : `storeId` / `storeName` / `storeProfileImageUrl` lorsque la pub est liée boutique.
+   */
   @Get()
+  @ApiOperation({ summary: 'Liste publique des bannières (GET /ads)' })
   async list() {
     const raw = await this.adsService.listPublic();
     const items = (raw as unknown as Record<string, unknown>[]).map((row) =>

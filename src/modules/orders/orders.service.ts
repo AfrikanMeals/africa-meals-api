@@ -143,14 +143,20 @@ export class OrdersService {
     //   throw new ForbiddenException('store_does_not_accept_orders');
     // }
 
-    const items: OrdeLineItem[] = await mapInChunks(cart.items, 4, async (item) => ({
-      label: item.entity?.title ?? 'Article',
-      itemType: item.type!,
-      pictureUrl: item.entity?.profileImage,
-      quantity: item.quantity!,
-      price: item.price!,
-      categoryTitle: await this.categoryTitleForCartLine(item),
-    }));
+    const items: OrdeLineItem[] = await mapInChunks(cart.items, 4, async (item) => {
+      const e = item.entity as
+        | { title?: string; name?: string; profileImage?: string }
+        | undefined;
+      const label = (e?.title || e?.name || 'Article').trim() || 'Article';
+      return {
+        label,
+        itemType: item.type!,
+        pictureUrl: e?.profileImage,
+        quantity: item.quantity!,
+        price: item.price!,
+        categoryTitle: await this.categoryTitleForCartLine(item),
+      };
+    });
 
     const calculatedPrice = items.reduce((acc, item) => acc + item.price, 0);
 
@@ -267,6 +273,9 @@ export class OrdersService {
     }
     if (type === CartItemTypeEnum.OFFER) {
       return 'Offre';
+    }
+    if (type === CartItemTypeEnum.DRINK) {
+      return 'Boisson';
     }
     return undefined;
   }

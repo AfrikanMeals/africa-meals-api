@@ -95,3 +95,5 @@ Nest is [MIT licensed](LICENSE).
 
 
 ngrok http --url=blindly-witty-snake.ngrok-free.app 9000
+
+ngrok start --config=proxy.yml afrikan-api

@@ -3,7 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import {
   StoreCouponModel,
   StoreCouponSchema,
-} from '@schemas/store-coupon.schema';
+} from '@schemas/store_coupon.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { CouponsController } from './coupons.controller';
 import { CouponsService } from './coupons.service';

@@ -9,6 +9,7 @@ export enum CartItemTypeEnum {
   PRODUCT = 'product',
   PRODUCT_EXTRA = 'product_extra',
   OFFER = 'offer',
+  DRINK = 'drink',
 }
 
 @Schema({
@@ -55,8 +56,8 @@ export class CartItemModel extends BaseSchema {
   })
   user: string;
 
-  // Computed properties
-  entity?: ProductModel | ProductExtraModel | OfferModel;
+  // Computed properties (boisson panier : objet minimal type « produit » pour le client)
+  entity?: ProductModel | ProductExtraModel | OfferModel | Record<string, unknown>;
 }
 
 export const CartItemSchema = SchemaFactory.createForClass(CartItemModel);

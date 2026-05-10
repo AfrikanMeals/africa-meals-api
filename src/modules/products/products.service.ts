@@ -1,5 +1,6 @@
 import { MediasService } from '@modules/medias/medias.service';
 import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
+import { isDemoProductRaterEmail } from '@modules/ratings/demo-product-rating-users';
 import { RatingsService } from '@modules/ratings/ratings.service';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import {
@@ -43,6 +44,122 @@ export class ProductsService {
 
   /** Incrémenté à chaque ajout/retrait favori : invalide les clés cache mémoire (TTL + génération). */
   private readonly _favoriteListRevision = new Map<string, number>();
+
+  /** Évite plusieurs agrégations Mongo en parallèle pour la même clé (cache froid). */
+  private readonly _favoriteListInflight = new Map<string, Promise<unknown>>();
+
+  private async runWithFavoriteListDedupe<T>(
+    cacheKey: string,
+    ttlMs: number,
+    factory: () => Promise<T>,
+  ): Promise<T> {
+    const cached = await this._cacheManager.get<T>(cacheKey);
+    if (cached !== undefined && cached !== null) {
+      return cached;
+    }
+    const pending = this._favoriteListInflight.get(cacheKey);
+    if (pending) {
+      return pending as Promise<T>;
+    }
+    const task = (async () => {
+      try {
+        const res = await factory();
+        await this._cacheManager.set(cacheKey, res, ttlMs);
+        return res;
+      } finally {
+        this._favoriteListInflight.delete(cacheKey);
+      }
+    })();
+    this._favoriteListInflight.set(cacheKey, task);
+    return task;
+  }
+
+  /**
+   * Lookups catégorie + boutique + moyenne des notes (sans charger toutes les lignes `product_ratings`).
+   */
+  private buildFavoriteProductsSharedLookupsAndMetricsStages(): PipelineStage[] {
+    return [
+      {
+        $lookup: {
+          from: 'product_categories',
+          localField: 'category',
+          foreignField: '_id',
+          as: '_cat',
+        },
+      },
+      {
+        $lookup: {
+          from: 'stores',
+          localField: 'store',
+          foreignField: '_id',
+          as: '_st',
+        },
+      },
+      {
+        $lookup: {
+          from: 'product_ratings',
+          let: { pid: '$_id' },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ['$product', '$$pid'] },
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                avgRate: { $avg: '$rate' },
+              },
+            },
+          ],
+          as: '_rateAgg',
+        },
+      },
+      {
+        $addFields: {
+          likesCount: { $size: { $ifNull: ['$likedBy', []] } },
+          averageRating: {
+            $ifNull: [{ $arrayElemAt: ['$_rateAgg.avgRate', 0] }, 0],
+          },
+          galleryImages: {
+            $filter: {
+              input: {
+                $map: {
+                  input: { $ifNull: ['$galleryImages', []] },
+                  as: 'g',
+                  in: {
+                    $cond: [
+                      {
+                        $gt: [
+                          {
+                            $strLenCP: {
+                              $trim: {
+                                input: {
+                                  $ifNull: [
+                                    { $convert: { input: '$$g.imageUrl', to: 'string', onError: '', onNull: '' } },
+                                    '',
+                                  ],
+                                },
+                              },
+                            },
+                          },
+                          0,
+                        ],
+                      },
+                      { imageUrl: '$$g.imageUrl' },
+                      null,
+                    ],
+                  },
+                },
+              },
+              as: 'item',
+              cond: { $ne: ['$$item', null] },
+            },
+          },
+        },
+      },
+    ];
+  }
 
   /** Taille max fichier image avant encodage base64 (5 Mo). */
   private static readonly MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -110,7 +227,7 @@ export class ProductsService {
   }
 
   async findOneById(id: string) {
-    return await this._productModel
+    const doc = await this._productModel
       .findOne({ _id: id })
       .populate('category')
       .populate({
@@ -118,7 +235,7 @@ export class ProductsService {
         options: { limit: 120, sort: { createdAt: -1 } },
         populate: {
           path: 'user',
-          select: 'fullName profileImage',
+          select: 'fullName profileImage email',
         },
       })
       .populate('likedBy')
@@ -127,6 +244,14 @@ export class ProductsService {
         populate: { path: 'address' },
       })
       .exec();
+    if (doc?.ratings?.length) {
+      type RWithUser = { user?: { email?: string } };
+      const kept = (doc.ratings as unknown as RWithUser[]).filter(
+        (r) => !isDemoProductRaterEmail(r?.user?.email),
+      );
+      doc.set('ratings', kept as typeof doc.ratings);
+    }
+    return doc;
   }
 
   async existsInStore(title: string, storeId: string) {
@@ -561,6 +686,9 @@ export class ProductsService {
       }
       return this.findOneById(product._id.toString());
     } catch (e) {
+      if (e instanceof ConflictException || e instanceof NotFoundException) {
+        throw e;
+      }
       throw new BadRequestException('error_creating_rating');
     }
   }
@@ -608,86 +736,25 @@ export class ProductsService {
     }
     const uid = userId.toString();
     const cacheKey = this.favoritesGraphqlCacheKey(uid, { page, take });
-    const hit = await this._cacheManager.get<FavoriteListingPagePayload>(
-      cacheKey,
-    );
-    if (hit != null) {
-      return hit;
-    }
+    const ttlEnv = Number(process.env.FAVORITES_CACHE_TTL_MS);
+    const ttlMs = Number.isFinite(ttlEnv) && ttlEnv > 0 ? ttlEnv : 25_000;
 
-    const skip = (page - 1) * take;
-    const pipeline: PipelineStage[] = [
-      { $match: { likedBy: userId, status: ProductStatusEnum.ACTIVE } },
-      {
-        $facet: {
-          meta: [{ $count: 'total' }],
-          data: [
-            { $sort: { updatedAt: -1 } },
-            { $skip: skip },
-            { $limit: take },
-            {
-              $lookup: {
-                from: 'product_categories',
-                localField: 'category',
-                foreignField: '_id',
-                as: '_cat',
-              },
-            },
-            {
-              $lookup: {
-                from: 'stores',
-                localField: 'store',
-                foreignField: '_id',
-                as: '_st',
-              },
-            },
-            {
-              $lookup: {
-                from: 'product_ratings',
-                let: { pid: '$_id' },
-                pipeline: [
-                  {
-                    $match: {
-                      $expr: { $eq: ['$product', '$$pid'] },
-                    },
-                  },
-                  { $project: { _id: 0, rate: 1 } },
-                ],
-                as: '_rates',
-              },
-            },
-            {
-              $addFields: {
-                likesCount: { $size: { $ifNull: ['$likedBy', []] } },
-                averageRating: {
-                  $let: {
-                    vars: {
-                      sz: { $size: { $ifNull: ['$_rates', []] } },
-                      sumRates: {
-                        $sum: {
-                          $map: {
-                            input: '$_rates',
-                            as: 'r',
-                            in: '$$r.rate',
-                          },
-                        },
-                      },
-                    },
-                    in: {
-                      $cond: [
-                        { $gt: ['$$sz', 0] },
-                        { $divide: ['$$sumRates', '$$sz'] },
-                        0,
-                      ],
-                    },
-                  },
-                },
-              },
-            },
-            {
-              $addFields: {
-                categoryPayload: {
-                  $cond: [
+    return this.runWithFavoriteListDedupe(cacheKey, ttlMs, async () => {
+      const skip = (page - 1) * take;
+      const pipeline: PipelineStage[] = [
+        { $match: { likedBy: userId, status: ProductStatusEnum.ACTIVE } },
+        {
+          $facet: {
+            meta: [{ $count: 'total' }],
+            data: [
+              { $sort: { updatedAt: -1 } },
+              { $skip: skip },
+              { $limit: take },
+              ...this.buildFavoriteProductsSharedLookupsAndMetricsStages(),
+              {
+                $addFields: {
+                  categoryPayload: {
+                    $cond: [
                     { $gt: [{ $size: { $ifNull: ['$_cat', []] } }, 0] },
                     {
                       id: {
@@ -739,7 +806,7 @@ export class ProductsService {
                 store: '$storePayload',
               },
             },
-          ],
+          ] as any[],
         },
       },
       {
@@ -760,83 +827,62 @@ export class ProductsService {
       },
     ];
 
-    const agg = await this._productModel.aggregate(pipeline).exec();
-    const pack = agg[0] as { total?: number; data?: Record<string, unknown>[] };
-    const total = typeof pack?.total === 'number' ? pack.total : 0;
-    const rawItems = Array.isArray(pack?.data) ? pack.data : [];
-
-    const items = rawItems.map((doc) => {
-      const cat = doc.category as Record<string, unknown> | null | undefined;
-      const st = doc.store as Record<string, unknown> | null | undefined;
-      return {
-        id: String(doc._id),
-        title: String(doc.title ?? ''),
-        profileImage:
-          typeof doc.profileImage === 'string' ? doc.profileImage : '',
-        price: Number(doc.price ?? 0),
-        discountPrice: Number(doc.discountPrice ?? 0),
-        currency: String(doc.currency ?? 'CAD'),
-        bio: String(doc.bio ?? ''),
-        originCountry: String(doc.originCountry ?? ''),
-        likesCount: Number(doc.likesCount ?? 0),
-        averageRating: Number(doc.averageRating ?? 0),
-        inCart: Boolean(doc.inCart),
-        category:
-          cat && typeof cat.id === 'string'
-            ? {
-                id: cat.id,
-                title: String(cat.title ?? ''),
-                icon: String(cat.icon ?? ''),
-                isEnabled: cat.isEnabled !== false,
-              }
-            : null,
-        store:
-          st && typeof st.id === 'string'
-            ? {
-                id: st.id,
-                name: String(st.name ?? ''),
-                status: String(st.status ?? ''),
-              }
-            : null,
+      const agg = await this._productModel
+        .aggregate(pipeline)
+        .hint({ likedBy: 1, status: 1, updatedAt: -1 })
+        .option({ allowDiskUse: true })
+        .exec();
+      const pack = agg[0] as {
+        total?: number;
+        data?: Record<string, unknown>[];
       };
+      const total = typeof pack?.total === 'number' ? pack.total : 0;
+      const rawItems = Array.isArray(pack?.data) ? pack.data : [];
+
+      const items = rawItems.map((doc) => {
+        const cat = doc.category as Record<string, unknown> | null | undefined;
+        const st = doc.store as Record<string, unknown> | null | undefined;
+        return {
+          id: String(doc._id),
+          title: String(doc.title ?? ''),
+          profileImage:
+            typeof doc.profileImage === 'string' ? doc.profileImage : '',
+          price: Number(doc.price ?? 0),
+          discountPrice: Number(doc.discountPrice ?? 0),
+          currency: String(doc.currency ?? 'CAD'),
+          bio: String(doc.bio ?? ''),
+          originCountry: String(doc.originCountry ?? ''),
+          likesCount: Number(doc.likesCount ?? 0),
+          averageRating: Number(doc.averageRating ?? 0),
+          inCart: Boolean(doc.inCart),
+          category:
+            cat && typeof cat.id === 'string'
+              ? {
+                  id: cat.id,
+                  title: String(cat.title ?? ''),
+                  icon: String(cat.icon ?? ''),
+                  isEnabled: cat.isEnabled !== false,
+                }
+              : null,
+          store:
+            st && typeof st.id === 'string'
+              ? {
+                  id: st.id,
+                  name: String(st.name ?? ''),
+                  status: String(st.status ?? ''),
+                }
+              : null,
+        };
+      });
+
+      const result: FavoriteListingPagePayload = {
+        items,
+        total,
+        page,
+        limit: take,
+      };
+      return result;
     });
-
-    const result: FavoriteListingPagePayload = {
-      items,
-      total,
-      page,
-      limit: take,
-    };
-
-    const ttlEnv = Number(process.env.FAVORITES_CACHE_TTL_MS);
-    const ttlMs = Number.isFinite(ttlEnv) && ttlEnv > 0 ? ttlEnv : 25_000;
-    await this._cacheManager.set(cacheKey, result, ttlMs);
-    return result;
-  }
-
-  /**
-   * Requête allégée pour la liste favoris : pas de populate `likedBy` ni `ratings.user`,
-   * médias base64 exclus, galerie réduite aux URLs (payload JSON plus léger + moins d’I/O Mongo).
-   */
-  private baseFavoriteProductsQuery(userId: Types.ObjectId) {
-    const filter = {
-      likedBy: userId,
-      status: ProductStatusEnum.ACTIVE,
-    };
-    return this._productModel
-      .find(filter)
-      .select('-imageBase64 -imageMimeType')
-      .populate({
-        path: 'category',
-        select: 'title icon isEnabled createdAt updatedAt',
-      })
-      .populate({
-        path: 'ratings',
-        select: '_id rate createdAt updatedAt product',
-      })
-      .populate({ path: 'store' })
-      .sort({ updatedAt: -1 })
-      .lean({ virtuals: true });
   }
 
   private stripHeavyFavoriteProductFields(
@@ -874,45 +920,302 @@ export class ProductsService {
     }
     const uid = userId.toString();
     const cacheKey = this.favoritesCacheKey(uid, pagination);
-    const cached = await this._cacheManager.get<unknown>(cacheKey);
-    if (cached !== undefined && cached !== null) {
-      return cached;
-    }
-
-    const filter = {
-      likedBy: userId,
-      status: ProductStatusEnum.ACTIVE,
-    };
-    const baseQuery = this.baseFavoriteProductsQuery(userId);
-
     const ttlEnv = Number(process.env.FAVORITES_CACHE_TTL_MS);
     const ttlMs = Number.isFinite(ttlEnv) && ttlEnv > 0 ? ttlEnv : 25_000;
 
-    let result: unknown;
-    if (pagination) {
-      const { page, take } = pagination;
-      const skip = (page - 1) * take;
-      const [data, total] = await Promise.all([
-        baseQuery.clone().skip(skip).limit(take).exec(),
-        this._productModel.countDocuments(filter).exec(),
-      ]);
-      result = {
-        data: this.stripHeavyFavoriteProductFields(
-          data as unknown as Record<string, unknown>[],
-        ),
-        total,
-        page,
-        limit: take,
-      };
-    } else {
-      const raw = await baseQuery.clone().limit(500).exec();
-      result = this.stripHeavyFavoriteProductFields(
-        raw as unknown as Record<string, unknown>[],
-      );
-    }
+    return this.runWithFavoriteListDedupe(cacheKey, ttlMs, async () => {
+      const skip = pagination ? (pagination.page - 1) * pagination.take : 0;
+      const limit = pagination ? pagination.take : 500;
 
-    await this._cacheManager.set(cacheKey, result, ttlMs);
-    return result;
+      const dataStages: PipelineStage[] = [
+        { $sort: { updatedAt: -1 } },
+        ...(skip > 0 ? [{ $skip: skip } as PipelineStage] : []),
+        { $limit: limit },
+        ...this.buildFavoriteProductsSharedLookupsAndMetricsStages(),
+        {
+          $addFields: {
+            category: {
+              $let: {
+                vars: { c0: { $arrayElemAt: ['$_cat', 0] } },
+                in: {
+                  $cond: [
+                    { $ne: ['$$c0', null] },
+                    {
+                      _id: '$$c0._id',
+                      id: { $toString: '$$c0._id' },
+                      title: { $ifNull: ['$$c0.title', ''] },
+                      icon: { $ifNull: ['$$c0.icon', ''] },
+                      isEnabled: {
+                        $ifNull: [
+                          {
+                            $ifNull: ['$$c0.isEnabled', '$$c0.is_enabled'],
+                          },
+                          true,
+                        ],
+                      },
+                      createdAt: '$$c0.createdAt',
+                      updatedAt: '$$c0.updatedAt',
+                    },
+                    {
+                      id: '',
+                      title: '',
+                      icon: '',
+                      isEnabled: true,
+                      createdAt: null,
+                      updatedAt: null,
+                    },
+                  ],
+                },
+              },
+            },
+            store: {
+              $cond: [
+                { $gt: [{ $size: { $ifNull: ['$_st', []] } }, 0] },
+                {
+                  $let: {
+                    vars: { st0: { $arrayElemAt: ['$_st', 0] } },
+                    in: {
+                      _id: '$$st0._id',
+                      id: { $toString: '$$st0._id' },
+                      name: { $ifNull: ['$$st0.name', ''] },
+                      bio: { $ifNull: ['$$st0.bio', ''] },
+                      email: { $ifNull: ['$$st0.email', ''] },
+                      phoneNumber: {
+                        $ifNull: [
+                          {
+                            $ifNull: [
+                              '$$st0.phoneNumber',
+                              '$$st0.phone_number',
+                            ],
+                          },
+                          '',
+                        ],
+                      },
+                      currency: { $ifNull: ['$$st0.currency', 'CAD'] },
+                      profileImage: {
+                        $ifNull: [
+                          {
+                            $ifNull: [
+                              '$$st0.profileImage',
+                              '$$st0.profile_image',
+                            ],
+                          },
+                          '',
+                        ],
+                      },
+                      acceptsOrders: {
+                        $ifNull: [
+                          {
+                            $ifNull: [
+                              '$$st0.acceptsOrders',
+                              '$$st0.accepts_orders',
+                            ],
+                          },
+                          false,
+                        ],
+                      },
+                      canCreateProducts: {
+                        $ifNull: [
+                          {
+                            $ifNull: [
+                              '$$st0.canCreateProducts',
+                              '$$st0.can_create_products',
+                            ],
+                          },
+                          false,
+                        ],
+                      },
+                      supportsShipping: {
+                        $ifNull: [
+                          {
+                            $ifNull: [
+                              '$$st0.supportsShipping',
+                              '$$st0.supports_shipping',
+                            ],
+                          },
+                          false,
+                        ],
+                      },
+                      status: {
+                        $toString: {
+                          $ifNull: ['$$st0.status', 'INACTIVE'],
+                        },
+                      },
+                      address: '$$st0.address',
+                      owner: '$$st0.owner',
+                      likedBy: {
+                        $ifNull: [
+                          {
+                            $ifNull: ['$$st0.likedBy', '$$st0.liked_by'],
+                          },
+                          [],
+                        ],
+                      },
+                      shippingZones: {
+                        $map: {
+                          input: {
+                            $ifNull: [
+                              {
+                                $ifNull: [
+                                  '$$st0.shippingZones',
+                                  '$$st0.shipping_zones',
+                                ],
+                              },
+                              [],
+                            ],
+                          },
+                          as: 'z',
+                          in: {
+                            minDistance: {
+                              $ifNull: [
+                                {
+                                  $ifNull: [
+                                    '$$z.minDistance',
+                                    '$$z.min_distance',
+                                  ],
+                                },
+                                0,
+                              ],
+                            },
+                            maxDistance: {
+                              $ifNull: [
+                                {
+                                  $ifNull: [
+                                    '$$z.maxDistance',
+                                    '$$z.max_distance',
+                                  ],
+                                },
+                                0,
+                              ],
+                            },
+                            price: { $ifNull: ['$$z.price', 0] },
+                          },
+                        },
+                      },
+                      averageRating: {
+                        $ifNull: ['$$st0.averageRating', 0],
+                      },
+                      latitude: {
+                        $ifNull: ['$$st0.latitude', null],
+                      },
+                      longitude: {
+                        $ifNull: ['$$st0.longitude', null],
+                      },
+                      createdAt: '$$st0.createdAt',
+                      updatedAt: '$$st0.updatedAt',
+                    },
+                  },
+                },
+                {
+                  _id: null,
+                  acceptsOrders: false,
+                  supportsShipping: false,
+                  id: '',
+                  name: '',
+                  bio: '',
+                  email: '',
+                  phoneNumber: '',
+                  currency: 'CAD',
+                  status: 'INACTIVE',
+                  address: null,
+                  owner: null,
+                  likedBy: [],
+                  createdAt: null,
+                  updatedAt: null,
+                  profileImage: '',
+                  canCreateProducts: false,
+                  shippingZones: [],
+                  averageRating: 0,
+                  latitude: null,
+                  longitude: null,
+                },
+              ],
+            },
+          },
+        },
+        {
+          $project: {
+            _id: 1,
+            id: { $toString: '$_id' },
+            title: 1,
+            bio: 1,
+            originCountry: { $ifNull: ['$originCountry', ''] },
+            price: 1,
+            discountPrice: { $ifNull: ['$discountPrice', 0] },
+            currency: 1,
+            profileImage: 1,
+            galleryImages: 1,
+            status: 1,
+            likedBy: { $ifNull: ['$likedBy', []] },
+            createdAt: 1,
+            updatedAt: 1,
+            extras: { $ifNull: ['$extras', []] },
+            category: 1,
+            store: 1,
+            averageRating: { $ifNull: ['$averageRating', 0] },
+            ordersCount: { $literal: 0 },
+            inCart: { $literal: false },
+            ratings: { $literal: [] },
+          },
+        },
+      ];
+
+      const pipeline: PipelineStage[] = [
+        {
+          $match: {
+            likedBy: userId,
+            status: ProductStatusEnum.ACTIVE,
+          },
+        },
+        {
+          $facet: {
+            meta: [{ $count: 'total' }],
+            data: dataStages as any[],
+          },
+        },
+        {
+          $project: {
+            total: {
+              $ifNull: [
+                {
+                  $let: {
+                    vars: { m: { $arrayElemAt: ['$meta', 0] } },
+                    in: '$$m.total',
+                  },
+                },
+                0,
+              ],
+            },
+            data: 1,
+          },
+        },
+      ];
+
+      const agg = await this._productModel
+        .aggregate(pipeline)
+        .hint({ likedBy: 1, status: 1, updatedAt: -1 })
+        .option({ allowDiskUse: true })
+        .exec();
+
+      const pack = agg[0] as {
+        total?: number;
+        data?: Record<string, unknown>[];
+      };
+      const total = typeof pack?.total === 'number' ? pack.total : 0;
+      const rows = Array.isArray(pack?.data) ? pack.data : [];
+      const data = this.stripHeavyFavoriteProductFields(rows);
+
+      if (pagination) {
+        return {
+          data,
+          total,
+          page: pagination.page,
+          limit: pagination.take,
+        };
+      }
+
+      return data;
+    });
   }
 
   async addToFavorites(productId: string, user: UserModel) {
