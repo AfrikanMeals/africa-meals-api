@@ -126,6 +126,13 @@ export class StoreModel extends BaseSchema {
   })
   likedBy: UserModel[];
 
+  /**
+   * Compte Stripe Connect (restaurant) — utilisé pour lister les balance transactions côté tableau de bord.
+   * Renseigné manuellement ou via votre flux d’onboarding Connect.
+   */
+  @Prop({ required: false, name: 'stripe_connect_account_id' })
+  stripeConnectAccountId?: string;
+
   @Prop({
     default: [],
     name: 'shipping_zones',

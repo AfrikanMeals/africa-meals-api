@@ -3,9 +3,11 @@ import {
   Body,
   Controller,
   Delete,
+  Get,
   Inject,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
   ValidationPipe,
@@ -14,6 +16,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { BillingService } from './billing.service';
+import { StripeConnectOnboardingDto } from './dto/stripe-connect-onboarding.dto';
 import { CreatePaymentMethodDto } from './paypal/dto/paypal.dto';
 import { PaypalService } from './paypal/paypal.service';
 
@@ -57,6 +60,43 @@ export class BillingController {
     await this._billingService.deletePaypalPaymentMethod(
       id,
       req.user as UserModel,
+    );
+  }
+
+  /** Balance transactions Stripe du compte Connect du restaurant (vendeur). */
+  @Get('stripe/balance-transactions')
+  @UseGuards(JwtGuard)
+  async listStripeBalanceTransactions(
+    @Req() req: Request,
+    @Query('storeId') storeId?: string,
+    @Query('limit') limitRaw?: string,
+    @Query('startingAfter') startingAfter?: string,
+  ) {
+    const limit =
+      limitRaw !== undefined && limitRaw !== ''
+        ? Number.parseInt(limitRaw, 10)
+        : undefined;
+    return this._billingService.listStripeBalanceTransactionsForVendor(
+      req.user as UserModel,
+      {
+        storeId: storeId?.trim() || undefined,
+        limit: Number.isFinite(limit) ? limit : undefined,
+        startingAfter: startingAfter?.trim() || undefined,
+      },
+    );
+  }
+
+  /** Lien d’onboarding Stripe Connect (compte Express + Account Link). */
+  @Post('stripe/connect-onboarding')
+  @UseGuards(JwtGuard)
+  async stripeConnectOnboarding(
+    @Req() req: Request,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: StripeConnectOnboardingDto,
+  ) {
+    return this._billingService.startStripeConnectOnboarding(
+      req.user as UserModel,
+      { storeId: body.storeId },
     );
   }
 }
