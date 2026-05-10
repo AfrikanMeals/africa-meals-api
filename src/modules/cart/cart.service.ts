@@ -20,6 +20,7 @@ import {
   AddItemToCartDto,
   CartItemApiResponse,
   RemoveItemFromCartDto,
+  ValidateCheckoutDto,
 } from './dto/cart.dto';
 import { mapInChunks } from '@utils/map-in-chunks';
 
@@ -76,6 +77,19 @@ function dailyMenuStockRemainingForStoreProduct(
   return Math.max(0, Math.floor(Number(it['stockRemaining'] ?? 0)));
 }
 
+function badRequestExceptionKey(e: unknown): string {
+  if (e instanceof BadRequestException) {
+    const r = e.getResponse();
+    if (typeof r === 'string') return r;
+    if (r && typeof r === 'object' && 'message' in r) {
+      const m = (r as { message: unknown }).message;
+      if (Array.isArray(m) && m.length) return String(m[0]);
+      if (typeof m === 'string') return m;
+    }
+  }
+  return 'unknown_error';
+}
+
 /** Forme proche d’un produit pour les clients (ex. app mobile `Entity`). */
 function drinkEntityForCartApi(drink: {
   id: string;
@@ -102,6 +116,9 @@ function drinkEntityForCartApi(drink: {
 export class CartService {
   @InjectModel(CartItemModel.name)
   private readonly _cartItemModel: Model<CartItemModel>;
+
+  @InjectModel(StoreModel.name)
+  private readonly _storeModel: Model<StoreModel>;
 
   @Inject(ProductsService)
   private readonly _productsService: ProductsService;
@@ -454,6 +471,247 @@ export class CartService {
       code: coupon.code,
       discountType: coupon.discountType,
       value: coupon.value,
+    };
+  }
+
+  /**
+   * Avant paiement : vérifie stocks (menu du jour limité, boissons) et codes promo.
+   * Ne modifie pas le panier.
+   */
+  async validateCheckoutReadiness(
+    user: UserModel,
+    dto: ValidateCheckoutDto,
+  ): Promise<{
+    ok: boolean;
+    stockIssues: Array<{
+      storeId: string;
+      storeName: string;
+      lineId?: string;
+      entityId: string;
+      title: string;
+      itemType: string;
+      quantityRequested: number;
+      maxAllowed: number;
+      code: string;
+    }>;
+    couponIssues: Array<{
+      storeId: string;
+      code: string;
+      errorKey: string;
+    }>;
+    couponWarnings: Array<{
+      storeId: string;
+      code: string;
+      warningKey: string;
+      previousDiscountAmount?: number;
+      currentDiscountAmount: number;
+    }>;
+    couponSnapshots: Array<{
+      storeId: string;
+      code: string;
+      subtotal: number;
+      discountAmount: number;
+      totalAfterDiscount: number;
+    }>;
+  }> {
+    const uid = new Types.ObjectId(user.id);
+    const rawItems = await this._cartItemModel
+      .find({ user: uid })
+      .lean()
+      .exec();
+
+    const stockIssues: Array<{
+      storeId: string;
+      storeName: string;
+      lineId?: string;
+      entityId: string;
+      title: string;
+      itemType: string;
+      quantityRequested: number;
+      maxAllowed: number;
+      code: string;
+    }> = [];
+
+    if (!rawItems?.length) {
+      return {
+        ok: true,
+        stockIssues: [],
+        couponIssues: [],
+        couponWarnings: [],
+        couponSnapshots: [],
+      };
+    }
+
+    const byStore = new Map<string, (typeof rawItems)[number][]>();
+    for (const row of rawItems) {
+      const rawSt = (row as { store?: unknown }).store;
+      const sid =
+        rawSt != null && typeof rawSt === 'object' && '_id' in (rawSt as object)
+          ? String((rawSt as { _id: unknown })._id)
+          : String(rawSt ?? '');
+      if (!sid || sid === 'undefined') continue;
+      if (!byStore.has(sid)) byStore.set(sid, []);
+      byStore.get(sid)!.push(row);
+    }
+
+    for (const [storeId, lines] of byStore) {
+      const store = await this._storeModel
+        .findById(storeId)
+        .select('dailyMenuByWeekday name')
+        .lean()
+        .exec();
+      const storeName = String(
+        (store as { name?: string } | null)?.name ?? '',
+      );
+
+      const productQty = new Map<string, number>();
+      for (const line of lines) {
+        if (line.type === CartItemTypeEnum.PRODUCT) {
+          const pid = String(line.entityId ?? '');
+          if (!pid) continue;
+          productQty.set(
+            pid,
+            (productQty.get(pid) ?? 0) +
+              Math.max(0, Number(line.quantity ?? 0)),
+          );
+        }
+      }
+
+      for (const [pid, qty] of productQty) {
+        const maxRem = dailyMenuStockRemainingForStoreProduct(
+          (store ?? {}) as { dailyMenuByWeekday?: unknown },
+          pid,
+        );
+        if (maxRem != null && qty > maxRem) {
+          const doc = await this._productsService.findOneById(pid);
+          const title = String(doc?.title ?? pid);
+          stockIssues.push({
+            storeId,
+            storeName,
+            entityId: pid,
+            title,
+            itemType: CartItemTypeEnum.PRODUCT,
+            quantityRequested: qty,
+            maxAllowed: maxRem,
+            code: 'daily_menu_insufficient_stock',
+          });
+        }
+      }
+
+      const drinkQty = new Map<string, number>();
+      for (const line of lines) {
+        if (line.type === CartItemTypeEnum.DRINK) {
+          const did = String(line.entityId ?? '');
+          if (!did) continue;
+          drinkQty.set(
+            did,
+            (drinkQty.get(did) ?? 0) +
+              Math.max(0, Number(line.quantity ?? 0)),
+          );
+        }
+      }
+
+      for (const [did, qty] of drinkQty) {
+        const drink = await this._drinksService.findOneInStoreByIdRaw(
+          storeId,
+          did,
+        );
+        const maxQ = drink ? drink.quantite : 0;
+        if (!drink || maxQ < qty) {
+          stockIssues.push({
+            storeId,
+            storeName,
+            entityId: did,
+            title: drink?.name ?? did,
+            itemType: CartItemTypeEnum.DRINK,
+            quantityRequested: qty,
+            maxAllowed: maxQ,
+            code: 'drink_insufficient_stock',
+          });
+        }
+      }
+    }
+
+    const couponIssues: Array<{
+      storeId: string;
+      code: string;
+      errorKey: string;
+    }> = [];
+    const couponWarnings: Array<{
+      storeId: string;
+      code: string;
+      warningKey: string;
+      previousDiscountAmount?: number;
+      currentDiscountAmount: number;
+    }> = [];
+    const couponSnapshots: Array<{
+      storeId: string;
+      code: string;
+      subtotal: number;
+      discountAmount: number;
+      totalAfterDiscount: number;
+    }> = [];
+
+    for (const c of dto.coupons ?? []) {
+      const sid = (c.storeId ?? '').trim();
+      const code = (c.code ?? '').trim();
+      if (!sid || !code) continue;
+
+      try {
+        await this._couponsService.getActiveCouponForStore(sid, code);
+      } catch (e) {
+        couponIssues.push({
+          storeId: sid,
+          code,
+          errorKey: badRequestExceptionKey(e),
+        });
+        continue;
+      }
+
+      try {
+        const snap = await this.previewCouponForStore(user, sid, code);
+        couponSnapshots.push({
+          storeId: sid,
+          code: snap.code,
+          subtotal: snap.subtotal,
+          discountAmount: snap.discountAmount,
+          totalAfterDiscount: snap.totalAfterDiscount,
+        });
+        if (
+          c.expectedDiscountAmount != null &&
+          Number.isFinite(c.expectedDiscountAmount)
+        ) {
+          const diff = Math.abs(
+            snap.discountAmount - c.expectedDiscountAmount,
+          );
+          if (diff > 0.015) {
+            couponWarnings.push({
+              storeId: sid,
+              code: snap.code,
+              warningKey: 'discount_amount_changed',
+              previousDiscountAmount: c.expectedDiscountAmount,
+              currentDiscountAmount: snap.discountAmount,
+            });
+          }
+        }
+      } catch (e) {
+        couponIssues.push({
+          storeId: sid,
+          code,
+          errorKey: badRequestExceptionKey(e),
+        });
+      }
+    }
+
+    const ok =
+      stockIssues.length === 0 && couponIssues.length === 0;
+
+    return {
+      ok,
+      stockIssues,
+      couponIssues,
+      couponWarnings,
+      couponSnapshots,
     };
   }
 }

@@ -31,7 +31,8 @@ export class PlatformShippingRangeDto {
 export class UpdatePlatformShippingSettingsDto {
   @ApiProperty({
     example: 0.85,
-    description: 'Tarif par km ajouté au forfait de tranche : total ≈ fee_tranche + distance × perKmRate',
+    description:
+      'Tarif par km : frais livraison plateforme = distance (km) × perKmRate, dans maxDeliveryRadiusKm',
   })
   @Type(() => Number)
   @IsNumber()

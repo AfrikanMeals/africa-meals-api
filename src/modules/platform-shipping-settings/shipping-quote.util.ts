@@ -44,7 +44,8 @@ export type PlatformShippingSettingsForQuote = {
 };
 
 /**
- * Tranches [minKm, maxKm) ; total = forfait tranche + distance × perKmRate.
+ * Frais plateforme : **total = distance × perKmRate** (dans le rayon max).
+ * Les tranches `ranges` ne modulent plus le montant (compat : `rangeFlat` reste 0).
  */
 export function computePlatformShippingFeeFromDistance(
   settings: PlatformShippingSettingsForQuote,
@@ -61,23 +62,14 @@ export function computePlatformShippingFeeFromDistance(
   if (distanceKm > settings.maxDeliveryRadiusKm + 1e-9) {
     return { deliverable: false, rangeFlat: 0, perKmComponent: 0, total: 0 };
   }
-  const sorted = [...(settings.ranges ?? [])].sort((a, b) => a.minKm - b.minKm);
-  let rangeFlat = 0;
-  for (const r of sorted) {
-    if (distanceKm >= r.minKm && distanceKm < r.maxKm) {
-      rangeFlat = r.fee;
-      break;
-    }
-  }
   const perKmRate = Number(settings.perKmRate) || 0;
   const perKmComponent = distanceKm * perKmRate;
-  const raw = rangeFlat + perKmComponent;
-  const total = Math.round((raw + Number.EPSILON) * 100) / 100;
+  const total = Math.round((perKmComponent + Number.EPSILON) * 100) / 100;
   const perKmRounded =
     Math.round((perKmComponent + Number.EPSILON) * 100) / 100;
   return {
     deliverable: true,
-    rangeFlat,
+    rangeFlat: 0,
     perKmComponent: perKmRounded,
     total,
   };

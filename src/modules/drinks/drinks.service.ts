@@ -144,6 +144,27 @@ export class DrinksService {
     return mapDrinkDoc(row as Record<string, unknown>);
   }
 
+  /** Validation panier : boisson de la boutique même si stock à 0. */
+  async findOneInStoreByIdRaw(
+    storeId: string,
+    drinkId: string,
+  ): Promise<ReturnType<typeof mapDrinkDoc> | null> {
+    if (!Types.ObjectId.isValid(storeId) || !Types.ObjectId.isValid(drinkId)) {
+      return null;
+    }
+    const row = await this._drinkModel
+      .findOne({
+        _id: new Types.ObjectId(drinkId),
+        store: new Types.ObjectId(storeId),
+      })
+      .lean()
+      .exec();
+    if (!row) {
+      return null;
+    }
+    return mapDrinkDoc(row as Record<string, unknown>);
+  }
+
   async createForStore(
     storeId: string,
     dto: CreateDrinkDto,
