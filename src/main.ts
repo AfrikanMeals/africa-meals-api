@@ -16,7 +16,14 @@ async function bootstrap() {
   app.enableShutdownHooks();
   app.use(httpRequestTimeoutMiddleware());
   app.use(compressionMiddleware({ threshold: 1024 }));
-  app.use(express.json({ limit: '60mb' }));
+  app.use(
+    express.json({
+      limit: '60mb',
+      verify: (req: express.Request & { rawBody?: Buffer }, _res, buf) => {
+        req.rawBody = Buffer.from(buf);
+      },
+    }),
+  );
   app.use(express.urlencoded({ extended: true, limit: '60mb' }));
   await configureApplication(app);
 

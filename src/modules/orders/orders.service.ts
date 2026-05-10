@@ -9,7 +9,7 @@ import {
   OrderStatusEnum,
 } from '@schemas/order.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { haversineDistance } from 'src/utils/helpers';
 import { mapInChunks } from '@utils/map-in-chunks';
 import { FilterOrdersDto } from './dto/orders.dto';
@@ -158,7 +158,10 @@ export class OrdersService {
       };
     });
 
-    const calculatedPrice = items.reduce((acc, item) => acc + item.price, 0);
+    const calculatedPrice = items.reduce(
+      (acc, item) => acc + item.price * item.quantity,
+      0,
+    );
 
     const order = await this._orderModel.create({
       status: OrderStatusEnum.CREATED,
@@ -174,6 +177,35 @@ export class OrdersService {
     });
 
     return this.findOneById(order._id.toString(), user);
+  }
+
+  /** Après paiement Stripe : statut payé + frais de livraison enregistrés sur la commande. */
+  async markOrderPaidWithShipping(
+    orderId: string,
+    shippingPrice: number,
+  ): Promise<void> {
+    const ship = Math.max(0, Number(shippingPrice) || 0);
+    const o = await this._orderModel
+      .findById(new Types.ObjectId(orderId))
+      .lean()
+      .exec();
+    if (!o?.items?.length) return;
+    const goods = (o.items as OrdeLineItem[]).reduce(
+      (acc, item) => acc + item.price * item.quantity,
+      0,
+    );
+    await this._orderModel
+      .updateOne(
+        { _id: new Types.ObjectId(orderId) },
+        {
+          $set: {
+            status: OrderStatusEnum.PAIED,
+            shippingPrice: ship,
+            totalPrice: Math.round((goods + ship) * 100 + Number.EPSILON) / 100,
+          },
+        },
+      )
+      .exec();
   }
 
   async calculateShippingPrice(orderId: string, user: UserModel) {
