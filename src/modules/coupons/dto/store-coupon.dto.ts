@@ -1,4 +1,4 @@
-import { StoreCouponDiscountTypeEnum } from '@schemas/store-coupon.schema';
+import { StoreCouponDiscountTypeEnum } from '@schemas/store_coupon.schema';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {

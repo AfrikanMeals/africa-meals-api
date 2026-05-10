@@ -1,10 +1,39 @@
+import { fieldSelectionMiddleware } from './common/field-selection/field-selection.middleware';
 import { INestApplication } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import type { NextFunction, Request, Response } from 'express';
 
 export type ConfigureAppOptions = {
   /** Ex. `api` en local ; `''` sur Cloud Functions si la fonction s’appelle `api` (URL …/api/…). */
   globalPrefix?: string;
 };
+
+/**
+ * Clients qui appellent sans le préfixe global `/${prefix}/…` (ex. `POST /auth/forgot-password`,
+ * `DELETE /addresses/:id`) alors que Nest enregistre `POST /api/auth/…`, `DELETE /api/addresses/:id`.
+ */
+function legacyUnprefixedPathRewrite(globalPrefix: string) {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    const raw = req.url ?? '';
+    const q = raw.indexOf('?');
+    const pathOnly = q === -1 ? raw : raw.slice(0, q);
+    const query = q === -1 ? '' : raw.slice(q);
+    if (pathOnly.startsWith(`/${globalPrefix}/`)) {
+      next();
+      return;
+    }
+    const needsPrefix =
+      pathOnly.startsWith('/auth/') ||
+      pathOnly.startsWith('/users/') ||
+      pathOnly === '/addresses' ||
+      pathOnly.startsWith('/addresses/') ||
+      pathOnly.startsWith('/addresses?');
+    if (needsPrefix) {
+      req.url = `/${globalPrefix}${pathOnly}${query}`;
+    }
+    next();
+  };
+}
 
 /**
  * Configuration HTTP partagée : préfixe global, CORS, Swagger (sauf si DISABLE_SWAGGER=true).
@@ -30,14 +59,24 @@ export async function configureApplication(
 
   const prefix = options?.globalPrefix ?? 'api';
   if (prefix.length > 0) {
+    app.use(legacyUnprefixedPathRewrite(prefix));
     app.setGlobalPrefix(prefix);
   }
+
+  /** Query `includeFields` / `excludeField(s)` → filtre JSON (intercepteur global). */
+  app.use(fieldSelectionMiddleware());
 
   app.enableCors({
     origin: true,
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Accept',
+      // Clients (admin / mobile) derrière ngrok : en-tête documenté par ngrok pour éviter l’interstitiel HTML.
+      'ngrok-skip-browser-warning',
+    ],
   });
 
   if (process.env.DISABLE_SWAGGER === 'true') {

@@ -6,6 +6,7 @@ import {
   IsNotEmpty,
   IsNumber,
   IsOptional,
+  Max,
   Min,
 } from 'class-validator';
 
@@ -14,6 +15,8 @@ export enum SortBy {
   RATING = 'rating',
   NAME = 'name',
   CREATED_AT = 'createdAt',
+  /** Distance boutique ↔ client (km), nécessite latitude + longitude. */
+  DISTANCE = 'distance',
 }
 
 export enum SortOrder {
@@ -100,6 +103,42 @@ export class SearchDto {
   @IsNumber()
   @Min(0)
   skip?: number;
+
+  /** Latitude client (degrés). Avec [longitude], active filtre distance + tri par défaut. */
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === '' || value === null) return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+  })
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitude?: number;
+
+  /** Longitude client (degrés). */
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === '' || value === null) return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+  })
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitude?: number;
+
+  /** Rayon max en km (défaut 30 si lat/lng fournis). */
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === '' || value === null) return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+  })
+  @IsNumber()
+  @Min(1)
+  @Max(100)
+  maxDistanceKm?: number;
 }
 
 export class SearchResultDto<T> {

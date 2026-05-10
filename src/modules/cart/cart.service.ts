@@ -1,8 +1,18 @@
+import { CouponsService } from '@modules/coupons/coupons.service';
+import { DrinksService } from '@modules/drinks/drinks.service';
 import { OffersService } from '@modules/offers/offers.service';
 import { ProductsService } from '@modules/products/products.service';
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
+import {
+  StoreCouponDiscountTypeEnum,
+} from '@schemas/store_coupon.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
@@ -12,6 +22,81 @@ import {
   RemoveItemFromCartDto,
 } from './dto/cart.dto';
 import { mapInChunks } from '@utils/map-in-chunks';
+
+/** Boutique + adresse géolocalisée (distance client ↔ restaurant sur le mobile). */
+const cartStorePopulate = {
+  path: 'store',
+  populate: {
+    path: 'address',
+    select: 'address city country zipCode countryCode location label',
+  },
+} as const;
+
+function storeIdFromPopulatedCartItem(item: {
+  store?: unknown;
+}): string {
+  const s = item.store;
+  if (s && typeof s === 'object') {
+    const o = s as { _id?: unknown; id?: unknown };
+    if (o._id != null) {
+      return String(o._id);
+    }
+    if (o.id != null) {
+      return String(o.id);
+    }
+  }
+  return '';
+}
+
+/**
+ * Stock menu du jour restant pour un produit (null = illimité ou hors menu du jour limité).
+ */
+function dailyMenuStockRemainingForStoreProduct(
+  store: { dailyMenuByWeekday?: unknown },
+  productId: string,
+): number | null {
+  const dow = new Date().getDay();
+  const rows = Array.isArray(store.dailyMenuByWeekday)
+    ? store.dailyMenuByWeekday
+    : [];
+  const slot = (rows as { dayOfWeek?: number; items?: unknown[] }[]).find(
+    (r) => Number(r?.dayOfWeek) === dow,
+  );
+  const items = Array.isArray(slot?.items) ? slot!.items : [];
+  const pid = String(productId);
+  const it = (items as Record<string, unknown>[]).find((x) => {
+    const id = x['productId'];
+    if (id != null && typeof id === 'object' && 'toString' in id) {
+      return (id as Types.ObjectId).toString() === pid;
+    }
+    return String(id) === pid;
+  });
+  if (!it) return null;
+  if (it['stockUnlimited'] !== false) return null;
+  return Math.max(0, Math.floor(Number(it['stockRemaining'] ?? 0)));
+}
+
+/** Forme proche d’un produit pour les clients (ex. app mobile `Entity`). */
+function drinkEntityForCartApi(drink: {
+  id: string;
+  name: string;
+  description: string;
+  priceCad: number;
+  imageUrl?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}) {
+  const now = new Date().toISOString();
+  return {
+    _id: drink.id,
+    title: drink.name,
+    description: drink.description ?? '',
+    price: drink.priceCad,
+    profileImage: drink.imageUrl,
+    createdAt: drink.createdAt ?? now,
+    updatedAt: drink.updatedAt ?? now,
+  };
+}
 
 @Injectable()
 export class CartService {
@@ -24,13 +109,19 @@ export class CartService {
   @Inject(OffersService)
   private readonly _offersService: OffersService;
 
+  @Inject(DrinksService)
+  private readonly _drinksService: DrinksService;
+
+  @Inject(CouponsService)
+  private readonly _couponsService: CouponsService;
+
   async findOneByStoreId(
     storeId: string,
     user: UserModel,
   ): Promise<CartItemApiResponse> {
     const items = await this._cartItemModel
       .find({ store: new Types.ObjectId(storeId), user: new Types.ObjectId(user.id) })
-      .populate('store')
+      .populate(cartStorePopulate)
       .exec();
 
     if (!items?.length) {
@@ -59,7 +150,7 @@ export class CartService {
   ): Promise<Partial<CartItemModel>> {
     const item = await this._cartItemModel
       .findOne({ _id: new Types.ObjectId(id) })
-      .populate('store')
+      .populate(cartStorePopulate)
       .exec();
     if (!item) {
       throw new NotFoundException('cart_item_not_found');
@@ -79,9 +170,28 @@ export class CartService {
       if (!product) {
         throw new NotFoundException('product_not_found');
       }
+      const st = item.store as { dailyMenuByWeekday?: unknown };
+      const dailyMenuStockRemaining = dailyMenuStockRemainingForStoreProduct(
+        st,
+        item.entityId,
+      );
       return {
         ...item.toJSON(),
         entity: product,
+        dailyMenuStockRemaining,
+      };
+    } else if (item.type === CartItemTypeEnum.DRINK) {
+      const storeId = storeIdFromPopulatedCartItem(item);
+      const drink = await this._drinksService.findOneInStoreCatalog(
+        storeId,
+        item.entityId,
+      );
+      if (!drink) {
+        throw new NotFoundException('drink_not_found');
+      }
+      return {
+        ...item.toJSON(),
+        entity: drinkEntityForCartApi(drink),
       };
     } else {
       const product = await this._productsService.findOneById(item.productId);
@@ -108,9 +218,7 @@ export class CartService {
         {
           path: 'user',
         },
-        {
-          path: 'store',
-        },
+        cartStorePopulate,
       ])
       .exec();
 
@@ -211,9 +319,33 @@ export class CartService {
     user: UserModel,
     store: StoreModel,
   ): Promise<Partial<CartItemModel>> {
+    const qtyReq = +(args.quantity ?? 1);
+    let priceForLine = args.price;
+
+    if (args.type === CartItemTypeEnum.DRINK) {
+      const drink = await this._drinksService.findOneInStoreCatalog(
+        store.id,
+        args.itemId,
+      );
+      if (!drink) {
+        throw new NotFoundException('drink_not_found');
+      }
+      priceForLine = drink.priceCad;
+      const existing = await this.itemExistsInCart(store, args, user);
+      const newTotalQty = (existing?.quantity ?? 0) + qtyReq;
+      if (drink.quantite < newTotalQty) {
+        throw new BadRequestException('drink_insufficient_stock');
+      }
+    }
+
     let item = await this.itemExistsInCart(store, args, user);
     if (item) {
-      await this.updateQuantity(item, (item.quantity ?? 0) + args.quantity);
+      await this.updateQuantity(item, (item.quantity ?? 0) + qtyReq);
+      if (args.type === CartItemTypeEnum.DRINK) {
+        await this._cartItemModel
+          .updateOne({ _id: item.id }, { $set: { price: priceForLine } })
+          .exec();
+      }
     } else {
       item = await this._cartItemModel.create({
         user: new Types.ObjectId(user.id),
@@ -223,8 +355,8 @@ export class CartService {
           productId: args.productId,
         }),
         type: args.type,
-        quantity: +(args.quantity ?? 1),
-        price: args.price,
+        quantity: qtyReq,
+        price: priceForLine,
       });
     }
 
@@ -268,5 +400,60 @@ export class CartService {
         user: new Types.ObjectId(user.id),
       })
       .exec();
+  }
+
+  /** Supprime toutes les lignes panier du client (ex. déconnexion). */
+  async clearAllForUser(user: UserModel): Promise<void> {
+    await this._cartItemModel
+      .deleteMany({ user: new Types.ObjectId(user.id) })
+      .exec();
+  }
+
+  /** Valide un code promo pour les lignes panier de l’utilisateur dans une boutique. */
+  async previewCouponForStore(
+    user: UserModel,
+    storeId: string,
+    rawCode: string,
+  ): Promise<{
+    subtotal: number;
+    discountAmount: number;
+    totalAfterDiscount: number;
+    code: string;
+    discountType: StoreCouponDiscountTypeEnum;
+    value: number;
+  }> {
+    const coupon = await this._couponsService.getActiveCouponForStore(
+      storeId,
+      rawCode,
+    );
+    const items = await this._cartItemModel
+      .find({
+        user: new Types.ObjectId(user.id),
+        store: new Types.ObjectId(storeId),
+      })
+      .exec();
+    if (!items?.length) {
+      throw new BadRequestException('cart_empty_for_store');
+    }
+    const subtotal = items.reduce(
+      (acc, line) =>
+        acc + Number(line.price) * Math.max(1, Number(line.quantity ?? 1)),
+      0,
+    );
+    const discountAmount = this._couponsService.computeDiscountForSubtotal(
+      subtotal,
+      coupon.discountType,
+      coupon.value,
+    );
+    const total = Math.max(0, subtotal - discountAmount);
+    return {
+      subtotal,
+      discountAmount,
+      totalAfterDiscount:
+        Math.round(total * 100 + Number.EPSILON) / 100,
+      code: coupon.code,
+      discountType: coupon.discountType,
+      value: coupon.value,
+    };
   }
 }

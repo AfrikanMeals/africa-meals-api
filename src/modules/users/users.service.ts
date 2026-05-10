@@ -9,7 +9,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { AddressTypeEnum } from '@schemas/address.schema';
 import { OrderModel } from '@schemas/order.schema';
 import { PaymentMethodModel } from '@schemas/payment-method.schema';
 import { StoreModel } from '@schemas/store.schema';
@@ -31,33 +30,13 @@ export class UsersService {
   private readonly _addressesService: AddressesService;
 
   async createAddress(args: CreateAddressDto, authUser: UserModel) {
-    const user = await this._userModel
-      .findById(authUser._id)
-      .populate('addresses')
-      .exec();
-
-    if (!user) {
-      throw new NotFoundException('user_not_found');
-    }
-
-    const isFirstAddress = !user.addresses?.length;
-    const address = await this._addressesService.create(
-      {
-        ...args,
-        isDefault: isFirstAddress,
-        type: AddressTypeEnum.USER,
-      },
-      user,
+    const { address } = await this._addressesService.createAndAttach(
+      args,
+      authUser,
     );
-
     if (!address) {
       throw new BadRequestException('address_not_found');
     }
-
-    await this._userModel.updateOne(
-      { _id: user._id },
-      { $push: { addresses: address._id } },
-    );
     return address;
   }
 

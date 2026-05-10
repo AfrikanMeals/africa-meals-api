@@ -12,7 +12,7 @@ export * from './product-category.schema';
 export * from './product.schema';
 export * from './product_rating.schema';
 export * from './store.schema';
-export * from './store-coupon.schema';
+export * from './store_coupon.schema';
 export * from './store_rating.schema';
 export * from './user.schema';
 

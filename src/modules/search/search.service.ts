@@ -45,9 +45,377 @@ export class SearchService {
   /**
    * Tri agrégation / find produits : noms Mongo réels (évite les virtuals non stockés).
    */
+  private _hasSearchGeo(args: SearchDto): boolean {
+    const la = args.latitude;
+    const ln = args.longitude;
+    return (
+      la != null &&
+      ln != null &&
+      Number.isFinite(la) &&
+      Number.isFinite(ln)
+    );
+  }
+
+  /** Si lat/lng valides : maxDistance par défaut 30 km, tri distance asc si sortBy absent. */
+  private _normalizeSearchGeoArgs(args: SearchDto): void {
+    if (!this._hasSearchGeo(args)) return;
+    if (args.maxDistanceKm == null) args.maxDistanceKm = 30;
+    args.maxDistanceKm = Math.min(
+      100,
+      Math.max(1, Math.floor(args.maxDistanceKm)),
+    );
+    if (args.sortBy == null) {
+      args.sortBy = SortBy.DISTANCE;
+      args.sortDirection = SortOrder.ASC;
+    }
+  }
+
+  /**
+   * Distance Haversine (km) entre un point client (littéraux) et les coords boutique `$__storeLat` / `$__storeLng`.
+   */
+  private _haversineKmExpr(
+    userLatDeg: number,
+    userLonDeg: number,
+  ): Record<string, unknown> {
+    const R = 6371;
+    return {
+      $cond: [
+        {
+          $and: [
+            { $ne: ['$__storeLat', null] },
+            { $ne: ['$__storeLng', null] },
+          ],
+        },
+        {
+          $multiply: [
+            R,
+            2,
+            {
+              $asin: {
+                $min: [
+                  1,
+                  {
+                    $sqrt: {
+                      $add: [
+                        {
+                          $pow: [
+                            {
+                              $sin: {
+                                $divide: [
+                                  {
+                                    $subtract: [
+                                      {
+                                        $degreesToRadians: '$__storeLat',
+                                      },
+                                      { $degreesToRadians: userLatDeg },
+                                    ],
+                                  },
+                                  2,
+                                ],
+                              },
+                            },
+                            2,
+                          ],
+                        },
+                        {
+                          $multiply: [
+                            { $cos: { $degreesToRadians: userLatDeg } },
+                            { $cos: { $degreesToRadians: '$__storeLat' } },
+                            {
+                              $pow: [
+                                {
+                                  $sin: {
+                                    $divide: [
+                                      {
+                                        $subtract: [
+                                          {
+                                            $degreesToRadians: '$__storeLng',
+                                          },
+                                          { $degreesToRadians: userLonDeg },
+                                        ],
+                                      },
+                                      2,
+                                    ],
+                                  },
+                                },
+                                2,
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        null,
+      ],
+    };
+  }
+
+  /** Exclut les plats présents au menu du jour avec stock limité à 0. */
+  private _productExcludeDailyMenuSoldOutStages(): PipelineStage[] {
+    const dow = new Date().getDay();
+    return [
+      {
+        $addFields: {
+          __todaySlotItems: {
+            $let: {
+              vars: {
+                slot: {
+                  $first: {
+                    $filter: {
+                      input: { $ifNull: ['$store.dailyMenuByWeekday', []] },
+                      as: 's',
+                      cond: { $eq: ['$$s.dayOfWeek', dow] },
+                    },
+                  },
+                },
+              },
+              in: { $ifNull: ['$$slot.items', []] },
+            },
+          },
+        },
+      },
+      {
+        $addFields: {
+          __menuItem: {
+            $first: {
+              $filter: {
+                input: '$__todaySlotItems',
+                as: 'it',
+                cond: { $eq: ['$$it.productId', '$_id'] },
+              },
+            },
+          },
+          __onDailyMenu: {
+            $gt: [
+              {
+                $size: {
+                  $filter: {
+                    input: '$__todaySlotItems',
+                    as: 'it',
+                    cond: { $eq: ['$$it.productId', '$_id'] },
+                  },
+                },
+              },
+              0,
+            ],
+          },
+        },
+      },
+      {
+        $addFields: {
+          __menuSoldOut: {
+            $and: [
+              { $ne: ['$__menuItem', null] },
+              {
+                $eq: [
+                  { $ifNull: ['$__menuItem.stockUnlimited', true] },
+                  false,
+                ],
+              },
+              { $lte: [{ $ifNull: ['$__menuItem.stockRemaining', 0] }, 0] },
+            ],
+          },
+        },
+      },
+      { $match: { __menuSoldOut: { $ne: true } } },
+    ];
+  }
+
+  /** Filtre rayon + champ `distanceKm` (lookup adresse boutique). */
+  private _productGeoDistanceStages(args: SearchDto): PipelineStage[] {
+    if (!this._hasSearchGeo(args)) {
+      return [{ $addFields: { distanceKm: null } }];
+    }
+    const uLat = args.latitude as number;
+    const uLon = args.longitude as number;
+    const maxKm = args.maxDistanceKm ?? 30;
+    return [
+      this._lookupAddressPipelineStage('$store.address', '_searchGeoAddr'),
+      {
+        $addFields: {
+          _searchGeoResAddr: { $arrayElemAt: ['$_searchGeoAddr', 0] },
+        },
+      },
+      {
+        $addFields: {
+          __storeLat: {
+            $cond: [
+              {
+                $gte: [
+                  {
+                    $size: {
+                      $ifNull: [
+                        '$_searchGeoResAddr.location.coordinates',
+                        [],
+                      ],
+                    },
+                  },
+                  2,
+                ],
+              },
+              {
+                $arrayElemAt: [
+                  '$_searchGeoResAddr.location.coordinates',
+                  1,
+                ],
+              },
+              null,
+            ],
+          },
+          __storeLng: {
+            $cond: [
+              {
+                $gte: [
+                  {
+                    $size: {
+                      $ifNull: [
+                        '$_searchGeoResAddr.location.coordinates',
+                        [],
+                      ],
+                    },
+                  },
+                  2,
+                ],
+              },
+              {
+                $arrayElemAt: [
+                  '$_searchGeoResAddr.location.coordinates',
+                  0,
+                ],
+              },
+              null,
+            ],
+          },
+        },
+      },
+      {
+        $addFields: {
+          distanceKm: this._haversineKmExpr(uLat, uLon),
+        },
+      },
+      {
+        $match: {
+          $expr: {
+            $and: [
+              { $ne: ['$distanceKm', null] },
+              { $lte: ['$distanceKm', maxKm] },
+            ],
+          },
+        },
+      },
+    ];
+  }
+
+  /** Avant facet boutiques : coords + distance + filtre rayon + tri menu du jour (nombre de plats du jour). */
+  private _storeDistanceAndMenuStages(args: SearchDto): PipelineStage[] {
+    const dow = new Date().getDay();
+    const stages: PipelineStage[] = [
+      this._lookupAddressPipelineStage('$address', '_stGeoAddr'),
+      {
+        $addFields: {
+          _stGeoRes: { $arrayElemAt: ['$_stGeoAddr', 0] },
+        },
+      },
+      {
+        $addFields: {
+          __storeLat: {
+            $cond: [
+              {
+                $gte: [
+                  {
+                    $size: {
+                      $ifNull: ['$_stGeoRes.location.coordinates', []],
+                    },
+                  },
+                  2,
+                ],
+              },
+              { $arrayElemAt: ['$_stGeoRes.location.coordinates', 1] },
+              null,
+            ],
+          },
+          __storeLng: {
+            $cond: [
+              {
+                $gte: [
+                  {
+                    $size: {
+                      $ifNull: ['$_stGeoRes.location.coordinates', []],
+                    },
+                  },
+                  2,
+                ],
+              },
+              { $arrayElemAt: ['$_stGeoRes.location.coordinates', 0] },
+              null,
+            ],
+          },
+          __todayMenuCount: {
+            $size: {
+              $let: {
+                vars: {
+                  slot: {
+                    $first: {
+                      $filter: {
+                        input: { $ifNull: ['$dailyMenuByWeekday', []] },
+                        as: 's',
+                        cond: { $eq: ['$$s.dayOfWeek', dow] },
+                      },
+                    },
+                  },
+                },
+                in: { $ifNull: ['$$slot.items', []] },
+              },
+            },
+          },
+        },
+      },
+    ];
+
+    if (this._hasSearchGeo(args)) {
+      const uLat = args.latitude as number;
+      const uLon = args.longitude as number;
+      const maxKm = args.maxDistanceKm ?? 30;
+      stages.push({
+        $addFields: {
+          distanceKm: this._haversineKmExpr(uLat, uLon),
+        },
+      });
+      stages.push({
+        $match: {
+          $expr: {
+            $and: [
+              { $ne: ['$distanceKm', null] },
+              { $lte: ['$distanceKm', maxKm] },
+            ],
+          },
+        },
+      });
+    } else {
+      stages.push({ $addFields: { distanceKm: null } });
+    }
+
+    return stages;
+  }
+
   private _productSortKeys(args: SearchDto): Record<string, 1 | -1> {
-    const dir = args.sortDirection === SortOrder.ASC ? 1 : -1;
+    const dir = (args.sortDirection === SortOrder.ASC ? 1 : -1) as 1 | -1;
     switch (args.sortBy) {
+      case SortBy.DISTANCE:
+        if (this._hasSearchGeo(args)) {
+          return {
+            distanceKm: dir,
+            __onDailyMenu: -1,
+            createdAt: -1,
+          };
+        }
+        return { createdAt: (-dir) as 1 | -1 };
       case SortBy.PRICE:
         return { price: dir };
       case SortBy.NAME:
@@ -63,8 +431,17 @@ export class SearchService {
 
   /** Tri liste boutiques (champs Mongo réels). */
   private _storeSortKeys(args: SearchDto): Record<string, 1 | -1> {
-    const dir = args.sortDirection === SortOrder.ASC ? 1 : -1;
+    const dir = (args.sortDirection === SortOrder.ASC ? 1 : -1) as 1 | -1;
     switch (args.sortBy) {
+      case SortBy.DISTANCE:
+        if (this._hasSearchGeo(args)) {
+          return {
+            distanceKm: dir,
+            __todayMenuCount: -1,
+            createdAt: -1,
+          };
+        }
+        return { createdAt: (-dir) as 1 | -1 };
       case SortBy.NAME:
         return { name: dir };
       case SortBy.PRICE:
@@ -73,6 +450,42 @@ export class SearchService {
       default:
         return { createdAt: dir };
     }
+  }
+
+  /**
+   * Jointure `addresses` : `localField` + `foreignField` échoue si la ref boutique est une
+   * string (legacy) et `_id` adresse est un ObjectId — `$convert` unifie les deux cas.
+   */
+  private _lookupAddressPipelineStage(
+    addressRefPath: string,
+    as: string,
+  ): PipelineStage {
+    return {
+      $lookup: {
+        from: 'addresses',
+        let: { addrRef: addressRefPath },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $eq: [
+                  '$_id',
+                  {
+                    $convert: {
+                      input: '$$addrRef',
+                      to: 'objectId',
+                      onError: null,
+                      onNull: null,
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+        as,
+      },
+    };
   }
 
   /**
@@ -129,6 +542,12 @@ export class SearchService {
           _category: { $arrayElemAt: ['$_cat', 0] },
         },
       },
+      this._lookupAddressPipelineStage('$store.address', '_storeAddr'),
+      {
+        $addFields: {
+          _storeResolvedAddr: { $arrayElemAt: ['$_storeAddr', 0] },
+        },
+      },
       {
         $project: {
           _id: 1,
@@ -165,10 +584,13 @@ export class SearchService {
             name: '$store.name',
             status: { $toString: '$store.status' },
             bio: { $ifNull: ['$store.bio', ''] },
+            email: { $ifNull: ['$store.email', ''] },
+            phoneNumber: { $ifNull: ['$store.phoneNumber', ''] },
             acceptsOrders: { $ifNull: ['$store.acceptsOrders', true] },
             supportsShipping: { $ifNull: ['$store.supportsShipping', false] },
             currency: { $ifNull: ['$store.currency', 'CAD'] },
             profileImage: { $ifNull: ['$store.profileImage', ''] },
+            likedBy: { $ifNull: ['$store.likedBy', []] },
             owner: {
               $convert: {
                 input: '$store.owner',
@@ -181,7 +603,112 @@ export class SearchService {
             updatedAt: '$store.updatedAt',
             canCreateProducts: { $ifNull: ['$store.canCreateProducts', false] },
             averageRating: { $ifNull: ['$store.averageRating', 0] },
+            address: {
+              $cond: [
+                { $gt: [{ $size: { $ifNull: ['$_storeAddr', []] } }, 0] },
+                {
+                  _id: { $toString: '$_storeResolvedAddr._id' },
+                  isDefault: {
+                    $ifNull: [
+                      '$_storeResolvedAddr.is_default',
+                      {
+                        $ifNull: ['$_storeResolvedAddr.isDefault', false],
+                      },
+                    ],
+                  },
+                  label: { $ifNull: ['$_storeResolvedAddr.label', ''] },
+                  address: { $ifNull: ['$_storeResolvedAddr.address', ''] },
+                  country: { $ifNull: ['$_storeResolvedAddr.country', ''] },
+                  city: { $ifNull: ['$_storeResolvedAddr.city', ''] },
+                  countryCode: {
+                    $ifNull: [
+                      '$_storeResolvedAddr.country_code',
+                      {
+                        $ifNull: ['$_storeResolvedAddr.countryCode', ''],
+                      },
+                    ],
+                  },
+                  zipCode: {
+                    $ifNull: [
+                      '$_storeResolvedAddr.zip_code',
+                      {
+                        $ifNull: ['$_storeResolvedAddr.zipCode', ''],
+                      },
+                    ],
+                  },
+                  type: { $ifNull: ['$_storeResolvedAddr.type', 'USER'] },
+                  location: {
+                    $ifNull: ['$_storeResolvedAddr.location', null],
+                  },
+                  createdAt: '$_storeResolvedAddr.createdAt',
+                  updatedAt: '$_storeResolvedAddr.updatedAt',
+                },
+                null,
+              ],
+            },
+            latitude: {
+              $cond: [
+                {
+                  $and: [
+                    { $gt: [{ $size: { $ifNull: ['$_storeAddr', []] } }, 0] },
+                    {
+                      $gte: [
+                        {
+                          $size: {
+                            $ifNull: [
+                              '$_storeResolvedAddr.location.coordinates',
+                              [],
+                            ],
+                          },
+                        },
+                        2,
+                      ],
+                    },
+                  ],
+                },
+                {
+                  $arrayElemAt: [
+                    '$_storeResolvedAddr.location.coordinates',
+                    1,
+                  ],
+                },
+                null,
+              ],
+            },
+            longitude: {
+              $cond: [
+                {
+                  $and: [
+                    { $gt: [{ $size: { $ifNull: ['$_storeAddr', []] } }, 0] },
+                    {
+                      $gte: [
+                        {
+                          $size: {
+                            $ifNull: [
+                              '$_storeResolvedAddr.location.coordinates',
+                              [],
+                            ],
+                          },
+                        },
+                        2,
+                      ],
+                    },
+                  ],
+                },
+                {
+                  $arrayElemAt: [
+                    '$_storeResolvedAddr.location.coordinates',
+                    0,
+                  ],
+                },
+                null,
+              ],
+            },
+            dailyMenuByWeekday: {
+              $ifNull: ['$store.dailyMenuByWeekday', []],
+            },
           },
+          distanceKm: { $ifNull: ['$distanceKm', null] },
         },
       },
     ];
@@ -199,6 +726,7 @@ export class SearchService {
   async filter(args: SearchDto, user?: UserModel) {
     args.page = args.page ?? 1;
     args.take = args.take ?? 5;
+    this._normalizeSearchGeoArgs(args);
     const searchContent = args.searchContent;
     // console.log('🚀 ~ SearchService ~ filter ~ args:', searchContent);
     const response: {
@@ -354,6 +882,8 @@ export class SearchService {
           ].filter(Boolean),
         },
       },
+      ...this._productExcludeDailyMenuSoldOutStages(),
+      ...this._productGeoDistanceStages(args),
     ];
     const sortKeys = this._productSortKeys(args);
     const facetPipeline: PipelineStage[] = [
@@ -405,6 +935,55 @@ export class SearchService {
     };
   }
 
+  /**
+   * Aperçu menu du jour (jour courant serveur) pour le produit : le mobile borne les quantités panier.
+   */
+  private _buildDailyMenuTodayForProduct(
+    storeRaw: Record<string, unknown> | null | undefined,
+    productId: string,
+  ): {
+    onMenu: boolean;
+    stockUnlimited: boolean;
+    stockRemaining: number;
+    soldOut: boolean;
+  } {
+    const dow = new Date().getDay();
+    const rows = Array.isArray(storeRaw?.['dailyMenuByWeekday'])
+      ? (storeRaw!['dailyMenuByWeekday'] as Record<string, unknown>[])
+      : [];
+    const slot = rows.find((r) => Number(r['dayOfWeek']) === dow);
+    const items = Array.isArray(slot?.['items'])
+      ? (slot!['items'] as Record<string, unknown>[])
+      : [];
+    const pid = String(productId);
+    const it = items.find((x) => {
+      const id = x['productId'];
+      if (id != null && typeof id === 'object' && 'toString' in id) {
+        return (id as Types.ObjectId).toString() === pid;
+      }
+      return String(id) === pid;
+    });
+    if (!it) {
+      return {
+        onMenu: false,
+        stockUnlimited: true,
+        stockRemaining: 0,
+        soldOut: false,
+      };
+    }
+    const stockUnlimited = it['stockUnlimited'] !== false;
+    const stockRemaining = stockUnlimited
+      ? 0
+      : Math.max(0, Math.floor(Number(it['stockRemaining'] ?? 0)));
+    const soldOut = !stockUnlimited && stockRemaining <= 0;
+    return {
+      onMenu: true,
+      stockUnlimited,
+      stockRemaining,
+      soldOut,
+    };
+  }
+
   /** Normalise une ligne d’agrégation « home feed » / menu boutique (JSON client, sans BSON). */
   private _mapHomeFeedLeanDoc(doc: Record<string, unknown>): Record<string, unknown> {
     const toIso = (v: unknown): string => {
@@ -423,9 +1002,78 @@ export class SearchService {
           ? String(ownerRaw)
           : '';
 
+    const likedByRaw = st?.['likedBy'];
+    const storeLikedBy = Array.isArray(likedByRaw)
+      ? likedByRaw.map((x) =>
+          x != null && typeof x === 'object' && 'toString' in x
+            ? (x as Types.ObjectId).toString()
+            : String(x),
+        )
+      : [];
+
+    const addrRaw = st?.['address'] as Record<string, unknown> | null | undefined;
+    const storeAddress =
+      addrRaw != null &&
+      typeof addrRaw === 'object' &&
+      (addrRaw['address'] != null ||
+        addrRaw['city'] != null ||
+        addrRaw['location'] != null)
+        ? {
+            _id: String(addrRaw['_id'] ?? ''),
+            label: String(addrRaw['label'] ?? ''),
+            address: String(addrRaw['address'] ?? ''),
+            country: String(addrRaw['country'] ?? ''),
+            city: String(addrRaw['city'] ?? ''),
+            countryCode: String(addrRaw['countryCode'] ?? ''),
+            zipCode: String(addrRaw['zipCode'] ?? ''),
+            type: String(addrRaw['type'] ?? 'USER'),
+            location: addrRaw['location'] ?? null,
+            createdAt:
+              addrRaw['createdAt'] != null ? toIso(addrRaw['createdAt']) : '',
+            updatedAt:
+              addrRaw['updatedAt'] != null ? toIso(addrRaw['updatedAt']) : '',
+          }
+        : null;
+
+    let storeLatNum: number | undefined;
+    let storeLngNum: number | undefined;
+    const rawLat = st?.['latitude'];
+    const rawLng = st?.['longitude'];
+    if (rawLat != null && rawLng != null) {
+      const la = Number(rawLat);
+      const ln = Number(rawLng);
+      if (Number.isFinite(la) && Number.isFinite(ln)) {
+        storeLatNum = la;
+        storeLngNum = ln;
+      }
+    }
+    if (
+      (storeLatNum === undefined || storeLngNum === undefined) &&
+      storeAddress != null
+    ) {
+      const loc = storeAddress.location as Record<string, unknown> | null;
+      const coords = loc?.['coordinates'];
+      if (Array.isArray(coords) && coords.length >= 2) {
+        const ln = Number(coords[0]);
+        const la = Number(coords[1]);
+        if (Number.isFinite(la) && Number.isFinite(ln)) {
+          storeLatNum = la;
+          storeLngNum = ln;
+        }
+      }
+    }
+
+    const productIdStr = String(doc._id);
+    const dailyMenuToday = this._buildDailyMenuTodayForProduct(st, productIdStr);
+    const distRaw = doc.distanceKm;
+    const distanceKm =
+      distRaw != null && Number.isFinite(Number(distRaw))
+        ? Math.round(Number(distRaw) * 1000) / 1000
+        : null;
+
     return {
-      _id: String(doc._id),
-      id: String(doc._id),
+      _id: productIdStr,
+      id: productIdStr,
       title: String(doc.title ?? ''),
       bio: String(doc.bio ?? ''),
       originCountry: String(doc.originCountry ?? ''),
@@ -478,6 +1126,8 @@ export class SearchService {
               email: String(st['email'] ?? ''),
               phoneNumber: String(st['phoneNumber'] ?? ''),
               profileImage: String(st['profileImage'] ?? ''),
+              likedBy: storeLikedBy,
+              address: storeAddress,
               owner: ownerStr,
               createdAt: toIso(st['createdAt']),
               updatedAt: toIso(st['updatedAt']),
@@ -486,6 +1136,12 @@ export class SearchService {
                 ? (st['shippingZones'] as unknown[])
                 : [],
               averageRating: Number(st['averageRating'] ?? 0),
+              ...(storeLatNum !== undefined && storeLngNum !== undefined
+                ? {
+                    latitude: storeLatNum,
+                    longitude: storeLngNum,
+                  }
+                : {}),
             }
           : {
               id: '',
@@ -499,6 +1155,8 @@ export class SearchService {
               email: '',
               phoneNumber: '',
               profileImage: '',
+              likedBy: [] as string[],
+              address: null,
               owner: '',
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
@@ -506,6 +1164,8 @@ export class SearchService {
               shippingZones: [] as unknown[],
               averageRating: 0.0,
             },
+      dailyMenuToday,
+      distanceKm,
     };
   }
 
@@ -607,6 +1267,12 @@ export class SearchService {
           _category: { $arrayElemAt: ['$_cat', 0] },
         },
       },
+      this._lookupAddressPipelineStage('$store.address', '_storeAddr'),
+      {
+        $addFields: {
+          _storeResolvedAddr: { $arrayElemAt: ['$_storeAddr', 0] },
+        },
+      },
       {
         $project: {
           _id: 1,
@@ -643,10 +1309,13 @@ export class SearchService {
             name: '$store.name',
             status: { $toString: '$store.status' },
             bio: { $ifNull: ['$store.bio', ''] },
+            email: { $ifNull: ['$store.email', ''] },
+            phoneNumber: { $ifNull: ['$store.phoneNumber', ''] },
             acceptsOrders: { $ifNull: ['$store.acceptsOrders', true] },
             supportsShipping: { $ifNull: ['$store.supportsShipping', false] },
             currency: { $ifNull: ['$store.currency', 'CAD'] },
             profileImage: { $ifNull: ['$store.profileImage', ''] },
+            likedBy: { $ifNull: ['$store.likedBy', []] },
             owner: {
               $convert: {
                 input: '$store.owner',
@@ -659,6 +1328,107 @@ export class SearchService {
             updatedAt: '$store.updatedAt',
             canCreateProducts: { $ifNull: ['$store.canCreateProducts', false] },
             averageRating: { $ifNull: ['$store.averageRating', 0] },
+            address: {
+              $cond: [
+                { $gt: [{ $size: { $ifNull: ['$_storeAddr', []] } }, 0] },
+                {
+                  _id: { $toString: '$_storeResolvedAddr._id' },
+                  isDefault: {
+                    $ifNull: [
+                      '$_storeResolvedAddr.is_default',
+                      {
+                        $ifNull: ['$_storeResolvedAddr.isDefault', false],
+                      },
+                    ],
+                  },
+                  label: { $ifNull: ['$_storeResolvedAddr.label', ''] },
+                  address: { $ifNull: ['$_storeResolvedAddr.address', ''] },
+                  country: { $ifNull: ['$_storeResolvedAddr.country', ''] },
+                  city: { $ifNull: ['$_storeResolvedAddr.city', ''] },
+                  countryCode: {
+                    $ifNull: [
+                      '$_storeResolvedAddr.country_code',
+                      {
+                        $ifNull: ['$_storeResolvedAddr.countryCode', ''],
+                      },
+                    ],
+                  },
+                  zipCode: {
+                    $ifNull: [
+                      '$_storeResolvedAddr.zip_code',
+                      {
+                        $ifNull: ['$_storeResolvedAddr.zipCode', ''],
+                      },
+                    ],
+                  },
+                  type: { $ifNull: ['$_storeResolvedAddr.type', 'USER'] },
+                  location: {
+                    $ifNull: ['$_storeResolvedAddr.location', null],
+                  },
+                  createdAt: '$_storeResolvedAddr.createdAt',
+                  updatedAt: '$_storeResolvedAddr.updatedAt',
+                },
+                null,
+              ],
+            },
+            latitude: {
+              $cond: [
+                {
+                  $and: [
+                    { $gt: [{ $size: { $ifNull: ['$_storeAddr', []] } }, 0] },
+                    {
+                      $gte: [
+                        {
+                          $size: {
+                            $ifNull: [
+                              '$_storeResolvedAddr.location.coordinates',
+                              [],
+                            ],
+                          },
+                        },
+                        2,
+                      ],
+                    },
+                  ],
+                },
+                {
+                  $arrayElemAt: [
+                    '$_storeResolvedAddr.location.coordinates',
+                    1,
+                  ],
+                },
+                null,
+              ],
+            },
+            longitude: {
+              $cond: [
+                {
+                  $and: [
+                    { $gt: [{ $size: { $ifNull: ['$_storeAddr', []] } }, 0] },
+                    {
+                      $gte: [
+                        {
+                          $size: {
+                            $ifNull: [
+                              '$_storeResolvedAddr.location.coordinates',
+                              [],
+                            ],
+                          },
+                        },
+                        2,
+                      ],
+                    },
+                  ],
+                },
+                {
+                  $arrayElemAt: [
+                    '$_storeResolvedAddr.location.coordinates',
+                    0,
+                  ],
+                },
+                null,
+              ],
+            },
           },
         },
       },
@@ -729,6 +1499,7 @@ export class SearchService {
           ],
         },
       },
+      ...this._productExcludeDailyMenuSoldOutStages(),
       {
         $facet: {
           total: [{ $count: 'n' }],
@@ -790,17 +1561,13 @@ export class SearchService {
         ],
       });
     }
-    const pipeline = [
+    const pipeline: PipelineStage[] = [
       {
         $match: {
           $and: andParts,
         },
       },
-      // {
-      //   $project: {
-      //     _id: 1,
-      //   },
-      // },
+      ...this._storeDistanceAndMenuStages(args),
     ];
 
     const sortKeys = this._storeSortKeys(args);
@@ -823,14 +1590,7 @@ export class SearchService {
                 as: '_rates',
               },
             },
-            {
-              $lookup: {
-                from: 'addresses',
-                localField: 'address',
-                foreignField: '_id',
-                as: '_addr',
-              },
-            },
+            this._lookupAddressPipelineStage('$address', '_addr'),
             {
               $addFields: {
                 averageRating: {
@@ -891,13 +1651,28 @@ export class SearchService {
                     { $gt: [{ $size: { $ifNull: ['$_addr', []] } }, 0] },
                     {
                       _id: { $toString: '$_address._id' },
-                      isDefault: { $ifNull: ['$_address.is_default', false] },
+                      isDefault: {
+                        $ifNull: [
+                          '$_address.is_default',
+                          { $ifNull: ['$_address.isDefault', false] },
+                        ],
+                      },
                       label: { $ifNull: ['$_address.label', ''] },
                       address: { $ifNull: ['$_address.address', ''] },
                       country: { $ifNull: ['$_address.country', ''] },
                       city: { $ifNull: ['$_address.city', ''] },
-                      countryCode: { $ifNull: ['$_address.country_code', ''] },
-                      zipCode: { $ifNull: ['$_address.zip_code', ''] },
+                      countryCode: {
+                        $ifNull: [
+                          '$_address.country_code',
+                          { $ifNull: ['$_address.countryCode', ''] },
+                        ],
+                      },
+                      zipCode: {
+                        $ifNull: [
+                          '$_address.zip_code',
+                          { $ifNull: ['$_address.zipCode', ''] },
+                        ],
+                      },
                       type: { $ifNull: ['$_address.type', 'USER'] },
                       location: { $ifNull: ['$_address.location', null] },
                       createdAt: '$_address.createdAt',

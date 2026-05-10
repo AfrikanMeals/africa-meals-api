@@ -222,8 +222,16 @@ export class AuthService {
     });
   }
 
-  /** Ancienne inscription : utilisateur créé tout de suite (avec ou sans code d’activation). */
+  /**
+   * Inscription publique (ex. app mobile sur `POST /auth/register`).
+   * Pour `source === 'email'`, même flux que `register/start` : code envoyé,
+   * compte créé seulement après `verify` ou `register/complete` (pas de ligne
+   * `users` avant validation), sauf si SMTP désactivé / compte test.
+   */
   async register(args: RegisterDto) {
+    if (args.source === 'email') {
+      return this.registerStart(args);
+    }
     return this.registerCreateUserDirectly(args);
   }
 
@@ -474,24 +482,59 @@ export class AuthService {
   }
 
   async verifyEmail({ code: activationCode, email }: EmailVerificationDto) {
+    const emailNorm = email.trim().toLowerCase();
+    const codeNorm = activationCode.trim();
+
     const user = await this._usersModel
       .findOneAndUpdate(
-        { activationCode, email, emailVerifiedAt: null },
+        {
+          activationCode: codeNorm,
+          email: this._emailMatchExact(emailNorm),
+          emailVerifiedAt: null,
+        },
         { activationCode: null, emailVerifiedAt: new Date() },
         { new: true },
       )
       .exec();
-    if (!user) {
-      throw new NotFoundException(`user_not_found`);
+    if (user) {
+      return user;
     }
-    return user;
+
+    try {
+      const completed = await this.registerComplete({
+        email: emailNorm,
+        code: codeNorm,
+      });
+      return completed.user;
+    } catch (err: unknown) {
+      if (err instanceof ConflictException) {
+        throw err;
+      }
+      if (
+        err instanceof NotFoundException ||
+        err instanceof BadRequestException
+      ) {
+        throw new NotFoundException(`user_not_found`);
+      }
+      throw err;
+    }
   }
 
-  async resendVerificationCode(email: string) {
+  async resendVerificationCode(emailRaw: string) {
+    const email = emailRaw.trim().toLowerCase();
+
+    const pending = await this._pendingSignupModel.findOne({ email }).exec();
+    if (pending) {
+      return this.resendPendingSignupCode(email);
+    }
+
     const code = await this._generateVerificationCode(6);
     const user = await this._usersModel
       .findOneAndUpdate(
-        { email },
+        {
+          email: this._emailMatchExact(email),
+          emailVerifiedAt: null,
+        },
         {
           emailVerifiedAt: null,
           activationCode: code,

@@ -24,9 +24,12 @@ import { BillingModule } from './modules/billing/billing.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { SupportChatModule } from './modules/support-chat/support-chat.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { DeliveryAgentModule } from './modules/delivery-agent/delivery-agent.module';
 import { GraphqlApiModule } from './graphql/graphql.module';
 import { RecommendationsModule } from './modules/recommendations/recommendations.module';
+import { PlatformShippingSettingsModule } from './modules/platform-shipping-settings/platform-shipping-settings.module';
 import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
+import { FieldSelectionModule } from './common/field-selection/field-selection.module';
 
 @Module({
   imports: [
@@ -64,8 +67,11 @@ import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
     OrdersModule,
     SupportChatModule,
     DashboardModule,
+    DeliveryAgentModule,
     GraphqlApiModule,
     RecommendationsModule,
+    PlatformShippingSettingsModule,
+    FieldSelectionModule,
     // SharedModule,
   ],
   controllers: [AppController, EnvDebugController],

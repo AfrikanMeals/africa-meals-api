@@ -1,0 +1,10 @@
+version: "3"
+
+agent:
+  authtoken: 2KkFodyXKT1PmB1miEPQxefQg6m_7uF4ttnj5SiG39aDKvpu4
+
+endpoints:
+  - name: afrikan-api
+    url: https://blindly-witty-snake.ngrok-free.app
+    upstream:
+      url: "9000"

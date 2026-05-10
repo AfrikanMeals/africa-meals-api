@@ -19,6 +19,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UploadedFile,
   UploadedFiles,
@@ -500,8 +501,11 @@ export class StoreController {
 
   /** Boissons (`drinks`) visibles client — sans auth (même source que l’admin, filtrées stock > 0). */
   @Get(':id/drinks-catalog')
-  async listDrinksCatalog(@Param('id') id: string) {
-    return this._drinksService.findByStoreForCatalog(id);
+  async listDrinksCatalog(
+    @Param('id') id: string,
+    @Query('q') q?: string,
+  ) {
+    return this._drinksService.findByStoreForCatalog(id, q);
   }
 
   @Get('/:id')

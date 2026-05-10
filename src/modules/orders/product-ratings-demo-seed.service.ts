@@ -1,3 +1,4 @@
+import { DEMO_PRODUCT_RATER_EMAIL_RE } from '@modules/ratings/demo-product-rating-users';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -10,7 +11,7 @@ import { UserModel, UserTypeEnum } from '@schemas/user.schema';
  * Comptes clients utilisés uniquement pour insérer des avis démo sur les plats
  * (même modèle que `ProductRatingModel` : user + product + rate + comment).
  */
-const RATING_USER_EMAIL_RE = /^afrikan-demo-rating-[0-9]+@seed\.local$/;
+const RATING_USER_EMAIL_RE = DEMO_PRODUCT_RATER_EMAIL_RE;
 
 const NUM_REVIEWS_PER_STORE = 5;
 const NUM_SHARED_RATING_USERS = 5;

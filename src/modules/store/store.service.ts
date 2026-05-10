@@ -1,3 +1,4 @@
+import { CreateAddressDto } from '@modules/addresses/dto/addresses.dto';
 import { AddressesService } from '@modules/addresses/addresses.service';
 import { CartService } from '@modules/cart/cart.service';
 import { AddItemToCartDto } from '@modules/cart/dto/cart.dto';
@@ -39,6 +40,34 @@ import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service
 
 @Injectable()
 export class StoreService {
+  /**
+   * Dossier vendeur : adresse textuelle complète + coordonnées réelles sur la carte
+   * (requis pour la recherche par proximité et la validation du dossier).
+   */
+  private _assertVendorShopAddressForOnboarding(addr: CreateAddressDto): void {
+    const street = (addr.address ?? '').trim();
+    const city = (addr.city ?? '').trim();
+    const zip = (addr.zipCode ?? '').trim();
+    const country = (addr.country ?? '').trim();
+    const cc = (addr.countryCode ?? '').trim();
+    if (!street || !city || !zip || !country || !cc) {
+      throw new BadRequestException('shop_address_incomplete');
+    }
+    const lat = addr.latitude;
+    const lng = addr.longitude;
+    if (
+      typeof lat !== 'number' ||
+      typeof lng !== 'number' ||
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng)
+    ) {
+      throw new BadRequestException('shop_coordinates_required');
+    }
+    if (Math.abs(lat) < 1e-5 && Math.abs(lng) < 1e-5) {
+      throw new BadRequestException('shop_coordinates_invalid');
+    }
+  }
+
   @InjectModel(StoreModel.name)
   private readonly _storeModel: Model<StoreModel>;
 
@@ -135,6 +164,7 @@ export class StoreService {
 
   async create(dto: CreateStoreDto, user: UserModel) {
     const { address, ...args } = dto;
+    this._assertVendorShopAddressForOnboarding(address);
     const fullUser = await this._usersService.findById(
       (user._id as { toString(): string }).toString(),
     );
@@ -708,6 +738,7 @@ export class StoreService {
       fullUser,
       args,
     );
+    this._assertVendorShopAddressForOnboarding(args.address);
     const store = await this._storeModel
       .findOne({ owner: user._id })
       .populate('address')
@@ -728,15 +759,11 @@ export class StoreService {
     }
     const addrDoc = store.address as AddressModel & { _id: { toString(): string } };
     const addrId = addrDoc._id.toString();
-    await this._addressesService.update(
-      addrId,
-      {
-        ...args.address,
-        latitude: args.address.latitude,
-        longitude: args.address.longitude,
-      },
-      user,
-    );
+    await this._addressesService.patchById(addrId, {
+      ...args.address,
+      latitude: args.address.latitude,
+      longitude: args.address.longitude,
+    });
 
     const wasRevision = store.status === StoreStatusEnum.REVISION;
     const shippingZones = args.supportsShipping
@@ -796,10 +823,7 @@ export class StoreService {
     const shippingZones = args.supportsShipping
       ? args.shippingZones ?? []
       : [];
-    if (args.supportsShipping) {
-      if (!shippingZones.length) {
-        throw new BadRequestException('shipping_zones_required');
-      }
+    if (args.supportsShipping && shippingZones.length > 0) {
       for (const z of shippingZones) {
         if (z.minDistance > z.maxDistance) {
           throw new BadRequestException('invalid_shipping_zone_distances');
@@ -818,7 +842,7 @@ export class StoreService {
       {
         $push: {
           vendorMessages: {
-            message: 'Zones de livraison enregistrées.',
+            message: 'Préférence de livraison enregistrée.',
             from: 'SYSTEM',
             createdAt: new Date(),
           },
