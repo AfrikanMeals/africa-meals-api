@@ -179,7 +179,7 @@ export class CartService {
         ...item.toJSON(),
         entity: product,
         dailyMenuStockRemaining,
-      };
+      } as unknown as Partial<CartItemModel>;
     } else if (item.type === CartItemTypeEnum.DRINK) {
       const storeId = storeIdFromPopulatedCartItem(item);
       const drink = await this._drinksService.findOneInStoreCatalog(
