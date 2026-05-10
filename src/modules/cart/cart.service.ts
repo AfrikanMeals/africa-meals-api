@@ -48,6 +48,34 @@ function storeIdFromPopulatedCartItem(item: {
   return '';
 }
 
+/**
+ * Stock menu du jour restant pour un produit (null = illimité ou hors menu du jour limité).
+ */
+function dailyMenuStockRemainingForStoreProduct(
+  store: { dailyMenuByWeekday?: unknown },
+  productId: string,
+): number | null {
+  const dow = new Date().getDay();
+  const rows = Array.isArray(store.dailyMenuByWeekday)
+    ? store.dailyMenuByWeekday
+    : [];
+  const slot = (rows as { dayOfWeek?: number; items?: unknown[] }[]).find(
+    (r) => Number(r?.dayOfWeek) === dow,
+  );
+  const items = Array.isArray(slot?.items) ? slot!.items : [];
+  const pid = String(productId);
+  const it = (items as Record<string, unknown>[]).find((x) => {
+    const id = x['productId'];
+    if (id != null && typeof id === 'object' && 'toString' in id) {
+      return (id as Types.ObjectId).toString() === pid;
+    }
+    return String(id) === pid;
+  });
+  if (!it) return null;
+  if (it['stockUnlimited'] !== false) return null;
+  return Math.max(0, Math.floor(Number(it['stockRemaining'] ?? 0)));
+}
+
 /** Forme proche d’un produit pour les clients (ex. app mobile `Entity`). */
 function drinkEntityForCartApi(drink: {
   id: string;
@@ -142,9 +170,15 @@ export class CartService {
       if (!product) {
         throw new NotFoundException('product_not_found');
       }
+      const st = item.store as { dailyMenuByWeekday?: unknown };
+      const dailyMenuStockRemaining = dailyMenuStockRemainingForStoreProduct(
+        st,
+        item.entityId,
+      );
       return {
         ...item.toJSON(),
         entity: product,
+        dailyMenuStockRemaining,
       };
     } else if (item.type === CartItemTypeEnum.DRINK) {
       const storeId = storeIdFromPopulatedCartItem(item);

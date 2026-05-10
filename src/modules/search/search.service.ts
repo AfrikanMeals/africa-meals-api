@@ -45,9 +45,377 @@ export class SearchService {
   /**
    * Tri agrégation / find produits : noms Mongo réels (évite les virtuals non stockés).
    */
+  private _hasSearchGeo(args: SearchDto): boolean {
+    const la = args.latitude;
+    const ln = args.longitude;
+    return (
+      la != null &&
+      ln != null &&
+      Number.isFinite(la) &&
+      Number.isFinite(ln)
+    );
+  }
+
+  /** Si lat/lng valides : maxDistance par défaut 30 km, tri distance asc si sortBy absent. */
+  private _normalizeSearchGeoArgs(args: SearchDto): void {
+    if (!this._hasSearchGeo(args)) return;
+    if (args.maxDistanceKm == null) args.maxDistanceKm = 30;
+    args.maxDistanceKm = Math.min(
+      100,
+      Math.max(1, Math.floor(args.maxDistanceKm)),
+    );
+    if (args.sortBy == null) {
+      args.sortBy = SortBy.DISTANCE;
+      args.sortDirection = SortOrder.ASC;
+    }
+  }
+
+  /**
+   * Distance Haversine (km) entre un point client (littéraux) et les coords boutique `$__storeLat` / `$__storeLng`.
+   */
+  private _haversineKmExpr(
+    userLatDeg: number,
+    userLonDeg: number,
+  ): Record<string, unknown> {
+    const R = 6371;
+    return {
+      $cond: [
+        {
+          $and: [
+            { $ne: ['$__storeLat', null] },
+            { $ne: ['$__storeLng', null] },
+          ],
+        },
+        {
+          $multiply: [
+            R,
+            2,
+            {
+              $asin: {
+                $min: [
+                  1,
+                  {
+                    $sqrt: {
+                      $add: [
+                        {
+                          $pow: [
+                            {
+                              $sin: {
+                                $divide: [
+                                  {
+                                    $subtract: [
+                                      {
+                                        $degreesToRadians: '$__storeLat',
+                                      },
+                                      { $degreesToRadians: userLatDeg },
+                                    ],
+                                  },
+                                  2,
+                                ],
+                              },
+                            },
+                            2,
+                          ],
+                        },
+                        {
+                          $multiply: [
+                            { $cos: { $degreesToRadians: userLatDeg } },
+                            { $cos: { $degreesToRadians: '$__storeLat' } },
+                            {
+                              $pow: [
+                                {
+                                  $sin: {
+                                    $divide: [
+                                      {
+                                        $subtract: [
+                                          {
+                                            $degreesToRadians: '$__storeLng',
+                                          },
+                                          { $degreesToRadians: userLonDeg },
+                                        ],
+                                      },
+                                      2,
+                                    ],
+                                  },
+                                },
+                                2,
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        null,
+      ],
+    };
+  }
+
+  /** Exclut les plats présents au menu du jour avec stock limité à 0. */
+  private _productExcludeDailyMenuSoldOutStages(): PipelineStage[] {
+    const dow = new Date().getDay();
+    return [
+      {
+        $addFields: {
+          __todaySlotItems: {
+            $let: {
+              vars: {
+                slot: {
+                  $first: {
+                    $filter: {
+                      input: { $ifNull: ['$store.dailyMenuByWeekday', []] },
+                      as: 's',
+                      cond: { $eq: ['$$s.dayOfWeek', dow] },
+                    },
+                  },
+                },
+              },
+              in: { $ifNull: ['$$slot.items', []] },
+            },
+          },
+        },
+      },
+      {
+        $addFields: {
+          __menuItem: {
+            $first: {
+              $filter: {
+                input: '$__todaySlotItems',
+                as: 'it',
+                cond: { $eq: ['$$it.productId', '$_id'] },
+              },
+            },
+          },
+          __onDailyMenu: {
+            $gt: [
+              {
+                $size: {
+                  $filter: {
+                    input: '$__todaySlotItems',
+                    as: 'it',
+                    cond: { $eq: ['$$it.productId', '$_id'] },
+                  },
+                },
+              },
+              0,
+            ],
+          },
+        },
+      },
+      {
+        $addFields: {
+          __menuSoldOut: {
+            $and: [
+              { $ne: ['$__menuItem', null] },
+              {
+                $eq: [
+                  { $ifNull: ['$__menuItem.stockUnlimited', true] },
+                  false,
+                ],
+              },
+              { $lte: [{ $ifNull: ['$__menuItem.stockRemaining', 0] }, 0] },
+            ],
+          },
+        },
+      },
+      { $match: { __menuSoldOut: { $ne: true } } },
+    ];
+  }
+
+  /** Filtre rayon + champ `distanceKm` (lookup adresse boutique). */
+  private _productGeoDistanceStages(args: SearchDto): PipelineStage[] {
+    if (!this._hasSearchGeo(args)) {
+      return [{ $addFields: { distanceKm: null } }];
+    }
+    const uLat = args.latitude as number;
+    const uLon = args.longitude as number;
+    const maxKm = args.maxDistanceKm ?? 30;
+    return [
+      this._lookupAddressPipelineStage('$store.address', '_searchGeoAddr'),
+      {
+        $addFields: {
+          _searchGeoResAddr: { $arrayElemAt: ['$_searchGeoAddr', 0] },
+        },
+      },
+      {
+        $addFields: {
+          __storeLat: {
+            $cond: [
+              {
+                $gte: [
+                  {
+                    $size: {
+                      $ifNull: [
+                        '$_searchGeoResAddr.location.coordinates',
+                        [],
+                      ],
+                    },
+                  },
+                  2,
+                ],
+              },
+              {
+                $arrayElemAt: [
+                  '$_searchGeoResAddr.location.coordinates',
+                  1,
+                ],
+              },
+              null,
+            ],
+          },
+          __storeLng: {
+            $cond: [
+              {
+                $gte: [
+                  {
+                    $size: {
+                      $ifNull: [
+                        '$_searchGeoResAddr.location.coordinates',
+                        [],
+                      ],
+                    },
+                  },
+                  2,
+                ],
+              },
+              {
+                $arrayElemAt: [
+                  '$_searchGeoResAddr.location.coordinates',
+                  0,
+                ],
+              },
+              null,
+            ],
+          },
+        },
+      },
+      {
+        $addFields: {
+          distanceKm: this._haversineKmExpr(uLat, uLon),
+        },
+      },
+      {
+        $match: {
+          $expr: {
+            $and: [
+              { $ne: ['$distanceKm', null] },
+              { $lte: ['$distanceKm', maxKm] },
+            ],
+          },
+        },
+      },
+    ];
+  }
+
+  /** Avant facet boutiques : coords + distance + filtre rayon + tri menu du jour (nombre de plats du jour). */
+  private _storeDistanceAndMenuStages(args: SearchDto): PipelineStage[] {
+    const dow = new Date().getDay();
+    const stages: PipelineStage[] = [
+      this._lookupAddressPipelineStage('$address', '_stGeoAddr'),
+      {
+        $addFields: {
+          _stGeoRes: { $arrayElemAt: ['$_stGeoAddr', 0] },
+        },
+      },
+      {
+        $addFields: {
+          __storeLat: {
+            $cond: [
+              {
+                $gte: [
+                  {
+                    $size: {
+                      $ifNull: ['$_stGeoRes.location.coordinates', []],
+                    },
+                  },
+                  2,
+                ],
+              },
+              { $arrayElemAt: ['$_stGeoRes.location.coordinates', 1] },
+              null,
+            ],
+          },
+          __storeLng: {
+            $cond: [
+              {
+                $gte: [
+                  {
+                    $size: {
+                      $ifNull: ['$_stGeoRes.location.coordinates', []],
+                    },
+                  },
+                  2,
+                ],
+              },
+              { $arrayElemAt: ['$_stGeoRes.location.coordinates', 0] },
+              null,
+            ],
+          },
+          __todayMenuCount: {
+            $size: {
+              $let: {
+                vars: {
+                  slot: {
+                    $first: {
+                      $filter: {
+                        input: { $ifNull: ['$dailyMenuByWeekday', []] },
+                        as: 's',
+                        cond: { $eq: ['$$s.dayOfWeek', dow] },
+                      },
+                    },
+                  },
+                },
+                in: { $ifNull: ['$$slot.items', []] },
+              },
+            },
+          },
+        },
+      },
+    ];
+
+    if (this._hasSearchGeo(args)) {
+      const uLat = args.latitude as number;
+      const uLon = args.longitude as number;
+      const maxKm = args.maxDistanceKm ?? 30;
+      stages.push({
+        $addFields: {
+          distanceKm: this._haversineKmExpr(uLat, uLon),
+        },
+      });
+      stages.push({
+        $match: {
+          $expr: {
+            $and: [
+              { $ne: ['$distanceKm', null] },
+              { $lte: ['$distanceKm', maxKm] },
+            ],
+          },
+        },
+      });
+    } else {
+      stages.push({ $addFields: { distanceKm: null } });
+    }
+
+    return stages;
+  }
+
   private _productSortKeys(args: SearchDto): Record<string, 1 | -1> {
-    const dir = args.sortDirection === SortOrder.ASC ? 1 : -1;
+    const dir = (args.sortDirection === SortOrder.ASC ? 1 : -1) as 1 | -1;
     switch (args.sortBy) {
+      case SortBy.DISTANCE:
+        if (this._hasSearchGeo(args)) {
+          return {
+            distanceKm: dir,
+            __onDailyMenu: -1,
+            createdAt: -1,
+          };
+        }
+        return { createdAt: (-dir) as 1 | -1 };
       case SortBy.PRICE:
         return { price: dir };
       case SortBy.NAME:
@@ -63,8 +431,17 @@ export class SearchService {
 
   /** Tri liste boutiques (champs Mongo réels). */
   private _storeSortKeys(args: SearchDto): Record<string, 1 | -1> {
-    const dir = args.sortDirection === SortOrder.ASC ? 1 : -1;
+    const dir = (args.sortDirection === SortOrder.ASC ? 1 : -1) as 1 | -1;
     switch (args.sortBy) {
+      case SortBy.DISTANCE:
+        if (this._hasSearchGeo(args)) {
+          return {
+            distanceKm: dir,
+            __todayMenuCount: -1,
+            createdAt: -1,
+          };
+        }
+        return { createdAt: (-dir) as 1 | -1 };
       case SortBy.NAME:
         return { name: dir };
       case SortBy.PRICE:
@@ -327,7 +704,11 @@ export class SearchService {
                 null,
               ],
             },
+            dailyMenuByWeekday: {
+              $ifNull: ['$store.dailyMenuByWeekday', []],
+            },
           },
+          distanceKm: { $ifNull: ['$distanceKm', null] },
         },
       },
     ];
@@ -345,6 +726,7 @@ export class SearchService {
   async filter(args: SearchDto, user?: UserModel) {
     args.page = args.page ?? 1;
     args.take = args.take ?? 5;
+    this._normalizeSearchGeoArgs(args);
     const searchContent = args.searchContent;
     // console.log('🚀 ~ SearchService ~ filter ~ args:', searchContent);
     const response: {
@@ -500,6 +882,8 @@ export class SearchService {
           ].filter(Boolean),
         },
       },
+      ...this._productExcludeDailyMenuSoldOutStages(),
+      ...this._productGeoDistanceStages(args),
     ];
     const sortKeys = this._productSortKeys(args);
     const facetPipeline: PipelineStage[] = [
@@ -548,6 +932,55 @@ export class SearchService {
       total,
       page: args.page,
       limit: args.take,
+    };
+  }
+
+  /**
+   * Aperçu menu du jour (jour courant serveur) pour le produit : le mobile borne les quantités panier.
+   */
+  private _buildDailyMenuTodayForProduct(
+    storeRaw: Record<string, unknown> | null | undefined,
+    productId: string,
+  ): {
+    onMenu: boolean;
+    stockUnlimited: boolean;
+    stockRemaining: number;
+    soldOut: boolean;
+  } {
+    const dow = new Date().getDay();
+    const rows = Array.isArray(storeRaw?.['dailyMenuByWeekday'])
+      ? (storeRaw!['dailyMenuByWeekday'] as Record<string, unknown>[])
+      : [];
+    const slot = rows.find((r) => Number(r['dayOfWeek']) === dow);
+    const items = Array.isArray(slot?.['items'])
+      ? (slot!['items'] as Record<string, unknown>[])
+      : [];
+    const pid = String(productId);
+    const it = items.find((x) => {
+      const id = x['productId'];
+      if (id != null && typeof id === 'object' && 'toString' in id) {
+        return (id as Types.ObjectId).toString() === pid;
+      }
+      return String(id) === pid;
+    });
+    if (!it) {
+      return {
+        onMenu: false,
+        stockUnlimited: true,
+        stockRemaining: 0,
+        soldOut: false,
+      };
+    }
+    const stockUnlimited = it['stockUnlimited'] !== false;
+    const stockRemaining = stockUnlimited
+      ? 0
+      : Math.max(0, Math.floor(Number(it['stockRemaining'] ?? 0)));
+    const soldOut = !stockUnlimited && stockRemaining <= 0;
+    return {
+      onMenu: true,
+      stockUnlimited,
+      stockRemaining,
+      soldOut,
     };
   }
 
@@ -630,9 +1063,17 @@ export class SearchService {
       }
     }
 
+    const productIdStr = String(doc._id);
+    const dailyMenuToday = this._buildDailyMenuTodayForProduct(st, productIdStr);
+    const distRaw = doc.distanceKm;
+    const distanceKm =
+      distRaw != null && Number.isFinite(Number(distRaw))
+        ? Math.round(Number(distRaw) * 1000) / 1000
+        : null;
+
     return {
-      _id: String(doc._id),
-      id: String(doc._id),
+      _id: productIdStr,
+      id: productIdStr,
       title: String(doc.title ?? ''),
       bio: String(doc.bio ?? ''),
       originCountry: String(doc.originCountry ?? ''),
@@ -723,6 +1164,8 @@ export class SearchService {
               shippingZones: [] as unknown[],
               averageRating: 0.0,
             },
+      dailyMenuToday,
+      distanceKm,
     };
   }
 
@@ -1056,6 +1499,7 @@ export class SearchService {
           ],
         },
       },
+      ...this._productExcludeDailyMenuSoldOutStages(),
       {
         $facet: {
           total: [{ $count: 'n' }],
@@ -1117,17 +1561,13 @@ export class SearchService {
         ],
       });
     }
-    const pipeline = [
+    const pipeline: PipelineStage[] = [
       {
         $match: {
           $and: andParts,
         },
       },
-      // {
-      //   $project: {
-      //     _id: 1,
-      //   },
-      // },
+      ...this._storeDistanceAndMenuStages(args),
     ];
 
     const sortKeys = this._storeSortKeys(args);
