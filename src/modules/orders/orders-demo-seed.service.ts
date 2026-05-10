@@ -140,8 +140,7 @@ const SAGUENAY_DEMO_ADDRESSES: Array<{
  * des comptes `@seed.local`, plats réalistes + `category_title` aligné sur les
  * catégories catalogue en base.
  *
- * - Prod : `SEED_DEMO_ORDERS=true`
- * - Hors prod : désactiver avec `SEED_DEMO_ORDERS=false`
+ * Désactivé par défaut au démarrage. Activer explicitement : `SEED_DEMO_ORDERS=true`.
  *
  * Supprime les anciennes commandes de démo pour cette boutique (clients synthétiques,
  * ancien client Sim, libellés `Sim —` / `Démo AE`) puis recrée 7 commandes.
@@ -170,11 +169,7 @@ export class OrdersDemoSeedService implements OnModuleInit {
   }
 
   private async seedDemoOrdersIfNeeded() {
-    const isProd = process.env.NODE_ENV === 'production';
-    if (isProd && process.env.SEED_DEMO_ORDERS !== 'true') {
-      return;
-    }
-    if (!isProd && process.env.SEED_DEMO_ORDERS === 'false') {
+    if (process.env.SEED_DEMO_ORDERS !== 'true') {
       return;
     }
 
