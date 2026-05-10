@@ -67,7 +67,7 @@ export class StoreModel extends BaseSchema {
   @Prop({ default: false, name: 'can_create_products' }) // TODO should be updated when activating the store
   canCreateProducts?: boolean;
 
-  @Prop({ default: false, name: 'supports_shipping' })
+  @Prop({ default: true, name: 'supports_shipping' })
   supportsShipping?: boolean;
 
   @Prop({

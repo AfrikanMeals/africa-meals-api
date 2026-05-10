@@ -72,6 +72,55 @@ export class CouponsService {
     }
   }
 
+  /**
+   * Coupon actif pour une boutique (client) : code, dates, quota, activé.
+   */
+  async getActiveCouponForStore(
+    storeId: string,
+    rawCode: string,
+  ): Promise<StoreCouponModel> {
+    const code = (rawCode ?? '').trim().toUpperCase();
+    if (!code) {
+      throw new BadRequestException('coupon_code_required');
+    }
+    let oid: Types.ObjectId;
+    try {
+      oid = new Types.ObjectId(storeId);
+    } catch {
+      throw new BadRequestException('invalid_store_id');
+    }
+    const doc = await this._couponModel
+      .findOne({ store: oid, code, enabled: true })
+      .exec();
+    if (!doc) {
+      throw new BadRequestException('coupon_invalid');
+    }
+    const now = new Date();
+    if (now < doc.validFrom || now > doc.validUntil) {
+      throw new BadRequestException('coupon_expired');
+    }
+    if (doc.maxUses != null && doc.usedCount >= doc.maxUses) {
+      throw new BadRequestException('coupon_exhausted');
+    }
+    return doc;
+  }
+
+  computeDiscountForSubtotal(
+    subtotal: number,
+    discountType: StoreCouponDiscountTypeEnum,
+    value: number,
+  ): number {
+    const s = Math.max(0, Number(subtotal) || 0);
+    if (s <= 0) {
+      return 0;
+    }
+    if (discountType === StoreCouponDiscountTypeEnum.FIXED) {
+      return Math.min(Number(value) || 0, s);
+    }
+    const pct = Math.min(100, Math.max(0, Number(value) || 0));
+    return Math.min(s, (s * pct) / 100);
+  }
+
   private validateValue(
     discountType: StoreCouponDiscountTypeEnum,
     value: number,

@@ -1,3 +1,4 @@
+import { CouponsService } from '@modules/coupons/coupons.service';
 import { DrinksService } from '@modules/drinks/drinks.service';
 import { OffersService } from '@modules/offers/offers.service';
 import { ProductsService } from '@modules/products/products.service';
@@ -9,6 +10,9 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
+import {
+  StoreCouponDiscountTypeEnum,
+} from '@schemas/store_coupon.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
@@ -18,6 +22,15 @@ import {
   RemoveItemFromCartDto,
 } from './dto/cart.dto';
 import { mapInChunks } from '@utils/map-in-chunks';
+
+/** Boutique + adresse géolocalisée (distance client ↔ restaurant sur le mobile). */
+const cartStorePopulate = {
+  path: 'store',
+  populate: {
+    path: 'address',
+    select: 'address city country zipCode countryCode location label',
+  },
+} as const;
 
 function storeIdFromPopulatedCartItem(item: {
   store?: unknown;
@@ -71,13 +84,16 @@ export class CartService {
   @Inject(DrinksService)
   private readonly _drinksService: DrinksService;
 
+  @Inject(CouponsService)
+  private readonly _couponsService: CouponsService;
+
   async findOneByStoreId(
     storeId: string,
     user: UserModel,
   ): Promise<CartItemApiResponse> {
     const items = await this._cartItemModel
       .find({ store: new Types.ObjectId(storeId), user: new Types.ObjectId(user.id) })
-      .populate('store')
+      .populate(cartStorePopulate)
       .exec();
 
     if (!items?.length) {
@@ -106,7 +122,7 @@ export class CartService {
   ): Promise<Partial<CartItemModel>> {
     const item = await this._cartItemModel
       .findOne({ _id: new Types.ObjectId(id) })
-      .populate('store')
+      .populate(cartStorePopulate)
       .exec();
     if (!item) {
       throw new NotFoundException('cart_item_not_found');
@@ -168,9 +184,7 @@ export class CartService {
         {
           path: 'user',
         },
-        {
-          path: 'store',
-        },
+        cartStorePopulate,
       ])
       .exec();
 
@@ -359,5 +373,53 @@ export class CartService {
     await this._cartItemModel
       .deleteMany({ user: new Types.ObjectId(user.id) })
       .exec();
+  }
+
+  /** Valide un code promo pour les lignes panier de l’utilisateur dans une boutique. */
+  async previewCouponForStore(
+    user: UserModel,
+    storeId: string,
+    rawCode: string,
+  ): Promise<{
+    subtotal: number;
+    discountAmount: number;
+    totalAfterDiscount: number;
+    code: string;
+    discountType: StoreCouponDiscountTypeEnum;
+    value: number;
+  }> {
+    const coupon = await this._couponsService.getActiveCouponForStore(
+      storeId,
+      rawCode,
+    );
+    const items = await this._cartItemModel
+      .find({
+        user: new Types.ObjectId(user.id),
+        store: new Types.ObjectId(storeId),
+      })
+      .exec();
+    if (!items?.length) {
+      throw new BadRequestException('cart_empty_for_store');
+    }
+    const subtotal = items.reduce(
+      (acc, line) =>
+        acc + Number(line.price) * Math.max(1, Number(line.quantity ?? 1)),
+      0,
+    );
+    const discountAmount = this._couponsService.computeDiscountForSubtotal(
+      subtotal,
+      coupon.discountType,
+      coupon.value,
+    );
+    const total = Math.max(0, subtotal - discountAmount);
+    return {
+      subtotal,
+      discountAmount,
+      totalAfterDiscount:
+        Math.round(total * 100 + Number.EPSILON) / 100,
+      code: coupon.code,
+      discountType: coupon.discountType,
+      value: coupon.value,
+    };
   }
 }

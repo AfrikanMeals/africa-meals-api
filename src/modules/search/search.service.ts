@@ -76,6 +76,42 @@ export class SearchService {
   }
 
   /**
+   * Jointure `addresses` : `localField` + `foreignField` échoue si la ref boutique est une
+   * string (legacy) et `_id` adresse est un ObjectId — `$convert` unifie les deux cas.
+   */
+  private _lookupAddressPipelineStage(
+    addressRefPath: string,
+    as: string,
+  ): PipelineStage {
+    return {
+      $lookup: {
+        from: 'addresses',
+        let: { addrRef: addressRefPath },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $eq: [
+                  '$_id',
+                  {
+                    $convert: {
+                      input: '$$addrRef',
+                      to: 'objectId',
+                      onError: null,
+                      onNull: null,
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+        as,
+      },
+    };
+  }
+
+  /**
    * Enrichissement « liste produit » : catégorie + note moyenne via `product_ratings`,
    * sans populate de toutes les notes (évite payloads ~300 Ko+ et scans lourds).
    */
@@ -129,14 +165,7 @@ export class SearchService {
           _category: { $arrayElemAt: ['$_cat', 0] },
         },
       },
-      {
-        $lookup: {
-          from: 'addresses',
-          localField: 'store.address',
-          foreignField: '_id',
-          as: '_storeAddr',
-        },
-      },
+      this._lookupAddressPipelineStage('$store.address', '_storeAddr'),
       {
         $addFields: {
           _storeResolvedAddr: { $arrayElemAt: ['$_storeAddr', 0] },
@@ -202,17 +231,38 @@ export class SearchService {
                 { $gt: [{ $size: { $ifNull: ['$_storeAddr', []] } }, 0] },
                 {
                   _id: { $toString: '$_storeResolvedAddr._id' },
-                  isDefault: { $ifNull: ['$_storeResolvedAddr.is_default', false] },
+                  isDefault: {
+                    $ifNull: [
+                      '$_storeResolvedAddr.is_default',
+                      {
+                        $ifNull: ['$_storeResolvedAddr.isDefault', false],
+                      },
+                    ],
+                  },
                   label: { $ifNull: ['$_storeResolvedAddr.label', ''] },
                   address: { $ifNull: ['$_storeResolvedAddr.address', ''] },
                   country: { $ifNull: ['$_storeResolvedAddr.country', ''] },
                   city: { $ifNull: ['$_storeResolvedAddr.city', ''] },
                   countryCode: {
-                    $ifNull: ['$_storeResolvedAddr.country_code', ''],
+                    $ifNull: [
+                      '$_storeResolvedAddr.country_code',
+                      {
+                        $ifNull: ['$_storeResolvedAddr.countryCode', ''],
+                      },
+                    ],
                   },
-                  zipCode: { $ifNull: ['$_storeResolvedAddr.zip_code', ''] },
+                  zipCode: {
+                    $ifNull: [
+                      '$_storeResolvedAddr.zip_code',
+                      {
+                        $ifNull: ['$_storeResolvedAddr.zipCode', ''],
+                      },
+                    ],
+                  },
                   type: { $ifNull: ['$_storeResolvedAddr.type', 'USER'] },
-                  location: { $ifNull: ['$_storeResolvedAddr.location', null] },
+                  location: {
+                    $ifNull: ['$_storeResolvedAddr.location', null],
+                  },
                   createdAt: '$_storeResolvedAddr.createdAt',
                   updatedAt: '$_storeResolvedAddr.updatedAt',
                 },
@@ -774,14 +824,7 @@ export class SearchService {
           _category: { $arrayElemAt: ['$_cat', 0] },
         },
       },
-      {
-        $lookup: {
-          from: 'addresses',
-          localField: 'store.address',
-          foreignField: '_id',
-          as: '_storeAddr',
-        },
-      },
+      this._lookupAddressPipelineStage('$store.address', '_storeAddr'),
       {
         $addFields: {
           _storeResolvedAddr: { $arrayElemAt: ['$_storeAddr', 0] },
@@ -847,17 +890,38 @@ export class SearchService {
                 { $gt: [{ $size: { $ifNull: ['$_storeAddr', []] } }, 0] },
                 {
                   _id: { $toString: '$_storeResolvedAddr._id' },
-                  isDefault: { $ifNull: ['$_storeResolvedAddr.is_default', false] },
+                  isDefault: {
+                    $ifNull: [
+                      '$_storeResolvedAddr.is_default',
+                      {
+                        $ifNull: ['$_storeResolvedAddr.isDefault', false],
+                      },
+                    ],
+                  },
                   label: { $ifNull: ['$_storeResolvedAddr.label', ''] },
                   address: { $ifNull: ['$_storeResolvedAddr.address', ''] },
                   country: { $ifNull: ['$_storeResolvedAddr.country', ''] },
                   city: { $ifNull: ['$_storeResolvedAddr.city', ''] },
                   countryCode: {
-                    $ifNull: ['$_storeResolvedAddr.country_code', ''],
+                    $ifNull: [
+                      '$_storeResolvedAddr.country_code',
+                      {
+                        $ifNull: ['$_storeResolvedAddr.countryCode', ''],
+                      },
+                    ],
                   },
-                  zipCode: { $ifNull: ['$_storeResolvedAddr.zip_code', ''] },
+                  zipCode: {
+                    $ifNull: [
+                      '$_storeResolvedAddr.zip_code',
+                      {
+                        $ifNull: ['$_storeResolvedAddr.zipCode', ''],
+                      },
+                    ],
+                  },
                   type: { $ifNull: ['$_storeResolvedAddr.type', 'USER'] },
-                  location: { $ifNull: ['$_storeResolvedAddr.location', null] },
+                  location: {
+                    $ifNull: ['$_storeResolvedAddr.location', null],
+                  },
                   createdAt: '$_storeResolvedAddr.createdAt',
                   updatedAt: '$_storeResolvedAddr.updatedAt',
                 },
@@ -1086,14 +1150,7 @@ export class SearchService {
                 as: '_rates',
               },
             },
-            {
-              $lookup: {
-                from: 'addresses',
-                localField: 'address',
-                foreignField: '_id',
-                as: '_addr',
-              },
-            },
+            this._lookupAddressPipelineStage('$address', '_addr'),
             {
               $addFields: {
                 averageRating: {
@@ -1154,13 +1211,28 @@ export class SearchService {
                     { $gt: [{ $size: { $ifNull: ['$_addr', []] } }, 0] },
                     {
                       _id: { $toString: '$_address._id' },
-                      isDefault: { $ifNull: ['$_address.is_default', false] },
+                      isDefault: {
+                        $ifNull: [
+                          '$_address.is_default',
+                          { $ifNull: ['$_address.isDefault', false] },
+                        ],
+                      },
                       label: { $ifNull: ['$_address.label', ''] },
                       address: { $ifNull: ['$_address.address', ''] },
                       country: { $ifNull: ['$_address.country', ''] },
                       city: { $ifNull: ['$_address.city', ''] },
-                      countryCode: { $ifNull: ['$_address.country_code', ''] },
-                      zipCode: { $ifNull: ['$_address.zip_code', ''] },
+                      countryCode: {
+                        $ifNull: [
+                          '$_address.country_code',
+                          { $ifNull: ['$_address.countryCode', ''] },
+                        ],
+                      },
+                      zipCode: {
+                        $ifNull: [
+                          '$_address.zip_code',
+                          { $ifNull: ['$_address.zipCode', ''] },
+                        ],
+                      },
                       type: { $ifNull: ['$_address.type', 'USER'] },
                       location: { $ifNull: ['$_address.location', null] },
                       createdAt: '$_address.createdAt',

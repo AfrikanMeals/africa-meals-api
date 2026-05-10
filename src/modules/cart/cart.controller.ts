@@ -7,6 +7,7 @@ import {
   Inject,
   Param,
   Patch,
+  Post,
   Req,
   UseGuards,
   ValidationPipe,
@@ -14,7 +15,7 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
-import { UpdateCartLineQuantityDto } from './dto/cart.dto';
+import { PreviewCartCouponDto, UpdateCartLineQuantityDto } from './dto/cart.dto';
 import { CartService } from './cart.service';
 
 @ApiTags('cart')
@@ -27,6 +28,20 @@ export class CartController {
   @UseGuards(JwtGuard)
   async findAll(@Req() req: Request): Promise<any> {
     return this._cartService.filter(req.user as UserModel);
+  }
+
+  @Post('coupon/preview')
+  @UseGuards(JwtGuard)
+  async previewCoupon(
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    dto: PreviewCartCouponDto,
+    @Req() req: Request,
+  ) {
+    return this._cartService.previewCouponForStore(
+      req.user as UserModel,
+      dto.storeId,
+      dto.code,
+    );
   }
 
   @Get('/:storeId')

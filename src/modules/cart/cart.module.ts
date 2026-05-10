@@ -1,3 +1,4 @@
+import { CouponsModule } from '@modules/coupons/coupons.module';
 import { DrinksModule } from '@modules/drinks/drinks.module';
 import { OffersModule } from '@modules/offers/offers.module';
 import { ProductsModule } from '@modules/products/products.module';
@@ -14,6 +15,7 @@ import { CartService } from './cart.service';
     ProductsModule,
     OffersModule,
     DrinksModule,
+    CouponsModule,
     MongooseModule.forFeature([
       { name: CartItemModel.name, schema: CartItemSchema },
     ]),

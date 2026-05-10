@@ -73,14 +73,15 @@ export class CreateStoreDto {
 
   @ApiPropertyOptional({
     type: () => [StoreShippingZoneDto],
-    description: 'Zones de livraison (distance min/max en km et prix)',
-    minItems: 1,
+    description:
+      'Zones historiques (optionnel). Les frais de livraison sont gérés par la plateforme ; laisser [] si livraison activée sans zones boutique.',
   })
-  @IsNotEmpty()
-  @ValidateNested()
-  @ArrayMinSize(1)
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
   @Type(() => StoreShippingZoneDto)
-  @ValidateIf((o) => o.shippingZones?.length > 0 || o.supportsShipping)
+  @ValidateIf((o) => (o.shippingZones?.length ?? 0) > 0)
+  @ArrayMinSize(1)
   shippingZones?: StoreShippingZoneDto[];
 }
 
@@ -153,7 +154,8 @@ export class PatchVendorShippingZonesDto {
 
   @ApiPropertyOptional({
     type: () => [StoreShippingZoneDto],
-    description: 'Obligatoire d’avoir au moins une entrée si supportsShipping est true',
+    description:
+      'Zones boutique (optionnel). Si vide alors supportsShipping = true, les frais restent ceux de la plateforme.',
   })
   @IsOptional()
   @IsArray()

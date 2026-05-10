@@ -45,6 +45,10 @@ function mapDrinkDoc(doc: Record<string, unknown>) {
 
 @Injectable()
 export class DrinksService {
+  private _escapeRegex(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
   @InjectModel(DrinkModel.name)
   private readonly _drinkModel: Model<DrinkModel>;
 
@@ -79,8 +83,9 @@ export class DrinksService {
 
   /**
    * Liste catalogue client (sans JWT) : boutique existante + boissons encore en stock.
+   * @param searchQuery — optionnel : filtre insensible à la casse sur `name` / `description` (regex échappée).
    */
-  async findByStoreForCatalog(storeId: string) {
+  async findByStoreForCatalog(storeId: string, searchQuery?: string) {
     if (!Types.ObjectId.isValid(storeId)) {
       return [];
     }
@@ -92,14 +97,26 @@ export class DrinksService {
     if (store == null) {
       return [];
     }
-    const rows = await this._drinkModel
-      .find({
-        store: new Types.ObjectId(storeId),
-        quantite: { $gt: 0 },
-      })
+    const baseFilter: Record<string, unknown> = {
+      store: new Types.ObjectId(storeId),
+      quantite: { $gt: 0 },
+    };
+    const q = searchQuery?.trim();
+    if (q) {
+      const esc = this._escapeRegex(q);
+      baseFilter['$or'] = [
+        { name: { $regex: esc, $options: 'i' } },
+        { description: { $regex: esc, $options: 'i' } },
+      ];
+    }
+    let query = this._drinkModel
+      .find(baseFilter)
       .sort({ updatedAt: -1 })
-      .lean()
-      .exec();
+      .lean();
+    if (q) {
+      query = query.limit(80);
+    }
+    const rows = await query.exec();
     return rows.map((r) => mapDrinkDoc(r as Record<string, unknown>));
   }
 
