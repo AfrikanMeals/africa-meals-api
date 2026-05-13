@@ -35,6 +35,26 @@ export class OrdersService {
   @Inject(NotificationsService)
   private readonly _notificationsService: NotificationsService;
 
+  private storeOwnerUserIdFromLean(store: unknown): string | null {
+    if (!store || typeof store !== 'object' || !('owner' in store)) {
+      return null;
+    }
+    const o = (store as { owner?: unknown }).owner;
+    if (o instanceof Types.ObjectId) {
+      return o.toHexString();
+    }
+    if (o && typeof o === 'object' && o !== null && '_id' in o) {
+      const id = (o as { _id: unknown })._id;
+      if (id instanceof Types.ObjectId) {
+        return id.toHexString();
+      }
+      if (id != null && Types.ObjectId.isValid(String(id))) {
+        return String(id);
+      }
+    }
+    return null;
+  }
+
   /**
    * Restreint `filter.store` aux boutiques dont le nom correspond à `q`.
    * @returns `empty` si aucune boutique ne correspond ou si l’intersection avec le filtre courant est vide.
@@ -269,6 +289,31 @@ export class OrdersService {
           `FCM order created: ${err instanceof Error ? err.message : String(err)}`,
         ),
       );
+
+    const sto = await this._storeModel
+      .findById(new Types.ObjectId(String(storeId)))
+      .select('owner name')
+      .lean()
+      .exec();
+    const ownerId = this.storeOwnerUserIdFromLean(sto);
+    if (ownerId && ownerId !== String(user.id)) {
+      const sname = (sto as { name?: string } | null)?.name?.trim();
+      void this._notificationsService
+        .pushVendorOrderNotify({
+          vendorUserIds: [ownerId],
+          title: 'Nouvelle commande',
+          body: `${sname || 'Boutique'} : nouvelle commande (en attente de paiement).`,
+          orderId: created._id.toString(),
+          storeName: sname,
+          reason: 'new_order',
+          status: OrderStatusEnum.CREATED,
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `FCM vendor new order: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+    }
     return created;
   }
 
@@ -290,7 +335,7 @@ export class OrdersService {
     const ship = Math.max(0, Number(shippingPrice) || 0);
     const o = await this._orderModel
       .findById(new Types.ObjectId(orderId))
-      .populate('store', 'name')
+      .populate('store', 'name owner')
       .lean()
       .exec();
     if (!o?.items?.length) return;
@@ -380,6 +425,24 @@ export class OrdersService {
               `FCM order paid: ${err instanceof Error ? err.message : String(err)}`,
             ),
           );
+        const ownerId = this.storeOwnerUserIdFromLean(o.store);
+        if (ownerId && ownerId !== uid) {
+          void this._notificationsService
+            .pushVendorOrderNotify({
+              vendorUserIds: [ownerId],
+              title: 'Commande payée',
+              body: `${storeName ?? 'Boutique'} : la commande a été payée.`,
+              orderId,
+              storeName,
+              reason: 'order_paid',
+              status: OrderStatusEnum.PAIED,
+            })
+            .catch((err) =>
+              this.logger.warn(
+                `FCM vendor order paid: ${err instanceof Error ? err.message : String(err)}`,
+              ),
+            );
+        }
       }
     }
   }

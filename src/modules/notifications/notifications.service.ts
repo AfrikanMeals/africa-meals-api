@@ -525,18 +525,24 @@ export class NotificationsService {
     }
     const store = (args.storeName ?? '').trim() || 'Restaurant';
     try {
-      await this.sendMulticastNotification({
+      const res = await this.sendMulticastNotification({
         recipientUserIds: [args.userId],
         title: 'Commande enregistrée',
         body: `${store} : votre commande est en attente. Payez quand vous voulez.`,
         data: {
           type: 'order_update',
+          audience: 'customer',
           reason: 'created',
           orderId: args.orderId,
           storeName: store,
           status: 'created',
         },
       });
+      if (res.deviceCount === 0) {
+        this.logger.warn(
+          `pushCustomerOrderCreated: aucun jeton FCM pour l’utilisateur ${args.userId}`,
+        );
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(`pushCustomerOrderCreated: ${msg}`);
@@ -564,12 +570,13 @@ export class NotificationsService {
     const store = (args.storeName ?? '').trim() || 'Restaurant';
     const label = NotificationsService.orderStatusLabelFr(next);
     try {
-      await this.sendMulticastNotification({
+      const res = await this.sendMulticastNotification({
         recipientUserIds: [args.userId],
         title: 'Commande mise à jour',
         body: `${store} : ${label}`,
         data: {
           type: 'order_update',
+          audience: 'customer',
           reason: 'status_changed',
           orderId: args.orderId,
           storeName: store,
@@ -577,9 +584,60 @@ export class NotificationsService {
           previousStatus: prev || 'unknown',
         },
       });
+      if (res.deviceCount === 0) {
+        this.logger.warn(
+          `pushCustomerOrderStatusChanged: aucun jeton FCM pour l’utilisateur ${args.userId}`,
+        );
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(`pushCustomerOrderStatusChanged: ${msg}`);
+    }
+  }
+
+  /**
+   * Push FCM — restaurateur / espace admin (nouvelle commande, paiement, expédition).
+   */
+  async pushVendorOrderNotify(args: {
+    vendorUserIds: string[];
+    title: string;
+    body: string;
+    orderId: string;
+    storeName?: string;
+    reason: string;
+    status?: string;
+  }): Promise<void> {
+    const ids = [...new Set(args.vendorUserIds)].filter((id) =>
+      Types.ObjectId.isValid(id),
+    );
+    if (ids.length === 0) {
+      return;
+    }
+    const store = (args.storeName ?? '').trim() || 'Restaurant';
+    const status = (args.status ?? '').trim().toLowerCase();
+    try {
+      const res = await this.sendMulticastNotification({
+        recipientUserIds: ids,
+        title: args.title,
+        body: args.body,
+        data: {
+          type: 'order_update',
+          audience: 'vendor',
+          reason: args.reason,
+          orderId: args.orderId,
+          storeName: store,
+          status: status || 'unknown',
+          url: '/commandes',
+        },
+      });
+      if (res.deviceCount === 0) {
+        this.logger.warn(
+          `pushVendorOrderNotify: aucun jeton FCM pour les IDs ${ids.join(', ')}`,
+        );
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`pushVendorOrderNotify: ${msg}`);
     }
   }
 

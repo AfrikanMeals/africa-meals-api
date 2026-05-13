@@ -432,6 +432,27 @@ export class DashboardService {
     return undefined;
   }
 
+  private storeOwnerUserIdForOrderPush(order: { store?: unknown }): string | null {
+    const s = order.store;
+    if (!s || typeof s !== 'object' || s === null || !('owner' in s)) {
+      return null;
+    }
+    const o = (s as { owner?: unknown }).owner;
+    if (o instanceof Types.ObjectId) {
+      return o.toHexString();
+    }
+    if (o && typeof o === 'object' && '_id' in o) {
+      const id = (o as { _id: unknown })._id;
+      if (id instanceof Types.ObjectId) {
+        return id.toHexString();
+      }
+      if (id != null && Types.ObjectId.isValid(String(id))) {
+        return String(id);
+      }
+    }
+    return null;
+  }
+
   /**
    * Heures d’activité (0–23 h, fuseau `America/Toronto`, **30 derniers jours** glissants) :
    * - **commandes** : heure de `createdAt` (hors annulées)
@@ -1692,7 +1713,7 @@ export class DashboardService {
 
     const orderDoc = await this.orderModel
       .findById(orderId)
-      .populate('store', 'name')
+      .populate('store', 'name owner')
       .populate({
         path: 'user',
         select: 'fullName addresses',
@@ -1773,6 +1794,28 @@ export class DashboardService {
         .catch((err) => {
           this.logger.warn(
             `FCM order shipped: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
+    }
+
+    const vendorId = this.storeOwnerUserIdForOrderPush(orderDoc);
+    if (vendorId && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
+      const sname = this.storeNameForOrderPush(orderDoc);
+      void this.notificationsService
+        .pushVendorOrderNotify({
+          vendorUserIds: [vendorId],
+          title: 'Commande en livraison',
+          body: `${sname ?? 'Boutique'} : commande prise en charge par le livreur.`,
+          orderId: orderDoc._id.toString(),
+          storeName: sname,
+          reason: 'order_shipped',
+          status: OrderStatusEnum.SHIPPED,
+        })
+        .catch((err) => {
+          this.logger.warn(
+            `FCM vendor order shipped: ${
               err instanceof Error ? err.message : String(err)
             }`,
           );
