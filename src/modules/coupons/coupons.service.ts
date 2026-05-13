@@ -354,4 +354,32 @@ export class CouponsService {
       throw new NotFoundException('coupon_not_found');
     }
   }
+
+  /**
+   * Après paiement réussi : incrémente `usedCount` si le coupon est encore valide
+   * et sous le plafond `maxUses` (lecture puis `$inc` pour éviter les dépassements).
+   */
+  async recordUsageAfterSuccessfulPayment(
+    storeId: string,
+    rawCode: string,
+  ): Promise<void> {
+    const code = (rawCode ?? '').trim().toUpperCase();
+    if (!code) return;
+    let oid: Types.ObjectId;
+    try {
+      oid = new Types.ObjectId(storeId);
+    } catch {
+      return;
+    }
+    const doc = await this._couponModel
+      .findOne({ store: oid, code, enabled: true })
+      .exec();
+    if (!doc) return;
+    const now = new Date();
+    if (now < doc.validFrom || now > doc.validUntil) return;
+    if (doc.maxUses != null && doc.usedCount >= doc.maxUses) return;
+    await this._couponModel
+      .updateOne({ _id: doc._id }, { $inc: { usedCount: 1 } })
+      .exec();
+  }
 }

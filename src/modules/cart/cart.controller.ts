@@ -15,7 +15,11 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
-import { PreviewCartCouponDto, UpdateCartLineQuantityDto } from './dto/cart.dto';
+import {
+  PreviewCartCouponDto,
+  UpdateCartLineQuantityDto,
+  ValidateCheckoutDto,
+} from './dto/cart.dto';
 import { CartService } from './cart.service';
 
 @ApiTags('cart')
@@ -41,6 +45,20 @@ export class CartController {
       req.user as UserModel,
       dto.storeId,
       dto.code,
+    );
+  }
+
+  /** Avant paiement : stocks (menu du jour, boissons) + validité des codes promo. */
+  @Post('validate-checkout')
+  @UseGuards(JwtGuard)
+  async validateCheckout(
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    dto: ValidateCheckoutDto,
+    @Req() req: Request,
+  ) {
+    return this._cartService.validateCheckoutReadiness(
+      req.user as UserModel,
+      dto ?? {},
     );
   }
 

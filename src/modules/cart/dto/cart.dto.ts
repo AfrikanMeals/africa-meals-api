@@ -1,16 +1,19 @@
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { ApiProperty } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  IsArray,
   IsEnum,
   IsInt,
   IsNotEmpty,
   IsNumber,
+  IsOptional,
   IsString,
   Max,
   Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 
 export class RemoveItemFromCartDto {
@@ -81,4 +84,36 @@ export class PreviewCartCouponDto {
   @IsNotEmpty()
   @IsString()
   code: string;
+}
+
+/** Un code promo à revérifier avant paiement (montant attendu = aperçu précédent). */
+export class CheckoutCouponCheckDto {
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  storeId: string;
+
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  code: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Si fourni, une variation > 0,01 sur la réduction déclenche un avertissement.',
+  })
+  @IsOptional()
+  @IsNumber()
+  expectedDiscountAmount?: number;
+}
+
+/** `POST /cart/validate-checkout` — stocks menu du jour / boissons + codes promo. */
+export class ValidateCheckoutDto {
+  @ApiProperty({ type: [CheckoutCouponCheckDto], required: false })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CheckoutCouponCheckDto)
+  coupons?: CheckoutCouponCheckDto[];
 }

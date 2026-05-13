@@ -5,6 +5,7 @@ import { ProductsModule } from '@modules/products/products.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { CartItemModel, CartItemSchema } from '@schemas/cart_item.schema';
+import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { CartController } from './cart.controller';
 import { CartService } from './cart.service';
 
@@ -18,6 +19,7 @@ import { CartService } from './cart.service';
     CouponsModule,
     MongooseModule.forFeature([
       { name: CartItemModel.name, schema: CartItemSchema },
+      { name: StoreModel.name, schema: StoreSchema },
     ]),
   ],
   exports: [CartService],

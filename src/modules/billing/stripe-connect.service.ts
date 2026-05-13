@@ -2,9 +2,11 @@ import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
 
+type StripeClient = InstanceType<typeof Stripe>;
+
 @Injectable()
 export class StripeConnectService {
-  private readonly stripe: Stripe | null;
+  private readonly stripe: StripeClient | null;
 
   constructor(private readonly _config: ConfigService) {
     const key = this._config.get<string>('STRIPE_SECRET_KEY')?.trim();
@@ -18,7 +20,7 @@ export class StripeConnectService {
   async listBalanceTransactions(
     connectedAccountId: string,
     opts: { limit: number; startingAfter?: string },
-  ): Promise<Stripe.Response<Stripe.ApiList<Stripe.BalanceTransaction>>> {
+  ) {
     if (!this.stripe) {
       throw new ServiceUnavailableException('stripe_not_configured');
     }
@@ -37,7 +39,7 @@ export class StripeConnectService {
     email: string;
     country: string;
     businessName: string;
-  }): Promise<Stripe.Response<Stripe.Account>> {
+  }) {
     if (!this.stripe) {
       throw new ServiceUnavailableException('stripe_not_configured');
     }
@@ -55,7 +57,7 @@ export class StripeConnectService {
     });
   }
 
-  async retrieveAccount(accountId: string): Promise<Stripe.Response<Stripe.Account>> {
+  async retrieveAccount(accountId: string) {
     if (!this.stripe) {
       throw new ServiceUnavailableException('stripe_not_configured');
     }
@@ -66,7 +68,7 @@ export class StripeConnectService {
     accountId: string,
     refreshUrl: string,
     returnUrl: string,
-  ): Promise<Stripe.Response<Stripe.AccountLink>> {
+  ) {
     if (!this.stripe) {
       throw new ServiceUnavailableException('stripe_not_configured');
     }

@@ -9,7 +9,7 @@ import {
   OrderStatusEnum,
 } from '@schemas/order.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { haversineDistance } from 'src/utils/helpers';
 import { mapInChunks } from '@utils/map-in-chunks';
 import { FilterOrdersDto } from './dto/orders.dto';
@@ -158,7 +158,10 @@ export class OrdersService {
       };
     });
 
-    const calculatedPrice = items.reduce((acc, item) => acc + item.price, 0);
+    const calculatedPrice = items.reduce(
+      (acc, item) => acc + item.price * item.quantity,
+      0,
+    );
 
     const order = await this._orderModel.create({
       status: OrderStatusEnum.CREATED,
@@ -174,6 +177,75 @@ export class OrdersService {
     });
 
     return this.findOneById(order._id.toString(), user);
+  }
+
+  /**
+   * Après paiement Stripe : statut payé + frais + total.
+   * Si `opts.charged*Cents` sont fournis (métadonnées Stripe / payout), le total
+   * suit le montant réellement encaissé (ex. panier avec code promo).
+   */
+  async markOrderPaidWithShipping(
+    orderId: string,
+    shippingPrice: number,
+    opts?: {
+      stripeParentPaymentId?: string;
+      couponCode?: string;
+      chargedGoodsCents?: number;
+      chargedShipCents?: number;
+    },
+  ): Promise<void> {
+    const ship = Math.max(0, Number(shippingPrice) || 0);
+    const o = await this._orderModel
+      .findById(new Types.ObjectId(orderId))
+      .lean()
+      .exec();
+    if (!o?.items?.length) return;
+    const goods = (o.items as OrdeLineItem[]).reduce(
+      (acc, item) => acc + item.price * item.quantity,
+      0,
+    );
+
+    const gC =
+      opts?.chargedGoodsCents != null && Number.isFinite(opts.chargedGoodsCents)
+        ? Math.max(0, Math.round(opts.chargedGoodsCents))
+        : null;
+    const sC =
+      opts?.chargedShipCents != null && Number.isFinite(opts.chargedShipCents)
+        ? Math.max(0, Math.round(opts.chargedShipCents))
+        : null;
+
+    let totalPrice: number;
+    let shippingStored: number;
+    if (gC != null && sC != null) {
+      totalPrice = Math.round((gC + sC + Number.EPSILON)) / 100;
+      shippingStored = sC / 100;
+    } else {
+      shippingStored = ship;
+      totalPrice =
+        Math.round((goods + shippingStored) * 100 + Number.EPSILON) / 100;
+    }
+
+    const $set: Record<string, unknown> = {
+      status: OrderStatusEnum.PAIED,
+      shippingPrice: shippingStored,
+      totalPrice,
+    };
+    if (opts?.stripeParentPaymentId?.trim()) {
+      $set['stripeParentPaymentId'] = opts.stripeParentPaymentId.trim();
+    }
+    if (opts?.couponCode?.trim()) {
+      $set['couponCode'] = opts.couponCode.trim().toUpperCase();
+    }
+    if (gC != null) {
+      $set['stripeChargedGoodsCents'] = gC;
+    }
+    if (sC != null) {
+      $set['stripeChargedShipCents'] = sC;
+    }
+
+    await this._orderModel
+      .updateOne({ _id: new Types.ObjectId(orderId) }, { $set })
+      .exec();
   }
 
   async calculateShippingPrice(orderId: string, user: UserModel) {
