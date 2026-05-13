@@ -492,6 +492,97 @@ export class NotificationsService {
     return { sent, failures, deviceCount };
   }
 
+  private static orderStatusLabelFr(status: string): string {
+    const s = status.trim().toLowerCase();
+    switch (s) {
+      case 'created':
+        return 'En attente de paiement';
+      case 'paied':
+        return 'Payée';
+      case 'approved':
+        return 'Approuvée';
+      case 'cancelled':
+        return 'Annulée';
+      case 'shipped':
+        return 'En livraison';
+      case 'completed':
+        return 'Terminée';
+      default:
+        return status || 'Mise à jour';
+    }
+  }
+
+  /**
+   * Push FCM — nouvelle commande (ex. panier → `created`, payer plus tard).
+   */
+  async pushCustomerOrderCreated(args: {
+    userId: string;
+    orderId: string;
+    storeName?: string;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.userId)) {
+      return;
+    }
+    const store = (args.storeName ?? '').trim() || 'Restaurant';
+    try {
+      await this.sendMulticastNotification({
+        recipientUserIds: [args.userId],
+        title: 'Commande enregistrée',
+        body: `${store} : votre commande est en attente. Payez quand vous voulez.`,
+        data: {
+          type: 'order_update',
+          reason: 'created',
+          orderId: args.orderId,
+          storeName: store,
+          status: 'created',
+        },
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`pushCustomerOrderCreated: ${msg}`);
+    }
+  }
+
+  /**
+   * Push FCM — changement de statut de commande côté client.
+   */
+  async pushCustomerOrderStatusChanged(args: {
+    userId: string;
+    orderId: string;
+    storeName?: string;
+    previousStatus: string;
+    newStatus: string;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.userId)) {
+      return;
+    }
+    const prev = (args.previousStatus ?? '').trim().toLowerCase();
+    const next = (args.newStatus ?? '').trim().toLowerCase();
+    if (!next || prev === next) {
+      return;
+    }
+    const store = (args.storeName ?? '').trim() || 'Restaurant';
+    const label = NotificationsService.orderStatusLabelFr(next);
+    try {
+      await this.sendMulticastNotification({
+        recipientUserIds: [args.userId],
+        title: 'Commande mise à jour',
+        body: `${store} : ${label}`,
+        data: {
+          type: 'order_update',
+          reason: 'status_changed',
+          orderId: args.orderId,
+          storeName: store,
+          status: next,
+          previousStatus: prev || 'unknown',
+        },
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`pushCustomerOrderStatusChanged: ${msg}`);
+    }
+  }
+
   /**
    * Une entrée par destinataire dans `app_notifications` (in-app + compteur non lu).
    * Les accusés de lecture restent sur `notification_read_receipts`.

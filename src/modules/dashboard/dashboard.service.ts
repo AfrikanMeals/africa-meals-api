@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -31,6 +32,7 @@ import {
   randomLngLatNearPoint,
   randomPercentCoords,
 } from './delivery-driver-geo';
+import { NotificationsService } from '@modules/notifications/notifications.service';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -340,6 +342,8 @@ function emptyPeakHourSlots(): DashboardPeakHourRow[] {
 
 @Injectable()
 export class DashboardService {
+  private readonly logger = new Logger(DashboardService.name);
+
   constructor(
     @InjectModel(OrderModel.name)
     private readonly orderModel: Model<OrderModel>,
@@ -359,6 +363,7 @@ export class DashboardService {
     private readonly deliveryDriverModel: Model<DeliveryDriverModel>,
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async getAlerts(user: UserModel): Promise<{
@@ -396,6 +401,35 @@ export class DashboardService {
       ]);
 
     return { delayedDeliveries, negativeReviewStores, stockAlerts };
+  }
+
+  private customerUserIdForOrderPush(order: { user?: unknown }): string | null {
+    const u = order.user;
+    if (!u) {
+      return null;
+    }
+    if (u instanceof Types.ObjectId) {
+      return u.toHexString();
+    }
+    if (typeof u === 'object' && u !== null && '_id' in u) {
+      const id = (u as { _id: unknown })._id;
+      if (id instanceof Types.ObjectId) {
+        return id.toHexString();
+      }
+      if (id != null && Types.ObjectId.isValid(String(id))) {
+        return String(id);
+      }
+    }
+    return null;
+  }
+
+  private storeNameForOrderPush(order: { store?: unknown }): string | undefined {
+    const s = order.store;
+    if (s && typeof s === 'object' && s !== null && 'name' in s) {
+      const n = String((s as { name?: string }).name ?? '').trim();
+      return n || undefined;
+    }
+    return undefined;
   }
 
   /**
@@ -1722,8 +1756,28 @@ export class DashboardService {
     };
     await livreurDoc.save();
 
+    const prevOrderStatus = orderDoc.status as OrderStatusEnum;
     orderDoc.status = OrderStatusEnum.SHIPPED;
     await orderDoc.save();
+
+    const customerId = this.customerUserIdForOrderPush(orderDoc);
+    if (customerId && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
+      void this.notificationsService
+        .pushCustomerOrderStatusChanged({
+          userId: customerId,
+          orderId: orderDoc._id.toString(),
+          storeName: this.storeNameForOrderPush(orderDoc),
+          previousStatus: prevOrderStatus,
+          newStatus: OrderStatusEnum.SHIPPED,
+        })
+        .catch((err) => {
+          this.logger.warn(
+            `FCM order shipped: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
+    }
 
     return this.toDashboardLivreurRow(
       livreurDoc.toObject() as unknown as DeliveryDriverLean,

@@ -6,6 +6,7 @@ import { StoreService } from '@modules/store/store.service';
 import { UsersService } from '@modules/users/users.service';
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
 } from '@nestjs/common';
@@ -931,6 +932,61 @@ export class StripeGroupedCheckoutService {
         },
       },
     );
+  }
+
+  /**
+   * Après Payment Sheet : même logique que le webhook `payment_intent.succeeded`,
+   * pour les environnements où le webhook Stripe n’atteint pas l’API (local, ngrok).
+   * Idempotent via `stripe_processed_checkouts` (clé `sessionId` = id du PaymentIntent).
+   */
+  async fulfillGroupedPaymentFromClient(
+    user: UserModel,
+    paymentIntentId: string,
+  ): Promise<{ received: boolean }> {
+    const id = paymentIntentId.trim();
+    if (!id.startsWith('pi_')) {
+      throw new BadRequestException('invalid_payment_intent_id');
+    }
+    const stripe = this.stripe();
+    const pi = await stripe.paymentIntents.retrieve(id);
+    if (pi.status !== 'succeeded') {
+      throw new BadRequestException({
+        message: 'payment_intent_not_succeeded',
+        status: pi.status,
+      });
+    }
+    const uid = pi.metadata?.uid;
+    const storesCsv = pi.metadata?.stores;
+    const shipB64 = pi.metadata?.shipB64;
+    if (!uid || !storesCsv) {
+      throw new BadRequestException('stripe_missing_payment_intent_metadata');
+    }
+    if (String(uid) !== String(user.id)) {
+      throw new ForbiddenException('payment_intent_user_mismatch');
+    }
+    const metadata = (pi.metadata ?? {}) as Record<
+      string,
+      string | undefined | null
+    >;
+    const amountTotalCents =
+      pi.amount_received != null
+        ? pi.amount_received
+        : pi.amount != null
+          ? pi.amount
+          : undefined;
+    const currency =
+      pi.currency != null ? String(pi.currency) : undefined;
+    await this.fulfillOrdersAfterStripePayment({
+      stripePaymentId: pi.id,
+      uid: String(uid),
+      storesCsv,
+      shipB64,
+      metadata,
+      amountTotalCents,
+      currency,
+      stripeEventKind: 'payment_intent',
+    });
+    return { received: true };
   }
 
   async handleWebhook(

@@ -1,6 +1,7 @@
 import { CartService } from '@modules/cart/cart.service';
+import { NotificationsService } from '@modules/notifications/notifications.service';
 import { ProductsService } from '@modules/products/products.service';
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
 import {
@@ -8,6 +9,7 @@ import {
   OrderModel,
   OrderStatusEnum,
 } from '@schemas/order.schema';
+import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { haversineDistance } from 'src/utils/helpers';
@@ -16,14 +18,85 @@ import { FilterOrdersDto } from './dto/orders.dto';
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   @InjectModel(OrderModel.name)
   private readonly _orderModel: Model<OrderModel>;
+
+  @InjectModel(StoreModel.name)
+  private readonly _storeModel: Model<StoreModel>;
 
   @Inject(CartService)
   private readonly _cartService: CartService;
 
   @Inject(ProductsService)
   private readonly _productsService: ProductsService;
+
+  @Inject(NotificationsService)
+  private readonly _notificationsService: NotificationsService;
+
+  /**
+   * Restreint `filter.store` aux boutiques dont le nom correspond à `q`.
+   * @returns `empty` si aucune boutique ne correspond ou si l’intersection avec le filtre courant est vide.
+   */
+  private async applyStoreNameSearch(
+    filter: Record<string, unknown>,
+    qRaw: string | undefined,
+  ): Promise<'ok' | 'empty'> {
+    const q = qRaw?.trim();
+    if (!q) {
+      return 'ok';
+    }
+    const esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rx = new RegExp(esc, 'i');
+    const matching = await this._storeModel
+      .find({ name: rx })
+      .select('_id')
+      .limit(500)
+      .lean()
+      .exec();
+    const matchIds = matching.map((s) => String(s._id));
+    if (!matchIds.length) {
+      return 'empty';
+    }
+
+    const cur = filter['store'];
+    if (cur == null) {
+      filter['store'] = {
+        $in: matchIds.map((id) => new Types.ObjectId(id)),
+      };
+      return 'ok';
+    }
+    if (typeof cur === 'object' && cur !== null && '_id' in cur) {
+      const sid = (cur as { _id: unknown })._id;
+      const idStr =
+        sid instanceof Types.ObjectId ? sid.toHexString() : String(sid);
+      if (!matchIds.includes(idStr)) {
+        return 'empty';
+      }
+      return 'ok';
+    }
+    if (typeof cur === 'object' && cur !== null && '$in' in cur) {
+      const arr = (cur as { $in: unknown[] }).$in;
+      const narrowed = arr.filter((oid) => {
+        const idStr =
+          oid instanceof Types.ObjectId
+            ? oid.toHexString()
+            : String(oid);
+        return matchIds.includes(idStr);
+      });
+      if (!narrowed.length) {
+        return 'empty';
+      }
+      filter['store'] = { $in: narrowed };
+      return 'ok';
+    }
+
+    filter['store'] = {
+      $in: matchIds.map((id) => new Types.ObjectId(id)),
+    };
+    return 'ok';
+  }
 
   async filter(
     args: FilterOrdersDto,
@@ -55,7 +128,7 @@ export class OrdersService {
         filter['store'] = { $in: storeIds };
       }
     } else {
-      filter['user'] = { _id: user.id };
+      filter['user'] = new Types.ObjectId(String(user.id));
       if (args.storeId) {
         filter['store'] = { _id: args.storeId };
       }
@@ -65,15 +138,26 @@ export class OrdersService {
       filter['status'] = args.status;
     }
 
+    const search = await this.applyStoreNameSearch(filter, args.q);
+    if (search === 'empty') {
+      return { data: [] };
+    }
+
     /** Liste mobile / admin : plafond par défaut (évite charger tout l’historique + populate profond). */
     const lim =
       typeof args.limit === 'number' && args.limit > 0
         ? Math.min(200, Math.max(1, args.limit))
         : 80;
 
+    const skip =
+      typeof args.skip === 'number' && args.skip > 0
+        ? Math.min(10_000, Math.max(0, Math.floor(args.skip)))
+        : 0;
+
     const data = await this._orderModel
       .find(filter)
       .sort({ createdAt: -1 })
+      .skip(skip)
       .limit(lim)
       .populate({
         path: 'store',
@@ -108,7 +192,7 @@ export class OrdersService {
       }
       filter['store'] = { $in: storeIds };
     } else {
-      filter['user'] = { _id: user.id };
+      filter['user'] = new Types.ObjectId(String(user.id));
     }
 
     const order = await this._orderModel
@@ -165,18 +249,27 @@ export class OrdersService {
 
     const order = await this._orderModel.create({
       status: OrderStatusEnum.CREATED,
-      store: {
-        _id: storeId,
-      },
-      user: {
-        _id: user.id,
-      },
+      store: new Types.ObjectId(String(storeId)),
+      user: new Types.ObjectId(String(user.id)),
       items,
       totalPrice: calculatedPrice, // TODO should we add shipping price here?
       shippingPrice: 0,
     });
 
-    return this.findOneById(order._id.toString(), user);
+    const created = await this.findOneById(order._id.toString(), user);
+    const storePop = created.store as { name?: string } | null | undefined;
+    void this._notificationsService
+      .pushCustomerOrderCreated({
+        userId: String(user.id),
+        orderId: created._id.toString(),
+        storeName: storePop?.name?.trim() || undefined,
+      })
+      .catch((err) =>
+        this.logger.warn(
+          `FCM order created: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+    return created;
   }
 
   /**
@@ -197,9 +290,11 @@ export class OrdersService {
     const ship = Math.max(0, Number(shippingPrice) || 0);
     const o = await this._orderModel
       .findById(new Types.ObjectId(orderId))
+      .populate('store', 'name')
       .lean()
       .exec();
     if (!o?.items?.length) return;
+    const prevStatus = String(o.status ?? '');
     const goods = (o.items as OrdeLineItem[]).reduce(
       (acc, item) => acc + item.price * item.quantity,
       0,
@@ -246,6 +341,47 @@ export class OrdersService {
     await this._orderModel
       .updateOne({ _id: new Types.ObjectId(orderId) }, { $set })
       .exec();
+
+    if (prevStatus !== OrderStatusEnum.PAIED) {
+      const rawUser = o.user as
+        | Types.ObjectId
+        | { _id?: Types.ObjectId }
+        | null
+        | undefined;
+      let uid: string | null = null;
+      if (rawUser instanceof Types.ObjectId) {
+        uid = rawUser.toHexString();
+      } else if (
+        rawUser &&
+        typeof rawUser === 'object' &&
+        '_id' in rawUser &&
+        rawUser._id instanceof Types.ObjectId
+      ) {
+        uid = rawUser._id.toHexString();
+      } else if (rawUser != null) {
+        uid = String(rawUser);
+      }
+      const st = o.store as { name?: string } | null | undefined;
+      const storeName =
+        st && typeof st === 'object' && 'name' in st
+          ? (st.name ?? '').trim() || undefined
+          : undefined;
+      if (uid && Types.ObjectId.isValid(uid)) {
+        void this._notificationsService
+          .pushCustomerOrderStatusChanged({
+            userId: uid,
+            orderId,
+            storeName,
+            previousStatus: prevStatus,
+            newStatus: OrderStatusEnum.PAIED,
+          })
+          .catch((err) =>
+            this.logger.warn(
+              `FCM order paid: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+          );
+      }
+    }
   }
 
   async calculateShippingPrice(orderId: string, user: UserModel) {

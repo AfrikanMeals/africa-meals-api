@@ -21,6 +21,7 @@ import { BillingService } from './billing.service';
 import { CreatePaymentMethodDto } from './paypal/dto/paypal.dto';
 import { PaypalService } from './paypal/paypal.service';
 import { GroupedStripeCheckoutDto } from './stripe/dto/grouped-stripe-checkout.dto';
+import { GroupedPaymentSyncDto } from './stripe/dto/grouped-payment-sync.dto';
 import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.service';
 
 @ApiTags('billing')
@@ -111,6 +112,30 @@ export class BillingController {
     return this._stripeGroupedCheckout.createGroupedPaymentIntent(
       req.user as UserModel,
       dto,
+    );
+  }
+
+  /** Confirme côté serveur un PaymentIntent réussi (complète le webhook si absent — ex. dev local). */
+  @Post('stripe/grouped-payment-sync')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Synchronise les commandes après Payment Sheet (idempotent, même logique que le webhook)',
+  })
+  async stripeGroupedPaymentSync(
+    @Req() req: Request,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    body: GroupedPaymentSyncDto,
+  ) {
+    return this._stripeGroupedCheckout.fulfillGroupedPaymentFromClient(
+      req.user as UserModel,
+      body.paymentIntentId,
     );
   }
 
