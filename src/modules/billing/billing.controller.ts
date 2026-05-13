@@ -91,6 +91,29 @@ export class BillingController {
     );
   }
 
+  @Post('stripe/grouped-payment-intent')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'PaymentIntent (client_secret) pour Payment Sheet — Apple Pay, Google Pay, cartes',
+  })
+  async stripeGroupedPaymentIntent(
+    @Req() req: Request,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: false,
+      }),
+    )
+    dto: GroupedStripeCheckoutDto,
+  ) {
+    return this._stripeGroupedCheckout.createGroupedPaymentIntent(
+      req.user as UserModel,
+      dto,
+    );
+  }
+
   /** Stripe envoie le corps brut JSON — utiliser `req.rawBody` (voir `main.ts`). */
   @Post('stripe/webhook')
   @HttpCode(200)

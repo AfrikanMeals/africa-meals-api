@@ -179,10 +179,20 @@ export class OrdersService {
     return this.findOneById(order._id.toString(), user);
   }
 
-  /** Après paiement Stripe : statut payé + frais de livraison enregistrés sur la commande. */
+  /**
+   * Après paiement Stripe : statut payé + frais + total.
+   * Si `opts.charged*Cents` sont fournis (métadonnées Stripe / payout), le total
+   * suit le montant réellement encaissé (ex. panier avec code promo).
+   */
   async markOrderPaidWithShipping(
     orderId: string,
     shippingPrice: number,
+    opts?: {
+      stripeParentPaymentId?: string;
+      couponCode?: string;
+      chargedGoodsCents?: number;
+      chargedShipCents?: number;
+    },
   ): Promise<void> {
     const ship = Math.max(0, Number(shippingPrice) || 0);
     const o = await this._orderModel
@@ -194,17 +204,47 @@ export class OrdersService {
       (acc, item) => acc + item.price * item.quantity,
       0,
     );
+
+    const gC =
+      opts?.chargedGoodsCents != null && Number.isFinite(opts.chargedGoodsCents)
+        ? Math.max(0, Math.round(opts.chargedGoodsCents))
+        : null;
+    const sC =
+      opts?.chargedShipCents != null && Number.isFinite(opts.chargedShipCents)
+        ? Math.max(0, Math.round(opts.chargedShipCents))
+        : null;
+
+    let totalPrice: number;
+    let shippingStored: number;
+    if (gC != null && sC != null) {
+      totalPrice = Math.round((gC + sC + Number.EPSILON)) / 100;
+      shippingStored = sC / 100;
+    } else {
+      shippingStored = ship;
+      totalPrice =
+        Math.round((goods + shippingStored) * 100 + Number.EPSILON) / 100;
+    }
+
+    const $set: Record<string, unknown> = {
+      status: OrderStatusEnum.PAIED,
+      shippingPrice: shippingStored,
+      totalPrice,
+    };
+    if (opts?.stripeParentPaymentId?.trim()) {
+      $set['stripeParentPaymentId'] = opts.stripeParentPaymentId.trim();
+    }
+    if (opts?.couponCode?.trim()) {
+      $set['couponCode'] = opts.couponCode.trim().toUpperCase();
+    }
+    if (gC != null) {
+      $set['stripeChargedGoodsCents'] = gC;
+    }
+    if (sC != null) {
+      $set['stripeChargedShipCents'] = sC;
+    }
+
     await this._orderModel
-      .updateOne(
-        { _id: new Types.ObjectId(orderId) },
-        {
-          $set: {
-            status: OrderStatusEnum.PAIED,
-            shippingPrice: ship,
-            totalPrice: Math.round((goods + ship) * 100 + Number.EPSILON) / 100,
-          },
-        },
-      )
+      .updateOne({ _id: new Types.ObjectId(orderId) }, { $set })
       .exec();
   }
 

@@ -98,6 +98,22 @@ export class OrderModel extends BaseSchema {
     },
   })
   items: OrdeLineItem[];
+
+  /** `cs_…` ou `pi_…` du paiement Stripe groupé ayant déclenché la commande. */
+  @Prop({ required: false, name: 'stripe_parent_payment_id' })
+  stripeParentPaymentId?: string;
+
+  /** Code promo boutique appliqué au moment du paiement (si présent). */
+  @Prop({ required: false, name: 'coupon_code' })
+  couponCode?: string;
+
+  /** Montant articles encaissé via Stripe (centimes), pour alignement avec le paiement groupé. */
+  @Prop({ required: false, name: 'stripe_charged_goods_cents' })
+  stripeChargedGoodsCents?: number;
+
+  /** Portion livraison encaissée via Stripe (centimes). */
+  @Prop({ required: false, name: 'stripe_charged_ship_cents' })
+  stripeChargedShipCents?: number;
 }
 
 export const OrderSchema = SchemaFactory.createForClass(OrderModel);

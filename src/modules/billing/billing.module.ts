@@ -1,4 +1,5 @@
 import { CartModule } from '@modules/cart/cart.module';
+import { CouponsModule } from '@modules/coupons/coupons.module';
 import { OrdersModule } from '@modules/orders/orders.module';
 import { PlatformShippingSettingsModule } from '@modules/platform-shipping-settings/platform-shipping-settings.module';
 import { StoreModule } from '@modules/store/store.module';
@@ -25,6 +26,7 @@ import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.s
     PaypalModule,
     UsersModule,
     CartModule,
+    CouponsModule,
     StoreModule,
     OrdersModule,
     PlatformShippingSettingsModule,
