@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Query,
   Header,
   HttpCode,
   Inject,
@@ -20,6 +21,7 @@ import { Request } from 'express';
 import { BillingService } from './billing.service';
 import { CreatePaymentMethodDto } from './paypal/dto/paypal.dto';
 import { PaypalService } from './paypal/paypal.service';
+import { FilterGroupedPaymentsDto } from './stripe/dto/filter-grouped-payments.dto';
 import { GroupedStripeCheckoutDto } from './stripe/dto/grouped-stripe-checkout.dto';
 import { GroupedPaymentSyncDto } from './stripe/dto/grouped-payment-sync.dto';
 import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.service';
@@ -136,6 +138,23 @@ export class BillingController {
     return this._stripeGroupedCheckout.fulfillGroupedPaymentFromClient(
       req.user as UserModel,
       body.paymentIntentId,
+    );
+  }
+
+  @Get('stripe/my-grouped-payments')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Historique des paiements panier multi-boutiques (Stripe Checkout ou Payment Sheet)',
+  })
+  async stripeMyGroupedPayments(
+    @Req() req: Request,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: FilterGroupedPaymentsDto,
+  ) {
+    return this._stripeGroupedCheckout.listMyGroupedPayments(
+      req.user as UserModel,
+      query,
     );
   }
 

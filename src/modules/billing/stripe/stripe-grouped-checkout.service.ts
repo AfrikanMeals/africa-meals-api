@@ -16,9 +16,11 @@ import {
   StripePerStoreBreakdownRow,
   StripeProcessedCheckoutModel,
 } from '@schemas/stripe-processed-checkout.schema';
+import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import Stripe = require('stripe');
+import { FilterGroupedPaymentsDto } from './dto/filter-grouped-payments.dto';
 import { GroupedStripeCheckoutDto } from './dto/grouped-stripe-checkout.dto';
 
 type StripeClient = InstanceType<typeof Stripe>;
@@ -319,6 +321,8 @@ export class StripeGroupedCheckoutService {
     private readonly couponsService: CouponsService,
     @InjectModel(StripeProcessedCheckoutModel.name)
     private readonly processedModel: Model<StripeProcessedCheckoutModel>,
+    @InjectModel(StoreModel.name)
+    private readonly storeModel: Model<StoreModel>,
   ) {}
 
   private stripe() {
@@ -932,6 +936,153 @@ export class StripeGroupedCheckoutService {
         },
       },
     );
+  }
+
+  /**
+   * Liste des paiements groupés réussis (`stripe_processed_checkouts`) pour le client JWT.
+   */
+  async listMyGroupedPayments(
+    user: UserModel,
+    args: FilterGroupedPaymentsDto,
+  ): Promise<{ data: Record<string, unknown>[] }> {
+    const lim =
+      typeof args.limit === 'number' && args.limit > 0
+        ? Math.min(200, Math.max(1, args.limit))
+        : 20;
+
+    const skip =
+      typeof args.skip === 'number' && args.skip > 0
+        ? Math.min(10_000, Math.max(0, Math.floor(args.skip)))
+        : 0;
+
+    const filter: Record<string, unknown> = {
+      userId: new Types.ObjectId(String(user.id)),
+    };
+
+    if (args.stripeEventKind) {
+      filter['stripeEventKind'] = args.stripeEventKind;
+    }
+
+    const qRaw = args.q?.trim();
+    if (qRaw) {
+      const esc = qRaw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const rx = new RegExp(esc, 'i');
+      const matching = await this.storeModel
+        .find({ name: rx })
+        .select('_id')
+        .limit(500)
+        .lean()
+        .exec();
+      const matchIds = matching.map((s) => String(s._id));
+      const ors: Record<string, unknown>[] = [{ sessionId: rx }];
+      if (matchIds.length) {
+        ors.push({ 'perStoreBreakdown.storeId': { $in: matchIds } });
+      }
+      filter['$or'] = ors;
+    }
+
+    const docs = await this.processedModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(lim)
+      .lean()
+      .exec();
+
+    const storeIdSet = new Set<string>();
+    for (const d of docs) {
+      const rows = d.perStoreBreakdown as StripePerStoreBreakdownRow[] | undefined;
+      if (!Array.isArray(rows)) continue;
+      for (const r of rows) {
+        const sid = String(r.storeId ?? '').trim();
+        if (sid && Types.ObjectId.isValid(sid)) {
+          storeIdSet.add(sid);
+        }
+      }
+    }
+
+    const storeOids = [...storeIdSet].map((id) => new Types.ObjectId(id));
+    const storeRows =
+      storeOids.length === 0
+        ? []
+        : await this.storeModel
+            .find({ _id: { $in: storeOids } })
+            .select('name profileImage currency')
+            .lean()
+            .exec();
+
+    const storeMap = new Map(
+      storeRows.map((s) => [String(s._id), s as Record<string, unknown>]),
+    );
+
+    const data = docs.map((doc) => {
+      const id = String(doc._id);
+      const createdAt = (doc as { createdAt?: Date }).createdAt;
+      const updatedAt = (doc as { updatedAt?: Date }).updatedAt;
+      const rows = (doc.perStoreBreakdown ?? []) as StripePerStoreBreakdownRow[];
+      const orderedStoreIds: string[] = [];
+      for (const r of rows) {
+        const sid = String(r.storeId ?? '').trim();
+        if (!sid || !Types.ObjectId.isValid(sid)) continue;
+        if (!orderedStoreIds.includes(sid)) {
+          orderedStoreIds.push(sid);
+        }
+      }
+
+      const storesPayload = orderedStoreIds.map((storeId) => {
+        const st = storeMap.get(storeId);
+        const name =
+          typeof st?.['name'] === 'string' ? st['name'].trim() : null;
+        const profileImage =
+          typeof st?.['profileImage'] === 'string'
+            ? st['profileImage'].trim()
+            : null;
+        const currency =
+          typeof st?.['currency'] === 'string' && st['currency'].trim()
+            ? st['currency'].trim().toUpperCase()
+            : null;
+        return {
+          _id: storeId,
+          name: name || null,
+          profileImage: profileImage || null,
+          currency: currency || 'CAD',
+        };
+      });
+
+      const first = storesPayload[0];
+      const totalCents = Number(doc.amountTotalCents ?? 0);
+      const curRaw = doc.currency != null ? String(doc.currency).trim() : '';
+      const cur = curRaw ? curRaw.toUpperCase() : 'CAD';
+
+      const storeBlock = first ?? {
+        _id: '',
+        name: null as string | null,
+        profileImage: null as string | null,
+        currency: cur,
+      };
+
+      return {
+        _id: id,
+        createdAt,
+        updatedAt,
+        status: 'succeeded',
+        totalPrice: totalCents / 100,
+        shippingPrice: 0,
+        currency: cur,
+        store: {
+          _id: storeBlock._id,
+          name: storeBlock.name ?? 'Afrika Meals',
+          profileImage: storeBlock.profileImage,
+          currency: storeBlock.currency || cur,
+        },
+        stores: storesPayload,
+        stripePaymentId: doc.sessionId,
+        stripeEventKind: doc.stripeEventKind ?? null,
+        orderIds: (doc.orderIds ?? []).map((x) => String(x)),
+      };
+    });
+
+    return { data };
   }
 
   /**

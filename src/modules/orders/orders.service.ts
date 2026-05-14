@@ -278,17 +278,12 @@ export class OrdersService {
 
     const created = await this.findOneById(order._id.toString(), user);
     const storePop = created.store as { name?: string } | null | undefined;
-    void this._notificationsService
-      .pushCustomerOrderCreated({
-        userId: String(user.id),
-        orderId: created._id.toString(),
-        storeName: storePop?.name?.trim() || undefined,
-      })
-      .catch((err) =>
-        this.logger.warn(
-          `FCM order created: ${err instanceof Error ? err.message : String(err)}`,
-        ),
-      );
+    await this._notificationsService.pushCustomerOrderCreated({
+      userId: String(user.id),
+      orderId: created._id.toString(),
+      storeName: storePop?.name?.trim() || undefined,
+      storeId: String(storeId),
+    });
 
     const sto = await this._storeModel
       .findById(new Types.ObjectId(String(storeId)))
@@ -406,17 +401,29 @@ export class OrdersService {
       } else if (rawUser != null) {
         uid = String(rawUser);
       }
-      const st = o.store as { name?: string } | null | undefined;
-      const storeName =
-        st && typeof st === 'object' && 'name' in st
-          ? (st.name ?? '').trim() || undefined
-          : undefined;
+      let storeName: string | undefined;
+      let storeIdForNotif: string | undefined;
+      const rawStore = o.store as unknown;
+      if (rawStore && typeof rawStore === 'object' && rawStore !== null) {
+        const stObj = rawStore as { _id?: unknown; name?: unknown };
+        const nm = stObj.name;
+        if (typeof nm === 'string' && nm.trim()) {
+          storeName = nm.trim();
+        }
+        const sid = stObj._id;
+        if (sid instanceof Types.ObjectId) {
+          storeIdForNotif = sid.toHexString();
+        } else if (typeof sid === 'string' && Types.ObjectId.isValid(sid)) {
+          storeIdForNotif = sid;
+        }
+      }
       if (uid && Types.ObjectId.isValid(uid)) {
         void this._notificationsService
           .pushCustomerOrderStatusChanged({
             userId: uid,
             orderId,
             storeName,
+            storeId: storeIdForNotif,
             previousStatus: prevStatus,
             newStatus: OrderStatusEnum.PAIED,
           })

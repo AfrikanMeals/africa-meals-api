@@ -20,6 +20,7 @@ import { ProductRatingsDemoSeedService } from './product-ratings-demo-seed.servi
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
+import { BusinessReportsModule } from '@modules/business-reports/business-reports.module';
 
 @Module({
   controllers: [OrdersController],
@@ -31,6 +32,7 @@ import { NotificationsModule } from '@modules/notifications/notifications.module
   exports: [OrdersService],
   imports: [
     NotificationsModule,
+    BusinessReportsModule,
     CartModule,
     ProductsModule,
     MongooseModule.forFeature([

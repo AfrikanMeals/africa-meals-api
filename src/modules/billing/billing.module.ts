@@ -14,6 +14,7 @@ import {
   StripeProcessedCheckoutModel,
   StripeProcessedCheckoutSchema,
 } from '@schemas/stripe-processed-checkout.schema';
+import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { BillingController } from './billing.controller';
 import { BillingService } from './billing.service';
 import { PaypalModule } from './paypal/paypal.module';
@@ -36,6 +37,7 @@ import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.s
         name: StripeProcessedCheckoutModel.name,
         schema: StripeProcessedCheckoutSchema,
       },
+      { name: StoreModel.name, schema: StoreSchema },
     ]),
   ],
   exports: [BillingService],

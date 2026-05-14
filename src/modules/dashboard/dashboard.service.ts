@@ -1788,6 +1788,7 @@ export class DashboardService {
           userId: customerId,
           orderId: orderDoc._id.toString(),
           storeName: this.storeNameForOrderPush(orderDoc),
+          storeId: orderStoreId || undefined,
           previousStatus: prevOrderStatus,
           newStatus: OrderStatusEnum.SHIPPED,
         })
