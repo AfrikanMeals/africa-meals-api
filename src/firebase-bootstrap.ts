@@ -2,7 +2,7 @@ import { compressionMiddleware } from './compression-middleware';
 import { httpRequestTimeoutMiddleware } from './http-request-timeout';
 import { NestFactory } from '@nestjs/core';
 import { ExpressAdapter } from '@nestjs/platform-express';
-import * as express from 'express';
+import express from 'express';
 import { AppModule } from './app.module';
 import { configureApplication } from './configure-app';
 

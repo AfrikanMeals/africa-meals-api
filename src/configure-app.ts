@@ -12,6 +12,29 @@ export type ConfigureAppOptions = {
  * Clients qui appellent sans le préfixe global `/${prefix}/…` (ex. `POST /auth/forgot-password`,
  * `DELETE /addresses/:id`) alors que Nest enregistre `POST /api/auth/…`, `DELETE /api/addresses/:id`.
  */
+/**
+ * Sur Cloud Functions, la fonction HTTP s’appelle souvent `api` (URL …/api/…)
+ * et le préfixe Nest est **vide** pour éviter …/api/api/…. Certains proxies / émulateurs
+ * laissent alors le chemin complet `/api/billing/…` au lieu de `/billing/…` — ce
+ * middleware aligne sur les routes Nest (`/billing`, `/auth`, …).
+ */
+function stripLeadingApiPathWhenNoNestPrefix() {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    const raw = req.url ?? '';
+    const q = raw.indexOf('?');
+    const pathOriginal = q === -1 ? raw : raw.slice(0, q);
+    const query = q === -1 ? '' : raw.slice(q);
+    let pathOnly = pathOriginal;
+    while (pathOnly === '/api' || pathOnly.startsWith('/api/')) {
+      pathOnly = pathOnly === '/api' ? '/' : pathOnly.slice('/api'.length) || '/';
+    }
+    if (pathOnly !== pathOriginal) {
+      req.url = pathOnly + query;
+    }
+    next();
+  };
+}
+
 function legacyUnprefixedPathRewrite(globalPrefix: string) {
   return (req: Request, _res: Response, next: NextFunction) => {
     const raw = req.url ?? '';
@@ -61,6 +84,8 @@ export async function configureApplication(
   if (prefix.length > 0) {
     app.use(legacyUnprefixedPathRewrite(prefix));
     app.setGlobalPrefix(prefix);
+  } else {
+    app.use(stripLeadingApiPathWhenNoNestPrefix());
   }
 
   /** Query `includeFields` / `excludeField(s)` → filtre JSON (intercepteur global). */
