@@ -59,3 +59,8 @@ export const BusinessStoreReportSchema = SchemaFactory.createForClass(
 );
 
 BusinessStoreReportSchema.index({ store: 1, createdAt: -1 });
+/** Un seul signalement par commande et par client. */
+BusinessStoreReportSchema.index(
+  { order: 1, reporterUser: 1 },
+  { unique: true },
+);

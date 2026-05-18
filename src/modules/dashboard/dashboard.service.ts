@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -33,6 +34,10 @@ import {
   randomPercentCoords,
 } from './delivery-driver-geo';
 import { NotificationsService } from '@modules/notifications/notifications.service';
+import { OrderStatusEventsService } from '@modules/orders/order-status-events.service';
+import { OrdersService } from '@modules/orders/orders.service';
+import { WsOrderNotifyService } from '@modules/ws-notify/ws-order-notify.service';
+import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -364,6 +369,11 @@ export class DashboardService {
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
     private readonly notificationsService: NotificationsService,
+    private readonly orderStatusEvents: OrderStatusEventsService,
+    @Inject(OrdersService)
+    private readonly ordersService: OrdersService,
+    @Inject(WsOrderNotifyService)
+    private readonly wsOrderNotify: WsOrderNotifyService,
   ) {}
 
   async getAlerts(user: UserModel): Promise<{
@@ -980,6 +990,7 @@ export class DashboardService {
     livrees: number;
     enLivraison: number;
     enAttente: number;
+    payees: number;
     annulees: number;
   }> {
     const empty = {
@@ -987,6 +998,7 @@ export class DashboardService {
       livrees: 0,
       enLivraison: 0,
       enAttente: 0,
+      payees: 0,
       annulees: 0,
     };
 
@@ -1022,6 +1034,7 @@ export class DashboardService {
     let livrees = 0;
     let enLivraison = 0;
     let enAttente = 0;
+    let payees = 0;
     let annulees = 0;
     for (const row of rows) {
       const n = Number(row.n) || 0;
@@ -1035,13 +1048,20 @@ export class DashboardService {
         case OrderStatusEnum.CANCELLED:
           annulees += n;
           break;
+        case OrderStatusEnum.CREATED:
+          enAttente += n;
+          break;
+        case OrderStatusEnum.PAIED:
+        case OrderStatusEnum.APPROVED:
+          payees += n;
+          break;
         default:
           enAttente += n;
       }
     }
 
-    const total = livrees + enLivraison + enAttente + annulees;
-    return { total, livrees, enLivraison, enAttente, annulees };
+    const total = livrees + enLivraison + enAttente + payees + annulees;
+    return { total, livrees, enLivraison, enAttente, payees, annulees };
   }
 
   /**
@@ -1713,7 +1733,7 @@ export class DashboardService {
 
     const orderDoc = await this.orderModel
       .findById(orderId)
-      .populate('store', 'name owner')
+      .populate('store', 'name owner address')
       .populate({
         path: 'user',
         select: 'fullName addresses',
@@ -1782,6 +1802,19 @@ export class DashboardService {
     await orderDoc.save();
 
     const customerId = this.customerUserIdForOrderPush(orderDoc);
+    if (prevOrderStatus !== OrderStatusEnum.SHIPPED) {
+      await this.orderStatusEvents.record({
+        orderId: orderDoc._id.toString(),
+        storeId: orderStoreId,
+        customerUserId: customerId ?? undefined,
+        fromStatus: prevOrderStatus,
+        toStatus: OrderStatusEnum.SHIPPED,
+        source: OrderStatusChangeSourceEnum.DASHBOARD,
+        actorUserId: String(user.id),
+        note: `Livreur ${livreurDoc.nom ?? dto.livreurId}`,
+      });
+    }
+
     if (customerId && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
       void this.notificationsService
         .pushCustomerOrderStatusChanged({
@@ -1791,6 +1824,7 @@ export class DashboardService {
           storeId: orderStoreId || undefined,
           previousStatus: prevOrderStatus,
           newStatus: OrderStatusEnum.SHIPPED,
+          bodyOverride: 'En cours de livraison',
         })
         .catch((err) => {
           this.logger.warn(
@@ -1799,6 +1833,10 @@ export class DashboardService {
             }`,
           );
         });
+      this.ordersService.notifyPartiesOrderRealtimeFromDoc(
+        orderDoc,
+        OrderStatusEnum.SHIPPED,
+      );
     }
 
     const vendorId = this.storeOwnerUserIdForOrderPush(orderDoc);

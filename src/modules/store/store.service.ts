@@ -30,12 +30,15 @@ import { InjectModel } from '@nestjs/mongoose';
 import { AddressTypeEnum } from '@schemas/address.schema';
 import { CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { AddressModel } from '@schemas/address.schema';
+import { isDemoProductRaterEmail } from '@modules/ratings/demo-product-rating-users';
+import { ProductRatingModel } from '@schemas/product_rating.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { CreateStoreDto, DailyMenuSlotDto, PatchVendorShippingZonesDto } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
+import { DrinksService, maxDrinkOrderQuantity } from '@modules/drinks/drinks.service';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 
 @Injectable()
@@ -77,6 +80,9 @@ export class StoreService {
   @InjectModel(ProductModel.name)
   private readonly _productModel: Model<ProductModel>;
 
+  @InjectModel(ProductRatingModel.name)
+  private readonly _productRatingModel: Model<ProductRatingModel>;
+
   @Inject(AddressesService)
   private readonly _addressesService: AddressesService;
 
@@ -113,6 +119,9 @@ export class StoreService {
   @Inject(WsInboxNotifyService)
   private readonly _wsInboxNotify: WsInboxNotifyService;
 
+  @Inject(DrinksService)
+  private readonly _drinksService: DrinksService;
+
   getStoreModel() {
     return this._storeModel;
   }
@@ -135,6 +144,59 @@ export class StoreService {
   }
 
   /**
+   * Note boutique affichée client : moyenne des avis plats
+   * (somme des `rate` / nombre d’avis), hors comptes démo seed.
+   */
+  private async productReviewsAverageForStore(
+    storeOid: Types.ObjectId,
+  ): Promise<{ averageRating: number; reviewCount: number }> {
+    const rows = await this._productRatingModel
+      .aggregate<{ rate?: number; userEmail?: string }>([
+        {
+          $lookup: {
+            from: 'products',
+            localField: 'product',
+            foreignField: '_id',
+            as: 'p',
+          },
+        },
+        { $unwind: '$p' },
+        { $match: { 'p.store': storeOid } },
+        {
+          $lookup: {
+            from: 'users',
+            localField: 'user',
+            foreignField: '_id',
+            as: 'u',
+          },
+        },
+        {
+          $project: {
+            rate: 1,
+            userEmail: { $arrayElemAt: ['$u.email', 0] },
+          },
+        },
+      ])
+      .exec();
+
+    let sum = 0;
+    let count = 0;
+    for (const row of rows) {
+      if (isDemoProductRaterEmail(row.userEmail)) continue;
+      const rate = Number(row.rate);
+      if (!Number.isFinite(rate)) continue;
+      sum += Math.min(5, Math.max(1, Math.round(rate)));
+      count += 1;
+    }
+    if (count === 0) {
+      return { averageRating: 0, reviewCount: 0 };
+    }
+    const averageRating =
+      Math.round((sum / count) * 10) / 10;
+    return { averageRating, reviewCount: count };
+  }
+
+  /**
    * Fiche minimale pour l’écran « menu boutique » app (sans populate) — beaucoup plus rapide que {@link findOneById}.
    */
   async findPublicStoreMenuMeta(
@@ -143,16 +205,23 @@ export class StoreService {
     if (!Types.ObjectId.isValid(id)) {
       return null;
     }
+    const storeOid = new Types.ObjectId(id);
     const doc = await this._storeModel
-      .findById(id)
-      .select('bio profileImage averageRating name status')
+      .findById(storeOid)
+      .select('bio profileImage name status')
       .lean()
       .exec();
     if (doc == null) {
       return null;
     }
+    const { averageRating, reviewCount } =
+      await this.productReviewsAverageForStore(storeOid);
     const o = doc as unknown as Record<string, unknown>;
-    const plain: Record<string, unknown> = { ...o };
+    const plain: Record<string, unknown> = {
+      ...o,
+      averageRating,
+      reviewCount,
+    };
     const oid = o['_id'];
     if (oid != null && typeof (oid as { toString?: () => string }).toString === 'function') {
       plain['id'] = (oid as { toString: () => string }).toString();
@@ -595,7 +664,13 @@ export class StoreService {
     const entry = rows
       .find((r) => r.dayOfWeek === dow)
       ?.items.find((i) => i.productId === args.itemId);
-    if (!entry || entry.stockUnlimited) return;
+    if (!entry) {
+      throw new BadRequestException('daily_menu_product_not_available');
+    }
+    if (!entry.stockUnlimited && entry.stockRemaining <= 0) {
+      throw new BadRequestException('daily_menu_product_not_available');
+    }
+    if (entry.stockUnlimited) return;
     const inCart = await this._cartService.sumQuantityForProductInCart(
       storeId,
       user.id.toString(),
@@ -616,13 +691,21 @@ export class StoreService {
       Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [],
     );
     const slot = rows.find((r) => r.dayOfWeek === dow);
-    if (!slot) return;
     for (const line of cart.items) {
       if (line.type !== CartItemTypeEnum.PRODUCT) continue;
       const pid = String(line.entityId ?? '');
       if (!pid) continue;
+      if (!slot) {
+        throw new BadRequestException('daily_menu_product_not_available');
+      }
       const entry = slot.items.find((i) => i.productId === pid);
-      if (!entry || entry.stockUnlimited) continue;
+      if (!entry) {
+        throw new BadRequestException('daily_menu_product_not_available');
+      }
+      if (!entry.stockUnlimited && entry.stockRemaining <= 0) {
+        throw new BadRequestException('daily_menu_product_not_available');
+      }
+      if (entry.stockUnlimited) continue;
       const qty = Math.max(0, Number(line.quantity ?? 0));
       if (qty > entry.stockRemaining) {
         throw new BadRequestException('daily_menu_insufficient_stock');
@@ -1269,8 +1352,50 @@ export class StoreService {
 
     const dow = new Date().getDay();
     const consumed: { productId: string; qty: number }[] = [];
+    const consumedDrinks: { drinkId: string; qty: number }[] = [];
+
+    const drinkQty = new Map<string, number>();
+    for (const line of cart.items) {
+      if (line.type !== CartItemTypeEnum.DRINK) continue;
+      const did = String(line.entityId ?? '');
+      if (!did) continue;
+      const q = Math.max(0, Number(line.quantity ?? 0));
+      if (q <= 0) continue;
+      drinkQty.set(did, (drinkQty.get(did) ?? 0) + q);
+    }
+
+    const rollbackDrinks = async () => {
+      for (let i = consumedDrinks.length - 1; i >= 0; i--) {
+        const c = consumedDrinks[i]!;
+        await this._drinksService
+          .restoreStock(storeId, c.drinkId, c.qty)
+          .catch(() => undefined);
+      }
+    };
 
     try {
+      for (const [did, qty] of drinkQty) {
+        const drink = await this._drinksService.findOneInStoreByIdRaw(
+          storeId,
+          did,
+        );
+        const maxOrder = drink ? maxDrinkOrderQuantity(drink.quantite) : 0;
+        if (!drink || qty > maxOrder) {
+          await rollbackDrinks();
+          throw new BadRequestException('drink_quantity_limit_exceeded');
+        }
+        const ok = await this._drinksService.tryConsumeStock(
+          storeId,
+          did,
+          qty,
+        );
+        if (!ok) {
+          await rollbackDrinks();
+          throw new BadRequestException('drink_insufficient_stock');
+        }
+        consumedDrinks.push({ drinkId: did, qty });
+      }
+
       for (const line of cart.items) {
         if (line.type !== CartItemTypeEnum.PRODUCT) continue;
         const pid = String(line.entityId ?? '');
@@ -1293,6 +1418,7 @@ export class StoreService {
 
       return order;
     } catch (e) {
+      await rollbackDrinks();
       for (const c of consumed.reverse()) {
         await this.atomicIncrementDailyMenuProductStock(
           storeId,

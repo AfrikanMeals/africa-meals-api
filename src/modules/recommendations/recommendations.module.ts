@@ -1,4 +1,5 @@
 import { AuthModule } from '@modules/auth/auth.module';
+import { DrinksModule } from '@modules/drinks/drinks.module';
 import { SearchModule } from '@modules/search/search.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -30,6 +31,7 @@ import { RecommendationsService } from './recommendations.service';
 @Module({
   imports: [
     AuthModule,
+    DrinksModule,
     SearchModule,
     MongooseModule.forFeature([
       {

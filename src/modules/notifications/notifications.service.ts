@@ -1,4 +1,10 @@
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { App } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
@@ -25,7 +31,7 @@ export interface InboxNotificationRow {
 }
 
 @Injectable()
-export class NotificationsService {
+export class NotificationsService implements OnModuleInit {
   private readonly logger = new Logger(NotificationsService.name);
 
   constructor(
@@ -36,6 +42,18 @@ export class NotificationsService {
     @InjectModel(NotificationReadReceiptModel.name)
     private readonly readReceiptModel: Model<NotificationReadReceiptModel>,
   ) {}
+
+  onModuleInit(): void {
+    const projectId = this.firebaseApp.options.projectId;
+    if (!projectId) {
+      this.logger.error(
+        'FCM désactivé : Firebase Admin sans projectId. ' +
+          'Ajoutez GOOGLE_APPLICATION_CREDENTIALS=accounts.json et AM_FIREBASE_PROJECT_ID=afrikanmeals dans .env puis redémarrez.',
+      );
+      return;
+    }
+    this.logger.log(`FCM prêt (projet Firebase Admin : ${projectId})`);
+  }
 
   /**
    * Les jetons sont stockés en base sous `fcm_tokens` (pipeline d’upsert) ;
@@ -498,8 +516,12 @@ export class NotificationsService {
           ) {
             if (tok) invalidTokens.add(tok);
           } else {
+            const hint =
+              code === 'messaging/third-party-auth-error'
+                ? ' — vérifiez GOOGLE_APPLICATION_CREDENTIALS=accounts.json (compte de service), pas la clé VAPID ; pour iOS, configurez APNs dans la console Firebase'
+                : '';
             this.logger.warn(
-              `FCM error: ${code} ${resp.error?.message ?? ''}`,
+              `FCM error: ${code} ${resp.error?.message ?? ''}${hint}`,
             );
           }
         }
@@ -652,6 +674,8 @@ export class NotificationsService {
     storeId?: string;
     previousStatus: string;
     newStatus: string;
+    /** Libellé court dans le corps du push (ex. prêt retrait / livraison). */
+    bodyOverride?: string;
   }): Promise<void> {
     if (!Types.ObjectId.isValid(args.userId)) {
       return;
@@ -662,7 +686,9 @@ export class NotificationsService {
       return;
     }
     const store = (args.storeName ?? '').trim() || 'Restaurant';
-    const label = NotificationsService.orderStatusLabelFr(next);
+    const label =
+      (args.bodyOverride ?? '').trim() ||
+      NotificationsService.orderStatusLabelFr(next);
     await this.persistCustomerOrderInbox({
       userId: args.userId,
       orderId: args.orderId,

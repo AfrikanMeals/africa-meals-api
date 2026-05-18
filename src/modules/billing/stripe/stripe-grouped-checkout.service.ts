@@ -9,6 +9,7 @@ import {
   ForbiddenException,
   Injectable,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -24,6 +25,12 @@ import { FilterGroupedPaymentsDto } from './dto/filter-grouped-payments.dto';
 import { GroupedStripeCheckoutDto } from './dto/grouped-stripe-checkout.dto';
 
 type StripeClient = InstanceType<typeof Stripe>;
+
+type StripeFulfillResult = {
+  complete: boolean;
+  orderIds: string[];
+  errors: Array<{ storeId: string; error: string }>;
+};
 
 type CartGroup = {
   store: {
@@ -793,6 +800,52 @@ export class StripeGroupedCheckoutService {
     };
   }
 
+  private async isStripeFulfillmentComplete(
+    doc: {
+      orderIds?: string[];
+      perStoreBreakdown?: StripePerStoreBreakdownRow[];
+    } | null,
+    storeIds: string[],
+    stripePaymentId: string,
+  ): Promise<boolean> {
+    if (!doc || !storeIds.length) {
+      return false;
+    }
+    const rows = doc.perStoreBreakdown ?? [];
+    for (const sid of storeIds) {
+      const row = rows.find((r) => r.storeId === sid);
+      if (!row?.orderId || row.error) {
+        return false;
+      }
+      const paid = await this.ordersService.isOrderPaidForStripePayment(
+        row.orderId,
+        stripePaymentId,
+      );
+      if (!paid) {
+        return false;
+      }
+    }
+    return (doc.orderIds?.length ?? 0) > 0;
+  }
+
+  private isCartEmptyFulfillError(e: unknown): boolean {
+    if (e instanceof NotFoundException) {
+      return e.message === 'cart_is_empty';
+    }
+    if (e instanceof BadRequestException) {
+      const r = e.getResponse();
+      if (typeof r === 'string') {
+        return r === 'cart_is_empty';
+      }
+      if (r && typeof r === 'object' && 'message' in r) {
+        const m = (r as { message?: unknown }).message;
+        return m === 'cart_is_empty' || (Array.isArray(m) && m.includes('cart_is_empty'));
+      }
+    }
+    const msg = e instanceof Error ? e.message : String(e);
+    return msg.includes('cart_is_empty');
+  }
+
   private async fulfillOrdersAfterStripePayment(params: {
     stripePaymentId: string;
     uid: string;
@@ -802,7 +855,7 @@ export class StripeGroupedCheckoutService {
     amountTotalCents?: number;
     currency?: string;
     stripeEventKind: 'checkout_session' | 'payment_intent';
-  }): Promise<void> {
+  }): Promise<StripeFulfillResult> {
     const {
       stripePaymentId,
       uid,
@@ -828,41 +881,116 @@ export class StripeGroupedCheckoutService {
     const payoutMap = parsePayoutFromStripeMetadata(metadata);
     const couponByStore = parseCouponsFromStripeMetadata(metadata);
 
-    try {
-      await this.processedModel.create({
-        sessionId: stripePaymentId,
-        userId: new Types.ObjectId(uid),
-        orderIds: [],
-        amountTotalCents,
-        currency: currency?.toLowerCase(),
-        stripeEventKind,
-      });
-    } catch (e: unknown) {
-      const code = (e as { code?: number })?.code;
-      if (code === 11000) {
-        this.logger.log(
-          `Stripe webhook: duplicate payment id ${stripePaymentId}`,
-        );
-        return;
-      }
-      throw e;
-    }
-
-    const userDoc = await this.usersService.findById(uid);
-    if (!userDoc) {
-      this.logger.error(`Stripe webhook: user not found ${uid}`);
-      return;
-    }
-    const user = userDoc as unknown as UserModel;
-
     const storeIds = storesCsv
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    const orderIds: string[] = [];
+
+    let processed = await this.processedModel
+      .findOne({ sessionId: stripePaymentId })
+      .lean()
+      .exec();
+
+    if (
+      processed &&
+      (await this.isStripeFulfillmentComplete(
+        processed,
+        storeIds,
+        stripePaymentId,
+      ))
+    ) {
+      this.logger.log(
+        `Stripe fulfill: already complete for ${stripePaymentId}`,
+      );
+      return {
+        complete: true,
+        orderIds: processed.orderIds ?? [],
+        errors: [],
+      };
+    }
+
+    if (!processed) {
+      try {
+        await this.processedModel.create({
+          sessionId: stripePaymentId,
+          userId: new Types.ObjectId(uid),
+          orderIds: [],
+          amountTotalCents,
+          currency: currency?.toLowerCase(),
+          stripeEventKind,
+        });
+      } catch (e: unknown) {
+        const code = (e as { code?: number })?.code;
+        if (code === 11000) {
+          processed = await this.processedModel
+            .findOne({ sessionId: stripePaymentId })
+            .lean()
+            .exec();
+          if (
+            processed &&
+            (await this.isStripeFulfillmentComplete(
+              processed,
+              storeIds,
+              stripePaymentId,
+            ))
+          ) {
+            return {
+              complete: true,
+              orderIds: processed.orderIds ?? [],
+              errors: [],
+            };
+          }
+          this.logger.warn(
+            `Stripe fulfill: retry after concurrent insert ${stripePaymentId}`,
+          );
+        } else {
+          throw e;
+        }
+      }
+    } else {
+      this.logger.warn(
+        `Stripe fulfill: retry after partial failure ${stripePaymentId}`,
+      );
+    }
+
+    const priorByStore = new Map<string, StripePerStoreBreakdownRow>();
+    for (const row of processed?.perStoreBreakdown ?? []) {
+      if (row?.storeId) {
+        priorByStore.set(row.storeId, row);
+      }
+    }
+
+    const userDoc = await this.usersService.findById(uid);
+    if (!userDoc) {
+      this.logger.error(`Stripe fulfill: user not found ${uid}`);
+      return {
+        complete: false,
+        orderIds: [],
+        errors: [{ storeId: '*', error: 'user_not_found' }],
+      };
+    }
+    const user = userDoc as unknown as UserModel;
+
+    const orderIds: string[] = [...(processed?.orderIds ?? [])];
     const perStoreBreakdown: StripePerStoreBreakdownRow[] = [];
+    const fulfillErrors: Array<{ storeId: string; error: string }> = [];
 
     for (const storeId of storeIds) {
+      const prior = priorByStore.get(storeId);
+      if (prior?.orderId && !prior.error) {
+        const alreadyPaid = await this.ordersService.isOrderPaidForStripePayment(
+          prior.orderId,
+          stripePaymentId,
+        );
+        if (alreadyPaid) {
+          perStoreBreakdown.push(prior);
+          if (!orderIds.includes(prior.orderId)) {
+            orderIds.push(prior.orderId);
+          }
+          continue;
+        }
+      }
+
       const payoutRow = payoutMap.get(storeId);
       const shipCents =
         payoutRow != null
@@ -880,46 +1008,84 @@ export class StripeGroupedCheckoutService {
       };
 
       try {
-        const order = await this.storeService.createOrderFromCart(
-          storeId,
-          user,
-        );
-        const oid =
-          (order as { _id?: Types.ObjectId })?._id?.toString() ??
-          (order as { id?: string })?.id;
-        if (oid) {
-          orderIds.push(oid);
-          const useStripeCents = payoutRow != null;
-          await this.ordersService.markOrderPaidWithShipping(
-            oid,
-            shipCents / 100,
-            {
-              stripeParentPaymentId: stripePaymentId,
-              couponCode,
-              chargedGoodsCents: useStripeCents ? goodsCents : undefined,
-              chargedShipCents: useStripeCents ? shipCents : undefined,
-            },
+        let oid =
+          await this.ordersService.findRecoverableOrderIdForStorePayment(
+            uid,
+            storeId,
+            stripePaymentId,
           );
-          if (couponCode) {
-            await this.couponsService.recordUsageAfterSuccessfulPayment(
+
+        if (!oid) {
+          try {
+            const order = await this.storeService.createOrderFromCart(
               storeId,
-              couponCode,
+              user,
             );
+            oid =
+              (order as { _id?: Types.ObjectId })?._id?.toString() ??
+              (order as { id?: string })?.id ??
+              null;
+          } catch (createErr) {
+            if (this.isCartEmptyFulfillError(createErr)) {
+              oid =
+                await this.ordersService.findRecoverableOrderIdForStorePayment(
+                  uid,
+                  storeId,
+                  stripePaymentId,
+                );
+            }
+            if (!oid) {
+              throw createErr;
+            }
           }
-          perStoreBreakdown.push({
-            ...baseRow,
-            orderId: oid,
-            goodsCents: goodsCents ?? baseRow.goodsCents,
-            shipCents,
-          });
         }
-      } catch (e) {
-        this.logger.error(
-          `Stripe webhook: order failed for store ${storeId}: ${e}`,
+
+        if (!oid) {
+          throw new Error('order_id_missing_after_create');
+        }
+
+        if (!orderIds.includes(oid)) {
+          orderIds.push(oid);
+        }
+        const useStripeCents = payoutRow != null;
+        await this.ordersService.markOrderPaidWithShipping(
+          oid,
+          shipCents / 100,
+          {
+            stripeParentPaymentId: stripePaymentId,
+            couponCode,
+            chargedGoodsCents: useStripeCents ? goodsCents : undefined,
+            chargedShipCents: useStripeCents ? shipCents : undefined,
+          },
         );
+        const paidOk = await this.ordersService.isOrderPaidForStripePayment(
+          oid,
+          stripePaymentId,
+        );
+        if (!paidOk) {
+          throw new Error('order_not_marked_paid');
+        }
+        if (couponCode) {
+          await this.couponsService.recordUsageAfterSuccessfulPayment(
+            storeId,
+            couponCode,
+          );
+        }
         perStoreBreakdown.push({
           ...baseRow,
-          error: e instanceof Error ? e.message : String(e),
+          orderId: oid,
+          goodsCents: goodsCents ?? baseRow.goodsCents,
+          shipCents,
+        });
+      } catch (e) {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        this.logger.error(
+          `Stripe fulfill: order failed for store ${storeId}: ${e}`,
+        );
+        fulfillErrors.push({ storeId, error: errMsg });
+        perStoreBreakdown.push({
+          ...baseRow,
+          error: errMsg,
         });
       }
     }
@@ -935,7 +1101,25 @@ export class StripeGroupedCheckoutService {
           stripeEventKind,
         },
       },
+      { upsert: true },
     );
+
+    const complete =
+      storeIds.length > 0 &&
+      storeIds.every((sid) => {
+        const row = perStoreBreakdown.find((r) => r.storeId === sid);
+        return Boolean(row?.orderId && !row.error);
+      });
+
+    if (!complete) {
+      this.logger.warn(
+        `Stripe fulfill: incomplete for ${stripePaymentId}: ${fulfillErrors
+          .map((x) => `${x.storeId}=${x.error}`)
+          .join('; ')}`,
+      );
+    }
+
+    return { complete, orderIds, errors: fulfillErrors };
   }
 
   /**
@@ -1093,7 +1277,7 @@ export class StripeGroupedCheckoutService {
   async fulfillGroupedPaymentFromClient(
     user: UserModel,
     paymentIntentId: string,
-  ): Promise<{ received: boolean }> {
+  ): Promise<{ received: boolean; orderIds: string[] }> {
     const id = paymentIntentId.trim();
     if (!id.startsWith('pi_')) {
       throw new BadRequestException('invalid_payment_intent_id');
@@ -1127,7 +1311,7 @@ export class StripeGroupedCheckoutService {
           : undefined;
     const currency =
       pi.currency != null ? String(pi.currency) : undefined;
-    await this.fulfillOrdersAfterStripePayment({
+    const result = await this.fulfillOrdersAfterStripePayment({
       stripePaymentId: pi.id,
       uid: String(uid),
       storesCsv,
@@ -1137,7 +1321,14 @@ export class StripeGroupedCheckoutService {
       currency,
       stripeEventKind: 'payment_intent',
     });
-    return { received: true };
+    if (!result.complete) {
+      throw new BadRequestException({
+        message: 'grouped_payment_fulfillment_incomplete',
+        orderIds: result.orderIds,
+        errors: result.errors,
+      });
+    }
+    return { received: true, orderIds: result.orderIds };
   }
 
   async handleWebhook(
@@ -1180,7 +1371,7 @@ export class StripeGroupedCheckoutService {
         session.amount_total != null ? session.amount_total : undefined;
       const currency =
         session.currency != null ? String(session.currency) : undefined;
-      await this.fulfillOrdersAfterStripePayment({
+      const sessionResult = await this.fulfillOrdersAfterStripePayment({
         stripePaymentId: session.id,
         uid,
         storesCsv,
@@ -1190,6 +1381,11 @@ export class StripeGroupedCheckoutService {
         currency,
         stripeEventKind: 'checkout_session',
       });
+      if (!sessionResult.complete) {
+        this.logger.warn(
+          `Stripe webhook: incomplete checkout.session ${session.id}`,
+        );
+      }
       return { received: true };
     }
 
@@ -1220,7 +1416,7 @@ export class StripeGroupedCheckoutService {
             : undefined;
       const currency =
         pi.currency != null ? String(pi.currency) : undefined;
-      await this.fulfillOrdersAfterStripePayment({
+      const piResult = await this.fulfillOrdersAfterStripePayment({
         stripePaymentId: pi.id,
         uid,
         storesCsv,
@@ -1230,6 +1426,11 @@ export class StripeGroupedCheckoutService {
         currency,
         stripeEventKind: 'payment_intent',
       });
+      if (!piResult.complete) {
+        this.logger.warn(
+          `Stripe webhook: incomplete payment_intent ${pi.id}`,
+        );
+      }
       return { received: true };
     }
 

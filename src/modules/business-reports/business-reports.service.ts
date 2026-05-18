@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -71,14 +72,57 @@ export class BusinessReportsService {
       throw new NotFoundException('order_store_missing');
     }
 
+    const uid = new Types.ObjectId(String(user.id));
+    const existing = await this._reportModel
+      .findOne({
+        order: new Types.ObjectId(oid),
+        reporterUser: uid,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    if (existing) {
+      throw new BadRequestException('report_already_submitted');
+    }
+
     const doc = await this._reportModel.create({
       store: storeId,
       order: new Types.ObjectId(oid),
-      reporterUser: new Types.ObjectId(String(user.id)),
+      reporterUser: uid,
       details: dto.details.trim(),
       category: dto.category ?? BusinessStoreReportCategoryEnum.OTHER,
     });
     return { id: doc._id.toString() };
+  }
+
+  /** Commandes pour lesquelles l’utilisateur a déjà envoyé un signalement. */
+  async reportedOrderIdsForUser(
+    userId: string,
+    orderIds: string[],
+  ): Promise<Set<string>> {
+    const ids = orderIds
+      .map((id) => id.trim())
+      .filter((id) => Types.ObjectId.isValid(id));
+    if (!ids.length || !Types.ObjectId.isValid(userId)) {
+      return new Set();
+    }
+    const rows = await this._reportModel
+      .find({
+        reporterUser: new Types.ObjectId(userId),
+        order: { $in: ids.map((id) => new Types.ObjectId(id)) },
+      })
+      .select('order')
+      .lean()
+      .exec();
+    return new Set(
+      rows.map((r) => {
+        const o = r.order as unknown;
+        if (o instanceof Types.ObjectId) {
+          return o.toHexString();
+        }
+        return String(o);
+      }),
+    );
   }
 
   /**

@@ -15,6 +15,7 @@ import {
   SortOrder,
 } from './dto/search.dto';
 import { mapInChunks } from '@utils/map-in-chunks';
+import { productDailyMenuListingPipelineStages } from '@utils/product-daily-menu-listing.pipeline';
 
 @Injectable()
 export class SearchService {
@@ -156,75 +157,9 @@ export class SearchService {
     };
   }
 
-  /** Exclut les plats présents au menu du jour avec stock limité à 0. */
-  private _productExcludeDailyMenuSoldOutStages(): PipelineStage[] {
-    const dow = new Date().getDay();
-    return [
-      {
-        $addFields: {
-          __todaySlotItems: {
-            $let: {
-              vars: {
-                slot: {
-                  $first: {
-                    $filter: {
-                      input: { $ifNull: ['$store.dailyMenuByWeekday', []] },
-                      as: 's',
-                      cond: { $eq: ['$$s.dayOfWeek', dow] },
-                    },
-                  },
-                },
-              },
-              in: { $ifNull: ['$$slot.items', []] },
-            },
-          },
-        },
-      },
-      {
-        $addFields: {
-          __menuItem: {
-            $first: {
-              $filter: {
-                input: '$__todaySlotItems',
-                as: 'it',
-                cond: { $eq: ['$$it.productId', '$_id'] },
-              },
-            },
-          },
-          __onDailyMenu: {
-            $gt: [
-              {
-                $size: {
-                  $filter: {
-                    input: '$__todaySlotItems',
-                    as: 'it',
-                    cond: { $eq: ['$$it.productId', '$_id'] },
-                  },
-                },
-              },
-              0,
-            ],
-          },
-        },
-      },
-      {
-        $addFields: {
-          __menuSoldOut: {
-            $and: [
-              { $ne: ['$__menuItem', null] },
-              {
-                $eq: [
-                  { $ifNull: ['$__menuItem.stockUnlimited', true] },
-                  false,
-                ],
-              },
-              { $lte: [{ $ifNull: ['$__menuItem.stockRemaining', 0] }, 0] },
-            ],
-          },
-        },
-      },
-      { $match: { __menuSoldOut: { $ne: true } } },
-    ];
+  /** Menu du jour uniquement, avec stock > 0 (ou illimité). */
+  private _productDailyMenuListingStages(): PipelineStage[] {
+    return productDailyMenuListingPipelineStages();
   }
 
   /** Filtre rayon + champ `distanceKm` (lookup adresse boutique). */
@@ -882,7 +817,7 @@ export class SearchService {
           ].filter(Boolean),
         },
       },
-      ...this._productExcludeDailyMenuSoldOutStages(),
+      ...this._productDailyMenuListingStages(),
       ...this._productGeoDistanceStages(args),
     ];
     const sortKeys = this._productSortKeys(args);
@@ -1217,6 +1152,7 @@ export class SearchService {
           ],
         },
       },
+      ...this._productDailyMenuListingStages(),
       { $sort: { createdAt: -1 } },
       { $limit: safeLimit },
       {
@@ -1499,7 +1435,7 @@ export class SearchService {
           ],
         },
       },
-      ...this._productExcludeDailyMenuSoldOutStages(),
+      ...this._productDailyMenuListingStages(),
       {
         $facet: {
           total: [{ $count: 'n' }],

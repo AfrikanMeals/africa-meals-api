@@ -19,6 +19,7 @@ import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, PipelineStage, Types } from 'mongoose';
 import type { FavoriteListingPagePayload } from './dto/favorite-listing.payload';
+import { productDailyMenuListingPipelineStages } from '@utils/product-daily-menu-listing.pipeline';
 import {
   CreateProductDto,
   CreateProductExtraDto,
@@ -77,7 +78,29 @@ export class ProductsService {
   /**
    * Lookups catégorie + boutique + moyenne des notes (sans charger toutes les lignes `product_ratings`).
    */
-  private buildFavoriteProductsSharedLookupsAndMetricsStages(): PipelineStage[] {
+  /** Lookup boutique + filtre menu du jour (stock > 0) avant pagination catalogue. */
+  private buildFavoriteProductsDailyMenuPreFilterStages(): PipelineStage[] {
+    return [
+      {
+        $lookup: {
+          from: 'stores',
+          localField: 'store',
+          foreignField: '_id',
+          as: 'store',
+        },
+      },
+      {
+        $addFields: {
+          store: { $arrayElemAt: ['$store', 0] },
+        },
+      },
+      ...productDailyMenuListingPipelineStages(),
+    ];
+  }
+
+  private buildFavoriteProductsSharedLookupsAndMetricsStages(
+    skipStoreLookup = false,
+  ): PipelineStage[] {
     return [
       {
         $lookup: {
@@ -87,14 +110,18 @@ export class ProductsService {
           as: '_cat',
         },
       },
-      {
-        $lookup: {
-          from: 'stores',
-          localField: 'store',
-          foreignField: '_id',
-          as: '_st',
-        },
-      },
+      ...(skipStoreLookup
+        ? [{ $addFields: { _st: ['$store'] } } as PipelineStage]
+        : [
+            {
+              $lookup: {
+                from: 'stores',
+                localField: 'store',
+                foreignField: '_id',
+                as: '_st',
+              },
+            } as PipelineStage,
+          ]),
       {
         $lookup: {
           from: 'product_ratings',
@@ -743,6 +770,7 @@ export class ProductsService {
       const skip = (page - 1) * take;
       const pipeline: PipelineStage[] = [
         { $match: { likedBy: userId, status: ProductStatusEnum.ACTIVE } },
+        ...this.buildFavoriteProductsDailyMenuPreFilterStages(),
         {
           $facet: {
             meta: [{ $count: 'total' }],
@@ -750,7 +778,7 @@ export class ProductsService {
               { $sort: { updatedAt: -1 } },
               { $skip: skip },
               { $limit: take },
-              ...this.buildFavoriteProductsSharedLookupsAndMetricsStages(),
+              ...this.buildFavoriteProductsSharedLookupsAndMetricsStages(true),
               {
                 $addFields: {
                   categoryPayload: {
@@ -931,7 +959,7 @@ export class ProductsService {
         { $sort: { updatedAt: -1 } },
         ...(skip > 0 ? [{ $skip: skip } as PipelineStage] : []),
         { $limit: limit },
-        ...this.buildFavoriteProductsSharedLookupsAndMetricsStages(),
+        ...this.buildFavoriteProductsSharedLookupsAndMetricsStages(true),
         {
           $addFields: {
             category: {
@@ -1167,6 +1195,7 @@ export class ProductsService {
             status: ProductStatusEnum.ACTIVE,
           },
         },
+        ...this.buildFavoriteProductsDailyMenuPreFilterStages(),
         {
           $facet: {
             meta: [{ $count: 'total' }],

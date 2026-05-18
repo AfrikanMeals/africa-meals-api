@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { DrinkModel, DrinkStatutEnum } from '@schemas/drink.schema';
+import { DRINK_IN_STOCK_FILTER } from '@modules/drinks/drinks.service';
+import { DrinkModel } from '@schemas/drink.schema';
 import {
   RecommendationTrainingSnapshotModel,
   RECOMMENDATION_GLOBAL_SNAPSHOT_KEY,
@@ -208,7 +209,7 @@ export class RecommendationTrainingService {
       ? await this._drinkModel
           .find({
             store: { $in: storeOidSet },
-            statut: DrinkStatutEnum.OK,
+            ...DRINK_IN_STOCK_FILTER,
           })
           .sort({ updatedAt: -1 })
           .limit(120)

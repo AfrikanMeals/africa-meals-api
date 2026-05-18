@@ -24,3 +24,14 @@ export function getAmFirebaseServiceAccountPath(
 ): string | undefined {
   return config.get<string>('AM_FIREBASE_SERVICE_ACCOUNT_PATH');
 }
+
+/**
+ * Clé Web Push VAPID (console Firebase → Cloud Messaging → certificats Web).
+ * Utilisée côté **client** (admin Next.js `getToken`), pas pour l’envoi serveur FCM.
+ */
+export function getFcmWebVapidKey(config: ConfigService): string | undefined {
+  return (
+    config.get<string>('FCM_WEB_VAPID_KEY') ||
+    config.get<string>('NEXT_PUBLIC_FCM_VAPID_KEY')
+  );
+}

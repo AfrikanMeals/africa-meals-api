@@ -1,12 +1,21 @@
+import { BusinessReportsService } from '@modules/business-reports/business-reports.service';
 import { CartService } from '@modules/cart/cart.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { ProductsService } from '@modules/products/products.service';
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
 import {
   OrdeLineItem,
   OrderModel,
+  OrderRefundRequestEntryStatusEnum,
   OrderStatusEnum,
 } from '@schemas/order.schema';
 import { StoreModel } from '@schemas/store.schema';
@@ -14,7 +23,26 @@ import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { haversineDistance } from 'src/utils/helpers';
 import { mapInChunks } from '@utils/map-in-chunks';
-import { FilterOrdersDto } from './dto/orders.dto';
+import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema';
+import {
+  generatePickupCode,
+  normalizePickupCodeInput,
+} from 'src/utils/pickup-code';
+import {
+  ConfirmPickupDto,
+  CreateRefundRequestDto,
+  FilterOrdersDto,
+  RejectOrderDto,
+} from './dto/orders.dto';
+import {
+  assertOrderCancelReasonPayload,
+  resolveOrderCancelReasonDisplay,
+} from './order-cancel-reasons';
+import { OrderStatusEventsService } from './order-status-events.service';
+import {
+  WsOrderNotifyService,
+  type OrderWsTrackingPayload,
+} from '@modules/ws-notify/ws-order-notify.service';
 
 @Injectable()
 export class OrdersService {
@@ -34,6 +62,22 @@ export class OrdersService {
 
   @Inject(NotificationsService)
   private readonly _notificationsService: NotificationsService;
+
+  @Inject(BusinessReportsService)
+  private readonly _businessReportsService: BusinessReportsService;
+
+  @Inject(OrderStatusEventsService)
+  private readonly _orderStatusEvents: OrderStatusEventsService;
+
+  @Inject(WsOrderNotifyService)
+  private readonly _wsOrderNotify: WsOrderNotifyService;
+
+  /** Client + adresses de livraison (refs `addresses` peuplées). */
+  private static readonly orderUserWithAddressesPopulate = {
+    path: 'user',
+    select: 'fullName email profileImage addresses',
+    populate: { path: 'addresses' },
+  } as const;
 
   private storeOwnerUserIdFromLean(store: unknown): string | null {
     if (!store || typeof store !== 'object' || !('owner' in store)) {
@@ -184,14 +228,102 @@ export class OrdersService {
         select:
           'name profileImage status currency acceptsOrders supportsShipping bio',
       })
-      .populate({
-        path: 'user',
-        select: 'fullName email profileImage',
-      })
+      .populate(OrdersService.orderUserWithAddressesPopulate)
       .lean()
       .exec();
 
-    return { data: data as unknown as OrderModel[] };
+    let enriched = await this.attachClientOrderFlags(
+      data as unknown as Record<string, unknown>[],
+      user,
+    );
+    if (user.type !== UserTypeEnum.USER) {
+      enriched = this.stripPickupCodeForNonClients(enriched);
+    }
+
+    return { data: enriched as unknown as OrderModel[] };
+  }
+
+  /** Le code retrait n’est visible que dans l’app client (pas admin / vendeur). */
+  private stripPickupCodeForNonClients(
+    rows: Record<string, unknown>[],
+  ): Record<string, unknown>[] {
+    return rows.map((o) => {
+      const out = { ...o };
+      delete out.pickupCode;
+      delete out.pickup_code;
+      return out;
+    });
+  }
+
+  /** Indicateurs mobile : signalement déjà envoyé, éligibilité remboursement. */
+  private async attachClientOrderFlags(
+    rows: Record<string, unknown>[],
+    user: UserModel,
+  ): Promise<Record<string, unknown>[]> {
+    if (user.type !== UserTypeEnum.USER || !rows.length) {
+      return rows;
+    }
+    const orderIds = rows
+      .map((o) => (o['_id'] != null ? String(o['_id']) : ''))
+      .filter((id) => id.length > 0);
+    const reported = await this._businessReportsService.reportedOrderIdsForUser(
+      String(user.id),
+      orderIds,
+    );
+    return rows.map((o) => {
+      const id = o['_id'] != null ? String(o['_id']) : '';
+      const refund = this.clientRefundFlags(o);
+      return {
+        ...o,
+        hasBusinessReport: reported.has(id),
+        canRequestRefund: refund.canRequestRefund,
+        refundRequestState: refund.refundRequestState,
+      };
+    });
+  }
+
+  /** Remboursement : uniquement commande payée, pas encore en attente de livraison / livrée. */
+  isRefundRequestAllowedForStatus(status: OrderStatusEnum | string): boolean {
+    return String(status) === OrderStatusEnum.PAIED;
+  }
+
+  /**
+   * Éligibilité remboursement côté client (liste / détail mobile).
+   * `eligible` → annulation + demande possible ; `pending` / `processed` → déjà demandé ou traité.
+   */
+  clientRefundFlags(order: Record<string, unknown>): {
+    canRequestRefund: boolean;
+    refundRequestState: 'eligible' | 'pending' | 'processed' | 'unavailable';
+  } {
+    const status = String(order['status'] ?? '');
+    const log = (
+      (order['refundRequestLog'] ?? order['refund_request_log']) as
+        | Array<{ status?: string }>
+        | undefined
+    ) ?? [];
+
+    for (const row of log) {
+      const s = String(row?.status ?? '');
+      if (s === OrderRefundRequestEntryStatusEnum.PENDING) {
+        return { canRequestRefund: false, refundRequestState: 'pending' };
+      }
+    }
+    for (const row of log) {
+      const s = String(row?.status ?? '');
+      if (
+        s === OrderRefundRequestEntryStatusEnum.APPROVED ||
+        s === OrderRefundRequestEntryStatusEnum.COMPLETED
+      ) {
+        return { canRequestRefund: false, refundRequestState: 'processed' };
+      }
+    }
+    if (this.isRefundRequestAllowedForStatus(status)) {
+      return { canRequestRefund: true, refundRequestState: 'eligible' };
+    }
+    if (status === OrderStatusEnum.CANCELLED) {
+      return { canRequestRefund: false, refundRequestState: 'unavailable' };
+    }
+    return { canRequestRefund: false, refundRequestState: 'unavailable' };
   }
 
   async findOneById(id: string, user: UserModel) {
@@ -225,14 +357,23 @@ export class OrdersService {
           },
         ],
       })
-      .populate('user', 'fullName email profileImage addresses')
+      .populate(OrdersService.orderUserWithAddressesPopulate)
       .exec();
 
     if (!order) {
       throw new NotFoundException('order_not_found');
     }
 
-    return order;
+    await this.ensurePickupCodeForOrderDoc(order);
+
+    if (user.type === UserTypeEnum.USER) {
+      const plain = order.toObject() as Record<string, unknown>;
+      const [enriched] = await this.attachClientOrderFlags([plain], user);
+      return enriched as unknown as typeof order;
+    }
+
+    const plain = order.toObject() as Record<string, unknown>;
+    return this.stripPickupCodeForNonClients([plain])[0] as unknown as typeof order;
   }
 
   async createFromCart(storeId: string, user: UserModel) {
@@ -276,7 +417,24 @@ export class OrdersService {
       shippingPrice: 0,
     });
 
-    const created = await this.findOneById(order._id.toString(), user);
+    await this._orderStatusEvents.record({
+      orderId: order._id.toString(),
+      storeId: String(storeId),
+      customerUserId: String(user.id),
+      toStatus: OrderStatusEnum.CREATED,
+      source: OrderStatusChangeSourceEnum.CHECKOUT,
+      actorUserId: String(user.id),
+    });
+
+    // Ne pas passer par findOneById (ACL vendeur) : un compte VENDOR qui commande
+    // chez une autre boutique échouait avec order_not_found après création.
+    const created = await this._orderModel
+      .findById(order._id)
+      .populate({ path: 'store', select: 'name owner' })
+      .exec();
+    if (!created) {
+      throw new NotFoundException('order_not_found');
+    }
     const storePop = created.store as { name?: string } | null | undefined;
     await this._notificationsService.pushCustomerOrderCreated({
       userId: String(user.id),
@@ -312,6 +470,76 @@ export class OrdersService {
     return created;
   }
 
+  /** Commande bien passée en `paied` pour ce paiement Stripe groupé. */
+  async isOrderPaidForStripePayment(
+    orderId: string,
+    stripeParentPaymentId: string,
+  ): Promise<boolean> {
+    const oid = orderId.trim();
+    const pi = stripeParentPaymentId.trim();
+    if (!Types.ObjectId.isValid(oid) || !pi) {
+      return false;
+    }
+    const o = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .select('status stripeParentPaymentId')
+      .lean()
+      .exec();
+    if (!o) return false;
+    return (
+      String(o.status) === OrderStatusEnum.PAIED &&
+      String(o.stripeParentPaymentId ?? '').trim() === pi
+    );
+  }
+
+  /**
+   * Reprise après échec Stripe (panier déjà vidé ou commande créée mais non finalisée).
+   */
+  async findRecoverableOrderIdForStorePayment(
+    userId: string,
+    storeId: string,
+    stripeParentPaymentId: string,
+  ): Promise<string | null> {
+    if (
+      !Types.ObjectId.isValid(userId) ||
+      !Types.ObjectId.isValid(storeId) ||
+      !stripeParentPaymentId.trim()
+    ) {
+      return null;
+    }
+    const uid = new Types.ObjectId(userId);
+    const sid = new Types.ObjectId(storeId);
+    const pi = stripeParentPaymentId.trim();
+
+    const paid = await this._orderModel
+      .findOne({
+        user: uid,
+        store: sid,
+        stripeParentPaymentId: pi,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    if (paid?._id) {
+      return paid._id.toString();
+    }
+
+    const pending = await this._orderModel
+      .findOne({
+        user: uid,
+        store: sid,
+        status: OrderStatusEnum.CREATED,
+      })
+      .sort({ createdAt: -1 })
+      .select('_id')
+      .lean()
+      .exec();
+    if (pending?._id) {
+      return pending._id.toString();
+    }
+    return null;
+  }
+
   /**
    * Après paiement Stripe : statut payé + frais + total.
    * Si `opts.charged*Cents` sont fournis (métadonnées Stripe / payout), le total
@@ -333,7 +561,12 @@ export class OrdersService {
       .populate('store', 'name owner')
       .lean()
       .exec();
-    if (!o?.items?.length) return;
+    if (!o) {
+      throw new NotFoundException('order_not_found');
+    }
+    if (!o.items?.length) {
+      throw new BadRequestException('order_has_no_items');
+    }
     const prevStatus = String(o.status ?? '');
     const goods = (o.items as OrdeLineItem[]).reduce(
       (acc, item) => acc + item.price * item.quantity,
@@ -360,11 +593,16 @@ export class OrdersService {
         Math.round((goods + shippingStored) * 100 + Number.EPSILON) / 100;
     }
 
+    const isPickup = shippingStored <= 0;
     const $set: Record<string, unknown> = {
       status: OrderStatusEnum.PAIED,
       shippingPrice: shippingStored,
       totalPrice,
+      shouldShip: !isPickup,
     };
+    if (isPickup) {
+      $set['pickupCode'] = generatePickupCode();
+    }
     if (opts?.stripeParentPaymentId?.trim()) {
       $set['stripeParentPaymentId'] = opts.stripeParentPaymentId.trim();
     }
@@ -381,6 +619,43 @@ export class OrdersService {
     await this._orderModel
       .updateOne({ _id: new Types.ObjectId(orderId) }, { $set })
       .exec();
+
+    if (prevStatus !== OrderStatusEnum.PAIED) {
+      let storeIdForEvent: string | undefined;
+      const rawStoreEv = o.store as unknown;
+      if (rawStoreEv instanceof Types.ObjectId) {
+        storeIdForEvent = rawStoreEv.toHexString();
+      } else if (
+        rawStoreEv &&
+        typeof rawStoreEv === 'object' &&
+        '_id' in rawStoreEv
+      ) {
+        const sid = (rawStoreEv as { _id: unknown })._id;
+        storeIdForEvent =
+          sid instanceof Types.ObjectId ? sid.toHexString() : String(sid);
+      }
+      let customerIdForEvent: string | undefined;
+      const rawUserEv = o.user as unknown;
+      if (rawUserEv instanceof Types.ObjectId) {
+        customerIdForEvent = rawUserEv.toHexString();
+      } else if (
+        rawUserEv &&
+        typeof rawUserEv === 'object' &&
+        '_id' in rawUserEv
+      ) {
+        const uid = (rawUserEv as { _id: unknown })._id;
+        customerIdForEvent =
+          uid instanceof Types.ObjectId ? uid.toHexString() : String(uid);
+      }
+      await this._orderStatusEvents.record({
+        orderId,
+        storeId: storeIdForEvent,
+        customerUserId: customerIdForEvent,
+        fromStatus: prevStatus || undefined,
+        toStatus: OrderStatusEnum.PAIED,
+        source: OrderStatusChangeSourceEnum.STRIPE,
+      });
+    }
 
     if (prevStatus !== OrderStatusEnum.PAIED) {
       const rawUser = o.user as
@@ -451,6 +726,10 @@ export class OrdersService {
             );
         }
       }
+      void this.notifyPartiesOrderRealtimeByOrderId(
+        orderId,
+        OrderStatusEnum.PAIED,
+      );
     }
   }
 
@@ -556,5 +835,824 @@ export class OrdersService {
       return 'Boisson';
     }
     return undefined;
+  }
+
+  /** Commande retrait sur place (pas de livraison). */
+  isPickupOrder(order: {
+    shouldShip?: boolean;
+    shippingPrice?: number;
+  }): boolean {
+    if (order.shouldShip === true) return false;
+    const ship = Number(order.shippingPrice ?? 0);
+    return !(Number.isFinite(ship) && ship > 0);
+  }
+
+  private async ensurePickupCodeForOrderDoc(
+    order: OrderModel | Record<string, unknown>,
+  ): Promise<void> {
+    const oid =
+      (order as { _id?: Types.ObjectId })._id?.toString() ??
+      (order as { id?: string }).id;
+    if (!oid || !Types.ObjectId.isValid(oid)) return;
+
+    const st = String((order as { status?: string }).status ?? '');
+    if (
+      st === OrderStatusEnum.CREATED ||
+      st === OrderStatusEnum.CANCELLED ||
+      st === OrderStatusEnum.COMPLETED
+    ) {
+      return;
+    }
+    if (!this.isPickupOrder(order as { shouldShip?: boolean; shippingPrice?: number })) {
+      return;
+    }
+    const existing = String(
+      (order as { pickupCode?: string }).pickupCode ?? '',
+    ).trim();
+    if (existing.length >= 4) return;
+
+    const code = generatePickupCode();
+    await this._orderModel
+      .updateOne({ _id: new Types.ObjectId(oid) }, { $set: { pickupCode: code } })
+      .exec();
+    (order as { pickupCode?: string }).pickupCode = code;
+  }
+
+  /**
+   * Vendeur / admin : commande payée → `approved` (prête livraison ou retrait).
+   */
+  async markOrderReady(
+    orderId: string,
+    user: UserModel,
+  ): Promise<{
+    orderId: string;
+    status: OrderStatusEnum;
+    isPickup: boolean;
+  }> {
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const order = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .populate('store', 'name owner address')
+      .populate(OrdersService.orderUserWithAddressesPopulate)
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    await this.assertUserCanManageOrderStore(user, order);
+
+    const st = order.status as OrderStatusEnum;
+    if (st === OrderStatusEnum.APPROVED) {
+      throw new BadRequestException('order_already_ready');
+    }
+    if (st !== OrderStatusEnum.PAIED) {
+      throw new BadRequestException('order_ready_invalid_status');
+    }
+
+    const isPickup = this.isPickupOrder(order);
+    const prevStatus = st;
+    order.status = OrderStatusEnum.APPROVED;
+    await order.save();
+
+    const storeId = this.storeIdFromOrderDoc(order);
+    const customerId = this.userIdFromOrderDoc(order);
+    await this._orderStatusEvents.record({
+      orderId: oid,
+      storeId,
+      customerUserId: customerId,
+      fromStatus: prevStatus,
+      toStatus: OrderStatusEnum.APPROVED,
+      source: OrderStatusChangeSourceEnum.VENDOR,
+      actorUserId: String(user.id),
+      note: isPickup ? 'Prête pour retrait' : 'Prête pour livraison',
+    });
+
+    if (customerId) {
+      const storeName = this.storeNameFromPopulated(order.store);
+      const readyLabel = isPickup
+        ? 'Prête à être retirée'
+        : 'Prête pour la livraison';
+      void this._notificationsService
+        .pushCustomerOrderStatusChanged({
+          userId: customerId,
+          orderId: oid,
+          storeName,
+          storeId: storeId ?? undefined,
+          previousStatus: prevStatus,
+          newStatus: OrderStatusEnum.APPROVED,
+          bodyOverride: readyLabel,
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `FCM order ready: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+    }
+
+    this.notifyPartiesOrderRealtimeFromDoc(order, OrderStatusEnum.APPROVED);
+
+    return { orderId: oid, status: OrderStatusEnum.APPROVED, isPickup };
+  }
+
+  /**
+   * Vendeur / admin : refuse ou annule la commande avec motif structuré.
+   */
+  async rejectOrder(
+    orderId: string,
+    user: UserModel,
+    dto: RejectOrderDto,
+  ): Promise<{
+    orderId: string;
+    status: OrderStatusEnum;
+    cancelReasonCode: string;
+    cancelReasonDetails: string;
+  }> {
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const source =
+      user.type === UserTypeEnum.ADMIN ? ('admin' as const) : ('vendor' as const);
+
+    try {
+      assertOrderCancelReasonPayload({
+        source,
+        reasonCode: dto.reasonCode,
+        customDetails: dto.details,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'cancel_reason_invalid';
+      throw new BadRequestException(msg);
+    }
+
+    const resolved = resolveOrderCancelReasonDisplay({
+      source,
+      reasonCode: dto.reasonCode,
+      customDetails: dto.details,
+    });
+
+    const order = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .populate('store', 'name owner address')
+      .populate(OrdersService.orderUserWithAddressesPopulate)
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    await this.assertUserCanManageOrderStore(user, order);
+
+    const st = order.status as OrderStatusEnum;
+    if (st === OrderStatusEnum.CANCELLED) {
+      throw new BadRequestException('order_already_cancelled');
+    }
+    if (
+      st === OrderStatusEnum.CREATED ||
+      st === OrderStatusEnum.SHIPPED ||
+      st === OrderStatusEnum.COMPLETED
+    ) {
+      throw new BadRequestException('order_reject_invalid_status');
+    }
+
+    const prevStatus = st;
+    order.status = OrderStatusEnum.CANCELLED;
+    order.cancelReasonCode = resolved.code;
+    order.cancelReasonDetails = resolved.details;
+    order.cancelReasonSource = source;
+    await order.save();
+
+    const storeId = this.storeIdFromOrderDoc(order);
+    const customerId = this.userIdFromOrderDoc(order);
+    await this._orderStatusEvents.record({
+      orderId: oid,
+      storeId,
+      customerUserId: customerId,
+      fromStatus: prevStatus,
+      toStatus: OrderStatusEnum.CANCELLED,
+      source:
+        source === 'admin'
+          ? OrderStatusChangeSourceEnum.DASHBOARD
+          : OrderStatusChangeSourceEnum.VENDOR,
+      actorUserId: String(user.id),
+      note: `Refus : ${resolved.details}`.slice(0, 500),
+    });
+
+    if (customerId) {
+      void this._notificationsService
+        .pushCustomerOrderStatusChanged({
+          userId: customerId,
+          orderId: oid,
+          storeName: this.storeNameFromPopulated(order.store),
+          storeId: storeId ?? undefined,
+          previousStatus: prevStatus,
+          newStatus: OrderStatusEnum.CANCELLED,
+          bodyOverride: 'Commande refusée ou annulée par le restaurant',
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `FCM order reject: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+    }
+
+    void this.notifyPartiesOrderRealtimeByOrderId(
+      oid,
+      OrderStatusEnum.CANCELLED,
+    );
+
+    return {
+      orderId: oid,
+      status: OrderStatusEnum.CANCELLED,
+      cancelReasonCode: resolved.code,
+      cancelReasonDetails: resolved.details,
+    };
+  }
+
+  /** Snapshot distance / progression pour le suivi temps réel (WS + mobile). */
+  buildOrderTrackingPayload(
+    order: OrderModel | Record<string, unknown>,
+    status: OrderStatusEnum,
+  ): OrderWsTrackingPayload {
+    const oid =
+      (order as { _id?: Types.ObjectId })._id?.toString() ??
+      (order as { id?: string }).id ??
+      '';
+    const isPickup = this.isPickupOrder(
+      order as { shouldShip?: boolean; shippingPrice?: number },
+    );
+    const { distanceKm, destinationLine, originLine } =
+      this.resolveOrderTrackingGeo(order, isPickup);
+    const progress = this.trackingProgressForStatus(status, isPickup);
+    return {
+      orderId: oid,
+      status,
+      isPickup,
+      distanceKm,
+      progress,
+      destinationLine,
+      originLine,
+    };
+  }
+
+  private trackingProgressForStatus(
+    status: OrderStatusEnum,
+    isPickup: boolean,
+  ): number {
+    switch (status) {
+      case OrderStatusEnum.PAIED:
+        return 0.15;
+      case OrderStatusEnum.APPROVED:
+        return isPickup ? 0.35 : 0.25;
+      case OrderStatusEnum.SHIPPED:
+        return 0.72;
+      case OrderStatusEnum.COMPLETED:
+        return 1;
+      case OrderStatusEnum.CANCELLED:
+        return 0;
+      default:
+        return 0.1;
+    }
+  }
+
+  private resolveOrderTrackingGeo(
+    order: OrderModel | Record<string, unknown>,
+    isPickup: boolean,
+  ): {
+    distanceKm?: number;
+    destinationLine?: string;
+    originLine?: string;
+  } {
+    const store = (order as { store?: unknown }).store;
+    const user = (order as { user?: unknown }).user;
+
+    const storeCoords = this.coordsFromAddressLike(
+      store && typeof store === 'object' && 'address' in store
+        ? (store as { address?: unknown }).address
+        : undefined,
+    );
+    const userAddr = this.defaultUserAddressFromPopulated(user);
+    const userCoords = userAddr?.coords;
+
+    let distanceKm: number | undefined;
+    if (storeCoords && userCoords) {
+      distanceKm = +haversineDistance(
+        userCoords,
+        storeCoords,
+      )?.toFixed(2);
+    }
+
+    const storeLine = this.formatAddressLine(
+      store && typeof store === 'object' && 'address' in store
+        ? (store as { address?: Record<string, unknown> }).address
+        : undefined,
+      store && typeof store === 'object' && 'name' in store
+        ? String((store as { name?: unknown }).name ?? '')
+        : '',
+    );
+    const userLine =
+      userAddr?.line ??
+      this.formatAddressLine(
+        userAddr?.raw as Record<string, unknown> | undefined,
+        '',
+      );
+
+    if (isPickup) {
+      return {
+        distanceKm,
+        originLine: userLine || undefined,
+        destinationLine: storeLine || undefined,
+      };
+    }
+    return {
+      distanceKm,
+      originLine: storeLine || undefined,
+      destinationLine: userLine || undefined,
+    };
+  }
+
+  private defaultUserAddressFromPopulated(user: unknown): {
+    line?: string;
+    coords?: [number, number];
+    raw?: Record<string, unknown>;
+  } | null {
+    if (!user || typeof user !== 'object') return null;
+    const list = (user as { addresses?: unknown }).addresses;
+    if (!Array.isArray(list) || list.length === 0) return null;
+    let picked: Record<string, unknown> | null = null;
+    for (const raw of list) {
+      if (raw && typeof raw === 'object') {
+        const m = raw as Record<string, unknown>;
+        if (m.isDefault === true || m.is_default === true) {
+          picked = m;
+          break;
+        }
+      }
+    }
+    picked ??=
+      list[0] && typeof list[0] === 'object'
+        ? (list[0] as Record<string, unknown>)
+        : null;
+    if (!picked) return null;
+    const coords = this.coordsFromAddressLike(picked);
+    const street = String(picked.address ?? '').trim();
+    const city = String(picked.city ?? '').trim();
+    const zip = String(picked.zipCode ?? picked.zip_code ?? '').trim();
+    const parts = [
+      street,
+      [city, zip].filter((s) => s.length > 0).join(' '),
+    ].filter((s) => s.length > 0);
+    return {
+      line: parts.join(', ') || undefined,
+      coords: coords ?? undefined,
+      raw: picked,
+    };
+  }
+
+  private coordsFromAddressLike(
+    addr: unknown,
+  ): [number, number] | undefined {
+    if (!addr || typeof addr !== 'object') return undefined;
+    const loc = (addr as { location?: { coordinates?: unknown } }).location;
+    const c = loc?.coordinates;
+    if (Array.isArray(c) && c.length >= 2) {
+      const lng = Number(c[0]);
+      const lat = Number(c[1]);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        return [lng, lat];
+      }
+    }
+    return undefined;
+  }
+
+  private formatAddressLine(
+    addr: Record<string, unknown> | undefined,
+    fallback: string,
+  ): string {
+    if (!addr) return fallback.trim() || '';
+    const street = String(addr.address ?? '').trim();
+    const city = String(addr.city ?? '').trim();
+    const zip = String(addr.zipCode ?? addr.zip_code ?? '').trim();
+    const parts = [
+      street,
+      [city, zip].filter((s) => s.length > 0).join(' '),
+    ].filter((s) => s.length > 0);
+    const line = parts.join(', ');
+    return line || fallback.trim();
+  }
+
+  private notifyCustomerOrderRealtime(
+    customerId: string | undefined,
+    tracking: OrderWsTrackingPayload,
+  ): void {
+    if (!customerId) return;
+    this._wsOrderNotify.notifyCustomerOrderUpdate(customerId, tracking);
+    this._wsOrderNotify.notifyCustomerOrderTracking(customerId, tracking);
+  }
+
+  /**
+   * WS temps réel : client, vendeur propriétaire de la boutique, admins plateforme.
+   */
+  notifyPartiesOrderRealtimeFromDoc(
+    order: OrderModel | Record<string, unknown>,
+    status: OrderStatusEnum,
+    extra?: Partial<OrderWsTrackingPayload>,
+  ): void {
+    const tracking = {
+      ...this.buildOrderTrackingPayload(order, status),
+      ...extra,
+    };
+    const customerId = this.userIdFromOrderDoc(order as OrderModel);
+    if (customerId) {
+      this.notifyCustomerOrderRealtime(customerId, tracking);
+    }
+    const vendorId = this.storeOwnerUserIdFromLean(
+      (order as { store?: unknown }).store,
+    );
+    if (vendorId && vendorId !== customerId) {
+      this._wsOrderNotify.notifyCustomerOrderUpdate(vendorId, tracking);
+      this._wsOrderNotify.notifyCustomerOrderTracking(vendorId, tracking);
+    }
+    this._wsOrderNotify.notifyStaffOrderBroadcast(tracking);
+  }
+
+  async notifyPartiesOrderRealtimeByOrderId(
+    orderId: string,
+    status: OrderStatusEnum,
+    extra?: Partial<OrderWsTrackingPayload>,
+  ): Promise<void> {
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) return;
+    const order = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .populate({
+        path: 'store',
+        populate: [{ path: 'address' }],
+      })
+      .populate(OrdersService.orderUserWithAddressesPopulate)
+      .exec();
+    if (!order) return;
+    this.notifyPartiesOrderRealtimeFromDoc(order, status, extra);
+  }
+
+  /**
+   * Client : génère un nouveau code retrait (retrait actif, commande payée).
+   */
+  async regeneratePickupCodeForClient(
+    orderId: string,
+    user: UserModel,
+  ): Promise<{ orderId: string; pickupCode: string }> {
+    if (user.type !== UserTypeEnum.USER) {
+      throw new ForbiddenException('client_only');
+    }
+
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const uid = new Types.ObjectId(String(user.id));
+    const order = await this._orderModel
+      .findOne({ _id: new Types.ObjectId(oid), user: uid })
+      .select('status shouldShip shippingPrice pickupCode')
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    if (!this.isPickupOrder(order)) {
+      throw new BadRequestException('pickup_not_applicable_delivery_order');
+    }
+
+    const st = order.status as OrderStatusEnum;
+    if (st === OrderStatusEnum.CREATED) {
+      throw new BadRequestException('pickup_order_not_paid');
+    }
+    if (st === OrderStatusEnum.CANCELLED) {
+      throw new BadRequestException('pickup_order_cancelled');
+    }
+    if (st === OrderStatusEnum.COMPLETED) {
+      throw new BadRequestException('pickup_already_completed');
+    }
+
+    const code = generatePickupCode();
+    await this._orderModel
+      .updateOne({ _id: new Types.ObjectId(oid) }, { $set: { pickupCode: code } })
+      .exec();
+
+    void this.notifyPartiesOrderRealtimeByOrderId(
+      oid,
+      order.status as OrderStatusEnum,
+      { pickupCode: code },
+    );
+
+    return { orderId: oid, pickupCode: code };
+  }
+
+  /**
+   * Vendeur / admin : valide le code retrait → statut `completed` + horodatage.
+   */
+  async confirmPickupByCode(
+    orderId: string,
+    user: UserModel,
+    dto: ConfirmPickupDto,
+  ): Promise<{
+    orderId: string;
+    status: OrderStatusEnum;
+    pickedUpAt: Date;
+  }> {
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const order = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .populate('store', 'name owner')
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    await this.assertUserCanManageOrderStore(user, order);
+
+    if (!this.isPickupOrder(order)) {
+      throw new BadRequestException('pickup_not_applicable_delivery_order');
+    }
+
+    const st = order.status as OrderStatusEnum;
+    if (st === OrderStatusEnum.COMPLETED) {
+      throw new BadRequestException('pickup_already_completed');
+    }
+    if (st === OrderStatusEnum.CREATED) {
+      throw new BadRequestException('pickup_order_not_paid');
+    }
+    if (st === OrderStatusEnum.CANCELLED) {
+      throw new BadRequestException('pickup_order_cancelled');
+    }
+    if (st === OrderStatusEnum.SHIPPED) {
+      throw new BadRequestException('pickup_not_applicable_shipped_status');
+    }
+
+    await this.ensurePickupCodeForOrderDoc(order);
+    const expected = normalizePickupCodeInput(
+      String(order.pickupCode ?? ''),
+    );
+    const provided = normalizePickupCodeInput(dto.code);
+    if (!expected || expected !== provided) {
+      throw new BadRequestException('pickup_code_invalid');
+    }
+
+    const prevStatus = st;
+    const pickedUpAt = new Date();
+    order.status = OrderStatusEnum.COMPLETED;
+    order.pickedUpAt = pickedUpAt;
+    await order.save();
+
+    const storeId = this.storeIdFromOrderDoc(order);
+    const customerId = this.userIdFromOrderDoc(order);
+    await this._orderStatusEvents.record({
+      orderId: oid,
+      storeId,
+      customerUserId: customerId,
+      fromStatus: prevStatus,
+      toStatus: OrderStatusEnum.COMPLETED,
+      source: OrderStatusChangeSourceEnum.VENDOR,
+      actorUserId: String(user.id),
+      note: 'Retrait confirmé (code validé)',
+    });
+
+    if (customerId) {
+      void this._notificationsService
+        .pushCustomerOrderStatusChanged({
+          userId: customerId,
+          orderId: oid,
+          storeName: this.storeNameFromPopulated(order.store),
+          storeId: storeId ?? undefined,
+          previousStatus: prevStatus,
+          newStatus: OrderStatusEnum.COMPLETED,
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `FCM pickup completed: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+    }
+
+    const populated = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .populate({
+        path: 'store',
+        populate: [{ path: 'address' }],
+      })
+      .populate(OrdersService.orderUserWithAddressesPopulate)
+      .exec();
+    this.notifyPartiesOrderRealtimeFromDoc(
+      populated ?? order,
+      OrderStatusEnum.COMPLETED,
+    );
+
+    return {
+      orderId: oid,
+      status: OrderStatusEnum.COMPLETED,
+      pickedUpAt,
+    };
+  }
+
+  private storeIdFromOrderDoc(order: OrderModel): string | undefined {
+    const raw = order.store as unknown;
+    if (raw instanceof Types.ObjectId) return raw.toHexString();
+    if (raw && typeof raw === 'object' && '_id' in raw) {
+      const id = (raw as { _id: unknown })._id;
+      return id instanceof Types.ObjectId ? id.toHexString() : String(id);
+    }
+    return undefined;
+  }
+
+  private userIdFromOrderDoc(order: OrderModel): string | undefined {
+    const raw = order.user as unknown;
+    if (raw instanceof Types.ObjectId) return raw.toHexString();
+    if (raw && typeof raw === 'object' && '_id' in raw) {
+      const id = (raw as { _id: unknown })._id;
+      return id instanceof Types.ObjectId ? id.toHexString() : String(id);
+    }
+    if (typeof raw === 'string' && Types.ObjectId.isValid(raw)) return raw;
+    return undefined;
+  }
+
+  private storeNameFromPopulated(store: unknown): string | undefined {
+    if (store && typeof store === 'object' && 'name' in store) {
+      const nm = (store as { name?: unknown }).name;
+      if (typeof nm === 'string' && nm.trim()) return nm.trim();
+    }
+    return undefined;
+  }
+
+  private async assertUserCanManageOrderStore(
+    user: UserModel,
+    order: OrderModel,
+  ): Promise<void> {
+    if (user.type === UserTypeEnum.ADMIN) {
+      return;
+    }
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_or_admin_only');
+    }
+    const storeId = this.storeIdFromOrderDoc(order);
+    if (!storeId) {
+      throw new BadRequestException('order_store_missing');
+    }
+    const rawStores = user.stores || [];
+    const allowed = rawStores.some((s: unknown) => {
+      if (typeof s === 'object' && s !== null && '_id' in s) {
+        return String((s as { _id: unknown })._id) === storeId;
+      }
+      return String(s) === storeId;
+    });
+    if (!allowed) {
+      throw new ForbiddenException('store_forbidden');
+    }
+  }
+
+  /**
+   * Client : enregistre une demande de remboursement (historique sur la commande).
+   * Refus si statut commande / livraison incompatible ou si une demande est déjà en cours / traitée.
+   */
+  async submitRefundRequest(
+    orderId: string,
+    user: UserModel,
+    dto: CreateRefundRequestDto,
+  ): Promise<{ orderId: string; status: OrderRefundRequestEntryStatusEnum }> {
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+    const uid = new Types.ObjectId(String(user.id));
+    const order = await this._orderModel
+      .findOne({ _id: new Types.ObjectId(oid), user: uid })
+      .select('status shouldShip refundRequestLog store')
+      .populate('store', 'name')
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+    const st = order.status as OrderStatusEnum;
+    this.assertRefundRequestApplicableToOrder(st);
+    const log = order.refundRequestLog ?? [];
+    this.assertRefundRequestNotBlockedByHistory(log);
+
+    try {
+      assertOrderCancelReasonPayload({
+        source: 'client',
+        reasonCode: dto.reasonCode,
+        customDetails: dto.details,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'cancel_reason_invalid';
+      throw new BadRequestException(msg);
+    }
+
+    const resolved = resolveOrderCancelReasonDisplay({
+      source: 'client',
+      reasonCode: dto.reasonCode,
+      customDetails: dto.details,
+    });
+
+    const prevStatus = st;
+    order.status = OrderStatusEnum.CANCELLED;
+    order.cancelReasonCode = resolved.code;
+    order.cancelReasonDetails = resolved.details;
+    order.cancelReasonSource = 'client';
+    order.refundRequestLog = [
+      ...(order.refundRequestLog ?? []),
+      {
+        status: OrderRefundRequestEntryStatusEnum.PENDING,
+        details: resolved.details,
+        requestedAt: new Date(),
+      },
+    ];
+    await order.save();
+
+    const storeId = this.storeIdFromOrderDoc(order);
+    await this._orderStatusEvents.record({
+      orderId: oid,
+      storeId,
+      customerUserId: String(user.id),
+      fromStatus: prevStatus,
+      toStatus: OrderStatusEnum.CANCELLED,
+      source: OrderStatusChangeSourceEnum.SYSTEM,
+      actorUserId: String(user.id),
+      note: `Annulation client : ${resolved.details}`.slice(0, 500),
+    });
+
+    void this._notificationsService
+      .pushCustomerOrderStatusChanged({
+        userId: String(user.id),
+        orderId: oid,
+        storeName: this.storeNameFromPopulated(order.store),
+        storeId: storeId ?? undefined,
+        previousStatus: prevStatus,
+        newStatus: OrderStatusEnum.CANCELLED,
+        bodyOverride: 'Commande annulée — remboursement en cours d’examen',
+      })
+      .catch((err) =>
+        this.logger.warn(
+          `FCM cancel+refund: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+
+    void this.notifyPartiesOrderRealtimeByOrderId(
+      oid,
+      OrderStatusEnum.CANCELLED,
+    );
+
+    return {
+      orderId: oid,
+      status: OrderRefundRequestEntryStatusEnum.PENDING,
+    };
+  }
+
+  private assertRefundRequestApplicableToOrder(status: OrderStatusEnum): void {
+    if (status === OrderStatusEnum.CREATED) {
+      throw new BadRequestException('refund_not_applicable_unpaid');
+    }
+    if (status === OrderStatusEnum.CANCELLED) {
+      throw new BadRequestException('refund_not_applicable_cancelled');
+    }
+    if (this.isRefundRequestAllowedForStatus(status)) {
+      return;
+    }
+    if (
+      status === OrderStatusEnum.APPROVED ||
+      status === OrderStatusEnum.SHIPPED ||
+      status === OrderStatusEnum.COMPLETED
+    ) {
+      throw new BadRequestException('refund_not_applicable_pending_delivery');
+    }
+    throw new BadRequestException('refund_not_applicable_status');
+  }
+
+  private assertRefundRequestNotBlockedByHistory(
+    log: Array<{ status?: string }>,
+  ): void {
+    for (const row of log) {
+      const s = String(row?.status ?? '');
+      if (s === OrderRefundRequestEntryStatusEnum.PENDING) {
+        throw new BadRequestException('refund_request_pending');
+      }
+    }
+    for (const row of log) {
+      const s = String(row?.status ?? '');
+      if (
+        s === OrderRefundRequestEntryStatusEnum.APPROVED ||
+        s === OrderRefundRequestEntryStatusEnum.COMPLETED
+      ) {
+        throw new BadRequestException('refund_already_processed');
+      }
+    }
   }
 }

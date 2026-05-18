@@ -13,6 +13,14 @@ export enum OrderStatusEnum {
   COMPLETED = 'completed', // WHEN ORDER IS COMPLETED
 }
 
+/** Statut d’une entrée du journal de demande de remboursement (côté client → admin). */
+export enum OrderRefundRequestEntryStatusEnum {
+  PENDING = 'pending',
+  APPROVED = 'approved',
+  REJECTED = 'rejected',
+  COMPLETED = 'completed',
+}
+
 @Schema({
   toJSON: {
     getters: true,
@@ -55,6 +63,35 @@ export class OrdeLineItem {
 export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'should_ship', default: false })
   shouldShip?: boolean;
+
+  /** Code à présenter en boutique (commandes retrait, généré au paiement). */
+  @Prop({ required: false, name: 'pickup_code', trim: true, uppercase: true })
+  pickupCode?: string;
+
+  /** Date/heure de remise au client (retrait confirmé). */
+  @Prop({ required: false, name: 'picked_up_at', type: Date })
+  pickedUpAt?: Date;
+
+  /** Code motif annulation / refus (`out_of_stock`, `changed_mind`, `other`, …). */
+  @Prop({ required: false, name: 'cancel_reason_code', trim: true, maxlength: 64 })
+  cancelReasonCode?: string;
+
+  /** Libellé lisible ou précision (motif personnalisé si `other`). */
+  @Prop({
+    required: false,
+    name: 'cancel_reason_details',
+    trim: true,
+    maxlength: 4000,
+  })
+  cancelReasonDetails?: string;
+
+  /** Origine du motif : vendeur, client ou admin. */
+  @Prop({
+    required: false,
+    name: 'cancel_reason_source',
+    enum: ['vendor', 'client', 'admin'],
+  })
+  cancelReasonSource?: 'vendor' | 'client' | 'admin';
 
   @Prop({
     required: true,
@@ -114,6 +151,36 @@ export class OrderModel extends BaseSchema {
   /** Portion livraison encaissée via Stripe (centimes). */
   @Prop({ required: false, name: 'stripe_charged_ship_cents' })
   stripeChargedShipCents?: number;
+
+  /**
+   * Journal des demandes de remboursement (historique). Dernière entrée la plus récente.
+   * Une seule entrée `pending` à la fois ; `approved` / `completed` = traitement encours ou terminé.
+   */
+  @Prop({
+    type: [
+      {
+        status: {
+          type: String,
+          enum: Object.values(OrderRefundRequestEntryStatusEnum),
+          required: true,
+          default: OrderRefundRequestEntryStatusEnum.PENDING,
+        },
+        details: { type: String, required: true, maxlength: 4000 },
+        requestedAt: { type: Date, required: true, default: () => new Date() },
+        resolvedAt: { type: Date, required: false },
+        resolutionNote: { type: String, required: false, maxlength: 4000 },
+      },
+    ],
+    default: [],
+    name: 'refund_request_log',
+  })
+  refundRequestLog?: Array<{
+    status: OrderRefundRequestEntryStatusEnum;
+    details: string;
+    requestedAt: Date;
+    resolvedAt?: Date;
+    resolutionNote?: string;
+  }>;
 }
 
 export const OrderSchema = SchemaFactory.createForClass(OrderModel);
