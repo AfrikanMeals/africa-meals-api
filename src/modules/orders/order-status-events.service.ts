@@ -193,4 +193,65 @@ export class OrderStatusEventsService {
 
     return { data };
   }
+
+  /** Journal minimal par commande (client / vendeur / admin avec accès à la commande). */
+  async listTimelineByOrderIds(
+    orderIds: string[],
+  ): Promise<
+    Map<
+      string,
+      Array<{
+        createdAt?: Date;
+        fromStatus?: string;
+        toStatus: string;
+      }>
+    >
+  > {
+    const oids = [
+      ...new Set(
+        orderIds
+          .map((id) => id?.trim())
+          .filter((id): id is string => !!id && Types.ObjectId.isValid(id)),
+      ),
+    ];
+    const map = new Map<
+      string,
+      Array<{
+        createdAt?: Date;
+        fromStatus?: string;
+        toStatus: string;
+      }>
+    >();
+    if (!oids.length) return map;
+
+    const rows = await this._eventModel
+      .find({ order: { $in: oids.map((id) => new Types.ObjectId(id)) } })
+      .sort({ createdAt: 1 })
+      .select('order createdAt fromStatus toStatus')
+      .lean()
+      .exec();
+
+    for (const r of rows as Record<string, unknown>[]) {
+      const ord = r['order'];
+      const orderKey =
+        ord instanceof Types.ObjectId
+          ? ord.toHexString()
+          : ord != null
+            ? String(ord)
+            : '';
+      if (!orderKey) continue;
+
+      const entry = {
+        createdAt: r['createdAt'] as Date | undefined,
+        fromStatus:
+          typeof r['fromStatus'] === 'string' ? r['fromStatus'] : undefined,
+        toStatus: String(r['toStatus'] ?? ''),
+      };
+      const list = map.get(orderKey);
+      if (list) list.push(entry);
+      else map.set(orderKey, [entry]);
+    }
+
+    return map;
+  }
 }

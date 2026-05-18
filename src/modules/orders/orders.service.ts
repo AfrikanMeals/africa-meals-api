@@ -270,7 +270,7 @@ export class OrdersService {
       String(user.id),
       orderIds,
     );
-    return rows.map((o) => {
+    const enriched = rows.map((o) => {
       const id = o['_id'] != null ? String(o['_id']) : '';
       const refund = this.clientRefundFlags(o);
       return {
@@ -279,6 +279,25 @@ export class OrdersService {
         canRequestRefund: refund.canRequestRefund,
         refundRequestState: refund.refundRequestState,
       };
+    });
+    return this.attachStatusEventsToOrders(enriched);
+  }
+
+  /** Historique des statuts (prêt → terminé) pour le calcul du temps total côté mobile. */
+  private async attachStatusEventsToOrders(
+    rows: Record<string, unknown>[],
+  ): Promise<Record<string, unknown>[]> {
+    if (!rows.length) return rows;
+    const orderIds = rows
+      .map((o) => (o['_id'] != null ? String(o['_id']) : ''))
+      .filter((id) => id.length > 0);
+    const byOrder =
+      await this._orderStatusEvents.listTimelineByOrderIds(orderIds);
+    return rows.map((o) => {
+      const id = o['_id'] != null ? String(o['_id']) : '';
+      const events = byOrder.get(id);
+      if (!events?.length) return o;
+      return { ...o, statusEvents: events };
     });
   }
 
@@ -368,7 +387,8 @@ export class OrdersService {
 
     if (user.type === UserTypeEnum.USER) {
       const plain = order.toObject() as Record<string, unknown>;
-      const [enriched] = await this.attachClientOrderFlags([plain], user);
+      const [withFlags] = await this.attachClientOrderFlags([plain], user);
+      const [enriched] = await this.attachStatusEventsToOrders([withFlags]);
       return enriched as unknown as typeof order;
     }
 
