@@ -90,6 +90,15 @@ export class DashboardController {
     return this._dashboardService.getAdminKpis(req.user as UserModel);
   }
 
+  /** Performance financière hebdomadaire par client / vendeur (Finances). */
+  @Get('finance/weekly-user-performance')
+  @UseGuards(JwtGuard)
+  financeWeeklyUserPerformance(@Req() req: Request) {
+    return this._dashboardService.getFinanceWeeklyUserPerformance(
+      req.user as UserModel,
+    );
+  }
+
   /** Avis sur les plats (notes produit), avec client, plat et restaurant — admin ou vendeur. */
   @Get('product-reviews')
   @UseGuards(JwtGuard)

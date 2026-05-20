@@ -11,6 +11,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import dayjs = require('dayjs');
 import utc = require('dayjs/plugin/utc');
 import timezone = require('dayjs/plugin/timezone');
+import isoWeek = require('dayjs/plugin/isoWeek');
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { ProductRatingModel } from '@schemas/product_rating.schema';
@@ -41,6 +42,7 @@ import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema'
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
+dayjs.extend(isoWeek);
 
 /** Objectif CA jour (KPI admin) — même unité que `total_price` commandes. */
 const ADMIN_REVENUE_TARGET_FCFA = 500_000;
@@ -321,6 +323,40 @@ export type DashboardPeakHourRow = {
 };
 
 /** Ligne « Nouveaux clients » : dernière commande + 1ère fois dans cette boutique. */
+export type FinanceWeeklyUserPerformanceRow = {
+  userId: string;
+  fullName: string;
+  email: string;
+  orderCount: number;
+  totalSpent: number;
+  avgOrderValue: number;
+  shippingTotal: number;
+  priorTotalSpent: number;
+  trendPercent: number | null;
+};
+
+export type FinanceWeeklyPerformanceSummary = {
+  revenueThisWeek: number;
+  revenuePriorWeek: number;
+  revenueTrendPercent: number | null;
+  ordersThisWeek: number;
+  ordersPriorWeek: number;
+  ordersTrendPercent: number | null;
+  activeClientsThisWeek: number;
+  activeVendorsThisWeek: number;
+};
+
+export type FinanceWeeklyUserPerformancePayload = {
+  timezone: string;
+  weekStart: string;
+  weekEnd: string;
+  priorWeekStart: string;
+  priorWeekEnd: string;
+  summary: FinanceWeeklyPerformanceSummary;
+  clients: FinanceWeeklyUserPerformanceRow[];
+  vendors: FinanceWeeklyUserPerformanceRow[];
+};
+
 export type DashboardVendorRecentCustomerRow = {
   userId: string;
   fullName: string;
@@ -2148,6 +2184,315 @@ export class DashboardService {
       return randomLngLatNearPoint(Number(c[0]), Number(c[1]));
     }
     return randomLngLatInBbox();
+  }
+
+  /**
+   * Performance financière hebdomadaire par utilisateur (clients + vendeurs).
+   * Admin : plateforme ; vendeur : clients de ses boutiques + sa ligne vendeur.
+   */
+  async getFinanceWeeklyUserPerformance(
+    user: UserModel,
+  ): Promise<FinanceWeeklyUserPerformancePayload> {
+    if (
+      user.type !== UserTypeEnum.ADMIN &&
+      user.type !== UserTypeEnum.VENDOR
+    ) {
+      throw new ForbiddenException('forbidden');
+    }
+
+    const storeIds =
+      user.type === UserTypeEnum.VENDOR ? vendorStoreObjectIds(user) : null;
+    if (user.type === UserTypeEnum.VENDOR && !storeIds?.length) {
+      const z = PEAK_HOURS_TZ;
+      const now = dayjs().tz(z);
+      const weekStart = now.startOf('isoWeek');
+      return {
+        timezone: z,
+        weekStart: weekStart.toISOString(),
+        weekEnd: weekStart.add(1, 'week').toISOString(),
+        priorWeekStart: weekStart.subtract(1, 'week').toISOString(),
+        priorWeekEnd: weekStart.toISOString(),
+        summary: {
+          revenueThisWeek: 0,
+          revenuePriorWeek: 0,
+          revenueTrendPercent: null,
+          ordersThisWeek: 0,
+          ordersPriorWeek: 0,
+          ordersTrendPercent: null,
+          activeClientsThisWeek: 0,
+          activeVendorsThisWeek: 0,
+        },
+        clients: [],
+        vendors: [],
+      };
+    }
+
+    const z = PEAK_HOURS_TZ;
+    const now = dayjs().tz(z);
+    const weekStart = now.startOf('isoWeek').toDate();
+    const weekEnd = now.startOf('isoWeek').add(1, 'week').toDate();
+    const priorWeekStart = now.startOf('isoWeek').subtract(1, 'week').toDate();
+    const priorWeekEnd = weekStart;
+
+    const limit = user.type === UserTypeEnum.ADMIN ? 50 : 30;
+    const rawVendorId =
+      user.type === UserTypeEnum.VENDOR
+        ? (user as UserModel & { _id?: Types.ObjectId | string })._id ?? user.id
+        : null;
+    const vendorSelfId =
+      rawVendorId instanceof Types.ObjectId
+        ? rawVendorId.toString()
+        : rawVendorId != null
+          ? String(rawVendorId)
+          : '';
+
+    const [
+      clientsThis,
+      clientsPrior,
+      vendorsThisRaw,
+      vendorsPriorRaw,
+      revenueThisWeek,
+      revenuePriorWeek,
+      ordersThisWeek,
+      ordersPriorWeek,
+    ] = await Promise.all([
+      this.aggregateWeeklyClientTotals(weekStart, weekEnd, storeIds, limit),
+      this.aggregateWeeklyClientTotals(
+        priorWeekStart,
+        priorWeekEnd,
+        storeIds,
+        500,
+      ),
+      this.aggregateWeeklyVendorTotals(
+        weekStart,
+        weekEnd,
+        storeIds,
+        user.type === UserTypeEnum.ADMIN ? limit : 50,
+      ),
+      this.aggregateWeeklyVendorTotals(
+        priorWeekStart,
+        priorWeekEnd,
+        storeIds,
+        500,
+      ),
+      this.sumRevenueInRange(weekStart, weekEnd, storeIds),
+      this.sumRevenueInRange(priorWeekStart, priorWeekEnd, storeIds),
+      this.countOrdersInRange(weekStart, weekEnd, storeIds),
+      this.countOrdersInRange(priorWeekStart, priorWeekEnd, storeIds),
+    ]);
+
+    const filterVendorRows = (
+      rows: {
+        userId: string;
+        orderCount: number;
+        totalSpent: number;
+        shippingTotal: number;
+      }[],
+    ) =>
+      user.type === UserTypeEnum.VENDOR && vendorSelfId
+        ? rows.filter((r) => r.userId === vendorSelfId)
+        : rows;
+
+    const vendorsThis = filterVendorRows(vendorsThisRaw);
+    const vendorsPrior = filterVendorRows(vendorsPriorRaw);
+
+    const priorClientMap = new Map(
+      clientsPrior.map((r) => [r.userId, r.totalSpent]),
+    );
+    const priorVendorMap = new Map(
+      vendorsPrior.map((r) => [r.userId, r.totalSpent]),
+    );
+
+    const clients = await this.hydrateWeeklyPerformanceRows(
+      clientsThis,
+      priorClientMap,
+    );
+    const vendors = await this.hydrateWeeklyPerformanceRows(
+      vendorsThis,
+      priorVendorMap,
+    );
+
+    return {
+      timezone: z,
+      weekStart: weekStart.toISOString(),
+      weekEnd: weekEnd.toISOString(),
+      priorWeekStart: priorWeekStart.toISOString(),
+      priorWeekEnd: priorWeekEnd.toISOString(),
+      summary: {
+        revenueThisWeek,
+        revenuePriorWeek,
+        revenueTrendPercent: trendPercent(revenueThisWeek, revenuePriorWeek),
+        ordersThisWeek,
+        ordersPriorWeek,
+        ordersTrendPercent: trendPercent(ordersThisWeek, ordersPriorWeek),
+        activeClientsThisWeek: clientsThis.length,
+        activeVendorsThisWeek:
+          user.type === UserTypeEnum.ADMIN ? vendorsThis.length : vendors.length,
+      },
+      clients,
+      vendors,
+    };
+  }
+
+  private async countOrdersInRange(
+    start: Date,
+    end: Date,
+    storeIds: Types.ObjectId[] | null,
+  ): Promise<number> {
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: end },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+    return this.orderModel.countDocuments(match).exec();
+  }
+
+  private async aggregateWeeklyClientTotals(
+    start: Date,
+    end: Date,
+    storeIds: Types.ObjectId[] | null,
+    limit: number,
+  ): Promise<
+    { userId: string; orderCount: number; totalSpent: number; shippingTotal: number }[]
+  > {
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: end },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+    const rows = await this.orderModel
+      .aggregate<{
+        _id: Types.ObjectId;
+        orderCount: number;
+        totalSpent: number;
+        shippingTotal: number;
+      }>([
+        { $match: match },
+        {
+          $group: {
+            _id: '$user',
+            orderCount: { $sum: 1 },
+            totalSpent: { $sum: { $ifNull: ['$total_price', 0] } },
+            shippingTotal: { $sum: { $ifNull: ['$shipping_price', 0] } },
+          },
+        },
+        { $sort: { totalSpent: -1 } },
+        { $limit: limit },
+      ])
+      .exec();
+    return rows.map((r) => ({
+      userId: String(r._id),
+      orderCount: r.orderCount ?? 0,
+      totalSpent: r.totalSpent ?? 0,
+      shippingTotal: r.shippingTotal ?? 0,
+    }));
+  }
+
+  private async aggregateWeeklyVendorTotals(
+    start: Date,
+    end: Date,
+    storeIds: Types.ObjectId[] | null,
+    limit: number,
+  ): Promise<
+    { userId: string; orderCount: number; totalSpent: number; shippingTotal: number }[]
+  > {
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: end },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+    const storeColl = this.storeModel.collection.name;
+    const rows = await this.orderModel
+      .aggregate<{
+        _id: Types.ObjectId;
+        orderCount: number;
+        totalSpent: number;
+        shippingTotal: number;
+      }>([
+        { $match: match },
+        {
+          $lookup: {
+            from: storeColl,
+            localField: 'store',
+            foreignField: '_id',
+            as: 'storeDoc',
+          },
+        },
+        { $unwind: '$storeDoc' },
+        {
+          $group: {
+            _id: '$storeDoc.owner',
+            orderCount: { $sum: 1 },
+            totalSpent: { $sum: { $ifNull: ['$total_price', 0] } },
+            shippingTotal: { $sum: { $ifNull: ['$shipping_price', 0] } },
+          },
+        },
+        { $sort: { totalSpent: -1 } },
+        { $limit: limit },
+      ])
+      .exec();
+    return rows
+      .filter((r) => r._id != null)
+      .map((r) => ({
+        userId: String(r._id),
+        orderCount: r.orderCount ?? 0,
+        totalSpent: r.totalSpent ?? 0,
+        shippingTotal: r.shippingTotal ?? 0,
+      }));
+  }
+
+  private async hydrateWeeklyPerformanceRows(
+    rows: {
+      userId: string;
+      orderCount: number;
+      totalSpent: number;
+      shippingTotal: number;
+    }[],
+    priorMap: Map<string, number>,
+  ): Promise<FinanceWeeklyUserPerformanceRow[]> {
+    if (!rows.length) return [];
+    const ids = rows
+      .map((r) => r.userId)
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    const users = await this.userModel
+      .find({ _id: { $in: ids } })
+      .select('fullName email')
+      .lean()
+      .exec();
+    const userById = new Map(
+      users.map((u) => {
+        const id = (u as { _id?: unknown })._id;
+        return [
+          id != null ? String(id) : '',
+          u as { fullName?: string; email?: string },
+        ];
+      }),
+    );
+    return rows.map((r) => {
+      const u = userById.get(r.userId);
+      const priorTotalSpent = priorMap.get(r.userId) ?? 0;
+      return {
+        userId: r.userId,
+        fullName: String(u?.fullName ?? '—'),
+        email: String(u?.email ?? '—'),
+        orderCount: r.orderCount,
+        totalSpent: r.totalSpent,
+        avgOrderValue:
+          r.orderCount > 0
+            ? Math.round((r.totalSpent / r.orderCount) * 100) / 100
+            : 0,
+        shippingTotal: r.shippingTotal,
+        priorTotalSpent,
+        trendPercent: trendPercent(r.totalSpent, priorTotalSpent),
+      };
+    });
   }
 
   private resolveLivreurLngLat(doc: DeliveryDriverLean): {

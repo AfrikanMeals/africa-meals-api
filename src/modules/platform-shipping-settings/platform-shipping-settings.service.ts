@@ -5,8 +5,9 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import {
-  PlatformShippingSettingsModel,
+  PlatformFeeMode,
   PlatformShippingSettingsDocument,
+  PlatformShippingSettingsModel,
 } from '@schemas/platform-shipping-settings.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
@@ -14,10 +15,37 @@ import { UpdatePlatformShippingSettingsDto } from './dto/platform-shipping-setti
 
 const SETTINGS_KEY = 'default';
 
+const DEFAULTS = {
+  perKmRate: 0,
+  maxDeliveryRadiusKm: 25,
+  ranges: [] as { minKm: number; maxKm: number; fee: number }[],
+  deliveryWithheldFeeMode: 'percent' as PlatformFeeMode,
+  deliveryWithheldFeeFixed: 0,
+  deliveryWithheldFeePercent: 0,
+};
+
 function assertAdmin(user: UserModel) {
   if (user.type !== UserTypeEnum.ADMIN) {
     throw new ForbiddenException('admin_only');
   }
+}
+
+function normalizeMode(
+  raw: string | undefined,
+  fallback: PlatformFeeMode,
+): PlatformFeeMode {
+  return raw === 'percent' || raw === 'fixed' ? raw : fallback;
+}
+
+function inferWithheldMode(
+  stored: string | undefined,
+  fixed: number,
+  percent: number,
+): PlatformFeeMode {
+  if (stored === 'percent' || stored === 'fixed') return stored;
+  if (percent > 0 && fixed <= 0) return 'percent';
+  if (fixed > 0 && percent <= 0) return 'fixed';
+  return DEFAULTS.deliveryWithheldFeeMode;
 }
 
 function normalizeRanges(
@@ -48,6 +76,11 @@ export class PlatformShippingSettingsService {
   ) {}
 
   private _toResponse(doc: PlatformShippingSettingsModel) {
+    const deliveryWithheldFeeMode = inferWithheldMode(
+      doc.deliveryWithheldFeeMode,
+      doc.deliveryWithheldFeeFixed ?? 0,
+      doc.deliveryWithheldFeePercent ?? 0,
+    );
     return {
       perKmRate: doc.perKmRate,
       maxDeliveryRadiusKm: doc.maxDeliveryRadiusKm,
@@ -56,6 +89,9 @@ export class PlatformShippingSettingsService {
         maxKm: r.maxKm,
         fee: r.fee,
       })),
+      deliveryWithheldFeeMode,
+      deliveryWithheldFeeFixed: doc.deliveryWithheldFeeFixed ?? 0,
+      deliveryWithheldFeePercent: doc.deliveryWithheldFeePercent ?? 0,
       updatedAt:
         (doc as unknown as { updatedAt?: Date }).updatedAt?.toISOString?.() ??
         null,
@@ -69,9 +105,7 @@ export class PlatformShippingSettingsService {
         {
           $setOnInsert: {
             key: SETTINGS_KEY,
-            perKmRate: 0,
-            maxDeliveryRadiusKm: 25,
-            ranges: [],
+            ...DEFAULTS,
           },
         },
         { upsert: true, new: true, lean: true, setDefaultsOnInsert: true },
@@ -82,6 +116,7 @@ export class PlatformShippingSettingsService {
 
   async updateSettings(user: UserModel, dto: UpdatePlatformShippingSettingsDto) {
     assertAdmin(user);
+    const current = await this.getPublicSettings();
     const ranges = normalizeRanges(dto.ranges ?? []);
     if (dto.maxDeliveryRadiusKm > 0 && ranges.length > 0) {
       const maxRangeEnd = Math.max(...ranges.map((r) => r.maxKm));
@@ -89,6 +124,16 @@ export class PlatformShippingSettingsService {
         throw new BadRequestException('range_exceeds_max_radius');
       }
     }
+
+    const deliveryWithheldFeeMode = normalizeMode(
+      dto.deliveryWithheldFeeMode,
+      current.deliveryWithheldFeeMode,
+    );
+    const withheldFixed =
+      dto.deliveryWithheldFeeFixed ?? current.deliveryWithheldFeeFixed;
+    const withheldPercent =
+      dto.deliveryWithheldFeePercent ?? current.deliveryWithheldFeePercent;
+
     const updated = await this._model
       .findOneAndUpdate(
         { key: SETTINGS_KEY },
@@ -97,6 +142,11 @@ export class PlatformShippingSettingsService {
             perKmRate: dto.perKmRate,
             maxDeliveryRadiusKm: dto.maxDeliveryRadiusKm,
             ranges,
+            deliveryWithheldFeeMode,
+            deliveryWithheldFeeFixed:
+              deliveryWithheldFeeMode === 'fixed' ? withheldFixed : 0,
+            deliveryWithheldFeePercent:
+              deliveryWithheldFeeMode === 'percent' ? withheldPercent : 0,
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },

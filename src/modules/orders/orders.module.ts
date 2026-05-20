@@ -17,6 +17,10 @@ import {
   ProductRatingModel,
   ProductRatingSchema,
 } from '@schemas/product_rating.schema';
+import {
+  DeliveryDriverModel,
+  DeliveryDriverSchema,
+} from '@schemas/delivery-driver.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import { OrdersDemoSeedService } from './orders-demo-seed.service';
@@ -52,6 +56,7 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
       { name: ProductModel.name, schema: ProductSchema },
       { name: ProductRatingModel.name, schema: ProductRatingSchema },
       { name: StoreModel.name, schema: StoreSchema },
+      { name: DeliveryDriverModel.name, schema: DeliveryDriverSchema },
       { name: UserModel.name, schema: UserSchema },
       { name: AddressModel.name, schema: AddressSchema },
       {

@@ -1,5 +1,6 @@
 import { CartService } from '@modules/cart/cart.service';
 import { CouponsService } from '@modules/coupons/coupons.service';
+import { StripeConnectService } from './stripe-connect.service';
 import { OrdersService } from '@modules/orders/orders.service';
 import { PlatformShippingQuoteService } from '@modules/platform-shipping-settings/platform-shipping-quote.service';
 import { StoreService } from '@modules/store/store.service';
@@ -326,6 +327,7 @@ export class StripeGroupedCheckoutService {
     private readonly usersService: UsersService,
     private readonly ordersService: OrdersService,
     private readonly couponsService: CouponsService,
+    private readonly stripeConnect: StripeConnectService,
     @InjectModel(StripeProcessedCheckoutModel.name)
     private readonly processedModel: Model<StripeProcessedCheckoutModel>,
     @InjectModel(StoreModel.name)
@@ -1431,6 +1433,23 @@ export class StripeGroupedCheckoutService {
           `Stripe webhook: incomplete payment_intent ${pi.id}`,
         );
       }
+      return { received: true };
+    }
+
+    if (event.type === 'account.updated') {
+      await this.stripeConnect.handleAccountUpdated(
+        event.data.object as {
+          id: string;
+          charges_enabled?: boolean;
+          payouts_enabled?: boolean;
+          details_submitted?: boolean;
+          requirements?: {
+            disabled_reason?: string | null;
+            currently_due?: string[] | null;
+            past_due?: string[] | null;
+          } | null;
+        },
+      );
       return { received: true };
     }
 

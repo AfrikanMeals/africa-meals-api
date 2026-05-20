@@ -1,8 +1,11 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { PLATFORM_FEE_MODES } from '@schemas/platform-shipping-settings.schema';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsIn,
   IsNumber,
+  IsOptional,
   Max,
   Min,
   ValidateNested,
@@ -54,4 +57,33 @@ export class UpdatePlatformShippingSettingsDto {
   @ValidateNested({ each: true })
   @Type(() => PlatformShippingRangeDto)
   ranges: PlatformShippingRangeDto[];
+
+  @ApiPropertyOptional({
+    enum: PLATFORM_FEE_MODES,
+    description: 'Mode des frais prélevés sur la livraison',
+  })
+  @IsOptional()
+  @IsIn(PLATFORM_FEE_MODES)
+  deliveryWithheldFeeMode?: (typeof PLATFORM_FEE_MODES)[number];
+
+  @ApiPropertyOptional({
+    example: 1.5,
+    description: 'Frais fixe prélevé sur chaque livraison ($)',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  deliveryWithheldFeeFixed?: number;
+
+  @ApiPropertyOptional({
+    example: 15,
+    description: '% du frais de livraison facturé au client',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  deliveryWithheldFeePercent?: number;
 }

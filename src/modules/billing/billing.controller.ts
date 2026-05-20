@@ -24,6 +24,8 @@ import { PaypalService } from './paypal/paypal.service';
 import { FilterGroupedPaymentsDto } from './stripe/dto/filter-grouped-payments.dto';
 import { GroupedStripeCheckoutDto } from './stripe/dto/grouped-stripe-checkout.dto';
 import { GroupedPaymentSyncDto } from './stripe/dto/grouped-payment-sync.dto';
+import { StripeConnectOnboardingDto } from './stripe/dto/stripe-connect-onboarding.dto';
+import { StripeConnectService } from './stripe/stripe-connect.service';
 import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.service';
 
 @ApiTags('billing')
@@ -34,6 +36,8 @@ export class BillingController {
   @Inject(BillingService) private readonly _billingService: BillingService;
   @Inject(StripeGroupedCheckoutService)
   private readonly _stripeGroupedCheckout: StripeGroupedCheckoutService;
+  @Inject(StripeConnectService)
+  private readonly _stripeConnect: StripeConnectService;
 
   @Post('create-paypal-vault-token')
   @UseGuards(JwtGuard)
@@ -139,6 +143,51 @@ export class BillingController {
       req.user as UserModel,
       body.paymentIntentId,
     );
+  }
+
+  @Get('stripe/connect/status')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Statut Stripe Connect (vendeur)' })
+  stripeConnectStatus(@Req() req: Request) {
+    return this._stripeConnect.getConnectStatus(req.user as UserModel);
+  }
+
+  @Post('stripe/connect/onboarding-link')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Lien d’onboarding Stripe Connect (Setup Payment) avec préremplissage',
+  })
+  stripeConnectOnboarding(
+    @Req() req: Request,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    body: StripeConnectOnboardingDto,
+  ) {
+    return this._stripeConnect.createOnboardingLink(req.user as UserModel);
+  }
+
+  @Post('stripe/connect/dashboard-link')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Lien tableau de bord Stripe Express (vendeur)' })
+  stripeConnectDashboard(@Req() req: Request) {
+    return this._stripeConnect.createDashboardLink(req.user as UserModel);
+  }
+
+  @Get('stripe/connect/payouts')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Liste des versements Stripe Connect (vendeur)' })
+  stripeConnectPayouts(
+    @Req() req: Request,
+    @Query('limit') limit?: string,
+  ) {
+    const n = limit != null ? Number(limit) : 25;
+    return this._stripeConnect.listPayouts(req.user as UserModel, n);
   }
 
   @Get('stripe/my-grouped-payments')

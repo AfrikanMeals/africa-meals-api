@@ -10,6 +10,10 @@ export type OrderWsTrackingPayload = {
   destinationLine?: string;
   originLine?: string;
   pickupCode?: string;
+  courierLatitude?: number;
+  courierLongitude?: number;
+  remainingDistanceKm?: number;
+  elapsedMinutes?: number;
 };
 
 /**

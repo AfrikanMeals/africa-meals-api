@@ -1,3 +1,4 @@
+import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { CartModule } from '@modules/cart/cart.module';
 import { CouponsModule } from '@modules/coupons/coupons.module';
 import { OrdersModule } from '@modules/orders/orders.module';
@@ -18,12 +19,19 @@ import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { BillingController } from './billing.controller';
 import { BillingService } from './billing.service';
 import { PaypalModule } from './paypal/paypal.module';
+import { StripeConnectService } from './stripe/stripe-connect.service';
 import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.service';
+import { UserModel, UserSchema } from '@schemas/user.schema';
 
 @Module({
   controllers: [BillingController],
-  providers: [BillingService, StripeGroupedCheckoutService],
+  providers: [
+    BillingService,
+    StripeGroupedCheckoutService,
+    StripeConnectService,
+  ],
   imports: [
+    WsNotifyModule,
     PaypalModule,
     UsersModule,
     CartModule,
@@ -38,8 +46,9 @@ import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.s
         schema: StripeProcessedCheckoutSchema,
       },
       { name: StoreModel.name, schema: StoreSchema },
+      { name: UserModel.name, schema: UserSchema },
     ]),
   ],
-  exports: [BillingService],
+  exports: [BillingService, StripeConnectService],
 })
 export class BillingModule {}

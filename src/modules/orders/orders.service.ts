@@ -18,6 +18,10 @@ import {
   OrderRefundRequestEntryStatusEnum,
   OrderStatusEnum,
 } from '@schemas/order.schema';
+import {
+  DeliveryDriverModel,
+  DeliveryDriverStatutEnum,
+} from '@schemas/delivery-driver.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
@@ -53,6 +57,9 @@ export class OrdersService {
 
   @InjectModel(StoreModel.name)
   private readonly _storeModel: Model<StoreModel>;
+
+  @InjectModel(DeliveryDriverModel.name)
+  private readonly _deliveryDriverModel: Model<DeliveryDriverModel>;
 
   @Inject(CartService)
   private readonly _cartService: CartService;
@@ -385,15 +392,18 @@ export class OrdersService {
 
     await this.ensurePickupCodeForOrderDoc(order);
 
-    if (user.type === UserTypeEnum.USER) {
-      const plain = order.toObject() as Record<string, unknown>;
-      const [withFlags] = await this.attachClientOrderFlags([plain], user);
-      const [enriched] = await this.attachStatusEventsToOrders([withFlags]);
-      return enriched as unknown as typeof order;
-    }
-
     const plain = order.toObject() as Record<string, unknown>;
-    return this.stripPickupCodeForNonClients([plain])[0] as unknown as typeof order;
+    let row: Record<string, unknown> = plain;
+    if (user.type === UserTypeEnum.USER) {
+      const [withFlags] = await this.attachClientOrderFlags([plain], user);
+      row = withFlags;
+    }
+    const [enriched] = await this.attachStatusEventsToOrders([row]);
+    const out = enriched;
+    if (user.type === UserTypeEnum.USER) {
+      return out as unknown as typeof order;
+    }
+    return this.stripPickupCodeForNonClients([out])[0] as unknown as typeof order;
   }
 
   async createFromCart(storeId: string, user: UserModel) {
@@ -883,7 +893,13 @@ export class OrdersService {
     ) {
       return;
     }
-    if (!this.isPickupOrder(order as { shouldShip?: boolean; shippingPrice?: number })) {
+    const isPickup = this.isPickupOrder(
+      order as { shouldShip?: boolean; shippingPrice?: number },
+    );
+    const isDeliveryReady =
+      !isPickup &&
+      (st === OrderStatusEnum.APPROVED || st === OrderStatusEnum.SHIPPED);
+    if (!isPickup && !isDeliveryReady) {
       return;
     }
     const existing = String(
@@ -973,6 +989,7 @@ export class OrdersService {
         );
     }
 
+    await this.ensurePickupCodeForOrderDoc(order);
     this.notifyPartiesOrderRealtimeFromDoc(order, OrderStatusEnum.APPROVED);
 
     return { orderId: oid, status: OrderStatusEnum.APPROVED, isPickup };
@@ -1344,10 +1361,7 @@ export class OrdersService {
       throw new NotFoundException('order_not_found');
     }
 
-    if (!this.isPickupOrder(order)) {
-      throw new BadRequestException('pickup_not_applicable_delivery_order');
-    }
-
+    const isPickup = this.isPickupOrder(order);
     const st = order.status as OrderStatusEnum;
     if (st === OrderStatusEnum.CREATED) {
       throw new BadRequestException('pickup_order_not_paid');
@@ -1357,6 +1371,14 @@ export class OrdersService {
     }
     if (st === OrderStatusEnum.COMPLETED) {
       throw new BadRequestException('pickup_already_completed');
+    }
+    if (isPickup) {
+      // retrait : payée → terminée
+    } else if (
+      st !== OrderStatusEnum.APPROVED &&
+      st !== OrderStatusEnum.SHIPPED
+    ) {
+      throw new BadRequestException('delivery_code_not_available_yet');
     }
 
     const code = generatePickupCode();
@@ -1400,10 +1422,7 @@ export class OrdersService {
 
     await this.assertUserCanManageOrderStore(user, order);
 
-    if (!this.isPickupOrder(order)) {
-      throw new BadRequestException('pickup_not_applicable_delivery_order');
-    }
-
+    const isPickup = this.isPickupOrder(order);
     const st = order.status as OrderStatusEnum;
     if (st === OrderStatusEnum.COMPLETED) {
       throw new BadRequestException('pickup_already_completed');
@@ -1414,8 +1433,15 @@ export class OrdersService {
     if (st === OrderStatusEnum.CANCELLED) {
       throw new BadRequestException('pickup_order_cancelled');
     }
-    if (st === OrderStatusEnum.SHIPPED) {
-      throw new BadRequestException('pickup_not_applicable_shipped_status');
+    if (isPickup) {
+      if (st === OrderStatusEnum.SHIPPED) {
+        throw new BadRequestException('pickup_not_applicable_shipped_status');
+      }
+    } else if (
+      st !== OrderStatusEnum.APPROVED &&
+      st !== OrderStatusEnum.SHIPPED
+    ) {
+      throw new BadRequestException('delivery_confirm_invalid_status');
     }
 
     await this.ensurePickupCodeForOrderDoc(order);
@@ -1443,7 +1469,9 @@ export class OrdersService {
       toStatus: OrderStatusEnum.COMPLETED,
       source: OrderStatusChangeSourceEnum.VENDOR,
       actorUserId: String(user.id),
-      note: 'Retrait confirmé (code validé)',
+      note: isPickup
+        ? 'Retrait confirmé (code validé)'
+        : 'Livraison confirmée (code validé)',
     });
 
     if (customerId) {
@@ -1458,7 +1486,7 @@ export class OrdersService {
         })
         .catch((err) =>
           this.logger.warn(
-            `FCM pickup completed: ${err instanceof Error ? err.message : String(err)}`,
+            `FCM order completed: ${err instanceof Error ? err.message : String(err)}`,
           ),
         );
     }
@@ -1674,5 +1702,145 @@ export class OrdersService {
         throw new BadRequestException('refund_already_processed');
       }
     }
+  }
+
+  /**
+   * Snapshot suivi temps réel (client) : position livreur, progression, distance restante.
+   */
+  async getLiveTrackingForClient(
+    orderId: string,
+    user: UserModel,
+  ): Promise<OrderWsTrackingPayload & { elapsedMinutes?: number }> {
+    const order = await this.findOneById(orderId, user);
+    const plain = order as unknown as Record<string, unknown>;
+    const oid =
+      (plain._id as { toString?: () => string })?.toString?.() ??
+      String(plain.id ?? orderId);
+    const status = String(plain.status ?? '') as OrderStatusEnum;
+    const isPickup = this.isPickupOrder(
+      plain as { shouldShip?: boolean; shippingPrice?: number },
+    );
+    const tracking = this.buildOrderTrackingPayload(plain, status);
+    const elapsedMinutes = this.elapsedMinutesForOrder(plain);
+
+    if (
+      !isPickup &&
+      status === OrderStatusEnum.SHIPPED &&
+      Types.ObjectId.isValid(oid)
+    ) {
+      const driver = await this.findDeliveryDriverForOrder(oid);
+      const storeCoords = this.coordsFromAddressLike(
+        plain.store &&
+          typeof plain.store === 'object' &&
+          'address' in (plain.store as object)
+          ? (plain.store as { address?: unknown }).address
+          : undefined,
+      );
+      const userAddr = this.defaultUserAddressFromPopulated(plain.user);
+      const userCoords = userAddr?.coords;
+
+      if (
+        driver &&
+        typeof driver.latitude === 'number' &&
+        typeof driver.longitude === 'number' &&
+        storeCoords &&
+        userCoords
+      ) {
+        const courierLat = driver.latitude;
+        const courierLng = driver.longitude;
+        const totalKm = +haversineDistance(storeCoords, userCoords).toFixed(2);
+        const remainingKm = +haversineDistance(
+          [courierLng, courierLat],
+          userCoords,
+        ).toFixed(2);
+        const fromStore = +haversineDistance(storeCoords, [
+          courierLng,
+          courierLat,
+        ]).toFixed(2);
+        const progress =
+          totalKm > 0
+            ? Math.min(0.98, Math.max(0.1, fromStore / totalKm))
+            : this.trackingProgressForStatus(status, false);
+
+        return {
+          ...tracking,
+          distanceKm: totalKm,
+          remainingDistanceKm: remainingKm,
+          progress,
+          courierLatitude: courierLat,
+          courierLongitude: courierLng,
+          elapsedMinutes,
+        };
+      }
+    }
+
+    const totalKm = tracking.distanceKm;
+    const progress = tracking.progress ?? 0;
+    const remainingDistanceKm =
+      totalKm != null && Number.isFinite(totalKm)
+        ? +Math.max(0, totalKm * (1 - progress)).toFixed(2)
+        : undefined;
+
+    return {
+      ...tracking,
+      remainingDistanceKm,
+      elapsedMinutes,
+    };
+  }
+
+  private elapsedMinutesForOrder(
+    order: Record<string, unknown>,
+  ): number | undefined {
+    const events = (order.statusEvents ?? order.status_events) as
+      | Array<Record<string, unknown>>
+      | undefined;
+    let start: Date | undefined;
+    if (Array.isArray(events)) {
+      for (const e of events) {
+        const to = String(e.toStatus ?? e.to_status ?? '')
+          .trim()
+          .toLowerCase();
+        if (to !== 'approved' && to !== 'shipped') continue;
+        const raw = e.createdAt ?? e.created_at;
+        const at =
+          raw instanceof Date
+            ? raw
+            : typeof raw === 'string'
+              ? new Date(raw)
+              : null;
+        if (at && !Number.isNaN(at.getTime())) {
+          if (!start || at < start) start = at;
+        }
+      }
+    }
+    if (!start) {
+      const c = order.createdAt ?? order.created_at;
+      if (typeof c === 'string') start = new Date(c);
+    }
+    if (!start || Number.isNaN(start.getTime())) return undefined;
+    const mins = Math.floor((Date.now() - start.getTime()) / 60000);
+    return mins < 1 ? 1 : mins;
+  }
+
+  private async findDeliveryDriverForOrder(
+    orderId: string,
+  ): Promise<DeliveryDriverModel | null> {
+    const tail = orderId.trim().slice(-6).toUpperCase();
+    if (!tail) return null;
+    const patterns = [
+      `#AE-${tail}`,
+      `AE-${tail}`,
+      `CMD-${tail}`,
+      tail,
+    ];
+    const doc = await this._deliveryDriverModel
+      .findOne({
+        statut: DeliveryDriverStatutEnum.EN_LIVRAISON,
+        'commande_en_cours.id': { $in: patterns },
+      })
+      .select('latitude longitude commande_en_cours')
+      .lean()
+      .exec();
+    return doc as DeliveryDriverModel | null;
   }
 }

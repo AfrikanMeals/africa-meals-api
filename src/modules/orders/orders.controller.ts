@@ -175,6 +175,16 @@ export class OrdersController {
     );
   }
 
+  @Get(':id/live-tracking')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Suivi temps réel commande (CLIENT)' })
+  async liveTracking(@Req() req: Request, @Param('id') id: string) {
+    return this._ordersService.getLiveTrackingForClient(
+      id,
+      req.user as UserModel,
+    );
+  }
+
   @Get(':id')
   @UseGuards(JwtGuard)
   async findOneById(@Req() req: Request, @Param('id') id: string) {
