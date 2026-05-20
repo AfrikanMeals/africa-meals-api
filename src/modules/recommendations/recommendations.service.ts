@@ -1,3 +1,4 @@
+import { storeOwnerStripeOnboardedPipelineStages } from '@modules/billing/stripe/stripe-connect-visibility';
 import { DrinksService } from '@modules/drinks/drinks.service';
 import { SearchService } from '@modules/search/search.service';
 import { BadRequestException, Injectable, Inject } from '@nestjs/common';
@@ -409,6 +410,7 @@ export class RecommendationsService {
             acceptsOrders: { $ne: false },
           },
         },
+        ...storeOwnerStripeOnboardedPipelineStages(),
         { $sort: { averageRating: -1, updatedAt: -1 } },
         /** Borne avant `$lookup` commandes — coût O(n×orders) sinon sur tout le parc boutiques. */
         { $limit: 160 },

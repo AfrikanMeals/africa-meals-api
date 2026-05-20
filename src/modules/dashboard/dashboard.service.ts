@@ -357,6 +357,44 @@ export type FinanceWeeklyUserPerformancePayload = {
   vendors: FinanceWeeklyUserPerformanceRow[];
 };
 
+export type FinancePeriodReportSummary = {
+  totalRevenue: number;
+  orderCount: number;
+  avgOrderValue: number;
+  shippingTotal: number;
+  priorPeriodRevenue: number;
+  trendPercent: number | null;
+};
+
+export type FinancePeriodDailyPoint = {
+  date: string;
+  revenue: number;
+  orderCount: number;
+};
+
+export type FinancePeriodReportOrderRow = {
+  id: string;
+  orderNumber: string;
+  createdAt: string;
+  customerName: string;
+  customerEmail: string;
+  totalPrice: number;
+  shippingPrice: number;
+  status: string;
+  storeName: string | null;
+};
+
+export type FinancePeriodReportPayload = {
+  timezone: string;
+  from: string;
+  to: string;
+  priorFrom: string;
+  priorTo: string;
+  summary: FinancePeriodReportSummary;
+  daily: FinancePeriodDailyPoint[];
+  orders: FinancePeriodReportOrderRow[];
+};
+
 export type DashboardVendorRecentCustomerRow = {
   userId: string;
   fullName: string;
@@ -2332,6 +2370,221 @@ export class DashboardService {
       clients,
       vendors,
     };
+  }
+
+  /**
+   * Rapport financier sur une période (inclusive), fuseau America/Toronto.
+   * Admin : plateforme ; vendeur : ses boutiques.
+   */
+  async getFinancePeriodReport(
+    user: UserModel,
+    fromStr: string,
+    toStr: string,
+  ): Promise<FinancePeriodReportPayload> {
+    if (
+      user.type !== UserTypeEnum.ADMIN &&
+      user.type !== UserTypeEnum.VENDOR
+    ) {
+      throw new ForbiddenException('forbidden');
+    }
+
+    const z = PEAK_HOURS_TZ;
+    const fromDay = dayjs.tz(fromStr, z).startOf('day');
+    const toDay = dayjs.tz(toStr, z).startOf('day');
+    if (!fromDay.isValid() || !toDay.isValid()) {
+      throw new BadRequestException('invalid_date_range');
+    }
+    if (toDay.isBefore(fromDay)) {
+      throw new BadRequestException('invalid_date_range');
+    }
+    const spanDays = toDay.diff(fromDay, 'day') + 1;
+    if (spanDays > 366) {
+      throw new BadRequestException('date_range_too_long');
+    }
+
+    const start = fromDay.toDate();
+    const endExclusive = toDay.add(1, 'day').toDate();
+    const priorEndExclusive = fromDay.toDate();
+    const priorStart = fromDay.subtract(spanDays, 'day').toDate();
+    const priorFromLabel = dayjs(priorStart).tz(z).format('YYYY-MM-DD');
+    const priorToLabel = fromDay.subtract(1, 'day').format('YYYY-MM-DD');
+
+    let storeIds: Types.ObjectId[] | null = null;
+    if (user.type === UserTypeEnum.VENDOR) {
+      storeIds = vendorStoreObjectIds(user);
+      if (!storeIds.length) {
+        return {
+          timezone: z,
+          from: fromStr,
+          to: toStr,
+          priorFrom: priorFromLabel,
+          priorTo: priorToLabel,
+          summary: {
+            totalRevenue: 0,
+            orderCount: 0,
+            avgOrderValue: 0,
+            shippingTotal: 0,
+            priorPeriodRevenue: 0,
+            trendPercent: null,
+          },
+          daily: [],
+          orders: [],
+        };
+      }
+    }
+
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: endExclusive },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+
+    const [
+      totalRevenue,
+      orderCount,
+      shippingTotal,
+      priorPeriodRevenue,
+      dailyAgg,
+      orderDocs,
+    ] = await Promise.all([
+      this.sumRevenueInRange(start, endExclusive, storeIds),
+      this.countOrdersInRange(start, endExclusive, storeIds),
+      this.sumShippingInRange(start, endExclusive, storeIds),
+      this.sumRevenueInRange(priorStart, priorEndExclusive, storeIds),
+      this.aggregateDailyRevenue(start, endExclusive, storeIds),
+      this.orderModel
+        .find(match)
+        .sort({ createdAt: -1 })
+        .limit(5000)
+        .populate<{ user?: { fullName?: string; email?: string } }>(
+          'user',
+          'fullName email',
+        )
+        .populate<{ store?: { name?: string } }>('store', 'name')
+        .select('_id createdAt totalPrice shippingPrice status user store')
+        .lean()
+        .exec(),
+    ]);
+
+    const orders: FinancePeriodReportOrderRow[] = orderDocs.map((o) => {
+      const id = String(o._id);
+      const userDoc = o.user as
+        | { fullName?: string; email?: string }
+        | undefined;
+      const storeDoc = o.store as { name?: string } | undefined;
+      return {
+        id,
+        orderNumber: `#AE-${id.slice(-6).toUpperCase()}`,
+        createdAt: o.createdAt
+          ? new Date(o.createdAt).toISOString()
+          : new Date().toISOString(),
+        customerName: userDoc?.fullName?.trim() || '—',
+        customerEmail: userDoc?.email?.trim() || '',
+        totalPrice:
+          typeof o.totalPrice === 'number' && !Number.isNaN(o.totalPrice)
+            ? o.totalPrice
+            : 0,
+        shippingPrice:
+          typeof o.shippingPrice === 'number' &&
+          !Number.isNaN(o.shippingPrice)
+            ? o.shippingPrice
+            : 0,
+        status: String(o.status ?? ''),
+        storeName: storeDoc?.name?.trim() || null,
+      };
+    });
+
+    return {
+      timezone: z,
+      from: fromStr,
+      to: toStr,
+      priorFrom: priorFromLabel,
+      priorTo: priorToLabel,
+      summary: {
+        totalRevenue,
+        orderCount,
+        avgOrderValue:
+          orderCount > 0
+            ? Math.round((totalRevenue / orderCount) * 100) / 100
+            : 0,
+        shippingTotal,
+        priorPeriodRevenue,
+        trendPercent: trendPercent(totalRevenue, priorPeriodRevenue),
+      },
+      daily: dailyAgg,
+      orders,
+    };
+  }
+
+  private async sumShippingInRange(
+    start: Date,
+    end: Date,
+    storeIds: Types.ObjectId[] | null,
+  ): Promise<number> {
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: end },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+    const agg = await this.orderModel
+      .aggregate<{ total: number }>([
+        { $match: match },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: { $ifNull: ['$shipping_price', 0] } },
+          },
+        },
+      ])
+      .exec();
+    const v = agg[0]?.total;
+    return typeof v === 'number' && !Number.isNaN(v) ? v : 0;
+  }
+
+  private async aggregateDailyRevenue(
+    start: Date,
+    end: Date,
+    storeIds: Types.ObjectId[] | null,
+  ): Promise<FinancePeriodDailyPoint[]> {
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: end },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+    const rows = await this.orderModel
+      .aggregate<{
+        _id: string;
+        revenue: number;
+        orderCount: number;
+      }>([
+        { $match: match },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$createdAt',
+                timezone: PEAK_HOURS_TZ,
+              },
+            },
+            revenue: { $sum: { $ifNull: ['$total_price', 0] } },
+            orderCount: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ])
+      .exec();
+    return rows.map((r) => ({
+      date: r._id,
+      revenue: typeof r.revenue === 'number' ? r.revenue : 0,
+      orderCount: typeof r.orderCount === 'number' ? r.orderCount : 0,
+    }));
   }
 
   private async countOrdersInRange(

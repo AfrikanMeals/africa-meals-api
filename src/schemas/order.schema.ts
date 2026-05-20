@@ -16,6 +16,8 @@ export enum OrderStatusEnum {
 /** Statut d’une entrée du journal de demande de remboursement (côté client → admin). */
 export enum OrderRefundRequestEntryStatusEnum {
   PENDING = 'pending',
+  /** En pause — le cron n’essaie pas de traiter (décision admin). */
+  PAUSED = 'paused',
   APPROVED = 'approved',
   REJECTED = 'rejected',
   COMPLETED = 'completed',
@@ -152,6 +154,26 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'stripe_charged_ship_cents' })
   stripeChargedShipCents?: number;
 
+  /** Transfer Connect vers le vendeur (`tr_…`). */
+  @Prop({ required: false, name: 'stripe_transfer_id' })
+  stripeTransferId?: string;
+
+  /** Montant transféré au compte Connect (centimes). */
+  @Prop({ required: false, name: 'stripe_transfer_amount_cents' })
+  stripeTransferAmountCents?: number;
+
+  /** Commission plateforme retenue sur la commande (centimes). */
+  @Prop({ required: false, name: 'platform_fee_cents' })
+  platformFeeCents?: number;
+
+  /** Dernier reversal de transfer (`trr_…` / id reversal). */
+  @Prop({ required: false, name: 'stripe_transfer_reversal_id' })
+  stripeTransferReversalId?: string;
+
+  /** Total des reversals sur le transfer (centimes). */
+  @Prop({ required: false, name: 'stripe_transfer_reversal_amount_cents' })
+  stripeTransferReversalAmountCents?: number;
+
   /**
    * Journal des demandes de remboursement (historique). Dernière entrée la plus récente.
    * Une seule entrée `pending` à la fois ; `approved` / `completed` = traitement encours ou terminé.
@@ -169,6 +191,20 @@ export class OrderModel extends BaseSchema {
         requestedAt: { type: Date, required: true, default: () => new Date() },
         resolvedAt: { type: Date, required: false },
         resolutionNote: { type: String, required: false, maxlength: 4000 },
+        stripeRefundId: { type: String, required: false, maxlength: 128 },
+        refundGrossCents: { type: Number, required: false },
+        platformRefundFeeCents: { type: Number, required: false },
+        customerRefundCents: { type: Number, required: false },
+        processedBy: {
+          type: String,
+          required: false,
+          enum: ['cron', 'admin'],
+        },
+        adminUserId: {
+          type: MongooseSchema.Types.ObjectId,
+          required: false,
+          ref: 'UserModel',
+        },
       },
     ],
     default: [],
@@ -180,6 +216,12 @@ export class OrderModel extends BaseSchema {
     requestedAt: Date;
     resolvedAt?: Date;
     resolutionNote?: string;
+    stripeRefundId?: string;
+    refundGrossCents?: number;
+    platformRefundFeeCents?: number;
+    customerRefundCents?: number;
+    processedBy?: 'cron' | 'admin';
+    adminUserId?: string;
   }>;
 }
 

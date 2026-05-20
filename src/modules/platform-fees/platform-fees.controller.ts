@@ -20,6 +20,15 @@ import { PlatformFeesService } from './platform-fees.service';
 export class PlatformFeesController {
   constructor(private readonly _platformFees: PlatformFeesService) {}
 
+  @Get('checkout')
+  @ApiOperation({
+    summary:
+      'Frais de transaction paiement commande (public, apps mobile)',
+  })
+  getPublicCheckoutFees() {
+    return this._platformFees.getPublicCheckoutFees();
+  }
+
   @ApiBearerAuth('bearer')
   @Get()
   @UseGuards(JwtGuard)

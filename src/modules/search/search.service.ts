@@ -1,3 +1,7 @@
+import {
+  productEmbeddedStoreOwnerStripeOnboardedStages,
+  storeOwnerStripeOnboardedPipelineStages,
+} from '@modules/billing/stripe/stripe-connect-visibility';
 import { OffersService } from '@modules/offers/offers.service';
 import { ProductsService } from '@modules/products/products.service';
 import { StoreService } from '@modules/store/store.service';
@@ -788,9 +792,12 @@ export class SearchService {
             {
               'store.acceptsOrders': true,
             },
-            // {
-            //   status: ProductStatusEnum.ACTIVE,
-            // },
+            ...(ownerOid
+              ? []
+              : [
+                  { 'store.status': StoreStatusEnum.ACTIVE },
+                  ...productEmbeddedStoreOwnerStripeOnboardedStages(),
+                ]),
             args.categoryId && {
               category: { $eq: new Types.ObjectId(args.categoryId) },
             },
@@ -873,6 +880,31 @@ export class SearchService {
   /**
    * Aperçu menu du jour (jour courant serveur) pour le produit : le mobile borne les quantités panier.
    */
+  private _dailyMenuProductIdStr(value: unknown): string {
+    if (value == null) return '';
+    if (typeof value === 'object' && value !== null && 'toString' in value) {
+      return (value as { toString(): string }).toString();
+    }
+    return String(value).trim();
+  }
+
+  private _dailyMenuSlotItems(
+    slot: Record<string, unknown> | undefined,
+  ): Record<string, unknown>[] {
+    if (!slot) return [];
+    const rawItems = slot['items'];
+    if (Array.isArray(rawItems) && rawItems.length) {
+      return rawItems as Record<string, unknown>[];
+    }
+    const pids = slot['productIds'];
+    if (!Array.isArray(pids)) return [];
+    return pids.map((id) => ({
+      productId: id,
+      stockUnlimited: true,
+      stockRemaining: 0,
+    }));
+  }
+
   private _buildDailyMenuTodayForProduct(
     storeRaw: Record<string, unknown> | null | undefined,
     productId: string,
@@ -887,17 +919,11 @@ export class SearchService {
       ? (storeRaw!['dailyMenuByWeekday'] as Record<string, unknown>[])
       : [];
     const slot = rows.find((r) => Number(r['dayOfWeek']) === dow);
-    const items = Array.isArray(slot?.['items'])
-      ? (slot!['items'] as Record<string, unknown>[])
-      : [];
-    const pid = String(productId);
-    const it = items.find((x) => {
-      const id = x['productId'];
-      if (id != null && typeof id === 'object' && 'toString' in id) {
-        return (id as Types.ObjectId).toString() === pid;
-      }
-      return String(id) === pid;
-    });
+    const items = this._dailyMenuSlotItems(slot);
+    const pid = this._dailyMenuProductIdStr(productId);
+    const it = items.find(
+      (x) => this._dailyMenuProductIdStr(x['productId']) === pid,
+    );
     if (!it) {
       return {
         onMenu: false,
@@ -1142,6 +1168,12 @@ export class SearchService {
               ].filter(Boolean),
             },
             { 'store.acceptsOrders': true },
+            ...(ownerOid
+              ? []
+              : [
+                  { 'store.status': StoreStatusEnum.ACTIVE },
+                  ...productEmbeddedStoreOwnerStripeOnboardedStages(),
+                ]),
             {
               $or: [
                 { title: { $regex: '', $options: 'i' } },
@@ -1394,6 +1426,9 @@ export class SearchService {
     if (!Types.ObjectId.isValid(storeId)) {
       return { items: [], total: 0 };
     }
+    if (!(await this._storeService.isStoreVisibleOnMobileApp(storeId))) {
+      return { items: [], total: 0 };
+    }
     const storeOid = new Types.ObjectId(storeId);
     const ownerOid = this._userObjectId(user);
     const safeTake = Math.min(120, Math.max(1, Math.floor(take)));
@@ -1425,6 +1460,7 @@ export class SearchService {
             },
             { 'store.acceptsOrders': true },
             { 'store._id': storeOid },
+            { 'store.status': StoreStatusEnum.ACTIVE },
             {
               $or: [
                 { title: { $regex: '', $options: 'i' } },
@@ -1435,6 +1471,7 @@ export class SearchService {
           ],
         },
       },
+      ...productEmbeddedStoreOwnerStripeOnboardedStages(),
       ...this._productDailyMenuListingStages(),
       {
         $facet: {
@@ -1473,20 +1510,14 @@ export class SearchService {
     const ownerOid = this._userObjectId(user);
     const q = args.query?.trim();
     const andParts: Record<string, unknown>[] = [
-      {
-        $or: [
-          ownerOid ? { owner: ownerOid } : null,
-          {
-            status: {
-              $in: [
-                StoreStatusEnum.ACTIVE,
-                StoreStatusEnum.PENDING,
-                StoreStatusEnum.REVISION,
-              ],
-            },
-          },
-        ].filter(Boolean),
-      },
+      ownerOid
+        ? {
+            $or: [
+              { owner: ownerOid },
+              { status: StoreStatusEnum.ACTIVE },
+            ],
+          }
+        : { status: StoreStatusEnum.ACTIVE },
     ];
     if (q) {
       const esc = this._escapeRegex(q);
@@ -1503,6 +1534,7 @@ export class SearchService {
           $and: andParts,
         },
       },
+      ...(ownerOid ? [] : storeOwnerStripeOnboardedPipelineStages()),
       ...this._storeDistanceAndMenuStages(args),
     ];
 

@@ -39,6 +39,7 @@ import { Model, Types } from 'mongoose';
 import { CreateStoreDto, DailyMenuSlotDto, PatchVendorShippingZonesDto } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { DrinksService, maxDrinkOrderQuantity } from '@modules/drinks/drinks.service';
+import { isStripeConnectOnboardingCompleteUser } from '@modules/billing/stripe/stripe-connect-visibility';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 
 @Injectable()
@@ -126,7 +127,48 @@ export class StoreService {
     return this._storeModel;
   }
 
-  async findOneById(id: string) {
+  /**
+   * Boutique visible dans l’app mobile client : ACTIVE + onboarding Stripe Connect du vendeur terminé.
+   */
+  async isStoreVisibleOnMobileApp(storeId: string): Promise<boolean> {
+    if (!Types.ObjectId.isValid(storeId)) {
+      return false;
+    }
+    const store = await this._storeModel
+      .findById(storeId)
+      .select('status owner')
+      .lean()
+      .exec();
+    if (!store || store.status !== StoreStatusEnum.ACTIVE) {
+      return false;
+    }
+    if (!store.owner) {
+      return false;
+    }
+    const owner = await this._userModel
+      .findById(store.owner)
+      .select(
+        'stripeConnectAccountId stripeConnectChargesEnabled stripeConnectPayoutsEnabled stripeConnectDetailsSubmitted stripeConnectDisabledReason stripeConnectRequirementsDue stripeConnectRequirementsPastDue',
+      )
+      .lean()
+      .exec();
+    return isStripeConnectOnboardingCompleteUser(owner);
+  }
+
+  async assertStoreVisibleOnMobileApp(storeId: string): Promise<void> {
+    const ok = await this.isStoreVisibleOnMobileApp(storeId);
+    if (!ok) {
+      throw new NotFoundException('store_not_found');
+    }
+  }
+
+  async findOneById(
+    id: string,
+    options?: { requireMobileVisibility?: boolean },
+  ) {
+    if (options?.requireMobileVisibility) {
+      await this.assertStoreVisibleOnMobileApp(id);
+    }
     const store = await this._storeModel
       .findOne({ _id: id })
       .populate('address')
@@ -203,6 +245,9 @@ export class StoreService {
     id: string,
   ): Promise<Record<string, unknown> | null> {
     if (!Types.ObjectId.isValid(id)) {
+      return null;
+    }
+    if (!(await this.isStoreVisibleOnMobileApp(id))) {
       return null;
     }
     const storeOid = new Types.ObjectId(id);
@@ -646,13 +691,30 @@ export class StoreService {
     return ok ? 'ok' : 'fail';
   }
 
+  /** Menu du jour actif pour aujourd’hui (au moins un plat listé). */
+  private todayDailyMenuSlot(
+    rows: Array<{
+      dayOfWeek: number;
+      items: Array<{
+        productId: string;
+        stockUnlimited: boolean;
+        stockRemaining: number;
+        soldOut: boolean;
+      }>;
+    }>,
+  ) {
+    const dow = new Date().getDay();
+    const slot = rows.find((r) => r.dayOfWeek === dow);
+    if (!slot?.items?.length) return null;
+    return slot;
+  }
+
   private async assertDailyMenuProductAddAllowed(
     storeId: string,
     user: UserModel,
     args: AddItemToCartDto,
   ): Promise<void> {
     if (args.type !== CartItemTypeEnum.PRODUCT) return;
-    const dow = new Date().getDay();
     const doc = await this._storeModel
       .findById(storeId)
       .select('dailyMenuByWeekday')
@@ -661,9 +723,14 @@ export class StoreService {
     const rows = this.normalizeDailyMenuForApi(
       (doc?.dailyMenuByWeekday as Record<string, unknown>[]) ?? [],
     );
-    const entry = rows
-      .find((r) => r.dayOfWeek === dow)
-      ?.items.find((i) => i.productId === args.itemId);
+    const slot = this.todayDailyMenuSlot(rows);
+    if (!slot) {
+      return;
+    }
+    const itemId = this.stringifyIdLike(args.itemId);
+    const entry = slot.items.find(
+      (i) => this.stringifyIdLike(i.productId) === itemId,
+    );
     if (!entry) {
       throw new BadRequestException('daily_menu_product_not_available');
     }
@@ -685,19 +752,18 @@ export class StoreService {
     store: StoreModel,
     cart: { items: Array<{ type?: string; entityId?: string; quantity?: number }> },
   ): Promise<void> {
-    const dow = new Date().getDay();
     const raw = (store as { dailyMenuByWeekday?: unknown }).dailyMenuByWeekday;
     const rows = this.normalizeDailyMenuForApi(
       Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [],
     );
-    const slot = rows.find((r) => r.dayOfWeek === dow);
+    const slot = this.todayDailyMenuSlot(rows);
+    if (!slot) {
+      return;
+    }
     for (const line of cart.items) {
       if (line.type !== CartItemTypeEnum.PRODUCT) continue;
       const pid = String(line.entityId ?? '');
       if (!pid) continue;
-      if (!slot) {
-        throw new BadRequestException('daily_menu_product_not_available');
-      }
       const entry = slot.items.find((i) => i.productId === pid);
       if (!entry) {
         throw new BadRequestException('daily_menu_product_not_available');

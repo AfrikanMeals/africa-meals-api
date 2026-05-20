@@ -1,8 +1,9 @@
+import { isStripeConnectOnboardingCompleteUser } from '@modules/billing/stripe/stripe-connect-visibility';
 import { MediasService } from '@modules/medias/medias.service';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { DrinkModel, DrinkStatutEnum } from '@schemas/drink.schema';
-import { StoreModel } from '@schemas/store.schema';
+import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { CreateDrinkDto, PatchDrinkDto } from './dto/drink.dto';
@@ -63,8 +64,32 @@ export class DrinksService {
   @InjectModel(StoreModel.name)
   private readonly _storeModel: Model<StoreModel>;
 
+  @InjectModel(UserModel.name)
+  private readonly _userModel: Model<UserModel>;
+
   @Inject(MediasService)
   private readonly _mediasService: MediasService;
+
+  private async isStoreVisibleOnMobileApp(storeId: string): Promise<boolean> {
+    if (!Types.ObjectId.isValid(storeId)) {
+      return false;
+    }
+    const store = await this._storeModel
+      .findById(storeId)
+      .select('status owner')
+      .lean()
+      .exec();
+    if (!store || store.status !== StoreStatusEnum.ACTIVE) {
+      return false;
+    }
+    const owner = await this._userModel.findById(store.owner)
+      .select(
+        'stripeConnectAccountId stripeConnectChargesEnabled stripeConnectPayoutsEnabled stripeConnectDetailsSubmitted stripeConnectDisabledReason stripeConnectRequirementsDue stripeConnectRequirementsPastDue',
+      )
+      .lean()
+      .exec();
+    return isStripeConnectOnboardingCompleteUser(owner);
+  }
 
   private async assertStoreOwner(storeId: string, user: UserModel) {
     const store = await this._storeModel
@@ -97,12 +122,7 @@ export class DrinksService {
     if (!Types.ObjectId.isValid(storeId)) {
       return [];
     }
-    const store = await this._storeModel
-      .findById(storeId)
-      .select('_id')
-      .lean()
-      .exec();
-    if (store == null) {
+    if (!(await this.isStoreVisibleOnMobileApp(storeId))) {
       return [];
     }
     const baseFilter: Record<string, unknown> = {

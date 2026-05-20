@@ -190,6 +190,22 @@ export class BillingController {
     return this._stripeConnect.listPayouts(req.user as UserModel, n);
   }
 
+  @Get('stripe/connect/balance')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Solde disponible Stripe Connect (vendeur)' })
+  stripeConnectBalance(@Req() req: Request) {
+    return this._stripeConnect.getConnectBalance(req.user as UserModel);
+  }
+
+  @Post('stripe/connect/request-payout')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Demander un versement du solde disponible vers le compte bancaire',
+  })
+  stripeConnectRequestPayout(@Req() req: Request) {
+    return this._stripeConnect.requestPayout(req.user as UserModel);
+  }
+
   @Get('stripe/my-grouped-payments')
   @UseGuards(JwtGuard)
   @ApiOperation({

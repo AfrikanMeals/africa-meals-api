@@ -726,6 +726,46 @@ export class NotificationsService implements OnModuleInit {
       });
   }
 
+  /** Inbox + push FCM — mise à jour remboursement commande. */
+  async notifyCustomerRefundStatus(args: {
+    userId: string;
+    orderId: string;
+    storeName?: string;
+    storeId?: string;
+    title: string;
+    body: string;
+    refundStatus: string;
+    stripeRefundId?: string;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.userId)) {
+      return;
+    }
+    const store = (args.storeName ?? '').trim() || 'Restaurant';
+    const data = {
+      type: 'refund_update',
+      audience: 'customer',
+      orderId: args.orderId,
+      storeName: store,
+      storeId: args.storeId ?? '',
+      refundStatus: args.refundStatus,
+      stripeRefundId: args.stripeRefundId ?? '',
+    };
+
+    try {
+      await this.createUserScopedNotification({
+        recipientUserId: args.userId,
+        title: args.title,
+        body: args.body,
+        type: 'refund',
+        data,
+        sendPush: true,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`notifyCustomerRefundStatus: ${msg}`);
+    }
+  }
+
   /**
    * Push FCM — restaurateur / espace admin (nouvelle commande, paiement, expédition).
    */

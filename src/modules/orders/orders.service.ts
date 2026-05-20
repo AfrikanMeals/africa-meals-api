@@ -243,6 +243,12 @@ export class OrdersService {
       data as unknown as Record<string, unknown>[],
       user,
     );
+    if (
+      user.type === UserTypeEnum.VENDOR ||
+      user.type === UserTypeEnum.ADMIN
+    ) {
+      enriched = this.attachDashboardOrderRefundFlags(enriched);
+    }
     if (user.type !== UserTypeEnum.USER) {
       enriched = this.stripPickupCodeForNonClients(enriched);
     }
@@ -259,6 +265,20 @@ export class OrdersService {
       delete out.pickupCode;
       delete out.pickup_code;
       return out;
+    });
+  }
+
+  /** Remboursement : indicateurs pour le dashboard vendeur / admin. */
+  private attachDashboardOrderRefundFlags(
+    rows: Record<string, unknown>[],
+  ): Record<string, unknown>[] {
+    return rows.map((o) => {
+      const refund = this.clientRefundFlags(o);
+      return {
+        ...o,
+        canRequestRefund: refund.canRequestRefund,
+        refundRequestState: refund.refundRequestState,
+      };
     });
   }
 
@@ -330,7 +350,10 @@ export class OrdersService {
 
     for (const row of log) {
       const s = String(row?.status ?? '');
-      if (s === OrderRefundRequestEntryStatusEnum.PENDING) {
+      if (
+        s === OrderRefundRequestEntryStatusEnum.PENDING ||
+        s === OrderRefundRequestEntryStatusEnum.PAUSED
+      ) {
         return { canRequestRefund: false, refundRequestState: 'pending' };
       }
     }
@@ -397,6 +420,11 @@ export class OrdersService {
     if (user.type === UserTypeEnum.USER) {
       const [withFlags] = await this.attachClientOrderFlags([plain], user);
       row = withFlags;
+    } else if (
+      user.type === UserTypeEnum.VENDOR ||
+      user.type === UserTypeEnum.ADMIN
+    ) {
+      row = this.attachDashboardOrderRefundFlags([plain])[0];
     }
     const [enriched] = await this.attachStatusEventsToOrders([row]);
     const out = enriched;
@@ -1689,7 +1717,10 @@ export class OrdersService {
   ): void {
     for (const row of log) {
       const s = String(row?.status ?? '');
-      if (s === OrderRefundRequestEntryStatusEnum.PENDING) {
+      if (
+        s === OrderRefundRequestEntryStatusEnum.PENDING ||
+        s === OrderRefundRequestEntryStatusEnum.PAUSED
+      ) {
         throw new BadRequestException('refund_request_pending');
       }
     }

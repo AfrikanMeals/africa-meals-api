@@ -25,6 +25,10 @@ import {
   RemoveItemFromCartDto,
   ValidateCheckoutDto,
 } from './dto/cart.dto';
+import {
+  dailyMenuStockRemainingForStoreProduct,
+  resolveDailyMenuProductCap,
+} from '@utils/daily-menu-stock.util';
 import { mapInChunks } from '@utils/map-in-chunks';
 
 /** Boutique + adresse géolocalisée (distance client ↔ restaurant sur le mobile). */
@@ -50,34 +54,6 @@ function storeIdFromPopulatedCartItem(item: {
     }
   }
   return '';
-}
-
-/**
- * Stock menu du jour restant pour un produit (null = illimité ou hors menu du jour limité).
- */
-function dailyMenuStockRemainingForStoreProduct(
-  store: { dailyMenuByWeekday?: unknown },
-  productId: string,
-): number | null {
-  const dow = new Date().getDay();
-  const rows = Array.isArray(store.dailyMenuByWeekday)
-    ? store.dailyMenuByWeekday
-    : [];
-  const slot = (rows as { dayOfWeek?: number; items?: unknown[] }[]).find(
-    (r) => Number(r?.dayOfWeek) === dow,
-  );
-  const items = Array.isArray(slot?.items) ? slot!.items : [];
-  const pid = String(productId);
-  const it = (items as Record<string, unknown>[]).find((x) => {
-    const id = x['productId'];
-    if (id != null && typeof id === 'object' && 'toString' in id) {
-      return (id as Types.ObjectId).toString() === pid;
-    }
-    return String(id) === pid;
-  });
-  if (!it) return null;
-  if (it['stockUnlimited'] !== false) return null;
-  return Math.max(0, Math.floor(Number(it['stockRemaining'] ?? 0)));
 }
 
 function badRequestExceptionKey(e: unknown): string {
@@ -268,6 +244,8 @@ export class CartService {
     );
 
     const storeGroups = Object.values(formatedItems);
+    // Ne pas masquer les lignes déjà en panier : le client doit les voir.
+    // Le blocage Stripe / menu du jour reste sur validate-checkout et le paiement.
     const data = await mapInChunks(storeGroups, 2, async (group) => {
       const lineItems = await mapInChunks(
         group.items ?? [],
@@ -592,6 +570,15 @@ export class CartService {
         (store as { name?: string } | null)?.name ?? '',
       );
 
+      const menuRows = Array.isArray(
+        (store as { dailyMenuByWeekday?: unknown } | null)?.dailyMenuByWeekday,
+      )
+        ? ((store as { dailyMenuByWeekday: unknown[] }).dailyMenuByWeekday as Record<
+            string,
+            unknown
+          >[])
+        : [];
+
       const productQty = new Map<string, number>();
       for (const line of lines) {
         if (line.type === CartItemTypeEnum.PRODUCT) {
@@ -606,13 +593,13 @@ export class CartService {
       }
 
       for (const [pid, qty] of productQty) {
-        const maxRem = dailyMenuStockRemainingForStoreProduct(
-          (store ?? {}) as { dailyMenuByWeekday?: unknown },
-          pid,
-        );
-        if (maxRem != null && qty > maxRem) {
-          const doc = await this._productsService.findOneById(pid);
-          const title = String(doc?.title ?? pid);
+        const cap = resolveDailyMenuProductCap(menuRows, pid);
+        if (cap.kind === 'unlimited' || cap.kind === 'no_menu_today') {
+          continue;
+        }
+        const doc = await this._productsService.findOneById(pid);
+        const title = String(doc?.title ?? pid);
+        if (cap.kind === 'not_on_menu') {
           stockIssues.push({
             storeId,
             storeName,
@@ -620,8 +607,24 @@ export class CartService {
             title,
             itemType: CartItemTypeEnum.PRODUCT,
             quantityRequested: qty,
-            maxAllowed: maxRem,
-            code: 'daily_menu_insufficient_stock',
+            maxAllowed: 0,
+            code: 'daily_menu_product_not_available',
+          });
+          continue;
+        }
+        if (qty > cap.max) {
+          stockIssues.push({
+            storeId,
+            storeName,
+            entityId: pid,
+            title,
+            itemType: CartItemTypeEnum.PRODUCT,
+            quantityRequested: qty,
+            maxAllowed: cap.max,
+            code:
+              cap.max < 1
+                ? 'daily_menu_product_not_available'
+                : 'daily_menu_insufficient_stock',
           });
         }
       }

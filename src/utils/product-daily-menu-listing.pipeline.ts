@@ -36,7 +36,12 @@ export function productDailyMenuListingPipelineStages(): PipelineStage[] {
             $filter: {
               input: '$__todaySlotItems',
               as: 'it',
-              cond: { $eq: ['$$it.productId', '$_id'] },
+              cond: {
+                $eq: [
+                  { $toString: '$$it.productId' },
+                  { $toString: '$_id' },
+                ],
+              },
             },
           },
         },
@@ -47,7 +52,12 @@ export function productDailyMenuListingPipelineStages(): PipelineStage[] {
                 $filter: {
                   input: '$__todaySlotItems',
                   as: 'it',
-                  cond: { $eq: ['$$it.productId', '$_id'] },
+                  cond: {
+                $eq: [
+                  { $toString: '$$it.productId' },
+                  { $toString: '$_id' },
+                ],
+              },
                 },
               },
             },

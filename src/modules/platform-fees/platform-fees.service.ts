@@ -53,6 +53,161 @@ function inferMode(
   return fallback;
 }
 
+/** Frais de transaction sur le montant commande (ajoutés au total client). */
+export type OrderPaymentFeeSplit = {
+  grossCents: number;
+  platformFeeCents: number;
+  totalCents: number;
+  feeMode: PlatformFeeMode;
+  feePercent: number;
+  feeFixedCad: number;
+};
+
+/** Répartition d’un remboursement : brut payé, frais plateforme, net client. */
+export type RefundAmountSplit = {
+  grossCents: number;
+  platformFeeCents: number;
+  customerRefundCents: number;
+  feeMode: PlatformFeeMode;
+  feePercent: number;
+  feeFixedCad: number;
+};
+
+/** Répartition commande : brut encaissé, commission plateforme, net à transférer au vendeur. */
+export type VendorTransferSplit = {
+  grossCents: number;
+  platformFeeCents: number;
+  transferCents: number;
+  feeMode: PlatformFeeMode;
+  feePercent: number;
+  feeFixedCad: number;
+};
+
+export function computeVendorTransferSplit(
+  grossCents: number,
+  settings: {
+    platformOrderFeeMode: PlatformFeeMode;
+    platformOrderFeeFixed: number;
+    platformOrderFeePercent: number;
+  },
+): VendorTransferSplit {
+  const gross = Math.max(0, Math.round(grossCents));
+  const feeMode = settings.platformOrderFeeMode;
+  const feePercent = Math.max(0, settings.platformOrderFeePercent ?? 0);
+  const feeFixedCad = Math.max(0, settings.platformOrderFeeFixed ?? 0);
+
+  if (gross < 1) {
+    return {
+      grossCents: 0,
+      platformFeeCents: 0,
+      transferCents: 0,
+      feeMode,
+      feePercent,
+      feeFixedCad,
+    };
+  }
+
+  let platformFeeCents =
+    feeMode === 'percent'
+      ? Math.round(gross * (feePercent / 100))
+      : Math.round(feeFixedCad * 100);
+
+  platformFeeCents = Math.max(0, Math.min(platformFeeCents, gross));
+  const transferCents = gross - platformFeeCents;
+
+  return {
+    grossCents: gross,
+    platformFeeCents,
+    transferCents,
+    feeMode,
+    feePercent,
+    feeFixedCad,
+  };
+}
+
+export function computeOrderPaymentFeeSplit(
+  grossCents: number,
+  settings: {
+    orderPaymentFeeMode: PlatformFeeMode;
+    orderPaymentFeeFixed: number;
+    orderPaymentFeePercent: number;
+  },
+): OrderPaymentFeeSplit {
+  const gross = Math.max(0, Math.round(grossCents));
+  const feeMode = settings.orderPaymentFeeMode;
+  const feePercent = Math.max(0, settings.orderPaymentFeePercent ?? 0);
+  const feeFixedCad = Math.max(0, settings.orderPaymentFeeFixed ?? 0);
+
+  if (gross < 1) {
+    return {
+      grossCents: 0,
+      platformFeeCents: 0,
+      totalCents: 0,
+      feeMode,
+      feePercent,
+      feeFixedCad,
+    };
+  }
+
+  const platformFeeCents =
+    feeMode === 'percent'
+      ? Math.round(gross * (feePercent / 100))
+      : Math.round(feeFixedCad * 100);
+
+  const fee = Math.max(0, platformFeeCents);
+
+  return {
+    grossCents: gross,
+    platformFeeCents: fee,
+    totalCents: gross + fee,
+    feeMode,
+    feePercent,
+    feeFixedCad,
+  };
+}
+
+export function computeRefundAmountSplit(
+  grossCents: number,
+  settings: {
+    refundFeeMode: PlatformFeeMode;
+    refundFeeFixed: number;
+    refundFeePercent: number;
+  },
+): RefundAmountSplit {
+  const gross = Math.max(0, Math.round(grossCents));
+  const feeMode = settings.refundFeeMode;
+  const feePercent = Math.max(0, settings.refundFeePercent ?? 0);
+  const feeFixedCad = Math.max(0, settings.refundFeeFixed ?? 0);
+
+  if (gross < 1) {
+    return {
+      grossCents: 0,
+      platformFeeCents: 0,
+      customerRefundCents: 0,
+      feeMode,
+      feePercent,
+      feeFixedCad,
+    };
+  }
+
+  let platformFeeCents =
+    feeMode === 'percent'
+      ? Math.round(gross * (feePercent / 100))
+      : Math.round(feeFixedCad * 100);
+
+  platformFeeCents = Math.max(0, Math.min(platformFeeCents, gross - 1));
+  const customerRefundCents = gross - platformFeeCents;
+
+  return {
+    grossCents: gross,
+    platformFeeCents,
+    customerRefundCents,
+    feeMode,
+    feePercent,
+    feeFixedCad,
+  };
+}
+
 @Injectable()
 export class PlatformFeesService {
   constructor(
@@ -122,6 +277,54 @@ export class PlatformFeesService {
     assertAdmin(user);
     const doc = await this._ensureDoc();
     return this._toResponse(doc);
+  }
+
+  /** Commission plateforme + montant à transférer au vendeur Connect. */
+  async computeVendorTransferSplitFromSettings(
+    grossCents: number,
+  ): Promise<VendorTransferSplit> {
+    const doc = await this._ensureDoc();
+    const settings = this._toResponse(doc);
+    return computeVendorTransferSplit(grossCents, {
+      platformOrderFeeMode: settings.platformOrderFeeMode,
+      platformOrderFeeFixed: settings.platformOrderFeeFixed,
+      platformOrderFeePercent: settings.platformOrderFeePercent,
+    });
+  }
+
+  /** Barème remboursement (sans auth) — utilisé par le traitement des remboursements. */
+  async computeRefundSplit(grossCents: number): Promise<RefundAmountSplit> {
+    const doc = await this._ensureDoc();
+    const settings = this._toResponse(doc);
+    return computeRefundAmountSplit(grossCents, {
+      refundFeeMode: settings.refundFeeMode,
+      refundFeeFixed: settings.refundFeeFixed,
+      refundFeePercent: settings.refundFeePercent,
+    });
+  }
+
+  /** Barème frais de transaction commande (apps mobile / checkout). */
+  async getPublicCheckoutFees() {
+    const doc = await this._ensureDoc();
+    const settings = this._toResponse(doc);
+    return {
+      currency: settings.currency,
+      orderPaymentFeeMode: settings.orderPaymentFeeMode,
+      orderPaymentFeeFixed: settings.orderPaymentFeeFixed,
+      orderPaymentFeePercent: settings.orderPaymentFeePercent,
+    };
+  }
+
+  async computeOrderPaymentFeeFromSettings(
+    grossCents: number,
+  ): Promise<OrderPaymentFeeSplit> {
+    const doc = await this._ensureDoc();
+    const settings = this._toResponse(doc);
+    return computeOrderPaymentFeeSplit(grossCents, {
+      orderPaymentFeeMode: settings.orderPaymentFeeMode,
+      orderPaymentFeeFixed: settings.orderPaymentFeeFixed,
+      orderPaymentFeePercent: settings.orderPaymentFeePercent,
+    });
   }
 
   async updateSettings(user: UserModel, dto: UpdatePlatformFeesDto) {

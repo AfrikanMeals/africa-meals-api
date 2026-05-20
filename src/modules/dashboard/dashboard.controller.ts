@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
   UsePipes,
@@ -18,6 +19,7 @@ import { Request } from 'express';
 import { AssignDashboardOrderDto } from './dto/assign-dashboard-order.dto';
 import { CreateDashboardLivreurDto } from './dto/create-dashboard-livreur.dto';
 import { UpdateDashboardLivreurStatutDto } from './dto/update-dashboard-livreur-statut.dto';
+import { FinancePeriodReportQueryDto } from './dto/finance-period-report-query.dto';
 import { DashboardService } from './dashboard.service';
 
 @ApiTags('dashboard')
@@ -96,6 +98,21 @@ export class DashboardController {
   financeWeeklyUserPerformance(@Req() req: Request) {
     return this._dashboardService.getFinanceWeeklyUserPerformance(
       req.user as UserModel,
+    );
+  }
+
+  /** Rapport CA + commandes sur une période (exports Finances). */
+  @Get('finance/period-report')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  financePeriodReport(
+    @Req() req: Request,
+    @Query() query: FinancePeriodReportQueryDto,
+  ) {
+    return this._dashboardService.getFinancePeriodReport(
+      req.user as UserModel,
+      query.from,
+      query.to,
     );
   }
 

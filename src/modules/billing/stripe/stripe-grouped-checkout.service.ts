@@ -1,7 +1,9 @@
 import { CartService } from '@modules/cart/cart.service';
 import { CouponsService } from '@modules/coupons/coupons.service';
 import { StripeConnectService } from './stripe-connect.service';
+import { StripeConnectTransferService } from './stripe-connect-transfer.service';
 import { OrdersService } from '@modules/orders/orders.service';
+import { PlatformFeesService } from '@modules/platform-fees/platform-fees.service';
 import { PlatformShippingQuoteService } from '@modules/platform-shipping-settings/platform-shipping-quote.service';
 import { StoreService } from '@modules/store/store.service';
 import { UsersService } from '@modules/users/users.service';
@@ -177,7 +179,7 @@ function distributeCentsByWeights(weights: number[], target: number): number[] {
 function stripeProductMetadata(params: {
   storeId: string;
   storeName: string;
-  lineKind: 'goods' | 'shipping' | 'promo_goods';
+  lineKind: 'goods' | 'shipping' | 'promo_goods' | 'payment_fee';
   line: Record<string, unknown>;
 }): Record<string, string> {
   const { storeId, storeName, lineKind, line } = params;
@@ -209,7 +211,7 @@ function checkoutLineFromCartRow(params: {
   line: Record<string, unknown>;
   quantity: number;
   unitAmountCents: number;
-  lineKind: 'goods' | 'shipping' | 'promo_goods';
+  lineKind: 'goods' | 'shipping' | 'promo_goods' | 'payment_fee';
   extraDescription?: string;
 }): CheckoutLineItem | null {
   const {
@@ -245,6 +247,47 @@ function checkoutLineFromCartRow(params: {
       },
     },
   };
+}
+
+function checkoutPlatformPaymentFeeLine(params: {
+  currency: string;
+  feeCents: number;
+  feeLabel: string;
+}): CheckoutLineItem | null {
+  const { currency, feeCents, feeLabel } = params;
+  if (feeCents < 1) return null;
+  const line: Record<string, unknown> = {
+    type: 'order_payment_fee',
+    entity: { title: feeLabel },
+  };
+  return {
+    quantity: 1,
+    price_data: {
+      currency,
+      unit_amount: feeCents,
+      product_data: {
+        name: feeLabel.slice(0, 250),
+        description:
+          'Frais de traitement du paiement (passerelle, carte, etc.)',
+        metadata: stripeProductMetadata({
+          storeId: 'platform',
+          storeName: 'Afrika Meals',
+          lineKind: 'payment_fee',
+          line,
+        }),
+      },
+    },
+  };
+}
+
+function sumCheckoutLineItemsCents(lineItems: CheckoutLineItem[]): number {
+  let sum = 0;
+  for (const li of lineItems) {
+    const ua = li.price_data?.unit_amount ?? 0;
+    const q = li.quantity ?? 1;
+    sum += ua * q;
+  }
+  return sum;
 }
 
 /** Montants par boutique issus des métadonnées Stripe (`payout_v1`). */
@@ -328,6 +371,8 @@ export class StripeGroupedCheckoutService {
     private readonly ordersService: OrdersService,
     private readonly couponsService: CouponsService,
     private readonly stripeConnect: StripeConnectService,
+    private readonly stripeTransfers: StripeConnectTransferService,
+    private readonly platformFees: PlatformFeesService,
     @InjectModel(StripeProcessedCheckoutModel.name)
     private readonly processedModel: Model<StripeProcessedCheckoutModel>,
     @InjectModel(StoreModel.name)
@@ -594,6 +639,23 @@ export class StripeGroupedCheckoutService {
 
     if (!lineItems.length) {
       throw new BadRequestException('cart_is_empty');
+    }
+
+    const subtotalCents = sumCheckoutLineItemsCents(lineItems);
+    const paymentFee = await this.platformFees.computeOrderPaymentFeeFromSettings(
+      subtotalCents,
+    );
+    if (paymentFee.platformFeeCents > 0) {
+      const feeLabel =
+        paymentFee.feeMode === 'percent'
+          ? `Frais de transaction (${paymentFee.feePercent} %)`
+          : 'Frais de transaction';
+      const feeLi = checkoutPlatformPaymentFeeLine({
+        currency,
+        feeCents: paymentFee.platformFeeCents,
+        feeLabel,
+      });
+      if (feeLi) lineItems.push(feeLi);
     }
 
     if (lineItems.length > 100) {
@@ -985,7 +1047,34 @@ export class StripeGroupedCheckoutService {
           stripePaymentId,
         );
         if (alreadyPaid) {
-          perStoreBreakdown.push(prior);
+          const g = prior.goodsCents ?? 0;
+          const s = prior.shipCents ?? 0;
+          let transferId = prior.transferId;
+          let transferCents = prior.transferCents;
+          let platformFeeCents = prior.platformFeeCents;
+          let transferSkippedReason = prior.transferSkippedReason;
+          try {
+            const tr = await this.stripeTransfers.transferForPaidOrder({
+              orderId: prior.orderId,
+              storeId,
+              goodsCents: g,
+              shipCents: s,
+              stripeParentPaymentId: stripePaymentId,
+            });
+            transferId = tr.transferId ?? transferId;
+            transferCents = tr.transferCents;
+            platformFeeCents = tr.platformFeeCents;
+            transferSkippedReason = tr.skippedReason;
+          } catch {
+            /* garde les valeurs prior */
+          }
+          perStoreBreakdown.push({
+            ...prior,
+            transferId,
+            transferCents,
+            platformFeeCents,
+            transferSkippedReason,
+          });
           if (!orderIds.includes(prior.orderId)) {
             orderIds.push(prior.orderId);
           }
@@ -1073,11 +1162,45 @@ export class StripeGroupedCheckoutService {
             couponCode,
           );
         }
+
+        let transferId: string | undefined;
+        let transferCents: number | undefined;
+        let platformFeeCents: number | undefined;
+        let transferSkippedReason: string | undefined;
+        try {
+          const tr = await this.stripeTransfers.transferForPaidOrder({
+            orderId: oid,
+            storeId,
+            goodsCents: goodsCents ?? 0,
+            shipCents,
+            stripeParentPaymentId: stripePaymentId,
+          });
+          transferCents = tr.transferCents;
+          platformFeeCents = tr.platformFeeCents;
+          transferId = tr.transferId;
+          transferSkippedReason = tr.skippedReason;
+          if (!tr.transferred && tr.skippedReason) {
+            this.logger.warn(
+              `Connect transfer skipped store=${storeId} order=${oid}: ${tr.skippedReason}`,
+            );
+          }
+        } catch (trErr) {
+          transferSkippedReason =
+            trErr instanceof Error ? trErr.message : String(trErr);
+          this.logger.error(
+            `Connect transfer error store=${storeId} order=${oid}: ${transferSkippedReason}`,
+          );
+        }
+
         perStoreBreakdown.push({
           ...baseRow,
           orderId: oid,
           goodsCents: goodsCents ?? baseRow.goodsCents,
           shipCents,
+          transferId,
+          transferCents,
+          platformFeeCents,
+          transferSkippedReason,
         });
       } catch (e) {
         const errMsg = e instanceof Error ? e.message : String(e);
