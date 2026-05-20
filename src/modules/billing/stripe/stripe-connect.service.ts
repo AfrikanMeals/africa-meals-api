@@ -63,16 +63,26 @@ type StripeAddressBlock = {
   country: string;
 };
 
+type RepresentativePrefill = {
+  email: string;
+  first_name: string;
+  last_name: string;
+  phone?: string;
+  address?: StripeAddressBlock;
+};
+
 type VendorPrefill = {
   accountCountry: string;
   company: Record<string, unknown>;
   business_profile: Record<string, unknown>;
-  individual: Record<string, unknown>;
+  /** Représentant légal — via API Persons, pas `accounts.*.individual`. */
+  representative: RepresentativePrefill;
 };
 
 /** Compte Connect Express tel que renvoyé par l’API Stripe (sans namespace `Stripe.Account`). */
 type StripeConnectAccountRecord = {
   id: string;
+  business_type?: string | null;
   country?: string | null;
   default_currency?: string | null;
   details_submitted?: boolean;
@@ -214,16 +224,32 @@ function buildVendorPrefill(
     ...(accountEmail ? { support_email: accountEmail } : {}),
   };
 
-  const individual: Record<string, unknown> = {
+  const representative: RepresentativePrefill = {
     email: accountEmail,
     first_name: firstName,
     last_name: lastName,
     ...(phoneE164 ? { phone: phoneE164 } : {}),
     ...(addressBlock ? { address: addressBlock } : {}),
-    relationship: { title: 'Propriétaire' },
   };
 
-  return { accountCountry, company, business_profile, individual };
+  return { accountCountry, company, business_profile, representative };
+}
+
+/** Message client (FR) — jamais de clé API ni message Stripe brut. */
+function userFacingStripeConnectError(error: unknown): string {
+  const msg =
+    error instanceof Error ? error.message : String(error ?? '');
+  const lower = msg.toLowerCase();
+  if (/individual.*parameters.*business_type/i.test(msg)) {
+    return 'stripe_connect_company_prefill_error';
+  }
+  if (/business_type|company|individual/i.test(lower) && /invalid/i.test(lower)) {
+    return 'stripe_connect_company_prefill_error';
+  }
+  if (isStripeConnectAccountUnavailableError(error)) {
+    return 'stripe_connect_account_unavailable';
+  }
+  return 'stripe_connect_create_failed';
 }
 
 function resolveConnectLifecycleStatus(
@@ -408,6 +434,66 @@ export class StripeConnectService {
       .exec();
   }
 
+  private buildAccountUpdateBody(
+    prefill: VendorPrefill,
+    account: StripeConnectAccountRecord,
+    email: string | undefined,
+  ): Record<string, unknown> {
+    const isLegacyIndividual = account.business_type === 'individual';
+    if (isLegacyIndividual) {
+      return {
+        ...(email ? { email } : {}),
+        business_profile: prefill.business_profile,
+      };
+    }
+    return {
+      ...(email ? { email } : {}),
+      business_type: CONNECT_BUSINESS_TYPE,
+      company: prefill.company,
+      business_profile: prefill.business_profile,
+    };
+  }
+
+  /** Représentant légal (comptes `company` uniquement). */
+  private async syncRepresentativePerson(
+    accountId: string,
+    prefill: VendorPrefill,
+  ): Promise<void> {
+    const rep = prefill.representative;
+    if (!rep.email?.trim()) return;
+
+    const stripe = this.stripe();
+    const personPayload: Record<string, unknown> = {
+      email: rep.email.trim(),
+      first_name: rep.first_name,
+      last_name: rep.last_name,
+      ...(rep.phone ? { phone: rep.phone } : {}),
+      ...(rep.address ? { address: rep.address } : {}),
+      relationship: {
+        representative: true,
+        title: 'Propriétaire',
+      },
+    };
+
+    try {
+      const existing = await stripe.accounts.listPersons(accountId, {
+        limit: 20,
+      });
+      const current = existing.data.find(
+        (p) => p.relationship?.representative === true,
+      );
+      if (current?.id) {
+        await stripe.accounts.updatePerson(accountId, current.id, personPayload);
+      } else {
+        await stripe.accounts.createPerson(accountId, personPayload);
+      }
+    } catch (e) {
+      this.logger.warn(
+        `Stripe Connect representative person skipped for ${accountId}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
   private async syncPrefillToAccount(
     accountId: string,
     account: StripeConnectAccountRecord,
@@ -419,13 +505,13 @@ export class StripeConnectService {
     }
     const prefill = buildVendorPrefill(user, store);
     try {
-      await this.stripe().accounts.update(accountId, {
-        email: user.email?.trim(),
-        business_type: CONNECT_BUSINESS_TYPE,
-        company: prefill.company,
-        business_profile: prefill.business_profile,
-        individual: prefill.individual,
-      });
+      await this.stripe().accounts.update(
+        accountId,
+        this.buildAccountUpdateBody(prefill, account, user.email?.trim()),
+      );
+      if (account.business_type !== 'individual') {
+        await this.syncRepresentativePerson(accountId, prefill);
+      }
       const refreshed = (await this.stripe().accounts.retrieve(
         accountId,
       )) as StripeConnectAccountRecord;
@@ -576,25 +662,32 @@ export class StripeConnectService {
     }
 
     if (!accountId) {
-      account = await stripe.accounts.create({
-        type: 'express',
-        country: prefill.accountCountry,
-        email: user.email?.trim(),
-        business_type: CONNECT_BUSINESS_TYPE,
-        capabilities: {
-          card_payments: { requested: true },
-          transfers: { requested: true },
-        },
-        metadata: {
-          platform: 'africa-meals',
-          userId: uid.toString(),
-        },
-        company: prefill.company,
-        business_profile: prefill.business_profile,
-        individual: prefill.individual,
-      });
-      accountId = account.id;
-      await this.syncAccountFlags(uid, account);
+      try {
+        account = (await stripe.accounts.create({
+          type: 'express',
+          country: prefill.accountCountry,
+          email: user.email?.trim(),
+          business_type: CONNECT_BUSINESS_TYPE,
+          capabilities: {
+            card_payments: { requested: true },
+            transfers: { requested: true },
+          },
+          metadata: {
+            platform: 'africa-meals',
+            userId: uid.toString(),
+          },
+          company: prefill.company,
+          business_profile: prefill.business_profile,
+        })) as StripeConnectAccountRecord;
+        accountId = account.id;
+        await this.syncRepresentativePerson(accountId, prefill);
+        await this.syncAccountFlags(uid, account);
+      } catch (createErr) {
+        this.logger.error(
+          `Stripe Connect account create failed: ${createErr instanceof Error ? createErr.message : String(createErr)}`,
+        );
+        throw new BadRequestException(userFacingStripeConnectError(createErr));
+      }
     } else if (account) {
       account = await this.syncPrefillToAccount(
         accountId,
