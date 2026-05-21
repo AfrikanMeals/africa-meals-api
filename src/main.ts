@@ -1,4 +1,5 @@
 import { compressionMiddleware } from './compression-middleware';
+import { unifiedJsonBodyParser } from './unified-body-parser';
 import {
   applyHttpServerTimeouts,
   httpRequestTimeoutMiddleware,
@@ -16,14 +17,7 @@ async function bootstrap() {
   app.enableShutdownHooks();
   app.use(httpRequestTimeoutMiddleware());
   app.use(compressionMiddleware({ threshold: 1024 }));
-  app.use(
-    express.json({
-      limit: '60mb',
-      verify: (req: express.Request & { rawBody?: Buffer }, _res, buf) => {
-        req.rawBody = Buffer.from(buf);
-      },
-    }),
-  );
+  app.use(unifiedJsonBodyParser({ limit: '60mb', preserveRawBody: true }));
   app.use(express.urlencoded({ extended: true, limit: '60mb' }));
   await configureApplication(app);
 

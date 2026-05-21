@@ -1,4 +1,5 @@
 import { compressionMiddleware } from './compression-middleware';
+import { unifiedJsonBodyParser } from './unified-body-parser';
 import { httpRequestTimeoutMiddleware } from './http-request-timeout';
 import { NestFactory } from '@nestjs/core';
 import { ExpressAdapter } from '@nestjs/platform-express';
@@ -18,7 +19,7 @@ export async function getExpressServer(): Promise<express.Express> {
   const expressApp = express();
   expressApp.use(httpRequestTimeoutMiddleware());
   expressApp.use(compressionMiddleware({ threshold: 1024 }));
-  expressApp.use(express.json({ limit: '60mb' }));
+  expressApp.use(unifiedJsonBodyParser({ limit: '60mb', preserveRawBody: false }));
   expressApp.use(express.urlencoded({ extended: true, limit: '60mb' }));
   const adapter = new ExpressAdapter(expressApp);
   const nestApp = await NestFactory.create(AppModule, adapter, {
