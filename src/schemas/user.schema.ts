@@ -132,6 +132,28 @@ export class UserModel extends BaseSchema {
   })
   fcmTokens?: { token: string; platform: string; updatedAt: Date }[];
 
+  /** Compte Stripe Connect Express (vendeur). */
+  @Prop({ required: false, name: 'stripe_connect_account_id', trim: true })
+  stripeConnectAccountId?: string;
+
+  @Prop({ required: false, name: 'stripe_connect_charges_enabled', default: false })
+  stripeConnectChargesEnabled?: boolean;
+
+  @Prop({ required: false, name: 'stripe_connect_payouts_enabled', default: false })
+  stripeConnectPayoutsEnabled?: boolean;
+
+  @Prop({ required: false, name: 'stripe_connect_details_submitted', default: false })
+  stripeConnectDetailsSubmitted?: boolean;
+
+  @Prop({ required: false, name: 'stripe_connect_disabled_reason', trim: true })
+  stripeConnectDisabledReason?: string;
+
+  @Prop({ required: false, name: 'stripe_connect_requirements_due', type: [String], default: [] })
+  stripeConnectRequirementsDue?: string[];
+
+  @Prop({ required: false, name: 'stripe_connect_requirements_past_due', type: [String], default: [] })
+  stripeConnectRequirementsPastDue?: string[];
+
   // @Prop({
   //   get: (creditCardNumber: string) => {
   //     if (!creditCardNumber) {

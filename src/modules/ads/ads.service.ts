@@ -5,6 +5,7 @@ import {
   PatchAdManagementDto,
 } from '@modules/ads/dto/ad-management.dto';
 import { TrackAdEventDto } from '@modules/ads/dto/ad-tracking.dto';
+import { storeOwnerStripeOnboardedPipelineStages } from '@modules/billing/stripe/stripe-connect-visibility';
 import { MediasService } from '@modules/medias/medias.service';
 import {
   BadRequestException,
@@ -394,12 +395,16 @@ export class AdsService implements OnModuleInit {
     ];
 
     const stores = await this._storeModel
-      .find({
-        _id: { $in: uniqueIds },
-        status: StoreStatusEnum.ACTIVE,
-      })
-      .select('name profileImage status')
-      .lean()
+      .aggregate([
+        {
+          $match: {
+            _id: { $in: uniqueIds },
+            status: StoreStatusEnum.ACTIVE,
+          },
+        },
+        ...storeOwnerStripeOnboardedPipelineStages(),
+        { $project: { name: 1, profileImage: 1, status: 1 } },
+      ])
       .exec();
 
     const byId = new Map(

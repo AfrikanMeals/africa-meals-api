@@ -9,6 +9,10 @@ export type StripePerStoreBreakdownRow = {
   shipCents: number;
   couponCode?: string;
   error?: string;
+  transferId?: string;
+  transferCents?: number;
+  platformFeeCents?: number;
+  transferSkippedReason?: string;
 };
 
 /**

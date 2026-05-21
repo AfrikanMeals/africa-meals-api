@@ -1,5 +1,8 @@
 import { CouponsService } from '@modules/coupons/coupons.service';
-import { DrinksService } from '@modules/drinks/drinks.service';
+import {
+  DrinksService,
+  maxDrinkOrderQuantity,
+} from '@modules/drinks/drinks.service';
 import { OffersService } from '@modules/offers/offers.service';
 import { ProductsService } from '@modules/products/products.service';
 import {
@@ -22,6 +25,10 @@ import {
   RemoveItemFromCartDto,
   ValidateCheckoutDto,
 } from './dto/cart.dto';
+import {
+  dailyMenuStockRemainingForStoreProduct,
+  resolveDailyMenuProductCap,
+} from '@utils/daily-menu-stock.util';
 import { mapInChunks } from '@utils/map-in-chunks';
 
 /** Boutique + adresse géolocalisée (distance client ↔ restaurant sur le mobile). */
@@ -49,34 +56,6 @@ function storeIdFromPopulatedCartItem(item: {
   return '';
 }
 
-/**
- * Stock menu du jour restant pour un produit (null = illimité ou hors menu du jour limité).
- */
-function dailyMenuStockRemainingForStoreProduct(
-  store: { dailyMenuByWeekday?: unknown },
-  productId: string,
-): number | null {
-  const dow = new Date().getDay();
-  const rows = Array.isArray(store.dailyMenuByWeekday)
-    ? store.dailyMenuByWeekday
-    : [];
-  const slot = (rows as { dayOfWeek?: number; items?: unknown[] }[]).find(
-    (r) => Number(r?.dayOfWeek) === dow,
-  );
-  const items = Array.isArray(slot?.items) ? slot!.items : [];
-  const pid = String(productId);
-  const it = (items as Record<string, unknown>[]).find((x) => {
-    const id = x['productId'];
-    if (id != null && typeof id === 'object' && 'toString' in id) {
-      return (id as Types.ObjectId).toString() === pid;
-    }
-    return String(id) === pid;
-  });
-  if (!it) return null;
-  if (it['stockUnlimited'] !== false) return null;
-  return Math.max(0, Math.floor(Number(it['stockRemaining'] ?? 0)));
-}
-
 function badRequestExceptionKey(e: unknown): string {
   if (e instanceof BadRequestException) {
     const r = e.getResponse();
@@ -99,6 +78,8 @@ function drinkEntityForCartApi(drink: {
   imageUrl?: string;
   createdAt?: string;
   updatedAt?: string;
+  quantite: number;
+  seuil: number;
 }) {
   const now = new Date().toISOString();
   return {
@@ -109,6 +90,8 @@ function drinkEntityForCartApi(drink: {
     profileImage: drink.imageUrl,
     createdAt: drink.createdAt ?? now,
     updatedAt: drink.updatedAt ?? now,
+    quantite: drink.quantite,
+    seuil: drink.seuil,
   };
 }
 
@@ -199,17 +182,19 @@ export class CartService {
       } as unknown as Partial<CartItemModel>;
     } else if (item.type === CartItemTypeEnum.DRINK) {
       const storeId = storeIdFromPopulatedCartItem(item);
-      const drink = await this._drinksService.findOneInStoreCatalog(
+      const drink = await this._drinksService.findOneInStoreByIdRaw(
         storeId,
         item.entityId,
       );
       if (!drink) {
         throw new NotFoundException('drink_not_found');
       }
+      const maxOrder = maxDrinkOrderQuantity(drink.quantite);
       return {
         ...item.toJSON(),
         entity: drinkEntityForCartApi(drink),
-      };
+        drinkMaxOrderQuantity: maxOrder,
+      } as unknown as Partial<CartItemModel>;
     } else {
       const product = await this._productsService.findOneById(item.productId);
       // console.log('🚀 ~ CartService ~ product:', product);
@@ -259,6 +244,8 @@ export class CartService {
     );
 
     const storeGroups = Object.values(formatedItems);
+    // Ne pas masquer les lignes déjà en panier : le client doit les voir.
+    // Le blocage Stripe / menu du jour reste sur validate-checkout et le paiement.
     const data = await mapInChunks(storeGroups, 2, async (group) => {
       const lineItems = await mapInChunks(
         group.items ?? [],
@@ -350,8 +337,9 @@ export class CartService {
       priceForLine = drink.priceCad;
       const existing = await this.itemExistsInCart(store, args, user);
       const newTotalQty = (existing?.quantity ?? 0) + qtyReq;
-      if (drink.quantite < newTotalQty) {
-        throw new BadRequestException('drink_insufficient_stock');
+      const maxOrder = maxDrinkOrderQuantity(drink.quantite);
+      if (newTotalQty > maxOrder) {
+        throw new BadRequestException('drink_quantity_limit_exceeded');
       }
     }
 
@@ -403,11 +391,29 @@ export class CartService {
         _id: new Types.ObjectId(lineId),
         user: new Types.ObjectId(user.id),
       })
+      .populate({ path: 'store', select: '_id' })
       .exec();
     if (!item) {
       throw new NotFoundException('cart_item_not_found');
     }
-    await this.updateQuantity(item, quantity);
+    const q = Math.max(0, Math.floor(Number(quantity)));
+    if (q < 1) {
+      throw new BadRequestException('invalid_quantity');
+    }
+    if (item.type === CartItemTypeEnum.DRINK) {
+      const storeId = storeIdFromPopulatedCartItem(item);
+      const drink = await this._drinksService.findOneInStoreByIdRaw(
+        storeId,
+        String(item.entityId ?? ''),
+      );
+      const maxOrder = drink
+        ? maxDrinkOrderQuantity(drink.quantite)
+        : 0;
+      if (!drink || q > maxOrder) {
+        throw new BadRequestException('drink_quantity_limit_exceeded');
+      }
+    }
+    await this.updateQuantity(item, q);
   }
 
   async clearStoreCart(store: StoreModel, user: UserModel): Promise<void> {
@@ -564,6 +570,15 @@ export class CartService {
         (store as { name?: string } | null)?.name ?? '',
       );
 
+      const menuRows = Array.isArray(
+        (store as { dailyMenuByWeekday?: unknown } | null)?.dailyMenuByWeekday,
+      )
+        ? ((store as { dailyMenuByWeekday: unknown[] }).dailyMenuByWeekday as Record<
+            string,
+            unknown
+          >[])
+        : [];
+
       const productQty = new Map<string, number>();
       for (const line of lines) {
         if (line.type === CartItemTypeEnum.PRODUCT) {
@@ -578,13 +593,13 @@ export class CartService {
       }
 
       for (const [pid, qty] of productQty) {
-        const maxRem = dailyMenuStockRemainingForStoreProduct(
-          (store ?? {}) as { dailyMenuByWeekday?: unknown },
-          pid,
-        );
-        if (maxRem != null && qty > maxRem) {
-          const doc = await this._productsService.findOneById(pid);
-          const title = String(doc?.title ?? pid);
+        const cap = resolveDailyMenuProductCap(menuRows, pid);
+        if (cap.kind === 'unlimited' || cap.kind === 'no_menu_today') {
+          continue;
+        }
+        const doc = await this._productsService.findOneById(pid);
+        const title = String(doc?.title ?? pid);
+        if (cap.kind === 'not_on_menu') {
           stockIssues.push({
             storeId,
             storeName,
@@ -592,8 +607,24 @@ export class CartService {
             title,
             itemType: CartItemTypeEnum.PRODUCT,
             quantityRequested: qty,
-            maxAllowed: maxRem,
-            code: 'daily_menu_insufficient_stock',
+            maxAllowed: 0,
+            code: 'daily_menu_product_not_available',
+          });
+          continue;
+        }
+        if (qty > cap.max) {
+          stockIssues.push({
+            storeId,
+            storeName,
+            entityId: pid,
+            title,
+            itemType: CartItemTypeEnum.PRODUCT,
+            quantityRequested: qty,
+            maxAllowed: cap.max,
+            code:
+              cap.max < 1
+                ? 'daily_menu_product_not_available'
+                : 'daily_menu_insufficient_stock',
           });
         }
       }
@@ -616,8 +647,10 @@ export class CartService {
           storeId,
           did,
         );
-        const maxQ = drink ? drink.quantite : 0;
-        if (!drink || maxQ < qty) {
+        const maxOrder = drink
+          ? maxDrinkOrderQuantity(drink.quantite)
+          : 0;
+        if (!drink || drink.quantite < qty) {
           stockIssues.push({
             storeId,
             storeName,
@@ -625,8 +658,19 @@ export class CartService {
             title: drink?.name ?? did,
             itemType: CartItemTypeEnum.DRINK,
             quantityRequested: qty,
-            maxAllowed: maxQ,
+            maxAllowed: drink ? drink.quantite : 0,
             code: 'drink_insufficient_stock',
+          });
+        } else if (qty > maxOrder) {
+          stockIssues.push({
+            storeId,
+            storeName,
+            entityId: did,
+            title: drink.name,
+            itemType: CartItemTypeEnum.DRINK,
+            quantityRequested: qty,
+            maxAllowed: maxOrder,
+            code: 'drink_quantity_limit_exceeded',
           });
         }
       }

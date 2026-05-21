@@ -1,13 +1,18 @@
 import { CartService } from '@modules/cart/cart.service';
 import { CouponsService } from '@modules/coupons/coupons.service';
+import { StripeConnectService } from './stripe-connect.service';
+import { StripeConnectTransferService } from './stripe-connect-transfer.service';
 import { OrdersService } from '@modules/orders/orders.service';
+import { PlatformFeesService } from '@modules/platform-fees/platform-fees.service';
 import { PlatformShippingQuoteService } from '@modules/platform-shipping-settings/platform-shipping-quote.service';
 import { StoreService } from '@modules/store/store.service';
 import { UsersService } from '@modules/users/users.service';
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -15,12 +20,20 @@ import {
   StripePerStoreBreakdownRow,
   StripeProcessedCheckoutModel,
 } from '@schemas/stripe-processed-checkout.schema';
+import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import Stripe = require('stripe');
+import { FilterGroupedPaymentsDto } from './dto/filter-grouped-payments.dto';
 import { GroupedStripeCheckoutDto } from './dto/grouped-stripe-checkout.dto';
 
 type StripeClient = InstanceType<typeof Stripe>;
+
+type StripeFulfillResult = {
+  complete: boolean;
+  orderIds: string[];
+  errors: Array<{ storeId: string; error: string }>;
+};
 
 type CartGroup = {
   store: {
@@ -166,7 +179,7 @@ function distributeCentsByWeights(weights: number[], target: number): number[] {
 function stripeProductMetadata(params: {
   storeId: string;
   storeName: string;
-  lineKind: 'goods' | 'shipping' | 'promo_goods';
+  lineKind: 'goods' | 'shipping' | 'promo_goods' | 'payment_fee';
   line: Record<string, unknown>;
 }): Record<string, string> {
   const { storeId, storeName, lineKind, line } = params;
@@ -198,7 +211,7 @@ function checkoutLineFromCartRow(params: {
   line: Record<string, unknown>;
   quantity: number;
   unitAmountCents: number;
-  lineKind: 'goods' | 'shipping' | 'promo_goods';
+  lineKind: 'goods' | 'shipping' | 'promo_goods' | 'payment_fee';
   extraDescription?: string;
 }): CheckoutLineItem | null {
   const {
@@ -234,6 +247,47 @@ function checkoutLineFromCartRow(params: {
       },
     },
   };
+}
+
+function checkoutPlatformPaymentFeeLine(params: {
+  currency: string;
+  feeCents: number;
+  feeLabel: string;
+}): CheckoutLineItem | null {
+  const { currency, feeCents, feeLabel } = params;
+  if (feeCents < 1) return null;
+  const line: Record<string, unknown> = {
+    type: 'order_payment_fee',
+    entity: { title: feeLabel },
+  };
+  return {
+    quantity: 1,
+    price_data: {
+      currency,
+      unit_amount: feeCents,
+      product_data: {
+        name: feeLabel.slice(0, 250),
+        description:
+          'Frais de traitement du paiement (passerelle, carte, etc.)',
+        metadata: stripeProductMetadata({
+          storeId: 'platform',
+          storeName: 'Afrika Meals',
+          lineKind: 'payment_fee',
+          line,
+        }),
+      },
+    },
+  };
+}
+
+function sumCheckoutLineItemsCents(lineItems: CheckoutLineItem[]): number {
+  let sum = 0;
+  for (const li of lineItems) {
+    const ua = li.price_data?.unit_amount ?? 0;
+    const q = li.quantity ?? 1;
+    sum += ua * q;
+  }
+  return sum;
 }
 
 /** Montants par boutique issus des métadonnées Stripe (`payout_v1`). */
@@ -316,8 +370,13 @@ export class StripeGroupedCheckoutService {
     private readonly usersService: UsersService,
     private readonly ordersService: OrdersService,
     private readonly couponsService: CouponsService,
+    private readonly stripeConnect: StripeConnectService,
+    private readonly stripeTransfers: StripeConnectTransferService,
+    private readonly platformFees: PlatformFeesService,
     @InjectModel(StripeProcessedCheckoutModel.name)
     private readonly processedModel: Model<StripeProcessedCheckoutModel>,
+    @InjectModel(StoreModel.name)
+    private readonly storeModel: Model<StoreModel>,
   ) {}
 
   private stripe() {
@@ -582,6 +641,23 @@ export class StripeGroupedCheckoutService {
       throw new BadRequestException('cart_is_empty');
     }
 
+    const subtotalCents = sumCheckoutLineItemsCents(lineItems);
+    const paymentFee = await this.platformFees.computeOrderPaymentFeeFromSettings(
+      subtotalCents,
+    );
+    if (paymentFee.platformFeeCents > 0) {
+      const feeLabel =
+        paymentFee.feeMode === 'percent'
+          ? `Frais de transaction (${paymentFee.feePercent} %)`
+          : 'Frais de transaction';
+      const feeLi = checkoutPlatformPaymentFeeLine({
+        currency,
+        feeCents: paymentFee.platformFeeCents,
+        feeLabel,
+      });
+      if (feeLi) lineItems.push(feeLi);
+    }
+
     if (lineItems.length > 100) {
       throw new BadRequestException({
         message: 'stripe_checkout_line_item_limit',
@@ -788,6 +864,52 @@ export class StripeGroupedCheckoutService {
     };
   }
 
+  private async isStripeFulfillmentComplete(
+    doc: {
+      orderIds?: string[];
+      perStoreBreakdown?: StripePerStoreBreakdownRow[];
+    } | null,
+    storeIds: string[],
+    stripePaymentId: string,
+  ): Promise<boolean> {
+    if (!doc || !storeIds.length) {
+      return false;
+    }
+    const rows = doc.perStoreBreakdown ?? [];
+    for (const sid of storeIds) {
+      const row = rows.find((r) => r.storeId === sid);
+      if (!row?.orderId || row.error) {
+        return false;
+      }
+      const paid = await this.ordersService.isOrderPaidForStripePayment(
+        row.orderId,
+        stripePaymentId,
+      );
+      if (!paid) {
+        return false;
+      }
+    }
+    return (doc.orderIds?.length ?? 0) > 0;
+  }
+
+  private isCartEmptyFulfillError(e: unknown): boolean {
+    if (e instanceof NotFoundException) {
+      return e.message === 'cart_is_empty';
+    }
+    if (e instanceof BadRequestException) {
+      const r = e.getResponse();
+      if (typeof r === 'string') {
+        return r === 'cart_is_empty';
+      }
+      if (r && typeof r === 'object' && 'message' in r) {
+        const m = (r as { message?: unknown }).message;
+        return m === 'cart_is_empty' || (Array.isArray(m) && m.includes('cart_is_empty'));
+      }
+    }
+    const msg = e instanceof Error ? e.message : String(e);
+    return msg.includes('cart_is_empty');
+  }
+
   private async fulfillOrdersAfterStripePayment(params: {
     stripePaymentId: string;
     uid: string;
@@ -797,7 +919,7 @@ export class StripeGroupedCheckoutService {
     amountTotalCents?: number;
     currency?: string;
     stripeEventKind: 'checkout_session' | 'payment_intent';
-  }): Promise<void> {
+  }): Promise<StripeFulfillResult> {
     const {
       stripePaymentId,
       uid,
@@ -823,41 +945,143 @@ export class StripeGroupedCheckoutService {
     const payoutMap = parsePayoutFromStripeMetadata(metadata);
     const couponByStore = parseCouponsFromStripeMetadata(metadata);
 
-    try {
-      await this.processedModel.create({
-        sessionId: stripePaymentId,
-        userId: new Types.ObjectId(uid),
-        orderIds: [],
-        amountTotalCents,
-        currency: currency?.toLowerCase(),
-        stripeEventKind,
-      });
-    } catch (e: unknown) {
-      const code = (e as { code?: number })?.code;
-      if (code === 11000) {
-        this.logger.log(
-          `Stripe webhook: duplicate payment id ${stripePaymentId}`,
-        );
-        return;
-      }
-      throw e;
-    }
-
-    const userDoc = await this.usersService.findById(uid);
-    if (!userDoc) {
-      this.logger.error(`Stripe webhook: user not found ${uid}`);
-      return;
-    }
-    const user = userDoc as unknown as UserModel;
-
     const storeIds = storesCsv
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    const orderIds: string[] = [];
+
+    let processed = await this.processedModel
+      .findOne({ sessionId: stripePaymentId })
+      .lean()
+      .exec();
+
+    if (
+      processed &&
+      (await this.isStripeFulfillmentComplete(
+        processed,
+        storeIds,
+        stripePaymentId,
+      ))
+    ) {
+      this.logger.log(
+        `Stripe fulfill: already complete for ${stripePaymentId}`,
+      );
+      return {
+        complete: true,
+        orderIds: processed.orderIds ?? [],
+        errors: [],
+      };
+    }
+
+    if (!processed) {
+      try {
+        await this.processedModel.create({
+          sessionId: stripePaymentId,
+          userId: new Types.ObjectId(uid),
+          orderIds: [],
+          amountTotalCents,
+          currency: currency?.toLowerCase(),
+          stripeEventKind,
+        });
+      } catch (e: unknown) {
+        const code = (e as { code?: number })?.code;
+        if (code === 11000) {
+          processed = await this.processedModel
+            .findOne({ sessionId: stripePaymentId })
+            .lean()
+            .exec();
+          if (
+            processed &&
+            (await this.isStripeFulfillmentComplete(
+              processed,
+              storeIds,
+              stripePaymentId,
+            ))
+          ) {
+            return {
+              complete: true,
+              orderIds: processed.orderIds ?? [],
+              errors: [],
+            };
+          }
+          this.logger.warn(
+            `Stripe fulfill: retry after concurrent insert ${stripePaymentId}`,
+          );
+        } else {
+          throw e;
+        }
+      }
+    } else {
+      this.logger.warn(
+        `Stripe fulfill: retry after partial failure ${stripePaymentId}`,
+      );
+    }
+
+    const priorByStore = new Map<string, StripePerStoreBreakdownRow>();
+    for (const row of processed?.perStoreBreakdown ?? []) {
+      if (row?.storeId) {
+        priorByStore.set(row.storeId, row);
+      }
+    }
+
+    const userDoc = await this.usersService.findById(uid);
+    if (!userDoc) {
+      this.logger.error(`Stripe fulfill: user not found ${uid}`);
+      return {
+        complete: false,
+        orderIds: [],
+        errors: [{ storeId: '*', error: 'user_not_found' }],
+      };
+    }
+    const user = userDoc as unknown as UserModel;
+
+    const orderIds: string[] = [...(processed?.orderIds ?? [])];
     const perStoreBreakdown: StripePerStoreBreakdownRow[] = [];
+    const fulfillErrors: Array<{ storeId: string; error: string }> = [];
 
     for (const storeId of storeIds) {
+      const prior = priorByStore.get(storeId);
+      if (prior?.orderId && !prior.error) {
+        const alreadyPaid = await this.ordersService.isOrderPaidForStripePayment(
+          prior.orderId,
+          stripePaymentId,
+        );
+        if (alreadyPaid) {
+          const g = prior.goodsCents ?? 0;
+          const s = prior.shipCents ?? 0;
+          let transferId = prior.transferId;
+          let transferCents = prior.transferCents;
+          let platformFeeCents = prior.platformFeeCents;
+          let transferSkippedReason = prior.transferSkippedReason;
+          try {
+            const tr = await this.stripeTransfers.transferForPaidOrder({
+              orderId: prior.orderId,
+              storeId,
+              goodsCents: g,
+              shipCents: s,
+              stripeParentPaymentId: stripePaymentId,
+            });
+            transferId = tr.transferId ?? transferId;
+            transferCents = tr.transferCents;
+            platformFeeCents = tr.platformFeeCents;
+            transferSkippedReason = tr.skippedReason;
+          } catch {
+            /* garde les valeurs prior */
+          }
+          perStoreBreakdown.push({
+            ...prior,
+            transferId,
+            transferCents,
+            platformFeeCents,
+            transferSkippedReason,
+          });
+          if (!orderIds.includes(prior.orderId)) {
+            orderIds.push(prior.orderId);
+          }
+          continue;
+        }
+      }
+
       const payoutRow = payoutMap.get(storeId);
       const shipCents =
         payoutRow != null
@@ -875,46 +1099,118 @@ export class StripeGroupedCheckoutService {
       };
 
       try {
-        const order = await this.storeService.createOrderFromCart(
-          storeId,
-          user,
-        );
-        const oid =
-          (order as { _id?: Types.ObjectId })?._id?.toString() ??
-          (order as { id?: string })?.id;
-        if (oid) {
-          orderIds.push(oid);
-          const useStripeCents = payoutRow != null;
-          await this.ordersService.markOrderPaidWithShipping(
-            oid,
-            shipCents / 100,
-            {
-              stripeParentPaymentId: stripePaymentId,
-              couponCode,
-              chargedGoodsCents: useStripeCents ? goodsCents : undefined,
-              chargedShipCents: useStripeCents ? shipCents : undefined,
-            },
+        let oid =
+          await this.ordersService.findRecoverableOrderIdForStorePayment(
+            uid,
+            storeId,
+            stripePaymentId,
           );
-          if (couponCode) {
-            await this.couponsService.recordUsageAfterSuccessfulPayment(
+
+        if (!oid) {
+          try {
+            const order = await this.storeService.createOrderFromCart(
               storeId,
-              couponCode,
+              user,
+            );
+            oid =
+              (order as { _id?: Types.ObjectId })?._id?.toString() ??
+              (order as { id?: string })?.id ??
+              null;
+          } catch (createErr) {
+            if (this.isCartEmptyFulfillError(createErr)) {
+              oid =
+                await this.ordersService.findRecoverableOrderIdForStorePayment(
+                  uid,
+                  storeId,
+                  stripePaymentId,
+                );
+            }
+            if (!oid) {
+              throw createErr;
+            }
+          }
+        }
+
+        if (!oid) {
+          throw new Error('order_id_missing_after_create');
+        }
+
+        if (!orderIds.includes(oid)) {
+          orderIds.push(oid);
+        }
+        const useStripeCents = payoutRow != null;
+        await this.ordersService.markOrderPaidWithShipping(
+          oid,
+          shipCents / 100,
+          {
+            stripeParentPaymentId: stripePaymentId,
+            couponCode,
+            chargedGoodsCents: useStripeCents ? goodsCents : undefined,
+            chargedShipCents: useStripeCents ? shipCents : undefined,
+          },
+        );
+        const paidOk = await this.ordersService.isOrderPaidForStripePayment(
+          oid,
+          stripePaymentId,
+        );
+        if (!paidOk) {
+          throw new Error('order_not_marked_paid');
+        }
+        if (couponCode) {
+          await this.couponsService.recordUsageAfterSuccessfulPayment(
+            storeId,
+            couponCode,
+          );
+        }
+
+        let transferId: string | undefined;
+        let transferCents: number | undefined;
+        let platformFeeCents: number | undefined;
+        let transferSkippedReason: string | undefined;
+        try {
+          const tr = await this.stripeTransfers.transferForPaidOrder({
+            orderId: oid,
+            storeId,
+            goodsCents: goodsCents ?? 0,
+            shipCents,
+            stripeParentPaymentId: stripePaymentId,
+          });
+          transferCents = tr.transferCents;
+          platformFeeCents = tr.platformFeeCents;
+          transferId = tr.transferId;
+          transferSkippedReason = tr.skippedReason;
+          if (!tr.transferred && tr.skippedReason) {
+            this.logger.warn(
+              `Connect transfer skipped store=${storeId} order=${oid}: ${tr.skippedReason}`,
             );
           }
-          perStoreBreakdown.push({
-            ...baseRow,
-            orderId: oid,
-            goodsCents: goodsCents ?? baseRow.goodsCents,
-            shipCents,
-          });
+        } catch (trErr) {
+          transferSkippedReason =
+            trErr instanceof Error ? trErr.message : String(trErr);
+          this.logger.error(
+            `Connect transfer error store=${storeId} order=${oid}: ${transferSkippedReason}`,
+          );
         }
-      } catch (e) {
-        this.logger.error(
-          `Stripe webhook: order failed for store ${storeId}: ${e}`,
-        );
+
         perStoreBreakdown.push({
           ...baseRow,
-          error: e instanceof Error ? e.message : String(e),
+          orderId: oid,
+          goodsCents: goodsCents ?? baseRow.goodsCents,
+          shipCents,
+          transferId,
+          transferCents,
+          platformFeeCents,
+          transferSkippedReason,
+        });
+      } catch (e) {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        this.logger.error(
+          `Stripe fulfill: order failed for store ${storeId}: ${e}`,
+        );
+        fulfillErrors.push({ storeId, error: errMsg });
+        perStoreBreakdown.push({
+          ...baseRow,
+          error: errMsg,
         });
       }
     }
@@ -930,7 +1226,234 @@ export class StripeGroupedCheckoutService {
           stripeEventKind,
         },
       },
+      { upsert: true },
     );
+
+    const complete =
+      storeIds.length > 0 &&
+      storeIds.every((sid) => {
+        const row = perStoreBreakdown.find((r) => r.storeId === sid);
+        return Boolean(row?.orderId && !row.error);
+      });
+
+    if (!complete) {
+      this.logger.warn(
+        `Stripe fulfill: incomplete for ${stripePaymentId}: ${fulfillErrors
+          .map((x) => `${x.storeId}=${x.error}`)
+          .join('; ')}`,
+      );
+    }
+
+    return { complete, orderIds, errors: fulfillErrors };
+  }
+
+  /**
+   * Liste des paiements groupés réussis (`stripe_processed_checkouts`) pour le client JWT.
+   */
+  async listMyGroupedPayments(
+    user: UserModel,
+    args: FilterGroupedPaymentsDto,
+  ): Promise<{ data: Record<string, unknown>[] }> {
+    const lim =
+      typeof args.limit === 'number' && args.limit > 0
+        ? Math.min(200, Math.max(1, args.limit))
+        : 20;
+
+    const skip =
+      typeof args.skip === 'number' && args.skip > 0
+        ? Math.min(10_000, Math.max(0, Math.floor(args.skip)))
+        : 0;
+
+    const filter: Record<string, unknown> = {
+      userId: new Types.ObjectId(String(user.id)),
+    };
+
+    if (args.stripeEventKind) {
+      filter['stripeEventKind'] = args.stripeEventKind;
+    }
+
+    const qRaw = args.q?.trim();
+    if (qRaw) {
+      const esc = qRaw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const rx = new RegExp(esc, 'i');
+      const matching = await this.storeModel
+        .find({ name: rx })
+        .select('_id')
+        .limit(500)
+        .lean()
+        .exec();
+      const matchIds = matching.map((s) => String(s._id));
+      const ors: Record<string, unknown>[] = [{ sessionId: rx }];
+      if (matchIds.length) {
+        ors.push({ 'perStoreBreakdown.storeId': { $in: matchIds } });
+      }
+      filter['$or'] = ors;
+    }
+
+    const docs = await this.processedModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(lim)
+      .lean()
+      .exec();
+
+    const storeIdSet = new Set<string>();
+    for (const d of docs) {
+      const rows = d.perStoreBreakdown as StripePerStoreBreakdownRow[] | undefined;
+      if (!Array.isArray(rows)) continue;
+      for (const r of rows) {
+        const sid = String(r.storeId ?? '').trim();
+        if (sid && Types.ObjectId.isValid(sid)) {
+          storeIdSet.add(sid);
+        }
+      }
+    }
+
+    const storeOids = [...storeIdSet].map((id) => new Types.ObjectId(id));
+    const storeRows =
+      storeOids.length === 0
+        ? []
+        : await this.storeModel
+            .find({ _id: { $in: storeOids } })
+            .select('name profileImage currency')
+            .lean()
+            .exec();
+
+    const storeMap = new Map(
+      storeRows.map((s) => [String(s._id), s as Record<string, unknown>]),
+    );
+
+    const data = docs.map((doc) => {
+      const id = String(doc._id);
+      const createdAt = (doc as { createdAt?: Date }).createdAt;
+      const updatedAt = (doc as { updatedAt?: Date }).updatedAt;
+      const rows = (doc.perStoreBreakdown ?? []) as StripePerStoreBreakdownRow[];
+      const orderedStoreIds: string[] = [];
+      for (const r of rows) {
+        const sid = String(r.storeId ?? '').trim();
+        if (!sid || !Types.ObjectId.isValid(sid)) continue;
+        if (!orderedStoreIds.includes(sid)) {
+          orderedStoreIds.push(sid);
+        }
+      }
+
+      const storesPayload = orderedStoreIds.map((storeId) => {
+        const st = storeMap.get(storeId);
+        const name =
+          typeof st?.['name'] === 'string' ? st['name'].trim() : null;
+        const profileImage =
+          typeof st?.['profileImage'] === 'string'
+            ? st['profileImage'].trim()
+            : null;
+        const currency =
+          typeof st?.['currency'] === 'string' && st['currency'].trim()
+            ? st['currency'].trim().toUpperCase()
+            : null;
+        return {
+          _id: storeId,
+          name: name || null,
+          profileImage: profileImage || null,
+          currency: currency || 'CAD',
+        };
+      });
+
+      const first = storesPayload[0];
+      const totalCents = Number(doc.amountTotalCents ?? 0);
+      const curRaw = doc.currency != null ? String(doc.currency).trim() : '';
+      const cur = curRaw ? curRaw.toUpperCase() : 'CAD';
+
+      const storeBlock = first ?? {
+        _id: '',
+        name: null as string | null,
+        profileImage: null as string | null,
+        currency: cur,
+      };
+
+      return {
+        _id: id,
+        createdAt,
+        updatedAt,
+        status: 'succeeded',
+        totalPrice: totalCents / 100,
+        shippingPrice: 0,
+        currency: cur,
+        store: {
+          _id: storeBlock._id,
+          name: storeBlock.name ?? 'Afrika Meals',
+          profileImage: storeBlock.profileImage,
+          currency: storeBlock.currency || cur,
+        },
+        stores: storesPayload,
+        stripePaymentId: doc.sessionId,
+        stripeEventKind: doc.stripeEventKind ?? null,
+        orderIds: (doc.orderIds ?? []).map((x) => String(x)),
+      };
+    });
+
+    return { data };
+  }
+
+  /**
+   * Après Payment Sheet : même logique que le webhook `payment_intent.succeeded`,
+   * pour les environnements où le webhook Stripe n’atteint pas l’API (local, ngrok).
+   * Idempotent via `stripe_processed_checkouts` (clé `sessionId` = id du PaymentIntent).
+   */
+  async fulfillGroupedPaymentFromClient(
+    user: UserModel,
+    paymentIntentId: string,
+  ): Promise<{ received: boolean; orderIds: string[] }> {
+    const id = paymentIntentId.trim();
+    if (!id.startsWith('pi_')) {
+      throw new BadRequestException('invalid_payment_intent_id');
+    }
+    const stripe = this.stripe();
+    const pi = await stripe.paymentIntents.retrieve(id);
+    if (pi.status !== 'succeeded') {
+      throw new BadRequestException({
+        message: 'payment_intent_not_succeeded',
+        status: pi.status,
+      });
+    }
+    const uid = pi.metadata?.uid;
+    const storesCsv = pi.metadata?.stores;
+    const shipB64 = pi.metadata?.shipB64;
+    if (!uid || !storesCsv) {
+      throw new BadRequestException('stripe_missing_payment_intent_metadata');
+    }
+    if (String(uid) !== String(user.id)) {
+      throw new ForbiddenException('payment_intent_user_mismatch');
+    }
+    const metadata = (pi.metadata ?? {}) as Record<
+      string,
+      string | undefined | null
+    >;
+    const amountTotalCents =
+      pi.amount_received != null
+        ? pi.amount_received
+        : pi.amount != null
+          ? pi.amount
+          : undefined;
+    const currency =
+      pi.currency != null ? String(pi.currency) : undefined;
+    const result = await this.fulfillOrdersAfterStripePayment({
+      stripePaymentId: pi.id,
+      uid: String(uid),
+      storesCsv,
+      shipB64,
+      metadata,
+      amountTotalCents,
+      currency,
+      stripeEventKind: 'payment_intent',
+    });
+    if (!result.complete) {
+      throw new BadRequestException({
+        message: 'grouped_payment_fulfillment_incomplete',
+        orderIds: result.orderIds,
+        errors: result.errors,
+      });
+    }
+    return { received: true, orderIds: result.orderIds };
   }
 
   async handleWebhook(
@@ -973,7 +1496,7 @@ export class StripeGroupedCheckoutService {
         session.amount_total != null ? session.amount_total : undefined;
       const currency =
         session.currency != null ? String(session.currency) : undefined;
-      await this.fulfillOrdersAfterStripePayment({
+      const sessionResult = await this.fulfillOrdersAfterStripePayment({
         stripePaymentId: session.id,
         uid,
         storesCsv,
@@ -983,6 +1506,11 @@ export class StripeGroupedCheckoutService {
         currency,
         stripeEventKind: 'checkout_session',
       });
+      if (!sessionResult.complete) {
+        this.logger.warn(
+          `Stripe webhook: incomplete checkout.session ${session.id}`,
+        );
+      }
       return { received: true };
     }
 
@@ -1013,7 +1541,7 @@ export class StripeGroupedCheckoutService {
             : undefined;
       const currency =
         pi.currency != null ? String(pi.currency) : undefined;
-      await this.fulfillOrdersAfterStripePayment({
+      const piResult = await this.fulfillOrdersAfterStripePayment({
         stripePaymentId: pi.id,
         uid,
         storesCsv,
@@ -1023,6 +1551,28 @@ export class StripeGroupedCheckoutService {
         currency,
         stripeEventKind: 'payment_intent',
       });
+      if (!piResult.complete) {
+        this.logger.warn(
+          `Stripe webhook: incomplete payment_intent ${pi.id}`,
+        );
+      }
+      return { received: true };
+    }
+
+    if (event.type === 'account.updated') {
+      await this.stripeConnect.handleAccountUpdated(
+        event.data.object as {
+          id: string;
+          charges_enabled?: boolean;
+          payouts_enabled?: boolean;
+          details_submitted?: boolean;
+          requirements?: {
+            disabled_reason?: string | null;
+            currently_due?: string[] | null;
+            past_due?: string[] | null;
+          } | null;
+        },
+      );
       return { received: true };
     }
 

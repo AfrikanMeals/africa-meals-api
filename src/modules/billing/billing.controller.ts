@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Query,
   Header,
   HttpCode,
   Inject,
@@ -22,7 +23,11 @@ import { BillingService } from './billing.service';
 import { StripeConnectOnboardingDto } from './dto/stripe-connect-onboarding.dto';
 import { CreatePaymentMethodDto } from './paypal/dto/paypal.dto';
 import { PaypalService } from './paypal/paypal.service';
+import { FilterGroupedPaymentsDto } from './stripe/dto/filter-grouped-payments.dto';
 import { GroupedStripeCheckoutDto } from './stripe/dto/grouped-stripe-checkout.dto';
+import { GroupedPaymentSyncDto } from './stripe/dto/grouped-payment-sync.dto';
+import { StripeConnectOnboardingDto } from './stripe/dto/stripe-connect-onboarding.dto';
+import { StripeConnectService } from './stripe/stripe-connect.service';
 import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.service';
 
 @ApiTags('billing')
@@ -33,6 +38,8 @@ export class BillingController {
   @Inject(BillingService) private readonly _billingService: BillingService;
   @Inject(StripeGroupedCheckoutService)
   private readonly _stripeGroupedCheckout: StripeGroupedCheckoutService;
+  @Inject(StripeConnectService)
+  private readonly _stripeConnect: StripeConnectService;
 
   @Post('create-paypal-vault-token')
   @UseGuards(JwtGuard)
@@ -150,6 +157,108 @@ export class BillingController {
     return this._stripeGroupedCheckout.createGroupedPaymentIntent(
       req.user as UserModel,
       dto,
+    );
+  }
+
+  /** Confirme côté serveur un PaymentIntent réussi (complète le webhook si absent — ex. dev local). */
+  @Post('stripe/grouped-payment-sync')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Synchronise les commandes après Payment Sheet (idempotent, même logique que le webhook)',
+  })
+  async stripeGroupedPaymentSync(
+    @Req() req: Request,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    body: GroupedPaymentSyncDto,
+  ) {
+    return this._stripeGroupedCheckout.fulfillGroupedPaymentFromClient(
+      req.user as UserModel,
+      body.paymentIntentId,
+    );
+  }
+
+  @Get('stripe/connect/status')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Statut Stripe Connect (vendeur)' })
+  stripeConnectStatus(@Req() req: Request) {
+    return this._stripeConnect.getConnectStatus(req.user as UserModel);
+  }
+
+  @Post('stripe/connect/onboarding-link')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Lien d’onboarding Stripe Connect (Setup Payment) avec préremplissage',
+  })
+  stripeConnectOnboarding(
+    @Req() req: Request,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }),
+    )
+    body: StripeConnectOnboardingDto,
+  ) {
+    return this._stripeConnect.createOnboardingLink(req.user as UserModel);
+  }
+
+  @Post('stripe/connect/dashboard-link')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Lien tableau de bord Stripe Express (vendeur)' })
+  stripeConnectDashboard(@Req() req: Request) {
+    return this._stripeConnect.createDashboardLink(req.user as UserModel);
+  }
+
+  @Get('stripe/connect/payouts')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Liste des versements Stripe Connect (vendeur)' })
+  stripeConnectPayouts(
+    @Req() req: Request,
+    @Query('limit') limit?: string,
+  ) {
+    const n = limit != null ? Number(limit) : 25;
+    return this._stripeConnect.listPayouts(req.user as UserModel, n);
+  }
+
+  @Get('stripe/connect/balance')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Solde disponible Stripe Connect (vendeur)' })
+  stripeConnectBalance(@Req() req: Request) {
+    return this._stripeConnect.getConnectBalance(req.user as UserModel);
+  }
+
+  @Post('stripe/connect/request-payout')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Demander un versement du solde disponible vers le compte bancaire',
+  })
+  stripeConnectRequestPayout(@Req() req: Request) {
+    return this._stripeConnect.requestPayout(req.user as UserModel);
+  }
+
+  @Get('stripe/my-grouped-payments')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Historique des paiements panier multi-boutiques (Stripe Checkout ou Payment Sheet)',
+  })
+  async stripeMyGroupedPayments(
+    @Req() req: Request,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: FilterGroupedPaymentsDto,
+  ) {
+    return this._stripeGroupedCheckout.listMyGroupedPayments(
+      req.user as UserModel,
+      query,
     );
   }
 

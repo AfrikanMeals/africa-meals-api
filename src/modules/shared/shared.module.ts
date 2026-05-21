@@ -1,7 +1,14 @@
 import { readFileSync } from 'fs';
-import { Module } from '@nestjs/common';
+import { Module, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { applicationDefault, cert, getApp, getApps, initializeApp } from 'firebase-admin/app';
+import {
+  applicationDefault,
+  cert,
+  getApps,
+  initializeApp,
+  type App,
+  type ServiceAccount,
+} from 'firebase-admin/app';
 import { resolve } from 'path';
 import {
   getAmFirebaseProjectId,
@@ -11,20 +18,84 @@ import {
 } from 'src/config/firebase-env';
 import { MultipartToJsonPipe } from 'src/pipes/multipart-to-json/multipart-to-json.pipe';
 
-function getCredential(config: ConfigService) {
-  const serviceAccountJson = getAmFirebaseServiceAccountJson(config);
-  if (serviceAccountJson) {
-    return cert(JSON.parse(serviceAccountJson) as Record<string, unknown>);
+const FIREBASE_APP_NAME = 'africa-meals-api';
+const firebaseBootstrapLog = new Logger('FirebaseAdmin');
+
+type FirebaseAdminInit = {
+  credential: ReturnType<typeof cert> | ReturnType<typeof applicationDefault>;
+  projectId: string;
+  storageBucket: string;
+};
+
+function loadServiceAccountFromConfig(
+  config: ConfigService,
+): Record<string, unknown> | null {
+  const inline = getAmFirebaseServiceAccountJson(config);
+  if (inline?.trim()) {
+    return JSON.parse(inline) as Record<string, unknown>;
   }
   const pathEnv =
     config.get<string>('GOOGLE_APPLICATION_CREDENTIALS') ||
     getAmFirebaseServiceAccountPath(config);
-  if (pathEnv?.trim()) {
-    const absolutePath = resolve(process.cwd(), pathEnv.trim());
-    const content = readFileSync(absolutePath, 'utf8');
-    return cert(JSON.parse(content) as Record<string, unknown>);
+  if (!pathEnv?.trim()) {
+    return null;
   }
-  return applicationDefault();
+  const absolutePath = resolve(process.cwd(), pathEnv.trim());
+  process.env.GOOGLE_APPLICATION_CREDENTIALS = absolutePath;
+  const content = readFileSync(absolutePath, 'utf8');
+  return JSON.parse(content) as Record<string, unknown>;
+}
+
+function resolveFirebaseAdminInit(config: ConfigService): FirebaseAdminInit {
+  const sa = loadServiceAccountFromConfig(config);
+  const saProjectId = String(sa?.project_id ?? sa?.projectId ?? '').trim();
+  const saEmail = String(sa?.client_email ?? sa?.clientEmail ?? '').trim();
+  const saKey = String(sa?.private_key ?? sa?.privateKey ?? '').trim();
+  if (sa && saProjectId && saEmail && saKey) {
+    const projectId =
+      saProjectId ||
+      getAmFirebaseProjectId(config)?.trim() ||
+      '';
+    const storageBucket =
+      getAmFirebaseStorageBucket(config)?.trim() ||
+      (projectId ? `${projectId}.appspot.com` : '');
+    return {
+      credential: cert(sa as ServiceAccount),
+      projectId,
+      storageBucket,
+    };
+  }
+
+  firebaseBootstrapLog.warn(
+    'Compte de service Firebase introuvable — repli sur applicationDefault() (FCM peut échouer en local). Définissez GOOGLE_APPLICATION_CREDENTIALS=accounts.json',
+  );
+  const projectId = getAmFirebaseProjectId(config)?.trim() ?? '';
+  return {
+    credential: applicationDefault(),
+    projectId,
+    storageBucket:
+      getAmFirebaseStorageBucket(config)?.trim() ||
+      (projectId ? `${projectId}.appspot.com` : ''),
+  };
+}
+
+function getOrCreateFirebaseApp(options: FirebaseAdminInit): App {
+  const existing = getApps().find((a) => a.name === FIREBASE_APP_NAME);
+  if (existing) {
+    return existing;
+  }
+  const app = initializeApp(
+    {
+      credential: options.credential,
+      projectId: options.projectId || undefined,
+      ...(options.storageBucket ? { storageBucket: options.storageBucket } : {}),
+    },
+    FIREBASE_APP_NAME,
+  );
+  firebaseBootstrapLog.log(
+    `Initialisé (projet=${options.projectId || '—'}, bucket=${options.storageBucket || '—'})`,
+  );
+  return app;
 }
 
 @Module({
@@ -34,32 +105,21 @@ function getCredential(config: ConfigService) {
       provide: 'FIREBASE_ADMIN',
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
-        const projectId = getAmFirebaseProjectId(config);
-        const storageBucket =
-          getAmFirebaseStorageBucket(config) ||
-          (projectId ? `${projectId}.appspot.com` : '');
-        const credential = getCredential(config);
-        if (getApps().length === 0) {
-          return initializeApp(
-            {
-              credential,
-              ...(storageBucket ? { storageBucket } : {}),
-            },
-            'africa-meals-api',
+        const init = resolveFirebaseAdminInit(config);
+        if (!init.projectId) {
+          firebaseBootstrapLog.error(
+            'AM_FIREBASE_PROJECT_ID ou accounts.json (project_id) requis pour FCM',
           );
         }
-        return getApp('africa-meals-api');
+        return getOrCreateFirebaseApp(init);
       },
     },
     {
       provide: 'FIREBASE_STORAGE_BUCKET',
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
-        const projectId = getAmFirebaseProjectId(config);
-        return (
-          getAmFirebaseStorageBucket(config) ||
-          (projectId ? `${projectId}.appspot.com` : '')
-        );
+        const init = resolveFirebaseAdminInit(config);
+        return init.storageBucket;
       },
     },
   ],

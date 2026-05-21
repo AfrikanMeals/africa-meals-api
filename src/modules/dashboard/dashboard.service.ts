@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -9,6 +11,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import dayjs = require('dayjs');
 import utc = require('dayjs/plugin/utc');
 import timezone = require('dayjs/plugin/timezone');
+import isoWeek = require('dayjs/plugin/isoWeek');
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { ProductRatingModel } from '@schemas/product_rating.schema';
@@ -31,9 +34,15 @@ import {
   randomLngLatNearPoint,
   randomPercentCoords,
 } from './delivery-driver-geo';
+import { NotificationsService } from '@modules/notifications/notifications.service';
+import { OrderStatusEventsService } from '@modules/orders/order-status-events.service';
+import { OrdersService } from '@modules/orders/orders.service';
+import { WsOrderNotifyService } from '@modules/ws-notify/ws-order-notify.service';
+import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
+dayjs.extend(isoWeek);
 
 /** Objectif CA jour (KPI admin) — même unité que `total_price` commandes. */
 const ADMIN_REVENUE_TARGET_FCFA = 500_000;
@@ -314,6 +323,78 @@ export type DashboardPeakHourRow = {
 };
 
 /** Ligne « Nouveaux clients » : dernière commande + 1ère fois dans cette boutique. */
+export type FinanceWeeklyUserPerformanceRow = {
+  userId: string;
+  fullName: string;
+  email: string;
+  orderCount: number;
+  totalSpent: number;
+  avgOrderValue: number;
+  shippingTotal: number;
+  priorTotalSpent: number;
+  trendPercent: number | null;
+};
+
+export type FinanceWeeklyPerformanceSummary = {
+  revenueThisWeek: number;
+  revenuePriorWeek: number;
+  revenueTrendPercent: number | null;
+  ordersThisWeek: number;
+  ordersPriorWeek: number;
+  ordersTrendPercent: number | null;
+  activeClientsThisWeek: number;
+  activeVendorsThisWeek: number;
+};
+
+export type FinanceWeeklyUserPerformancePayload = {
+  timezone: string;
+  weekStart: string;
+  weekEnd: string;
+  priorWeekStart: string;
+  priorWeekEnd: string;
+  summary: FinanceWeeklyPerformanceSummary;
+  clients: FinanceWeeklyUserPerformanceRow[];
+  vendors: FinanceWeeklyUserPerformanceRow[];
+};
+
+export type FinancePeriodReportSummary = {
+  totalRevenue: number;
+  orderCount: number;
+  avgOrderValue: number;
+  shippingTotal: number;
+  priorPeriodRevenue: number;
+  trendPercent: number | null;
+};
+
+export type FinancePeriodDailyPoint = {
+  date: string;
+  revenue: number;
+  orderCount: number;
+};
+
+export type FinancePeriodReportOrderRow = {
+  id: string;
+  orderNumber: string;
+  createdAt: string;
+  customerName: string;
+  customerEmail: string;
+  totalPrice: number;
+  shippingPrice: number;
+  status: string;
+  storeName: string | null;
+};
+
+export type FinancePeriodReportPayload = {
+  timezone: string;
+  from: string;
+  to: string;
+  priorFrom: string;
+  priorTo: string;
+  summary: FinancePeriodReportSummary;
+  daily: FinancePeriodDailyPoint[];
+  orders: FinancePeriodReportOrderRow[];
+};
+
 export type DashboardVendorRecentCustomerRow = {
   userId: string;
   fullName: string;
@@ -340,6 +421,8 @@ function emptyPeakHourSlots(): DashboardPeakHourRow[] {
 
 @Injectable()
 export class DashboardService {
+  private readonly logger = new Logger(DashboardService.name);
+
   constructor(
     @InjectModel(OrderModel.name)
     private readonly orderModel: Model<OrderModel>,
@@ -359,6 +442,12 @@ export class DashboardService {
     private readonly deliveryDriverModel: Model<DeliveryDriverModel>,
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
+    private readonly notificationsService: NotificationsService,
+    private readonly orderStatusEvents: OrderStatusEventsService,
+    @Inject(OrdersService)
+    private readonly ordersService: OrdersService,
+    @Inject(WsOrderNotifyService)
+    private readonly wsOrderNotify: WsOrderNotifyService,
   ) {}
 
   async getAlerts(user: UserModel): Promise<{
@@ -396,6 +485,56 @@ export class DashboardService {
       ]);
 
     return { delayedDeliveries, negativeReviewStores, stockAlerts };
+  }
+
+  private customerUserIdForOrderPush(order: { user?: unknown }): string | null {
+    const u = order.user;
+    if (!u) {
+      return null;
+    }
+    if (u instanceof Types.ObjectId) {
+      return u.toHexString();
+    }
+    if (typeof u === 'object' && u !== null && '_id' in u) {
+      const id = (u as { _id: unknown })._id;
+      if (id instanceof Types.ObjectId) {
+        return id.toHexString();
+      }
+      if (id != null && Types.ObjectId.isValid(String(id))) {
+        return String(id);
+      }
+    }
+    return null;
+  }
+
+  private storeNameForOrderPush(order: { store?: unknown }): string | undefined {
+    const s = order.store;
+    if (s && typeof s === 'object' && s !== null && 'name' in s) {
+      const n = String((s as { name?: string }).name ?? '').trim();
+      return n || undefined;
+    }
+    return undefined;
+  }
+
+  private storeOwnerUserIdForOrderPush(order: { store?: unknown }): string | null {
+    const s = order.store;
+    if (!s || typeof s !== 'object' || s === null || !('owner' in s)) {
+      return null;
+    }
+    const o = (s as { owner?: unknown }).owner;
+    if (o instanceof Types.ObjectId) {
+      return o.toHexString();
+    }
+    if (o && typeof o === 'object' && '_id' in o) {
+      const id = (o as { _id: unknown })._id;
+      if (id instanceof Types.ObjectId) {
+        return id.toHexString();
+      }
+      if (id != null && Types.ObjectId.isValid(String(id))) {
+        return String(id);
+      }
+    }
+    return null;
   }
 
   /**
@@ -925,6 +1064,7 @@ export class DashboardService {
     livrees: number;
     enLivraison: number;
     enAttente: number;
+    payees: number;
     annulees: number;
   }> {
     const empty = {
@@ -932,6 +1072,7 @@ export class DashboardService {
       livrees: 0,
       enLivraison: 0,
       enAttente: 0,
+      payees: 0,
       annulees: 0,
     };
 
@@ -967,6 +1108,7 @@ export class DashboardService {
     let livrees = 0;
     let enLivraison = 0;
     let enAttente = 0;
+    let payees = 0;
     let annulees = 0;
     for (const row of rows) {
       const n = Number(row.n) || 0;
@@ -980,13 +1122,20 @@ export class DashboardService {
         case OrderStatusEnum.CANCELLED:
           annulees += n;
           break;
+        case OrderStatusEnum.CREATED:
+          enAttente += n;
+          break;
+        case OrderStatusEnum.PAIED:
+        case OrderStatusEnum.APPROVED:
+          payees += n;
+          break;
         default:
           enAttente += n;
       }
     }
 
-    const total = livrees + enLivraison + enAttente + annulees;
-    return { total, livrees, enLivraison, enAttente, annulees };
+    const total = livrees + enLivraison + enAttente + payees + annulees;
+    return { total, livrees, enLivraison, enAttente, payees, annulees };
   }
 
   /**
@@ -1658,7 +1807,7 @@ export class DashboardService {
 
     const orderDoc = await this.orderModel
       .findById(orderId)
-      .populate('store', 'name')
+      .populate('store', 'name owner address')
       .populate({
         path: 'user',
         select: 'fullName addresses',
@@ -1722,8 +1871,69 @@ export class DashboardService {
     };
     await livreurDoc.save();
 
+    const prevOrderStatus = orderDoc.status as OrderStatusEnum;
     orderDoc.status = OrderStatusEnum.SHIPPED;
     await orderDoc.save();
+
+    const customerId = this.customerUserIdForOrderPush(orderDoc);
+    if (prevOrderStatus !== OrderStatusEnum.SHIPPED) {
+      await this.orderStatusEvents.record({
+        orderId: orderDoc._id.toString(),
+        storeId: orderStoreId,
+        customerUserId: customerId ?? undefined,
+        fromStatus: prevOrderStatus,
+        toStatus: OrderStatusEnum.SHIPPED,
+        source: OrderStatusChangeSourceEnum.DASHBOARD,
+        actorUserId: String(user.id),
+        note: `Livreur ${livreurDoc.nom ?? dto.livreurId}`,
+      });
+    }
+
+    if (customerId && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
+      void this.notificationsService
+        .pushCustomerOrderStatusChanged({
+          userId: customerId,
+          orderId: orderDoc._id.toString(),
+          storeName: this.storeNameForOrderPush(orderDoc),
+          storeId: orderStoreId || undefined,
+          previousStatus: prevOrderStatus,
+          newStatus: OrderStatusEnum.SHIPPED,
+          bodyOverride: 'En cours de livraison',
+        })
+        .catch((err) => {
+          this.logger.warn(
+            `FCM order shipped: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
+      this.ordersService.notifyPartiesOrderRealtimeFromDoc(
+        orderDoc,
+        OrderStatusEnum.SHIPPED,
+      );
+    }
+
+    const vendorId = this.storeOwnerUserIdForOrderPush(orderDoc);
+    if (vendorId && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
+      const sname = this.storeNameForOrderPush(orderDoc);
+      void this.notificationsService
+        .pushVendorOrderNotify({
+          vendorUserIds: [vendorId],
+          title: 'Commande en livraison',
+          body: `${sname ?? 'Boutique'} : commande prise en charge par le livreur.`,
+          orderId: orderDoc._id.toString(),
+          storeName: sname,
+          reason: 'order_shipped',
+          status: OrderStatusEnum.SHIPPED,
+        })
+        .catch((err) => {
+          this.logger.warn(
+            `FCM vendor order shipped: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
+    }
 
     return this.toDashboardLivreurRow(
       livreurDoc.toObject() as unknown as DeliveryDriverLean,
@@ -2012,6 +2222,530 @@ export class DashboardService {
       return randomLngLatNearPoint(Number(c[0]), Number(c[1]));
     }
     return randomLngLatInBbox();
+  }
+
+  /**
+   * Performance financière hebdomadaire par utilisateur (clients + vendeurs).
+   * Admin : plateforme ; vendeur : clients de ses boutiques + sa ligne vendeur.
+   */
+  async getFinanceWeeklyUserPerformance(
+    user: UserModel,
+  ): Promise<FinanceWeeklyUserPerformancePayload> {
+    if (
+      user.type !== UserTypeEnum.ADMIN &&
+      user.type !== UserTypeEnum.VENDOR
+    ) {
+      throw new ForbiddenException('forbidden');
+    }
+
+    const storeIds =
+      user.type === UserTypeEnum.VENDOR ? vendorStoreObjectIds(user) : null;
+    if (user.type === UserTypeEnum.VENDOR && !storeIds?.length) {
+      const z = PEAK_HOURS_TZ;
+      const now = dayjs().tz(z);
+      const weekStart = now.startOf('isoWeek');
+      return {
+        timezone: z,
+        weekStart: weekStart.toISOString(),
+        weekEnd: weekStart.add(1, 'week').toISOString(),
+        priorWeekStart: weekStart.subtract(1, 'week').toISOString(),
+        priorWeekEnd: weekStart.toISOString(),
+        summary: {
+          revenueThisWeek: 0,
+          revenuePriorWeek: 0,
+          revenueTrendPercent: null,
+          ordersThisWeek: 0,
+          ordersPriorWeek: 0,
+          ordersTrendPercent: null,
+          activeClientsThisWeek: 0,
+          activeVendorsThisWeek: 0,
+        },
+        clients: [],
+        vendors: [],
+      };
+    }
+
+    const z = PEAK_HOURS_TZ;
+    const now = dayjs().tz(z);
+    const weekStart = now.startOf('isoWeek').toDate();
+    const weekEnd = now.startOf('isoWeek').add(1, 'week').toDate();
+    const priorWeekStart = now.startOf('isoWeek').subtract(1, 'week').toDate();
+    const priorWeekEnd = weekStart;
+
+    const limit = user.type === UserTypeEnum.ADMIN ? 50 : 30;
+    const rawVendorId =
+      user.type === UserTypeEnum.VENDOR
+        ? (user as UserModel & { _id?: Types.ObjectId | string })._id ?? user.id
+        : null;
+    const vendorSelfId =
+      rawVendorId instanceof Types.ObjectId
+        ? rawVendorId.toString()
+        : rawVendorId != null
+          ? String(rawVendorId)
+          : '';
+
+    const [
+      clientsThis,
+      clientsPrior,
+      vendorsThisRaw,
+      vendorsPriorRaw,
+      revenueThisWeek,
+      revenuePriorWeek,
+      ordersThisWeek,
+      ordersPriorWeek,
+    ] = await Promise.all([
+      this.aggregateWeeklyClientTotals(weekStart, weekEnd, storeIds, limit),
+      this.aggregateWeeklyClientTotals(
+        priorWeekStart,
+        priorWeekEnd,
+        storeIds,
+        500,
+      ),
+      this.aggregateWeeklyVendorTotals(
+        weekStart,
+        weekEnd,
+        storeIds,
+        user.type === UserTypeEnum.ADMIN ? limit : 50,
+      ),
+      this.aggregateWeeklyVendorTotals(
+        priorWeekStart,
+        priorWeekEnd,
+        storeIds,
+        500,
+      ),
+      this.sumRevenueInRange(weekStart, weekEnd, storeIds),
+      this.sumRevenueInRange(priorWeekStart, priorWeekEnd, storeIds),
+      this.countOrdersInRange(weekStart, weekEnd, storeIds),
+      this.countOrdersInRange(priorWeekStart, priorWeekEnd, storeIds),
+    ]);
+
+    const filterVendorRows = (
+      rows: {
+        userId: string;
+        orderCount: number;
+        totalSpent: number;
+        shippingTotal: number;
+      }[],
+    ) =>
+      user.type === UserTypeEnum.VENDOR && vendorSelfId
+        ? rows.filter((r) => r.userId === vendorSelfId)
+        : rows;
+
+    const vendorsThis = filterVendorRows(vendorsThisRaw);
+    const vendorsPrior = filterVendorRows(vendorsPriorRaw);
+
+    const priorClientMap = new Map(
+      clientsPrior.map((r) => [r.userId, r.totalSpent]),
+    );
+    const priorVendorMap = new Map(
+      vendorsPrior.map((r) => [r.userId, r.totalSpent]),
+    );
+
+    const clients = await this.hydrateWeeklyPerformanceRows(
+      clientsThis,
+      priorClientMap,
+    );
+    const vendors = await this.hydrateWeeklyPerformanceRows(
+      vendorsThis,
+      priorVendorMap,
+    );
+
+    return {
+      timezone: z,
+      weekStart: weekStart.toISOString(),
+      weekEnd: weekEnd.toISOString(),
+      priorWeekStart: priorWeekStart.toISOString(),
+      priorWeekEnd: priorWeekEnd.toISOString(),
+      summary: {
+        revenueThisWeek,
+        revenuePriorWeek,
+        revenueTrendPercent: trendPercent(revenueThisWeek, revenuePriorWeek),
+        ordersThisWeek,
+        ordersPriorWeek,
+        ordersTrendPercent: trendPercent(ordersThisWeek, ordersPriorWeek),
+        activeClientsThisWeek: clientsThis.length,
+        activeVendorsThisWeek:
+          user.type === UserTypeEnum.ADMIN ? vendorsThis.length : vendors.length,
+      },
+      clients,
+      vendors,
+    };
+  }
+
+  /**
+   * Rapport financier sur une période (inclusive), fuseau America/Toronto.
+   * Admin : plateforme ; vendeur : ses boutiques.
+   */
+  async getFinancePeriodReport(
+    user: UserModel,
+    fromStr: string,
+    toStr: string,
+  ): Promise<FinancePeriodReportPayload> {
+    if (
+      user.type !== UserTypeEnum.ADMIN &&
+      user.type !== UserTypeEnum.VENDOR
+    ) {
+      throw new ForbiddenException('forbidden');
+    }
+
+    const z = PEAK_HOURS_TZ;
+    const fromDay = dayjs.tz(fromStr, z).startOf('day');
+    const toDay = dayjs.tz(toStr, z).startOf('day');
+    if (!fromDay.isValid() || !toDay.isValid()) {
+      throw new BadRequestException('invalid_date_range');
+    }
+    if (toDay.isBefore(fromDay)) {
+      throw new BadRequestException('invalid_date_range');
+    }
+    const spanDays = toDay.diff(fromDay, 'day') + 1;
+    if (spanDays > 366) {
+      throw new BadRequestException('date_range_too_long');
+    }
+
+    const start = fromDay.toDate();
+    const endExclusive = toDay.add(1, 'day').toDate();
+    const priorEndExclusive = fromDay.toDate();
+    const priorStart = fromDay.subtract(spanDays, 'day').toDate();
+    const priorFromLabel = dayjs(priorStart).tz(z).format('YYYY-MM-DD');
+    const priorToLabel = fromDay.subtract(1, 'day').format('YYYY-MM-DD');
+
+    let storeIds: Types.ObjectId[] | null = null;
+    if (user.type === UserTypeEnum.VENDOR) {
+      storeIds = vendorStoreObjectIds(user);
+      if (!storeIds.length) {
+        return {
+          timezone: z,
+          from: fromStr,
+          to: toStr,
+          priorFrom: priorFromLabel,
+          priorTo: priorToLabel,
+          summary: {
+            totalRevenue: 0,
+            orderCount: 0,
+            avgOrderValue: 0,
+            shippingTotal: 0,
+            priorPeriodRevenue: 0,
+            trendPercent: null,
+          },
+          daily: [],
+          orders: [],
+        };
+      }
+    }
+
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: endExclusive },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+
+    const [
+      totalRevenue,
+      orderCount,
+      shippingTotal,
+      priorPeriodRevenue,
+      dailyAgg,
+      orderDocs,
+    ] = await Promise.all([
+      this.sumRevenueInRange(start, endExclusive, storeIds),
+      this.countOrdersInRange(start, endExclusive, storeIds),
+      this.sumShippingInRange(start, endExclusive, storeIds),
+      this.sumRevenueInRange(priorStart, priorEndExclusive, storeIds),
+      this.aggregateDailyRevenue(start, endExclusive, storeIds),
+      this.orderModel
+        .find(match)
+        .sort({ createdAt: -1 })
+        .limit(5000)
+        .populate<{ user?: { fullName?: string; email?: string } }>(
+          'user',
+          'fullName email',
+        )
+        .populate<{ store?: { name?: string } }>('store', 'name')
+        .select('_id createdAt totalPrice shippingPrice status user store')
+        .lean()
+        .exec(),
+    ]);
+
+    const orders: FinancePeriodReportOrderRow[] = orderDocs.map((o) => {
+      const id = String(o._id);
+      const userDoc = o.user as
+        | { fullName?: string; email?: string }
+        | undefined;
+      const storeDoc = o.store as { name?: string } | undefined;
+      return {
+        id,
+        orderNumber: `#AE-${id.slice(-6).toUpperCase()}`,
+        createdAt: o.createdAt
+          ? new Date(o.createdAt).toISOString()
+          : new Date().toISOString(),
+        customerName: userDoc?.fullName?.trim() || '—',
+        customerEmail: userDoc?.email?.trim() || '',
+        totalPrice:
+          typeof o.totalPrice === 'number' && !Number.isNaN(o.totalPrice)
+            ? o.totalPrice
+            : 0,
+        shippingPrice:
+          typeof o.shippingPrice === 'number' &&
+          !Number.isNaN(o.shippingPrice)
+            ? o.shippingPrice
+            : 0,
+        status: String(o.status ?? ''),
+        storeName: storeDoc?.name?.trim() || null,
+      };
+    });
+
+    return {
+      timezone: z,
+      from: fromStr,
+      to: toStr,
+      priorFrom: priorFromLabel,
+      priorTo: priorToLabel,
+      summary: {
+        totalRevenue,
+        orderCount,
+        avgOrderValue:
+          orderCount > 0
+            ? Math.round((totalRevenue / orderCount) * 100) / 100
+            : 0,
+        shippingTotal,
+        priorPeriodRevenue,
+        trendPercent: trendPercent(totalRevenue, priorPeriodRevenue),
+      },
+      daily: dailyAgg,
+      orders,
+    };
+  }
+
+  private async sumShippingInRange(
+    start: Date,
+    end: Date,
+    storeIds: Types.ObjectId[] | null,
+  ): Promise<number> {
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: end },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+    const agg = await this.orderModel
+      .aggregate<{ total: number }>([
+        { $match: match },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: { $ifNull: ['$shipping_price', 0] } },
+          },
+        },
+      ])
+      .exec();
+    const v = agg[0]?.total;
+    return typeof v === 'number' && !Number.isNaN(v) ? v : 0;
+  }
+
+  private async aggregateDailyRevenue(
+    start: Date,
+    end: Date,
+    storeIds: Types.ObjectId[] | null,
+  ): Promise<FinancePeriodDailyPoint[]> {
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: end },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+    const rows = await this.orderModel
+      .aggregate<{
+        _id: string;
+        revenue: number;
+        orderCount: number;
+      }>([
+        { $match: match },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$createdAt',
+                timezone: PEAK_HOURS_TZ,
+              },
+            },
+            revenue: { $sum: { $ifNull: ['$total_price', 0] } },
+            orderCount: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ])
+      .exec();
+    return rows.map((r) => ({
+      date: r._id,
+      revenue: typeof r.revenue === 'number' ? r.revenue : 0,
+      orderCount: typeof r.orderCount === 'number' ? r.orderCount : 0,
+    }));
+  }
+
+  private async countOrdersInRange(
+    start: Date,
+    end: Date,
+    storeIds: Types.ObjectId[] | null,
+  ): Promise<number> {
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: end },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+    return this.orderModel.countDocuments(match).exec();
+  }
+
+  private async aggregateWeeklyClientTotals(
+    start: Date,
+    end: Date,
+    storeIds: Types.ObjectId[] | null,
+    limit: number,
+  ): Promise<
+    { userId: string; orderCount: number; totalSpent: number; shippingTotal: number }[]
+  > {
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: end },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+    const rows = await this.orderModel
+      .aggregate<{
+        _id: Types.ObjectId;
+        orderCount: number;
+        totalSpent: number;
+        shippingTotal: number;
+      }>([
+        { $match: match },
+        {
+          $group: {
+            _id: '$user',
+            orderCount: { $sum: 1 },
+            totalSpent: { $sum: { $ifNull: ['$total_price', 0] } },
+            shippingTotal: { $sum: { $ifNull: ['$shipping_price', 0] } },
+          },
+        },
+        { $sort: { totalSpent: -1 } },
+        { $limit: limit },
+      ])
+      .exec();
+    return rows.map((r) => ({
+      userId: String(r._id),
+      orderCount: r.orderCount ?? 0,
+      totalSpent: r.totalSpent ?? 0,
+      shippingTotal: r.shippingTotal ?? 0,
+    }));
+  }
+
+  private async aggregateWeeklyVendorTotals(
+    start: Date,
+    end: Date,
+    storeIds: Types.ObjectId[] | null,
+    limit: number,
+  ): Promise<
+    { userId: string; orderCount: number; totalSpent: number; shippingTotal: number }[]
+  > {
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: end },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+    const storeColl = this.storeModel.collection.name;
+    const rows = await this.orderModel
+      .aggregate<{
+        _id: Types.ObjectId;
+        orderCount: number;
+        totalSpent: number;
+        shippingTotal: number;
+      }>([
+        { $match: match },
+        {
+          $lookup: {
+            from: storeColl,
+            localField: 'store',
+            foreignField: '_id',
+            as: 'storeDoc',
+          },
+        },
+        { $unwind: '$storeDoc' },
+        {
+          $group: {
+            _id: '$storeDoc.owner',
+            orderCount: { $sum: 1 },
+            totalSpent: { $sum: { $ifNull: ['$total_price', 0] } },
+            shippingTotal: { $sum: { $ifNull: ['$shipping_price', 0] } },
+          },
+        },
+        { $sort: { totalSpent: -1 } },
+        { $limit: limit },
+      ])
+      .exec();
+    return rows
+      .filter((r) => r._id != null)
+      .map((r) => ({
+        userId: String(r._id),
+        orderCount: r.orderCount ?? 0,
+        totalSpent: r.totalSpent ?? 0,
+        shippingTotal: r.shippingTotal ?? 0,
+      }));
+  }
+
+  private async hydrateWeeklyPerformanceRows(
+    rows: {
+      userId: string;
+      orderCount: number;
+      totalSpent: number;
+      shippingTotal: number;
+    }[],
+    priorMap: Map<string, number>,
+  ): Promise<FinanceWeeklyUserPerformanceRow[]> {
+    if (!rows.length) return [];
+    const ids = rows
+      .map((r) => r.userId)
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    const users = await this.userModel
+      .find({ _id: { $in: ids } })
+      .select('fullName email')
+      .lean()
+      .exec();
+    const userById = new Map(
+      users.map((u) => {
+        const id = (u as { _id?: unknown })._id;
+        return [
+          id != null ? String(id) : '',
+          u as { fullName?: string; email?: string },
+        ];
+      }),
+    );
+    return rows.map((r) => {
+      const u = userById.get(r.userId);
+      const priorTotalSpent = priorMap.get(r.userId) ?? 0;
+      return {
+        userId: r.userId,
+        fullName: String(u?.fullName ?? '—'),
+        email: String(u?.email ?? '—'),
+        orderCount: r.orderCount,
+        totalSpent: r.totalSpent,
+        avgOrderValue:
+          r.orderCount > 0
+            ? Math.round((r.totalSpent / r.orderCount) * 100) / 100
+            : 0,
+        shippingTotal: r.shippingTotal,
+        priorTotalSpent,
+        trendPercent: trendPercent(r.totalSpent, priorTotalSpent),
+      };
+    });
   }
 
   private resolveLivreurLngLat(doc: DeliveryDriverLean): {

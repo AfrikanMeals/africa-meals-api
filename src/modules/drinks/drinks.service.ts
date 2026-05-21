@@ -1,14 +1,23 @@
+import { isStripeConnectOnboardingCompleteUser } from '@modules/billing/stripe/stripe-connect-visibility';
 import { MediasService } from '@modules/medias/medias.service';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { DrinkModel, DrinkStatutEnum } from '@schemas/drink.schema';
-import { StoreModel } from '@schemas/store.schema';
+import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { CreateDrinkDto, PatchDrinkDto } from './dto/drink.dto';
 
 function computeStatut(quantite: number, seuil: number): DrinkStatutEnum {
   return quantite <= seuil ? DrinkStatutEnum.ALERTE : DrinkStatutEnum.OK;
+}
+
+/** Filtre catalogue client mobile : boissons encore en stock. */
+export const DRINK_IN_STOCK_FILTER = { quantite: { $gt: 0 } } as const;
+
+/** Quantité max commandable pour une boisson = stock `quantite` (le seuil sert uniquement à l’alerte stock). */
+export function maxDrinkOrderQuantity(quantite: number): number {
+  return Math.max(0, Math.floor(Number(quantite)));
 }
 
 function mapDrinkDoc(doc: Record<string, unknown>) {
@@ -55,8 +64,32 @@ export class DrinksService {
   @InjectModel(StoreModel.name)
   private readonly _storeModel: Model<StoreModel>;
 
+  @InjectModel(UserModel.name)
+  private readonly _userModel: Model<UserModel>;
+
   @Inject(MediasService)
   private readonly _mediasService: MediasService;
+
+  private async isStoreVisibleOnMobileApp(storeId: string): Promise<boolean> {
+    if (!Types.ObjectId.isValid(storeId)) {
+      return false;
+    }
+    const store = await this._storeModel
+      .findById(storeId)
+      .select('status owner')
+      .lean()
+      .exec();
+    if (!store || store.status !== StoreStatusEnum.ACTIVE) {
+      return false;
+    }
+    const owner = await this._userModel.findById(store.owner)
+      .select(
+        'stripeConnectAccountId stripeConnectChargesEnabled stripeConnectPayoutsEnabled stripeConnectDetailsSubmitted stripeConnectDisabledReason stripeConnectRequirementsDue stripeConnectRequirementsPastDue',
+      )
+      .lean()
+      .exec();
+    return isStripeConnectOnboardingCompleteUser(owner);
+  }
 
   private async assertStoreOwner(storeId: string, user: UserModel) {
     const store = await this._storeModel
@@ -89,17 +122,12 @@ export class DrinksService {
     if (!Types.ObjectId.isValid(storeId)) {
       return [];
     }
-    const store = await this._storeModel
-      .findById(storeId)
-      .select('_id')
-      .lean()
-      .exec();
-    if (store == null) {
+    if (!(await this.isStoreVisibleOnMobileApp(storeId))) {
       return [];
     }
     const baseFilter: Record<string, unknown> = {
       store: new Types.ObjectId(storeId),
-      quantite: { $gt: 0 },
+      ...DRINK_IN_STOCK_FILTER,
     };
     const q = searchQuery?.trim();
     if (q) {
@@ -134,7 +162,7 @@ export class DrinksService {
       .findOne({
         _id: new Types.ObjectId(drinkId),
         store: new Types.ObjectId(storeId),
-        quantite: { $gt: 0 },
+        ...DRINK_IN_STOCK_FILTER,
       })
       .lean()
       .exec();
@@ -142,6 +170,43 @@ export class DrinksService {
       return null;
     }
     return mapDrinkDoc(row as Record<string, unknown>);
+  }
+
+  /**
+   * Boissons en stock pour plusieurs boutiques (recommandations accueil, etc.).
+   */
+  async findByStoresForCatalog(
+    storeIds: string[],
+    maxItems: number,
+  ): Promise<Array<ReturnType<typeof mapDrinkDoc> & { storeId: string }>> {
+    const oids = storeIds
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    if (!oids.length) return [];
+    const limit = Math.min(120, Math.max(1, Math.floor(maxItems)));
+    const rows = await this._drinkModel
+      .find({
+        store: { $in: oids },
+        ...DRINK_IN_STOCK_FILTER,
+      })
+      .sort({ updatedAt: -1 })
+      .limit(limit)
+      .lean()
+      .exec();
+    return rows.map((r) => {
+      const raw = r as unknown as Record<string, unknown>;
+      const storeRef = raw['store'];
+      const storeId =
+        storeRef != null && typeof storeRef === 'object' && 'toString' in storeRef
+          ? String(storeRef)
+          : storeRef != null
+            ? String(storeRef)
+            : '';
+      return {
+        ...mapDrinkDoc(raw),
+        storeId,
+      };
+    });
   }
 
   /** Validation panier : boisson de la boutique même si stock à 0. */
@@ -274,5 +339,83 @@ export class DrinksService {
       await this._mediasService.delete(doc.imageUrl).catch(() => undefined);
     }
     await doc.deleteOne();
+  }
+
+  /**
+   * Décrémente le stock boisson de façon atomique (commande payée / panier → commande).
+   * Met à jour `statut` selon `quantite` vs `seuil`.
+   */
+  async tryConsumeStock(
+    storeId: string,
+    drinkId: string,
+    qty: number,
+  ): Promise<boolean> {
+    const q = Math.floor(Number(qty));
+    if (
+      !Types.ObjectId.isValid(storeId) ||
+      !Types.ObjectId.isValid(drinkId) ||
+      q <= 0
+    ) {
+      return false;
+    }
+    const res = await this._drinkModel
+      .updateOne(
+        {
+          _id: new Types.ObjectId(drinkId),
+          store: new Types.ObjectId(storeId),
+          quantite: { $gte: q },
+        },
+        { $inc: { quantite: -q } },
+      )
+      .exec();
+    if (res.modifiedCount !== 1) {
+      return false;
+    }
+    await this.syncStatutAfterQuantiteChange(new Types.ObjectId(drinkId));
+    return true;
+  }
+
+  /** Annule une consommation (ex. échec après décrément, rollback commande). */
+  async restoreStock(
+    storeId: string,
+    drinkId: string,
+    qty: number,
+  ): Promise<void> {
+    const q = Math.floor(Number(qty));
+    if (
+      !Types.ObjectId.isValid(storeId) ||
+      !Types.ObjectId.isValid(drinkId) ||
+      q <= 0
+    ) {
+      return;
+    }
+    await this._drinkModel
+      .updateOne(
+        {
+          _id: new Types.ObjectId(drinkId),
+          store: new Types.ObjectId(storeId),
+        },
+        { $inc: { quantite: q } },
+      )
+      .exec();
+    await this.syncStatutAfterQuantiteChange(new Types.ObjectId(drinkId));
+  }
+
+  private async syncStatutAfterQuantiteChange(drinkOid: Types.ObjectId) {
+    await this._drinkModel
+      .updateOne({ _id: drinkOid }, [
+        {
+          $set: {
+            statut: {
+              $cond: [
+                { $lte: ['$quantite', '$seuil'] },
+                DrinkStatutEnum.ALERTE,
+                DrinkStatutEnum.OK,
+              ],
+            },
+          },
+        },
+      ])
+      .exec();
   }
 }

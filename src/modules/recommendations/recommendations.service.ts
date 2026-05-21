@@ -1,7 +1,8 @@
+import { storeOwnerStripeOnboardedPipelineStages } from '@modules/billing/stripe/stripe-connect-visibility';
+import { DrinksService } from '@modules/drinks/drinks.service';
 import { SearchService } from '@modules/search/search.service';
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { DrinkModel, DrinkStatutEnum } from '@schemas/drink.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
 import { ProductRatingModel } from '@schemas/product_rating.schema';
@@ -32,12 +33,13 @@ const PAID_LIKE_STATUSES: OrderStatusEnum[] = [
 
 @Injectable()
 export class RecommendationsService {
+  @Inject(DrinksService)
+  private readonly _drinksService: DrinksService;
+
   constructor(
     private readonly _search: SearchService,
     @InjectModel(UserRecommendationSignalModel.name)
     private readonly _signalModel: Model<UserRecommendationSignalModel>,
-    @InjectModel(DrinkModel.name)
-    private readonly _drinkModel: Model<DrinkModel>,
     @InjectModel(OrderModel.name)
     private readonly _orderModel: Model<OrderModel>,
     @InjectModel(StoreModel.name)
@@ -408,6 +410,7 @@ export class RecommendationsService {
             acceptsOrders: { $ne: false },
           },
         },
+        ...storeOwnerStripeOnboardedPipelineStages(),
         { $sort: { averageRating: -1, updatedAt: -1 } },
         /** Borne avant `$lookup` commandes — coût O(n×orders) sinon sur tout le parc boutiques. */
         { $limit: 160 },
@@ -485,48 +488,40 @@ export class RecommendationsService {
     storeIds: string[],
     maxItems: number,
   ): Promise<Record<string, unknown>[]> {
-    const oids = storeIds
-      .filter((id) => Types.ObjectId.isValid(id))
-      .map((id) => new Types.ObjectId(id));
-    if (!oids.length) return [];
+    const drinks = await this._drinksService.findByStoresForCatalog(
+      storeIds,
+      maxItems,
+    );
+    if (!drinks.length) return [];
 
-    const rows = await this._drinkModel
-      .find({
-        store: { $in: oids },
-        statut: DrinkStatutEnum.OK,
-      })
-      .sort({ updatedAt: -1 })
-      .limit(maxItems)
-      .populate({ path: 'store', select: 'name' })
-      .lean()
-      .exec();
-
-    return rows.map((d) => {
-      const doc = d as unknown as {
-        _id: Types.ObjectId;
-        name?: string;
-        priceCad?: number;
-        imageUrl?: string;
-        store?: Types.ObjectId | { _id?: Types.ObjectId; name?: string };
-      };
-      let sid = '';
-      let storeName = '';
-      const stRaw = doc.store;
-      if (stRaw != null && typeof stRaw === 'object' && !(stRaw instanceof Types.ObjectId)) {
-        const st = stRaw as { _id?: Types.ObjectId; name?: string };
-        if (st._id) sid = String(st._id);
-        if (st.name != null) storeName = String(st.name);
-      } else if (stRaw != null) {
-        sid = String(stRaw);
+    const storeOids = [
+      ...new Set(
+        storeIds.filter((id) => Types.ObjectId.isValid(id)).map((id) => id),
+      ),
+    ];
+    const storeNameById = new Map<string, string>();
+    if (storeOids.length) {
+      const stores = await this._storeModel
+        .find({
+          _id: {
+            $in: storeOids.map((id) => new Types.ObjectId(id)),
+          },
+        })
+        .select('name')
+        .lean()
+        .exec();
+      for (const s of stores) {
+        storeNameById.set(String(s._id), String(s.name ?? ''));
       }
-      return {
-        id: String(doc._id),
-        name: String(doc.name ?? ''),
-        priceCad: Number(doc.priceCad ?? 0),
-        imageUrl: String(doc.imageUrl ?? ''),
-        storeId: sid,
-        storeName,
-      };
-    });
+    }
+
+    return drinks.map((d) => ({
+      id: d.id,
+      name: d.name,
+      priceCad: d.priceCad,
+      imageUrl: d.imageUrl ?? '',
+      storeId: d.storeId,
+      storeName: storeNameById.get(d.storeId) ?? '',
+    }));
   }
 }

@@ -1,5 +1,8 @@
+import { PLATFORM_FEE_MODES, PlatformFeeMode } from '@schemas/platform-fees-settings.schema';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
+
+export { PLATFORM_FEE_MODES, PlatformFeeMode };
 
 /**
  * Paramètres globaux de livraison (plateforme), distincts des zones par restaurant.
@@ -29,6 +32,17 @@ export class PlatformShippingSettingsModel {
     default: [],
   })
   ranges: { minKm: number; maxKm: number; fee: number }[];
+
+  /** Frais prélevés par la plateforme sur le montant livraison facturé au client. */
+  @Prop({ type: String, enum: PLATFORM_FEE_MODES, default: 'percent' })
+  deliveryWithheldFeeMode: PlatformFeeMode;
+
+  @Prop({ type: Number, default: 0 })
+  deliveryWithheldFeeFixed: number;
+
+  /** % du frais de livraison facturé (ex. 15 = 15 %). */
+  @Prop({ type: Number, default: 0 })
+  deliveryWithheldFeePercent: number;
 }
 
 export type PlatformShippingSettingsDocument =

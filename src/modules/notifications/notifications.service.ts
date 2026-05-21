@@ -1,4 +1,10 @@
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { App } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
@@ -25,7 +31,7 @@ export interface InboxNotificationRow {
 }
 
 @Injectable()
-export class NotificationsService {
+export class NotificationsService implements OnModuleInit {
   private readonly logger = new Logger(NotificationsService.name);
 
   constructor(
@@ -36,6 +42,40 @@ export class NotificationsService {
     @InjectModel(NotificationReadReceiptModel.name)
     private readonly readReceiptModel: Model<NotificationReadReceiptModel>,
   ) {}
+
+  onModuleInit(): void {
+    const projectId = this.firebaseApp.options.projectId;
+    if (!projectId) {
+      this.logger.error(
+        'FCM désactivé : Firebase Admin sans projectId. ' +
+          'Ajoutez GOOGLE_APPLICATION_CREDENTIALS=accounts.json et AM_FIREBASE_PROJECT_ID=afrikanmeals dans .env puis redémarrez.',
+      );
+      return;
+    }
+    this.logger.log(`FCM prêt (projet Firebase Admin : ${projectId})`);
+  }
+
+  /**
+   * Les jetons sont stockés en base sous `fcm_tokens` (pipeline d’upsert) ;
+   * certains documents ont aussi `fcmTokens` (vide ou legacy). On fusionne et déduplique.
+   */
+  private mergeFcmTokenRows(...arrays: unknown[]): { token: string }[] {
+    const seen = new Set<string>();
+    const out: { token: string }[] = [];
+    for (const arr of arrays) {
+      if (!Array.isArray(arr)) continue;
+      for (const row of arr) {
+        if (!row || typeof row !== 'object') continue;
+        const token = String(
+          (row as { token?: unknown }).token ?? '',
+        ).trim();
+        if (!token || seen.has(token)) continue;
+        seen.add(token);
+        out.push({ token });
+      }
+    }
+    return out;
+  }
 
   private inboxFilterForUser(
     userId: string,
@@ -341,15 +381,22 @@ export class NotificationsService {
     body: string;
     data: Record<string, string>;
   }): Promise<void> {
-    const cur = this.userModel
-      .find({ 'fcmTokens.0': { $exists: true } })
-      .select('_id')
-      .batchSize(500)
-      .cursor();
+    const cur = this.userModel.collection
+      .find({
+        $or: [
+          { 'fcm_tokens.0': { $exists: true } },
+          { 'fcmTokens.0': { $exists: true } },
+        ],
+      })
+      .project({ _id: 1 })
+      .batchSize(500);
 
     const chunk: string[] = [];
     for await (const u of cur) {
-      chunk.push((u._id as Types.ObjectId).toString());
+      const id = u._id;
+      chunk.push(
+        id instanceof Types.ObjectId ? id.toString() : String(id),
+      );
       if (chunk.length >= 500) {
         await this.sendMulticastNotification({
           recipientUserIds: [...chunk],
@@ -388,24 +435,24 @@ export class NotificationsService {
       return { sent: 0, failures: 0, deviceCount: 0 };
     }
 
-    const users = await this.userModel
+    const mongoUsers = await this.userModel.collection
       .find({ _id: { $in: oids } })
-      .select({ fcmTokens: 1 })
-      .lean()
-      .exec();
+      .project({ _id: 1, fcm_tokens: 1, fcmTokens: 1 })
+      .toArray();
 
     const tokenRows: { userId: string; token: string }[] = [];
-    for (const u of users) {
-      const doc = u as unknown as {
-        _id: Types.ObjectId;
-        fcmTokens?: { token: string }[];
-      };
-      const uid = doc._id.toString();
-      const tokens = doc.fcmTokens ?? [];
-      for (const row of tokens) {
-        if (row?.token?.trim()) {
-          tokenRows.push({ userId: uid, token: row.token.trim() });
-        }
+    for (const u of mongoUsers) {
+      const raw = u as Record<string, unknown>;
+      const id = raw._id;
+      const uid =
+        id instanceof Types.ObjectId
+          ? id.toHexString()
+          : Types.ObjectId.isValid(String(id))
+            ? new Types.ObjectId(String(id)).toHexString()
+            : String(id);
+      const merged = this.mergeFcmTokenRows(raw.fcm_tokens, raw.fcmTokens);
+      for (const row of merged) {
+        tokenRows.push({ userId: uid, token: row.token });
       }
     }
 
@@ -469,8 +516,12 @@ export class NotificationsService {
           ) {
             if (tok) invalidTokens.add(tok);
           } else {
+            const hint =
+              code === 'messaging/third-party-auth-error'
+                ? ' — vérifiez GOOGLE_APPLICATION_CREDENTIALS=accounts.json (compte de service), pas la clé VAPID ; pour iOS, configurez APNs dans la console Firebase'
+                : '';
             this.logger.warn(
-              `FCM error: ${code} ${resp.error?.message ?? ''}`,
+              `FCM error: ${code} ${resp.error?.message ?? ''}${hint}`,
             );
           }
         }
@@ -479,17 +530,286 @@ export class NotificationsService {
 
     if (invalidTokens.size > 0) {
       const arr = [...invalidTokens];
-      await this.userModel.updateMany(
+      await this.userModel.collection.updateMany(
         {},
         {
           $pull: {
+            fcm_tokens: { token: { $in: arr } },
             fcmTokens: { token: { $in: arr } },
           },
-        },
+        } as Record<string, unknown>,
       );
     }
 
     return { sent, failures, deviceCount };
+  }
+
+  private static orderStatusLabelFr(status: string): string {
+    const s = status.trim().toLowerCase();
+    switch (s) {
+      case 'created':
+        return 'En attente de paiement';
+      case 'paied':
+        return 'Payée';
+      case 'approved':
+        return 'Approuvée';
+      case 'cancelled':
+        return 'Annulée';
+      case 'shipped':
+        return 'En livraison';
+      case 'completed':
+        return 'Terminée';
+      default:
+        return status || 'Mise à jour';
+    }
+  }
+
+  private static shortOrderPublicRef(orderId: string): string {
+    const t = (orderId ?? '').trim();
+    if (t.length >= 6) return t.slice(-6).toUpperCase();
+    return t.toUpperCase();
+  }
+
+  /**
+   * Centre de messages in-app (aligné sur le chat) — sans second push FCM.
+   */
+  private async persistCustomerOrderInbox(args: {
+    userId: string;
+    orderId: string;
+    storeName?: string;
+    storeId?: string;
+    body: string;
+    reason: 'created' | 'status_changed';
+    status: string;
+  }): Promise<void> {
+    try {
+      const store = (args.storeName ?? '').trim() || 'Restaurant';
+      const ref = NotificationsService.shortOrderPublicRef(args.orderId);
+      const title = `${store} • #${ref}`;
+      const data: Record<string, unknown> = {
+        type: 'order',
+        orderId: args.orderId,
+        storeName: store,
+        reason: args.reason,
+        status: args.status,
+      };
+      const sid = args.storeId?.trim();
+      if (sid) {
+        data.storeId = sid;
+      }
+      await this.createUserScopedNotification({
+        recipientUserId: args.userId,
+        title,
+        body: (args.body ?? '').trim() || NotificationsService.orderStatusLabelFr(args.status),
+        type: 'order',
+        data,
+        sendPush: false,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`persistCustomerOrderInbox: ${msg}`);
+    }
+  }
+
+  /**
+   * Push FCM — nouvelle commande (ex. panier → `created`, payer plus tard).
+   */
+  async pushCustomerOrderCreated(args: {
+    userId: string;
+    orderId: string;
+    storeName?: string;
+    storeId?: string;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.userId)) {
+      return;
+    }
+    const store = (args.storeName ?? '').trim() || 'Restaurant';
+    const statusLabel = NotificationsService.orderStatusLabelFr('created');
+    // Inbox d’abord : évite qu’un flux « créer puis payer tout de suite »
+    // (ex. webhook Stripe) enregistre « Payée » avant « En attente de paiement »
+    // quand le FCM « créé » est encore en cours.
+    await this.persistCustomerOrderInbox({
+      userId: args.userId,
+      orderId: args.orderId,
+      storeName: args.storeName,
+      storeId: args.storeId,
+      body: statusLabel,
+      reason: 'created',
+      status: 'created',
+    });
+
+    void this.sendMulticastNotification({
+      recipientUserIds: [args.userId],
+      title: 'Commande enregistrée',
+      body: `${store} : votre commande est en attente. Payez quand vous voulez.`,
+      data: {
+        type: 'order_update',
+        audience: 'customer',
+        reason: 'created',
+        orderId: args.orderId,
+        storeName: store,
+        status: 'created',
+      },
+    })
+      .then((res) => {
+        if (res.deviceCount === 0) {
+          this.logger.warn(
+            `pushCustomerOrderCreated: aucun jeton FCM pour l’utilisateur ${args.userId}`,
+          );
+        }
+      })
+      .catch((e) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        this.logger.warn(`pushCustomerOrderCreated: ${msg}`);
+      });
+  }
+
+  /**
+   * Push FCM — changement de statut de commande côté client.
+   */
+  async pushCustomerOrderStatusChanged(args: {
+    userId: string;
+    orderId: string;
+    storeName?: string;
+    storeId?: string;
+    previousStatus: string;
+    newStatus: string;
+    /** Libellé court dans le corps du push (ex. prêt retrait / livraison). */
+    bodyOverride?: string;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.userId)) {
+      return;
+    }
+    const prev = (args.previousStatus ?? '').trim().toLowerCase();
+    const next = (args.newStatus ?? '').trim().toLowerCase();
+    if (!next || prev === next) {
+      return;
+    }
+    const store = (args.storeName ?? '').trim() || 'Restaurant';
+    const label =
+      (args.bodyOverride ?? '').trim() ||
+      NotificationsService.orderStatusLabelFr(next);
+    await this.persistCustomerOrderInbox({
+      userId: args.userId,
+      orderId: args.orderId,
+      storeName: args.storeName,
+      storeId: args.storeId,
+      body: label,
+      reason: 'status_changed',
+      status: next,
+    });
+
+    void this.sendMulticastNotification({
+      recipientUserIds: [args.userId],
+      title: 'Commande mise à jour',
+      body: `${store} : ${label}`,
+      data: {
+        type: 'order_update',
+        audience: 'customer',
+        reason: 'status_changed',
+        orderId: args.orderId,
+        storeName: store,
+        status: next,
+        previousStatus: prev || 'unknown',
+      },
+    })
+      .then((res) => {
+        if (res.deviceCount === 0) {
+          this.logger.warn(
+            `pushCustomerOrderStatusChanged: aucun jeton FCM pour l’utilisateur ${args.userId}`,
+          );
+        }
+      })
+      .catch((e) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        this.logger.warn(`pushCustomerOrderStatusChanged: ${msg}`);
+      });
+  }
+
+  /** Inbox + push FCM — mise à jour remboursement commande. */
+  async notifyCustomerRefundStatus(args: {
+    userId: string;
+    orderId: string;
+    storeName?: string;
+    storeId?: string;
+    title: string;
+    body: string;
+    refundStatus: string;
+    stripeRefundId?: string;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.userId)) {
+      return;
+    }
+    const store = (args.storeName ?? '').trim() || 'Restaurant';
+    const data = {
+      type: 'refund_update',
+      audience: 'customer',
+      orderId: args.orderId,
+      storeName: store,
+      storeId: args.storeId ?? '',
+      refundStatus: args.refundStatus,
+      stripeRefundId: args.stripeRefundId ?? '',
+    };
+
+    try {
+      await this.createUserScopedNotification({
+        recipientUserId: args.userId,
+        title: args.title,
+        body: args.body,
+        type: 'refund',
+        data,
+        sendPush: true,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`notifyCustomerRefundStatus: ${msg}`);
+    }
+  }
+
+  /**
+   * Push FCM — restaurateur / espace admin (nouvelle commande, paiement, expédition).
+   */
+  async pushVendorOrderNotify(args: {
+    vendorUserIds: string[];
+    title: string;
+    body: string;
+    orderId: string;
+    storeName?: string;
+    reason: string;
+    status?: string;
+  }): Promise<void> {
+    const ids = [...new Set(args.vendorUserIds)].filter((id) =>
+      Types.ObjectId.isValid(id),
+    );
+    if (ids.length === 0) {
+      return;
+    }
+    const store = (args.storeName ?? '').trim() || 'Restaurant';
+    const status = (args.status ?? '').trim().toLowerCase();
+    try {
+      const res = await this.sendMulticastNotification({
+        recipientUserIds: ids,
+        title: args.title,
+        body: args.body,
+        data: {
+          type: 'order_update',
+          audience: 'vendor',
+          reason: args.reason,
+          orderId: args.orderId,
+          storeName: store,
+          status: status || 'unknown',
+          url: '/commandes',
+        },
+      });
+      if (res.deviceCount === 0) {
+        this.logger.warn(
+          `pushVendorOrderNotify: aucun jeton FCM pour les IDs ${ids.join(', ')}`,
+        );
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`pushVendorOrderNotify: ${msg}`);
+    }
   }
 
   /**
@@ -648,9 +968,14 @@ export class NotificationsService {
   async removeUserFcmToken(userId: string, token: string): Promise<void> {
     const t = token.trim();
     if (!t) return;
-    await this.userModel.updateOne(
+    await this.userModel.collection.updateOne(
       { _id: new Types.ObjectId(userId) },
-      { $pull: { fcmTokens: { token: t } } },
+      {
+        $pull: {
+          fcm_tokens: { token: t },
+          fcmTokens: { token: t },
+        },
+      } as Record<string, unknown>,
     );
   }
 }

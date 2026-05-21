@@ -510,7 +510,7 @@ export class StoreController {
 
   @Get('/:id')
   async findOneById(@Param('id') id: string) {
-    return this._storeService.findOneById(id);
+    return this._storeService.findOneById(id, { requireMobileVisibility: true });
   }
 
   @Post('')

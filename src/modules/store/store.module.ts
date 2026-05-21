@@ -13,6 +13,10 @@ import { UsersModule } from '@modules/users/users.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import {
+  ProductRatingModel,
+  ProductRatingSchema,
+} from '@schemas/product_rating.schema';
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
@@ -41,6 +45,7 @@ import { StoreService } from './store.service';
       { name: StoreModel.name, schema: StoreSchema },
       { name: UserModel.name, schema: UserSchema },
       { name: ProductModel.name, schema: ProductSchema },
+      { name: ProductRatingModel.name, schema: ProductRatingSchema },
     ]),
   ],
   exports: [StoreService, MongooseModule],

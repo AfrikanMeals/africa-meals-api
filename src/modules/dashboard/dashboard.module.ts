@@ -25,9 +25,15 @@ import { DeliveryDriversCityMigrationService } from './delivery-drivers-city-mig
 import { DeliveryDriversSeedService } from './delivery-drivers-seed.service';
 import { DashboardController } from './dashboard.controller';
 import { DashboardService } from './dashboard.service';
+import { NotificationsModule } from '@modules/notifications/notifications.module';
+import { OrdersModule } from '@modules/orders/orders.module';
+import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 
 @Module({
   imports: [
+    NotificationsModule,
+    WsNotifyModule,
+    OrdersModule,
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       { name: StoreRatingModel.name, schema: StoreRatingSchema },
