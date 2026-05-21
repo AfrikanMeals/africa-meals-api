@@ -45,6 +45,10 @@ import {
   PatchDrinkJsonDto,
 } from '@modules/drinks/dto/drink.dto';
 import { DrinksService } from '@modules/drinks/drinks.service';
+import {
+  VendorCatalogDrinksQueryDto,
+  VendorCatalogProductsQueryDto,
+} from './dto/vendor-catalog-query.dto';
 import { StockItemsService } from '@modules/stock-items/stock-items.service';
 import { AdminVendorStoreStatusDto } from './dto/admin-vendor-store.dto';
 import {
@@ -247,6 +251,74 @@ export class StoreController {
     return this._storeService.listStoreProducts(id, req.user as UserModel);
   }
 
+  @Get(':id/products/:productId')
+  @UseGuards(JwtGuard)
+  async getStoreProduct(
+    @Param('id') id: string,
+    @Param('productId') productId: string,
+    @Req() req: Request,
+  ) {
+    return this._storeService.getStoreProductForOwner(
+      id,
+      productId,
+      req.user as UserModel,
+    );
+  }
+
+  /** Catalogue vendeur mobile — plats (food ou menu du jour). */
+  @Get(':id/vendor-catalog/products')
+  @UseGuards(JwtGuard)
+  async listVendorCatalogProducts(
+    @Param('id') id: string,
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: false,
+      }),
+    )
+    query: VendorCatalogProductsQueryDto,
+    @Req() req: Request,
+  ) {
+    const tab = query.tab === 'daily_menu' ? 'daily_menu' : 'food';
+    return this._storeService.listVendorCatalogProducts(
+      id,
+      req.user as UserModel,
+      {
+        page: query.page ?? 1,
+        take: query.take ?? 20,
+        q: query.q,
+        tab,
+      },
+    );
+  }
+
+  /** Catalogue vendeur mobile — boissons. */
+  @Get(':id/vendor-catalog/drinks')
+  @UseGuards(JwtGuard)
+  async listVendorCatalogDrinks(
+    @Param('id') id: string,
+    @Query(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: false,
+      }),
+    )
+    query: VendorCatalogDrinksQueryDto,
+    @Req() req: Request,
+  ) {
+    return this._drinksService.findByStoreForOwnerPaginated(
+      id,
+      req.user as UserModel,
+      {
+        page: query.page ?? 1,
+        take: query.take ?? 20,
+        q: query.q,
+      },
+    );
+  }
+
   /** Lignes de stock (ingrédients) — propriétaire de la boutique. */
   @Get(':id/stock-items')
   @UseGuards(JwtGuard)
@@ -309,6 +381,20 @@ export class StoreController {
   @UseGuards(JwtGuard)
   async listDrinks(@Param('id') id: string, @Req() req: Request) {
     return this._drinksService.findByStoreForOwner(id, req.user as UserModel);
+  }
+
+  @Get(':id/drinks/:drinkId')
+  @UseGuards(JwtGuard)
+  async getDrink(
+    @Param('id') id: string,
+    @Param('drinkId') drinkId: string,
+    @Req() req: Request,
+  ) {
+    return this._drinksService.findOneForStoreOwner(
+      id,
+      drinkId,
+      req.user as UserModel,
+    );
   }
 
   /**

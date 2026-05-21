@@ -287,16 +287,11 @@ export class ProductsService {
       .exec();
   }
 
-  /** Liste catalogue vendeur (document allégé + catégorie peuplée). */
-  async findByStoreId(storeId: string) {
-    const rows = await this._productModel
-      .find({ store: storeId })
-      .populate({ path: 'category', select: 'title' })
-      .sort({ updatedAt: -1 })
-      .lean()
-      .exec();
+  private _escapeRegex(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
 
-    return rows.map((p: Record<string, unknown>) => {
+  private mapVendorProductRow(p: Record<string, unknown>) {
       const cat = p.category as Record<string, unknown> | undefined;
       const catId =
         cat?._id != null
@@ -411,7 +406,195 @@ export class ProductsService {
               ? p.updatedAt
               : undefined,
       };
-    });
+  }
+
+  /** Détail plat — propriétaire (sans base64, URLs galerie uniquement). */
+  async findOneForStoreOwner(storeId: string, productId: string) {
+    if (!Types.ObjectId.isValid(storeId) || !Types.ObjectId.isValid(productId)) {
+      throw new NotFoundException('product_not_found');
+    }
+    const row = await this._productModel
+      .findOne({
+        _id: new Types.ObjectId(productId),
+        store: storeId,
+      })
+      .populate({ path: 'category', select: 'title' })
+      .lean()
+      .exec();
+    if (!row) {
+      throw new NotFoundException('product_not_found');
+    }
+    const mapped = this.mapVendorProductRow(row as Record<string, unknown>);
+    const main =
+      typeof mapped.profileImage === 'string' &&
+      (mapped.profileImage.startsWith('http://') ||
+        mapped.profileImage.startsWith('https://'))
+        ? mapped.profileImage
+        : undefined;
+    const gallery = (mapped.profileImages ?? []).filter(
+      (u) =>
+        typeof u === 'string' &&
+        (u.startsWith('http://') || u.startsWith('https://')),
+    );
+    return {
+      ...mapped,
+      profileImage: main,
+      profileImages: gallery,
+      imageStoredInDb: false,
+    };
+  }
+
+  /** Liste catalogue vendeur (document allégé + catégorie peuplée). */
+  async findByStoreId(storeId: string) {
+    const rows = await this._productModel
+      .find({ store: storeId })
+      .populate({ path: 'category', select: 'title' })
+      .sort({ updatedAt: -1 })
+      .lean()
+      .exec();
+
+    return rows.map((p) =>
+      this.mapVendorProductRow(p as Record<string, unknown>),
+    );
+  }
+
+  /** Ligne liste catalogue mobile (sans base64 ni galerie). */
+  private mapVendorCatalogListRow(p: Record<string, unknown>) {
+    const cat = p.category as Record<string, unknown> | undefined;
+    const catTitle =
+      typeof p.categoryTitle === 'string'
+        ? p.categoryTitle
+        : cat && typeof cat.title === 'string'
+          ? cat.title
+          : '';
+    const url =
+      typeof p.profileImage === 'string'
+        ? p.profileImage
+        : typeof p.profile_image === 'string'
+          ? p.profile_image
+          : '';
+    const profileImage =
+      url.startsWith('http://') || url.startsWith('https://') ? url : undefined;
+    const catId =
+      cat?._id != null
+        ? String(cat._id)
+        : p.category != null
+          ? String(p.category)
+          : '';
+    return {
+      id: String(p._id ?? p.id ?? ''),
+      title: String(p.title ?? ''),
+      bio: String(p.bio ?? ''),
+      about: String(p.about ?? ''),
+      price: Number(p.price ?? 0),
+      discountPrice: Number(p.discountPrice ?? p.discount_price ?? 0),
+      currency: String(p.currency ?? 'CAD'),
+      status: String(p.status ?? ProductStatusEnum.PENDING),
+      categoryId: catId,
+      categoryTitle: catTitle,
+      ...(profileImage ? { profileImage } : {}),
+    };
+  }
+
+  /**
+   * Catalogue vendeur mobile : une agrégation ($facet), champs minimaux,
+   * jamais `image_base64` / `gallery_images`.
+   */
+  async findByStoreIdPaginated(
+    storeId: string,
+    opts: {
+      page: number;
+      take: number;
+      q?: string;
+      productIds?: string[];
+    },
+  ) {
+    const storeOid = Types.ObjectId.isValid(storeId)
+      ? new Types.ObjectId(storeId)
+      : null;
+    if (!storeOid) {
+      return { items: [], total: 0, page: 1, limit: opts.take };
+    }
+
+    const ids = (opts.productIds ?? [])
+      .map((x) => x.trim())
+      .filter((x) => Types.ObjectId.isValid(x));
+    if (opts.productIds != null && !ids.length) {
+      return { items: [], total: 0, page: 1, limit: opts.take };
+    }
+
+    const match: Record<string, unknown> = { store: storeOid };
+    if (opts.productIds != null) {
+      match._id = { $in: ids.map((id) => new Types.ObjectId(id)) };
+    }
+    const q = opts.q?.trim();
+    if (q) {
+      const esc = this._escapeRegex(q);
+      match.$or = [
+        { title: { $regex: esc, $options: 'i' } },
+        { bio: { $regex: esc, $options: 'i' } },
+      ];
+    }
+
+    const page = Math.max(1, opts.page);
+    const take = Math.min(80, Math.max(8, opts.take));
+    const skip = (page - 1) * take;
+
+    const pipeline: PipelineStage[] = [
+      { $match: match },
+      {
+        $lookup: {
+          from: 'product_categories',
+          localField: 'category',
+          foreignField: '_id',
+          as: 'cat',
+          pipeline: [{ $project: { title: 1 } }],
+        },
+      },
+      {
+        $facet: {
+          total: [{ $count: 'n' }],
+          rows: [
+            { $sort: { updatedAt: -1 } },
+            { $skip: skip },
+            { $limit: take },
+            {
+              $project: {
+                _id: 1,
+                title: 1,
+                price: 1,
+                discount_price: 1,
+                discountPrice: 1,
+                currency: 1,
+                status: 1,
+                profile_image: 1,
+                profileImage: 1,
+                bio: 1,
+                about: 1,
+                category: 1,
+                categoryTitle: {
+                  $ifNull: [{ $arrayElemAt: ['$cat.title', 0] }, ''],
+                },
+              },
+            },
+          ],
+        },
+      },
+    ];
+
+    const agg = await this._productModel.aggregate(pipeline).exec();
+    const bucket = agg[0] as
+      | { total?: { n?: number }[]; rows?: Record<string, unknown>[] }
+      | undefined;
+    const total = bucket?.total?.[0]?.n ?? 0;
+    const rows = bucket?.rows ?? [];
+
+    return {
+      items: rows.map((p) => this.mapVendorCatalogListRow(p)),
+      total,
+      page,
+      limit: take,
+    };
   }
 
   async create(

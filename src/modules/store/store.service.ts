@@ -1077,6 +1077,106 @@ export class StoreService {
     return this._productsService.findByStoreId(storeId);
   }
 
+  private async assertVendorCatalogStoreAccess(
+    storeId: string,
+    user: UserModel,
+  ) {
+    if (user.type === UserTypeEnum.ADMIN) {
+      const exists = await this._storeModel
+        .findById(storeId)
+        .select('_id')
+        .exec();
+      if (!exists) {
+        throw new NotFoundException('store_not_found');
+      }
+      return;
+    }
+    const store = await this._storeModel
+      .findOne({ _id: storeId, owner: user._id })
+      .select('_id')
+      .exec();
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+  }
+
+  /** Plats catalogue vendeur (food ou menu du jour du jour courant). */
+  async listVendorCatalogProducts(
+    storeId: string,
+    user: UserModel,
+    args: {
+      page: number;
+      take: number;
+      q?: string;
+      tab: 'food' | 'daily_menu';
+    },
+  ) {
+    await this.assertVendorCatalogStoreAccess(storeId, user);
+    let productIds: string[] | undefined;
+    const dailyMenuByProductId = new Map<
+      string,
+      {
+        stockUnlimited: boolean;
+        stockRemaining: number;
+        soldOut: boolean;
+      }
+    >();
+    if (args.tab === 'daily_menu') {
+      const doc = await this._storeModel
+        .findById(storeId)
+        .select('dailyMenuByWeekday')
+        .lean()
+        .exec();
+      const rows = this.normalizeDailyMenuForApi(
+        (doc?.dailyMenuByWeekday as Record<string, unknown>[]) ?? [],
+      );
+      const dayOfWeek = new Date().getDay();
+      const slot = rows.find((r) => r.dayOfWeek === dayOfWeek);
+      for (const it of slot?.items ?? []) {
+        dailyMenuByProductId.set(it.productId, {
+          stockUnlimited: it.stockUnlimited,
+          stockRemaining: it.stockRemaining,
+          soldOut: it.soldOut,
+        });
+      }
+      productIds = [...dailyMenuByProductId.keys()];
+    }
+    const page = await this._productsService.findByStoreIdPaginated(storeId, {
+      page: args.page,
+      take: args.take,
+      q: args.q,
+      productIds: args.tab === 'daily_menu' ? productIds : undefined,
+    });
+    if (args.tab !== 'daily_menu' || !dailyMenuByProductId.size) {
+      return page;
+    }
+    return {
+      ...page,
+      items: page.items.map((p) => {
+        const dm = dailyMenuByProductId.get(p.id);
+        return dm
+          ? {
+              ...p,
+              dailyMenu: {
+                stockUnlimited: dm.stockUnlimited,
+                stockRemaining: dm.stockRemaining,
+                soldOut: dm.soldOut,
+              },
+            }
+          : p;
+      }),
+    };
+  }
+
+  async getStoreProductForOwner(
+    storeId: string,
+    productId: string,
+    user: UserModel,
+  ) {
+    await this.assertVendorCatalogStoreAccess(storeId, user);
+    return this._productsService.findOneForStoreOwner(storeId, productId);
+  }
+
   async updateStoreProduct(
     storeId: string,
     productId: string,

@@ -20,6 +20,29 @@ export function maxDrinkOrderQuantity(quantite: number): number {
   return Math.max(0, Math.floor(Number(quantite)));
 }
 
+/** Liste catalogue vendeur mobile (champs affichés uniquement). */
+function mapDrinkCatalogListRow(doc: Record<string, unknown>) {
+  const img =
+    doc.imageUrl != null
+      ? String(doc.imageUrl)
+      : doc.image_url != null
+        ? String(doc.image_url)
+        : '';
+  const imageUrl =
+    img.startsWith('http://') || img.startsWith('https://') ? img : undefined;
+  return {
+    id: String(doc._id),
+    name: String(doc.name ?? ''),
+    description:
+      doc.description != null ? String(doc.description) : '',
+    priceCad: Number(doc.priceCad ?? doc.price_cad ?? 0),
+    quantite: Number(doc.quantite ?? 0),
+    seuil: Number(doc.seuil ?? 0),
+    statut: String(doc.statut ?? DrinkStatutEnum.OK),
+    ...(imageUrl ? { imageUrl } : {}),
+  };
+}
+
 function mapDrinkDoc(doc: Record<string, unknown>) {
   const created = doc.createdAt;
   const updated = doc.updatedAt;
@@ -101,6 +124,29 @@ export class DrinksService {
     }
   }
 
+  /** Détail boisson — propriétaire boutique. */
+  async findOneForStoreOwner(
+    storeId: string,
+    drinkId: string,
+    user: UserModel,
+  ) {
+    await this.assertStoreOwner(storeId, user);
+    if (!Types.ObjectId.isValid(storeId) || !Types.ObjectId.isValid(drinkId)) {
+      throw new NotFoundException('drink_not_found');
+    }
+    const row = await this._drinkModel
+      .findOne({
+        _id: new Types.ObjectId(drinkId),
+        store: new Types.ObjectId(storeId),
+      })
+      .lean()
+      .exec();
+    if (!row) {
+      throw new NotFoundException('drink_not_found');
+    }
+    return mapDrinkDoc(row as Record<string, unknown>);
+  }
+
   async findByStoreForOwner(storeId: string, user: UserModel) {
     await this.assertStoreOwner(storeId, user);
     if (!Types.ObjectId.isValid(storeId)) {
@@ -112,6 +158,73 @@ export class DrinksService {
       .lean()
       .exec();
     return rows.map((r) => mapDrinkDoc(r as Record<string, unknown>));
+  }
+
+  /** Catalogue boissons vendeur (pagination + recherche, payload minimal). */
+  async findByStoreForOwnerPaginated(
+    storeId: string,
+    user: UserModel,
+    opts: { page: number; take: number; q?: string },
+  ) {
+    await this.assertStoreOwner(storeId, user);
+    if (!Types.ObjectId.isValid(storeId)) {
+      return { items: [], total: 0, page: 1, limit: opts.take };
+    }
+    const storeOid = new Types.ObjectId(storeId);
+    const match: Record<string, unknown> = { store: storeOid };
+    const q = opts.q?.trim();
+    if (q) {
+      const esc = this._escapeRegex(q);
+      match.$or = [
+        { name: { $regex: esc, $options: 'i' } },
+        { description: { $regex: esc, $options: 'i' } },
+      ];
+    }
+    const page = Math.max(1, opts.page);
+    const take = Math.min(80, Math.max(8, opts.take));
+    const skip = (page - 1) * take;
+
+    const agg = await this._drinkModel
+      .aggregate([
+        { $match: match },
+        {
+          $facet: {
+            total: [{ $count: 'n' }],
+            rows: [
+              { $sort: { updatedAt: -1 } },
+              { $skip: skip },
+              { $limit: take },
+              {
+                $project: {
+                  name: 1,
+                  description: 1,
+                  quantite: 1,
+                  seuil: 1,
+                  statut: 1,
+                  price_cad: 1,
+                  priceCad: 1,
+                  image_url: 1,
+                  imageUrl: 1,
+                },
+              },
+            ],
+          },
+        },
+      ])
+      .exec();
+
+    const bucket = agg[0] as
+      | { total?: { n?: number }[]; rows?: Record<string, unknown>[] }
+      | undefined;
+    const total = bucket?.total?.[0]?.n ?? 0;
+    const rows = bucket?.rows ?? [];
+
+    return {
+      items: rows.map((r) => mapDrinkCatalogListRow(r)),
+      total,
+      page,
+      limit: take,
+    };
   }
 
   /**
