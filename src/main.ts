@@ -5,7 +5,7 @@ import {
 } from './http-request-timeout';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import * as express from 'express';
+import express from 'express';
 import { AppModule } from './app.module';
 import { configureApplication } from './configure-app';
 

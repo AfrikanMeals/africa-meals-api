@@ -140,7 +140,7 @@ const SAGUENAY_DEMO_ADDRESSES: Array<{
  * des comptes `@seed.local`, plats réalistes + `category_title` aligné sur les
  * catégories catalogue en base.
  *
- * Désactivé par défaut au démarrage ; activer avec `SEED_DEMO_ORDERS=true` (tous environnements).
+ * Désactivé par défaut au démarrage. Activer explicitement : `SEED_DEMO_ORDERS=true`.
  *
  * Supprime les anciennes commandes de démo pour cette boutique (clients synthétiques,
  * ancien client Sim, libellés `Sim —` / `Démo AE`) puis recrée 7 commandes.

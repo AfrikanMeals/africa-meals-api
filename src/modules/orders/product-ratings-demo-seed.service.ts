@@ -77,7 +77,7 @@ export class ProductRatingsDemoSeedService implements OnModuleInit {
    * Insère jusqu’à 5 avis par boutique (un plat différent par avis, 5 clients seed partagés).
    * Idempotent : supprime d’abord les avis liés aux comptes `afrikan-demo-rating-*@seed.local`.
    *
-   * Désactivé par défaut au démarrage ; activer avec `SEED_DEMO_PRODUCT_RATINGS=true` (tous environnements).
+   * Désactivé par défaut au démarrage. Activer explicitement : `SEED_DEMO_PRODUCT_RATINGS=true`.
    */
   private async seedDemoProductRatingsIfNeeded() {
     if (process.env.SEED_DEMO_PRODUCT_RATINGS !== 'true') {

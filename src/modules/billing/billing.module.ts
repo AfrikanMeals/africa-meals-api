@@ -46,6 +46,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
     PlatformShippingSettingsModule,
     MongooseModule.forFeature([
       { name: PaymentMethodModel.name, schema: PaymentMethodSchema },
+      { name: StoreModel.name, schema: StoreSchema },
       {
         name: StripeProcessedCheckoutModel.name,
         schema: StripeProcessedCheckoutSchema,
