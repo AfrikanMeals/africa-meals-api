@@ -16,6 +16,10 @@ import type {
   ProductReviewPublicRow,
   ProductReviewsPageResponse,
 } from './dto/product-reviews-page.dto';
+import type {
+  StoreReviewPublicRow,
+  StoreReviewsPageResponse,
+} from './dto/store-reviews-page.dto';
 
 @Injectable()
 export class RatingsService {
@@ -166,6 +170,123 @@ export class RatingsService {
         createdAt,
         updatedAt,
         product: productId,
+        user: {
+          id: uid,
+          fullName: (usr?.fullName ?? '').trim(),
+          profileImage:
+            typeof usr?.profileImage === 'string' && usr.profileImage.trim()
+              ? usr.profileImage.trim()
+              : null,
+        },
+      };
+    });
+
+    const hasMore = skip + items.length < total;
+    return { items, total, page, take, hasMore };
+  }
+
+  /**
+   * Avis plats d’une boutique (tous les `product_ratings` des produits du store),
+   * tri récents — **public**, pagination seule.
+   */
+  async listStoreReviewsPaginated(
+    storeId: string,
+    opts: { page: number; take: number },
+  ): Promise<StoreReviewsPageResponse> {
+    const { page, take } = opts;
+    if (!Types.ObjectId.isValid(storeId)) {
+      return { items: [], total: 0, page, take, hasMore: false };
+    }
+    const storeOid = new Types.ObjectId(storeId);
+    const skip = (page - 1) * take;
+
+    const pipeline: PipelineStage[] = [
+      {
+        $lookup: {
+          from: 'products',
+          localField: 'product',
+          foreignField: '_id',
+          as: '_p',
+        },
+      },
+      { $unwind: { path: '$_p' } },
+      { $match: { '_p.store': storeOid } },
+      {
+        $lookup: {
+          from: 'users',
+          let: { uid: '$user' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$_id', '$$uid'] } } },
+            {
+              $match: {
+                $or: [
+                  { email: { $exists: false } },
+                  { email: null },
+                  { email: { $not: DEMO_PRODUCT_RATER_EMAIL_RE } },
+                ],
+              },
+            },
+          ],
+          as: '_u',
+        },
+      },
+      { $unwind: { path: '$_u' } },
+      { $sort: { createdAt: -1 } },
+      {
+        $facet: {
+          meta: [{ $count: 'n' }],
+          pageRows: [{ $skip: skip }, { $limit: take }],
+        },
+      },
+    ];
+
+    type AggOut = {
+      meta?: { n: number }[];
+      pageRows?: Record<string, unknown>[];
+    };
+    const agg = await this._productRatingModel
+      .aggregate<AggOut>(pipeline)
+      .exec();
+    const bucket = agg[0] ?? { meta: [], pageRows: [] };
+    const total = bucket.meta?.[0]?.n ?? 0;
+    const raw = bucket.pageRows ?? [];
+
+    type LeanUser = {
+      _id?: unknown;
+      fullName?: string;
+      profileImage?: string;
+    };
+    type LeanProduct = { _id?: unknown; title?: string };
+
+    const items: StoreReviewPublicRow[] = raw.map((r) => {
+      const usr = r._u as LeanUser | null | undefined;
+      const prod = r._p as LeanProduct | null | undefined;
+      const commentRaw =
+        typeof r.comment === 'string' ? r.comment.trim() : '';
+      const uid =
+        usr && typeof usr === 'object' && usr._id != null
+          ? String(usr._id)
+          : '';
+      const productOid =
+        prod && prod._id != null ? String(prod._id) : String(r.product ?? '');
+      const rate = Math.min(5, Math.max(1, Math.round(Number(r.rate) || 0)));
+      const createdAt =
+        r.createdAt instanceof Date
+          ? r.createdAt.toISOString()
+          : String(r.createdAt ?? new Date().toISOString());
+      const updatedAt =
+        r.updatedAt instanceof Date
+          ? r.updatedAt.toISOString()
+          : String(r.updatedAt ?? createdAt);
+      const productTitle = (prod?.title ?? '').trim() || 'Plat';
+      return {
+        id: String(r._id),
+        rate,
+        comment: commentRaw.length > 0 ? commentRaw : null,
+        createdAt,
+        updatedAt,
+        product: productOid,
+        productTitle,
         user: {
           id: uid,
           fullName: (usr?.fullName ?? '').trim(),

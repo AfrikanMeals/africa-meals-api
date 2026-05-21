@@ -30,6 +30,28 @@ export class RatingsController {
   }
 
   /**
+   * Avis plats d’une boutique (pagination) — public, onglet Avis fiche restaurant.
+   */
+  @Get('stores/:storeId/reviews')
+  @ApiOperation({
+    summary: 'Avis paginés par boutique',
+    description:
+      'Agrège les avis `product_ratings` des plats du restaurant. `page` ≥ 1, `take` 1–50 (défaut 20). Tri : plus récents en premier.',
+  })
+  listStoreReviews(
+    @Param('storeId') storeId: string,
+    @Query('page') pageRaw?: string,
+    @Query('take') takeRaw?: string,
+  ) {
+    const page = Math.max(1, parseInt(pageRaw ?? '1', 10) || 1);
+    const take = Math.min(50, Math.max(1, parseInt(takeRaw ?? '20', 10) || 20));
+    return this.ratingsService.listStoreReviewsPaginated(storeId, {
+      page,
+      take,
+    });
+  }
+
+  /**
    * Avis produits récents (note ≥ 4) pour la landing web — public, sans authentification.
    */
   @Get('landing')
