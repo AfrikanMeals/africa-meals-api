@@ -436,6 +436,61 @@ export class StripeConnectService {
     return new Stripe(key);
   }
 
+  isConfigured(): boolean {
+    return Boolean(this.config.get<string>('STRIPE_SECRET_KEY')?.trim());
+  }
+
+  async listBalanceTransactions(
+    connectedAccountId: string,
+    opts: { limit: number; startingAfter?: string },
+  ) {
+    return this.stripe().balanceTransactions.list(
+      {
+        limit: opts.limit,
+        ...(opts.startingAfter
+          ? { starting_after: opts.startingAfter }
+          : {}),
+      },
+      { stripeAccount: connectedAccountId },
+    );
+  }
+
+  async createExpressAccount(params: {
+    email: string;
+    country: string;
+    businessName: string;
+  }) {
+    return this.stripe().accounts.create({
+      type: 'express',
+      country: params.country.toUpperCase(),
+      email: params.email,
+      capabilities: {
+        card_payments: { requested: true },
+        transfers: { requested: true },
+      },
+      business_profile: {
+        name: params.businessName,
+      },
+    });
+  }
+
+  async retrieveAccount(accountId: string) {
+    return this.stripe().accounts.retrieve(accountId);
+  }
+
+  async createAccountOnboardingLink(
+    accountId: string,
+    refreshUrl: string,
+    returnUrl: string,
+  ) {
+    return this.stripe().accountLinks.create({
+      account: accountId,
+      refresh_url: refreshUrl,
+      return_url: returnUrl,
+      type: 'account_onboarding',
+    });
+  }
+
   private assertVendor(user: UserModel) {
     if (user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('vendor_only');

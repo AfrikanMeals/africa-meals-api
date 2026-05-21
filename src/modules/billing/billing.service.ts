@@ -19,7 +19,7 @@ import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import Stripe from 'stripe';
 import { PaypalService } from './paypal/paypal.service';
-import { StripeConnectService } from './stripe-connect.service';
+import { StripeConnectService } from './stripe/stripe-connect.service';
 
 function vendorStoreObjectIds(user: UserModel): Types.ObjectId[] {
   const rawStores = user.stores || [];

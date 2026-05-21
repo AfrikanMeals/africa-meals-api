@@ -1,10 +1,10 @@
 version: "3"
 
 agent:
-  authtoken: 2KkFodyXKT1PmB1miEPQxefQg6m_7uF4ttnj5SiG39aDKvpu4
+  authtoken: 3E1nwAO6BhHCu5BoapS0LH7zoIf_7qbk1zYSWwtjA8Mpru9Tp
 
 endpoints:
   - name: afrikan-api
-    url: https://blindly-witty-snake.ngrok-free.app
+    url: https://pacify-frosty-scored.ngrok-free.dev
     upstream:
       url: "9000"
