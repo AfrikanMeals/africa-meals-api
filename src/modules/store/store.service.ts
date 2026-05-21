@@ -33,6 +33,7 @@ import { AddressModel } from '@schemas/address.schema';
 import { isDemoProductRaterEmail } from '@modules/ratings/demo-product-rating-users';
 import { ProductRatingModel } from '@schemas/product_rating.schema';
 import { ProductModel } from '@schemas/product.schema';
+import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
@@ -83,6 +84,9 @@ export class StoreService {
 
   @InjectModel(ProductRatingModel.name)
   private readonly _productRatingModel: Model<ProductRatingModel>;
+
+  @InjectModel(OrderModel.name)
+  private readonly _orderModel: Model<OrderModel>;
 
   @Inject(AddressesService)
   private readonly _addressesService: AddressesService;
@@ -261,11 +265,18 @@ export class StoreService {
     }
     const { averageRating, reviewCount } =
       await this.productReviewsAverageForStore(storeOid);
+    const ordersCount = await this._orderModel
+      .countDocuments({
+        store: storeOid,
+        status: { $ne: OrderStatusEnum.CANCELLED },
+      })
+      .exec();
     const o = doc as unknown as Record<string, unknown>;
     const plain: Record<string, unknown> = {
       ...o,
       averageRating,
       reviewCount,
+      ordersCount,
     };
     const oid = o['_id'];
     if (oid != null && typeof (oid as { toString?: () => string }).toString === 'function') {
