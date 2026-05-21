@@ -235,6 +235,15 @@ export class BillingController {
     return this._stripeConnect.getConnectBalance(req.user as UserModel);
   }
 
+  @Get('stripe/connect/payout-estimate')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Aperçu net estimé avant demande de versement Stripe Connect',
+  })
+  stripeConnectPayoutEstimate(@Req() req: Request) {
+    return this._stripeConnect.getPayoutEstimate(req.user as UserModel);
+  }
+
   @Post('stripe/connect/request-payout')
   @UseGuards(JwtGuard)
   @ApiOperation({

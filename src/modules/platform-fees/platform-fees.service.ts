@@ -26,6 +26,9 @@ const DEFAULTS = {
   platformOrderFeeMode: 'fixed' as PlatformFeeMode,
   platformOrderFeeFixed: 0,
   platformOrderFeePercent: 0,
+  payoutFeeMode: 'fixed' as PlatformFeeMode,
+  payoutFeeFixed: 0,
+  payoutFeePercent: 0,
 };
 
 function assertAdmin(user: UserModel) {
@@ -83,6 +86,16 @@ export type VendorTransferSplit = {
   feeFixedCad: number;
 };
 
+/** Répartition versement : brut disponible, frais payout, net versé au vendeur. */
+export type PayoutFeeSplit = {
+  grossCents: number;
+  platformFeeCents: number;
+  payoutCents: number;
+  feeMode: PlatformFeeMode;
+  feePercent: number;
+  feeFixedCad: number;
+};
+
 export function computeVendorTransferSplit(
   grossCents: number,
   settings: {
@@ -119,6 +132,47 @@ export function computeVendorTransferSplit(
     grossCents: gross,
     platformFeeCents,
     transferCents,
+    feeMode,
+    feePercent,
+    feeFixedCad,
+  };
+}
+
+export function computePayoutFeeSplit(
+  grossCents: number,
+  settings: {
+    payoutFeeMode: PlatformFeeMode;
+    payoutFeeFixed: number;
+    payoutFeePercent: number;
+  },
+): PayoutFeeSplit {
+  const gross = Math.max(0, Math.round(grossCents));
+  const feeMode = settings.payoutFeeMode;
+  const feePercent = Math.max(0, settings.payoutFeePercent ?? 0);
+  const feeFixedCad = Math.max(0, settings.payoutFeeFixed ?? 0);
+
+  if (gross < 1) {
+    return {
+      grossCents: 0,
+      platformFeeCents: 0,
+      payoutCents: 0,
+      feeMode,
+      feePercent,
+      feeFixedCad,
+    };
+  }
+
+  let platformFeeCents =
+    feeMode === 'percent'
+      ? Math.round(gross * (feePercent / 100))
+      : Math.round(feeFixedCad * 100);
+
+  platformFeeCents = Math.max(0, Math.min(platformFeeCents, gross));
+
+  return {
+    grossCents: gross,
+    platformFeeCents,
+    payoutCents: gross - platformFeeCents,
     feeMode,
     feePercent,
     feeFixedCad,
@@ -240,6 +294,12 @@ export class PlatformFeesService {
       doc.platformOrderFeePercent ?? 0,
       DEFAULTS.platformOrderFeeMode,
     );
+    const payoutFeeMode = inferMode(
+      doc.payoutFeeMode,
+      doc.payoutFeeFixed ?? 0,
+      doc.payoutFeePercent ?? 0,
+      DEFAULTS.payoutFeeMode,
+    );
 
     return {
       currency: doc.currency ?? DEFAULTS.currency,
@@ -256,6 +316,9 @@ export class PlatformFeesService {
       platformOrderFeeMode,
       platformOrderFeeFixed: doc.platformOrderFeeFixed ?? 0,
       platformOrderFeePercent: doc.platformOrderFeePercent ?? 0,
+      payoutFeeMode,
+      payoutFeeFixed: doc.payoutFeeFixed ?? 0,
+      payoutFeePercent: doc.payoutFeePercent ?? 0,
       updatedAt:
         (doc as unknown as { updatedAt?: Date }).updatedAt?.toISOString?.() ??
         null,
@@ -289,6 +352,17 @@ export class PlatformFeesService {
       platformOrderFeeMode: settings.platformOrderFeeMode,
       platformOrderFeeFixed: settings.platformOrderFeeFixed,
       platformOrderFeePercent: settings.platformOrderFeePercent,
+    });
+  }
+
+  /** Frais appliqués lors d'un versement manuel vendeur (request payout). */
+  async computePayoutFeeFromSettings(grossCents: number): Promise<PayoutFeeSplit> {
+    const doc = await this._ensureDoc();
+    const settings = this._toResponse(doc);
+    return computePayoutFeeSplit(grossCents, {
+      payoutFeeMode: settings.payoutFeeMode,
+      payoutFeeFixed: settings.payoutFeeFixed,
+      payoutFeePercent: settings.payoutFeePercent,
     });
   }
 
@@ -372,11 +446,21 @@ export class PlatformFeesService {
         DEFAULTS.platformOrderFeeMode,
       ),
     );
+    const payoutFeeMode = normalizeMode(
+      dto.payoutFeeMode,
+      inferMode(
+        current.payoutFeeMode,
+        current.payoutFeeFixed ?? 0,
+        current.payoutFeePercent ?? 0,
+        DEFAULTS.payoutFeeMode,
+      ),
+    );
 
     $set.refundFeeMode = refundFeeMode;
     $set.orderPaymentFeeMode = orderPaymentFeeMode;
     $set.mlmCommissionMode = mlmCommissionMode;
     $set.platformOrderFeeMode = platformOrderFeeMode;
+    $set.payoutFeeMode = payoutFeeMode;
 
     const refundFeeFixed =
       dto.refundFeeFixed ?? current.refundFeeFixed ?? 0;
@@ -417,6 +501,12 @@ export class PlatformFeesService {
       platformOrderFeeMode === 'fixed' ? platformOrderFeeFixed : 0;
     $set.platformOrderFeePercent =
       platformOrderFeeMode === 'percent' ? platformOrderFeePercent : 0;
+
+    const payoutFeeFixed = dto.payoutFeeFixed ?? current.payoutFeeFixed ?? 0;
+    const payoutFeePercent =
+      dto.payoutFeePercent ?? current.payoutFeePercent ?? 0;
+    $set.payoutFeeFixed = payoutFeeMode === 'fixed' ? payoutFeeFixed : 0;
+    $set.payoutFeePercent = payoutFeeMode === 'percent' ? payoutFeePercent : 0;
 
     const updated = await this._model
       .findOneAndUpdate(

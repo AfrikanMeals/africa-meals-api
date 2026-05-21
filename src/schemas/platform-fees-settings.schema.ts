@@ -62,6 +62,17 @@ export class PlatformFeesSettingsModel {
   /** Commission plateforme sur commande : % du montant commande (hors livraison). */
   @Prop({ type: Number, default: 0 })
   platformOrderFeePercent: number;
+
+  @Prop({ type: String, enum: PLATFORM_FEE_MODES, default: 'fixed' })
+  payoutFeeMode: PlatformFeeMode;
+
+  /** Frais de versement vendeur (payout) : montant fixe. */
+  @Prop({ type: Number, default: 0 })
+  payoutFeeFixed: number;
+
+  /** Frais de versement vendeur (payout) : % du montant demandé. */
+  @Prop({ type: Number, default: 0 })
+  payoutFeePercent: number;
 }
 
 export type PlatformFeesSettingsDocument =

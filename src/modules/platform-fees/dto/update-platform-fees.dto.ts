@@ -126,4 +126,30 @@ export class UpdatePlatformFeesDto {
   @Min(0)
   @Max(100)
   platformOrderFeePercent?: number;
+
+  @ApiPropertyOptional({ enum: PLATFORM_FEE_MODES })
+  @IsOptional()
+  @IsIn(PLATFORM_FEE_MODES)
+  payoutFeeMode?: (typeof PLATFORM_FEE_MODES)[number];
+
+  @ApiPropertyOptional({
+    example: 1,
+    description: 'Frais de versement vendeur fixe',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  payoutFeeFixed?: number;
+
+  @ApiPropertyOptional({
+    example: 2,
+    description: 'Frais de versement vendeur (% du montant du versement)',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  payoutFeePercent?: number;
 }

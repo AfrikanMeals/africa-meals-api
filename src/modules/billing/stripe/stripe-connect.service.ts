@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
+import { PlatformFeesService } from '@modules/platform-fees/platform-fees.service';
 import { AddressModel } from '@schemas/address.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
@@ -59,6 +60,17 @@ export type StripeConnectBalance = {
   available: number;
   pending: number;
   currency: string;
+};
+
+export type StripeConnectPayoutEstimate = {
+  available: number;
+  payoutFee: number;
+  netPayout: number;
+  currency: string;
+  feeMode: 'fixed' | 'percent';
+  feePercent: number;
+  feeFixed: number;
+  canRequestPayout: boolean;
 };
 
 type StripeAddressBlock = {
@@ -421,6 +433,7 @@ export class StripeConnectService {
 
   constructor(
     private readonly config: ConfigService,
+    private readonly platformFees: PlatformFeesService,
     @InjectModel(UserModel.name)
     private readonly userModel: Model<UserModel>,
     @InjectModel(StoreModel.name)
@@ -1060,6 +1073,63 @@ export class StripeConnectService {
     }
   }
 
+  async getPayoutEstimate(user: UserModel): Promise<StripeConnectPayoutEstimate> {
+    this.assertVendor(user);
+    const status = await this.getConnectStatus(user);
+    const currency = (status.defaultCurrency ?? 'cad').toLowerCase();
+    if (!status.accountId || !status.payoutsEnabled || !status.onboardingComplete) {
+      return {
+        available: 0,
+        payoutFee: 0,
+        netPayout: 0,
+        currency: currency.toUpperCase(),
+        feeMode: 'fixed',
+        feePercent: 0,
+        feeFixed: 0,
+        canRequestPayout: false,
+      };
+    }
+
+    let availableCents = 0;
+    let payoutCurrency = currency;
+    try {
+      const balance = await this.stripe().balance.retrieve(
+        {},
+        { stripeAccount: status.accountId },
+      );
+      const row = balanceAvailableRow(balance, currency);
+      availableCents = row?.amount ?? 0;
+      payoutCurrency = row?.currency ?? currency;
+    } catch {
+      return {
+        available: 0,
+        payoutFee: 0,
+        netPayout: 0,
+        currency: currency.toUpperCase(),
+        feeMode: 'fixed',
+        feePercent: 0,
+        feeFixed: 0,
+        canRequestPayout: false,
+      };
+    }
+
+    const split =
+      await this.platformFees.computePayoutFeeFromSettings(availableCents);
+    const payoutFeeCents = Math.max(0, split.platformFeeCents);
+    const netPayoutCents = Math.max(0, split.payoutCents);
+
+    return {
+      available: availableCents / 100,
+      payoutFee: payoutFeeCents / 100,
+      netPayout: netPayoutCents / 100,
+      currency: payoutCurrency.toUpperCase(),
+      feeMode: split.feeMode,
+      feePercent: split.feePercent,
+      feeFixed: split.feeFixedCad,
+      canRequestPayout: netPayoutCents >= 100,
+    };
+  }
+
   /**
    * Versement manuel du solde disponible vers le compte bancaire du vendeur (Express).
    */
@@ -1099,21 +1169,35 @@ export class StripeConnectService {
       throw new BadRequestException('stripe_payout_no_balance');
     }
 
+    const payoutSplit =
+      await this.platformFees.computePayoutFeeFromSettings(availableCents);
+    const payoutFeeCents = Math.max(0, payoutSplit.platformFeeCents);
+    const payoutCents = Math.max(0, payoutSplit.payoutCents);
+    if (payoutCents < 100) {
+      throw new BadRequestException('stripe_payout_no_balance_after_fee');
+    }
+
     try {
       const payout = await this.stripe().payouts.create(
         {
-          amount: availableCents,
+          amount: payoutCents,
           currency: payoutCurrency,
           description: 'Versement demandé depuis Afrika Meals',
+          metadata: {
+            platformPayoutFeeCents: String(payoutFeeCents),
+            platformPayoutFeeMode: payoutSplit.feeMode,
+            platformPayoutFeePercent: String(payoutSplit.feePercent),
+            platformPayoutFeeFixed: String(payoutSplit.feeFixedCad),
+          },
         },
         { stripeAccount: accountId },
       );
       this.logger.log(
-        `Stripe manual payout ${payout.id} for ${accountId}: ${availableCents / 100} ${currency}`,
+        `Stripe manual payout ${payout.id} for ${accountId}: gross=${availableCents / 100} ${currency}, fee=${payoutFeeCents / 100}, net=${payoutCents / 100}`,
       );
       return {
         id: payout.id,
-        amount: (payout.amount ?? availableCents) / 100,
+        amount: (payout.amount ?? payoutCents) / 100,
         currency: String(payout.currency ?? currency).toUpperCase(),
         status: payout.status ?? 'pending',
         arrivalDate: payout.arrival_date

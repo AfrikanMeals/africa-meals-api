@@ -2600,11 +2600,32 @@ export class DashboardService {
         { $sort: { _id: 1 } },
       ])
       .exec();
-    return rows.map((r) => ({
-      date: r._id,
-      revenue: typeof r.revenue === 'number' ? r.revenue : 0,
-      orderCount: typeof r.orderCount === 'number' ? r.orderCount : 0,
-    }));
+    const byDate = new Map(
+      rows.map((r) => [
+        r._id,
+        {
+          revenue: typeof r.revenue === 'number' ? r.revenue : 0,
+          orderCount: typeof r.orderCount === 'number' ? r.orderCount : 0,
+        },
+      ]),
+    );
+
+    const out: FinancePeriodDailyPoint[] = [];
+    let cursor = dayjs(start).tz(PEAK_HOURS_TZ).startOf('day');
+    const endExclusive = dayjs(end).tz(PEAK_HOURS_TZ).startOf('day');
+
+    while (cursor.isBefore(endExclusive)) {
+      const key = cursor.format('YYYY-MM-DD');
+      const hit = byDate.get(key);
+      out.push({
+        date: key,
+        revenue: hit?.revenue ?? 0,
+        orderCount: hit?.orderCount ?? 0,
+      });
+      cursor = cursor.add(1, 'day');
+    }
+
+    return out;
   }
 
   private async countOrdersInRange(
