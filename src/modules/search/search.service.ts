@@ -20,6 +20,7 @@ import {
 } from './dto/search.dto';
 import { mapInChunks } from '@utils/map-in-chunks';
 import { productDailyMenuListingPipelineStages } from '@utils/product-daily-menu-listing.pipeline';
+import { storeArticlesAvailabilityPipelineStages } from '@utils/store-articles-availability.pipeline';
 
 @Injectable()
 export class SearchService {
@@ -1519,6 +1520,9 @@ export class SearchService {
           }
         : { status: StoreStatusEnum.ACTIVE },
     ];
+    if (!ownerOid) {
+      andParts.push({ acceptsOrders: { $ne: false } });
+    }
     if (q) {
       const esc = this._escapeRegex(q);
       andParts.push({
@@ -1536,6 +1540,7 @@ export class SearchService {
       },
       ...(ownerOid ? [] : storeOwnerStripeOnboardedPipelineStages()),
       ...this._storeDistanceAndMenuStages(args),
+      ...(ownerOid ? [] : storeArticlesAvailabilityPipelineStages()),
     ];
 
     const sortKeys = this._storeSortKeys(args);

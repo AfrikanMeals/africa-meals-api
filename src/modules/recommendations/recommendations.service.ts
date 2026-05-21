@@ -22,6 +22,7 @@ import {
   normalizeRecommendationSearchTerm,
   searchTermToRefObjectId,
 } from '@utils/recommendation-search.util';
+import { storeArticlesAvailabilityPipelineStages } from '@utils/store-articles-availability.pipeline';
 import { TrackRecommendationDto } from './dto/track-recommendation.dto';
 
 const PAID_LIKE_STATUSES: OrderStatusEnum[] = [
@@ -411,6 +412,7 @@ export class RecommendationsService {
           },
         },
         ...storeOwnerStripeOnboardedPipelineStages(),
+        ...storeArticlesAvailabilityPipelineStages(),
         { $sort: { averageRating: -1, updatedAt: -1 } },
         /** Borne avant `$lookup` commandes — coût O(n×orders) sinon sur tout le parc boutiques. */
         { $limit: 160 },
