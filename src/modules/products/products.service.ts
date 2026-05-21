@@ -653,7 +653,7 @@ export class ProductsService {
         category: category._id,
         store: store._id,
         currency: (args.currency?.trim() || store.currency) as string,
-        status: args.status ?? ProductStatusEnum.PENDING,
+        status: args.status ?? ProductStatusEnum.ACTIVE,
         ...(profileImage && { profileImage }),
         ...(galleryItems.length > 0 && { galleryImages: galleryItems }),
       });

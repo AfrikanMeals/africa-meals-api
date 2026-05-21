@@ -18,7 +18,7 @@ export function unifiedJsonBodyParser(options?: {
 
   const jsonParser = express.json({
     limit,
-    type: (req) => !hasCompressedContentEncoding(req),
+    type: (req) => shouldParseJsonBody(req),
     verify: preserveRawBody
       ? (req: RequestWithRawBody, _res, buf) => {
           req.rawBody = Buffer.from(buf);
@@ -27,11 +27,18 @@ export function unifiedJsonBodyParser(options?: {
   });
 
   return (req: RequestWithRawBody, res: Response, next: NextFunction) => {
+    if (!hasRequestBody(req)) {
+      return next();
+    }
+
     if (!hasCompressedContentEncoding(req)) {
       return jsonParser(req, res, next);
     }
 
     const chunks: Buffer[] = [];
+    req.on('aborted', () => {
+      // Client a fermé la socket (navigation, timeout) — ne pas faire remonter raw-body.
+    });
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
       try {
@@ -52,8 +59,37 @@ export function unifiedJsonBodyParser(options?: {
         res.status(400).json({ message: 'invalid_compressed_body' });
       }
     });
-    req.on('error', (err) => next(err));
+    req.on('error', (err) => {
+      if (isClientAbortedError(err)) {
+        return;
+      }
+      next(err);
+    });
   };
+}
+
+export function hasRequestBody(req: IncomingMessage): boolean {
+  const method = (req.method || 'GET').toUpperCase();
+  return method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
+}
+
+export function shouldParseJsonBody(req: IncomingMessage): boolean {
+  if (!hasRequestBody(req) || hasCompressedContentEncoding(req)) {
+    return false;
+  }
+  const ct = String(req.headers['content-type'] || '').toLowerCase();
+  if (!ct) {
+    return false;
+  }
+  return ct.includes('application/json') || ct.includes('+json');
+}
+
+function isClientAbortedError(err: unknown): boolean {
+  const msg =
+    err && typeof err === 'object' && 'message' in err
+      ? String((err as { message: unknown }).message)
+      : String(err);
+  return /aborted|ECONNRESET|socket hang up/i.test(msg);
 }
 
 function hasCompressedContentEncoding(req: IncomingMessage): boolean {
