@@ -20,6 +20,7 @@ import { NotificationsService } from '@modules/notifications/notifications.servi
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
+import { isAllowedGzipUploadMime } from 'src/incoming-upload-file';
 import { memoryStorage } from 'multer';
 import { AuthService } from './auth.service';
 import {
@@ -204,6 +205,9 @@ export class AuthController {
       storage: memoryStorage(),
       limits: { fileSize: 15 * 1024 * 1024, files: 1 },
       fileFilter: (req, file, cb) => {
+        if (isAllowedGzipUploadMime(file.mimetype)) {
+          return cb(null, true);
+        }
         if (
           !file.mimetype.match(
             /^(audio\/(mpeg|mp4|webm|wav|x-m4a|aac|3gpp)|video\/webm)$/i,
@@ -304,6 +308,9 @@ export class AuthController {
       storage: memoryStorage(),
       limits: { fileSize: 20 * 1024 * 1024, files: 1 },
       fileFilter: (req, file, cb) => {
+        if (isAllowedGzipUploadMime(file.mimetype)) {
+          return cb(null, true);
+        }
         const mime = (file.mimetype || '').toLowerCase();
         const ok =
           /^image\/(jpeg|png|gif|webp|heic|heif)$/i.test(mime) ||

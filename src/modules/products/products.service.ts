@@ -1,3 +1,4 @@
+import { prepareIncomingUploadFile } from 'src/incoming-upload-file';
 import { MediasService } from '@modules/medias/medias.service';
 import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import { isDemoProductRaterEmail } from '@modules/ratings/demo-product-rating-users';
@@ -194,6 +195,11 @@ export class ProductsService {
   /** Au plus 2 fichiers en galerie (3 images au total avec la principale). */
   private static readonly MAX_GALLERY_FILES = 2;
 
+  private static uploadByteLength(file: Express.Multer.File): number {
+    const prepared = prepareIncomingUploadFile(file);
+    return prepared.buffer?.length ?? prepared.size ?? 0;
+  }
+
   private async uploadGalleryToFirebase(
     files: Express.Multer.File[] | undefined,
     user: UserModel,
@@ -205,7 +211,7 @@ export class ProductsService {
       return { items, uploadedUrls };
     }
     for (const f of files.slice(0, ProductsService.MAX_GALLERY_FILES)) {
-      const imgBytes = f.buffer?.length ?? f.size ?? 0;
+      const imgBytes = ProductsService.uploadByteLength(f);
       if (imgBytes > ProductsService.MAX_IMAGE_BYTES) {
         for (const u of uploadedUrls) {
           await this._mediasService.delete(u).catch(() => undefined);
@@ -618,7 +624,7 @@ export class ProductsService {
     let profileImage: string | undefined;
     try {
       if (image) {
-        const imgBytes = image.buffer?.length ?? image.size ?? 0;
+        const imgBytes = ProductsService.uploadByteLength(image);
         if (imgBytes > ProductsService.MAX_IMAGE_BYTES) {
           throw new BadRequestException('image_too_large');
         }
@@ -724,7 +730,7 @@ export class ProductsService {
     }
 
     if (image) {
-      const imgBytes = image.buffer?.length ?? image.size ?? 0;
+      const imgBytes = ProductsService.uploadByteLength(image);
       if (imgBytes > ProductsService.MAX_IMAGE_BYTES) {
         throw new BadRequestException('image_too_large');
       }

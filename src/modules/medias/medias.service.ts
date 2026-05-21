@@ -2,6 +2,7 @@ import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { UserModel } from '@schemas/user.schema';
 import { App } from 'firebase-admin/app';
 import { getDownloadURL, getStorage } from 'firebase-admin/storage';
+import { prepareIncomingUploadFile } from 'src/incoming-upload-file';
 import { extname } from 'path';
 import { v4 as uuid } from 'uuid';
 
@@ -29,14 +30,15 @@ export class MediasService {
    */
   async upload(file: Express.Multer.File, user: UserModel, basePath = '') {
     try {
+      const prepared = prepareIncomingUploadFile(file);
       const path =
         basePath.length > 0
-          ? `${basePath}/${uuid()}${extname(file.originalname)}`
-          : `${uuid()}${extname(file.originalname)}`;
+          ? `${basePath}/${uuid()}${extname(prepared.originalname)}`
+          : `${uuid()}${extname(prepared.originalname)}`;
       const fileRef = this.bucket.file(path);
-      await fileRef.save(file.buffer, {
+      await fileRef.save(prepared.buffer, {
         metadata: {
-          contentType: file.mimetype,
+          contentType: prepared.mimetype,
           metadata: {
             owner: user._id.toString(),
           },
