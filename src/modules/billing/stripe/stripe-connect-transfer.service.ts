@@ -15,12 +15,17 @@ import { Model, Types } from 'mongoose';
 import Stripe = require('stripe');
 
 type StripeClient = InstanceType<typeof Stripe>;
+type ChargeFeeSnapshot = {
+  amountCents: number;
+  feeCents: number;
+};
 
 export type StoreTransferResult = {
   transferred: boolean;
   transferId?: string;
   transferCents: number;
   platformFeeCents: number;
+  stripeProcessingFeeCents: number;
   grossCents: number;
   skippedReason?: string;
 };
@@ -28,6 +33,10 @@ export type StoreTransferResult = {
 @Injectable()
 export class StripeConnectTransferService {
   private readonly logger = new Logger(StripeConnectTransferService.name);
+  private readonly chargeFeeCache = new Map<
+    string,
+    Promise<ChargeFeeSnapshot | null>
+  >();
 
   constructor(
     private readonly config: ConfigService,
@@ -52,6 +61,63 @@ export class StripeConnectTransferService {
       throw new BadRequestException('stripe_not_configured');
     }
     return new Stripe(key);
+  }
+
+  private async loadChargeFeeSnapshot(
+    chargeId: string,
+  ): Promise<ChargeFeeSnapshot | null> {
+    const raw = chargeId.trim();
+    if (!raw.startsWith('ch_')) return null;
+
+    const charge = await this.stripe().charges.retrieve(raw, {
+      expand: ['balance_transaction'],
+    });
+    const amountCents = Math.max(0, Math.round(Number(charge.amount ?? 0)));
+    const bt = charge.balance_transaction;
+    if (!bt || typeof bt === 'string' || typeof bt !== 'object') {
+      return { amountCents, feeCents: 0 };
+    }
+    const feeCents = Math.max(
+      0,
+      Math.round(Number((bt as { fee?: number }).fee ?? 0)),
+    );
+    return { amountCents, feeCents };
+  }
+
+  private chargeFeeSnapshot(
+    chargeId: string,
+  ): Promise<ChargeFeeSnapshot | null> {
+    const key = chargeId.trim();
+    const inCache = this.chargeFeeCache.get(key);
+    if (inCache) return inCache;
+    const p = this.loadChargeFeeSnapshot(key).catch((e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`Unable to load charge fees for ${key}: ${msg}`);
+      return null;
+    });
+    this.chargeFeeCache.set(key, p);
+    return p;
+  }
+
+  private async estimateStripeFeeShareCents(args: {
+    chargeId: string;
+    orderGrossCents: number;
+    transferBeforeStripeFeesCents: number;
+  }): Promise<number> {
+    const orderGross = Math.max(0, Math.round(args.orderGrossCents));
+    if (orderGross < 1) return 0;
+
+    const transferGross = Math.max(
+      0,
+      Math.round(args.transferBeforeStripeFeesCents),
+    );
+    if (transferGross < 1) return 0;
+
+    const snap = await this.chargeFeeSnapshot(args.chargeId);
+    if (!snap || snap.feeCents < 1 || snap.amountCents < 1) return 0;
+
+    const proportional = Math.round((snap.feeCents * orderGross) / snap.amountCents);
+    return Math.max(0, Math.min(proportional, transferGross));
   }
 
   /** Résout l’id charge `ch_…` liée à un `pi_…` ou `cs_…`. */
@@ -138,6 +204,7 @@ export class StripeConnectTransferService {
         transferred: false,
         transferCents: split.transferCents,
         platformFeeCents: split.platformFeeCents,
+        stripeProcessingFeeCents: 0,
         grossCents: split.grossCents,
         skippedReason: 'transfers_disabled',
       };
@@ -150,7 +217,7 @@ export class StripeConnectTransferService {
     const order = await this.orderModel
       .findById(args.orderId)
       .select(
-        'stripeTransferId stripeTransferAmountCents platformFeeCents stripeParentPaymentId',
+        'stripeTransferId stripeTransferAmountCents platformFeeCents stripeProcessingFeeCents stripeParentPaymentId',
       )
       .lean()
       .exec();
@@ -170,6 +237,10 @@ export class StripeConnectTransferService {
           typeof order.platformFeeCents === 'number'
             ? order.platformFeeCents
             : split.platformFeeCents,
+        stripeProcessingFeeCents:
+          typeof order.stripeProcessingFeeCents === 'number'
+            ? order.stripeProcessingFeeCents
+            : 0,
         grossCents: split.grossCents,
         skippedReason: 'already_transferred',
       };
@@ -184,6 +255,7 @@ export class StripeConnectTransferService {
         {
           $set: {
             platformFeeCents: split.platformFeeCents,
+            stripeProcessingFeeCents: 0,
           },
         },
       );
@@ -191,6 +263,7 @@ export class StripeConnectTransferService {
         transferred: false,
         transferCents: split.transferCents,
         platformFeeCents: split.platformFeeCents,
+        stripeProcessingFeeCents: 0,
         grossCents: split.grossCents,
         skippedReason: 'connect_onboarding_incomplete',
       };
@@ -202,6 +275,7 @@ export class StripeConnectTransferService {
         {
           $set: {
             platformFeeCents: split.platformFeeCents,
+            stripeProcessingFeeCents: 0,
             stripeTransferAmountCents: 0,
           },
         },
@@ -210,6 +284,7 @@ export class StripeConnectTransferService {
         transferred: false,
         transferCents: 0,
         platformFeeCents: split.platformFeeCents,
+        stripeProcessingFeeCents: 0,
         grossCents: split.grossCents,
         skippedReason: 'transfer_amount_zero',
       };
@@ -227,6 +302,7 @@ export class StripeConnectTransferService {
         transferred: false,
         transferCents: split.transferCents,
         platformFeeCents: split.platformFeeCents,
+        stripeProcessingFeeCents: 0,
         grossCents: split.grossCents,
         skippedReason: 'charge_unresolved',
       };
@@ -235,11 +311,41 @@ export class StripeConnectTransferService {
     const currency =
       this.config.get<string>('STRIPE_CONNECT_TRANSFER_CURRENCY')?.trim() ||
       'cad';
+    const stripeProcessingFeeShareCents = await this.estimateStripeFeeShareCents({
+      chargeId,
+      orderGrossCents: split.grossCents,
+      transferBeforeStripeFeesCents: split.transferCents,
+    });
+    const transferCents = Math.max(
+      0,
+      split.transferCents - stripeProcessingFeeShareCents,
+    );
+
+    if (transferCents < 1) {
+      await this.orderModel.updateOne(
+        { _id: args.orderId },
+        {
+          $set: {
+            platformFeeCents: split.platformFeeCents,
+            stripeProcessingFeeCents: stripeProcessingFeeShareCents,
+            stripeTransferAmountCents: 0,
+          },
+        },
+      );
+      return {
+        transferred: false,
+        transferCents: 0,
+        platformFeeCents: split.platformFeeCents,
+        stripeProcessingFeeCents: stripeProcessingFeeShareCents,
+        grossCents: split.grossCents,
+        skippedReason: 'transfer_amount_zero_after_stripe_fee',
+      };
+    }
 
     try {
       const transfer = await this.stripe().transfers.create(
         {
-          amount: split.transferCents,
+          amount: transferCents,
           currency: currency.toLowerCase(),
           destination: accountId,
           source_transaction: chargeId,
@@ -249,6 +355,7 @@ export class StripeConnectTransferService {
             storeId: args.storeId,
             platform: 'africa-meals',
             platformFeeCents: String(split.platformFeeCents),
+            stripeProcessingFeeCents: String(stripeProcessingFeeShareCents),
             grossCents: String(split.grossCents),
           },
         },
@@ -260,8 +367,9 @@ export class StripeConnectTransferService {
         {
           $set: {
             stripeTransferId: transfer.id,
-            stripeTransferAmountCents: split.transferCents,
+            stripeTransferAmountCents: transferCents,
             platformFeeCents: split.platformFeeCents,
+            stripeProcessingFeeCents: stripeProcessingFeeShareCents,
             stripeTransferReversalId: null,
           },
           $unset: { stripeTransferReversalAmountCents: '' },
@@ -269,14 +377,15 @@ export class StripeConnectTransferService {
       );
 
       this.logger.log(
-        `Connect transfer ${transfer.id}: ${split.transferCents / 100} ${currency} → ${accountId} (order ${args.orderId})`,
+        `Connect transfer ${transfer.id}: ${transferCents / 100} ${currency} → ${accountId} (order ${args.orderId}, stripeFeeShare=${stripeProcessingFeeShareCents / 100})`,
       );
 
       return {
         transferred: true,
         transferId: transfer.id,
-        transferCents: split.transferCents,
+        transferCents,
         platformFeeCents: split.platformFeeCents,
+        stripeProcessingFeeCents: stripeProcessingFeeShareCents,
         grossCents: split.grossCents,
       };
     } catch (e) {
@@ -286,12 +395,18 @@ export class StripeConnectTransferService {
       );
       await this.orderModel.updateOne(
         { _id: args.orderId },
-        { $set: { platformFeeCents: split.platformFeeCents } },
+        {
+          $set: {
+            platformFeeCents: split.platformFeeCents,
+            stripeProcessingFeeCents: stripeProcessingFeeShareCents,
+          },
+        },
       );
       return {
         transferred: false,
-        transferCents: split.transferCents,
+        transferCents,
         platformFeeCents: split.platformFeeCents,
+        stripeProcessingFeeCents: stripeProcessingFeeShareCents,
         grossCents: split.grossCents,
         skippedReason: `stripe_error:${msg}`.slice(0, 200),
       };

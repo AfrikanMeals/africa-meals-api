@@ -10,7 +10,6 @@ import {
   Inject,
   Param,
   Post,
-  Query,
   Req,
   Headers,
   UseGuards,
@@ -26,7 +25,7 @@ import { PaypalService } from './paypal/paypal.service';
 import { FilterGroupedPaymentsDto } from './stripe/dto/filter-grouped-payments.dto';
 import { GroupedStripeCheckoutDto } from './stripe/dto/grouped-stripe-checkout.dto';
 import { GroupedPaymentSyncDto } from './stripe/dto/grouped-payment-sync.dto';
-import { StripeConnectOnboardingDto } from './stripe/dto/stripe-connect-onboarding.dto';
+import { StripeConnectOnboardingDto as StripeConnectOnboardingLinkDto } from './stripe/dto/stripe-connect-onboarding.dto';
 import { StripeConnectService } from './stripe/stripe-connect.service';
 import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.service';
 
@@ -197,7 +196,7 @@ export class BillingController {
     summary:
       'Lien d’onboarding Stripe Connect (Setup Payment) avec préremplissage',
   })
-  stripeConnectOnboarding(
+  stripeConnectOnboardingLink(
     @Req() req: Request,
     @Body(
       new ValidationPipe({
@@ -206,7 +205,7 @@ export class BillingController {
         forbidNonWhitelisted: true,
       }),
     )
-    body: StripeConnectOnboardingDto,
+    body: StripeConnectOnboardingLinkDto,
   ) {
     return this._stripeConnect.createOnboardingLink(req.user as UserModel);
   }

@@ -48,7 +48,7 @@ dayjs.extend(isoWeek);
 const ADMIN_REVENUE_TARGET_FCFA = 500_000;
 /** Objectif mensuel carte « Chiffre d’affaires » (unité = `total_price`, affiché $ CA côté UI). */
 const DASHBOARD_CA_MONTHLY_TARGET_ADMIN = 500_000;
-const DASHBOARD_CA_MONTHLY_TARGET_VENDOR = 50_000;
+const DASHBOARD_CA_MONTHLY_TARGET_VENDOR = 1_000;
 /** Objectif délai livraison affiché (minutes). */
 const ADMIN_DELIVERY_TARGET_MIN = 25;
 /** Commandes prises en compte pour le CA du jour (hors créées non payées et annulées). */
@@ -382,6 +382,7 @@ export type FinancePeriodReportOrderRow = {
   shippingPrice: number;
   status: string;
   storeName: string | null;
+  stripeProcessingFeeCents: number;
 };
 
 export type FinancePeriodReportPayload = {
@@ -1488,7 +1489,11 @@ export class DashboardService {
         {
           $group: {
             _id: null,
-            total: { $sum: { $ifNull: ['$total_price', 0] } },
+            total: {
+              $sum: {
+                $ifNull: ['$totalPrice', { $ifNull: ['$total_price', 0] }],
+              },
+            },
           },
         },
       ])
@@ -2463,7 +2468,9 @@ export class DashboardService {
           'fullName email',
         )
         .populate<{ store?: { name?: string } }>('store', 'name')
-        .select('_id createdAt totalPrice shippingPrice status user store')
+        .select(
+          '_id createdAt totalPrice shippingPrice status user store stripeProcessingFeeCents',
+        )
         .lean()
         .exec(),
     ]);
@@ -2493,6 +2500,11 @@ export class DashboardService {
             : 0,
         status: String(o.status ?? ''),
         storeName: storeDoc?.name?.trim() || null,
+        stripeProcessingFeeCents:
+          typeof o.stripeProcessingFeeCents === 'number' &&
+          Number.isFinite(o.stripeProcessingFeeCents)
+            ? Math.max(0, Math.round(o.stripeProcessingFeeCents))
+            : 0,
       };
     });
 
@@ -2536,7 +2548,11 @@ export class DashboardService {
         {
           $group: {
             _id: null,
-            total: { $sum: { $ifNull: ['$shipping_price', 0] } },
+            total: {
+              $sum: {
+                $ifNull: ['$shippingPrice', { $ifNull: ['$shipping_price', 0] }],
+              },
+            },
           },
         },
       ])
@@ -2573,7 +2589,11 @@ export class DashboardService {
                 timezone: PEAK_HOURS_TZ,
               },
             },
-            revenue: { $sum: { $ifNull: ['$total_price', 0] } },
+            revenue: {
+              $sum: {
+                $ifNull: ['$totalPrice', { $ifNull: ['$total_price', 0] }],
+              },
+            },
             orderCount: { $sum: 1 },
           },
         },
@@ -2629,8 +2649,16 @@ export class DashboardService {
           $group: {
             _id: '$user',
             orderCount: { $sum: 1 },
-            totalSpent: { $sum: { $ifNull: ['$total_price', 0] } },
-            shippingTotal: { $sum: { $ifNull: ['$shipping_price', 0] } },
+            totalSpent: {
+              $sum: {
+                $ifNull: ['$totalPrice', { $ifNull: ['$total_price', 0] }],
+              },
+            },
+            shippingTotal: {
+              $sum: {
+                $ifNull: ['$shippingPrice', { $ifNull: ['$shipping_price', 0] }],
+              },
+            },
           },
         },
         { $sort: { totalSpent: -1 } },
@@ -2682,8 +2710,16 @@ export class DashboardService {
           $group: {
             _id: '$storeDoc.owner',
             orderCount: { $sum: 1 },
-            totalSpent: { $sum: { $ifNull: ['$total_price', 0] } },
-            shippingTotal: { $sum: { $ifNull: ['$shipping_price', 0] } },
+            totalSpent: {
+              $sum: {
+                $ifNull: ['$totalPrice', { $ifNull: ['$total_price', 0] }],
+              },
+            },
+            shippingTotal: {
+              $sum: {
+                $ifNull: ['$shippingPrice', { $ifNull: ['$shipping_price', 0] }],
+              },
+            },
           },
         },
         { $sort: { totalSpent: -1 } },

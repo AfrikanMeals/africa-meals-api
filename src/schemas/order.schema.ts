@@ -166,6 +166,10 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'platform_fee_cents' })
   platformFeeCents?: number;
 
+  /** Part des frais Stripe processing imputée à la commande (centimes). */
+  @Prop({ required: false, name: 'stripe_processing_fee_cents' })
+  stripeProcessingFeeCents?: number;
+
   /** Dernier reversal de transfer (`trr_…` / id reversal). */
   @Prop({ required: false, name: 'stripe_transfer_reversal_id' })
   stripeTransferReversalId?: string;

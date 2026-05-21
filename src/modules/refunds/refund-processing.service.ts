@@ -66,6 +66,14 @@ const ACTIVE_REFUND_STATUSES: OrderRefundRequestEntryStatusEnum[] = [
   OrderRefundRequestEntryStatusEnum.APPROVED,
 ];
 
+const ALL_REFUND_STATUSES: OrderRefundRequestEntryStatusEnum[] = [
+  OrderRefundRequestEntryStatusEnum.PENDING,
+  OrderRefundRequestEntryStatusEnum.PAUSED,
+  OrderRefundRequestEntryStatusEnum.APPROVED,
+  OrderRefundRequestEntryStatusEnum.REJECTED,
+  OrderRefundRequestEntryStatusEnum.COMPLETED,
+];
+
 function assertAdmin(user: UserModel): void {
   if (user.type !== UserTypeEnum.ADMIN) {
     throw new ForbiddenException('admin_only');
@@ -222,7 +230,7 @@ export class RefundProcessingService {
     const settings = await this.settingsDoc();
     const match: Record<string, unknown> = {
       refundRequestLog: {
-        $elemMatch: { status: { $in: ACTIVE_REFUND_STATUSES } },
+        $elemMatch: { status: { $in: ALL_REFUND_STATUSES } },
       },
     };
 
@@ -256,7 +264,7 @@ export class RefundProcessingService {
     for (const o of orders) {
       const raw = o as Record<string, unknown>;
       const log = refundLogFromOrderDoc(raw);
-      const entry = activeRefundEntry(log);
+      const entry = latestRefundEntry(log);
       if (!entry) continue;
       const st = entry.status as OrderRefundRequestEntryStatusEnum;
 
