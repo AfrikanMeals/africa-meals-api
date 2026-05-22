@@ -42,6 +42,8 @@ import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { DrinksService, maxDrinkOrderQuantity } from '@modules/drinks/drinks.service';
 import { isStripeConnectOnboardingCompleteUser } from '@modules/billing/stripe/stripe-connect-visibility';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
+import { StoreAccessService } from '@modules/teams/store-access.service';
+import { TeamsService } from '@modules/teams/teams.service';
 
 @Injectable()
 export class StoreService {
@@ -126,6 +128,12 @@ export class StoreService {
 
   @Inject(DrinksService)
   private readonly _drinksService: DrinksService;
+
+  @Inject(StoreAccessService)
+  private readonly _storeAccess: StoreAccessService;
+
+  @Inject(TeamsService)
+  private readonly _teamsService: TeamsService;
 
   getStoreModel() {
     return this._storeModel;
@@ -349,6 +357,11 @@ export class StoreService {
 
     this._wsInboxNotify.notifyUserInboxRefresh(
       (user._id as { toString(): string }).toString(),
+    );
+
+    await this._teamsService.bootstrapStoreTeam(
+      store._id.toString(),
+      user._id as Types.ObjectId,
     );
 
     return this.findOneById(store._id.toString());
@@ -1081,23 +1094,7 @@ export class StoreService {
     storeId: string,
     user: UserModel,
   ) {
-    if (user.type === UserTypeEnum.ADMIN) {
-      const exists = await this._storeModel
-        .findById(storeId)
-        .select('_id')
-        .exec();
-      if (!exists) {
-        throw new NotFoundException('store_not_found');
-      }
-      return;
-    }
-    const store = await this._storeModel
-      .findOne({ _id: storeId, owner: user._id })
-      .select('_id')
-      .exec();
-    if (!store) {
-      throw new NotFoundException('store_not_found');
-    }
+    await this._storeAccess.assertStoreAccess(user, storeId, 'catalog.view');
   }
 
   /** Plats catalogue vendeur (food ou menu du jour du jour courant). */

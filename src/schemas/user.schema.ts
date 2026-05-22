@@ -1,11 +1,12 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import * as bcrypt from 'bcryptjs';
 import { Type } from 'class-transformer';
-import { Schema as MongooseSchema } from 'mongoose';
+import { Schema as MongooseSchema, Types } from 'mongoose';
 import { AddressModel } from './address.schema';
 import { BaseSchema } from './base.schema';
 import { PaymentMethodModel } from './payment-method.schema';
 import { StoreModel } from './store.schema';
+import { PlatformRoleModel } from './platform-role.schema';
 
 export enum UserTypeEnum {
   /** Client final (inscription « Client ») */
@@ -28,6 +29,15 @@ export enum UserTypeEnum {
 export class UserModel extends BaseSchema {
   @Prop({ enum: UserTypeEnum, default: UserTypeEnum.USER })
   type: UserTypeEnum;
+
+  /** Rôle plateforme (utilisateurs ADMIN) — permissions granulaires. */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: PlatformRoleModel.name,
+    required: false,
+    name: 'platform_role_id',
+  })
+  platformRoleId?: Types.ObjectId;
 
   @Prop({ required: true, name: 'full_name' })
   fullName: string;

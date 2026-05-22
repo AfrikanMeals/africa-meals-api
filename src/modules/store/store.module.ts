@@ -10,6 +10,7 @@ import { StockItemsModule } from '@modules/stock-items/stock-items.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
+import { TeamsModule } from '@modules/teams/teams.module';
 import { UsersModule } from '@modules/users/users.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { Module } from '@nestjs/common';
@@ -44,6 +45,7 @@ import { StoreService } from './store.service';
     ProductsModule,
     // SharedModule,
     UsersModule,
+    TeamsModule,
     SupportedCountriesModule,
     OffersModule,
     CartModule,

@@ -22,6 +22,7 @@ import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { isAllowedGzipUploadMime } from 'src/incoming-upload-file';
 import { memoryStorage } from 'multer';
+import { TeamsService } from '@modules/teams/teams.service';
 import { AuthService } from './auth.service';
 import {
   ChatMediaJsonDto,
@@ -49,6 +50,9 @@ export class AuthController {
 
   @Inject(NotificationsService)
   private readonly _notifications: NotificationsService;
+
+  @Inject(TeamsService)
+  private readonly _teamsService: TeamsService;
 
   @Post('register')
   async register(@Body(ValidationPipe) args: RegisterDto) {
@@ -140,7 +144,14 @@ export class AuthController {
   @ApiBearerAuth('bearer')
   @UseGuards(JwtGuard)
   async getMe(@Req() req: Request) {
-    return req.user as UserModel;
+    const user = req.user as UserModel;
+    const access = await this._teamsService.buildAccessPayload(user);
+    const plain =
+      typeof (user as { toObject?: () => Record<string, unknown> }).toObject ===
+      'function'
+        ? (user as { toObject: () => Record<string, unknown> }).toObject()
+        : { ...(user as unknown as Record<string, unknown>) };
+    return { ...plain, access };
   }
 
   @Post('me/fcm-token')
