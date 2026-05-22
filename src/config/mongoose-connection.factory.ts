@@ -1,5 +1,19 @@
 import { ConfigService } from '@nestjs/config';
 
+/** Vrai si l’URI contient déjà un nom de base (`…/african_meals_db?…`). */
+function mongoUriHasDatabase(uri: string): boolean {
+  const afterAt = uri.split('@')[1];
+  if (!afterAt) return false;
+  const slash = afterAt.indexOf('/');
+  if (slash < 0) return false;
+  const segment = afterAt
+    .slice(slash + 1)
+    .split('?')[0]
+    ?.split('/')[0]
+    ?.trim();
+  return Boolean(segment && segment.length > 0);
+}
+
 function parsePositiveInt(
   raw: string | undefined,
   fallback: number,
@@ -40,16 +54,22 @@ export function buildMongooseRootOptions(
     config.get<string>('MONGODB_URI') ||
     config.get<string>('MONGO_URI') ||
     '';
-  const builtUri = `mongodb+srv://${config.get<string>(
-    'DB_USERNAME',
-  )}:${config.get<string>('DB_PASSWORD')}@${config.get<string>(
-    'DB_HOST',
-  )}?retryWrites=true&w=majority&appName=${encodeURIComponent(
+  const user = encodeURIComponent(config.get<string>('DB_USERNAME') ?? '');
+  const pass = encodeURIComponent(config.get<string>('DB_PASSWORD') ?? '');
+  const host = (config.get<string>('DB_HOST') ?? '').trim();
+  const appName = encodeURIComponent(
     config.get<string>('MONGODB_APP_NAME') || defaultAppName,
-  )}`;
+  );
+  const dbName = (config.get<string>('DB_DATABASE') ?? '').trim();
+  const builtUri =
+    user && pass && host
+      ? `mongodb+srv://${user}:${pass}@${host}/${
+          dbName ? `${encodeURIComponent(dbName)}?` : '?'
+        }retryWrites=true&w=majority&appName=${appName}`
+      : '';
 
-  const uri = fullUri || builtUri;
-  const dbName = config.get<string>('DB_DATABASE');
+  const uri = fullUri.trim() || builtUri;
+  const dbInUri = mongoUriHasDatabase(uri);
 
   const maxPoolSize = parsePositiveInt(
     config.get<string>('MONGOOSE_MAX_POOL'),
@@ -100,7 +120,8 @@ export function buildMongooseRootOptions(
 
   return {
     uri,
-    ...(dbName ? { dbName } : {}),
+    ...(!dbInUri && dbName ? { dbName } : {}),
+    family: 4,
     maxPoolSize,
     minPoolSize,
     maxIdleTimeMS,

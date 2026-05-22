@@ -27,7 +27,9 @@ import { GroupedStripeCheckoutDto } from './stripe/dto/grouped-stripe-checkout.d
 import { GroupedPaymentSyncDto } from './stripe/dto/grouped-payment-sync.dto';
 import { StripeConnectOnboardingDto as StripeConnectOnboardingLinkDto } from './stripe/dto/stripe-connect-onboarding.dto';
 import { StripeConnectService } from './stripe/stripe-connect.service';
+import { SubscriptionsStripeCheckoutService } from '@modules/subscriptions/subscriptions-stripe-checkout.service';
 import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.service';
+import { subscriptionCheckoutReturnHtml } from './stripe/subscription-checkout-return.html';
 
 @ApiTags('billing')
 @ApiBearerAuth('bearer')
@@ -39,6 +41,8 @@ export class BillingController {
   private readonly _stripeGroupedCheckout: StripeGroupedCheckoutService;
   @Inject(StripeConnectService)
   private readonly _stripeConnect: StripeConnectService;
+  @Inject(SubscriptionsStripeCheckoutService)
+  private readonly _subscriptionStripe: SubscriptionsStripeCheckoutService;
 
   @Post('create-paypal-vault-token')
   @UseGuards(JwtGuard)
@@ -223,9 +227,14 @@ export class BillingController {
   stripeConnectPayouts(
     @Req() req: Request,
     @Query('limit') limit?: string,
+    @Query('starting_after') startingAfter?: string,
   ) {
     const n = limit != null ? Number(limit) : 25;
-    return this._stripeConnect.listPayouts(req.user as UserModel, n);
+    return this._stripeConnect.listPayouts(
+      req.user as UserModel,
+      n,
+      startingAfter,
+    );
   }
 
   @Get('stripe/connect/balance')
@@ -285,6 +294,27 @@ export class BillingController {
   @Header('Content-Type', 'text/html; charset=utf-8')
   stripePaymentDonePage(): string {
     return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Paiement</title></head><body style="font-family:system-ui,sans-serif;padding:2rem;line-height:1.5"><p><strong>Paiement enregistré.</strong></p><p>Vous pouvez fermer cette page et retourner dans l’application Afrika Meals.</p></body></html>`;
+  }
+
+  /**
+   * Retour Stripe Checkout abonnement vendeur : active l’abonnement puis redirige vers l’app.
+   * Stripe n’accepte pas les schémas `africameals://` en success_url — cette page fait le pont.
+   */
+  @Get('stripe/subscription-return')
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  @ApiOperation({ summary: 'Pont HTTPS → app après paiement abonnement Stripe' })
+  async stripeSubscriptionReturnPage(
+    @Query('session_id') sessionId?: string,
+  ): Promise<string> {
+    const sid = sessionId?.trim() ?? '';
+    if (sid) {
+      try {
+        await this._subscriptionStripe.fulfillFromCheckoutSessionId(sid);
+      } catch {
+        /* webhook ou confirm-checkout côté app complétera si besoin */
+      }
+    }
+    return subscriptionCheckoutReturnHtml(sid);
   }
 
   @Get('stripe/payment-cancel')

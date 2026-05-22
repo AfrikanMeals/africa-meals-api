@@ -767,6 +767,48 @@ export class NotificationsService implements OnModuleInit {
   }
 
   /**
+   * Inbox + push FCM — menu du jour non défini pour aujourd’hui (vendeur).
+   */
+  async notifyVendorDailyMenuMissing(args: {
+    recipientUserId: string;
+    storeId: string;
+    storeName?: string;
+    dayOfWeek: number;
+    reminderDate: string;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.recipientUserId)) {
+      return;
+    }
+    const store = (args.storeName ?? '').trim() || 'Restaurant';
+    const title = 'Menu du jour';
+    const body =
+      `Vous n'avez pas encore défini le menu du jour pour aujourd'hui. ` +
+      `Ajoutez vos plats dans l'onglet Catalogue.`;
+    const data: Record<string, unknown> = {
+      type: 'daily_menu_reminder',
+      audience: 'vendor',
+      storeId: args.storeId,
+      storeName: store,
+      dayOfWeek: String(args.dayOfWeek),
+      reminderDate: args.reminderDate,
+    };
+
+    try {
+      await this.createUserScopedNotification({
+        recipientUserId: args.recipientUserId,
+        title,
+        body,
+        type: 'daily_menu_reminder',
+        data,
+        sendPush: true,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`notifyVendorDailyMenuMissing: ${msg}`);
+    }
+  }
+
+  /**
    * Push FCM — restaurateur / espace admin (nouvelle commande, paiement, expédition).
    */
   async pushVendorOrderNotify(args: {

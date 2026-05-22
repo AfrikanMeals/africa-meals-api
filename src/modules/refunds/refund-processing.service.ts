@@ -58,6 +58,9 @@ export type RefundListResponse = {
   processingPaused: boolean;
   autoProcessDelayMinutes: number;
   items: RefundQueueItem[];
+  page?: number;
+  limit?: number;
+  total?: number;
 };
 
 const ACTIVE_REFUND_STATUSES: OrderRefundRequestEntryStatusEnum[] = [
@@ -219,13 +222,23 @@ export class RefundProcessingService {
     return stores.map((s) => s._id as Types.ObjectId);
   }
 
-  async listRefundQueue(user: UserModel): Promise<RefundListResponse> {
+  async listRefundQueue(
+    user: UserModel,
+    opts?: { page?: number; take?: number },
+  ): Promise<RefundListResponse> {
     if (
       user.type !== UserTypeEnum.ADMIN &&
       user.type !== UserTypeEnum.VENDOR
     ) {
       throw new ForbiddenException('forbidden');
     }
+
+    const page = Math.max(1, Math.floor(opts?.page ?? 1) || 1);
+    const take = Math.min(
+      Math.max(Math.floor(opts?.take ?? 200) || 200, 1),
+      200,
+    );
+    const skip = (page - 1) * take;
 
     const settings = await this.settingsDoc();
     const match: Record<string, unknown> = {
@@ -241,15 +254,21 @@ export class RefundProcessingService {
           processingPaused: settings.processingPaused,
           autoProcessDelayMinutes: AUTO_DELAY_MINUTES,
           items: [],
+          page,
+          limit: take,
+          total: 0,
         };
       }
       match.store = { $in: storeIds };
     }
 
+    const total = await this.orderModel.countDocuments(match).exec();
+
     const orders = await this.orderModel
       .find(match)
       .sort({ updatedAt: -1 })
-      .limit(200)
+      .skip(skip)
+      .limit(take)
       .populate('user', 'fullName email')
       .populate('store', 'name')
       .select(
@@ -335,6 +354,9 @@ export class RefundProcessingService {
       processingPaused: settings.processingPaused,
       autoProcessDelayMinutes: AUTO_DELAY_MINUTES,
       items,
+      page,
+      limit: take,
+      total,
     };
   }
 

@@ -1,3 +1,4 @@
+import { SubscriptionsStripeCheckoutService } from '@modules/subscriptions/subscriptions-stripe-checkout.service';
 import { CartService } from '@modules/cart/cart.service';
 import { CouponsService } from '@modules/coupons/coupons.service';
 import { StripeConnectService } from './stripe-connect.service';
@@ -10,6 +11,7 @@ import { UsersService } from '@modules/users/users.service';
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -377,6 +379,8 @@ export class StripeGroupedCheckoutService {
     private readonly processedModel: Model<StripeProcessedCheckoutModel>,
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
+    @Inject(SubscriptionsStripeCheckoutService)
+    private readonly subscriptionStripeCheckout: SubscriptionsStripeCheckoutService,
   ) {}
 
   private stripe() {
@@ -792,14 +796,21 @@ export class StripeGroupedCheckoutService {
         ? `Afrika Meals · ${nStores} restaurants`
         : `Afrika Meals · ${nStores} restaurant`;
     const stripe = this.stripe();
+    const pmcId = this.config
+      .get<string>('STRIPE_PAYMENT_METHOD_CONFIGURATION')
+      ?.trim();
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
+      currency: built.currency,
       client_reference_id: String(user.id),
       customer_email: user.email,
       line_items: built.lineItems,
       success_url: successUrl,
       cancel_url: cancelUrl,
       metadata: meta,
+      // Méthodes dynamiques (Google Pay, Apple Pay, Link…) : Dashboard Stripe
+      // ou config dédiée `STRIPE_PAYMENT_METHOD_CONFIGURATION=pmc_…`.
+      ...(pmcId ? { payment_method_configuration: pmcId } : {}),
       payment_intent_data: {
         description: piDescription,
         metadata: meta,
@@ -1480,7 +1491,15 @@ export class StripeGroupedCheckoutService {
         metadata?: Record<string, string | null | undefined> | null;
         amount_total?: number | null;
         currency?: string | null;
+        payment_status?: string | null;
+        status?: string | null;
       };
+      if (session.metadata?.kind === 'vendor_subscription') {
+        await this.subscriptionStripeCheckout.fulfillFromCheckoutSessionObject(
+          session,
+        );
+        return { received: true };
+      }
       const uid = session.metadata?.uid;
       const storesCsv = session.metadata?.stores;
       const shipB64 = session.metadata?.shipB64;
@@ -1517,11 +1536,19 @@ export class StripeGroupedCheckoutService {
     if (event.type === 'payment_intent.succeeded') {
       const pi = event.data.object as unknown as {
         id: string;
+        status?: string | null;
         metadata?: Record<string, string | null | undefined> | null;
         amount?: number | null;
         amount_received?: number | null;
         currency?: string | null;
       };
+      if (pi.metadata?.kind === 'vendor_subscription') {
+        await this.subscriptionStripeCheckout.fulfillFromPaymentIntentObject({
+          ...pi,
+          status: 'succeeded',
+        });
+        return { received: true };
+      }
       const uid = pi.metadata?.uid;
       const storesCsv = pi.metadata?.stores;
       const shipB64 = pi.metadata?.shipB64;

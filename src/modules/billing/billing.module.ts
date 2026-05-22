@@ -5,6 +5,7 @@ import { OrdersModule } from '@modules/orders/orders.module';
 import { PlatformFeesModule } from '@modules/platform-fees/platform-fees.module';
 import { PlatformShippingSettingsModule } from '@modules/platform-shipping-settings/platform-shipping-settings.module';
 import { StoreModule } from '@modules/store/store.module';
+import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { UsersModule } from '@modules/users/users.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -43,6 +44,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
     CartModule,
     CouponsModule,
     StoreModule,
+    SubscriptionsModule,
     OrdersModule,
     PlatformFeesModule,
     PlatformShippingSettingsModule,

@@ -1,3 +1,4 @@
+import './setup-dns-resolver';
 import { compressionMiddleware } from './compression-middleware';
 import { unifiedJsonBodyParser } from './unified-body-parser';
 import { httpRequestTimeoutMiddleware } from './http-request-timeout';

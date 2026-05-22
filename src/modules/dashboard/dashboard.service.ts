@@ -404,6 +404,32 @@ export type DashboardVendorRecentCustomerRow = {
   isFirstOrderAtStore: boolean;
 };
 
+export type DashboardRecentCustomersPayload = {
+  newCustomersToday: number;
+  clients: DashboardVendorRecentCustomerRow[];
+};
+
+export type DashboardRevenueSeriesPoint = {
+  label: string;
+  date: string;
+  valeur: number;
+};
+
+export type DashboardRevenueSeriesPayload = {
+  period: '7d' | '30d' | '12m';
+  timezone: string;
+  total: number;
+  points: DashboardRevenueSeriesPoint[];
+};
+
+export type DashboardTopStoreRow = {
+  storeId: string;
+  name: string;
+  revenue: number;
+  commandes: number;
+  note: number | null;
+};
+
 /** Heure locale pour l’histogramme (Canada — aligné sur l’usage principal du dashboard). */
 const PEAK_HOURS_TZ = 'America/Toronto';
 /** Fenêtre pour classer le top plats (évite une liste vide si peu de ventes sur 48 h). */
@@ -1391,23 +1417,55 @@ export class DashboardService {
 
   /**
    * KPIs agrégés plateforme — réservé aux administrateurs.
-   * Fenêtres calendaires en **UTC** (minuit UTC → minuit UTC).
+   * Fenêtres calendaires `America/Toronto` (aligné cartes CA / revenus).
    */
   async getAdminKpis(user: UserModel): Promise<AdminDashboardKpis> {
     if (user.type !== UserTypeEnum.ADMIN) {
       throw new ForbiddenException('admin_only');
     }
+    return this.getDailyKpis(user);
+  }
 
-    const now = new Date();
-    const todayStart = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-    );
-    const todayEnd = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1),
-    );
-    const yesterdayStart = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1),
-    );
+  /**
+   * KPIs du jour — admin (plateforme) ou vendeur (ses boutiques).
+   */
+  async getDailyKpis(user: UserModel): Promise<AdminDashboardKpis> {
+    if (
+      user.type !== UserTypeEnum.ADMIN &&
+      user.type !== UserTypeEnum.VENDOR
+    ) {
+      throw new ForbiddenException('forbidden');
+    }
+
+    let storeIds: Types.ObjectId[] | null = null;
+    if (user.type === UserTypeEnum.VENDOR) {
+      storeIds = vendorStoreObjectIds(user);
+      if (!storeIds.length) {
+        return {
+          revenueTodayFcfa: 0,
+          revenueYesterdayFcfa: 0,
+          revenueTrendPercent: null,
+          ordersToday: 0,
+          ordersYesterday: 0,
+          ordersTrendPercent: null,
+          ordersInProgress: 0,
+          newClientsToday: 0,
+          newClientsYesterday: 0,
+          newClientsTrendPercent: null,
+          avgDeliveryMinutesToday: null,
+          avgDeliveryMinutesYesterday: null,
+          deliveryDeltaMinutes: null,
+          revenueTargetFcfa: DASHBOARD_CA_MONTHLY_TARGET_VENDOR,
+          deliveryTargetMinutes: ADMIN_DELIVERY_TARGET_MIN,
+        };
+      }
+    }
+
+    const z = PEAK_HOURS_TZ;
+    const now = dayjs().tz(z);
+    const todayStart = now.startOf('day').toDate();
+    const todayEnd = now.add(1, 'day').startOf('day').toDate();
+    const yesterdayStart = now.subtract(1, 'day').startOf('day').toDate();
     const yesterdayEnd = todayStart;
 
     const [
@@ -1421,27 +1479,15 @@ export class DashboardService {
       avgDelToday,
       avgDelYesterday,
     ] = await Promise.all([
-      this.sumRevenueFcfa(todayStart, todayEnd),
-      this.sumRevenueFcfa(yesterdayStart, yesterdayEnd),
-      this.orderModel.countDocuments({
-        createdAt: { $gte: todayStart, $lt: todayEnd },
-      }),
-      this.orderModel.countDocuments({
-        createdAt: { $gte: yesterdayStart, $lt: yesterdayEnd },
-      }),
-      this.orderModel.countDocuments({
-        status: { $in: ORDER_STATUSES_IN_FLIGHT },
-      }),
-      this.userModel.countDocuments({
-        type: UserTypeEnum.USER,
-        createdAt: { $gte: todayStart, $lt: todayEnd },
-      }),
-      this.userModel.countDocuments({
-        type: UserTypeEnum.USER,
-        createdAt: { $gte: yesterdayStart, $lt: yesterdayEnd },
-      }),
-      this.avgCompletedDeliveryMinutes(todayStart, todayEnd),
-      this.avgCompletedDeliveryMinutes(yesterdayStart, yesterdayEnd),
+      this.sumRevenueInRange(todayStart, todayEnd, storeIds),
+      this.sumRevenueInRange(yesterdayStart, yesterdayEnd, storeIds),
+      this.countOrdersInRange(todayStart, todayEnd, storeIds),
+      this.countOrdersInRange(yesterdayStart, yesterdayEnd, storeIds),
+      this.countOrdersInFlight(storeIds),
+      this.countNewClientsInRange(todayStart, todayEnd, storeIds),
+      this.countNewClientsInRange(yesterdayStart, yesterdayEnd, storeIds),
+      this.avgCompletedDeliveryMinutes(todayStart, todayEnd, storeIds),
+      this.avgCompletedDeliveryMinutes(yesterdayStart, yesterdayEnd, storeIds),
     ]);
 
     const deliveryDeltaMinutes =
@@ -1466,9 +1512,408 @@ export class DashboardService {
       avgDeliveryMinutesToday: avgDelToday,
       avgDeliveryMinutesYesterday: avgDelYesterday,
       deliveryDeltaMinutes,
-      revenueTargetFcfa: ADMIN_REVENUE_TARGET_FCFA,
+      revenueTargetFcfa:
+        user.type === UserTypeEnum.ADMIN
+          ? ADMIN_REVENUE_TARGET_FCFA
+          : DASHBOARD_CA_MONTHLY_TARGET_VENDOR,
       deliveryTargetMinutes: ADMIN_DELIVERY_TARGET_MIN,
     };
+  }
+
+  private async countOrdersInFlight(
+    storeIds: Types.ObjectId[] | null,
+  ): Promise<number> {
+    const filter: Record<string, unknown> = {
+      status: { $in: ORDER_STATUSES_IN_FLIGHT },
+    };
+    if (storeIds?.length) {
+      filter.store = { $in: storeIds };
+    }
+    return this.orderModel.countDocuments(filter).exec();
+  }
+
+  /** Inscriptions `USER` (admin) ou première commande boutique du jour (vendeur). */
+  private async countNewClientsInRange(
+    start: Date,
+    end: Date,
+    storeIds: Types.ObjectId[] | null,
+  ): Promise<number> {
+    if (!storeIds?.length) {
+      return this.userModel
+        .countDocuments({
+          type: UserTypeEnum.USER,
+          createdAt: { $gte: start, $lt: end },
+        })
+        .exec();
+    }
+
+    const orderColl = this.orderModel.collection.name;
+    const agg = await this.orderModel
+      .aggregate<{ n?: number }>([
+        {
+          $match: {
+            store: { $in: storeIds },
+            status: { $ne: OrderStatusEnum.CANCELLED },
+            createdAt: { $gte: start, $lte: end },
+          },
+        },
+        {
+          $lookup: {
+            from: orderColl,
+            let: { uid: '$user', sid: '$store', ca: '$createdAt' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: ['$user', '$$uid'] },
+                      { $eq: ['$store', '$$sid'] },
+                      { $ne: ['$status', OrderStatusEnum.CANCELLED] },
+                      { $lt: ['$createdAt', '$$ca'] },
+                    ],
+                  },
+                },
+              },
+              { $limit: 1 },
+            ],
+            as: 'prior',
+          },
+        },
+        { $match: { prior: { $size: 0 } } },
+        { $group: { _id: '$user' } },
+        { $count: 'n' },
+      ])
+      .exec();
+    return Number(agg[0]?.n) || 0;
+  }
+
+  /**
+   * Courbe de revenus (7 j / 30 j / 12 mois) — admin (plateforme) ou vendeur (ses boutiques).
+   */
+  async getDashboardRevenueSeries(
+    user: UserModel,
+    period: '7d' | '30d' | '12m',
+  ): Promise<DashboardRevenueSeriesPayload> {
+    if (
+      user.type !== UserTypeEnum.ADMIN &&
+      user.type !== UserTypeEnum.VENDOR
+    ) {
+      throw new ForbiddenException('forbidden');
+    }
+
+    let storeIds: Types.ObjectId[] | null = null;
+    if (user.type === UserTypeEnum.VENDOR) {
+      storeIds = vendorStoreObjectIds(user);
+      if (!storeIds.length) {
+        return {
+          period,
+          timezone: PEAK_HOURS_TZ,
+          total: 0,
+          points: [],
+        };
+      }
+    }
+
+    const z = PEAK_HOURS_TZ;
+    const now = dayjs().tz(z);
+    const points: DashboardRevenueSeriesPoint[] = [];
+
+    if (period === '12m') {
+      const start = now.subtract(11, 'month').startOf('month').toDate();
+      const endExclusive = now.add(1, 'month').startOf('month').toDate();
+      const monthly = await this.aggregateMonthlyRevenue(
+        start,
+        endExclusive,
+        storeIds,
+      );
+      for (const row of monthly) {
+        const d = dayjs.tz(`${row.monthKey}-01`, z);
+        points.push({
+          label: this.revenueSeriesLabel(d, '12m'),
+          date: row.monthKey,
+          valeur: Math.round(row.revenue),
+        });
+      }
+      const total = points.reduce((a, p) => a + p.valeur, 0);
+      return { period, timezone: z, total, points };
+    }
+
+    const days = period === '30d' ? 30 : 7;
+    const start = now
+      .subtract(days - 1, 'day')
+      .startOf('day')
+      .toDate();
+    const endExclusive = now.add(1, 'day').startOf('day').toDate();
+    const daily = await this.aggregateDailyRevenue(
+      start,
+      endExclusive,
+      storeIds,
+    );
+    for (const row of daily) {
+      const d = dayjs.tz(row.date, z);
+      points.push({
+        label: this.revenueSeriesLabel(d, period),
+        date: row.date,
+        valeur: Math.round(row.revenue),
+      });
+    }
+    const total = points.reduce((a, p) => a + p.valeur, 0);
+    return { period, timezone: z, total, points };
+  }
+
+  private revenueSeriesLabel(
+    d: dayjs.Dayjs,
+    period: '7d' | '30d' | '12m',
+  ): string {
+    const date = d.toDate();
+    if (period === '7d') {
+      const wd = date.toLocaleDateString('fr-CA', { weekday: 'short' });
+      return wd.charAt(0).toUpperCase() + wd.slice(1).replace(/\.$/, '');
+    }
+    if (period === '30d') {
+      return date.toLocaleDateString('fr-CA', {
+        day: 'numeric',
+        month: 'short',
+      });
+    }
+    const m = date.toLocaleDateString('fr-CA', { month: 'short' });
+    return m.charAt(0).toUpperCase() + m.slice(1).replace(/\.$/, '');
+  }
+
+  /**
+   * Derniers clients (commandes récentes) + nouveaux inscrits du jour.
+   * Admin : plateforme ; vendeur : ses boutiques (alias `vendor/recent-customers`).
+   */
+  async listRecentCustomers(
+    user: UserModel,
+  ): Promise<DashboardRecentCustomersPayload> {
+    if (user.type === UserTypeEnum.VENDOR) {
+      return this.listVendorRecentCustomers(user);
+    }
+    if (user.type === UserTypeEnum.ADMIN) {
+      return this.listAdminRecentCustomers(user);
+    }
+    throw new ForbiddenException('forbidden');
+  }
+
+  private async listAdminRecentCustomers(
+    _user: UserModel,
+  ): Promise<DashboardRecentCustomersPayload> {
+    const z = PEAK_HOURS_TZ;
+    const start = dayjs().tz(z).startOf('day').toDate();
+    const end = dayjs().tz(z).endOf('day').toDate();
+
+    const newClientsToday = await this.userModel.countDocuments({
+      type: UserTypeEnum.USER,
+      createdAt: { $gte: start, $lte: end },
+    });
+
+    type PopUser = {
+      _id: Types.ObjectId;
+      fullName?: string;
+      profileImage?: string;
+    };
+    type OrderRecentLean = {
+      _id: Types.ObjectId;
+      user: Types.ObjectId | PopUser;
+      createdAt: Date;
+    };
+
+    const recentOrders = (await this.orderModel
+      .find({ status: { $ne: OrderStatusEnum.CANCELLED } })
+      .sort({ createdAt: -1 })
+      .limit(80)
+      .populate('user', 'fullName profileImage')
+      .lean()
+      .exec()) as unknown as OrderRecentLean[];
+
+    const seenUser = new Set<string>();
+    const picked: OrderRecentLean[] = [];
+    for (const o of recentOrders) {
+      const uid =
+        typeof o.user === 'object' &&
+        o.user !== null &&
+        '_id' in o.user &&
+        !(o.user instanceof Types.ObjectId)
+          ? String((o.user as PopUser)._id)
+          : String(o.user);
+      if (seenUser.has(uid)) continue;
+      seenUser.add(uid);
+      picked.push(o);
+      if (picked.length >= 5) break;
+    }
+
+    const clients: DashboardVendorRecentCustomerRow[] = [];
+    for (const o of picked) {
+      const pop =
+        typeof o.user === 'object' &&
+        o.user !== null &&
+        '_id' in o.user &&
+        !(o.user instanceof Types.ObjectId)
+          ? (o.user as PopUser)
+          : null;
+      if (!pop?._id) continue;
+
+      const priorCount = await this.orderModel.countDocuments({
+        user: pop._id,
+        status: { $ne: OrderStatusEnum.CANCELLED },
+        createdAt: { $lt: o.createdAt },
+      });
+
+      const img = String(pop.profileImage ?? '').trim();
+      clients.push({
+        userId: String(pop._id),
+        fullName: String(pop.fullName ?? '').trim() || 'Client',
+        profileImage: img.length ? img : null,
+        lastOrderAt: o.createdAt.toISOString(),
+        isFirstOrderAtStore: priorCount === 0,
+      });
+    }
+
+    return { newCustomersToday: newClientsToday, clients };
+  }
+
+  /**
+   * Top boutiques par CA du jour (fuseau Toronto) — admin ou vendeur (ses boutiques).
+   */
+  async listTopStoresToday(user: UserModel): Promise<DashboardTopStoreRow[]> {
+    if (
+      user.type !== UserTypeEnum.ADMIN &&
+      user.type !== UserTypeEnum.VENDOR
+    ) {
+      throw new ForbiddenException('forbidden');
+    }
+
+    let storeIds: Types.ObjectId[] | null = null;
+    if (user.type === UserTypeEnum.VENDOR) {
+      storeIds = vendorStoreObjectIds(user);
+      if (!storeIds.length) return [];
+    }
+
+    const z = PEAK_HOURS_TZ;
+    const start = dayjs().tz(z).startOf('day').toDate();
+    const endExclusive = dayjs().tz(z).add(1, 'day').startOf('day').toDate();
+
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: endExclusive },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+
+    const agg = await this.orderModel
+      .aggregate<{
+        _id: Types.ObjectId;
+        revenue: number;
+        commandes: number;
+      }>([
+        { $match: match },
+        {
+          $group: {
+            _id: '$store',
+            revenue: {
+              $sum: {
+                $ifNull: ['$totalPrice', { $ifNull: ['$total_price', 0] }],
+              },
+            },
+            commandes: { $sum: 1 },
+          },
+        },
+        { $sort: { revenue: -1 } },
+        { $limit: 4 },
+      ])
+      .exec();
+
+    const storeIdList = agg.map((r) => r._id).filter(Boolean);
+    if (!storeIdList.length) return [];
+
+    const stores = await this.storeModel
+      .find({ _id: { $in: storeIdList } })
+      .select('name')
+      .lean()
+      .exec();
+    const nameById = new Map(
+      stores.map((s) => [String(s._id), String(s.name ?? 'Boutique')]),
+    );
+
+    const ratingAgg = await this.storeRatingModel
+      .aggregate<{ _id: Types.ObjectId; avg: number }>([
+        { $match: { store: { $in: storeIdList } } },
+        { $group: { _id: '$store', avg: { $avg: '$rate' } } },
+      ])
+      .exec();
+    const ratingByStore = new Map(
+      ratingAgg.map((r) => [
+        String(r._id),
+        typeof r.avg === 'number' && !Number.isNaN(r.avg)
+          ? Math.round(r.avg * 10) / 10
+          : null,
+      ]),
+    );
+
+    return agg.map((row) => {
+      const sid = String(row._id);
+      return {
+        storeId: sid,
+        name: nameById.get(sid) ?? 'Boutique',
+        revenue: Math.round(row.revenue * 100) / 100,
+        commandes: row.commandes ?? 0,
+        note: ratingByStore.get(sid) ?? null,
+      };
+    });
+  }
+
+  private async aggregateMonthlyRevenue(
+    start: Date,
+    end: Date,
+    storeIds: Types.ObjectId[] | null,
+  ): Promise<Array<{ monthKey: string; revenue: number }>> {
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: end },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+    const rows = await this.orderModel
+      .aggregate<{ _id: string; revenue: number }>([
+        { $match: match },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m',
+                date: '$createdAt',
+                timezone: PEAK_HOURS_TZ,
+              },
+            },
+            revenue: {
+              $sum: {
+                $ifNull: ['$totalPrice', { $ifNull: ['$total_price', 0] }],
+              },
+            },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ])
+      .exec();
+    const byMonth = new Map(
+      rows.map((r) => [
+        r._id,
+        typeof r.revenue === 'number' ? r.revenue : 0,
+      ]),
+    );
+
+    const out: Array<{ monthKey: string; revenue: number }> = [];
+    let cursor = dayjs(start).tz(PEAK_HOURS_TZ).startOf('month');
+    const endExclusive = dayjs(end).tz(PEAK_HOURS_TZ).startOf('month');
+    while (cursor.isBefore(endExclusive)) {
+      const key = cursor.format('YYYY-MM');
+      out.push({ monthKey: key, revenue: byMonth.get(key) ?? 0 });
+      cursor = cursor.add(1, 'month');
+    }
+    return out;
   }
 
   private async sumRevenueInRange(
@@ -1513,14 +1958,19 @@ export class DashboardService {
   private async avgCompletedDeliveryMinutes(
     start: Date,
     end: Date,
+    storeIds: Types.ObjectId[] | null = null,
   ): Promise<number | null> {
+    const match: Record<string, unknown> = {
+      status: OrderStatusEnum.COMPLETED,
+      updatedAt: { $gte: start, $lt: end },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
     const agg = await this.orderModel
       .aggregate<{ avg: number }>([
         {
-          $match: {
-            status: OrderStatusEnum.COMPLETED,
-            updatedAt: { $gte: start, $lt: end },
-          },
+          $match: match,
         },
         {
           $project: {

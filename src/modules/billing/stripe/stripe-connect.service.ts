@@ -1001,6 +1001,7 @@ export class StripeConnectService {
   async listPayouts(
     user: UserModel,
     limit = 25,
+    startingAfter?: string,
   ): Promise<{ payouts: StripeConnectPayoutRow[]; hasMore: boolean }> {
     this.assertVendor(user);
     const status = await this.getConnectStatus(user);
@@ -1011,10 +1012,16 @@ export class StripeConnectService {
     const uid = this.userId(user);
     let list;
     try {
-      list = await this.stripe().payouts.list(
-        { limit: safeLimit },
-        { stripeAccount: status.accountId },
-      );
+      const listParams: { limit: number; starting_after?: string } = {
+        limit: safeLimit,
+      };
+      const cursor = startingAfter?.trim();
+      if (cursor) {
+        listParams.starting_after = cursor;
+      }
+      list = await this.stripe().payouts.list(listParams, {
+        stripeAccount: status.accountId,
+      });
     } catch (e) {
       this.logger.warn(
         `Stripe payouts list failed: ${e instanceof Error ? e.message : String(e)}`,

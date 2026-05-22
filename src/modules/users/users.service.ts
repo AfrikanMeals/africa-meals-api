@@ -9,11 +9,24 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { OrderModel } from '@schemas/order.schema';
+import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { PaymentMethodModel } from '@schemas/payment-method.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
+import {
+  EndUserClientRow,
+  EndUserClientsPageResponse,
+  paginateClientRows,
+} from './dto/clients-page.dto';
+
+/** Commandes comptées dans le total d’achats client (aligné dashboard CA). */
+const CLIENT_ORDER_STATUSES_FOR_SPENT: OrderStatusEnum[] = [
+  OrderStatusEnum.PAIED,
+  OrderStatusEnum.APPROVED,
+  OrderStatusEnum.SHIPPED,
+  OrderStatusEnum.COMPLETED,
+];
 
 @Injectable()
 export class UsersService {
@@ -54,7 +67,22 @@ export class UsersService {
    * - `VENDOR` : clients ayant au moins une commande sur une boutique dont le propriétaire est l’appelant ;
    *   `ordersCount` = nombre de commandes chez ce vendeur (toutes ses boutiques).
    */
-  async listEndUserClients(caller: UserModel) {
+  async listEndUserClients(caller: UserModel): Promise<EndUserClientRow[]> {
+    return this._buildSortedEndUserClients(caller);
+  }
+
+  async listEndUserClientsPage(
+    caller: UserModel,
+    page: number,
+    take: number,
+  ): Promise<EndUserClientsPageResponse> {
+    const rows = await this._buildSortedEndUserClients(caller);
+    return paginateClientRows(rows, page, take);
+  }
+
+  private async _buildSortedEndUserClients(
+    caller: UserModel,
+  ): Promise<EndUserClientRow[]> {
     if (!caller) {
       throw new ForbiddenException('clients_access_denied');
     }
@@ -71,22 +99,56 @@ export class UsersService {
     userIds: Types.ObjectId[],
     storeFilter?: Types.ObjectId[],
   ): Promise<Map<string, number>> {
+    const spend = await this._orderSpendByUser(userIds, storeFilter);
     const map = new Map<string, number>();
+    for (const [uid, row] of spend) {
+      map.set(uid, row.orderCount);
+    }
+    return map;
+  }
+
+  private async _orderSpendByUser(
+    userIds: Types.ObjectId[],
+    storeFilter?: Types.ObjectId[],
+  ): Promise<
+    Map<string, { orderCount: number; totalSpent: number }>
+  > {
+    const map = new Map<string, { orderCount: number; totalSpent: number }>();
     if (!userIds.length) {
       return map;
     }
-    const match: Record<string, unknown> = { user: { $in: userIds } };
+    const match: Record<string, unknown> = {
+      user: { $in: userIds },
+      status: { $in: CLIENT_ORDER_STATUSES_FOR_SPENT },
+    };
     if (storeFilter?.length) {
       match.store = { $in: storeFilter };
     }
     const agg = await this._orderModel
-      .aggregate<{ _id: Types.ObjectId; count: number }>([
+      .aggregate<{
+        _id: Types.ObjectId;
+        orderCount: number;
+        totalSpent: number;
+      }>([
         { $match: match },
-        { $group: { _id: '$user', count: { $sum: 1 } } },
+        {
+          $group: {
+            _id: '$user',
+            orderCount: { $sum: 1 },
+            totalSpent: {
+              $sum: {
+                $ifNull: ['$totalPrice', { $ifNull: ['$total_price', 0] }],
+              },
+            },
+          },
+        },
       ])
       .exec();
     for (const row of agg) {
-      map.set(String(row._id), row.count);
+      map.set(String(row._id), {
+        orderCount: row.orderCount ?? 0,
+        totalSpent: Number(row.totalSpent ?? 0),
+      });
     }
     return map;
   }
@@ -94,7 +156,8 @@ export class UsersService {
   private _mapLeanUserToClientRow(
     u: Record<string, unknown>,
     ordersCount: number,
-  ) {
+    totalSpent = 0,
+  ): EndUserClientRow {
     const id = String(u._id);
     const fullName = String(u.fullName ?? u.full_name ?? '').trim();
     const parts = fullName.split(/\s+/).filter(Boolean);
@@ -126,6 +189,12 @@ export class UsersService {
       verifiedRaw instanceof Date ||
       (typeof verifiedRaw === 'string' && verifiedRaw.length > 0);
 
+    const profileRaw = u.profileImage ?? u.profile_image;
+    const profileImage =
+      typeof profileRaw === 'string' && profileRaw.trim().length > 0
+        ? profileRaw.trim()
+        : null;
+
     return {
       id,
       fullName: fullName || nom || prenom,
@@ -138,6 +207,8 @@ export class UsersService {
       addressSummary,
       emailVerified,
       ordersCount,
+      totalSpent: Math.round(totalSpent * 100) / 100,
+      profileImage,
     };
   }
 
@@ -145,7 +216,7 @@ export class UsersService {
     const rows = await this._userModel
       .find({ type: UserTypeEnum.USER })
       .select(
-        'fullName email appCountryCode emailVerifiedAt loyaltyPoints createdAt addresses',
+        'fullName email profileImage appCountryCode emailVerifiedAt loyaltyPoints createdAt addresses',
       )
       .populate({
         path: 'addresses',
@@ -158,14 +229,18 @@ export class UsersService {
     const userIds = rows.map(
       (r) => r._id as Types.ObjectId,
     );
-    const counts = await this._orderCountsByUser(userIds);
+    const spend = await this._orderSpendByUser(userIds);
 
-    return (rows as Record<string, unknown>[]).map((u) =>
-      this._mapLeanUserToClientRow(
+    const mapped = (rows as Record<string, unknown>[]).map((u) => {
+      const id = String(u._id);
+      const s = spend.get(id);
+      return this._mapLeanUserToClientRow(
         u,
-        counts.get(String(u._id)) ?? 0,
-      ),
-    );
+        s?.orderCount ?? 0,
+        s?.totalSpent ?? 0,
+      );
+    });
+    return mapped.sort((a, b) => b.totalSpent - a.totalSpent);
   }
 
   private async _listEndUserClientsForVendorStores(caller: UserModel) {
@@ -203,24 +278,27 @@ export class UsersService {
         type: UserTypeEnum.USER,
       })
       .select(
-        'fullName email appCountryCode emailVerifiedAt loyaltyPoints createdAt addresses',
+        'fullName email profileImage appCountryCode emailVerifiedAt loyaltyPoints createdAt addresses',
       )
       .populate({
         path: 'addresses',
         select: 'address city label isDefault',
       })
-      .sort({ createdAt: -1 })
       .lean()
       .exec();
 
-    const counts = await this._orderCountsByUser(userIds, storeIds);
+    const spend = await this._orderSpendByUser(userIds, storeIds);
 
-    return (rows as Record<string, unknown>[]).map((u) =>
-      this._mapLeanUserToClientRow(
+    const mapped = (rows as Record<string, unknown>[]).map((u) => {
+      const id = String(u._id);
+      const s = spend.get(id);
+      return this._mapLeanUserToClientRow(
         u,
-        counts.get(String(u._id)) ?? 0,
-      ),
-    );
+        s?.orderCount ?? 0,
+        s?.totalSpent ?? 0,
+      );
+    });
+    return mapped.sort((a, b) => b.totalSpent - a.totalSpent);
   }
 
   async hasStore(authUser: UserModel) {

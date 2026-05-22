@@ -1,6 +1,5 @@
-require("node:dns/promises").setServers(["1.1.1.1", "8.8.8.8"]);
 import { CacheModule } from '@nestjs/cache-manager';
-import { Module } from '@nestjs/common';
+import { Logger, Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -28,6 +27,7 @@ import { DeliveryAgentModule } from './modules/delivery-agent/delivery-agent.mod
 import { GraphqlApiModule } from './graphql/graphql.module';
 import { RecommendationsModule } from './modules/recommendations/recommendations.module';
 import { PlatformFeesModule } from './modules/platform-fees/platform-fees.module';
+import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
 import { RefundsModule } from './modules/refunds/refunds.module';
 import { PlatformShippingSettingsModule } from './modules/platform-shipping-settings/platform-shipping-settings.module';
 import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
@@ -49,8 +49,22 @@ import { FieldSelectionModule } from './common/field-selection/field-selection.m
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) =>
-        buildMongooseRootOptions(config, 'africa-meals-api'),
+      useFactory: (config: ConfigService) => {
+        const opts = buildMongooseRootOptions(config, 'africa-meals-api');
+        return {
+          ...opts,
+          connectionFactory: (connection: import('mongoose').Connection) => {
+            connection.on('error', (err: Error) => {
+              Logger.error(
+                `MongoDB: ${err.message}`,
+                err.stack,
+                'MongooseModule',
+              );
+            });
+            return connection;
+          },
+        };
+      },
     }),
     AuthModule,
     UsersModule,
@@ -74,6 +88,7 @@ import { FieldSelectionModule } from './common/field-selection/field-selection.m
     RecommendationsModule,
     PlatformShippingSettingsModule,
     PlatformFeesModule,
+    SubscriptionsModule,
     RefundsModule,
     FieldSelectionModule,
     // SharedModule,

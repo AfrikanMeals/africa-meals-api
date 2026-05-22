@@ -20,6 +20,10 @@ import { AssignDashboardOrderDto } from './dto/assign-dashboard-order.dto';
 import { CreateDashboardLivreurDto } from './dto/create-dashboard-livreur.dto';
 import { UpdateDashboardLivreurStatutDto } from './dto/update-dashboard-livreur-statut.dto';
 import { FinancePeriodReportQueryDto } from './dto/finance-period-report-query.dto';
+import {
+  DashboardRevenueSeriesQueryDto,
+  parseRevenueSeriesPeriod,
+} from './dto/revenue-series-query.dto';
 import { DashboardService } from './dashboard.service';
 
 @ApiTags('dashboard')
@@ -85,11 +89,45 @@ export class DashboardController {
     return this._dashboardService.listPeakHoursActivity(req.user as UserModel);
   }
 
-  /** Indicateurs agrégés (ADMIN uniquement) — CA, commandes, inscriptions, délai livraison. */
+  /** Indicateurs agrégés (ADMIN uniquement) — alias de `daily-kpis`. */
   @Get('admin/kpis')
   @UseGuards(JwtGuard)
   adminKpis(@Req() req: Request) {
     return this._dashboardService.getAdminKpis(req.user as UserModel);
+  }
+
+  /** KPIs du jour — admin (plateforme) ou vendeur (ses boutiques). */
+  @Get('daily-kpis')
+  @UseGuards(JwtGuard)
+  dailyKpis(@Req() req: Request) {
+    return this._dashboardService.getDailyKpis(req.user as UserModel);
+  }
+
+  /** Courbe de revenus (7j / 30j / 12m) — admin ou vendeur. */
+  @Get('revenue-series')
+  @UseGuards(JwtGuard)
+  revenueSeries(
+    @Req() req: Request,
+    @Query() query: DashboardRevenueSeriesQueryDto,
+  ) {
+    return this._dashboardService.getDashboardRevenueSeries(
+      req.user as UserModel,
+      parseRevenueSeriesPeriod(query.period),
+    );
+  }
+
+  /** Derniers clients + nouveaux du jour — admin (plateforme) ou vendeur. */
+  @Get('recent-customers')
+  @UseGuards(JwtGuard)
+  recentCustomers(@Req() req: Request) {
+    return this._dashboardService.listRecentCustomers(req.user as UserModel);
+  }
+
+  /** Top boutiques par CA du jour — admin ou vendeur. */
+  @Get('top-stores-today')
+  @UseGuards(JwtGuard)
+  topStoresToday(@Req() req: Request) {
+    return this._dashboardService.listTopStoresToday(req.user as UserModel);
   }
 
   /** Performance financière hebdomadaire par client / vendeur (Finances). */

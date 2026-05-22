@@ -1,0 +1,38 @@
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument } from 'mongoose';
+
+/** Offre d’abonnement vendeur (catalogue admin). */
+@Schema({ timestamps: true, collection: 'subscription_plans' })
+export class SubscriptionPlanModel {
+  @Prop({ type: String, required: true, trim: true })
+  name: string;
+
+  @Prop({ type: String, trim: true, default: '' })
+  description: string;
+
+  @Prop({ type: Number, required: true, min: 0 })
+  priceMonthly: number;
+
+  @Prop({ type: Number, required: true, min: 0 })
+  priceYearly: number;
+
+  @Prop({ type: String, default: 'CAD', trim: true })
+  currency: string;
+
+  /** Liste de fonctionnalités affichées (une entrée = une puce). */
+  @Prop({ type: [String], default: [] })
+  features: string[];
+
+  @Prop({ type: Boolean, default: true })
+  active: boolean;
+
+  @Prop({ type: Number, default: 0 })
+  sortOrder: number;
+}
+
+export type SubscriptionPlanDocument =
+  HydratedDocument<SubscriptionPlanModel>;
+
+export const SubscriptionPlanSchema = SchemaFactory.createForClass(
+  SubscriptionPlanModel,
+);

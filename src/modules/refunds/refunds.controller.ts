@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
   UsePipes,
@@ -25,8 +26,17 @@ export class RefundsController {
   @Get()
   @UseGuards(JwtGuard)
   @ApiOperation({ summary: 'File des remboursements (admin ou vendeur lecture)' })
-  list(@Req() req: Request) {
-    return this.refunds.listRefundQueue(req.user as UserModel);
+  list(
+    @Req() req: Request,
+    @Query('page') page?: string,
+    @Query('take') take?: string,
+  ) {
+    const p = page != null ? Number(page) : undefined;
+    const t = take != null ? Number(take) : undefined;
+    return this.refunds.listRefundQueue(req.user as UserModel, {
+      page: Number.isFinite(p) ? p : undefined,
+      take: Number.isFinite(t) ? t : undefined,
+    });
   }
 
   @Get('settings')

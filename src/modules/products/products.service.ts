@@ -498,6 +498,7 @@ export class ProductsService {
       status: String(p.status ?? ProductStatusEnum.PENDING),
       categoryId: catId,
       categoryTitle: catTitle,
+      averageRating: Number(p.averageRating ?? 0),
       ...(profileImage ? { profileImage } : {}),
     };
   }
@@ -536,10 +537,22 @@ export class ProductsService {
     const q = opts.q?.trim();
     if (q) {
       const esc = this._escapeRegex(q);
-      match.$or = [
+      const or: Record<string, unknown>[] = [
         { title: { $regex: esc, $options: 'i' } },
         { bio: { $regex: esc, $options: 'i' } },
+        { about: { $regex: esc, $options: 'i' } },
       ];
+      const categoryIds = await this._productCategoryModel
+        .find({ title: { $regex: esc, $options: 'i' } })
+        .select('_id')
+        .lean()
+        .exec();
+      if (categoryIds.length) {
+        or.push({
+          category: { $in: categoryIds.map((c) => c._id) },
+        });
+      }
+      match.$or = or;
     }
 
     const page = Math.max(1, opts.page);
@@ -565,6 +578,33 @@ export class ProductsService {
             { $skip: skip },
             { $limit: take },
             {
+              $lookup: {
+                from: 'product_ratings',
+                let: { pid: '$_id' },
+                pipeline: [
+                  {
+                    $match: {
+                      $expr: { $eq: ['$product', '$$pid'] },
+                    },
+                  },
+                  {
+                    $group: {
+                      _id: null,
+                      avgRate: { $avg: '$rate' },
+                    },
+                  },
+                ],
+                as: '_rateAgg',
+              },
+            },
+            {
+              $addFields: {
+                averageRating: {
+                  $ifNull: [{ $arrayElemAt: ['$_rateAgg.avgRate', 0] }, 0],
+                },
+              },
+            },
+            {
               $project: {
                 _id: 1,
                 title: 1,
@@ -578,6 +618,7 @@ export class ProductsService {
                 bio: 1,
                 about: 1,
                 category: 1,
+                averageRating: 1,
                 categoryTitle: {
                   $ifNull: [{ $arrayElemAt: ['$cat.title', 0] }, ''],
                 },
