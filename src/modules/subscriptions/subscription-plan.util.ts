@@ -1,3 +1,10 @@
+export function isFreePlanName(name: string): boolean {
+  const n = String(name ?? '')
+    .trim()
+    .toUpperCase();
+  return n === 'FREE' || n.startsWith('FREE');
+}
+
 /** Formule gratuite (pas d’essai). */
 export function isFreeSubscriptionPlan(plan: {
   name: string;

@@ -19,7 +19,11 @@ import {
   SubscribeVendorDto,
   UpdateSubscriptionPlanDto,
 } from './dto/subscription-plan.dto';
-import { resolvePlanTrialFields } from './subscription-plan.util';
+import {
+  isFreePlanName,
+  isFreeSubscriptionPlan,
+  resolvePlanTrialFields,
+} from './subscription-plan.util';
 
 function vendorStoreObjectIds(user: UserModel): Types.ObjectId[] {
   const rawStores = user.stores || [];
@@ -430,6 +434,34 @@ export class SubscriptionsService {
     );
   }
 
+  private pickPreferredActiveSubscription(
+    rows: Record<string, unknown>[],
+    now: Date,
+  ): Record<string, unknown> | null {
+    const nowMs = now.getTime();
+    const valid = rows.filter((s) => {
+      if (String(s.status ?? '') !== 'ACTIVE') return false;
+      const end = new Date(String(s.endsAt ?? '')).getTime();
+      return !Number.isNaN(end) && end > nowMs;
+    });
+    const pool = valid.length ? valid : rows.filter((s) => s.status === 'ACTIVE');
+    if (!pool.length) return null;
+
+    const scored = pool.map((s) => {
+      const planName = String(s.planName ?? '');
+      const free = isFreePlanName(planName);
+      const isTrial = s.isTrial === true;
+      const plan = s.plan as Record<string, unknown> | undefined;
+      const sortOrder = Number(plan?.sortOrder ?? 0);
+      let score = sortOrder;
+      if (isTrial && !free) score += 10_000;
+      if (!free) score += 1_000;
+      return { s, score };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    return scored[0]?.s ?? null;
+  }
+
   async getMySubscriptions(user: UserModel) {
     if (user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('vendor_only');
@@ -468,11 +500,7 @@ export class SubscriptionsService {
       }),
     );
 
-    const activeCandidates = mapped.filter((s) => s.status === 'ACTIVE');
-    let active = activeCandidates.find(
-      (s) => new Date(s.endsAt).getTime() > now.getTime(),
-    );
-    active ??= activeCandidates[0];
+    const active = this.pickPreferredActiveSubscription(mapped, now);
 
     const history = mapped.filter((s) => s.status !== 'PENDING_PAYMENT');
 
