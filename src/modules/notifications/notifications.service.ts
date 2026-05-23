@@ -842,6 +842,7 @@ export class NotificationsService implements OnModuleInit {
           status: status || 'unknown',
           url: '/commandes',
         },
+        androidChannelId: 'african_meals_vendor_orders',
       });
       if (res.deviceCount === 0) {
         this.logger.warn(

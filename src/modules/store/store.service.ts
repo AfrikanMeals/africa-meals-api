@@ -368,21 +368,40 @@ export class StoreService {
   }
 
   /** Résumé boutique pour l’écran vendeur (statut + messages + fiche éditable si PENDING/REVISION). */
-  async findMyStoreSummary(user: UserModel) {
+  async findMyStoreSummary(user: UserModel, storeId?: string) {
+    const access = await this._storeAccess.resolveStoreAccess(user);
+    const requested = storeId?.trim();
+    let targetId = requested;
+    if (!targetId) {
+      const owned = access.find((a) => a.isOwner)?.storeId ?? access[0]?.storeId;
+      targetId = owned;
+    }
+    if (!targetId) {
+      return { store: null as null };
+    }
+    const row = access.find((a) => a.storeId === targetId);
+    if (!row) {
+      throw new ForbiddenException('store_not_found');
+    }
+
     const store = await this._storeModel
-      .findOne({ owner: user._id })
+      .findById(targetId)
       .populate({
         path: 'address',
         select: 'address city country zipCode countryCode location',
       })
       .select(
-        'name bio email phoneNumber currency status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones address profileImage dailyMenuByWeekday',
+        'name bio email phoneNumber currency status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones address profileImage dailyMenuByWeekday owner',
       )
       .lean()
       .exec();
     if (!store) {
       return { store: null as null };
     }
+    const isOwner =
+      row.isOwner ||
+      String((store as { owner?: { toString(): string } }).owner ?? '') ===
+        String(user._id);
     const doc = store as Record<string, unknown>;
     const raw = (doc.vendorMessages as Record<string, unknown>[]) ?? [];
     const messages = [...raw].sort(
@@ -391,10 +410,9 @@ export class StoreService {
         new Date(String(a.createdAt)).getTime(),
     );
     const st = doc.status as StoreStatusEnum;
-    const canEditApplication = [
-      StoreStatusEnum.PENDING,
-      StoreStatusEnum.REVISION,
-    ].includes(st);
+    const canEditApplication =
+      isOwner &&
+      [StoreStatusEnum.PENDING, StoreStatusEnum.REVISION].includes(st);
 
     const addr = doc.address as AddressModel & {
       location?: { coordinates?: number[] };

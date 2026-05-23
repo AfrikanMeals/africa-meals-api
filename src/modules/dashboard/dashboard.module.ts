@@ -27,6 +27,7 @@ import { DashboardController } from './dashboard.controller';
 import { DashboardService } from './dashboard.service';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { OrdersModule } from '@modules/orders/orders.module';
+import { TeamsModule } from '@modules/teams/teams.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 
 @Module({
@@ -34,6 +35,7 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
     NotificationsModule,
     WsNotifyModule,
     OrdersModule,
+    TeamsModule,
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       { name: StoreRatingModel.name, schema: StoreRatingSchema },

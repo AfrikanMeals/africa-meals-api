@@ -30,7 +30,7 @@ export class UserModel extends BaseSchema {
   @Prop({ enum: UserTypeEnum, default: UserTypeEnum.USER })
   type: UserTypeEnum;
 
-  /** Rôle plateforme (utilisateurs ADMIN) — permissions granulaires. */
+  /** @deprecated Utiliser `platformRoleIds`. */
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: PlatformRoleModel.name,
@@ -38,6 +38,14 @@ export class UserModel extends BaseSchema {
     name: 'platform_role_id',
   })
   platformRoleId?: Types.ObjectId;
+
+  /** Rôles plateforme (utilisateurs ADMIN) — permissions = union des rôles. */
+  @Prop({
+    type: [{ type: MongooseSchema.Types.ObjectId, ref: PlatformRoleModel.name }],
+    default: [],
+    name: 'platform_role_ids',
+  })
+  platformRoleIds?: Types.ObjectId[];
 
   @Prop({ required: true, name: 'full_name' })
   fullName: string;

@@ -137,9 +137,15 @@ export class SubscriptionsStripeCheckoutService {
         status: 'ACTIVE',
         endsAt: { $gt: now },
       })
+      .lean()
       .exec();
     if (activeExisting) {
-      throw new BadRequestException('subscription_already_active');
+      const samePlan =
+        String(activeExisting.plan) === String(dto.planId);
+      const samePeriod = activeExisting.billingPeriod === period;
+      if (samePlan && samePeriod) {
+        throw new BadRequestException('subscription_unchanged');
+      }
     }
 
     await this.vendorSubModel.deleteMany({
@@ -265,6 +271,18 @@ export class SubscriptionsStripeCheckoutService {
 
     await this.vendorSubModel
       .updateOne({ _id: existing._id }, { $set: patch })
+      .exec();
+
+    const nowExpire = new Date();
+    await this.vendorSubModel
+      .updateMany(
+        {
+          store: existing.store,
+          status: 'ACTIVE',
+          _id: { $ne: existing._id },
+        },
+        { $set: { status: 'EXPIRED' as VendorSubscriptionStatus, endsAt: nowExpire } },
+      )
       .exec();
 
     return {

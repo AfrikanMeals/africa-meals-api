@@ -12,8 +12,15 @@ export class StoreMemberModel {
   @Prop({ type: Types.ObjectId, ref: 'UserModel', required: true, index: true })
   user: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'StoreRoleModel', required: true })
-  role: Types.ObjectId;
+  /** @deprecated Utiliser `roles` — conservé pour migration. */
+  @Prop({ type: Types.ObjectId, ref: 'StoreRoleModel', required: false })
+  role?: Types.ObjectId;
+
+  @Prop({
+    type: [{ type: Types.ObjectId, ref: 'StoreRoleModel' }],
+    default: [],
+  })
+  roles: Types.ObjectId[];
 
   @Prop({
     type: String,

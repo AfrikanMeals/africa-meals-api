@@ -193,8 +193,14 @@ export class StoreController {
   /** Résumé vendeur (évite la collision avec GET :id = "my-store"). */
   @Get('vendor/summary')
   @UseGuards(JwtGuard)
-  async getVendorSummary(@Req() req: Request) {
-    return this._storeService.findMyStoreSummary(req.user as UserModel);
+  async getVendorSummary(
+    @Req() req: Request,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this._storeService.findMyStoreSummary(
+      req.user as UserModel,
+      storeId,
+    );
   }
 
   /** Fil unique : messages boutique (`stores.vendor_messages`) + fil user (`users.reward_history`). */

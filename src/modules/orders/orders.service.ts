@@ -47,6 +47,7 @@ import {
   WsOrderNotifyService,
   type OrderWsTrackingPayload,
 } from '@modules/ws-notify/ws-order-notify.service';
+import { StoreAccessService } from '@modules/teams/store-access.service';
 
 @Injectable()
 export class OrdersService {
@@ -78,6 +79,9 @@ export class OrdersService {
 
   @Inject(WsOrderNotifyService)
   private readonly _wsOrderNotify: WsOrderNotifyService;
+
+  @Inject(StoreAccessService)
+  private readonly _storeAccess: StoreAccessService;
 
   /** Client + adresses de livraison (refs `addresses` peuplées). */
   private static readonly orderUserWithAddressesPopulate = {
@@ -506,12 +510,14 @@ export class OrdersService {
       .select('owner name')
       .lean()
       .exec();
-    const ownerId = this.storeOwnerUserIdFromLean(sto);
-    if (ownerId && ownerId !== String(user.id)) {
-      const sname = (sto as { name?: string } | null)?.name?.trim();
+    const sname = (sto as { name?: string } | null)?.name?.trim();
+    const vendorIds = (
+      await this._storeAccess.listStorePushRecipientUserIds(String(storeId))
+    ).filter((id) => id !== String(user.id));
+    if (vendorIds.length > 0) {
       void this._notificationsService
         .pushVendorOrderNotify({
-          vendorUserIds: [ownerId],
+          vendorUserIds: vendorIds,
           title: 'Nouvelle commande',
           body: `${sname || 'Boutique'} : nouvelle commande (en attente de paiement).`,
           orderId: created._id.toString(),
@@ -765,23 +771,28 @@ export class OrdersService {
               `FCM order paid: ${err instanceof Error ? err.message : String(err)}`,
             ),
           );
-        const ownerId = this.storeOwnerUserIdFromLean(o.store);
-        if (ownerId && ownerId !== uid) {
-          void this._notificationsService
-            .pushVendorOrderNotify({
-              vendorUserIds: [ownerId],
-              title: 'Commande payée',
-              body: `${storeName ?? 'Boutique'} : la commande a été payée.`,
-              orderId,
-              storeName,
-              reason: 'order_paid',
-              status: OrderStatusEnum.PAIED,
-            })
-            .catch((err) =>
-              this.logger.warn(
-                `FCM vendor order paid: ${err instanceof Error ? err.message : String(err)}`,
-              ),
-            );
+        const storeIdPaid = storeIdForNotif;
+        if (storeIdPaid) {
+          const vendorIds = (
+            await this._storeAccess.listStorePushRecipientUserIds(storeIdPaid)
+          ).filter((id) => id !== uid);
+          if (vendorIds.length > 0) {
+            void this._notificationsService
+              .pushVendorOrderNotify({
+                vendorUserIds: vendorIds,
+                title: 'Commande payée',
+                body: `${storeName ?? 'Boutique'} : la commande a été payée.`,
+                orderId,
+                storeName,
+                reason: 'order_paid',
+                status: OrderStatusEnum.PAIED,
+              })
+              .catch((err) =>
+                this.logger.warn(
+                  `FCM vendor order paid: ${err instanceof Error ? err.message : String(err)}`,
+                ),
+              );
+          }
         }
       }
       void this.notifyPartiesOrderRealtimeByOrderId(

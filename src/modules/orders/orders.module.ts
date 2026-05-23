@@ -29,6 +29,7 @@ import { OrderStatusEventsService } from './order-status-events.service';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
+import { TeamsModule } from '@modules/teams/teams.module';
 import { BusinessReportsModule } from '@modules/business-reports/business-reports.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 
@@ -43,6 +44,7 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
   exports: [OrdersService, OrderStatusEventsService],
   imports: [
     NotificationsModule,
+    TeamsModule,
     WsNotifyModule,
     BusinessReportsModule,
     CartModule,

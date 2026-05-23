@@ -38,6 +38,7 @@ import { NotificationsService } from '@modules/notifications/notifications.servi
 import { OrderStatusEventsService } from '@modules/orders/order-status-events.service';
 import { OrdersService } from '@modules/orders/orders.service';
 import { WsOrderNotifyService } from '@modules/ws-notify/ws-order-notify.service';
+import { StoreAccessService } from '@modules/teams/store-access.service';
 import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema';
 
 dayjs.extend(utc);
@@ -475,6 +476,7 @@ export class DashboardService {
     private readonly ordersService: OrdersService,
     @Inject(WsOrderNotifyService)
     private readonly wsOrderNotify: WsOrderNotifyService,
+    private readonly storeAccess: StoreAccessService,
   ) {}
 
   async getAlerts(user: UserModel): Promise<{
@@ -2368,26 +2370,29 @@ export class DashboardService {
       );
     }
 
-    const vendorId = this.storeOwnerUserIdForOrderPush(orderDoc);
-    if (vendorId && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
+    if (orderStoreId && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
       const sname = this.storeNameForOrderPush(orderDoc);
-      void this.notificationsService
-        .pushVendorOrderNotify({
-          vendorUserIds: [vendorId],
-          title: 'Commande en livraison',
-          body: `${sname ?? 'Boutique'} : commande prise en charge par le livreur.`,
-          orderId: orderDoc._id.toString(),
-          storeName: sname,
-          reason: 'order_shipped',
-          status: OrderStatusEnum.SHIPPED,
-        })
-        .catch((err) => {
-          this.logger.warn(
-            `FCM vendor order shipped: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        });
+      const vendorIds =
+        await this.storeAccess.listStorePushRecipientUserIds(orderStoreId);
+      if (vendorIds.length > 0) {
+        void this.notificationsService
+          .pushVendorOrderNotify({
+            vendorUserIds: vendorIds,
+            title: 'Commande en livraison',
+            body: `${sname ?? 'Boutique'} : commande prise en charge par le livreur.`,
+            orderId: orderDoc._id.toString(),
+            storeName: sname,
+            reason: 'order_shipped',
+            status: OrderStatusEnum.SHIPPED,
+          })
+          .catch((err) => {
+            this.logger.warn(
+              `FCM vendor order shipped: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          });
+      }
     }
 
     return this.toDashboardLivreurRow(

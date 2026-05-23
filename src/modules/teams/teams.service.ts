@@ -36,6 +36,12 @@ import {
   UpdateStoreRoleDto,
 } from './dto/teams.dto';
 import { StoreAccessService } from './store-access.service';
+import {
+  normalizePlatformRoleIds,
+  normalizeStoreMemberRoleIds,
+  resolvePlatformRoleIdsFromDto,
+  resolveRoleIdsFromDto,
+} from './teams-role-ids.util';
 
 function mapStoreRole(doc: Record<string, unknown>) {
   return {
@@ -59,18 +65,24 @@ function mapStoreMember(
   extras?: {
     userEmail?: string;
     userName?: string;
-    roleName?: string;
+    roleNames?: string[];
   },
 ) {
+  const roleIds = normalizeStoreMemberRoleIds(
+    doc as { role?: Types.ObjectId; roles?: Types.ObjectId[] },
+  ).map((id) => String(id));
+  const roleNames = extras?.roleNames ?? [];
   return {
     id: String(doc._id),
     storeId: String(doc.store),
     userId: String(doc.user),
-    roleId: String(doc.role),
+    roleIds,
+    roleNames,
+    roleId: roleIds[0] ?? '',
+    roleName: roleNames.join(', '),
     status: String(doc.status),
     userEmail: extras?.userEmail ?? '',
     userName: extras?.userName ?? '',
-    roleName: extras?.roleName ?? '',
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -131,19 +143,31 @@ export class TeamsService {
       user.type === UserTypeEnum.ADMIN
         ? await this.storeAccess.listAdminPermissions(user)
         : [];
-    let platformRole: ReturnType<typeof mapPlatformRole> | null = null;
-    const roleId = (user as { platformRoleId?: Types.ObjectId })
-      .platformRoleId;
-    if (user.type === UserTypeEnum.ADMIN && roleId) {
-      const role = await this.platformRoleModel.findById(roleId).lean().exec();
-      if (role) {
-        platformRole = mapPlatformRole(role as Record<string, unknown>);
+    const platformRoles: ReturnType<typeof mapPlatformRole>[] = [];
+    if (user.type === UserTypeEnum.ADMIN) {
+      const roleIds = normalizePlatformRoleIds(
+        user as {
+          platformRoleId?: Types.ObjectId;
+          platformRoleIds?: Types.ObjectId[];
+        },
+      );
+      if (roleIds.length) {
+        const roles = await this.platformRoleModel
+          .find({ _id: { $in: roleIds } })
+          .lean()
+          .exec();
+        for (const role of roles) {
+          platformRoles.push(
+            mapPlatformRole(role as Record<string, unknown>),
+          );
+        }
       }
     }
     return {
       storeAccess,
       adminPermissions,
-      platformRole,
+      platformRole: platformRoles[0] ?? null,
+      platformRoles,
     };
   }
 
@@ -192,7 +216,7 @@ export class TeamsService {
       await this.storeMemberModel.create({
         store: sid,
         user: ownerUserId,
-        role: ownerRole._id,
+        roles: [ownerRole._id],
         status: 'ACTIVE',
       });
     }
@@ -211,6 +235,26 @@ export class TeamsService {
         isSystem: true,
       });
     }
+  }
+
+  private async resolveStoreRoleObjectIds(
+    storeId: string,
+    dto: { roleId?: string; roleIds?: string[] },
+  ): Promise<Types.ObjectId[]> {
+    const ids = resolveRoleIdsFromDto(dto);
+    if (!ids.length) {
+      throw new BadRequestException('role_ids_required');
+    }
+    const roles = await this.storeRoleModel
+      .find({ _id: { $in: ids }, store: storeId })
+      .exec();
+    if (roles.length !== ids.length) {
+      throw new NotFoundException('role_not_found');
+    }
+    if (roles.some((r) => r.isOwnerRole)) {
+      throw new BadRequestException('cannot_assign_owner_role');
+    }
+    return roles.map((r) => r._id as Types.ObjectId);
   }
 
   private async resolveVendorStoreId(user: UserModel): Promise<string> {
@@ -299,8 +343,9 @@ export class TeamsService {
       throw new ForbiddenException('cannot_delete_system_role');
     }
     const inUse = await this.storeMemberModel.countDocuments({
-      role: roleId,
+      store: storeId,
       status: 'ACTIVE',
+      $or: [{ role: roleId }, { roles: roleId }],
     });
     if (inUse > 0) {
       throw new ConflictException('role_in_use');
@@ -323,7 +368,11 @@ export class TeamsService {
       .lean()
       .exec();
     const userIds = rows.map((r) => r.user);
-    const roleIds = rows.map((r) => r.role);
+    const roleIds = rows.flatMap((r) =>
+      normalizeStoreMemberRoleIds(
+        r as { role?: Types.ObjectId; roles?: Types.ObjectId[] },
+      ),
+    );
     const users = await this.userModel
       .find({ _id: { $in: userIds } })
       .select('fullName email')
@@ -349,11 +398,16 @@ export class TeamsService {
     const members = (rows as Record<string, unknown>[]).map((r) => {
       const uid = String(r.user);
       const u = userById.get(uid);
-      const role = roleById.get(String(r.role));
+      const memberRoleIds = normalizeStoreMemberRoleIds(
+        r as { role?: Types.ObjectId; roles?: Types.ObjectId[] },
+      );
+      const roleNames = memberRoleIds
+        .map((rid) => roleById.get(String(rid))?.name)
+        .filter((n): n is string => typeof n === 'string' && n.length > 0);
       return mapStoreMember(r, {
         userEmail: String(u?.email ?? ''),
         userName: String(u?.fullName ?? ''),
-        roleName: String(role?.name ?? ''),
+        roleNames,
       });
     });
 
@@ -364,11 +418,13 @@ export class TeamsService {
           id: `owner-${ownerId}`,
           storeId,
           userId: ownerId,
+          roleIds: [String(ownerRole._id)],
+          roleNames: [String(ownerRole.name ?? 'Propriétaire')],
           roleId: String(ownerRole._id),
+          roleName: String(ownerRole.name ?? 'Propriétaire'),
           status: 'ACTIVE',
           userEmail: String(owner.email ?? ''),
           userName: String(owner.fullName ?? ''),
-          roleName: String(ownerRole.name ?? 'Propriétaire'),
           createdAt: undefined,
           updatedAt: undefined,
         });
@@ -395,23 +451,22 @@ export class TeamsService {
       throw new BadRequestException('owner_already_has_access');
     }
 
-    const role = await this.storeRoleModel
-      .findOne({ _id: dto.roleId, store: storeId })
+    const roleObjectIds = await this.resolveStoreRoleObjectIds(storeId, dto);
+    const roleDocs = await this.storeRoleModel
+      .find({ _id: { $in: roleObjectIds } })
+      .lean()
       .exec();
-    if (!role) throw new NotFoundException('role_not_found');
-    if (role.isOwnerRole) {
-      throw new BadRequestException('cannot_assign_owner_role');
-    }
 
     const doc = await this.storeMemberModel
       .findOneAndUpdate(
         { store: storeId, user: target._id },
         {
           $set: {
-            role: role._id,
+            roles: roleObjectIds,
             status: 'ACTIVE',
             invitedBy: user._id,
           },
+          $unset: { role: 1 },
         },
         { upsert: true, new: true },
       )
@@ -426,7 +481,7 @@ export class TeamsService {
     return mapStoreMember(doc!.toObject() as Record<string, unknown>, {
       userEmail: target.email,
       userName: target.fullName,
-      roleName: role.name,
+      roleNames: roleDocs.map((r) => String(r.name ?? '')),
     });
   }
 
@@ -437,18 +492,16 @@ export class TeamsService {
     dto: UpdateStoreMemberDto,
   ) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.manage');
-    const role = await this.storeRoleModel
-      .findOne({ _id: dto.roleId, store: storeId })
+    const roleObjectIds = await this.resolveStoreRoleObjectIds(storeId, dto);
+    const roleDocs = await this.storeRoleModel
+      .find({ _id: { $in: roleObjectIds } })
+      .lean()
       .exec();
-    if (!role) throw new NotFoundException('role_not_found');
-    if (role.isOwnerRole) {
-      throw new BadRequestException('cannot_assign_owner_role');
-    }
 
     const updated = await this.storeMemberModel
       .findOneAndUpdate(
         { _id: memberId, store: storeId, status: 'ACTIVE' },
-        { $set: { role: role._id } },
+        { $set: { roles: roleObjectIds }, $unset: { role: 1 } },
         { new: true },
       )
       .exec();
@@ -457,7 +510,7 @@ export class TeamsService {
     return mapStoreMember(updated.toObject() as Record<string, unknown>, {
       userEmail: String(target?.email ?? ''),
       userName: String(target?.fullName ?? ''),
-      roleName: role.name,
+      roleNames: roleDocs.map((r) => String(r.name ?? '')),
     });
   }
 
@@ -528,7 +581,9 @@ export class TeamsService {
     const role = await this.platformRoleModel.findById(roleId).exec();
     if (!role) throw new NotFoundException('role_not_found');
     if (role.isSystem) throw new ForbiddenException('cannot_delete_system_role');
-    const inUse = await this.userModel.countDocuments({ platformRoleId: roleId });
+    const inUse = await this.userModel.countDocuments({
+      $or: [{ platformRoleId: roleId }, { platformRoleIds: roleId }],
+    });
     if (inUse > 0) throw new ConflictException('role_in_use');
     await role.deleteOne();
     return { ok: true };
@@ -538,13 +593,18 @@ export class TeamsService {
     await this.storeAccess.assertAdminPermission(user, 'admin.team.view');
     const rows = await this.userModel
       .find({ type: UserTypeEnum.ADMIN })
-      .select('fullName email platformRoleId createdAt')
+      .select('fullName email platformRoleId platformRoleIds createdAt')
       .sort({ fullName: 1 })
       .lean()
       .exec();
-    const roleIds = rows
-      .map((r) => r.platformRoleId)
-      .filter(Boolean) as Types.ObjectId[];
+    const roleIds = rows.flatMap((r) =>
+      normalizePlatformRoleIds(
+        r as {
+          platformRoleId?: Types.ObjectId;
+          platformRoleIds?: Types.ObjectId[];
+        },
+      ),
+    );
     const roles = await this.platformRoleModel
       .find({ _id: { $in: roleIds } })
       .lean()
@@ -552,14 +612,26 @@ export class TeamsService {
     const roleById = new Map(roles.map((r) => [String(r._id), r]));
 
     return rows.map((u) => {
-      const rid = u.platformRoleId ? String(u.platformRoleId) : '';
-      const role = rid ? roleById.get(rid) : null;
+      const pids = normalizePlatformRoleIds(
+        u as {
+          platformRoleId?: Types.ObjectId;
+          platformRoleIds?: Types.ObjectId[];
+        },
+      ).map((id) => String(id));
+      const roleNames = pids
+        .map((id) => roleById.get(id)?.name)
+        .filter((n): n is string => typeof n === 'string' && n.length > 0);
       return {
         userId: String(u._id),
         fullName: String(u.fullName ?? ''),
         email: String(u.email ?? ''),
-        platformRoleId: rid || null,
-        platformRoleName: role?.name ?? 'Super administrateur',
+        platformRoleIds: pids,
+        platformRoleNames: roleNames,
+        platformRoleId: pids[0] ?? null,
+        platformRoleName:
+          roleNames.length > 0
+            ? roleNames.join(', ')
+            : 'Super administrateur',
         createdAt: u.createdAt,
       };
     });
@@ -575,17 +647,22 @@ export class TeamsService {
     if (!target || target.type !== UserTypeEnum.ADMIN) {
       throw new NotFoundException('admin_user_not_found');
     }
-    if (String(target._id) === String(user._id) && dto.platformRoleId) {
+    const requestedIds = resolvePlatformRoleIdsFromDto(dto);
+    if (String(target._id) === String(user._id) && requestedIds.length > 0) {
       throw new ForbiddenException('cannot_change_own_role');
     }
-    const roleId = dto.platformRoleId?.trim();
-    if (!roleId) {
+    if (!requestedIds.length) {
       target.platformRoleId = undefined;
+      target.platformRoleIds = [];
     } else {
-      const role = await this.platformRoleModel.findById(roleId).exec();
-      if (!role) throw new NotFoundException('role_not_found');
-      (target as UserModel & { platformRoleId?: Types.ObjectId }).platformRoleId =
-        role._id as Types.ObjectId;
+      const roles = await this.platformRoleModel
+        .find({ _id: { $in: requestedIds } })
+        .exec();
+      if (roles.length !== requestedIds.length) {
+        throw new NotFoundException('role_not_found');
+      }
+      target.platformRoleIds = roles.map((r) => r._id as Types.ObjectId);
+      target.platformRoleId = undefined;
     }
     await target.save();
     return { ok: true };

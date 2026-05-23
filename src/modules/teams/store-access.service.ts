@@ -15,11 +15,20 @@ import { StoreRoleModel } from '@schemas/store-role.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
+import {
+  normalizePlatformRoleIds,
+  normalizeStoreMemberRoleIds,
+  unionStorePermissionsFromRoles,
+} from './teams-role-ids.util';
 
 export type StoreAccessEntry = {
   storeId: string;
   storeName: string;
+  roleIds: string[];
+  roleNames: string[];
+  /** Premier rôle (rétrocompatibilité). */
   roleId: string;
+  /** Libellés concaténés (rétrocompatibilité). */
   roleName: string;
   permissions: StorePermission[];
   isOwner: boolean;
@@ -44,14 +53,25 @@ export class StoreAccessService {
 
   async listAdminPermissions(user: UserModel): Promise<string[]> {
     if (user.type !== UserTypeEnum.ADMIN) return [];
-    const roleId = (user as { platformRoleId?: Types.ObjectId }).platformRoleId;
-    if (!roleId) {
+    const roleIds = normalizePlatformRoleIds(
+      user as { platformRoleId?: Types.ObjectId; platformRoleIds?: Types.ObjectId[] },
+    );
+    if (!roleIds.length) {
       return [...ALL_ADMIN_PERMISSIONS];
     }
-    const role = await this.platformRoleModel.findById(roleId).lean().exec();
-    if (!role) return [...ALL_ADMIN_PERMISSIONS];
-    if (role.isSuper) return [...ALL_ADMIN_PERMISSIONS];
-    return (role.permissions ?? []).filter(isAdminPermission);
+    const roles = await this.platformRoleModel
+      .find({ _id: { $in: roleIds } })
+      .lean()
+      .exec();
+    if (!roles.length) return [...ALL_ADMIN_PERMISSIONS];
+    if (roles.some((r) => r.isSuper)) return [...ALL_ADMIN_PERMISSIONS];
+    const set = new Set<string>();
+    for (const role of roles) {
+      for (const p of role.permissions ?? []) {
+        if (isAdminPermission(p)) set.add(p);
+      }
+    }
+    return [...set];
   }
 
   hasAdminPermission(user: UserModel, permission: string): boolean {
@@ -80,6 +100,8 @@ export class StoreAccessService {
       return stores.map((s) => ({
         storeId: String(s._id),
         storeName: String(s.name ?? ''),
+        roleIds: ['admin'],
+        roleNames: ['Administrateur'],
         roleId: 'admin',
         roleName: 'Administrateur',
         permissions: [...ALL_STORE_PERMISSIONS],
@@ -101,11 +123,15 @@ export class StoreAccessService {
         .findOne({ store: storeId, isOwnerRole: true })
         .lean()
         .exec();
+      const ownerRoleId = ownerRole ? String(ownerRole._id) : '';
+      const ownerRoleName = ownerRole?.name ?? 'Propriétaire';
       entries.push({
         storeId,
         storeName: String(s.name ?? ''),
-        roleId: ownerRole ? String(ownerRole._id) : '',
-        roleName: ownerRole?.name ?? 'Propriétaire',
+        roleIds: ownerRoleId ? [ownerRoleId] : [],
+        roleNames: [ownerRoleName],
+        roleId: ownerRoleId,
+        roleName: ownerRoleName,
         permissions: [...ALL_STORE_PERMISSIONS],
         isOwner: true,
       });
@@ -115,9 +141,11 @@ export class StoreAccessService {
       .find({ user: userId, status: 'ACTIVE' })
       .lean()
       .exec();
-    const roleIds = memberships.map((m) => m.role);
+    const allRoleIds = memberships.flatMap((m) =>
+      normalizeStoreMemberRoleIds(m as { role?: Types.ObjectId; roles?: Types.ObjectId[] }),
+    );
     const roles = await this.storeRoleModel
-      .find({ _id: { $in: roleIds } })
+      .find({ _id: { $in: allRoleIds } })
       .lean()
       .exec();
     const roleById = new Map(roles.map((r) => [String(r._id), r]));
@@ -133,14 +161,22 @@ export class StoreAccessService {
       const storeId = String(m.store);
       if (entries.some((e) => e.storeId === storeId)) continue;
       const store = storeById.get(storeId);
-      const role = roleById.get(String(m.role));
-      const perms = (role?.permissions ?? []).filter(isStorePermission);
+      const memberRoleIds = normalizeStoreMemberRoleIds(
+        m as { role?: Types.ObjectId; roles?: Types.ObjectId[] },
+      );
+      const memberRoles = memberRoleIds
+        .map((rid) => roleById.get(String(rid)))
+        .filter((r): r is NonNullable<typeof r> => r != null);
+      const roleIds = memberRoles.map((r) => String(r._id));
+      const roleNames = memberRoles.map((r) => String(r.name ?? ''));
       entries.push({
         storeId,
         storeName: String(store?.name ?? ''),
-        roleId: role ? String(role._id) : '',
-        roleName: role?.name ?? '',
-        permissions: perms,
+        roleIds,
+        roleNames,
+        roleId: roleIds[0] ?? '',
+        roleName: roleNames.join(', '),
+        permissions: unionStorePermissionsFromRoles(memberRoles),
         isOwner: false,
       });
     }
@@ -204,5 +240,35 @@ export class StoreAccessService {
       .map((a) => a.storeId)
       .filter((id) => Types.ObjectId.isValid(id))
       .map((id) => new Types.ObjectId(id));
+  }
+
+  /**
+   * Utilisateurs à notifier par FCM pour une boutique (propriétaire + équipe active).
+   */
+  async listStorePushRecipientUserIds(storeId: string): Promise<string[]> {
+    if (!Types.ObjectId.isValid(storeId)) {
+      return [];
+    }
+    const sid = new Types.ObjectId(storeId);
+    const ids = new Set<string>();
+    const sto = await this.storeModel
+      .findById(sid)
+      .select('owner')
+      .lean()
+      .exec();
+    if (sto?.owner) {
+      ids.add(String(sto.owner));
+    }
+    const members = await this.storeMemberModel
+      .find({ store: sid, status: 'ACTIVE' })
+      .select('user')
+      .lean()
+      .exec();
+    for (const m of members) {
+      if (m.user) {
+        ids.add(String(m.user));
+      }
+    }
+    return [...ids].filter((id) => Types.ObjectId.isValid(id));
   }
 }
