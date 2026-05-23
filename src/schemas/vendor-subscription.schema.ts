@@ -69,6 +69,16 @@ export class VendorSubscriptionModel {
 
   @Prop({ type: String, trim: true, sparse: true, index: true })
   stripePaymentIntentId?: string;
+
+  @Prop({ type: Boolean, default: false })
+  isTrial: boolean;
+
+  @Prop({ type: Date })
+  trialEndsAt?: Date;
+
+  /** Valeurs `trialReminderDays` déjà notifiées pour cet essai. */
+  @Prop({ type: [Number], default: [] })
+  trialRemindersSent: number[];
 }
 
 export type VendorSubscriptionDocument =

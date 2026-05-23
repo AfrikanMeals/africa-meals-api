@@ -101,6 +101,30 @@ export class SubscriptionsController {
     );
   }
 
+  @Patch('vendor-subscriptions/:subscriptionId/deactivate')
+  @UseGuards(JwtGuard)
+  deactivateVendorSubscription(
+    @Req() req: Request,
+    @Param('subscriptionId') subscriptionId: string,
+  ) {
+    return this.subscriptions.deactivateVendorSubscriptionAdmin(
+      req.user as UserModel,
+      subscriptionId,
+    );
+  }
+
+  @Delete('vendor-subscriptions/:subscriptionId')
+  @UseGuards(JwtGuard)
+  deleteVendorSubscription(
+    @Req() req: Request,
+    @Param('subscriptionId') subscriptionId: string,
+  ) {
+    return this.subscriptions.deleteVendorSubscriptionAdmin(
+      req.user as UserModel,
+      subscriptionId,
+    );
+  }
+
   @Get('my')
   @UseGuards(JwtGuard)
   mySubscriptions(@Req() req: Request) {
@@ -136,6 +160,13 @@ export class SubscriptionsController {
   }
 
   /** Checkout hébergé (secours navigateur). */
+  @Post('trial')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  startTrial(@Req() req: Request, @Body() body: SubscribeVendorDto) {
+    return this.subscriptions.startVendorTrial(req.user as UserModel, body);
+  }
+
   @Post('checkout-session')
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))

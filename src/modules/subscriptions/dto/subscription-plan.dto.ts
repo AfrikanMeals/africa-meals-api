@@ -1,9 +1,12 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   Min,
   MinLength,
 } from 'class-validator';
@@ -41,6 +44,20 @@ export class CreateSubscriptionPlanDto {
   @IsOptional()
   @IsNumber()
   sortOrder?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(365)
+  trialDays?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  @Max(90, { each: true })
+  trialReminderDays?: number[];
 }
 
 export class UpdateSubscriptionPlanDto {
@@ -79,6 +96,20 @@ export class UpdateSubscriptionPlanDto {
   @IsOptional()
   @IsNumber()
   sortOrder?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(365)
+  trialDays?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  @Max(90, { each: true })
+  trialReminderDays?: number[];
 }
 
 export class SubscribeVendorDto {

@@ -140,11 +140,27 @@ export class SubscriptionsStripeCheckoutService {
       .lean()
       .exec();
     if (activeExisting) {
-      const samePlan =
-        String(activeExisting.plan) === String(dto.planId);
-      const samePeriod = activeExisting.billingPeriod === period;
-      if (samePlan && samePeriod) {
-        throw new BadRequestException('subscription_unchanged');
+      const isTrialOnly =
+        (activeExisting as { isTrial?: boolean }).isTrial === true;
+      if (isTrialOnly) {
+        await this.vendorSubModel
+          .updateOne(
+            { _id: activeExisting._id },
+            {
+              $set: {
+                status: 'EXPIRED' as VendorSubscriptionStatus,
+                endsAt: now,
+              },
+            },
+          )
+          .exec();
+      } else {
+        const samePlan =
+          String(activeExisting.plan) === String(dto.planId);
+        const samePeriod = activeExisting.billingPeriod === period;
+        if (samePlan && samePeriod) {
+          throw new BadRequestException('subscription_unchanged');
+        }
       }
     }
 
@@ -258,6 +274,9 @@ export class SubscriptionsStripeCheckoutService {
       startsAt: now,
       endsAt,
       pricePaid,
+      isTrial: false,
+      trialEndsAt: null,
+      trialRemindersSent: [],
     };
     if (opts.currency) {
       patch.currency = opts.currency.toUpperCase();

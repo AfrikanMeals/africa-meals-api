@@ -769,6 +769,53 @@ export class NotificationsService implements OnModuleInit {
   /**
    * Inbox + push FCM — menu du jour non défini pour aujourd’hui (vendeur).
    */
+  /**
+   * Inbox + push FCM — fin d’essai abonnement vendeur (jours restants).
+   */
+  async notifyVendorSubscriptionTrialEnding(args: {
+    recipientUserId: string;
+    subscriptionId: string;
+    storeId: string;
+    planName?: string;
+    daysRemaining: number;
+    trialEndsAt: string;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.recipientUserId)) {
+      return;
+    }
+    const plan = (args.planName ?? '').trim() || 'votre formule';
+    const days = Math.max(1, Math.floor(args.daysRemaining));
+    const title =
+      days <= 1 ? 'Essai abonnement : dernier jour' : 'Rappel essai abonnement';
+    const body =
+      days <= 1
+        ? `Votre essai ${plan} se termine demain. Souscrivez pour garder le mode vendeur.`
+        : `Il reste ${days} jour(s) à votre essai ${plan}. Souscrivez avant la fin.`;
+    const data: Record<string, unknown> = {
+      type: 'subscription_trial_reminder',
+      audience: 'vendor',
+      subscriptionId: args.subscriptionId,
+      storeId: args.storeId,
+      planName: plan,
+      daysRemaining: String(days),
+      trialEndsAt: args.trialEndsAt,
+    };
+
+    try {
+      await this.createUserScopedNotification({
+        recipientUserId: args.recipientUserId,
+        title,
+        body,
+        type: 'subscription_trial_reminder',
+        data,
+        sendPush: true,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`notifyVendorSubscriptionTrialEnding: ${msg}`);
+    }
+  }
+
   async notifyVendorDailyMenuMissing(args: {
     recipientUserId: string;
     storeId: string;

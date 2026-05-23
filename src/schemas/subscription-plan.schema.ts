@@ -28,6 +28,14 @@ export class SubscriptionPlanModel {
 
   @Prop({ type: Number, default: 0 })
   sortOrder: number;
+
+  /** Nombre de jours d’essai gratuit (0 = pas d’essai). Interdit sur formule FREE. */
+  @Prop({ type: Number, default: 0, min: 0 })
+  trialDays: number;
+
+  /** Rappels push : jours restants avant fin d’essai (ex. [7, 3, 1]). */
+  @Prop({ type: [Number], default: [] })
+  trialReminderDays: number[];
 }
 
 export type SubscriptionPlanDocument =

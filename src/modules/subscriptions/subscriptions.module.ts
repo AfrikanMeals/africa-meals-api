@@ -9,12 +9,16 @@ import {
   VendorSubscriptionModel,
   VendorSubscriptionSchema,
 } from '@schemas/vendor-subscription.schema';
+import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { SubscriptionsController } from './subscriptions.controller';
+import { SubscriptionTrialReminderCron } from './subscription-trial-reminder.cron';
+import { SubscriptionTrialReminderService } from './subscription-trial-reminder.service';
 import { SubscriptionsService } from './subscriptions.service';
 import { SubscriptionsStripeCheckoutService } from './subscriptions-stripe-checkout.service';
 
 @Module({
   imports: [
+    NotificationsModule,
     MongooseModule.forFeature([
       { name: SubscriptionPlanModel.name, schema: SubscriptionPlanSchema },
       {
@@ -25,7 +29,12 @@ import { SubscriptionsStripeCheckoutService } from './subscriptions-stripe-check
     ]),
   ],
   controllers: [SubscriptionsController],
-  providers: [SubscriptionsService, SubscriptionsStripeCheckoutService],
+  providers: [
+    SubscriptionsService,
+    SubscriptionsStripeCheckoutService,
+    SubscriptionTrialReminderService,
+    SubscriptionTrialReminderCron,
+  ],
   exports: [SubscriptionsService, SubscriptionsStripeCheckoutService],
 })
 export class SubscriptionsModule {}

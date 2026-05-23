@@ -16,8 +16,10 @@ import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import {
   CreateSubscriptionPlanDto,
+  SubscribeVendorDto,
   UpdateSubscriptionPlanDto,
 } from './dto/subscription-plan.dto';
+import { resolvePlanTrialFields } from './subscription-plan.util';
 
 function vendorStoreObjectIds(user: UserModel): Types.ObjectId[] {
   const rawStores = user.stores || [];
@@ -48,6 +50,10 @@ function mapPlan(doc: Record<string, unknown>) {
       : [],
     active: doc.active !== false,
     sortOrder: Number(doc.sortOrder ?? 0),
+    trialDays: Number(doc.trialDays ?? 0),
+    trialReminderDays: Array.isArray(doc.trialReminderDays)
+      ? doc.trialReminderDays.map((d) => Number(d)).filter((d) => d > 0)
+      : [],
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -77,6 +83,13 @@ function mapVendorSubscription(
         : new Date(String(doc.endsAt)).toISOString(),
     pricePaid: Number(doc.pricePaid ?? 0),
     currency: String(doc.currency ?? 'CAD'),
+    isTrial: doc.isTrial === true,
+    trialEndsAt:
+      doc.trialEndsAt instanceof Date
+        ? doc.trialEndsAt.toISOString()
+        : doc.trialEndsAt
+          ? new Date(String(doc.trialEndsAt)).toISOString()
+          : null,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
     plan: plan ? mapPlan(plan) : undefined,
@@ -118,6 +131,13 @@ export class SubscriptionsService {
     const features = (dto.features ?? [])
       .map((f) => f.trim())
       .filter(Boolean);
+    const trial = resolvePlanTrialFields({
+      name: dto.name,
+      priceMonthly: dto.priceMonthly,
+      priceYearly: dto.priceYearly,
+      trialDays: dto.trialDays,
+      trialReminderDays: dto.trialReminderDays,
+    });
     const doc = await this.planModel.create({
       name: dto.name.trim(),
       description: (dto.description ?? '').trim(),
@@ -127,6 +147,8 @@ export class SubscriptionsService {
       features,
       active: dto.active !== false,
       sortOrder: dto.sortOrder ?? 0,
+      trialDays: trial.trialDays,
+      trialReminderDays: trial.trialReminderDays,
     });
     return mapPlan(doc.toObject() as Record<string, unknown>);
   }
@@ -154,12 +176,138 @@ export class SubscriptionsService {
     if (dto.active != null) patch.active = dto.active;
     if (dto.sortOrder != null) patch.sortOrder = dto.sortOrder;
 
+    if (
+      dto.trialDays != null ||
+      dto.trialReminderDays != null ||
+      dto.name != null ||
+      dto.priceMonthly != null ||
+      dto.priceYearly != null
+    ) {
+      const current = await this.planModel.findById(planId).lean().exec();
+      if (!current) throw new NotFoundException('plan_not_found');
+      const merged = {
+        name: String(patch.name ?? current.name ?? ''),
+        priceMonthly: Number(patch.priceMonthly ?? current.priceMonthly ?? 0),
+        priceYearly: Number(patch.priceYearly ?? current.priceYearly ?? 0),
+        trialDays:
+          dto.trialDays != null
+            ? dto.trialDays
+            : Number((current as { trialDays?: number }).trialDays ?? 0),
+        trialReminderDays:
+          dto.trialReminderDays != null
+            ? dto.trialReminderDays
+            : ((current as { trialReminderDays?: number[] }).trialReminderDays ??
+              []),
+      };
+      const trial = resolvePlanTrialFields(merged);
+      patch.trialDays = trial.trialDays;
+      patch.trialReminderDays = trial.trialReminderDays;
+    }
+
     const updated = await this.planModel
       .findByIdAndUpdate(planId, { $set: patch }, { new: true })
       .lean()
       .exec();
     if (!updated) throw new NotFoundException('plan_not_found');
     return mapPlan(updated as Record<string, unknown>);
+  }
+
+  async startVendorTrial(user: UserModel, dto: SubscribeVendorDto) {
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_only');
+    }
+    const storeIds = vendorStoreObjectIds(user);
+    if (!storeIds.length) {
+      throw new BadRequestException('no_store');
+    }
+    const storeId = storeIds[0];
+    if (!Types.ObjectId.isValid(dto.planId)) {
+      throw new NotFoundException('plan_not_found');
+    }
+    const period = dto.billingPeriod;
+    if (period !== 'MONTHLY' && period !== 'YEARLY') {
+      throw new BadRequestException('invalid_billing_period');
+    }
+
+    const plan = await this.planModel
+      .findOne({ _id: dto.planId, active: true })
+      .lean()
+      .exec();
+    if (!plan) throw new NotFoundException('plan_not_found');
+
+    const trial = resolvePlanTrialFields({
+      name: String(plan.name ?? ''),
+      priceMonthly: Number(plan.priceMonthly ?? 0),
+      priceYearly: Number(plan.priceYearly ?? 0),
+      trialDays: Number((plan as { trialDays?: number }).trialDays ?? 0),
+      trialReminderDays:
+        (plan as { trialReminderDays?: number[] }).trialReminderDays ?? [],
+    });
+    if (trial.trialDays <= 0) {
+      throw new BadRequestException('trial_not_configured');
+    }
+
+    const now = new Date();
+    const activeExisting = await this.vendorSubModel
+      .findOne({
+        store: storeId,
+        status: 'ACTIVE',
+        endsAt: { $gt: now },
+      })
+      .lean()
+      .exec();
+    if (activeExisting) {
+      throw new BadRequestException('subscription_already_active');
+    }
+
+    const priorTrial = await this.vendorSubModel
+      .exists({
+        store: storeId,
+        plan: plan._id,
+        isTrial: true,
+      })
+      .exec();
+    if (priorTrial) {
+      throw new BadRequestException('trial_already_used');
+    }
+
+    await this.vendorSubModel.deleteMany({
+      store: storeId,
+      status: 'PENDING_PAYMENT',
+    });
+
+    const trialEndsAt = new Date(now);
+    trialEndsAt.setDate(trialEndsAt.getDate() + trial.trialDays);
+
+    const created = await this.vendorSubModel.create({
+      store: storeId,
+      owner: user._id,
+      plan: plan._id,
+      billingPeriod: period,
+      status: 'ACTIVE',
+      startsAt: now,
+      endsAt: trialEndsAt,
+      trialEndsAt,
+      isTrial: true,
+      trialRemindersSent: [],
+      pricePaid: 0,
+      currency: String(plan.currency ?? 'CAD').trim().toUpperCase() || 'CAD',
+      planName: String(plan.name ?? ''),
+    });
+
+    const nowExpire = new Date();
+    await this.vendorSubModel
+      .updateMany(
+        {
+          store: storeId,
+          status: 'ACTIVE',
+          _id: { $ne: created._id },
+        },
+        { $set: { status: 'EXPIRED', endsAt: nowExpire } },
+      )
+      .exec();
+
+    return mapVendorSubscription(created.toObject() as Record<string, unknown>);
   }
 
   async deletePlan(user: UserModel, planId: string) {
@@ -190,6 +338,64 @@ export class SubscriptionsService {
     const deleted = await this.planModel.findByIdAndDelete(planId).exec();
     if (!deleted) throw new NotFoundException('plan_not_found');
     return { ok: true, id: planId };
+  }
+
+  async deactivateVendorSubscriptionAdmin(
+    user: UserModel,
+    subscriptionId: string,
+  ) {
+    this.assertAdmin(user);
+    if (!Types.ObjectId.isValid(subscriptionId)) {
+      throw new NotFoundException('vendor_subscription_not_found');
+    }
+    const existing = await this.vendorSubModel.findById(subscriptionId).lean().exec();
+    if (!existing) {
+      throw new NotFoundException('vendor_subscription_not_found');
+    }
+    const status = String(existing.status ?? '');
+    if (status !== 'ACTIVE' && status !== 'PENDING_PAYMENT') {
+      throw new BadRequestException('vendor_subscription_not_cancellable');
+    }
+    const now = new Date();
+    const endsAt =
+      existing.endsAt instanceof Date && existing.endsAt.getTime() < now.getTime()
+        ? existing.endsAt
+        : now;
+    const updated = await this.vendorSubModel
+      .findByIdAndUpdate(
+        subscriptionId,
+        { $set: { status: 'CANCELLED', endsAt } },
+        { new: true },
+      )
+      .lean()
+      .exec();
+    if (!updated) throw new NotFoundException('vendor_subscription_not_found');
+
+    const storeId = String(existing.store);
+    const store = await this.storeModel
+      .findById(storeId)
+      .select('name')
+      .lean()
+      .exec();
+
+    return mapVendorSubscription(updated as Record<string, unknown>, {
+      storeName: String(store?.name ?? ''),
+    });
+  }
+
+  async deleteVendorSubscriptionAdmin(
+    user: UserModel,
+    subscriptionId: string,
+  ) {
+    this.assertAdmin(user);
+    if (!Types.ObjectId.isValid(subscriptionId)) {
+      throw new NotFoundException('vendor_subscription_not_found');
+    }
+    const deleted = await this.vendorSubModel
+      .findByIdAndDelete(subscriptionId)
+      .exec();
+    if (!deleted) throw new NotFoundException('vendor_subscription_not_found');
+    return { ok: true, id: subscriptionId };
   }
 
   async listVendorSubscriptionsAdmin(user: UserModel) {
