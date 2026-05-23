@@ -39,3 +39,5 @@ lerna-debug.log*
 
 # Rapports générés par `npm run bench:api`
 scripts/reports/
+
+proxy.yml
