@@ -1,5 +1,6 @@
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -15,6 +16,10 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { RefundAdminNoteDto } from './dto/refund-admin-action.dto';
+import {
+  RefundFeeOverrideDto,
+  RefundProcessDto,
+} from './dto/refund-fee-override.dto';
 import { RefundProcessingService } from './refund-processing.service';
 
 @ApiTags('refunds')
@@ -97,13 +102,41 @@ export class RefundsController {
     );
   }
 
+  @Post(':orderId/fee-override')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Définir les frais plateforme retenus sur le remboursement (centimes)',
+  })
+  setFeeOverride(
+    @Req() req: Request,
+    @Param('orderId') orderId: string,
+    @Body() body: RefundFeeOverrideDto,
+  ) {
+    if (body.platformRefundFeeCents === undefined) {
+      throw new BadRequestException('platform_refund_fee_cents_required');
+    }
+    return this.refunds.setRefundFeeOverride(
+      req.user as UserModel,
+      orderId,
+      body.platformRefundFeeCents,
+    );
+  }
+
   @Post(':orderId/process')
   @UseGuards(JwtGuard)
-  processOne(@Req() req: Request, @Param('orderId') orderId: string) {
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  processOne(
+    @Req() req: Request,
+    @Param('orderId') orderId: string,
+    @Body() body: RefundProcessDto,
+  ) {
     return this.refunds.processRefundForOrder({
       orderId,
       processedBy: 'admin',
       admin: req.user as UserModel,
+      platformRefundFeeCents: body.platformRefundFeeCents,
     });
   }
 }

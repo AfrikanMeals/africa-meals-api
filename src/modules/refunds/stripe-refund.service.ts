@@ -41,6 +41,7 @@ export class StripeRefundService {
     amountCents: number;
     orderId: string;
     platformRefundFeeCents?: number;
+    stripeProcessingFeeCents?: number;
     refundGrossCents?: number;
   }): Promise<string> {
     const piId = await this.resolvePaymentIntentId(args.stripeParentPaymentId);
@@ -61,6 +62,13 @@ export class StripeRefundService {
           : {}),
         ...(args.platformRefundFeeCents != null
           ? { platformRefundFeeCents: String(args.platformRefundFeeCents) }
+          : {}),
+        ...(args.stripeProcessingFeeCents != null
+          ? {
+              stripeProcessingFeeOnCustomerCents: String(
+                args.stripeProcessingFeeCents,
+              ),
+            }
           : {}),
       },
     });

@@ -10,8 +10,13 @@ import { InjectModel } from '@nestjs/mongoose';
 import { MailerService } from '@modules/mailer/mailer.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { OrdersService } from '@modules/orders/orders.service';
+import { StripeChargeFeeService } from '@modules/billing/stripe/stripe-charge-fee.service';
+import { effectiveStripeProcessingFeeCents } from '@modules/billing/stripe/stripe-processing-fee.util';
 import { StripeConnectTransferService } from '@modules/billing/stripe/stripe-connect-transfer.service';
-import { PlatformFeesService } from '@modules/platform-fees/platform-fees.service';
+import {
+  PlatformFeesService,
+  RefundAmountSplit,
+} from '@modules/platform-fees/platform-fees.service';
 import {
   OrderModel,
   OrderRefundRequestEntryStatusEnum,
@@ -41,6 +46,8 @@ export type RefundQueueItem = {
   stripeRefundId?: string;
   refundGrossCents?: number;
   platformRefundFeeCents?: number;
+  stripeProcessingFeeCents?: number;
+  stripeProcessingFeeOnCustomerCents?: number;
   customerRefundCents?: number;
   totalPrice: number;
   shippingPrice: number;
@@ -52,6 +59,11 @@ export type RefundQueueItem = {
   canPause: boolean;
   canResume: boolean;
   canCancel: boolean;
+  canSetFeeOverride: boolean;
+  cancelReasonSource?: 'vendor' | 'client' | 'admin';
+  platformRefundFeeOverrideCents?: number;
+  vendorPenaltyCents?: number;
+  isVendorCancellationRefund: boolean;
 };
 
 export type RefundListResponse = {
@@ -129,6 +141,24 @@ function stripeParentIdFromOrder(
   return typeof v === 'string' && v.trim() ? v.trim() : undefined;
 }
 
+function cancelReasonSourceFromOrder(
+  order: Record<string, unknown> | OrderModel,
+): 'vendor' | 'client' | 'admin' | undefined {
+  const o = order as Record<string, unknown>;
+  const raw = o.cancelReasonSource ?? o.cancel_reason_source;
+  if (raw === 'vendor' || raw === 'client' || raw === 'admin') {
+    return raw;
+  }
+  return undefined;
+}
+
+export type ResolvedRefundSplit = RefundAmountSplit & {
+  vendorPenaltyCents: number;
+  stripeProcessingFeeCents: number;
+  stripeProcessingFeeOnCustomerCents: number;
+  isVendorCancellationRefund: boolean;
+};
+
 @Injectable()
 export class RefundProcessingService {
   private readonly logger = new Logger(RefundProcessingService.name);
@@ -150,6 +180,7 @@ export class RefundProcessingService {
     @Inject(OrdersService)
     private readonly ordersService: OrdersService,
     private readonly platformFeesService: PlatformFeesService,
+    private readonly stripeFees: StripeChargeFeeService,
     private readonly stripeTransfers: StripeConnectTransferService,
   ) {}
 
@@ -272,7 +303,7 @@ export class RefundProcessingService {
       .populate('user', 'fullName email')
       .populate('store', 'name')
       .select(
-        'status totalPrice shippingPrice stripeParentPaymentId stripeChargedGoodsCents stripeChargedShipCents refundRequestLog user store createdAt',
+        'status totalPrice shippingPrice stripeParentPaymentId stripeChargedGoodsCents stripeChargedShipCents refundRequestLog cancelReasonSource user store createdAt',
       )
       .lean()
       .exec();
@@ -296,16 +327,29 @@ export class RefundProcessingService {
         | undefined;
 
       const grossCents = this.refundAmountCents(o as OrderModel);
+      const cancelSource = cancelReasonSourceFromOrder(raw);
+      const isVendorCancel = cancelSource === 'vendor';
       let refundGrossCents = entry.refundGrossCents;
       let platformRefundFeeCents = entry.platformRefundFeeCents;
+      let stripeProcessingFeeCents = entry.stripeProcessingFeeCents;
+      let stripeProcessingFeeOnCustomerCents =
+        entry.stripeProcessingFeeOnCustomerCents;
       let customerRefundCents = entry.customerRefundCents;
+      let vendorPenaltyCents = entry.vendorPenaltyCents;
+      const overrideCents = entry.platformRefundFeeOverrideCents;
+
       if (customerRefundCents == null && grossCents >= 1) {
-        const split =
-          await this.platformFeesService.computeRefundSplit(grossCents);
+        const split = await this.resolveRefundSplit(o as OrderModel, entry);
         refundGrossCents = split.grossCents;
         platformRefundFeeCents = split.platformFeeCents;
+        stripeProcessingFeeCents = split.stripeProcessingFeeCents;
+        stripeProcessingFeeOnCustomerCents =
+          split.stripeProcessingFeeOnCustomerCents;
         customerRefundCents = split.customerRefundCents;
+        vendorPenaltyCents = split.vendorPenaltyCents;
       }
+
+      const active = ACTIVE_REFUND_STATUSES.includes(st);
 
       items.push({
         orderId: oid,
@@ -319,6 +363,8 @@ export class RefundProcessingService {
         stripeRefundId: entry.stripeRefundId,
         refundGrossCents,
         platformRefundFeeCents,
+        stripeProcessingFeeCents,
+        stripeProcessingFeeOnCustomerCents,
         customerRefundCents,
         totalPrice:
           typeof o.totalPrice === 'number' ? o.totalPrice : 0,
@@ -338,6 +384,7 @@ export class RefundProcessingService {
         canProcess:
           isAdmin &&
           (st === OrderRefundRequestEntryStatusEnum.PENDING ||
+            st === OrderRefundRequestEntryStatusEnum.PAUSED ||
             st === OrderRefundRequestEntryStatusEnum.APPROVED),
         canPause:
           isAdmin && st === OrderRefundRequestEntryStatusEnum.PENDING,
@@ -347,6 +394,20 @@ export class RefundProcessingService {
           isAdmin &&
           (st === OrderRefundRequestEntryStatusEnum.PENDING ||
             st === OrderRefundRequestEntryStatusEnum.PAUSED),
+        canSetFeeOverride:
+          isAdmin &&
+          active &&
+          !isVendorCancel,
+        cancelReasonSource: cancelSource,
+        platformRefundFeeOverrideCents:
+          overrideCents !== undefined && overrideCents !== null
+            ? Math.round(overrideCents)
+            : undefined,
+        vendorPenaltyCents:
+          vendorPenaltyCents !== undefined && vendorPenaltyCents !== null
+            ? Math.round(vendorPenaltyCents)
+            : undefined,
+        isVendorCancellationRefund: isVendorCancel,
       });
     }
 
@@ -417,6 +478,139 @@ export class RefundProcessingService {
       userId,
       fullName: u?.fullName?.trim() || 'Client',
       email: u?.email?.trim() || '',
+    };
+  }
+
+  private async stripeContextForRefund(order: OrderModel): Promise<{
+    paymentAmountCents: number;
+    totalStripeFeeCents: number;
+  }> {
+    const grossCents = this.refundAmountCents(order);
+    const parentId = stripeParentIdFromOrder(order) ?? '';
+    if (!parentId.trim()) {
+      return {
+        paymentAmountCents: grossCents,
+        totalStripeFeeCents: effectiveStripeProcessingFeeCents(null, grossCents),
+      };
+    }
+    const paymentAmountCents = await this.stripeFees.paymentTotalCentsForParent(
+      parentId,
+      grossCents,
+    );
+    const chargeId = await this.stripeFees.resolveChargeId(parentId);
+    const totalStripeFeeCents = chargeId
+      ? await this.stripeFees.totalProcessingFeeCents({
+          chargeId,
+          paymentAmountCents,
+        })
+      : effectiveStripeProcessingFeeCents(null, paymentAmountCents);
+    return { paymentAmountCents, totalStripeFeeCents };
+  }
+
+  /**
+   * Barème remboursement :
+   * - Annulation restaurant → client 100 %, pénalité vendeur = frais plateforme + frais Stripe.
+   * - Sinon : client = brut − frais plateforme − part Stripe (évite une perte sur le solde plateforme).
+   */
+  async resolveRefundSplit(
+    order: OrderModel,
+    entry?: NonNullable<OrderModel['refundRequestLog']>[number] | null,
+  ): Promise<ResolvedRefundSplit> {
+    const grossCents = this.refundAmountCents(order);
+    const source = cancelReasonSourceFromOrder(order);
+    const { paymentAmountCents, totalStripeFeeCents } =
+      await this.stripeContextForRefund(order);
+
+    const standard =
+      await this.platformFeesService.computeRefundSplit(grossCents);
+
+    let platformFeeCents = standard.platformFeeCents;
+    if (
+      entry != null &&
+      entry.platformRefundFeeOverrideCents !== undefined &&
+      entry.platformRefundFeeOverrideCents !== null &&
+      source !== 'vendor'
+    ) {
+      platformFeeCents = Math.max(
+        0,
+        Math.min(
+          Math.round(entry.platformRefundFeeOverrideCents),
+          Math.max(0, grossCents - 1),
+        ),
+      );
+    }
+
+    if (source === 'vendor') {
+      return {
+        ...standard,
+        grossCents,
+        platformFeeCents: 0,
+        customerRefundCents: grossCents,
+        stripeProcessingFeeCents: totalStripeFeeCents,
+        stripeProcessingFeeOnCustomerCents: 0,
+        vendorPenaltyCents: standard.platformFeeCents + totalStripeFeeCents,
+        isVendorCancellationRefund: true,
+      };
+    }
+
+    const afterPlatformCents = Math.max(0, grossCents - platformFeeCents);
+    const stripeOnCustomer = this.stripeFees.allocateProcessingFeeShareCents({
+      totalStripeFeeCents,
+      paymentAmountCents,
+      sliceAmountCents: afterPlatformCents,
+      maxDeductibleCents: afterPlatformCents,
+    });
+    const customerRefundCents = Math.max(0, afterPlatformCents - stripeOnCustomer);
+
+    return {
+      ...standard,
+      grossCents,
+      platformFeeCents,
+      customerRefundCents,
+      stripeProcessingFeeCents: totalStripeFeeCents,
+      stripeProcessingFeeOnCustomerCents: stripeOnCustomer,
+      vendorPenaltyCents: 0,
+      isVendorCancellationRefund: false,
+    };
+  }
+
+  async setRefundFeeOverride(
+    admin: UserModel,
+    orderId: string,
+    platformRefundFeeCents: number,
+  ): Promise<{
+    orderId: string;
+    platformRefundFeeOverrideCents: number;
+    customerRefundCents: number;
+    stripeProcessingFeeOnCustomerCents: number;
+  }> {
+    assertAdmin(admin);
+    const order = await this.loadOrderForRefund(orderId, admin);
+    if (cancelReasonSourceFromOrder(order) === 'vendor') {
+      throw new BadRequestException('refund_fee_override_vendor_cancel');
+    }
+    const entry = activeRefundEntry(refundLogFromOrderDoc(order));
+    if (!entry) {
+      throw new BadRequestException('refund_not_active');
+    }
+    const grossCents = this.refundAmountCents(order);
+    const fee = Math.max(
+      0,
+      Math.min(Math.round(platformRefundFeeCents), Math.max(0, grossCents - 1)),
+    );
+    this.patchLatestEntry(order, {
+      platformRefundFeeOverrideCents: fee,
+    });
+    await order.save();
+    const split = await this.resolveRefundSplit(
+      order,
+      latestRefundEntry(refundLogFromOrderDoc(order)),
+    );
+    return {
+      orderId,
+      platformRefundFeeOverrideCents: fee,
+      customerRefundCents: split.customerRefundCents,
+      stripeProcessingFeeOnCustomerCents: split.stripeProcessingFeeOnCustomerCents,
     };
   }
 
@@ -557,6 +751,7 @@ export class RefundProcessingService {
     orderId: string;
     processedBy: 'cron' | 'admin';
     admin?: UserModel;
+    platformRefundFeeCents?: number;
   }): Promise<{ orderId: string; status: string; stripeRefundId?: string }> {
     const order = args.admin
       ? await this.loadOrderForRefund(args.orderId, args.admin)
@@ -574,6 +769,7 @@ export class RefundProcessingService {
     if (
       !entry ||
       (entry.status !== OrderRefundRequestEntryStatusEnum.PENDING &&
+        entry.status !== OrderRefundRequestEntryStatusEnum.PAUSED &&
         entry.status !== OrderRefundRequestEntryStatusEnum.APPROVED)
     ) {
       throw new BadRequestException('refund_not_processable');
@@ -598,8 +794,23 @@ export class RefundProcessingService {
       throw new BadRequestException('refund_amount_invalid');
     }
 
-    const split =
-      await this.platformFeesService.computeRefundSplit(grossCents);
+    if (
+      args.platformRefundFeeCents !== undefined &&
+      args.admin &&
+      cancelReasonSourceFromOrder(order) !== 'vendor'
+    ) {
+      this.patchLatestEntry(order, {
+        platformRefundFeeOverrideCents: Math.max(
+          0,
+          Math.min(Math.round(args.platformRefundFeeCents), grossCents - 1),
+        ),
+      });
+    }
+
+    const split = await this.resolveRefundSplit(
+      order,
+      latestRefundEntry(refundLogFromOrderDoc(order)),
+    );
     if (split.customerRefundCents < 1) {
       throw new BadRequestException('refund_amount_invalid');
     }
@@ -608,15 +819,26 @@ export class RefundProcessingService {
       split.platformFeeCents > 0
         ? ` (frais plateforme ${(split.platformFeeCents / 100).toFixed(2)} $ CA)`
         : '';
+    const stripeNote =
+      split.stripeProcessingFeeOnCustomerCents > 0
+        ? ` · frais Stripe ${(split.stripeProcessingFeeOnCustomerCents / 100).toFixed(2)} $ CA`
+        : '';
+    const vendorPenaltyNote =
+      split.vendorPenaltyCents > 0
+        ? ` · pénalité restaurant ${(split.vendorPenaltyCents / 100).toFixed(2)} $ CA`
+        : '';
 
     this.patchLatestEntry(order, {
       status: OrderRefundRequestEntryStatusEnum.APPROVED,
-      resolutionNote: `Remboursement Stripe en cours…${feeNote}`,
+      resolutionNote: `Remboursement Stripe en cours…${feeNote}${stripeNote}${vendorPenaltyNote}`,
       processedBy: args.processedBy,
       adminUserId: args.admin ? String(args.admin.id) : entry.adminUserId,
       refundGrossCents: split.grossCents,
       platformRefundFeeCents: split.platformFeeCents,
+      stripeProcessingFeeCents: split.stripeProcessingFeeCents,
+      stripeProcessingFeeOnCustomerCents: split.stripeProcessingFeeOnCustomerCents,
       customerRefundCents: split.customerRefundCents,
+      vendorPenaltyCents: split.vendorPenaltyCents,
     });
     await order.save();
 
@@ -653,6 +875,7 @@ export class RefundProcessingService {
         orderId: args.orderId,
         refundGrossCents: split.grossCents,
         platformRefundFeeCents: split.platformFeeCents,
+        stripeProcessingFeeCents: split.stripeProcessingFeeOnCustomerCents,
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -665,10 +888,19 @@ export class RefundProcessingService {
       throw new BadRequestException('stripe_refund_failed');
     }
 
-    const completedNote =
+    let completedNote =
       split.platformFeeCents > 0
         ? `Remboursement de ${netCad.toFixed(2)} $ CA effectué (frais plateforme ${(split.platformFeeCents / 100).toFixed(2)} $ CA retenus).`
         : 'Remboursement effectué sur votre moyen de paiement.';
+    if (split.stripeProcessingFeeOnCustomerCents > 0) {
+      completedNote += ` Frais Stripe : ${(split.stripeProcessingFeeOnCustomerCents / 100).toFixed(2)} $ CA.`;
+    }
+    if (split.isVendorCancellationRefund) {
+      completedNote = `Remboursement intégral de ${netCad.toFixed(2)} $ CA effectué (annulation par le restaurant, sans frais plateforme pour le client).`;
+      if (split.vendorPenaltyCents > 0) {
+        completedNote += ` Pénalité restaurant : ${(split.vendorPenaltyCents / 100).toFixed(2)} $ CA (frais plateforme + Stripe, reprise du virement Connect).`;
+      }
+    }
 
     this.patchLatestEntry(order, {
       status: OrderRefundRequestEntryStatusEnum.COMPLETED,
@@ -679,7 +911,10 @@ export class RefundProcessingService {
       adminUserId: args.admin ? String(args.admin.id) : entry.adminUserId,
       refundGrossCents: split.grossCents,
       platformRefundFeeCents: split.platformFeeCents,
+      stripeProcessingFeeCents: split.stripeProcessingFeeCents,
+      stripeProcessingFeeOnCustomerCents: split.stripeProcessingFeeOnCustomerCents,
       customerRefundCents: split.customerRefundCents,
+      vendorPenaltyCents: split.vendorPenaltyCents,
     });
     await order.save();
 

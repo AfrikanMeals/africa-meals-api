@@ -227,7 +227,15 @@ export class OrderModel extends BaseSchema {
         stripeRefundId: { type: String, required: false, maxlength: 128 },
         refundGrossCents: { type: Number, required: false },
         platformRefundFeeCents: { type: Number, required: false },
+        /** Frais plateforme imposés au client (centimes), défini par l’admin ; absent = barème. */
+        platformRefundFeeOverrideCents: { type: Number, required: false },
         customerRefundCents: { type: Number, required: false },
+        /** Frais Stripe processing sur la charge (centimes, total paiement). */
+        stripeProcessingFeeCents: { type: Number, required: false },
+        /** Part des frais Stripe déduite du remboursement client (centimes). */
+        stripeProcessingFeeOnCustomerCents: { type: Number, required: false },
+        /** Pénalité imputée au restaurant (centimes), ex. annulation vendeur. */
+        vendorPenaltyCents: { type: Number, required: false },
         processedBy: {
           type: String,
           required: false,
@@ -252,7 +260,11 @@ export class OrderModel extends BaseSchema {
     stripeRefundId?: string;
     refundGrossCents?: number;
     platformRefundFeeCents?: number;
+    platformRefundFeeOverrideCents?: number;
     customerRefundCents?: number;
+    stripeProcessingFeeCents?: number;
+    stripeProcessingFeeOnCustomerCents?: number;
+    vendorPenaltyCents?: number;
     processedBy?: 'cron' | 'admin';
     adminUserId?: string;
   }>;

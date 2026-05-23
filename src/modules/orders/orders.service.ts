@@ -1104,6 +1104,36 @@ export class OrdersService {
     order.cancelReasonCode = resolved.code;
     order.cancelReasonDetails = resolved.details;
     order.cancelReasonSource = source;
+
+    const parentId = String(
+      (order as { stripeParentPaymentId?: string }).stripeParentPaymentId ?? '',
+    ).trim();
+    const wasPaid =
+      prevStatus === OrderStatusEnum.PAIED ||
+      prevStatus === OrderStatusEnum.APPROVED ||
+      prevStatus === OrderStatusEnum.SHIPPED ||
+      prevStatus === OrderStatusEnum.COMPLETED;
+    if (
+      wasPaid &&
+      parentId.length > 0 &&
+      !this.hasActiveRefundRequest(order.refundRequestLog)
+    ) {
+      const autoDetails =
+        source === 'vendor'
+          ? 'Annulation par le restaurant — remboursement client intégral (sans frais plateforme).'
+          : source === 'admin'
+            ? 'Annulation par l’administration — remboursement à traiter.'
+            : 'Annulation — remboursement à traiter.';
+      order.refundRequestLog = [
+        ...(order.refundRequestLog ?? []),
+        {
+          status: OrderRefundRequestEntryStatusEnum.PENDING,
+          details: autoDetails,
+          requestedAt: new Date(),
+        },
+      ];
+    }
+
     await order.save();
 
     const storeId = this.storeIdFromOrderDoc(order);
@@ -1744,6 +1774,20 @@ export class OrdersService {
       throw new BadRequestException('refund_not_applicable_pending_delivery');
     }
     throw new BadRequestException('refund_not_applicable_status');
+  }
+
+  private hasActiveRefundRequest(
+    log: Array<{ status?: string }> | undefined,
+  ): boolean {
+    if (!log?.length) return false;
+    return log.some((row) => {
+      const s = String(row?.status ?? '');
+      return (
+        s === OrderRefundRequestEntryStatusEnum.PENDING ||
+        s === OrderRefundRequestEntryStatusEnum.PAUSED ||
+        s === OrderRefundRequestEntryStatusEnum.APPROVED
+      );
+    });
   }
 
   private assertRefundRequestNotBlockedByHistory(
