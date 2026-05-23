@@ -8,6 +8,7 @@ import { StoreModule } from '@modules/store/store.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { UsersModule } from '@modules/users/users.module';
 import { Module, forwardRef } from '@nestjs/common';
+import { StripeConnectTransferModule } from './stripe/stripe-connect-transfer.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
   PaymentMethodModel,
@@ -24,7 +25,6 @@ import { PaypalModule } from './paypal/paypal.module';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import { StripeConnectService as LegacyStripeConnectService } from './stripe-connect.service';
 import { StripeConnectService } from './stripe/stripe-connect.service';
-import { StripeConnectTransferService } from './stripe/stripe-connect-transfer.service';
 import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.service';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 
@@ -35,7 +35,6 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
     LegacyStripeConnectService,
     StripeGroupedCheckoutService,
     StripeConnectService,
-    StripeConnectTransferService,
   ],
   imports: [
     WsNotifyModule,
@@ -43,9 +42,10 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
     UsersModule,
     CartModule,
     CouponsModule,
-    StoreModule,
+    forwardRef(() => StoreModule),
     SubscriptionsModule,
     forwardRef(() => OrdersModule),
+    StripeConnectTransferModule,
     PlatformFeesModule,
     PlatformShippingSettingsModule,
     MongooseModule.forFeature([
@@ -64,7 +64,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
     BillingService,
     LegacyStripeConnectService,
     StripeConnectService,
-    StripeConnectTransferService,
+    StripeConnectTransferModule,
   ],
 })
 export class BillingModule {}

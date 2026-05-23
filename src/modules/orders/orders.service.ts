@@ -10,7 +10,6 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
@@ -85,7 +84,7 @@ export class OrdersService {
   @Inject(StoreAccessService)
   private readonly _storeAccess: StoreAccessService;
 
-  @Inject(forwardRef(() => StripeConnectTransferService))
+  @Inject(StripeConnectTransferService)
   private readonly _stripeTransfers: StripeConnectTransferService;
 
   /** Client + adresses de livraison (refs `addresses` peuplées). */
