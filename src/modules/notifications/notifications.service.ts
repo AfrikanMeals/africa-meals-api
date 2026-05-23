@@ -816,6 +816,50 @@ export class NotificationsService implements OnModuleInit {
     }
   }
 
+  /**
+   * Inbox + push FCM — candidature livreur approuvée ou refusée.
+   */
+  async notifyDeliveryAgentApplicationReview(args: {
+    recipientUserId: string;
+    applicationId: string;
+    status: 'APPROVED' | 'REJECTED';
+    rejectionReason?: string;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.recipientUserId)) {
+      return;
+    }
+    const approved = args.status === 'APPROVED';
+    const title = approved
+      ? 'Candidature livreur acceptée'
+      : 'Candidature livreur refusée';
+    const body = approved
+      ? 'Félicitations ! Vous pouvez maintenant utiliser le mode livreur dans l’application.'
+      : `Votre candidature n’a pas été retenue.${args.rejectionReason?.trim() ? ` Motif : ${args.rejectionReason.trim()}` : ''}`;
+    const data: Record<string, unknown> = {
+      type: 'delivery_agent_application',
+      audience: 'customer',
+      applicationId: args.applicationId,
+      status: args.status,
+    };
+    if (!approved && args.rejectionReason?.trim()) {
+      data.rejectionReason = args.rejectionReason.trim();
+    }
+
+    try {
+      await this.createUserScopedNotification({
+        recipientUserId: args.recipientUserId,
+        title,
+        body,
+        type: 'delivery_agent_application',
+        data,
+        sendPush: true,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`notifyDeliveryAgentApplicationReview: ${msg}`);
+    }
+  }
+
   async notifyVendorDailyMenuMissing(args: {
     recipientUserId: string;
     storeId: string;

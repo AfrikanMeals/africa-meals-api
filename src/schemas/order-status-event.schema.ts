@@ -9,6 +9,7 @@ export enum OrderStatusChangeSourceEnum {
   DASHBOARD = 'dashboard',
   SYSTEM = 'system',
   VENDOR = 'vendor',
+  DELIVERY_AGENT = 'delivery_agent',
 }
 
 @Schema({

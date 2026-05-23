@@ -66,6 +66,16 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'should_ship', default: false })
   shouldShip?: boolean;
 
+  /** Livreur plateforme (compte `DELIVERY`) ayant pris la course. */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserModel',
+    required: false,
+    name: 'assigned_delivery_user',
+    index: true,
+  })
+  assignedDeliveryUser?: MongooseSchema.Types.ObjectId;
+
   /** Code à présenter en boutique (commandes retrait, généré au paiement). */
   @Prop({ required: false, name: 'pickup_code', trim: true, uppercase: true })
   pickupCode?: string;

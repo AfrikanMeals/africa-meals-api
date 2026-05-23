@@ -11,6 +11,10 @@ import { AddressModel } from '@schemas/address.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
+import {
+  type CountryCode,
+  parsePhoneNumberFromString,
+} from 'libphonenumber-js';
 import { WsStripeConnectNotifyService } from '@modules/ws-notify/ws-stripe-connect-notify.service';
 import Stripe = require('stripe');
 
@@ -18,6 +22,9 @@ type StripeClient = InstanceType<typeof Stripe>;
 
 /** Comptes vendeurs Afrika Meals : toujours entreprise (restaurant). */
 const CONNECT_BUSINESS_TYPE = 'company' as const;
+
+/** Pays Stripe Connect — plateforme opère au Canada (évite CM/SN + numéros hors CA). */
+const STRIPE_CONNECT_ACCOUNT_COUNTRY = 'CA' as const;
 
 /** MCC « Restaurants » (repas sur place / à emporter). */
 const DEFAULT_RESTAURANT_MCC = '5812';
@@ -135,23 +142,55 @@ function normalizeCountryCode(raw: string | undefined): string {
   return 'CA';
 }
 
-function phoneToE164(raw: string | undefined): string | undefined {
+/** Numéro E.164 valide pour Stripe, ou `undefined` (ne jamais envoyer un numéro rejeté par Stripe). */
+function phoneToE164(
+  raw: string | undefined,
+  defaultRegion?: string,
+): string | undefined {
   if (!raw?.trim()) return undefined;
   const s = raw.trim();
-  if (s.startsWith('+') && !s.includes('_')) {
-    const digits = s.replace(/\D/g, '');
-    return digits ? `+${digits}` : undefined;
+  const region = defaultRegion
+    ? (normalizeCountryCode(defaultRegion) as CountryCode)
+    : undefined;
+
+  const candidates: string[] = [s];
+  if (s.includes('_')) {
+    const head = s.split('-')[0];
+    const sep = head.indexOf('_');
+    if (sep !== -1) {
+      const cc = head.slice(0, sep).replace(/\D/g, '');
+      const national = head.slice(sep + 1).replace(/\D/g, '');
+      if (cc && national) candidates.push(`+${cc}${national}`);
+    }
   }
-  const head = s.split('-')[0];
-  const u = head.indexOf('_');
-  if (u === -1) {
+  if (!s.startsWith('+')) {
     const digits = s.replace(/\D/g, '');
-    return digits ? `+${digits}` : undefined;
+    if (digits) candidates.push(`+${digits}`);
   }
-  const cc = head.slice(0, u).replace(/\D/g, '');
-  const national = head.slice(u + 1).replace(/\D/g, '');
-  if (!cc || !national) return undefined;
-  return `+${cc}${national}`;
+
+  for (const candidate of candidates) {
+    let parsed = parsePhoneNumberFromString(candidate);
+    if (!parsed?.isValid() && region) {
+      parsed = parsePhoneNumberFromString(candidate, region);
+    }
+    if (parsed?.isValid()) {
+      return parsed.format('E.164');
+    }
+  }
+  return undefined;
+}
+
+/** Téléphone prérempli Stripe : uniquement numéros canadiens valides (E.164). */
+function phoneToE164ForStripeConnect(
+  raw: string | undefined,
+): string | undefined {
+  const e164 = phoneToE164(raw, STRIPE_CONNECT_ACCOUNT_COUNTRY);
+  if (!e164) return undefined;
+  const parsed = parsePhoneNumberFromString(e164);
+  if (parsed?.country !== STRIPE_CONNECT_ACCOUNT_COUNTRY) {
+    return undefined;
+  }
+  return e164;
 }
 
 const CA_PROVINCE_CODES = new Set([
@@ -285,26 +324,37 @@ function buildVendorPrefill(
   user: UserModel,
   store: (StoreModel & { address?: AddressModel }) | null,
   businessWebsiteUrl?: string,
+  userAddress?: AddressModel | null,
 ): VendorPrefill {
-  const businessName =
-    store?.name?.trim() || user.fullName?.trim() || 'Restaurant Afrika Meals';
+  const isDelivery = user.type === UserTypeEnum.DELIVERY;
+  const businessName = isDelivery
+    ? user.fullName?.trim() || 'Livreur Afrika Meals'
+    : store?.name?.trim() || user.fullName?.trim() || 'Restaurant Afrika Meals';
   const accountEmail = user.email?.trim() || '';
   const phoneE164 =
-    phoneToE164(user.phoneNumber) || phoneToE164(store?.phoneNumber);
+    phoneToE164ForStripeConnect(user.phoneNumber) ||
+    phoneToE164ForStripeConnect(store?.phoneNumber);
   const { firstName, lastName } = splitFullName(user.fullName);
-  const addressBlock = buildAddressBlock(
-    store?.address as AddressModel | undefined,
+  const addressBlockRaw = buildAddressBlock(
+    (store?.address as AddressModel | undefined) ??
+      userAddress ??
+      undefined,
     undefined,
-    normalizeCountryCode(store?.address?.countryCode),
+    STRIPE_CONNECT_ACCOUNT_COUNTRY,
   );
-  const accountCountry = addressBlock?.country ?? 'CA';
+  const addressBlock = addressBlockRaw
+    ? { ...addressBlockRaw, country: STRIPE_CONNECT_ACCOUNT_COUNTRY }
+    : undefined;
+  const accountCountry = STRIPE_CONNECT_ACCOUNT_COUNTRY;
 
-  const productDescription = store?.bio?.trim()
-    ? `Restaurant et livraison de repas. ${store.bio.trim()} Les clients sont débités lors du passage de commande sur Afrika Meals.`.slice(
-        0,
-        1000,
-      )
-    : 'Restaurant et livraison de repas sur Afrika Meals. Les clients sont débités lors du passage de commande en ligne.';
+  const productDescription = isDelivery
+    ? 'Livraison de repas pour la plateforme Afrika Meals. Versements liés aux courses effectuées.'
+    : store?.bio?.trim()
+      ? `Restaurant et livraison de repas. ${store.bio.trim()} Les clients sont débités lors du passage de commande sur Afrika Meals.`.slice(
+          0,
+          1000,
+        )
+      : 'Restaurant et livraison de repas sur Afrika Meals. Les clients sont débités lors du passage de commande en ligne.';
 
   const company: Record<string, unknown> = {
     name: businessName.slice(0, 100),
@@ -449,9 +499,13 @@ export class StripeConnectService {
     return new Stripe(key);
   }
 
-  private assertVendor(user: UserModel) {
-    if (user.type !== UserTypeEnum.VENDOR) {
-      throw new ForbiddenException('vendor_only');
+  /** Vendeur ou livreur approuvé (versements Stripe Connect sur le compte utilisateur). */
+  private assertConnectRecipient(user: UserModel) {
+    if (
+      user.type !== UserTypeEnum.VENDOR &&
+      user.type !== UserTypeEnum.DELIVERY
+    ) {
+      throw new ForbiddenException('connect_recipient_only');
     }
   }
 
@@ -520,6 +574,47 @@ export class StripeConnectService {
       .lean()
       .exec();
     return store as (StoreModel & { address?: AddressModel }) | null;
+  }
+
+  private async defaultAddressForUser(
+    userId: Types.ObjectId,
+  ): Promise<AddressModel | null> {
+    const doc = await this.userModel
+      .findById(userId)
+      .populate<{ addresses: AddressModel[] }>('addresses')
+      .lean()
+      .exec();
+    const list = doc?.addresses;
+    if (!Array.isArray(list) || list.length === 0) return null;
+    const picked =
+      list.find((a) => a && typeof a === 'object' && a.isDefault) ?? list[0];
+    return picked && typeof picked === 'object' ? picked : null;
+  }
+
+  private async resolveConnectPrefillContext(user: UserModel): Promise<{
+    store: (StoreModel & { address?: AddressModel }) | null;
+    userAddress: AddressModel | null;
+  }> {
+    const uid = this.userId(user);
+    const store = await this.primaryStoreForVendor(uid);
+    const userAddress =
+      user.type === UserTypeEnum.DELIVERY && !store
+        ? await this.defaultAddressForUser(uid)
+        : null;
+    return { store, userAddress };
+  }
+
+  private buildPrefillForUser(
+    user: UserModel,
+    store: (StoreModel & { address?: AddressModel }) | null,
+    userAddress: AddressModel | null,
+  ): VendorPrefill {
+    return buildVendorPrefill(
+      user,
+      store,
+      this.resolveConnectBusinessWebsiteUrl(),
+      userAddress,
+    );
   }
 
   private async syncAccountFlags(
@@ -605,12 +700,9 @@ export class StripeConnectService {
     account: StripeConnectAccountRecord,
     user: UserModel,
     store: (StoreModel & { address?: AddressModel }) | null,
+    userAddress: AddressModel | null,
   ): Promise<void> {
-    const prefill = buildVendorPrefill(
-      user,
-      store,
-      this.resolveConnectBusinessWebsiteUrl(),
-    );
+    const prefill = this.buildPrefillForUser(user, store, userAddress);
     const websiteUrl = prefill.business_profile.url as string | undefined;
     if (!websiteUrl) {
       this.logger.warn(
@@ -633,6 +725,7 @@ export class StripeConnectService {
     account: StripeConnectAccountRecord,
     user: UserModel,
     store: (StoreModel & { address?: AddressModel }) | null,
+    userAddress: AddressModel | null,
   ): Promise<StripeConnectAccountRecord> {
     if (isConnectFullyActive(account)) {
       return account;
@@ -643,6 +736,7 @@ export class StripeConnectService {
         account,
         user,
         store,
+        userAddress,
       );
       const refreshed = (await this.stripe().accounts.retrieve(
         accountId,
@@ -719,7 +813,7 @@ export class StripeConnectService {
   }
 
   async getConnectStatus(user: UserModel): Promise<StripeConnectStatus> {
-    this.assertVendor(user);
+    this.assertConnectRecipient(user);
     const uid = this.userId(user);
     const doc = await this.userModel
       .findById(uid)
@@ -763,16 +857,13 @@ export class StripeConnectService {
   async createOnboardingLink(
     user: UserModel,
   ): Promise<{ url: string; accountId: string }> {
-    this.assertVendor(user);
+    this.assertConnectRecipient(user);
     const uid = this.userId(user);
-    const store = await this.primaryStoreForVendor(uid);
+    const { store, userAddress } =
+      await this.resolveConnectPrefillContext(user);
     const stripe = this.stripe();
     const { returnUrl, refreshUrl } = this.connectReturnUrls();
-    const prefill = buildVendorPrefill(
-      user,
-      store,
-      this.resolveConnectBusinessWebsiteUrl(),
-    );
+    const prefill = this.buildPrefillForUser(user, store, userAddress);
 
     let accountId = (
       await this.userModel
@@ -829,6 +920,7 @@ export class StripeConnectService {
         account,
         user,
         store,
+        userAddress,
       );
     }
 
@@ -853,6 +945,7 @@ export class StripeConnectService {
         account,
         user,
         store,
+        userAddress,
       );
       const link = await stripe.accountLinks.create({
         account: accountId,
@@ -892,12 +985,9 @@ export class StripeConnectService {
     accountId: string,
     user: UserModel,
     store: (StoreModel & { address?: AddressModel }) | null,
+    userAddress: AddressModel | null,
   ): Promise<void> {
-    const prefill = buildVendorPrefill(
-      user,
-      store,
-      this.resolveConnectBusinessWebsiteUrl(),
-    );
+    const prefill = this.buildPrefillForUser(user, store, userAddress);
     try {
       await this.stripe().accounts.update(
         accountId,
@@ -913,7 +1003,7 @@ export class StripeConnectService {
   async createDashboardLink(
     user: UserModel,
   ): Promise<{ url: string; status: 'complete' | 'incomplete' }> {
-    this.assertVendor(user);
+    this.assertConnectRecipient(user);
     const uid = this.userId(user);
     const accountId = (
       await this.userModel.findById(uid).select('stripeConnectAccountId').lean()
@@ -922,7 +1012,8 @@ export class StripeConnectService {
       throw new BadRequestException('stripe_connect_not_linked');
     }
 
-    const store = await this.primaryStoreForVendor(uid);
+    const { store, userAddress } =
+      await this.resolveConnectPrefillContext(user);
     const stripe = this.stripe();
     const { returnUrl, refreshUrl } = this.connectReturnUrls();
 
@@ -940,7 +1031,7 @@ export class StripeConnectService {
     }
 
     try {
-      await this.syncBusinessProfileOnly(accountId, user, store);
+      await this.syncBusinessProfileOnly(accountId, user, store, userAddress);
       account = (await stripe.accounts.retrieve(
         accountId,
       )) as StripeConnectAccountRecord;
@@ -1003,7 +1094,7 @@ export class StripeConnectService {
     limit = 25,
     startingAfter?: string,
   ): Promise<{ payouts: StripeConnectPayoutRow[]; hasMore: boolean }> {
-    this.assertVendor(user);
+    this.assertConnectRecipient(user);
     const status = await this.getConnectStatus(user);
     if (!status.accountId) {
       return { payouts: [], hasMore: false };
@@ -1047,7 +1138,7 @@ export class StripeConnectService {
   }
 
   async getConnectBalance(user: UserModel): Promise<StripeConnectBalance> {
-    this.assertVendor(user);
+    this.assertConnectRecipient(user);
     const status = await this.getConnectStatus(user);
     if (!status.accountId || !status.payoutsEnabled) {
       return { available: 0, pending: 0, currency: 'CAD' };
@@ -1081,7 +1172,7 @@ export class StripeConnectService {
   }
 
   async getPayoutEstimate(user: UserModel): Promise<StripeConnectPayoutEstimate> {
-    this.assertVendor(user);
+    this.assertConnectRecipient(user);
     const status = await this.getConnectStatus(user);
     const currency = (status.defaultCurrency ?? 'cad').toLowerCase();
     if (!status.accountId || !status.payoutsEnabled || !status.onboardingComplete) {
@@ -1141,7 +1232,7 @@ export class StripeConnectService {
    * Versement manuel du solde disponible vers le compte bancaire du vendeur (Express).
    */
   async requestPayout(user: UserModel): Promise<StripeConnectPayoutRow> {
-    this.assertVendor(user);
+    this.assertConnectRecipient(user);
     const uid = this.userId(user);
     const status = await this.getConnectStatus(user);
     if (!status.accountId) {
