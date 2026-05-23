@@ -7,7 +7,7 @@ import { PlatformShippingSettingsModule } from '@modules/platform-shipping-setti
 import { StoreModule } from '@modules/store/store.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { UsersModule } from '@modules/users/users.module';
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
   PaymentMethodModel,
@@ -45,7 +45,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
     CouponsModule,
     StoreModule,
     SubscriptionsModule,
-    OrdersModule,
+    forwardRef(() => OrdersModule),
     PlatformFeesModule,
     PlatformShippingSettingsModule,
     MongooseModule.forFeature([

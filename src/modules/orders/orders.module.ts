@@ -1,6 +1,7 @@
 import { CartModule } from '@modules/cart/cart.module';
 import { ProductsModule } from '@modules/products/products.module';
-import { Module } from '@nestjs/common';
+import { BillingModule } from '@modules/billing/billing.module';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AddressModel, AddressSchema } from '@schemas/address.schema';
 import {
@@ -49,6 +50,7 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
     BusinessReportsModule,
     CartModule,
     ProductsModule,
+    forwardRef(() => BillingModule),
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       {

@@ -1071,6 +1071,7 @@ export class StripeGroupedCheckoutService {
               goodsCents: g,
               shipCents: s,
               stripeParentPaymentId: stripePaymentId,
+              paymentTotalCents: amountTotalCents,
             });
             transferId = tr.transferId ?? transferId;
             transferCents = tr.transferCents;
@@ -1185,6 +1186,7 @@ export class StripeGroupedCheckoutService {
             goodsCents: goodsCents ?? 0,
             shipCents,
             stripeParentPaymentId: stripePaymentId,
+            paymentTotalCents: amountTotalCents,
           });
           transferCents = tr.transferCents;
           platformFeeCents = tr.platformFeeCents;

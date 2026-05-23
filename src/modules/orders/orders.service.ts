@@ -1,3 +1,4 @@
+import { StripeConnectTransferService } from '@modules/billing/stripe/stripe-connect-transfer.service';
 import { BusinessReportsService } from '@modules/business-reports/business-reports.service';
 import { CartService } from '@modules/cart/cart.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
@@ -9,6 +10,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
@@ -82,6 +84,9 @@ export class OrdersService {
 
   @Inject(StoreAccessService)
   private readonly _storeAccess: StoreAccessService;
+
+  @Inject(forwardRef(() => StripeConnectTransferService))
+  private readonly _stripeTransfers: StripeConnectTransferService;
 
   /** Client + adresses de livraison (refs `addresses` peuplées). */
   private static readonly orderUserWithAddressesPopulate = {
@@ -1542,6 +1547,25 @@ export class OrdersService {
       populated ?? order,
       OrderStatusEnum.COMPLETED,
     );
+
+    if (!isPickup && order.shouldShip === true) {
+      void this._stripeTransfers
+        .transferDeliveryShareForCompletedOrder({ orderId: oid })
+        .then((tr) => {
+          if (!tr.transferred && tr.skippedReason) {
+            this.logger.warn(
+              `Delivery Connect transfer skipped order=${oid}: ${tr.skippedReason}`,
+            );
+          }
+        })
+        .catch((err) => {
+          this.logger.warn(
+            `Delivery Connect transfer error order=${oid}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
+    }
 
     return {
       orderId: oid,
