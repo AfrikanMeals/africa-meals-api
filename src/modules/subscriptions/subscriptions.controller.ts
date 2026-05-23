@@ -81,6 +81,18 @@ export class SubscriptionsController {
     return this.subscriptions.deletePlan(req.user as UserModel, planId);
   }
 
+  @Delete('plans/:planId/permanent')
+  @UseGuards(JwtGuard)
+  permanentlyDeletePlan(
+    @Req() req: Request,
+    @Param('planId') planId: string,
+  ) {
+    return this.subscriptions.permanentlyDeletePlan(
+      req.user as UserModel,
+      planId,
+    );
+  }
+
   @Get('vendor-subscriptions')
   @UseGuards(JwtGuard)
   listVendorSubscriptions(@Req() req: Request) {

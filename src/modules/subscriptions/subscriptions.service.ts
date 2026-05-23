@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -172,6 +173,23 @@ export class SubscriptionsService {
       .exec();
     if (!updated) throw new NotFoundException('plan_not_found');
     return mapPlan(updated as Record<string, unknown>);
+  }
+
+  async permanentlyDeletePlan(user: UserModel, planId: string) {
+    this.assertAdmin(user);
+    if (!Types.ObjectId.isValid(planId)) {
+      throw new NotFoundException('plan_not_found');
+    }
+    const planOid = new Types.ObjectId(planId);
+    const linkedCount = await this.vendorSubModel
+      .countDocuments({ plan: planOid })
+      .exec();
+    if (linkedCount > 0) {
+      throw new ConflictException('plan_has_subscriptions');
+    }
+    const deleted = await this.planModel.findByIdAndDelete(planId).exec();
+    if (!deleted) throw new NotFoundException('plan_not_found');
+    return { ok: true, id: planId };
   }
 
   async listVendorSubscriptionsAdmin(user: UserModel) {
