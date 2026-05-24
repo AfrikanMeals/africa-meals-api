@@ -84,7 +84,7 @@ export class SubscriptionsStripeCheckoutService {
     const raw =
       configured ||
       `${server}/api/billing/stripe/subscription-return?session_id={CHECKOUT_SESSION_ID}`;
-    if (raw.startsWith('africameals://')) {
+    if (raw.startsWith('wise-eat://')) {
       return `${server}/api/billing/stripe/subscription-return?session_id={CHECKOUT_SESSION_ID}`;
     }
     return raw.includes('{CHECKOUT_SESSION_ID}')

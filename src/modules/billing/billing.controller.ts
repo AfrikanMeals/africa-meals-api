@@ -298,7 +298,7 @@ export class BillingController {
 
   /**
    * Retour Stripe Checkout abonnement vendeur : active l’abonnement puis redirige vers l’app.
-   * Stripe n’accepte pas les schémas `africameals://` en success_url — cette page fait le pont.
+   * Stripe n’accepte pas les schémas `wise-eat://` en success_url — cette page fait le pont.
    */
   @Get('stripe/subscription-return')
   @Header('Content-Type', 'text/html; charset=utf-8')

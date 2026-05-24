@@ -48,7 +48,7 @@ export class NotificationsService implements OnModuleInit {
     if (!projectId) {
       this.logger.error(
         'FCM désactivé : Firebase Admin sans projectId. ' +
-          'Ajoutez GOOGLE_APPLICATION_CREDENTIALS=accounts.json et AM_FIREBASE_PROJECT_ID=afrikanmeals dans .env puis redémarrez.',
+          'Ajoutez GOOGLE_APPLICATION_CREDENTIALS=accounts.json et AM_FIREBASE_PROJECT_ID=wise-eat-ca dans .env puis redémarrez.',
       );
       return;
     }

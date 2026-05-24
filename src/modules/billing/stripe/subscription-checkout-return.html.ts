@@ -1,7 +1,7 @@
-/** Page HTML : pont HTTPS → deep link `africameals://` (Stripe exige une URL https en success_url). */
+/** Page HTML : pont HTTPS → deep link `wise-eat://` (Stripe exige une URL https en success_url). */
 export function subscriptionCheckoutReturnHtml(sessionId: string): string {
   const sid = sessionId.replace(/[<>"'&]/g, '');
-  const deepLink = `africameals://stripe-return?kind=vendor_subscription&session_id=${encodeURIComponent(sid)}`;
+  const deepLink = `wise-eat://stripe-return?kind=vendor_subscription&session_id=${encodeURIComponent(sid)}`;
   const escapedDeep = deepLink
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')
