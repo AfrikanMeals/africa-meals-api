@@ -42,7 +42,7 @@ export class ShopHomeService {
     const id =
       (user as unknown as { _id?: { toString?: () => string } })?._id?.toString?.() ??
       '';
-    return `shophome:${id || 'anon'}`;
+    return `shophome:v2-stripe:${id || 'anon'}`;
   }
 
   private ttlMs() {

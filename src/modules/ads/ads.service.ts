@@ -5,7 +5,10 @@ import {
   PatchAdManagementDto,
 } from '@modules/ads/dto/ad-management.dto';
 import { TrackAdEventDto } from '@modules/ads/dto/ad-tracking.dto';
-import { storeOwnerStripeOnboardedPipelineStages } from '@modules/billing/stripe/stripe-connect-visibility';
+import {
+  pipelineActiveStoresWithStripeOnboarded,
+  resolveStoreIdsVisibleOnMobileApp,
+} from '@modules/billing/stripe/stripe-connect-visibility';
 import { MediasService } from '@modules/medias/medias.service';
 import {
   BadRequestException,
@@ -83,7 +86,11 @@ export type AdStatsPayload = {
 @Injectable()
 export class AdsService implements OnModuleInit {
   private static readonly _LIST_TTL_MS = 30_000;
-  private _listCache: { at: number; data: AdModel[] } | null = null;
+  private _listCache: {
+    at: number;
+    data: AdModel[];
+    stripeFiltered: boolean;
+  } | null = null;
 
   @InjectModel(AdModel.name)
   private readonly adModel: Model<AdModel>;
@@ -396,13 +403,7 @@ export class AdsService implements OnModuleInit {
 
     const stores = await this._storeModel
       .aggregate([
-        {
-          $match: {
-            _id: { $in: uniqueIds },
-            status: StoreStatusEnum.ACTIVE,
-          },
-        },
-        ...storeOwnerStripeOnboardedPipelineStages(),
+        ...pipelineActiveStoresWithStripeOnboarded(uniqueIds),
         { $project: { name: 1, profileImage: 1, status: 1 } },
       ])
       .exec();
@@ -484,6 +485,20 @@ export class AdsService implements OnModuleInit {
     return out;
   }
 
+  private _storeIdFromAdDoc(d: Record<string, unknown>): Types.ObjectId | null {
+    const st = d.store;
+    if (st == null) return null;
+    if (st instanceof Types.ObjectId) return st;
+    if (typeof st === 'object' && !Array.isArray(st)) {
+      const o = st as Record<string, unknown>;
+      const raw = o['_id'] ?? o['id'];
+      if (raw instanceof Types.ObjectId) return raw;
+      const s = raw != null ? String(raw).trim() : '';
+      if (Types.ObjectId.isValid(s)) return new Types.ObjectId(s);
+    }
+    return null;
+  }
+
   /**
    * Bannières pour l’accueil public : globales (sans boutique) +
    * publicités boutiques actives (boutique ACTIVE, dates valides).
@@ -491,8 +506,10 @@ export class AdsService implements OnModuleInit {
    */
   async listPublic(): Promise<AdModel[]> {
     const now = Date.now();
+    // Ne pas servir un cache calculé avant le filtre Stripe Connect (paiements vendeur).
     if (
       this._listCache &&
+      this._listCache.stripeFiltered === true &&
       now - this._listCache.at < AdsService._LIST_TTL_MS
     ) {
       return this._listCache.data;
@@ -506,6 +523,18 @@ export class AdsService implements OnModuleInit {
       .exec();
     const docs = raw as unknown as Record<string, unknown>[];
     await this.hydrateStoresForPublicAds(docs);
+    const shopStoreIds = [
+      ...new Set(
+        docs
+          .map((d) => this._storeIdFromAdDoc(d))
+          .filter((id): id is Types.ObjectId => id != null)
+          .map((id) => id.toString()),
+      ),
+    ].map((s) => new Types.ObjectId(s));
+    const paymentsReadyStoreIds = await resolveStoreIdsVisibleOnMobileApp(
+      this._storeModel,
+      shopStoreIds,
+    );
     const t = new Date();
     const data = docs.filter((d) => {
       if (
@@ -517,21 +546,12 @@ export class AdsService implements OnModuleInit {
       ) {
         return false;
       }
-      const st = d.store as
-        | { status?: string }
-        | Types.ObjectId
-        | null
-        | undefined;
-      if (st == null) return true;
-      if (st instanceof Types.ObjectId) return false;
-      if (typeof st === 'object') {
-        const status = (st as { status?: string }).status;
-        return String(status) === StoreStatusEnum.ACTIVE;
-      }
-      return false;
+      const storeOid = this._storeIdFromAdDoc(d);
+      if (storeOid == null) return true;
+      return paymentsReadyStoreIds.has(storeOid.toString());
     }) as unknown as AdModel[];
     const ordered = this.orderPublicAdsByMinTwoThirdsShop(data);
-    this._listCache = { at: now, data: ordered };
+    this._listCache = { at: now, data: ordered, stripeFiltered: true };
     return ordered;
   }
 

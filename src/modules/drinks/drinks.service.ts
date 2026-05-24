@@ -1,4 +1,7 @@
-import { isStripeConnectOnboardingCompleteUser } from '@modules/billing/stripe/stripe-connect-visibility';
+import {
+  isStripeConnectOnboardingCompleteUser,
+  resolveStoreIdsVisibleOnMobileApp,
+} from '@modules/billing/stripe/stripe-connect-visibility';
 import { MediasService } from '@modules/medias/medias.service';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -292,9 +295,15 @@ export class DrinksService {
     storeIds: string[],
     maxItems: number,
   ): Promise<Array<ReturnType<typeof mapDrinkDoc> & { storeId: string }>> {
-    const oids = storeIds
+    const candidateOids = storeIds
       .filter((id) => Types.ObjectId.isValid(id))
       .map((id) => new Types.ObjectId(id));
+    if (!candidateOids.length) return [];
+    const visible = await resolveStoreIdsVisibleOnMobileApp(
+      this._storeModel,
+      candidateOids,
+    );
+    const oids = candidateOids.filter((id) => visible.has(id.toString()));
     if (!oids.length) return [];
     const limit = Math.min(120, Math.max(1, Math.floor(maxItems)));
     const rows = await this._drinkModel

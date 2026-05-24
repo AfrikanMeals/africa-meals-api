@@ -1,10 +1,22 @@
-version: "3"
+# version: "3"
 
-agent:
-  authtoken: 2KkFodyXKT1PmB1miEPQxefQg6m_7uF4ttnj5SiG39aDKvpu4
+# agent:
+#   authtoken: 2KkFodyXKT1PmB1miEPQxefQg6m_7uF4ttnj5SiG39aDKvpu4
 
-endpoints:
-  - name: afrikan-api
-    url: https://blindly-witty-snake.ngrok-free.app
-    upstream:
-      url: "9000"
+# endpoints:
+#   - name: afrikan-api
+#     url: https://blindly-witty-snake.ngrok-free.app
+#     upstream:
+#       url: "9000"
+
+# cloudflared tunnel run --config proxy.yml wise-eat-api
+
+tunnel: wise-eat-api
+credentials-file: ~/.cloudflared/3991ba9a-992d-4e95-aaf0-efec849efa84.json
+
+ingress:
+  - hostname: api-dev.wise-eat.com
+    service: http://localhost:9000
+  - hostname: ws-dev.wise-eat.com
+    service: http://localhost:3001
+  - service: http_status:404

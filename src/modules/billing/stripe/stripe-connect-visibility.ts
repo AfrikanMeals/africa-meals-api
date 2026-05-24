@@ -1,5 +1,6 @@
-import { FilterQuery, PipelineStage } from 'mongoose';
+import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
+import { FilterQuery, Model, PipelineStage, Types } from 'mongoose';
 
 /** Champs vendeur mis en cache par {@link StripeConnectService.syncAccountFlags}. */
 export type StripeOnboardingCachedUser = {
@@ -28,6 +29,23 @@ export function isStripeConnectOnboardingCompleteUser(
   const past = user.stripeConnectRequirementsPastDue ?? [];
   if (due.length > 0 || past.length > 0) return false;
   return true;
+}
+
+/**
+ * Agrégation `stores` : ACTIVE + accepte commandes + vendeur Stripe Connect opérationnel.
+ * Optionnellement limité à une liste d’ids (pubs, boissons multi-boutiques, etc.).
+ */
+export function pipelineActiveStoresWithStripeOnboarded(
+  storeIds?: Types.ObjectId[],
+): PipelineStage[] {
+  const match: Record<string, unknown> = {
+    status: StoreStatusEnum.ACTIVE,
+    acceptsOrders: { $ne: false },
+  };
+  if (storeIds?.length) {
+    match._id = { $in: storeIds };
+  }
+  return [{ $match: match }, ...storeOwnerStripeOnboardedPipelineStages()];
 }
 
 /** Filtre Mongo sur la collection `users` (propriétaire boutique). */
@@ -86,6 +104,21 @@ export function storeOwnerStripeOnboardedPipelineStages(): PipelineStage[] {
 /**
  * Après `$lookup` store sur un produit (`store` objet avec champ `owner`).
  */
+/** Retourne les ids boutique visibles côté app client (paiements Stripe OK). */
+export async function resolveStoreIdsVisibleOnMobileApp(
+  storeModel: Model<StoreModel>,
+  storeIds: Types.ObjectId[],
+): Promise<Set<string>> {
+  if (!storeIds.length) return new Set();
+  const rows = await storeModel
+    .aggregate([
+      ...pipelineActiveStoresWithStripeOnboarded(storeIds),
+      { $project: { _id: 1 } },
+    ])
+    .exec();
+  return new Set(rows.map((r) => String(r._id)));
+}
+
 export function productEmbeddedStoreOwnerStripeOnboardedStages(): PipelineStage[] {
   return [
     {

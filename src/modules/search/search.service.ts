@@ -775,7 +775,6 @@ export class SearchService {
     args: SearchDto,
     user?: UserModel,
   ): Promise<SearchResultDto<ProductModel>> {
-    const ownerOid = this._userObjectId(user);
     const pipeline = [
       {
         $lookup: {
@@ -795,12 +794,7 @@ export class SearchService {
       {
         $match: {
           $and: [
-            {
-              $or: [
-                ownerOid ? { 'store.owner': ownerOid } : null,
-                { status: ProductStatusEnum.ACTIVE },
-              ].filter(Boolean),
-            },
+            { status: ProductStatusEnum.ACTIVE },
             {
               'store.acceptsOrders': true,
             },
@@ -1104,6 +1098,7 @@ export class SearchService {
                 ? (st['shippingZones'] as unknown[])
                 : [],
               averageRating: Number(st['averageRating'] ?? 0),
+              paymentsReady: true,
               ...(storeLatNum !== undefined && storeLngNum !== undefined
                 ? {
                     latitude: storeLatNum,
@@ -1145,7 +1140,6 @@ export class SearchService {
     user?: UserModel,
     limit = 48,
   ): Promise<Record<string, unknown>[]> {
-    const ownerOid = this._userObjectId(user);
     const safeLimit = Math.min(120, Math.max(1, Math.floor(limit)));
     /** Fenêtre récente avant `$lookup` stores — évite un scan joint sur toute la collection `products`. */
     const candidateCap = Math.min(900, Math.max(safeLimit * 12, 200));
@@ -1168,12 +1162,7 @@ export class SearchService {
       {
         $match: {
           $and: [
-            {
-              $or: [
-                ownerOid ? { 'store.owner': ownerOid } : null,
-                { status: ProductStatusEnum.ACTIVE },
-              ].filter(Boolean),
-            },
+            { status: ProductStatusEnum.ACTIVE },
             { 'store.acceptsOrders': true },
             {
               $or: [
@@ -1509,21 +1498,12 @@ export class SearchService {
     args: SearchDto,
     user?: UserModel,
   ): Promise<SearchResultDto<StoreModel>> {
-    const ownerOid = this._userObjectId(user);
     const q = args.query?.trim();
+    /** Catalogue client : ACTIVE + commandes + Stripe Connect + au moins un article commandable. */
     const andParts: Record<string, unknown>[] = [
-      ownerOid
-        ? {
-            $or: [
-              { owner: ownerOid },
-              { status: StoreStatusEnum.ACTIVE },
-            ],
-          }
-        : { status: StoreStatusEnum.ACTIVE },
+      { status: StoreStatusEnum.ACTIVE },
+      { acceptsOrders: { $ne: false } },
     ];
-    if (!ownerOid) {
-      andParts.push({ acceptsOrders: { $ne: false } });
-    }
     if (q) {
       const esc = this._escapeRegex(q);
       andParts.push({
