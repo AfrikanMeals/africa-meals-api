@@ -15,8 +15,9 @@ import {
 import { Cache } from 'cache-manager';
 import { InjectModel } from '@nestjs/mongoose';
 import { ProductCategoryModel } from '@schemas/product-category.schema';
+import { productEmbeddedStoreOwnerStripeOnboardedStages } from '@modules/billing/stripe/stripe-connect-visibility';
 import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
-import { StoreModel } from '@schemas/store.schema';
+import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, PipelineStage, Types } from 'mongoose';
 import type { FavoriteListingPagePayload } from './dto/favorite-listing.payload';
@@ -95,6 +96,13 @@ export class ProductsService {
           store: { $arrayElemAt: ['$store', 0] },
         },
       },
+      {
+        $match: {
+          'store.status': StoreStatusEnum.ACTIVE,
+          'store.acceptsOrders': { $ne: false },
+        },
+      },
+      ...productEmbeddedStoreOwnerStripeOnboardedStages(),
       ...productDailyMenuListingPipelineStages(),
     ];
   }

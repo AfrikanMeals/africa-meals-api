@@ -49,6 +49,17 @@ export class SearchService {
   }
 
   /**
+   * Après `$lookup` store sur un produit : boutique ACTIVE + vendeur Stripe Connect
+   * opérationnel (peut recevoir des paiements). Toujours appliqué sur le catalogue client.
+   */
+  private _clientMarketplaceProductStoreStages(): PipelineStage[] {
+    return [
+      { $match: { 'store.status': StoreStatusEnum.ACTIVE } },
+      ...productEmbeddedStoreOwnerStripeOnboardedStages(),
+    ];
+  }
+
+  /**
    * Tri agrégation / find produits : noms Mongo réels (évite les virtuals non stockés).
    */
   private _hasSearchGeo(args: SearchDto): boolean {
@@ -793,12 +804,6 @@ export class SearchService {
             {
               'store.acceptsOrders': true,
             },
-            ...(ownerOid
-              ? []
-              : [
-                  { 'store.status': StoreStatusEnum.ACTIVE },
-                  ...productEmbeddedStoreOwnerStripeOnboardedStages(),
-                ]),
             args.categoryId && {
               category: { $eq: new Types.ObjectId(args.categoryId) },
             },
@@ -825,6 +830,7 @@ export class SearchService {
           ].filter(Boolean),
         },
       },
+      ...this._clientMarketplaceProductStoreStages(),
       ...this._productDailyMenuListingStages(),
       ...this._productGeoDistanceStages(args),
     ];
@@ -1169,12 +1175,6 @@ export class SearchService {
               ].filter(Boolean),
             },
             { 'store.acceptsOrders': true },
-            ...(ownerOid
-              ? []
-              : [
-                  { 'store.status': StoreStatusEnum.ACTIVE },
-                  ...productEmbeddedStoreOwnerStripeOnboardedStages(),
-                ]),
             {
               $or: [
                 { title: { $regex: '', $options: 'i' } },
@@ -1185,6 +1185,7 @@ export class SearchService {
           ],
         },
       },
+      ...this._clientMarketplaceProductStoreStages(),
       ...this._productDailyMenuListingStages(),
       { $sort: { createdAt: -1 } },
       { $limit: safeLimit },
@@ -1538,9 +1539,9 @@ export class SearchService {
           $and: andParts,
         },
       },
-      ...(ownerOid ? [] : storeOwnerStripeOnboardedPipelineStages()),
+      ...storeOwnerStripeOnboardedPipelineStages(),
       ...this._storeDistanceAndMenuStages(args),
-      ...(ownerOid ? [] : storeArticlesAvailabilityPipelineStages()),
+      ...storeArticlesAvailabilityPipelineStages(),
     ];
 
     const sortKeys = this._storeSortKeys(args);
