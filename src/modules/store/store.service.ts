@@ -40,6 +40,7 @@ import { Model, Types } from 'mongoose';
 import { CreateStoreDto, DailyMenuSlotDto, PatchVendorShippingZonesDto } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { DrinksService, maxDrinkOrderQuantity } from '@modules/drinks/drinks.service';
+import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
 import { isStripeConnectOnboardingCompleteUser } from '@modules/billing/stripe/stripe-connect-visibility';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
@@ -135,6 +136,9 @@ export class StoreService {
   @Inject(TeamsService)
   private readonly _teamsService: TeamsService;
 
+  @Inject(StripeConnectService)
+  private readonly _stripeConnect: StripeConnectService;
+
   getStoreModel() {
     return this._storeModel;
   }
@@ -157,8 +161,13 @@ export class StoreService {
     if (!store.owner) {
       return false;
     }
+    const ownerOid =
+      store.owner instanceof Types.ObjectId
+        ? store.owner
+        : new Types.ObjectId(String(store.owner));
+    await this._stripeConnect.refreshUserConnectFlagsFromStripe(ownerOid);
     const owner = await this._userModel
-      .findById(store.owner)
+      .findById(ownerOid)
       .select(
         'stripeConnectAccountId stripeConnectChargesEnabled stripeConnectPayoutsEnabled stripeConnectDetailsSubmitted stripeConnectDisabledReason stripeConnectRequirementsDue stripeConnectRequirementsPastDue',
       )

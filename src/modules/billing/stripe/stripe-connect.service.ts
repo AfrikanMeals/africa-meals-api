@@ -499,6 +499,115 @@ export class StripeConnectService {
     return new Stripe(key);
   }
 
+  /** Clé secrète Stripe présente (API utilisable). */
+  isConfigured(): boolean {
+    return Boolean(this.config.get<string>('STRIPE_SECRET_KEY')?.trim());
+  }
+
+  async retrieveAccount(
+    accountId: string,
+  ): Promise<StripeConnectAccountRecord> {
+    return (await this.stripe().accounts.retrieve(
+      accountId.trim(),
+    )) as StripeConnectAccountRecord;
+  }
+
+  async createExpressAccount(params: {
+    email: string;
+    country: string;
+    businessName: string;
+  }): Promise<{ id: string }> {
+    const country =
+      params.country.trim().toUpperCase().slice(0, 2) ||
+      STRIPE_CONNECT_ACCOUNT_COUNTRY;
+    const account = (await this.stripe().accounts.create({
+      type: 'express',
+      country,
+      email: params.email.trim(),
+      business_type: CONNECT_BUSINESS_TYPE,
+      capabilities: {
+        card_payments: { requested: true },
+        transfers: { requested: true },
+      },
+      business_profile: {
+        name: params.businessName.trim() || 'Restaurant',
+        mcc: DEFAULT_RESTAURANT_MCC,
+      },
+      metadata: { platform: 'africa-meals' },
+    })) as StripeConnectAccountRecord;
+    return { id: account.id };
+  }
+
+  async createAccountOnboardingLink(
+    accountId: string,
+    refreshUrl: string,
+    returnUrl: string,
+  ): Promise<{ url: string }> {
+    const link = await this.stripe().accountLinks.create({
+      account: accountId.trim(),
+      type: 'account_onboarding',
+      refresh_url: refreshUrl,
+      return_url: returnUrl,
+      collect: 'eventually_due',
+    });
+    if (!link.url) {
+      throw new BadRequestException('stripe_onboarding_link_failed');
+    }
+    return { url: link.url };
+  }
+
+  /**
+   * Rafraîchit les flags Connect en cache sur `users` depuis Stripe
+   * (utile juste après l’onboarding avant webhook `account.updated`).
+   */
+  async refreshUserConnectFlagsFromStripe(
+    ownerId: Types.ObjectId | string,
+  ): Promise<void> {
+    if (!this.isConfigured()) return;
+    const oid =
+      ownerId instanceof Types.ObjectId
+        ? ownerId
+        : new Types.ObjectId(String(ownerId));
+    const doc = await this.userModel
+      .findById(oid)
+      .select('stripeConnectAccountId')
+      .lean()
+      .exec();
+    const accountId = doc?.stripeConnectAccountId?.trim();
+    if (!accountId) return;
+    try {
+      const account = (await this.stripe().accounts.retrieve(
+        accountId,
+      )) as StripeConnectAccountRecord;
+      await this.syncAccountFlags(oid, account);
+    } catch (e) {
+      this.logger.warn(
+        `Stripe Connect refresh skipped for user ${oid.toString()}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
+  async listBalanceTransactions(
+    connectAccountId: string,
+    opts: { limit?: number; startingAfter?: string },
+  ) {
+    const id = connectAccountId.trim();
+    if (!id) {
+      throw new BadRequestException('stripe_account_required');
+    }
+    const limit = Math.min(Math.max(opts.limit ?? 25, 1), 100);
+    const startingAfter = opts.startingAfter?.trim();
+    return this.stripe().balanceTransactions.list(
+      {
+        limit,
+        ...(startingAfter ? { starting_after: startingAfter } : {}),
+      },
+      { stripeAccount: id },
+    );
+  }
+
   /** Vendeur ou livreur approuvé (versements Stripe Connect sur le compte utilisateur). */
   private assertConnectRecipient(user: UserModel) {
     if (

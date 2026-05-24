@@ -23,7 +23,6 @@ import { BillingController } from './billing.controller';
 import { BillingService } from './billing.service';
 import { PaypalModule } from './paypal/paypal.module';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
-import { StripeConnectService as LegacyStripeConnectService } from './stripe-connect.service';
 import { StripeConnectService } from './stripe/stripe-connect.service';
 import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.service';
 import { UserModel, UserSchema } from '@schemas/user.schema';
@@ -32,7 +31,6 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
   controllers: [BillingController],
   providers: [
     BillingService,
-    LegacyStripeConnectService,
     StripeGroupedCheckoutService,
     StripeConnectService,
   ],
@@ -62,7 +60,6 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
   ],
   exports: [
     BillingService,
-    LegacyStripeConnectService,
     StripeConnectService,
     StripeConnectTransferModule,
   ],

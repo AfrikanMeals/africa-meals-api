@@ -13,7 +13,8 @@ import { MailerModule } from '@modules/mailer/mailer.module';
 import { TeamsModule } from '@modules/teams/teams.module';
 import { UsersModule } from '@modules/users/users.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
-import { Module } from '@nestjs/common';
+import { BillingModule } from '@modules/billing/billing.module';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
   AppNotificationModel,
@@ -52,6 +53,7 @@ import { StoreService } from './store.service';
     OrdersModule,
     StockItemsModule,
     DrinksModule,
+    forwardRef(() => BillingModule),
     MongooseModule.forFeature([
       { name: AppNotificationModel.name, schema: AppNotificationSchema },
       { name: StoreModel.name, schema: StoreSchema },
