@@ -15,6 +15,8 @@ export type SendSimpleMailDto = {
   subject: string;
   html: string;
   text?: string;
+  replyTo?: string;
+  replyToName?: string;
 };
 
 // https://github.com/mailersend/mailersend-nodejs?tab=readme-ov-file#send-a-template-based-email
@@ -57,9 +59,16 @@ export class MailerService {
       auth: { user, pass },
     });
 
+    const replyToRaw = args.replyTo?.trim();
+    const replyTo =
+      replyToRaw && args.replyToName?.trim()
+        ? `"${args.replyToName.trim().replace(/"/g, '')}" <${replyToRaw}>`
+        : replyToRaw || undefined;
+
     await transporter.sendMail({
       from: `"${appName}" <${from}>`,
       to: args.to,
+      replyTo,
       subject: args.subject,
       html: args.html,
       text: args.text?.trim() || undefined,
@@ -125,7 +134,14 @@ export class MailerService {
     const paramsBuilder = new EmailParams()
       .setFrom(sentFrom)
       .setTo(recipients)
-      .setReplyTo(sentFrom)
+      .setReplyTo(
+        args.replyTo?.trim()
+          ? new Sender(
+              args.replyTo.trim(),
+              args.replyToName?.trim() || args.replyTo.trim(),
+            )
+          : sentFrom,
+      )
       .setSubject(args.subject)
       .setHtml(args.html);
     if (args.text?.trim()) {

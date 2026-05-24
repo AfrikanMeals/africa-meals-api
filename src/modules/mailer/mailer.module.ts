@@ -2,10 +2,11 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MailerSend } from 'mailersend';
 import { MailerController } from './mailer.controller';
+import { ContactController } from './contact.controller';
 import { MailerService } from './mailer.service';
 
 @Module({
-  controllers: [MailerController],
+  controllers: [MailerController, ContactController],
   providers: [
     {
       provide: 'MAILER',

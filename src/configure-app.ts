@@ -129,6 +129,8 @@ export async function configureApplication(
     .addTag('coupons', 'Codes promo boutique (admin & vendeur)')
     .addTag('search', 'Recherche')
     .addTag('mailer', 'Envoi d’emails (test)')
+    .addTag('contact', 'Formulaire de contact site vitrine')
+    .addTag('policies', 'Politiques & CGU (CMS)')
     .addTag('supported-countries', 'Pays supportés')
     .addTag('health', 'Santé de l’API')
     .addTag('notifications', 'Notifications push (FCM)')
