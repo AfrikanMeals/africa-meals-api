@@ -24,6 +24,12 @@ import { PolicySectionImageJsonDto } from './dto/policy-section-image.dto';
 export class AppPoliciesController {
   constructor(private readonly _policies: AppPoliciesService) {}
 
+  @Get('public')
+  @ApiOperation({ summary: 'Lister les politiques publiées (site / app)' })
+  listPublic(@Query('locale') locale?: string) {
+    return this._policies.listPublishedPublic(locale);
+  }
+
   @Get('public/:slug')
   @ApiOperation({ summary: 'Politique publiée (site / app)' })
   getPublic(
@@ -42,15 +48,15 @@ export class AppPoliciesController {
   }
 
   @ApiBearerAuth('bearer')
-  @Get('admin/:slug')
+  @Post('admin/section-image-json')
   @UseGuards(JwtGuard)
-  @ApiOperation({ summary: 'Lire une politique pour édition (ADMIN)' })
-  getAdmin(
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({ summary: 'Image de section → Firebase Storage (ADMIN)' })
+  uploadSectionImage(
     @Req() req: Request,
-    @Param('slug') slug: string,
-    @Query('locale') locale?: string,
+    @Body() body: PolicySectionImageJsonDto,
   ) {
-    return this._policies.getForAdmin(req.user as UserModel, slug, locale ?? 'fr');
+    return this._policies.uploadSectionImage(req.user as UserModel, body);
   }
 
   @ApiBearerAuth('bearer')
@@ -63,14 +69,14 @@ export class AppPoliciesController {
   }
 
   @ApiBearerAuth('bearer')
-  @Post('admin/section-image-json')
+  @Get('admin/:slug')
   @UseGuards(JwtGuard)
-  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  @ApiOperation({ summary: 'Image de section → Firebase Storage (ADMIN)' })
-  uploadSectionImage(
+  @ApiOperation({ summary: 'Lire une politique pour édition (ADMIN)' })
+  getAdmin(
     @Req() req: Request,
-    @Body() body: PolicySectionImageJsonDto,
+    @Param('slug') slug: string,
+    @Query('locale') locale?: string,
   ) {
-    return this._policies.uploadSectionImage(req.user as UserModel, body);
+    return this._policies.getForAdmin(req.user as UserModel, slug, locale ?? 'fr');
   }
 }

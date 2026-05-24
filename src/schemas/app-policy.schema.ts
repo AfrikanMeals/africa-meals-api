@@ -1,8 +1,23 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
 
-export const APP_POLICY_SLUGS = ['privacy', 'terms'] as const;
-export type AppPolicySlug = (typeof APP_POLICY_SLUGS)[number];
+/** Slugs suggérés (le CMS accepte tout identifiant valide). */
+export const BUILTIN_POLICY_SLUGS = [
+  'privacy',
+  'terms',
+  'refund',
+  'shipping',
+] as const;
+
+export const POLICY_SLUG_REGEX = /^[a-z][a-z0-9-]{0,63}$/;
+
+export function normalizePolicySlug(raw: string): string {
+  return raw.trim().toLowerCase().replace(/_/g, '-');
+}
+
+export function isValidPolicySlug(slug: string): boolean {
+  return POLICY_SLUG_REGEX.test(slug);
+}
 
 @Schema({ _id: false })
 export class AppPolicySectionModel {

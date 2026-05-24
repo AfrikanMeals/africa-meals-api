@@ -9,6 +9,8 @@ import {
   AppPolicyDocument,
   AppPolicyModel,
   AppPolicySectionModel,
+  isValidPolicySlug,
+  normalizePolicySlug,
 } from '@schemas/app-policy.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
@@ -26,7 +28,16 @@ function normalizeLocale(raw: string): string {
   return raw.trim().toLowerCase().slice(0, 8) || 'fr';
 }
 
+function policyTimestamps(doc: AppPolicyDocument) {
+  const t = doc as AppPolicyDocument & { updatedAt?: Date; createdAt?: Date };
+  return {
+    updatedAt: t.updatedAt?.toISOString?.() ?? null,
+    createdAt: t.createdAt?.toISOString?.() ?? null,
+  };
+}
+
 function serializePolicy(doc: AppPolicyDocument) {
+  const { updatedAt, createdAt } = policyTimestamps(doc);
   return {
     id: String(doc._id),
     slug: doc.slug,
@@ -39,8 +50,8 @@ function serializePolicy(doc: AppPolicyDocument) {
       htmlContent: s.htmlContent ?? '',
     })),
     isPublished: Boolean(doc.isPublished),
-    updatedAt: doc.updatedAt?.toISOString?.() ?? null,
-    createdAt: doc.createdAt?.toISOString?.() ?? null,
+    updatedAt,
+    createdAt,
   };
 }
 
@@ -61,8 +72,12 @@ export class AppPoliciesService {
     return docs.map(serializePolicy);
   }
 
-  async getForAdmin(user: UserModel, slug: string, localeRaw: string) {
+  async getForAdmin(user: UserModel, slugRaw: string, localeRaw: string) {
     assertAdmin(user);
+    const slug = normalizePolicySlug(slugRaw);
+    if (!isValidPolicySlug(slug)) {
+      throw new BadRequestException('invalid_policy_slug');
+    }
     const locale = normalizeLocale(localeRaw);
     const doc = await this._policies.findOne({ slug, locale }).exec();
     if (!doc) {
@@ -82,6 +97,10 @@ export class AppPoliciesService {
 
   async upsert(user: UserModel, dto: UpsertAppPolicyDto) {
     assertAdmin(user);
+    const slug = normalizePolicySlug(dto.slug);
+    if (!isValidPolicySlug(slug)) {
+      throw new BadRequestException('invalid_policy_slug');
+    }
     const locale = normalizeLocale(dto.locale);
     const sections = (dto.sections ?? []).map((s) => ({
       title: s.title.trim(),
@@ -91,10 +110,10 @@ export class AppPoliciesService {
 
     const doc = await this._policies
       .findOneAndUpdate(
-        { slug: dto.slug, locale },
+        { slug, locale },
         {
           $set: {
-            slug: dto.slug,
+            slug,
             locale,
             title: dto.title.trim(),
             description: dto.description?.trim() ?? '',
@@ -112,7 +131,38 @@ export class AppPoliciesService {
     return serializePolicy(doc);
   }
 
-  async getPublishedPublic(slug: string, localeRaw?: string) {
+  async listPublishedPublic(localeRaw?: string) {
+    const locale = normalizeLocale(localeRaw ?? 'fr');
+    const published = await this._policies
+      .find({ isPublished: true })
+      .sort({ slug: 1, locale: 1 })
+      .exec();
+
+    const slugs = [...new Set(published.map((d) => d.slug))].sort();
+    return slugs
+      .map((slug) => {
+        const doc =
+          published.find((d) => d.slug === slug && d.locale === locale) ??
+          published.find((d) => d.slug === slug && d.locale === 'fr') ??
+          published.find((d) => d.slug === slug);
+        if (!doc) return null;
+        const { updatedAt } = policyTimestamps(doc);
+        return {
+          slug: doc.slug,
+          locale: doc.locale,
+          title: doc.title,
+          description: doc.description ?? '',
+          updatedAt,
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => Boolean(row?.title?.trim()));
+  }
+
+  async getPublishedPublic(slugRaw: string, localeRaw?: string) {
+    const slug = normalizePolicySlug(slugRaw);
+    if (!isValidPolicySlug(slug)) {
+      throw new NotFoundException('policy_not_found');
+    }
     const locale = normalizeLocale(localeRaw ?? 'fr');
     let doc = await this._policies
       .findOne({ slug, locale, isPublished: true })

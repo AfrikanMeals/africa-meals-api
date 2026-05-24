@@ -4,14 +4,14 @@ import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
-  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   ValidateNested,
 } from 'class-validator';
-import { APP_POLICY_SLUGS } from '@schemas/app-policy.schema';
+import { POLICY_SLUG_REGEX } from '@schemas/app-policy.schema';
 
 export class AppPolicySectionDto {
   @ApiProperty({ maxLength: 200 })
@@ -33,9 +33,16 @@ export class AppPolicySectionDto {
 }
 
 export class UpsertAppPolicyDto {
-  @ApiProperty({ enum: APP_POLICY_SLUGS })
+  @ApiProperty({
+    example: 'refund',
+    description:
+      'Identifiant URL (a-z, chiffres, tirets). Ex. privacy, terms, refund, shipping',
+  })
   @IsString()
-  @IsIn([...APP_POLICY_SLUGS])
+  @Matches(POLICY_SLUG_REGEX, {
+    message:
+      'slug must be lowercase letters, digits or hyphens (2–64 chars, start with a letter)',
+  })
   slug: string;
 
   @ApiProperty({ example: 'fr', maxLength: 8 })
