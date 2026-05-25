@@ -25,7 +25,14 @@ export class DeliveryDriversSeedService implements OnApplicationBootstrap {
     private readonly storeModel: Model<StoreModel>,
   ) {}
 
+  /**
+   * Désactivé par défaut. Activer explicitement : `SEED_DEMO_DELIVERY_DRIVERS=true`.
+   */
   async onApplicationBootstrap(): Promise<void> {
+    if (process.env.SEED_DEMO_DELIVERY_DRIVERS !== 'true') {
+      return;
+    }
+
     const n = await this.deliveryDriverModel.countDocuments().exec();
     if (n > 0) return;
 
