@@ -41,6 +41,7 @@ import {
   resolveOrderCancelReasonDisplay,
 } from './order-cancel-reasons';
 import { OrderStatusEventsService } from './order-status-events.service';
+import { WsChatNotifyService } from '@modules/ws-notify/ws-chat-notify.service';
 import {
   WsOrderNotifyService,
   type OrderWsTrackingPayload,
@@ -77,6 +78,9 @@ export class OrdersService {
 
   @Inject(WsOrderNotifyService)
   private readonly _wsOrderNotify: WsOrderNotifyService;
+
+  @Inject(WsChatNotifyService)
+  private readonly _wsChatNotify: WsChatNotifyService;
 
   @Inject(StoreAccessService)
   private readonly _storeAccess: StoreAccessService;
@@ -315,6 +319,7 @@ export class OrdersService {
         refundRequestState: refund.refundRequestState,
         assignedDeliveryUserId: delivery.assignedDeliveryUserId,
         canMessageDeliveryAgent: delivery.canMessageDeliveryAgent,
+        deliveryChatArchived: delivery.deliveryChatArchived,
       };
     });
     return this.attachStatusEventsToOrders(enriched);
@@ -1387,6 +1392,7 @@ export class OrdersService {
         ? { assignedDeliveryUserId: delivery.assignedDeliveryUserId }
         : {}),
       canMessageDeliveryAgent: delivery.canMessageDeliveryAgent,
+      deliveryChatArchived: delivery.deliveryChatArchived,
     };
     const customerId = this.userIdFromOrderDoc(order as OrderModel);
     if (customerId) {
@@ -1602,6 +1608,7 @@ export class OrdersService {
     );
 
     if (!isPickup && order.shouldShip === true) {
+      void this._wsChatNotify.archiveOrderDeliveryChats(oid);
       void this._stripeTransfers
         .transferDeliveryShareForCompletedOrder({ orderId: oid })
         .then((tr) => {
@@ -1641,6 +1648,7 @@ export class OrdersService {
   private clientDeliveryAgentFlags(order: Record<string, unknown>): {
     assignedDeliveryUserId: string | null;
     canMessageDeliveryAgent: boolean;
+    deliveryChatArchived: boolean;
   } {
     const agentId = this.assignedDeliveryUserIdFromOrderDoc(order);
     const shouldShip =
@@ -1649,13 +1657,16 @@ export class OrdersService {
       return {
         assignedDeliveryUserId: agentId,
         canMessageDeliveryAgent: false,
+        deliveryChatArchived: false,
       };
     }
     const status = String(order['status'] ?? '').trim().toLowerCase();
+    const archived = status === 'completed';
     const canMessage = ['approved', 'shipped', 'completed'].includes(status);
     return {
       assignedDeliveryUserId: agentId,
       canMessageDeliveryAgent: canMessage,
+      deliveryChatArchived: archived,
     };
   }
 

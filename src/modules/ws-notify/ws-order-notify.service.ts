@@ -17,6 +17,8 @@ export type OrderWsTrackingPayload = {
   /** Livreur mobile assigné (`User` DELIVERY) — chat client ↔ livreur. */
   assignedDeliveryUserId?: string;
   canMessageDeliveryAgent?: boolean;
+  /** Fil client↔livreur archivé (commande livrée) — messagerie toujours ouverte. */
+  deliveryChatArchived?: boolean;
 };
 
 /**
