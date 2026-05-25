@@ -16,6 +16,10 @@ import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { ProductRatingModel } from '@schemas/product_rating.schema';
 import {
+  DeliveryAgentApplicationModel,
+  DeliveryAgentApplicationStatus,
+} from '@schemas/delivery-agent-application.schema';
+import {
   DeliveryDriverModel,
   DeliveryDriverStatutEnum,
 } from '@schemas/delivery-driver.schema';
@@ -40,6 +44,10 @@ import { OrdersService } from '@modules/orders/orders.service';
 import { WsOrderNotifyService } from '@modules/ws-notify/ws-order-notify.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema';
+import {
+  defaultDeliveryCapacity,
+  deliveryVehicleLabelFr,
+} from '@modules/delivery-agent/delivery-agent-vehicle.util';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -248,6 +256,9 @@ export type DashboardLivreurRow = {
   latitude: number;
   /** Boutique propriétaire (vide pour anciens enregistrements sans boutique). */
   storeId: string;
+  storeName: string;
+  /** Fiche flotte dashboard vs compte livreur app (DELIVERY). */
+  source: 'fleet' | 'app';
 };
 
 type DeliveryDriverLean = {
@@ -468,6 +479,8 @@ export class DashboardService {
     private readonly addressModel: Model<AddressModel>,
     @InjectModel(DeliveryDriverModel.name)
     private readonly deliveryDriverModel: Model<DeliveryDriverModel>,
+    @InjectModel(DeliveryAgentApplicationModel.name)
+    private readonly deliveryAgentApplicationModel: Model<DeliveryAgentApplicationModel>,
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
     private readonly notificationsService: NotificationsService,
@@ -2147,31 +2160,43 @@ export class DashboardService {
       const storePoints = await this.loadVendorStoreGeoPoints(ids);
       const rows = await this.deliveryDriverModel
         .find({ store: { $in: ids } })
+        .populate('store', 'name')
         .sort({ nom: 1 })
         .lean()
         .exec();
       const fromFleet = rows.map((r) =>
-        this.toDashboardLivreurRow(r as unknown as DeliveryDriverLean),
+        this.toDashboardLivreurRow(
+          r as unknown as DeliveryDriverLean,
+          this.storeNameFromPopulated(r.store),
+        ),
       );
       const fromAccounts = await this.listRegionalDeliveryUsersAsRows(
         storePoints,
         REGION_DELIVERY_USERS_RADIUS_KM,
       );
-      const merged = [...fromFleet, ...fromAccounts];
-      merged.sort((a, b) =>
-        a.nom.localeCompare(b.nom, 'fr', { sensitivity: 'base' }),
-      );
-      return merged;
+      const merged = this.mergeLivreurRowsById([...fromFleet, ...fromAccounts]);
+      return this.enrichLivreurRows(merged);
     }
     if (user.type === UserTypeEnum.ADMIN) {
+      const storePoints = await this.loadAllStoreGeoPoints();
       const rows = await this.deliveryDriverModel
         .find({})
+        .populate('store', 'name')
         .sort({ nom: 1 })
         .lean()
         .exec();
-      return rows.map((r) =>
-        this.toDashboardLivreurRow(r as unknown as DeliveryDriverLean),
+      const fromFleet = rows.map((r) =>
+        this.toDashboardLivreurRow(
+          r as unknown as DeliveryDriverLean,
+          this.storeNameFromPopulated(r.store),
+        ),
       );
+      const fromAccounts = await this.listRegionalDeliveryUsersAsRows(
+        storePoints,
+        REGION_DELIVERY_USERS_RADIUS_KM,
+      );
+      const merged = this.mergeLivreurRowsById([...fromFleet, ...fromAccounts]);
+      return this.enrichLivreurRows(merged);
     }
     throw new ForbiddenException('livreurs_access_denied');
   }
@@ -2442,7 +2467,268 @@ export class DashboardService {
     );
   }
 
-  private toDashboardLivreurRow(doc: DeliveryDriverLean): DashboardLivreurRow {
+  private storeNameFromPopulated(
+    store: { name?: string } | Types.ObjectId | null | undefined,
+  ): { storeName: string } {
+    if (store && typeof store === 'object' && 'name' in store) {
+      const n = (store as { name?: string }).name?.trim();
+      if (n) return { storeName: n };
+    }
+    return { storeName: '' };
+  }
+
+  private mergeLivreurRowsById(rows: DashboardLivreurRow[]): DashboardLivreurRow[] {
+    const byId = new Map<string, DashboardLivreurRow>();
+    for (const r of rows) {
+      if (!byId.has(r.id)) byId.set(r.id, r);
+    }
+    const out = Array.from(byId.values());
+    out.sort((a, b) =>
+      a.nom.localeCompare(b.nom, 'fr', { sensitivity: 'base' }),
+    );
+    return out;
+  }
+
+  private startOfTodayUtc(): Date {
+    return dayjs().utc().startOf('day').toDate();
+  }
+
+  private async enrichLivreurRows(
+    rows: DashboardLivreurRow[],
+  ): Promise<DashboardLivreurRow[]> {
+    if (!rows.length) return rows;
+    const appRows = rows.filter((r) => r.source === 'app');
+    if (!appRows.length) return this.attachStoreNamesToLivreurRows(rows);
+
+    const userIds = appRows
+      .map((r) => (r.id.startsWith('dlusr_') ? r.id.slice(6) : ''))
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+
+    if (!userIds.length) return this.attachStoreNamesToLivreurRows(rows);
+
+    const startOfDay = this.startOfTodayUtc();
+
+    const [todayAgg, totalAgg, activeOrders, applications] = await Promise.all([
+      this.orderModel
+        .aggregate<{ _id: Types.ObjectId; count: number }>([
+          {
+            $match: {
+              assigned_delivery_user: { $in: userIds },
+              status: OrderStatusEnum.COMPLETED,
+              updatedAt: { $gte: startOfDay },
+            },
+          },
+          { $group: { _id: '$assigned_delivery_user', count: { $sum: 1 } } },
+        ])
+        .exec(),
+      this.orderModel
+        .aggregate<{ _id: Types.ObjectId; count: number }>([
+          {
+            $match: {
+              assigned_delivery_user: { $in: userIds },
+              status: OrderStatusEnum.COMPLETED,
+            },
+          },
+          { $group: { _id: '$assigned_delivery_user', count: { $sum: 1 } } },
+        ])
+        .exec(),
+      this.orderModel
+        .find({
+          assignedDeliveryUser: { $in: userIds },
+          status: OrderStatusEnum.SHIPPED,
+        })
+        .populate({
+          path: 'user',
+          select: 'fullName addresses',
+          populate: { path: 'addresses' },
+        })
+        .sort({ updatedAt: -1 })
+        .lean()
+        .exec(),
+      this.deliveryAgentApplicationModel
+        .find({
+          user: { $in: userIds },
+          status: DeliveryAgentApplicationStatus.APPROVED,
+        })
+        .select(
+          'user lastLatitude lastLongitude vehicle vehicleRegistration maxConcurrentOrders serviceZone',
+        )
+        .lean()
+        .exec(),
+    ]);
+
+    const todayByUser = new Map(
+      todayAgg.map((x) => [String(x._id), x.count]),
+    );
+    const totalByUser = new Map(
+      totalAgg.map((x) => [String(x._id), x.count]),
+    );
+    const activeByUser = new Map<string, (typeof activeOrders)[0]>();
+    for (const o of activeOrders) {
+      const uid = o.assignedDeliveryUser
+        ? String(o.assignedDeliveryUser)
+        : '';
+      if (uid && !activeByUser.has(uid)) activeByUser.set(uid, o);
+    }
+    const appByUser = new Map(
+      applications.map((a) => [String(a.user), a]),
+    );
+
+    const enriched = rows.map((row) => {
+      if (row.source !== 'app') return row;
+      const uid = row.id.startsWith('dlusr_') ? row.id.slice(6) : '';
+      if (!uid) return row;
+
+      const appDoc = appByUser.get(uid);
+      let longitude = row.longitude;
+      let latitude = row.latitude;
+      if (
+        appDoc &&
+        typeof appDoc.lastLatitude === 'number' &&
+        typeof appDoc.lastLongitude === 'number' &&
+        Number.isFinite(appDoc.lastLatitude) &&
+        Number.isFinite(appDoc.lastLongitude) &&
+        !(appDoc.lastLatitude === 0 && appDoc.lastLongitude === 0)
+      ) {
+        longitude = appDoc.lastLongitude;
+        latitude = appDoc.lastLatitude;
+      }
+
+      const active = activeByUser.get(uid);
+      let statut = row.statut;
+      let commande_en_cours = row.commande_en_cours;
+      if (active) {
+        statut = 'en_livraison';
+        const tail = String(active._id).slice(-6).toUpperCase();
+        const userAny = active.user as
+          | {
+              fullName?: string;
+              addresses?: Array<{
+                isDefault?: boolean;
+                address?: string;
+                city?: string;
+                zipCode?: string;
+              }>;
+            }
+          | null
+          | undefined;
+        const clientName = userAny?.fullName?.trim() || 'Client';
+        const addr =
+          userAny?.addresses?.find((a) => a?.isDefault) ||
+          userAny?.addresses?.[0] ||
+          null;
+        const adresse = [addr?.address, addr?.city, addr?.zipCode]
+          .filter((x) => typeof x === 'string' && x.trim().length > 0)
+          .join(', ');
+        commande_en_cours = {
+          id: `#AE-${tail}`,
+          client: clientName,
+          adresse: adresse || '—',
+          eta: '30 min',
+        };
+      } else if (statut !== 'hors_ligne') {
+        statut = 'disponible';
+        commande_en_cours = null;
+      }
+
+      const immatFromApp = appDoc?.vehicleRegistration?.trim();
+      const vehiculeLabel = deliveryVehicleLabelFr(appDoc?.vehicle);
+      const capacite =
+        typeof appDoc?.maxConcurrentOrders === 'number' &&
+        appDoc.maxConcurrentOrders >= 1
+          ? appDoc.maxConcurrentOrders
+          : defaultDeliveryCapacity(appDoc?.vehicle);
+      const immat =
+        immatFromApp && immatFromApp.length > 0
+          ? immatFromApp
+          : appDoc?.vehicle === 'velo'
+            ? '—'
+            : '—';
+      const zoneSuffix = appDoc?.serviceZone?.trim();
+      const zone =
+        zoneSuffix && zoneSuffix.length > 0
+          ? `${zoneSuffix} · Compte app`
+          : row.zone;
+
+      return {
+        ...row,
+        statut,
+        commande_en_cours,
+        livraisons_jour: todayByUser.get(uid) ?? 0,
+        livraisons_total: totalByUser.get(uid) ?? 0,
+        longitude,
+        latitude,
+        coords: coordsFromLngLat(longitude, latitude),
+        vehicule: vehiculeLabel,
+        immat,
+        capacite,
+        zone,
+      };
+    });
+    return this.attachStoreNamesToLivreurRows(enriched);
+  }
+
+  private async attachStoreNamesToLivreurRows(
+    rows: DashboardLivreurRow[],
+  ): Promise<DashboardLivreurRow[]> {
+    const missing = rows.filter((r) => !r.storeName?.trim() && r.storeId);
+    if (!missing.length) return rows;
+    const ids = [
+      ...new Set(
+        missing
+          .map((r) => r.storeId)
+          .filter((id) => Types.ObjectId.isValid(id))
+          .map((id) => new Types.ObjectId(id)),
+      ),
+    ];
+    if (!ids.length) return rows;
+    const stores = await this.storeModel
+      .find({ _id: { $in: ids } })
+      .select('name')
+      .lean()
+      .exec();
+    const names = new Map(
+      stores.map((s) => [String(s._id), String(s.name ?? '').trim()]),
+    );
+    return rows.map((r) => ({
+      ...r,
+      storeName: r.storeName?.trim() || names.get(r.storeId) || '',
+    }));
+  }
+
+  private async loadAllStoreGeoPoints(): Promise<VendorStorePoint[]> {
+    const stores = await this.storeModel
+      .find({})
+      .populate({ path: 'address', select: 'location' })
+      .lean()
+      .exec();
+    const out: VendorStorePoint[] = [];
+    for (const s of stores) {
+      const addr = s.address as
+        | { location?: { coordinates?: number[] } }
+        | undefined;
+      const c = addr?.location?.coordinates;
+      if (
+        !Array.isArray(c) ||
+        c.length < 2 ||
+        (Number(c[0]) === 0 && Number(c[1]) === 0)
+      ) {
+        continue;
+      }
+      out.push({
+        storeId: String(s._id),
+        lng: Number(c[0]),
+        lat: Number(c[1]),
+      });
+    }
+    return out;
+  }
+
+  private toDashboardLivreurRow(
+    doc: DeliveryDriverLean,
+    meta?: { storeName?: string },
+  ): DashboardLivreurRow {
     const cmd = doc.commande_en_cours;
     const { longitude, latitude } = this.resolveLivreurLngLat(doc);
     return {
@@ -2473,6 +2759,8 @@ export class DashboardService {
       longitude,
       latitude,
       storeId: doc.store != null ? String(doc.store) : '',
+      storeName: meta?.storeName?.trim() ?? '',
+      source: 'fleet',
     };
   }
 
@@ -2602,7 +2890,7 @@ export class DashboardService {
       avatar,
       tel: u.phoneNumber?.trim() || '—',
       statut: 'disponible',
-      zone: `${cityLabel} · Inscrit`,
+      zone: `${cityLabel} · Compte app`,
       vehicule: 'Moto',
       immat: '—',
       note: 0,
@@ -2617,6 +2905,8 @@ export class DashboardService {
       longitude,
       latitude,
       storeId: nearestStoreId,
+      storeName: '',
+      source: 'app',
     };
   }
 

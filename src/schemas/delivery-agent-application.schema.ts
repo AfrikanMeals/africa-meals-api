@@ -40,6 +40,14 @@ export class DeliveryAgentApplicationModel extends BaseSchema {
   @Prop({ required: false })
   vehicle?: DeliveryAgentVehicle;
 
+  /** Plaque ou identifiant véhicule (optionnel pour vélo). */
+  @Prop({ required: false, maxlength: 32, name: 'vehicle_registration' })
+  vehicleRegistration?: string;
+
+  /** Nombre max de commandes simultanées (défaut selon [vehicle] si absent). */
+  @Prop({ required: false, min: 1, max: 6, name: 'max_concurrent_orders' })
+  maxConcurrentOrders?: number;
+
   @Prop({ required: false, maxlength: 500 })
   serviceZone?: string;
 

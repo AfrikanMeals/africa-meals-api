@@ -28,17 +28,27 @@ import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.ser
 import { PlatformShippingSettingsService } from '@modules/platform-shipping-settings/platform-shipping-settings.service';
 import { PatchDeliveryAgentApplicationDto } from './dto/delivery-agent-application.dto';
 import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
+import {
+  defaultDeliveryCapacity,
+  normalizeVehicleRegistration,
+  vehicleRegistrationRequired,
+} from './delivery-agent-vehicle.util';
 
 type LeanApp = {
   status: DeliveryAgentApplicationStatus;
   onboardingStep: number;
   vehicle?: string;
+  vehicleRegistration?: string;
+  maxConcurrentOrders?: number;
   serviceZone?: string;
   termsAccepted: boolean;
   submittedAt?: Date;
   rejectionReason?: string;
   updatedAt?: Date;
 };
+
+const APPLICATION_PUBLIC_SELECT =
+  'status onboardingStep vehicle vehicleRegistration maxConcurrentOrders serviceZone termsAccepted submittedAt rejectionReason updatedAt';
 
 type LeanAppDoc = LeanApp & {
   _id: Types.ObjectId;
@@ -96,6 +106,8 @@ export class DeliveryAgentService {
         status: DeliveryAgentApplicationStatus.DRAFT,
         onboardingStep: 0,
         vehicle: null as string | null,
+        vehicleRegistration: null as string | null,
+        maxConcurrentOrders: null as number | null,
         serviceZone: null as string | null,
         termsAccepted: false,
         submittedAt: null as string | null,
@@ -103,10 +115,17 @@ export class DeliveryAgentService {
         updatedAt: null as string | null,
       };
     }
+    const capacity =
+      typeof doc.maxConcurrentOrders === 'number' &&
+      doc.maxConcurrentOrders >= 1
+        ? doc.maxConcurrentOrders
+        : defaultDeliveryCapacity(doc.vehicle);
     return {
       status: doc.status,
       onboardingStep: doc.onboardingStep,
       vehicle: doc.vehicle ?? null,
+      vehicleRegistration: doc.vehicleRegistration?.trim() || null,
+      maxConcurrentOrders: capacity,
       serviceZone: doc.serviceZone ?? null,
       termsAccepted: Boolean(doc.termsAccepted),
       submittedAt: doc.submittedAt
@@ -124,9 +143,7 @@ export class DeliveryAgentService {
     const uid = user._id as Types.ObjectId;
     let doc = await this._applications
       .findOne({ user: uid })
-      .select(
-        'status onboardingStep vehicle serviceZone termsAccepted submittedAt rejectionReason updatedAt',
-      )
+      .select(APPLICATION_PUBLIC_SELECT)
       .lean<LeanApp>()
       .exec();
     if (!doc) {
@@ -138,9 +155,7 @@ export class DeliveryAgentService {
       });
       doc = await this._applications
         .findOne({ user: uid })
-        .select(
-          'status onboardingStep vehicle serviceZone termsAccepted submittedAt rejectionReason updatedAt',
-        )
+        .select(APPLICATION_PUBLIC_SELECT)
         .lean<LeanApp>()
         .exec();
     }
@@ -175,6 +190,19 @@ export class DeliveryAgentService {
     }
     if (dto.vehicle !== undefined) {
       cur.vehicle = dto.vehicle;
+      if (dto.maxConcurrentOrders === undefined) {
+        cur.maxConcurrentOrders = defaultDeliveryCapacity(dto.vehicle);
+      }
+    }
+    if (dto.vehicleRegistration !== undefined) {
+      cur.vehicleRegistration =
+        normalizeVehicleRegistration(
+          cur.vehicle ?? dto.vehicle,
+          dto.vehicleRegistration,
+        ) ?? undefined;
+    }
+    if (dto.maxConcurrentOrders !== undefined) {
+      cur.maxConcurrentOrders = dto.maxConcurrentOrders;
     }
     if (dto.serviceZone !== undefined) {
       cur.serviceZone = dto.serviceZone.trim();
@@ -186,9 +214,7 @@ export class DeliveryAgentService {
     await cur.save();
     const lean = await this._applications
       .findOne({ user: uid })
-      .select(
-        'status onboardingStep vehicle serviceZone termsAccepted submittedAt rejectionReason updatedAt',
-      )
+      .select(APPLICATION_PUBLIC_SELECT)
       .lean<LeanApp>()
       .exec();
     return this.toPublic(lean);
@@ -217,12 +243,32 @@ export class DeliveryAgentService {
     if (!cur.vehicle) {
       throw new BadRequestException('delivery_agent_vehicle_required');
     }
+    if (vehicleRegistrationRequired(cur.vehicle)) {
+      const immat = (cur.vehicleRegistration ?? '').trim();
+      if (immat.length < 2) {
+        throw new BadRequestException('delivery_agent_registration_required');
+      }
+    }
+    if (
+      typeof cur.maxConcurrentOrders !== 'number' ||
+      cur.maxConcurrentOrders < 1
+    ) {
+      cur.maxConcurrentOrders = defaultDeliveryCapacity(cur.vehicle);
+    }
     const zone = (cur.serviceZone ?? '').trim();
     if (zone.length < 5) {
       throw new BadRequestException('delivery_agent_zone_required');
     }
     if (!cur.termsAccepted) {
       throw new BadRequestException('delivery_agent_terms_required');
+    }
+    const phone = (user.phoneNumber ?? '').trim();
+    if (phone.length < 8) {
+      throw new BadRequestException('delivery_agent_phone_required');
+    }
+    const name = (user.fullName ?? '').trim();
+    if (name.length < 2) {
+      throw new BadRequestException('delivery_agent_name_required');
     }
     cur.serviceZone = zone;
     cur.status = DeliveryAgentApplicationStatus.AWAITING_REVIEW;
@@ -231,9 +277,7 @@ export class DeliveryAgentService {
     await cur.save();
     const lean = await this._applications
       .findOne({ user: uid })
-      .select(
-        'status onboardingStep vehicle serviceZone termsAccepted submittedAt rejectionReason updatedAt',
-      )
+      .select(APPLICATION_PUBLIC_SELECT)
       .lean<LeanApp>()
       .exec();
     return this.toPublic(lean);

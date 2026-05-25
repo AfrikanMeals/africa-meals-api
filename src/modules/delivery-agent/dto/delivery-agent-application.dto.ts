@@ -22,6 +22,17 @@ export class PatchDeliveryAgentApplicationDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(32)
+  vehicleRegistration?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(6)
+  maxConcurrentOrders?: number;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(500)
   serviceZone?: string;
 
