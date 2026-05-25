@@ -34,6 +34,7 @@ import { PlatformShippingSettingsModule } from './modules/platform-shipping-sett
 import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
 import { AppPoliciesModule } from './modules/app-policies/app-policies.module';
 import { DbMaintenanceModule } from './modules/db-maintenance/db-maintenance.module';
+import { RequestStatsModule } from './modules/request-stats/request-stats.module';
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
 
 @Module({
@@ -96,6 +97,7 @@ import { FieldSelectionModule } from './common/field-selection/field-selection.m
     RefundsModule,
     AppPoliciesModule,
     DbMaintenanceModule,
+    RequestStatsModule,
     FieldSelectionModule,
     // SharedModule,
   ],
