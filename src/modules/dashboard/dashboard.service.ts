@@ -2614,8 +2614,8 @@ export class DashboardService {
         commande_en_cours,
         livraisons_jour: todayByUser.get(uid) ?? 0,
         livraisons_total: totalByUser.get(uid) ?? 0,
-        longitude,
-        latitude,
+      longitude,
+      latitude,
         coords: coordsFromLngLat(longitude, latitude),
         vehicule: vehiculeLabel,
         immat,
@@ -2769,13 +2769,13 @@ export class DashboardService {
         const chosen =
           addrs.find((a) => a.isDefault) ??
           addrs.find((a) => {
-            const c = a.location?.coordinates;
-            return (
-              Array.isArray(c) &&
-              c.length >= 2 &&
-              !(Number(c[0]) === 0 && Number(c[1]) === 0)
-            );
-          });
+        const c = a.location?.coordinates;
+        return (
+          Array.isArray(c) &&
+          c.length >= 2 &&
+          !(Number(c[0]) === 0 && Number(c[1]) === 0)
+        );
+      });
         if (chosen?.location?.coordinates) {
           lng = Number(chosen.location.coordinates[0]);
           lat = Number(chosen.location.coordinates[1]);
@@ -2792,12 +2792,12 @@ export class DashboardService {
       let bestStoreId = fallbackStore?.storeId ?? '';
       let bestKm = Number.POSITIVE_INFINITY;
       if (storePoints.length) {
-        for (const sp of storePoints) {
-          const d = haversineKm(lng, lat, sp.lng, sp.lat);
-          if (d < bestKm) {
-            bestKm = d;
-            bestStoreId = sp.storeId;
-          }
+      for (const sp of storePoints) {
+        const d = haversineKm(lng, lat, sp.lng, sp.lat);
+        if (d < bestKm) {
+          bestKm = d;
+          bestStoreId = sp.storeId;
+        }
         }
         if (!includeAllApprovedForAdmin && bestKm > radiusKm) continue;
       }
