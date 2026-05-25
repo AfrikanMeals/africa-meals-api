@@ -75,6 +75,14 @@ export class DeliveryAgentApplicationModel extends BaseSchema {
 
   @Prop({ required: false })
   locationUpdatedAt?: Date;
+
+  /** Disponibilité côté dashboard (hors ligne = non assignable). */
+  @Prop({
+    enum: ['disponible', 'hors_ligne'],
+    default: 'disponible',
+    name: 'dashboard_availability',
+  })
+  dashboardAvailability?: 'disponible' | 'hors_ligne';
 }
 
 export const DeliveryAgentApplicationSchema = SchemaFactory.createForClass(

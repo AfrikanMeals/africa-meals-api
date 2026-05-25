@@ -261,8 +261,8 @@ export type DashboardLivreurRow = {
   /** Boutique propriétaire (vide pour anciens enregistrements sans boutique). */
   storeId: string;
   storeName: string;
-  /** Fiche flotte dashboard vs compte livreur app (DELIVERY). */
-  source: 'fleet' | 'app';
+  /** Toujours `user` : compte `users` type DELIVERY. */
+  source: 'user';
 };
 
 type DeliveryDriverLean = {
@@ -2162,96 +2162,30 @@ export class DashboardService {
       const ids = vendorStoreObjectIds(user);
       if (!ids.length) return [];
       const storePoints = await this.loadVendorStoreGeoPoints(ids);
-      const rows = await this.deliveryDriverModel
-        .find({ store: { $in: ids } })
-        .populate('store', 'name')
-        .sort({ nom: 1 })
-        .lean()
-        .exec();
-      const fromFleet = rows.map((r) =>
-        this.toDashboardLivreurRow(
-          r as unknown as DeliveryDriverLean,
-          this.storeNameFromPopulated(r.store),
-        ),
-      );
-      const fromAccounts = await this.listRegionalDeliveryUsersAsRows(
+      const rows = await this.listApprovedDeliveryUsersForDashboard(
         storePoints,
         REGION_DELIVERY_USERS_RADIUS_KM,
+        false,
       );
-      const merged = this.mergeLivreurRowsById([...fromFleet, ...fromAccounts]);
-      return this.enrichLivreurRows(merged);
+      return this.enrichLivreurRows(rows);
     }
     if (user.type === UserTypeEnum.ADMIN) {
       const storePoints = await this.loadAllStoreGeoPoints();
-      const rows = await this.deliveryDriverModel
-        .find({})
-        .populate('store', 'name')
-        .sort({ nom: 1 })
-        .lean()
-        .exec();
-      const fromFleet = rows.map((r) =>
-        this.toDashboardLivreurRow(
-          r as unknown as DeliveryDriverLean,
-          this.storeNameFromPopulated(r.store),
-        ),
-      );
-      const fromAccounts = await this.listRegionalDeliveryUsersAsRows(
+      const rows = await this.listApprovedDeliveryUsersForDashboard(
         storePoints,
         REGION_DELIVERY_USERS_RADIUS_KM,
+        true,
       );
-      const merged = this.mergeLivreurRowsById([...fromFleet, ...fromAccounts]);
-      return this.enrichLivreurRows(merged);
+      return this.enrichLivreurRows(rows);
     }
     throw new ForbiddenException('livreurs_access_denied');
   }
 
   async createDashboardLivreur(
-    user: UserModel,
-    dto: CreateDashboardLivreurDto,
+    _user: UserModel,
+    _dto: CreateDashboardLivreurDto,
   ): Promise<DashboardLivreurRow> {
-    if (
-      user.type !== UserTypeEnum.ADMIN &&
-      user.type !== UserTypeEnum.VENDOR
-    ) {
-      throw new ForbiddenException('livreurs_access_denied');
-    }
-    const immat =
-      dto.immat !== undefined && dto.immat.trim() !== ''
-        ? dto.immat.trim()
-        : '—';
-    const capacite =
-      dto.vehicule === 'Voiture' ? 4 : dto.vehicule === 'Vélo' ? 1 : 2;
-    const { storeId, storeLean } = await this.resolveStoreForLivreurCreation(
-      user,
-      dto.storeId,
-    );
-    const { longitude, latitude } =
-      this.pickInitialLngLatFromStoreLean(storeLean);
-    const coords = randomPercentCoords();
-    const created = await this.deliveryDriverModel.create({
-      store: storeId,
-      nom: dto.nom.trim(),
-      avatar: dto.avatar,
-      tel: dto.tel.trim(),
-      zone: dto.zone.trim(),
-      vehicule: dto.vehicule,
-      immat,
-      statut: DeliveryDriverStatutEnum.DISPONIBLE,
-      note: 4.5,
-      livraisons_jour: 0,
-      livraisons_total: 0,
-      temps_moyen: 25,
-      distance_jour: 0,
-      revenu_jour: 0,
-      capacite,
-      commande_en_cours: null,
-      coords,
-      longitude,
-      latitude,
-    });
-    return this.toDashboardLivreurRow(
-      created.toObject() as unknown as DeliveryDriverLean,
-    );
+    throw new BadRequestException('livreur_create_via_user_application');
   }
 
   async assignOrderToLivreur(
@@ -2261,38 +2195,80 @@ export class DashboardService {
     if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('livreurs_access_denied');
     }
-    if (
-      !Types.ObjectId.isValid(dto.livreurId) ||
-      !Types.ObjectId.isValid(dto.orderId)
-    ) {
+    if (!Types.ObjectId.isValid(dto.orderId)) {
       throw new BadRequestException('invalid_ids');
     }
 
-    const livreurId = new Types.ObjectId(dto.livreurId);
-    const orderId = new Types.ObjectId(dto.orderId);
+    const deliveryUserId = this.parseDeliveryUserId(dto.livreurId);
+    if (!deliveryUserId) {
+      throw new BadRequestException('invalid_ids');
+    }
+    return this.assignOrderToAppDeliveryUser(user, dto.orderId, deliveryUserId);
+  }
+
+  private parseDeliveryUserId(raw: string): string | null {
+    const id = raw.trim();
+    if (!id) return null;
+    const normalized = id.startsWith('dlusr_') ? id.slice('dlusr_'.length) : id;
+    return Types.ObjectId.isValid(normalized) ? normalized : null;
+  }
+
+  /** Assignation admin / vendeur → utilisateur `DELIVERY` (candidature approuvée). */
+  private async assignOrderToAppDeliveryUser(
+    actor: UserModel,
+    orderId: string,
+    deliveryUserId: string,
+  ): Promise<DashboardLivreurRow> {
     const vendorStoreIds =
-      user.type === UserTypeEnum.VENDOR ? vendorStoreObjectIds(user) : null;
-    if (user.type === UserTypeEnum.VENDOR && !vendorStoreIds?.length) {
+      actor.type === UserTypeEnum.VENDOR ? vendorStoreObjectIds(actor) : null;
+    if (actor.type === UserTypeEnum.VENDOR && !vendorStoreIds?.length) {
       throw new ForbiddenException('vendor_no_store');
     }
 
-    const livreurDoc = await this.deliveryDriverModel.findById(livreurId).exec();
-    if (!livreurDoc) throw new NotFoundException('livreur_not_found');
-    const livreurStoreId = livreurDoc.store ? String(livreurDoc.store) : '';
-    if (vendorStoreIds?.length) {
-      if (!vendorStoreIds.some((s) => s.toString() === livreurStoreId)) {
-        throw new ForbiddenException('store_forbidden');
-      }
+    const agentOid = new Types.ObjectId(deliveryUserId);
+    const orderOid = new Types.ObjectId(orderId);
+
+    const deliveryUser = await this.userModel
+      .findById(agentOid)
+      .select('type fullName')
+      .lean()
+      .exec();
+    if (!deliveryUser || deliveryUser.type !== UserTypeEnum.DELIVERY) {
+      throw new NotFoundException('livreur_not_found');
     }
+
+    const application = await this.deliveryAgentApplicationModel
+      .findOne({
+        user: agentOid,
+        status: DeliveryAgentApplicationStatus.APPROVED,
+      })
+      .lean()
+      .exec();
+    if (!application) {
+      throw new BadRequestException('livreur_not_available');
+    }
+    if (application.dashboardAvailability === 'hors_ligne') {
+      throw new BadRequestException('livreur_not_available');
+    }
+
+    const activeForAgent = await this.orderModel
+      .findOne({
+        assignedDeliveryUser: agentOid,
+        shouldShip: true,
+        status: OrderStatusEnum.SHIPPED,
+      })
+      .select('_id')
+      .lean()
+      .exec();
     if (
-      livreurDoc.statut !== DeliveryDriverStatutEnum.DISPONIBLE ||
-      livreurDoc.commande_en_cours
+      activeForAgent &&
+      String(activeForAgent._id) !== orderId
     ) {
       throw new BadRequestException('livreur_not_available');
     }
 
     const orderDoc = await this.orderModel
-      .findById(orderId)
+      .findById(orderOid)
       .populate('store', 'name owner address')
       .populate({
         path: 'user',
@@ -2301,6 +2277,10 @@ export class DashboardService {
       })
       .exec();
     if (!orderDoc) throw new NotFoundException('order_not_found');
+    if (!orderDoc.shouldShip) {
+      throw new BadRequestException('order_not_shippable');
+    }
+
     const orderStoreId =
       orderDoc.store &&
       typeof orderDoc.store === 'object' &&
@@ -2313,8 +2293,13 @@ export class DashboardService {
         throw new ForbiddenException('store_forbidden');
       }
     }
-    if (livreurStoreId && orderStoreId && livreurStoreId !== orderStoreId) {
-      throw new BadRequestException('store_mismatch');
+
+    const existingAssignee = orderDoc.assignedDeliveryUser;
+    if (
+      existingAssignee &&
+      String(existingAssignee) !== deliveryUserId
+    ) {
+      throw new BadRequestException('order_assigned_to_other');
     }
     if (
       ![
@@ -2326,42 +2311,15 @@ export class DashboardService {
       throw new BadRequestException('order_not_assignable');
     }
 
-    const userAny = orderDoc.user as
-      | {
-          fullName?: string;
-          addresses?: Array<{
-            isDefault?: boolean;
-            address?: string;
-            city?: string;
-            zipCode?: string;
-          }>;
-        }
-      | null
-      | undefined;
-    const clientName = userAny?.fullName?.trim() || 'Client';
-    const addr =
-      userAny?.addresses?.find((a) => a?.isDefault) ||
-      userAny?.addresses?.[0] ||
-      null;
-    const adresse = [addr?.address, addr?.city, addr?.zipCode]
-      .filter((x) => typeof x === 'string' && x.trim().length > 0)
-      .join(', ');
-    const tail = String(orderDoc._id).slice(-6).toUpperCase();
-
-    livreurDoc.statut = DeliveryDriverStatutEnum.EN_LIVRAISON;
-    livreurDoc.commande_en_cours = {
-      id: `#AE-${tail}`,
-      client: clientName,
-      adresse: adresse || '—',
-      eta: '30 min',
-    };
-    await livreurDoc.save();
-
     const prevOrderStatus = orderDoc.status as OrderStatusEnum;
+    orderDoc.set('assignedDeliveryUser', agentOid);
     orderDoc.status = OrderStatusEnum.SHIPPED;
     await orderDoc.save();
 
     const customerId = this.customerUserIdForOrderPush(orderDoc);
+    const agentName =
+      deliveryUser.fullName?.trim() || 'Livreur app';
+
     if (prevOrderStatus !== OrderStatusEnum.SHIPPED) {
       await this.orderStatusEvents.record({
         orderId: orderDoc._id.toString(),
@@ -2370,8 +2328,8 @@ export class DashboardService {
         fromStatus: prevOrderStatus,
         toStatus: OrderStatusEnum.SHIPPED,
         source: OrderStatusChangeSourceEnum.DASHBOARD,
-        actorUserId: String(user.id),
-        note: `Livreur ${livreurDoc.nom ?? dto.livreurId}`,
+        actorUserId: String(actor.id),
+        note: `Livreur app ${agentName}`,
       });
     }
 
@@ -2388,7 +2346,7 @@ export class DashboardService {
         })
         .catch((err) => {
           this.logger.warn(
-            `FCM order shipped: ${
+            `FCM order shipped (app livreur): ${
               err instanceof Error ? err.message : String(err)
             }`,
           );
@@ -2408,7 +2366,7 @@ export class DashboardService {
           .pushVendorOrderNotify({
             vendorUserIds: vendorIds,
             title: 'Commande en livraison',
-            body: `${sname ?? 'Boutique'} : commande prise en charge par le livreur.`,
+            body: `${sname ?? 'Boutique'} : commande prise en charge par ${agentName}.`,
             orderId: orderDoc._id.toString(),
             storeName: sname,
             reason: 'order_shipped',
@@ -2424,9 +2382,12 @@ export class DashboardService {
       }
     }
 
-    return this.toDashboardLivreurRow(
-      livreurDoc.toObject() as unknown as DeliveryDriverLean,
-    );
+    const rows = await this.listDashboardLivreurs(actor);
+    const row = rows.find((r) => r.id === deliveryUserId);
+    if (!row) {
+      throw new NotFoundException('livreur_not_found');
+    }
+    return row;
   }
 
   async updateDashboardLivreurStatut(
@@ -2437,38 +2398,50 @@ export class DashboardService {
     if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('livreurs_access_denied');
     }
-    if (!Types.ObjectId.isValid(livreurId)) {
+    const deliveryUserId = this.parseDeliveryUserId(livreurId);
+    if (!deliveryUserId) {
       throw new BadRequestException('invalid_livreur_id');
     }
-    const vendorStoreIds =
-      user.type === UserTypeEnum.VENDOR ? vendorStoreObjectIds(user) : null;
-    if (user.type === UserTypeEnum.VENDOR && !vendorStoreIds?.length) {
-      throw new ForbiddenException('vendor_no_store');
-    }
 
-    const oid = new Types.ObjectId(livreurId);
-    const livreurDoc = await this.deliveryDriverModel.findById(oid).exec();
-    if (!livreurDoc) throw new NotFoundException('livreur_not_found');
-    const livreurStoreId = livreurDoc.store ? String(livreurDoc.store) : '';
-    if (vendorStoreIds?.length) {
-      if (!vendorStoreIds.some((s) => s.toString() === livreurStoreId)) {
-        throw new ForbiddenException('store_forbidden');
-      }
+    const agentOid = new Types.ObjectId(deliveryUserId);
+    const application = await this.deliveryAgentApplicationModel
+      .findOne({
+        user: agentOid,
+        status: DeliveryAgentApplicationStatus.APPROVED,
+      })
+      .exec();
+    if (!application) {
+      throw new NotFoundException('livreur_not_found');
     }
 
     if (statut === 'hors_ligne') {
-      livreurDoc.statut = DeliveryDriverStatutEnum.HORS_LIGNE;
-      livreurDoc.commande_en_cours = null;
+      const active = await this.orderModel
+        .findOne({
+          assignedDeliveryUser: agentOid,
+          shouldShip: true,
+          status: OrderStatusEnum.SHIPPED,
+        })
+        .select('_id')
+        .lean()
+        .exec();
+      if (active) {
+        throw new BadRequestException('livreur_has_active_order');
+      }
+      application.dashboardAvailability = 'hors_ligne';
     } else {
-      if (livreurDoc.statut !== DeliveryDriverStatutEnum.HORS_LIGNE) {
+      if (application.dashboardAvailability !== 'hors_ligne') {
         throw new BadRequestException('livreur_reactivate_only_when_offline');
       }
-      livreurDoc.statut = DeliveryDriverStatutEnum.DISPONIBLE;
+      application.dashboardAvailability = 'disponible';
     }
-    await livreurDoc.save();
-    return this.toDashboardLivreurRow(
-      livreurDoc.toObject() as unknown as DeliveryDriverLean,
-    );
+    await application.save();
+
+    const rows = await this.listDashboardLivreurs(user);
+    const row = rows.find((r) => r.id === deliveryUserId);
+    if (!row) {
+      throw new NotFoundException('livreur_not_found');
+    }
+    return row;
   }
 
   private storeNameFromPopulated(
@@ -2501,12 +2474,10 @@ export class DashboardService {
     rows: DashboardLivreurRow[],
   ): Promise<DashboardLivreurRow[]> {
     if (!rows.length) return rows;
-    const appRows = rows.filter((r) => r.source === 'app');
-    if (!appRows.length) return this.attachStoreNamesToLivreurRows(rows);
 
-    const userIds = appRows
-      .map((r) => (r.id.startsWith('dlusr_') ? r.id.slice(6) : ''))
-      .filter((id) => Types.ObjectId.isValid(id))
+    const userIds = rows
+      .map((r) => this.parseDeliveryUserId(r.id))
+      .filter((id): id is string => id != null)
       .map((id) => new Types.ObjectId(id));
 
     if (!userIds.length) return this.attachStoreNamesToLivreurRows(rows);
@@ -2556,7 +2527,7 @@ export class DashboardService {
           status: DeliveryAgentApplicationStatus.APPROVED,
         })
         .select(
-          'user lastLatitude lastLongitude locationUpdatedAt vehicle vehicleRegistration maxConcurrentOrders serviceZone',
+          'user lastLatitude lastLongitude locationUpdatedAt dashboardAvailability vehicle vehicleRegistration maxConcurrentOrders serviceZone',
         )
         .lean()
         .exec(),
@@ -2580,8 +2551,7 @@ export class DashboardService {
     );
 
     const enriched = rows.map((row) => {
-      if (row.source !== 'app') return row;
-      const uid = row.id.startsWith('dlusr_') ? row.id.slice(6) : '';
+      const uid = this.parseDeliveryUserId(row.id);
       if (!uid) return row;
 
       const appDoc = appByUser.get(uid);
@@ -2637,6 +2607,9 @@ export class DashboardService {
           adresse: adresse || '—',
           eta: '30 min',
         };
+      } else if (appDoc?.dashboardAvailability === 'hors_ligne') {
+        statut = 'hors_ligne';
+        commande_en_cours = null;
       } else if (locUpdatedMs > 0 && !hasFreshLocation) {
         statut = 'hors_ligne';
         commande_en_cours = null;
@@ -2660,9 +2633,7 @@ export class DashboardService {
             : '—';
       const zoneSuffix = appDoc?.serviceZone?.trim();
       const zone =
-        zoneSuffix && zoneSuffix.length > 0
-          ? `${zoneSuffix} · Compte app`
-          : row.zone;
+        zoneSuffix && zoneSuffix.length > 0 ? zoneSuffix : row.zone;
 
       return {
         ...row,
