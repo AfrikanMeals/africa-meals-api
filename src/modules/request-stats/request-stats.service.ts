@@ -46,6 +46,7 @@ export class RequestStatsService {
       bufferSize: this.store.size(),
       summary: this.store.summaryFor(all),
       entries,
+      source: 'api' as const,
     };
   }
 
