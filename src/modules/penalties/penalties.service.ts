@@ -6,13 +6,21 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import {
-  PenaltyTransferModel,
-  PenaltyStripeStepModel,
-} from '@schemas/penalty-transfer.schema';
+import { PenaltyCustomMotifModel } from '@schemas/penalty-custom-motif.schema';
+import { PenaltyTransferModel } from '@schemas/penalty-transfer.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
+import { CreatePenaltyCustomMotifDto } from './dto/create-penalty-custom-motif.dto';
 import { CreatePenaltyDto } from './dto/create-penalty.dto';
+import { PenaltyParticipantEmailService } from './penalty-participant-email.service';
+import {
+  BUILTIN_PENALTY_REASON_CODES,
+  builtinPenaltyReasonLabel,
+  isBuiltinPenaltyReasonCode,
+  isCustomPenaltyReasonCode,
+  PENALTY_REASON_OTHER,
+  slugifyPenaltyMotifCode,
+} from './penalty-reasons';
 import {
   PENALTY_ROUTE_META,
   PenaltyPartyEnum,
@@ -32,11 +40,58 @@ export class PenaltiesService {
   constructor(
     @InjectModel(PenaltyTransferModel.name)
     private readonly penaltyModel: Model<PenaltyTransferModel>,
+    @InjectModel(PenaltyCustomMotifModel.name)
+    private readonly customMotifModel: Model<PenaltyCustomMotifModel>,
     private readonly stripePenalties: StripePenaltyTransferService,
+    private readonly participantEmails: PenaltyParticipantEmailService,
   ) {}
 
   listRoutes() {
     return { routes: this.stripePenalties.listRoutes() };
+  }
+
+  async listMotifs(user: UserModel) {
+    assertAdmin(user);
+    const custom = await this.customMotifModel
+      .find({ active: true })
+      .sort({ labelFr: 1 })
+      .lean()
+      .exec();
+    return {
+      builtIn: BUILTIN_PENALTY_REASON_CODES.map((code) => ({
+        code,
+        labelFr: builtinPenaltyReasonLabel(code) ?? code,
+        custom: false,
+      })),
+      custom: custom.map((m) => ({
+        id: String(m._id),
+        code: m.code,
+        labelFr: m.labelFr,
+        custom: true,
+      })),
+    };
+  }
+
+  async createCustomMotif(user: UserModel, dto: CreatePenaltyCustomMotifDto) {
+    assertAdmin(user);
+    const labelFr = dto.labelFr.trim();
+    let code = slugifyPenaltyMotifCode(labelFr);
+    const exists = await this.customMotifModel.findOne({ code }).lean().exec();
+    if (exists) {
+      code = `${code}_${Date.now().toString(36).slice(-4)}`;
+    }
+    const doc = await this.customMotifModel.create({
+      code,
+      labelFr,
+      active: true,
+      createdByAdmin: String(user.id),
+    });
+    return {
+      id: String(doc._id),
+      code: doc.code,
+      labelFr: doc.labelFr,
+      custom: true,
+    };
   }
 
   async list(
@@ -81,8 +136,10 @@ export class PenaltiesService {
   async createAndExecute(user: UserModel, dto: CreatePenaltyDto) {
     assertAdmin(user);
     this.validateDto(dto);
+    const { reasonLabel, reasonDetails } = await this.resolveReason(dto);
 
     const meta = PENALTY_ROUTE_META[dto.route];
+    const notifyParticipants = dto.notifyParticipants !== false;
     const idempotencyKey = dto.idempotencyKey?.trim() || undefined;
     if (idempotencyKey) {
       const existing = await this.penaltyModel
@@ -105,7 +162,10 @@ export class PenaltiesService {
       currency: (dto.currency ?? 'cad').toLowerCase(),
       status: PenaltyStatusEnum.PROCESSING,
       reasonCode: dto.reasonCode?.trim() || undefined,
+      reasonLabel,
+      reasonDetails,
       note: dto.note?.trim() || undefined,
+      notifyParticipants,
       order: dto.orderId,
       store: dto.storeId,
       vendorUser: dto.vendorUserId,
@@ -113,6 +173,7 @@ export class PenaltiesService {
       createdByAdmin: String(user.id),
       idempotencyKey,
       stripeSteps: [],
+      participantEmails: [],
     });
 
     const penaltyId = String(doc._id);
@@ -130,6 +191,23 @@ export class PenaltiesService {
         reasonCode: dto.reasonCode,
       });
 
+      let participantEmails: PenaltyTransferModel['participantEmails'] = [];
+      if (notifyParticipants) {
+        participantEmails = await this.participantEmails.notifyParticipants({
+          route: dto.route,
+          fromParty: meta.from,
+          toParty: meta.to,
+          amountCents: dto.amountCents,
+          currency: (dto.currency ?? 'cad').toLowerCase(),
+          reasonLabel,
+          note: dto.note,
+          orderId: dto.orderId,
+          storeId: dto.storeId,
+          vendorUserId: dto.vendorUserId,
+          deliveryUserId: dto.deliveryUserId,
+        });
+      }
+
       const updated = await this.penaltyModel
         .findByIdAndUpdate(
           penaltyId,
@@ -139,6 +217,7 @@ export class PenaltiesService {
               fromConnectAccountId: stripeResult.fromConnectAccountId,
               toConnectAccountId: stripeResult.toConnectAccountId,
               stripeSteps: stripeResult.steps,
+              participantEmails,
               failureCode: null,
               failureMessage: null,
             },
@@ -174,7 +253,48 @@ export class PenaltiesService {
     }
   }
 
+  private async resolveReason(
+    dto: CreatePenaltyDto,
+  ): Promise<{ reasonLabel: string; reasonDetails?: string }> {
+    const code = dto.reasonCode?.trim() || '';
+    if (!code) {
+      throw new BadRequestException('penalty_reason_required');
+    }
+
+    if (code === PENALTY_REASON_OTHER) {
+      const details = dto.reasonDetails?.trim() || '';
+      if (details.length < 10) {
+        throw new BadRequestException('penalty_reason_details_required');
+      }
+      return {
+        reasonLabel: details,
+        reasonDetails: details,
+      };
+    }
+
+    const builtin = builtinPenaltyReasonLabel(code);
+    if (builtin) {
+      return { reasonLabel: builtin };
+    }
+
+    if (isCustomPenaltyReasonCode(code)) {
+      const custom = await this.customMotifModel
+        .findOne({ code, active: true })
+        .lean()
+        .exec();
+      if (!custom) {
+        throw new BadRequestException('penalty_custom_motif_not_found');
+      }
+      return { reasonLabel: custom.labelFr };
+    }
+
+    throw new BadRequestException('penalty_reason_code_invalid');
+  }
+
   private validateDto(dto: CreatePenaltyDto): void {
+    if (!dto.reasonCode?.trim()) {
+      throw new BadRequestException('penalty_reason_required');
+    }
     const meta = PENALTY_ROUTE_META[dto.route];
     const needsOrder =
       meta.requiresVendorTransfer || meta.requiresDeliveryTransfer;
@@ -209,6 +329,22 @@ export class PenaltiesService {
         throw new BadRequestException('delivery_user_required');
       }
     }
+
+    if (
+      dto.reasonCode === PENALTY_REASON_OTHER &&
+      (dto.reasonDetails?.trim().length ?? 0) < 10
+    ) {
+      throw new BadRequestException('penalty_reason_details_required');
+    }
+
+    if (
+      dto.reasonCode?.trim() &&
+      !isBuiltinPenaltyReasonCode(dto.reasonCode) &&
+      dto.reasonCode !== PENALTY_REASON_OTHER &&
+      !isCustomPenaltyReasonCode(dto.reasonCode)
+    ) {
+      throw new BadRequestException('penalty_reason_code_invalid');
+    }
   }
 
   private toRow(doc: PenaltyTransferModel | Record<string, unknown>) {
@@ -223,7 +359,11 @@ export class PenaltiesService {
       currency: row.currency,
       status: row.status,
       reasonCode: row.reasonCode ?? null,
+      reasonLabel: row.reasonLabel ?? null,
+      reasonDetails: row.reasonDetails ?? null,
       note: row.note ?? null,
+      notifyParticipants: row.notifyParticipants ?? true,
+      participantEmails: row.participantEmails ?? [],
       orderId: row.order ? String(row.order) : null,
       storeId: row.store ? String(row.store) : null,
       vendorUserId: row.vendorUser ? String(row.vendorUser) : null,

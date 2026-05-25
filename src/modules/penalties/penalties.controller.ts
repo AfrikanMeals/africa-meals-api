@@ -14,6 +14,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
+import { CreatePenaltyCustomMotifDto } from './dto/create-penalty-custom-motif.dto';
 import { CreatePenaltyDto } from './dto/create-penalty.dto';
 import { PenaltyRouteEnum } from './penalty.types';
 import { PenaltiesService } from './penalties.service';
@@ -29,6 +30,21 @@ export class PenaltiesController {
   @ApiOperation({ summary: 'Routes de pénalité / compensation (admin)' })
   listRoutes(@Req() req: Request) {
     return this.penalties.listRoutes();
+  }
+
+  @Get('motifs')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Motifs intégrés + personnalisés (admin)' })
+  listMotifs(@Req() req: Request) {
+    return this.penalties.listMotifs(req.user as UserModel);
+  }
+
+  @Post('motifs')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({ summary: 'Créer un motif personnalisé réutilisable (admin)' })
+  createMotif(@Req() req: Request, @Body() body: CreatePenaltyCustomMotifDto) {
+    return this.penalties.createCustomMotif(req.user as UserModel, body);
   }
 
   @Get()

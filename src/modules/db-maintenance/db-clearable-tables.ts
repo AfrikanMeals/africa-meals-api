@@ -210,6 +210,13 @@ export const DB_CLEARABLE_TABLES: readonly DbClearableTableDef[] = [
     category: 'billing',
   },
   {
+    key: 'penalty_custom_motifs',
+    collection: 'penalty_custom_motifs',
+    labelFr: 'Motifs pénalités personnalisés',
+    labelEn: 'Custom penalty reasons',
+    category: 'billing',
+  },
+  {
     key: 'ads',
     collection: 'ads',
     labelFr: 'Publicités',

@@ -57,8 +57,28 @@ export class PenaltyTransferModel extends BaseSchema {
   @Prop({ required: false, trim: true, maxlength: 64 })
   reasonCode?: string;
 
+  /** Libellé affiché (motif intégré, personnalisé ou « autre »). */
+  @Prop({ required: false, trim: true, maxlength: 200 })
+  reasonLabel?: string;
+
+  @Prop({ required: false, trim: true, maxlength: 500 })
+  reasonDetails?: string;
+
   @Prop({ required: false, trim: true, maxlength: 2000 })
   note?: string;
+
+  @Prop({ required: false, default: true, name: 'notify_participants' })
+  notifyParticipants?: boolean;
+
+  @Prop({ type: [Object], default: [], name: 'participant_emails' })
+  participantEmails?: Array<{
+    party: string;
+    role: string;
+    email: string;
+    name: string;
+    sent: boolean;
+    error?: string;
+  }>;
 
   @Prop({
     required: false,

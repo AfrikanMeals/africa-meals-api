@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsEnum,
   IsInt,
   IsMongoId,
@@ -9,7 +10,9 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
+import { PENALTY_REASON_OTHER } from '../penalty-reasons';
 import { PenaltyRouteEnum, PENALTY_ROUTE_VALUES } from '../penalty.types';
 
 export class CreatePenaltyDto {
@@ -55,6 +58,21 @@ export class CreatePenaltyDto {
   @IsString()
   @MaxLength(64)
   reasonCode?: string;
+
+  @ApiPropertyOptional({
+    description: 'Obligatoire si reasonCode = other (min. 10 caractères).',
+  })
+  @IsOptional()
+  @IsString()
+  @ValidateIf((o) => o.reasonCode === PENALTY_REASON_OTHER)
+  @MinLength(10)
+  @MaxLength(500)
+  reasonDetails?: string;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  notifyParticipants?: boolean;
 
   @ApiPropertyOptional()
   @IsOptional()
