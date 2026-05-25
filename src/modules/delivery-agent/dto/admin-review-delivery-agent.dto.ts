@@ -7,6 +7,14 @@ export class RejectDeliveryAgentApplicationDto {
   rejectionReason: string;
 }
 
+export class SuspendDeliveryAgentApplicationDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  @MaxLength(500)
+  suspensionReason?: string;
+}
+
 export class ListDeliveryAgentApplicationsQueryDto {
   @IsOptional()
   @IsString()

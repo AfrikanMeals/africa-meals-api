@@ -16,7 +16,10 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
-import { RejectDeliveryAgentApplicationDto } from './dto/admin-review-delivery-agent.dto';
+import {
+  RejectDeliveryAgentApplicationDto,
+  SuspendDeliveryAgentApplicationDto,
+} from './dto/admin-review-delivery-agent.dto';
 import { PatchDeliveryAgentApplicationDto } from './dto/delivery-agent-application.dto';
 import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
 import { DeliveryAgentService } from './delivery-agent.service';
@@ -211,6 +214,25 @@ export class DeliveryAgentController {
       req.user as UserModel,
       applicationId,
       body.rejectionReason,
+    );
+  }
+
+  @Post('admin/applications/:applicationId/suspend')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+  @ApiOperation({
+    summary:
+      'Admin — suspendre un compte livreur approuvé (repasse le compte en USER).',
+  })
+  async suspendApplicationAdmin(
+    @Req() req: Request,
+    @Param('applicationId') applicationId: string,
+    @Body() body: SuspendDeliveryAgentApplicationDto,
+  ) {
+    return this._deliveryAgent.suspendApplicationAdmin(
+      req.user as UserModel,
+      applicationId,
+      body.suspensionReason,
     );
   }
 }

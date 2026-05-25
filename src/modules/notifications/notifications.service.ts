@@ -822,19 +822,24 @@ export class NotificationsService implements OnModuleInit {
   async notifyDeliveryAgentApplicationReview(args: {
     recipientUserId: string;
     applicationId: string;
-    status: 'APPROVED' | 'REJECTED';
+    status: 'APPROVED' | 'REJECTED' | 'SUSPENDED';
     rejectionReason?: string;
   }): Promise<void> {
     if (!Types.ObjectId.isValid(args.recipientUserId)) {
       return;
     }
     const approved = args.status === 'APPROVED';
+    const suspended = args.status === 'SUSPENDED';
     const title = approved
       ? 'Candidature livreur acceptée'
-      : 'Candidature livreur refusée';
+      : suspended
+        ? 'Compte livreur suspendu'
+        : 'Candidature livreur refusée';
     const body = approved
       ? 'Félicitations ! Vous pouvez maintenant utiliser le mode livreur dans l’application.'
-      : `Votre candidature n’a pas été retenue.${args.rejectionReason?.trim() ? ` Motif : ${args.rejectionReason.trim()}` : ''}`;
+      : suspended
+        ? `Votre compte livreur a été suspendu.${args.rejectionReason?.trim() ? ` Motif : ${args.rejectionReason.trim()}` : ''}`
+        : `Votre candidature n’a pas été retenue.${args.rejectionReason?.trim() ? ` Motif : ${args.rejectionReason.trim()}` : ''}`;
     const data: Record<string, unknown> = {
       type: 'delivery_agent_application',
       audience: 'customer',

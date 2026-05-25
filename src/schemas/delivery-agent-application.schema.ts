@@ -8,6 +8,8 @@ export enum DeliveryAgentApplicationStatus {
   AWAITING_REVIEW = 'AWAITING_REVIEW',
   APPROVED = 'APPROVED',
   REJECTED = 'REJECTED',
+  /** Compte livreur désactivé par l’admin (type utilisateur repassé en USER). */
+  SUSPENDED = 'SUSPENDED',
 }
 
 export type DeliveryAgentVehicle = 'moto' | 'velo' | 'voiture';

@@ -183,6 +183,9 @@ export class DeliveryAgentService {
     if (cur.status === DeliveryAgentApplicationStatus.APPROVED) {
       throw new BadRequestException('delivery_agent_application_readonly');
     }
+    if (cur.status === DeliveryAgentApplicationStatus.SUSPENDED) {
+      throw new BadRequestException('delivery_agent_account_suspended');
+    }
 
     if (cur.status === DeliveryAgentApplicationStatus.REJECTED) {
       cur.status = DeliveryAgentApplicationStatus.DRAFT;
@@ -247,6 +250,9 @@ export class DeliveryAgentService {
     }
     if (cur.status === DeliveryAgentApplicationStatus.APPROVED) {
       throw new BadRequestException('delivery_agent_already_approved');
+    }
+    if (cur.status === DeliveryAgentApplicationStatus.SUSPENDED) {
+      throw new BadRequestException('delivery_agent_account_suspended');
     }
     if (!cur.vehicle) {
       throw new BadRequestException('delivery_agent_vehicle_required');
@@ -464,6 +470,61 @@ export class DeliveryAgentService {
     });
   }
 
+  async suspendApplicationAdmin(
+    user: UserModel,
+    applicationId: string,
+    suspensionReason?: string,
+  ) {
+    this.assertAdmin(user);
+    if (!Types.ObjectId.isValid(applicationId)) {
+      throw new NotFoundException('delivery_agent_application_not_found');
+    }
+    const app = await this._applications.findById(applicationId).exec();
+    if (!app) {
+      throw new NotFoundException('delivery_agent_application_not_found');
+    }
+    if (app.status !== DeliveryAgentApplicationStatus.APPROVED) {
+      throw new BadRequestException('delivery_agent_application_not_approved');
+    }
+    const reason = (suspensionReason ?? '').trim();
+    app.status = DeliveryAgentApplicationStatus.SUSPENDED;
+    app.rejectionReason =
+      reason.length >= 3
+        ? reason
+        : 'Compte livreur suspendu par l’administrateur.';
+    await app.save();
+
+    await this._users
+      .updateOne(
+        { _id: app.user },
+        { $set: { type: UserTypeEnum.USER } },
+      )
+      .exec();
+
+    void this._notifyApplicationReview({
+      userId: String(app.user),
+      applicationId: String(app._id),
+      status: 'SUSPENDED',
+      rejectionReason: app.rejectionReason,
+    });
+
+    const lean = await this._applications
+      .findById(app._id)
+      .lean<LeanAppDoc>()
+      .exec();
+    const u = await this._users
+      .findById(app.user)
+      .select('fullName email phoneNumber profileImage type')
+      .lean()
+      .exec();
+    return this.mapAdminRow(lean!, u as {
+      fullName?: string;
+      email?: string;
+      phoneNumber?: string;
+      type?: string;
+    });
+  }
+
   private escapeHtml(value: string): string {
     return value
       .replace(/&/g, '&amp;')
@@ -475,10 +536,11 @@ export class DeliveryAgentService {
   private async _notifyApplicationReview(args: {
     userId: string;
     applicationId: string;
-    status: 'APPROVED' | 'REJECTED';
+    status: 'APPROVED' | 'REJECTED' | 'SUSPENDED';
     rejectionReason?: string;
   }): Promise<void> {
     const approved = args.status === 'APPROVED';
+    const suspended = args.status === 'SUSPENDED';
     const reason = (args.rejectionReason ?? '').trim();
 
     try {
@@ -506,10 +568,14 @@ export class DeliveryAgentService {
     const name = String(u?.fullName ?? '').trim() || 'Bonjour';
     const title = approved
       ? 'Candidature livreur acceptée'
-      : 'Candidature livreur refusée';
+      : suspended
+        ? 'Compte livreur suspendu'
+        : 'Candidature livreur refusée';
     const body = approved
       ? 'Félicitations ! Votre candidature livreur a été acceptée. Ouvrez l’application et passez en mode livreur pour commencer.'
-      : `Votre candidature livreur n’a pas été retenue.${reason ? ` Motif : ${reason}` : ''} Vous pouvez mettre à jour votre dossier et soumettre à nouveau.`;
+      : suspended
+        ? `Votre compte livreur a été suspendu. Vous ne pouvez plus prendre de courses.${reason ? ` Motif : ${reason}` : ''} Contactez le support pour plus d’informations.`
+        : `Votre candidature livreur n’a pas été retenue.${reason ? ` Motif : ${reason}` : ''} Vous pouvez mettre à jour votre dossier et soumettre à nouveau.`;
     const safeName = this.escapeHtml(name);
     const safeBody = this.escapeHtml(body);
     const safeReason = reason ? this.escapeHtml(reason) : '';
@@ -519,7 +585,13 @@ export class DeliveryAgentService {
 <p>Bonjour ${safeName},</p>
 <p>${safeBody}</p>
 <p>— L’équipe ${this.escapeHtml(appName)}</p>`.trim()
-      : `
+      : suspended
+        ? `
+<p>Bonjour ${safeName},</p>
+<p>${safeBody}</p>
+${safeReason ? `<p><strong>Motif :</strong> ${safeReason}</p>` : ''}
+<p>— L’équipe ${this.escapeHtml(appName)}</p>`.trim()
+        : `
 <p>Bonjour ${safeName},</p>
 <p>${safeBody}</p>
 ${safeReason ? `<p><strong>Motif :</strong> ${safeReason}</p>` : ''}
