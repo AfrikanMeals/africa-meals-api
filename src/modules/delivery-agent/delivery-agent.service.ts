@@ -273,7 +273,7 @@ export class DeliveryAgentService {
     cur.serviceZone = zone;
     cur.status = DeliveryAgentApplicationStatus.AWAITING_REVIEW;
     cur.submittedAt = new Date();
-    cur.onboardingStep = Math.max(cur.onboardingStep, 2);
+    cur.onboardingStep = Math.max(cur.onboardingStep, 3);
     await cur.save();
     const lean = await this._applications
       .findOne({ user: uid })

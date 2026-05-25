@@ -48,6 +48,7 @@ import {
   defaultDeliveryCapacity,
   deliveryVehicleLabelFr,
 } from '@modules/delivery-agent/delivery-agent-vehicle.util';
+import { resolveDashboardLivreurAvatar } from './dashboard-livreur-avatar.util';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -237,7 +238,10 @@ export type DashboardLivreurCommande = {
 export type DashboardLivreurRow = {
   id: string;
   nom: string;
+  /** Emoji ou initiales — jamais une URL. */
   avatar: string;
+  /** Photo profil (compte app) pour affichage <img>. */
+  profileImageUrl: string | null;
   tel: string;
   statut: 'disponible' | 'en_livraison' | 'hors_ligne';
   zone: string;
@@ -2731,10 +2735,15 @@ export class DashboardService {
   ): DashboardLivreurRow {
     const cmd = doc.commande_en_cours;
     const { longitude, latitude } = this.resolveLivreurLngLat(doc);
+    const { avatar, profileImageUrl } = resolveDashboardLivreurAvatar(
+      doc.nom,
+      doc.avatar,
+    );
     return {
       id: String(doc._id),
       nom: doc.nom,
-      avatar: doc.avatar,
+      avatar,
+      profileImageUrl,
       tel: doc.tel,
       statut: doc.statut as DashboardLivreurRow['statut'],
       zone: doc.zone,
@@ -2883,11 +2892,15 @@ export class DashboardService {
     nearestStoreId: string,
   ): DashboardLivreurRow {
     const coords = coordsFromLngLat(longitude, latitude);
-    const avatar = u.profileImage?.trim() || '🛵';
+    const { avatar, profileImageUrl } = resolveDashboardLivreurAvatar(
+      u.fullName,
+      u.profileImage,
+    );
     return {
       id: `dlusr_${String(u._id)}`,
       nom: u.fullName?.trim() || 'Livreur',
       avatar,
+      profileImageUrl,
       tel: u.phoneNumber?.trim() || '—',
       statut: 'disponible',
       zone: `${cityLabel} · Compte app`,

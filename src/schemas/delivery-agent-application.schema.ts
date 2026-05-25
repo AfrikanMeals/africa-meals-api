@@ -34,7 +34,7 @@ export class DeliveryAgentApplicationModel extends BaseSchema {
   status: DeliveryAgentApplicationStatus;
 
   /** Avancement local (0 = démarré, 1 = véhicule + zone, 2 = prêt à soumettre). */
-  @Prop({ default: 0, min: 0, max: 3 })
+  @Prop({ default: 0, min: 0, max: 4 })
   onboardingStep: number;
 
   @Prop({ required: false })

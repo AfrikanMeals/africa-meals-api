@@ -1,17 +1,18 @@
 import { DeliveryAgentVehicle } from '@schemas/delivery-agent-application.schema';
 
+export type DeliveryVehicleLabelFr = 'Moto' | 'Vélo' | 'Voiture';
+
 export function deliveryVehicleLabelFr(
   vehicle?: DeliveryAgentVehicle | string | null,
-): string {
+): DeliveryVehicleLabelFr {
   switch (vehicle) {
-    case 'moto':
-      return 'Moto';
     case 'velo':
       return 'Vélo';
     case 'voiture':
       return 'Voiture';
+    case 'moto':
     default:
-      return '—';
+      return 'Moto';
   }
 }
 

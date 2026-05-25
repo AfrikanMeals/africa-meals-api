@@ -13,7 +13,7 @@ export class PatchDeliveryAgentApplicationDto {
   @IsOptional()
   @IsInt()
   @Min(0)
-  @Max(3)
+  @Max(4)
   onboardingStep?: number;
 
   @IsOptional()
