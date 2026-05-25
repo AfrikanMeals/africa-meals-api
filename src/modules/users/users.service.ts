@@ -62,10 +62,11 @@ export class UsersService {
   }
 
   /**
-   * Liste des comptes `USER` (clients finaux), sans champs sensibles.
-   * - `ADMIN` : tous les clients ; `ordersCount` = nombre total de commandes (toutes boutiques).
-   * - `VENDOR` : clients ayant au moins une commande sur une boutique dont le propriétaire est l’appelant ;
-   *   `ordersCount` = nombre de commandes chez ce vendeur (toutes ses boutiques).
+   * Clients finaux (sans champs sensibles).
+   * - `ADMIN` : comptes `USER` + tout compte ayant au moins une commande app (tous rôles) ;
+   *   `ordersCount` = total commandes (toutes boutiques).
+   * - `VENDOR` : comptes ayant commandé sur une boutique du vendeur (tous rôles) ;
+   *   `ordersCount` = commandes chez ce vendeur.
    */
   async listEndUserClients(caller: UserModel): Promise<EndUserClientRow[]> {
     return this._buildSortedEndUserClients(caller);
@@ -212,11 +213,48 @@ export class UsersService {
     };
   }
 
+  private _normalizeDistinctUserIds(
+    rawIds: (Types.ObjectId | string | null | undefined)[],
+  ): Types.ObjectId[] {
+    const out: Types.ObjectId[] = [];
+    const seen = new Set<string>();
+    for (const raw of rawIds) {
+      if (raw == null) continue;
+      const id =
+        raw instanceof Types.ObjectId
+          ? raw.toHexString()
+          : String(raw).trim();
+      if (!Types.ObjectId.isValid(id) || seen.has(id)) continue;
+      seen.add(id);
+      out.push(new Types.ObjectId(id));
+    }
+    return out;
+  }
+
   private async _listAllEndUserClients() {
+    const [orderUserIds, userTypeRows] = await Promise.all([
+      this._orderModel.distinct('user', {
+        status: { $in: CLIENT_ORDER_STATUSES_FOR_SPENT },
+      }),
+      this._userModel
+        .find({ type: UserTypeEnum.USER })
+        .select('_id')
+        .lean()
+        .exec(),
+    ]);
+
+    const userIds = this._normalizeDistinctUserIds([
+      ...(orderUserIds as (Types.ObjectId | string)[]),
+      ...userTypeRows.map((r) => r._id as Types.ObjectId),
+    ]);
+    if (!userIds.length) {
+      return [];
+    }
+
     const rows = await this._userModel
-      .find({ type: UserTypeEnum.USER })
+      .find({ _id: { $in: userIds } })
       .select(
-        'fullName email profileImage appCountryCode emailVerifiedAt loyaltyPoints createdAt addresses',
+        'fullName email profileImage appCountryCode emailVerifiedAt loyaltyPoints createdAt addresses type',
       )
       .populate({
         path: 'addresses',
@@ -226,9 +264,6 @@ export class UsersService {
       .lean()
       .exec();
 
-    const userIds = rows.map(
-      (r) => r._id as Types.ObjectId,
-    );
     const spend = await this._orderSpendByUser(userIds);
 
     const mapped = (rows as Record<string, unknown>[]).map((u) => {
@@ -257,28 +292,21 @@ export class UsersService {
 
     const distinctUsers = await this._orderModel.distinct('user', {
       store: { $in: storeIds },
+      status: { $in: CLIENT_ORDER_STATUSES_FOR_SPENT },
     });
 
-    const userIds: Types.ObjectId[] = [];
-    for (const raw of distinctUsers as (Types.ObjectId | string)[]) {
-      if (raw instanceof Types.ObjectId) {
-        userIds.push(raw);
-      } else if (typeof raw === 'string' && Types.ObjectId.isValid(raw)) {
-        userIds.push(new Types.ObjectId(raw));
-      }
-    }
+    const userIds = this._normalizeDistinctUserIds(
+      distinctUsers as (Types.ObjectId | string)[],
+    );
 
     if (!userIds.length) {
       return [];
     }
 
     const rows = await this._userModel
-      .find({
-        _id: { $in: userIds },
-        type: UserTypeEnum.USER,
-      })
+      .find({ _id: { $in: userIds } })
       .select(
-        'fullName email profileImage appCountryCode emailVerifiedAt loyaltyPoints createdAt addresses',
+        'fullName email profileImage appCountryCode emailVerifiedAt loyaltyPoints createdAt addresses type',
       )
       .populate({
         path: 'addresses',

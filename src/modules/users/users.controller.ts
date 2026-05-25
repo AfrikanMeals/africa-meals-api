@@ -28,9 +28,9 @@ export class UsersController {
   private readonly _usersService: UsersService;
 
   /**
-   * Clients finaux (`type: USER`).
-   * - Administrateur : liste complète.
-   * - Restaurant (`VENDOR`) : uniquement les clients ayant au moins une commande sur une de ses boutiques.
+   * Clients finaux.
+   * - Administrateur : comptes `USER` + tout compte ayant commandé sur l’app.
+   * - Restaurant (`VENDOR`) : comptes ayant commandé sur une de ses boutiques (tous rôles).
    */
   @Get('clients')
   @UseGuards(JwtGuard)
