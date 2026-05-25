@@ -203,6 +203,13 @@ export const DB_CLEARABLE_TABLES: readonly DbClearableTableDef[] = [
     category: 'delivery',
   },
   {
+    key: 'stripe_penalties',
+    collection: 'stripe_penalties',
+    labelFr: 'Pénalités Stripe (transferts)',
+    labelEn: 'Stripe penalties',
+    category: 'billing',
+  },
+  {
     key: 'ads',
     collection: 'ads',
     labelFr: 'Publicités',

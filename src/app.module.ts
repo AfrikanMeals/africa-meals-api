@@ -30,6 +30,7 @@ import { PlatformFeesModule } from './modules/platform-fees/platform-fees.module
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
 import { TeamsModule } from './modules/teams/teams.module';
 import { RefundsModule } from './modules/refunds/refunds.module';
+import { PenaltiesModule } from './modules/penalties/penalties.module';
 import { PlatformShippingSettingsModule } from './modules/platform-shipping-settings/platform-shipping-settings.module';
 import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
 import { AppPoliciesModule } from './modules/app-policies/app-policies.module';
@@ -95,6 +96,7 @@ import { FieldSelectionModule } from './common/field-selection/field-selection.m
     SubscriptionsModule,
     TeamsModule,
     RefundsModule,
+    PenaltiesModule,
     AppPoliciesModule,
     DbMaintenanceModule,
     RequestStatsModule,
