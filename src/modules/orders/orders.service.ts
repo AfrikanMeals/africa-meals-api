@@ -20,10 +20,6 @@ import {
   OrderStatusEnum,
 } from '@schemas/order.schema';
 import { DeliveryAgentApplicationModel } from '@schemas/delivery-agent-application.schema';
-import {
-  DeliveryDriverModel,
-  DeliveryDriverStatutEnum,
-} from '@schemas/delivery-driver.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
@@ -60,9 +56,6 @@ export class OrdersService {
 
   @InjectModel(StoreModel.name)
   private readonly _storeModel: Model<StoreModel>;
-
-  @InjectModel(DeliveryDriverModel.name)
-  private readonly _deliveryDriverModel: Model<DeliveryDriverModel>;
 
   @InjectModel(DeliveryAgentApplicationModel.name)
   private readonly _deliveryAgentApplications: Model<DeliveryAgentApplicationModel>;
@@ -2077,15 +2070,6 @@ export class OrdersService {
     orderId: string,
     plain: Record<string, unknown>,
   ): Promise<{ latitude: number; longitude: number } | null> {
-    const driver = await this.findDeliveryDriverForOrder(orderId);
-    if (
-      driver &&
-      typeof driver.latitude === 'number' &&
-      typeof driver.longitude === 'number'
-    ) {
-      return { latitude: driver.latitude, longitude: driver.longitude };
-    }
-
     const agentId = this.assignedDeliveryUserIdFromOrderDoc(plain);
     if (!agentId || !Types.ObjectId.isValid(agentId)) return null;
 
@@ -2102,27 +2086,5 @@ export class OrdersService {
       return { latitude: app.lastLatitude, longitude: app.lastLongitude };
     }
     return null;
-  }
-
-  private async findDeliveryDriverForOrder(
-    orderId: string,
-  ): Promise<DeliveryDriverModel | null> {
-    const tail = orderId.trim().slice(-6).toUpperCase();
-    if (!tail) return null;
-    const patterns = [
-      `#AE-${tail}`,
-      `AE-${tail}`,
-      `CMD-${tail}`,
-      tail,
-    ];
-    const doc = await this._deliveryDriverModel
-      .findOne({
-        statut: DeliveryDriverStatutEnum.EN_LIVRAISON,
-        'commande_en_cours.id': { $in: patterns },
-      })
-      .select('latitude longitude commande_en_cours')
-      .lean()
-      .exec();
-    return doc as DeliveryDriverModel | null;
   }
 }

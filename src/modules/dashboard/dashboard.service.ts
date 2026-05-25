@@ -19,10 +19,6 @@ import {
   DeliveryAgentApplicationModel,
   DeliveryAgentApplicationStatus,
 } from '@schemas/delivery-agent-application.schema';
-import {
-  DeliveryDriverModel,
-  DeliveryDriverStatutEnum,
-} from '@schemas/delivery-driver.schema';
 import { AddressModel } from '@schemas/address.schema';
 import { StockItemModel, StockStatutEnum } from '@schemas/stock-item.schema';
 import { StoreModel } from '@schemas/store.schema';
@@ -265,29 +261,6 @@ export type DashboardLivreurRow = {
   source: 'user';
 };
 
-type DeliveryDriverLean = {
-  _id: Types.ObjectId;
-  store?: Types.ObjectId;
-  nom: string;
-  avatar: string;
-  tel: string;
-  statut: DeliveryDriverStatutEnum;
-  zone: string;
-  vehicule: DashboardLivreurRow['vehicule'];
-  immat: string;
-  note: number;
-  livraisons_jour: number;
-  livraisons_total: number;
-  temps_moyen: number;
-  distance_jour: number;
-  revenu_jour: number;
-  capacite: number;
-  commande_en_cours: DashboardLivreurCommande | null;
-  coords: { x: number; y: number };
-  longitude?: number;
-  latitude?: number;
-};
-
 type VendorStorePoint = { storeId: string; lng: number; lat: number };
 
 type PopulatedAddressLean = {
@@ -481,8 +454,6 @@ export class DashboardService {
     private readonly userModel: Model<UserModel>,
     @InjectModel(AddressModel.name)
     private readonly addressModel: Model<AddressModel>,
-    @InjectModel(DeliveryDriverModel.name)
-    private readonly deliveryDriverModel: Model<DeliveryDriverModel>,
     @InjectModel(DeliveryAgentApplicationModel.name)
     private readonly deliveryAgentApplicationModel: Model<DeliveryAgentApplicationModel>,
     @InjectModel(StoreModel.name)
@@ -2457,7 +2428,9 @@ export class DashboardService {
   private mergeLivreurRowsById(rows: DashboardLivreurRow[]): DashboardLivreurRow[] {
     const byId = new Map<string, DashboardLivreurRow>();
     for (const r of rows) {
-      if (!byId.has(r.id)) byId.set(r.id, r);
+      const key = this.parseDeliveryUserId(r.id) ?? r.id;
+      const normalized = { ...r, id: key };
+      if (!byId.has(key)) byId.set(key, normalized);
     }
     const out = Array.from(byId.values());
     out.sort((a, b) =>
@@ -2709,50 +2682,6 @@ export class DashboardService {
     return out;
   }
 
-  private toDashboardLivreurRow(
-    doc: DeliveryDriverLean,
-    meta?: { storeName?: string },
-  ): DashboardLivreurRow {
-    const cmd = doc.commande_en_cours;
-    const { longitude, latitude } = this.resolveLivreurLngLat(doc);
-    const { avatar, profileImageUrl } = resolveDashboardLivreurAvatar(
-      doc.nom,
-      doc.avatar,
-    );
-    return {
-      id: String(doc._id),
-      nom: doc.nom,
-      avatar,
-      profileImageUrl,
-      tel: doc.tel,
-      statut: doc.statut as DashboardLivreurRow['statut'],
-      zone: doc.zone,
-      vehicule: doc.vehicule,
-      immat: doc.immat,
-      note: doc.note,
-      livraisons_jour: doc.livraisons_jour,
-      livraisons_total: doc.livraisons_total,
-      temps_moyen: doc.temps_moyen,
-      distance_jour: doc.distance_jour,
-      revenu_jour: doc.revenu_jour,
-      capacite: doc.capacite,
-      commande_en_cours: cmd
-        ? {
-            id: cmd.id,
-            client: cmd.client,
-            adresse: cmd.adresse,
-            eta: cmd.eta,
-          }
-        : null,
-      coords: { x: doc.coords.x, y: doc.coords.y },
-      longitude,
-      latitude,
-      storeId: doc.store != null ? String(doc.store) : '',
-      storeName: meta?.storeName?.trim() ?? '',
-      source: 'fleet',
-    };
-  }
-
   private async loadVendorStoreGeoPoints(
     storeIds: Types.ObjectId[],
   ): Promise<VendorStorePoint[]> {
@@ -2781,6 +2710,117 @@ export class DashboardService {
       });
     }
     return out;
+  }
+
+  /**
+   * Livreurs = utilisateurs DELIVERY avec candidature APPROVED (plus de collection `delivery_drivers`).
+   */
+  private async listApprovedDeliveryUsersForDashboard(
+    storePoints: VendorStorePoint[],
+    radiusKm: number,
+    includeAllApprovedForAdmin: boolean,
+  ): Promise<DashboardLivreurRow[]> {
+    const fromAddresses = await this.listRegionalDeliveryUsersAsRows(
+      storePoints,
+      radiusKm,
+    );
+    const fromGps = await this.listDeliveryUsersFromApplicationGps(
+      storePoints,
+      radiusKm,
+      includeAllApprovedForAdmin,
+    );
+    return this.mergeLivreurRowsById([...fromAddresses, ...fromGps]);
+  }
+
+  private async listDeliveryUsersFromApplicationGps(
+    storePoints: VendorStorePoint[],
+    radiusKm: number,
+    includeAllApprovedForAdmin: boolean,
+  ): Promise<DashboardLivreurRow[]> {
+    const applications = await this.deliveryAgentApplicationModel
+      .find({ status: DeliveryAgentApplicationStatus.APPROVED })
+      .populate({
+        path: 'user',
+        match: { type: UserTypeEnum.DELIVERY },
+        select: 'fullName phoneNumber profileImage type addresses',
+        populate: { path: 'addresses', select: 'isDefault city location' },
+      })
+      .lean()
+      .exec();
+
+    const rows: DashboardLivreurRow[] = [];
+    const fallbackStore = storePoints[0];
+
+    for (const app of applications) {
+      const u = app.user as unknown as DeliveryUserLean | null;
+      if (!u?._id) continue;
+
+      let lng: number | null = null;
+      let lat: number | null = null;
+      let cityLabel = app.serviceZone?.trim() || '—';
+
+      if (
+        typeof app.lastLatitude === 'number' &&
+        typeof app.lastLongitude === 'number' &&
+        Number.isFinite(app.lastLatitude) &&
+        Number.isFinite(app.lastLongitude) &&
+        !(app.lastLatitude === 0 && app.lastLongitude === 0)
+      ) {
+        lng = app.lastLongitude;
+        lat = app.lastLatitude;
+      } else {
+        const addrs = (u.addresses ?? []) as PopulatedAddressLean[];
+        const chosen =
+          addrs.find((a) => a.isDefault) ??
+          addrs.find((a) => {
+            const c = a.location?.coordinates;
+            return (
+              Array.isArray(c) &&
+              c.length >= 2 &&
+              !(Number(c[0]) === 0 && Number(c[1]) === 0)
+            );
+          });
+        if (chosen?.location?.coordinates) {
+          lng = Number(chosen.location.coordinates[0]);
+          lat = Number(chosen.location.coordinates[1]);
+          if (chosen.city?.trim()) cityLabel = chosen.city.trim();
+        }
+      }
+
+      if (lng == null || lat == null) {
+        if (!includeAllApprovedForAdmin || !fallbackStore) continue;
+        lng = fallbackStore.lng;
+        lat = fallbackStore.lat;
+      }
+
+      let bestStoreId = fallbackStore?.storeId ?? '';
+      let bestKm = Number.POSITIVE_INFINITY;
+      if (storePoints.length) {
+        for (const sp of storePoints) {
+          const d = haversineKm(lng, lat, sp.lng, sp.lat);
+          if (d < bestKm) {
+            bestKm = d;
+            bestStoreId = sp.storeId;
+          }
+        }
+        if (!includeAllApprovedForAdmin && bestKm > radiusKm) continue;
+      }
+
+      const initialStatut =
+        app.dashboardAvailability === 'hors_ligne' ? 'hors_ligne' : 'disponible';
+      rows.push(
+        this.toDashboardLivreurRowFromDeliveryUser(
+          u,
+          cityLabel,
+          lng,
+          lat,
+          bestStoreId,
+          initialStatut,
+          app,
+        ),
+      );
+    }
+    return rows;
   }
 
   private async listRegionalDeliveryUsersAsRows(
@@ -2858,6 +2898,8 @@ export class DashboardService {
           lng,
           lat,
           bestStoreId,
+          'disponible',
+          undefined,
         ),
       );
     }
@@ -2870,36 +2912,53 @@ export class DashboardService {
     longitude: number,
     latitude: number,
     nearestStoreId: string,
+    initialStatut: DashboardLivreurRow['statut'] = 'disponible',
+    app?: {
+      vehicle?: string;
+      vehicleRegistration?: string;
+      maxConcurrentOrders?: number;
+      serviceZone?: string;
+    },
   ): DashboardLivreurRow {
     const coords = coordsFromLngLat(longitude, latitude);
     const { avatar, profileImageUrl } = resolveDashboardLivreurAvatar(
       u.fullName,
       u.profileImage,
     );
+    const vehiculeLabel = deliveryVehicleLabelFr(
+      app?.vehicle as 'moto' | 'velo' | 'voiture' | undefined,
+    );
+    const immat = app?.vehicleRegistration?.trim() || '—';
+    const capacite =
+      typeof app?.maxConcurrentOrders === 'number' &&
+      app.maxConcurrentOrders >= 1
+        ? app.maxConcurrentOrders
+        : defaultDeliveryCapacity(app?.vehicle);
+    const zone = app?.serviceZone?.trim() || cityLabel || '—';
     return {
-      id: `dlusr_${String(u._id)}`,
+      id: String(u._id),
       nom: u.fullName?.trim() || 'Livreur',
       avatar,
       profileImageUrl,
       tel: u.phoneNumber?.trim() || '—',
-      statut: 'disponible',
-      zone: `${cityLabel} · Compte app`,
-      vehicule: 'Moto',
-      immat: '—',
+      statut: initialStatut,
+      zone,
+      vehicule: vehiculeLabel,
+      immat,
       note: 0,
       livraisons_jour: 0,
       livraisons_total: 0,
       temps_moyen: 0,
       distance_jour: 0,
       revenu_jour: 0,
-      capacite: 2,
+      capacite,
       commande_en_cours: null,
       coords,
       longitude,
       latitude,
       storeId: nearestStoreId,
       storeName: '',
-      source: 'app',
+      source: 'user',
     };
   }
 
@@ -3543,18 +3602,4 @@ export class DashboardService {
     });
   }
 
-  private resolveLivreurLngLat(doc: DeliveryDriverLean): {
-    longitude: number;
-    latitude: number;
-  } {
-    if (
-      typeof doc.longitude === 'number' &&
-      !Number.isNaN(doc.longitude) &&
-      typeof doc.latitude === 'number' &&
-      !Number.isNaN(doc.latitude)
-    ) {
-      return { longitude: doc.longitude, latitude: doc.latitude };
-    }
-    return lngLatFromPercentCoords(doc.coords);
-  }
 }

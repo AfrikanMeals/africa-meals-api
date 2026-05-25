@@ -19,10 +19,6 @@ import {
   ProductRatingSchema,
 } from '@schemas/product_rating.schema';
 import {
-  DeliveryDriverModel,
-  DeliveryDriverSchema,
-} from '@schemas/delivery-driver.schema';
-import {
   DeliveryAgentApplicationModel,
   DeliveryAgentApplicationSchema,
 } from '@schemas/delivery-agent-application.schema';
@@ -64,7 +60,6 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
       { name: ProductModel.name, schema: ProductSchema },
       { name: ProductRatingModel.name, schema: ProductRatingSchema },
       { name: StoreModel.name, schema: StoreSchema },
-      { name: DeliveryDriverModel.name, schema: DeliveryDriverSchema },
       {
         name: DeliveryAgentApplicationModel.name,
         schema: DeliveryAgentApplicationSchema,
