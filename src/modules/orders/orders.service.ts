@@ -286,10 +286,12 @@ export class OrdersService {
   ): Record<string, unknown>[] {
     return rows.map((o) => {
       const refund = this.clientRefundFlags(o);
+      const delivery = this.clientDeliveryAgentFlags(o);
       return {
         ...o,
         canRequestRefund: refund.canRequestRefund,
         refundRequestState: refund.refundRequestState,
+        assignedDeliveryUserId: delivery.assignedDeliveryUserId,
       };
     });
   }

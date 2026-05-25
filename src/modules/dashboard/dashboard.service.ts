@@ -2556,7 +2556,7 @@ export class DashboardService {
           status: DeliveryAgentApplicationStatus.APPROVED,
         })
         .select(
-          'user lastLatitude lastLongitude vehicle vehicleRegistration maxConcurrentOrders serviceZone',
+          'user lastLatitude lastLongitude locationUpdatedAt vehicle vehicleRegistration maxConcurrentOrders serviceZone',
         )
         .lean()
         .exec(),
@@ -2602,6 +2602,12 @@ export class DashboardService {
       const active = activeByUser.get(uid);
       let statut = row.statut;
       let commande_en_cours = row.commande_en_cours;
+      const locUpdatedMs = appDoc?.locationUpdatedAt
+        ? new Date(appDoc.locationUpdatedAt).getTime()
+        : 0;
+      const locationStaleMs = 18 * 60 * 1000;
+      const hasFreshLocation =
+        locUpdatedMs > 0 && Date.now() - locUpdatedMs < locationStaleMs;
       if (active) {
         statut = 'en_livraison';
         const tail = String(active._id).slice(-6).toUpperCase();
@@ -2631,6 +2637,9 @@ export class DashboardService {
           adresse: adresse || '—',
           eta: '30 min',
         };
+      } else if (locUpdatedMs > 0 && !hasFreshLocation) {
+        statut = 'hors_ligne';
+        commande_en_cours = null;
       } else if (statut !== 'hors_ligne') {
         statut = 'disponible';
         commande_en_cours = null;
