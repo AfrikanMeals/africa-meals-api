@@ -48,3 +48,9 @@ export function vehicleRegistrationRequired(
 ): boolean {
   return vehicle === 'moto' || vehicle === 'voiture';
 }
+
+export function driverLicenseRequired(
+  vehicle?: DeliveryAgentVehicle | string | null,
+): boolean {
+  return vehicle === 'moto' || vehicle === 'voiture';
+}

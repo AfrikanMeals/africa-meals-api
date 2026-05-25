@@ -44,6 +44,10 @@ export class DeliveryAgentApplicationModel extends BaseSchema {
   @Prop({ required: false, maxlength: 32, name: 'vehicle_registration' })
   vehicleRegistration?: string;
 
+  /** Numéro de permis de conduire (obligatoire moto / voiture). */
+  @Prop({ required: false, maxlength: 32, name: 'driver_license' })
+  driverLicense?: string;
+
   /** Nombre max de commandes simultanées (défaut selon [vehicle] si absent). */
   @Prop({ required: false, min: 1, max: 6, name: 'max_concurrent_orders' })
   maxConcurrentOrders?: number;

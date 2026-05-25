@@ -30,6 +30,7 @@ import { PatchDeliveryAgentApplicationDto } from './dto/delivery-agent-applicati
 import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
 import {
   defaultDeliveryCapacity,
+  driverLicenseRequired,
   normalizeVehicleRegistration,
   vehicleRegistrationRequired,
 } from './delivery-agent-vehicle.util';
@@ -39,6 +40,7 @@ type LeanApp = {
   onboardingStep: number;
   vehicle?: string;
   vehicleRegistration?: string;
+  driverLicense?: string;
   maxConcurrentOrders?: number;
   serviceZone?: string;
   termsAccepted: boolean;
@@ -48,7 +50,7 @@ type LeanApp = {
 };
 
 const APPLICATION_PUBLIC_SELECT =
-  'status onboardingStep vehicle vehicleRegistration maxConcurrentOrders serviceZone termsAccepted submittedAt rejectionReason updatedAt';
+  'status onboardingStep vehicle vehicleRegistration driverLicense maxConcurrentOrders serviceZone termsAccepted submittedAt rejectionReason updatedAt';
 
 type LeanAppDoc = LeanApp & {
   _id: Types.ObjectId;
@@ -107,6 +109,7 @@ export class DeliveryAgentService {
         onboardingStep: 0,
         vehicle: null as string | null,
         vehicleRegistration: null as string | null,
+        driverLicense: null as string | null,
         maxConcurrentOrders: null as number | null,
         serviceZone: null as string | null,
         termsAccepted: false,
@@ -125,6 +128,7 @@ export class DeliveryAgentService {
       onboardingStep: doc.onboardingStep,
       vehicle: doc.vehicle ?? null,
       vehicleRegistration: doc.vehicleRegistration?.trim() || null,
+      driverLicense: doc.driverLicense?.trim() || null,
       maxConcurrentOrders: capacity,
       serviceZone: doc.serviceZone ?? null,
       termsAccepted: Boolean(doc.termsAccepted),
@@ -201,6 +205,10 @@ export class DeliveryAgentService {
           dto.vehicleRegistration,
         ) ?? undefined;
     }
+    if (dto.driverLicense !== undefined) {
+      const lic = dto.driverLicense.trim();
+      cur.driverLicense = lic.length > 0 ? lic : undefined;
+    }
     if (dto.maxConcurrentOrders !== undefined) {
       cur.maxConcurrentOrders = dto.maxConcurrentOrders;
     }
@@ -249,6 +257,12 @@ export class DeliveryAgentService {
         throw new BadRequestException('delivery_agent_registration_required');
       }
     }
+    if (driverLicenseRequired(cur.vehicle)) {
+      const lic = (cur.driverLicense ?? '').trim();
+      if (lic.length < 2) {
+        throw new BadRequestException('delivery_agent_driver_license_required');
+      }
+    }
     if (
       typeof cur.maxConcurrentOrders !== 'number' ||
       cur.maxConcurrentOrders < 1
@@ -289,10 +303,12 @@ export class DeliveryAgentService {
       fullName?: string;
       email?: string;
       phoneNumber?: string;
+      profileImage?: string;
       type?: string;
     },
   ) {
     const pub = this.toPublic(doc);
+    const profile = (user?.profileImage ?? '').trim();
     return {
       ...pub,
       id: String(doc._id),
@@ -300,6 +316,7 @@ export class DeliveryAgentService {
       userFullName: String(user?.fullName ?? '').trim(),
       userEmail: String(user?.email ?? '').trim(),
       userPhone: String(user?.phoneNumber ?? '').trim(),
+      userProfileImageUrl: profile.length > 0 ? profile : null,
       userType: String(user?.type ?? ''),
       createdAt: doc.createdAt
         ? new Date(doc.createdAt).toISOString()
@@ -333,7 +350,7 @@ export class DeliveryAgentService {
     ];
     const users = await this._users
       .find({ _id: { $in: userIds } })
-      .select('fullName email phoneNumber type')
+      .select('fullName email phoneNumber profileImage type')
       .lean()
       .exec();
     const userById = new Map(
@@ -388,7 +405,7 @@ export class DeliveryAgentService {
       .exec();
     const u = await this._users
       .findById(app.user)
-      .select('fullName email phoneNumber type')
+      .select('fullName email phoneNumber profileImage type')
       .lean()
       .exec();
     return this.mapAdminRow(lean!, u as {
@@ -436,7 +453,7 @@ export class DeliveryAgentService {
       .exec();
     const u = await this._users
       .findById(app.user)
-      .select('fullName email phoneNumber type')
+      .select('fullName email phoneNumber profileImage type')
       .lean()
       .exec();
     return this.mapAdminRow(lean!, u as {

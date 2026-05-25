@@ -26,6 +26,11 @@ export class PatchDeliveryAgentApplicationDto {
   vehicleRegistration?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  driverLicense?: string;
+
+  @IsOptional()
   @IsInt()
   @Min(1)
   @Max(6)
