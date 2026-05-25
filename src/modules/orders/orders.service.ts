@@ -46,6 +46,7 @@ import {
   WsOrderNotifyService,
   type OrderWsTrackingPayload,
 } from '@modules/ws-notify/ws-order-notify.service';
+import { LoyaltyService } from '@modules/loyalty/loyalty.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 
 @Injectable()
@@ -87,6 +88,9 @@ export class OrdersService {
 
   @Inject(StripeConnectTransferService)
   private readonly _stripeTransfers: StripeConnectTransferService;
+
+  @Inject(LoyaltyService)
+  private readonly _loyaltyService: LoyaltyService;
 
   /** Client + adresses de livraison (refs `addresses` peuplées). */
   private static readonly orderUserWithAddressesPopulate = {
@@ -1605,6 +1609,14 @@ export class OrdersService {
     this.notifyPartiesOrderRealtimeFromDoc(
       populated ?? order,
       OrderStatusEnum.COMPLETED,
+    );
+
+    void this._loyaltyService.creditOrderCompletion(oid).catch((err) =>
+      this.logger.warn(
+        `Loyalty credit order=${oid}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
     );
 
     if (!isPickup && order.shouldShip === true) {

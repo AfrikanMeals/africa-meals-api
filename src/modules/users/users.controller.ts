@@ -5,12 +5,15 @@ import {
   Controller,
   Get,
   Inject,
+  Param,
+  Patch,
   Post,
   Query,
   Req,
   UseGuards,
   ValidationPipe,
 } from '@nestjs/common';
+import { SetClientRewardProgramDto } from './dto/set-client-reward-program.dto';
 import { ApiOperation, ApiQuery } from '@nestjs/swagger';
 import {
   parseClientsPageQuery,
@@ -54,6 +57,24 @@ export class UsersController {
       req.user as UserModel,
       page,
       take,
+    );
+  }
+
+  @Patch('clients/:userId/reward-program')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Activer ou désactiver l’éligibilité fidélité d’un client (admin uniquement)',
+  })
+  async setClientRewardProgram(
+    @Req() req: Request,
+    @Param('userId') userId: string,
+    @Body(ValidationPipe) body: SetClientRewardProgramDto,
+  ) {
+    return this._usersService.setClientRewardProgramEligible(
+      req.user as UserModel,
+      userId,
+      body.eligible,
     );
   }
 

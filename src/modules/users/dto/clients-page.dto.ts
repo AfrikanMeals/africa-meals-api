@@ -6,6 +6,7 @@ export type EndUserClientRow = {
   email: string;
   appCountryCode: string;
   loyaltyPoints: number;
+  rewardProgramEligible: boolean;
   createdAt: string;
   addressSummary: string;
   emailVerified: boolean;

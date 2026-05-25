@@ -107,6 +107,10 @@ export class UserModel extends BaseSchema {
   @Type(() => Array<PaymentMethodModel>)
   paymentMethods?: PaymentMethodModel[];
 
+  /** Accès au programme fidélité / récompenses (activation manuelle admin). */
+  @Prop({ default: false, name: 'reward_program_eligible' })
+  rewardProgramEligible?: boolean;
+
   /** Points fidélité cumulés */
   @Prop({ default: 0, name: 'loyalty_points' })
   loyaltyPoints?: number;

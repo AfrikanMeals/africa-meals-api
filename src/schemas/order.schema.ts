@@ -127,6 +127,10 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: true, name: 'total_price' })
   totalPrice: number;
 
+  /** Points fidélité déjà crédités pour cette commande (évite double crédit). */
+  @Prop({ default: false, name: 'loyalty_points_credited' })
+  loyaltyPointsCredited?: boolean;
+
   @Prop({
     required: true,
     name: 'user',

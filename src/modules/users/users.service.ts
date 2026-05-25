@@ -14,6 +14,7 @@ import { PaymentMethodModel } from '@schemas/payment-method.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
+import { LoyaltyService } from '@modules/loyalty/loyalty.service';
 import {
   EndUserClientRow,
   EndUserClientsPageResponse,
@@ -41,6 +42,9 @@ export class UsersService {
 
   @Inject(AddressesService)
   private readonly _addressesService: AddressesService;
+
+  @Inject(LoyaltyService)
+  private readonly _loyaltyService: LoyaltyService;
 
   async createAddress(args: CreateAddressDto, authUser: UserModel) {
     const { address } = await this._addressesService.createAndAttach(
@@ -79,6 +83,72 @@ export class UsersService {
   ): Promise<EndUserClientsPageResponse> {
     const rows = await this._buildSortedEndUserClients(caller);
     return paginateClientRows(rows, page, take);
+  }
+
+  /**
+   * Active ou retire l’éligibilité au programme fidélité d’un client (admin uniquement).
+   */
+  async setClientRewardProgramEligible(
+    caller: UserModel,
+    userId: string,
+    eligible: boolean,
+  ): Promise<EndUserClientRow> {
+    if (!caller || caller.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('admin_only');
+    }
+    const oid = String(userId ?? '').trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new BadRequestException('invalid_user_id');
+    }
+
+    const userOid = new Types.ObjectId(oid);
+    const updated = await this._userModel
+      .findByIdAndUpdate(
+        userOid,
+        { $set: { rewardProgramEligible: eligible } },
+        { new: true },
+      )
+      .select(
+        'fullName email profileImage appCountryCode emailVerifiedAt loyaltyPoints rewardProgramEligible createdAt addresses type',
+      )
+      .populate({
+        path: 'addresses',
+        select: 'address city label isDefault',
+      })
+      .lean()
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException('user_not_found');
+    }
+
+    if (eligible) {
+      try {
+        await this._loyaltyService.grantWelcomeBonusIfNeeded(oid);
+      } catch {
+        /* ne bloque pas l’activation */
+      }
+    }
+
+    const refreshed = await this._userModel
+      .findById(userOid)
+      .select(
+        'fullName email profileImage appCountryCode emailVerifiedAt loyaltyPoints rewardProgramEligible createdAt addresses type',
+      )
+      .populate({
+        path: 'addresses',
+        select: 'address city label isDefault',
+      })
+      .lean()
+      .exec();
+
+    const spend = await this._orderSpendByUser([userOid]);
+    const s = spend.get(oid);
+    return this._mapLeanUserToClientRow(
+      (refreshed ?? updated) as Record<string, unknown>,
+      s?.orderCount ?? 0,
+      s?.totalSpent ?? 0,
+    );
   }
 
   private async _buildSortedEndUserClients(
@@ -204,6 +274,9 @@ export class UsersService {
       email: String(u.email ?? ''),
       appCountryCode: String(u.appCountryCode ?? u.app_country_code ?? ''),
       loyaltyPoints: Number(u.loyaltyPoints ?? u.loyalty_points ?? 0),
+      rewardProgramEligible: Boolean(
+        u.rewardProgramEligible ?? u.reward_program_eligible ?? false,
+      ),
       createdAt: created.toISOString(),
       addressSummary,
       emailVerified,
@@ -254,7 +327,7 @@ export class UsersService {
     const rows = await this._userModel
       .find({ _id: { $in: userIds } })
       .select(
-        'fullName email profileImage appCountryCode emailVerifiedAt loyaltyPoints createdAt addresses type',
+        'fullName email profileImage appCountryCode emailVerifiedAt loyaltyPoints rewardProgramEligible createdAt addresses type',
       )
       .populate({
         path: 'addresses',
@@ -306,7 +379,7 @@ export class UsersService {
     const rows = await this._userModel
       .find({ _id: { $in: userIds } })
       .select(
-        'fullName email profileImage appCountryCode emailVerifiedAt loyaltyPoints createdAt addresses type',
+        'fullName email profileImage appCountryCode emailVerifiedAt loyaltyPoints rewardProgramEligible createdAt addresses type',
       )
       .populate({
         path: 'addresses',

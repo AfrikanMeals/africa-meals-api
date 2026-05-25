@@ -668,25 +668,42 @@ export class AuthService {
   async getMyRewards(userId: string) {
     const u = await this._usersModel
       .findById(userId)
-      .select('loyaltyPoints rewardHistory')
+      .select('loyaltyPoints rewardHistory rewardProgramEligible')
       .lean()
       .exec();
     if (!u) throw new NotFoundException('user_not_found');
     const doc = u as Record<string, unknown>;
+    const eligible = Boolean(
+      doc.rewardProgramEligible ?? doc.reward_program_eligible ?? false,
+    );
+    if (!eligible) {
+      throw new ForbiddenException('reward_program_not_eligible');
+    }
     const raw = (doc.rewardHistory as Record<string, unknown>[]) ?? [];
     const history = [...raw].sort(
       (a, b) =>
         new Date(String(b.createdAt)).getTime() -
         new Date(String(a.createdAt)).getTime(),
     );
+    const score = Number(doc.loyaltyPoints ?? 0);
     return {
-      score: Number(doc.loyaltyPoints ?? 0),
+      eligible: true,
+      score,
+      tier: this._loyaltyTierLabel(score),
       history: history.map((h) => ({
         points: Number(h.points),
         reason: String(h.reason ?? ''),
         createdAt: h.createdAt,
       })),
     };
+  }
+
+  private _loyaltyTierLabel(points: number): string {
+    const p = Math.max(0, Math.floor(points));
+    if (p >= 3000) return 'Platinum';
+    if (p >= 1500) return 'Gold';
+    if (p >= 500) return 'Silver';
+    return 'Bronze';
   }
 
   async updateProfile(userId: string, args: UpdateProfileDto) {

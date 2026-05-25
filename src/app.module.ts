@@ -20,6 +20,7 @@ import { CartModule } from './modules/cart/cart.module';
 import { CouponsModule } from './modules/coupons/coupons.module';
 import { AnnouncementsModule } from './modules/announcements/announcements.module';
 import { BillingModule } from './modules/billing/billing.module';
+import { LoyaltyModule } from './modules/loyalty/loyalty.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { SupportChatModule } from './modules/support-chat/support-chat.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
@@ -85,6 +86,7 @@ import { FieldSelectionModule } from './common/field-selection/field-selection.m
     CouponsModule,
     AnnouncementsModule,
     BillingModule,
+    LoyaltyModule,
     OrdersModule,
     SupportChatModule,
     DashboardModule,

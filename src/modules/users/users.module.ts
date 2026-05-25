@@ -1,5 +1,6 @@
 import { AddressesModule } from '@modules/addresses/addresses.module';
 import { AuthModule } from '@modules/auth/auth.module';
+import { LoyaltyModule } from '@modules/loyalty/loyalty.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AddressModel, AddressSchema } from '@schemas/address.schema';
@@ -14,6 +15,7 @@ import { UsersService } from './users.service';
   imports: [
     AuthModule,
     AddressesModule,
+    LoyaltyModule,
     MongooseModule.forFeature([
       { name: AddressModel.name, schema: AddressSchema },
       { name: StoreModel.name, schema: StoreSchema },
