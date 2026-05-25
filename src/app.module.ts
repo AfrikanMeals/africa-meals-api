@@ -33,6 +33,7 @@ import { RefundsModule } from './modules/refunds/refunds.module';
 import { PlatformShippingSettingsModule } from './modules/platform-shipping-settings/platform-shipping-settings.module';
 import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
 import { AppPoliciesModule } from './modules/app-policies/app-policies.module';
+import { DbMaintenanceModule } from './modules/db-maintenance/db-maintenance.module';
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
 
 @Module({
@@ -94,6 +95,7 @@ import { FieldSelectionModule } from './common/field-selection/field-selection.m
     TeamsModule,
     RefundsModule,
     AppPoliciesModule,
+    DbMaintenanceModule,
     FieldSelectionModule,
     // SharedModule,
   ],

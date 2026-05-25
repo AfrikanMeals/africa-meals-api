@@ -1060,12 +1060,11 @@ export class StoreService {
     file: Express.Multer.File,
     user: UserModel,
   ) {
-    let url: string;
+    let url: string | undefined;
     try {
-      const store = await this._storeModel
-        .findOne({ _id: id, owner: user._id })
-        .exec();
+      await this._storeAccess.assertStoreAccess(user, id, 'settings.edit');
 
+      const store = await this._storeModel.findById(id).exec();
       if (!store) {
         throw new BadRequestException('store_not_found');
       }
@@ -1088,7 +1087,6 @@ export class StoreService {
         .exec();
       return { url };
     } catch (e) {
-      console.log('🚀 ~ StoreService ~ updateProfileImage ~ e:', e);
       if (url) {
         await this._mediasService.delete(url);
       }

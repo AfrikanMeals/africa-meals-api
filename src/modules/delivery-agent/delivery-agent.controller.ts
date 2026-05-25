@@ -18,6 +18,7 @@ import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { RejectDeliveryAgentApplicationDto } from './dto/admin-review-delivery-agent.dto';
 import { PatchDeliveryAgentApplicationDto } from './dto/delivery-agent-application.dto';
+import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
 import { DeliveryAgentService } from './delivery-agent.service';
 
 @ApiTags('delivery-agent')
@@ -64,6 +65,30 @@ export class DeliveryAgentController {
     return this._deliveryAgent.listPendingOrders(req.user as UserModel);
   }
 
+  @Get('orders/active')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Commande livraison en cours assignée au livreur connecté (statut expédié).',
+  })
+  async getActiveOrder(@Req() req: Request) {
+    return this._deliveryAgent.getActiveOrder(req.user as UserModel);
+  }
+
+  @Post('location')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+  @ApiOperation({
+    summary:
+      'Position GPS du livreur (carte + suivi client en temps réel).',
+  })
+  async reportLocation(
+    @Req() req: Request,
+    @Body() body: DeliveryAgentLocationDto,
+  ) {
+    return this._deliveryAgent.reportLocation(req.user as UserModel, body);
+  }
+
   @Post('orders/:orderId/assign-self')
   @UseGuards(JwtGuard)
   @ApiOperation({
@@ -92,6 +117,31 @@ export class DeliveryAgentController {
   @ApiOperation({ summary: 'Lien d’onboarding Stripe Connect (livreur).' })
   stripeOnboardingLink(@Req() req: Request) {
     return this._deliveryAgent.createOnboardingLink(req.user as UserModel);
+  }
+
+  @Get('payments/balance')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Solde disponible Stripe Connect (livreur).' })
+  stripeConnectBalance(@Req() req: Request) {
+    return this._deliveryAgent.getConnectBalance(req.user as UserModel);
+  }
+
+  @Get('payments/payout-estimate')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Aperçu net estimé avant demande de versement Stripe Connect (livreur).',
+  })
+  stripeConnectPayoutEstimate(@Req() req: Request) {
+    return this._deliveryAgent.getPayoutEstimate(req.user as UserModel);
+  }
+
+  @Post('payments/request-payout')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Demander un versement du solde disponible vers le compte bancaire (livreur).',
+  })
+  stripeConnectRequestPayout(@Req() req: Request) {
+    return this._deliveryAgent.requestPayout(req.user as UserModel);
   }
 
   @Get('payments/payouts')

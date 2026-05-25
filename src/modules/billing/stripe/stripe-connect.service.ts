@@ -20,14 +20,28 @@ import Stripe = require('stripe');
 
 type StripeClient = InstanceType<typeof Stripe>;
 
-/** Comptes vendeurs Afrika Meals : toujours entreprise (restaurant). */
-const CONNECT_BUSINESS_TYPE = 'company' as const;
+/** Comptes vendeurs : entreprise (restaurant). */
+const VENDOR_CONNECT_BUSINESS_TYPE = 'company' as const;
+/** Comptes livreurs : particulier (indépendant). */
+const DELIVERY_CONNECT_BUSINESS_TYPE = 'individual' as const;
+
+type ConnectBusinessType =
+  | typeof VENDOR_CONNECT_BUSINESS_TYPE
+  | typeof DELIVERY_CONNECT_BUSINESS_TYPE;
+
+function resolveConnectBusinessType(user: UserModel): ConnectBusinessType {
+  return user.type === UserTypeEnum.DELIVERY
+    ? DELIVERY_CONNECT_BUSINESS_TYPE
+    : VENDOR_CONNECT_BUSINESS_TYPE;
+}
 
 /** Pays Stripe Connect — plateforme opère au Canada (évite CM/SN + numéros hors CA). */
 const STRIPE_CONNECT_ACCOUNT_COUNTRY = 'CA' as const;
 
 /** MCC « Restaurants » (repas sur place / à emporter). */
 const DEFAULT_RESTAURANT_MCC = '5812';
+/** MCC « Courier Services » (livraison). */
+const DEFAULT_DELIVERY_MCC = '4215';
 
 export type StripeConnectLifecycleStatus =
   | 'not_created'
@@ -44,7 +58,7 @@ export type StripeConnectStatus = {
   detailsSubmitted: boolean;
   onboardingComplete: boolean;
   status: StripeConnectLifecycleStatus;
-  businessType: typeof CONNECT_BUSINESS_TYPE;
+  businessType: ConnectBusinessType;
   country: string | null;
   defaultCurrency: string | null;
   requirementsDue: string[];
@@ -96,11 +110,14 @@ type RepresentativePrefill = {
   address?: StripeAddressBlock;
 };
 
-type VendorPrefill = {
+type ConnectPrefill = {
+  businessType: ConnectBusinessType;
   accountCountry: string;
   company: Record<string, unknown>;
   business_profile: Record<string, unknown>;
-  /** Représentant légal — via API Persons, pas `accounts.*.individual`. */
+  /** Compte `individual` (livreur) — envoyé à `accounts.create`. */
+  individual?: Record<string, unknown>;
+  /** Représentant légal — via API Persons, comptes `company` uniquement. */
   representative: RepresentativePrefill;
 };
 
@@ -325,8 +342,9 @@ function buildVendorPrefill(
   store: (StoreModel & { address?: AddressModel }) | null,
   businessWebsiteUrl?: string,
   userAddress?: AddressModel | null,
-): VendorPrefill {
+): ConnectPrefill {
   const isDelivery = user.type === UserTypeEnum.DELIVERY;
+  const businessType = resolveConnectBusinessType(user);
   const businessName = isDelivery
     ? user.fullName?.trim() || 'Livreur Afrika Meals'
     : store?.name?.trim() || user.fullName?.trim() || 'Restaurant Afrika Meals';
@@ -366,7 +384,7 @@ function buildVendorPrefill(
 
   const business_profile: Record<string, unknown> = {
     name: businessName.slice(0, 100),
-    mcc: DEFAULT_RESTAURANT_MCC,
+    mcc: isDelivery ? DEFAULT_DELIVERY_MCC : DEFAULT_RESTAURANT_MCC,
     product_description: productDescription,
     ...(websiteUrl ? { url: websiteUrl } : {}),
     ...(phoneE164 ? { support_phone: phoneE164 } : {}),
@@ -381,7 +399,24 @@ function buildVendorPrefill(
     ...(addressBlock ? { address: addressBlock } : {}),
   };
 
-  return { accountCountry, company, business_profile, representative };
+  const individual: Record<string, unknown> | undefined = isDelivery
+    ? {
+        first_name: firstName,
+        last_name: lastName,
+        email: accountEmail,
+        ...(phoneE164 ? { phone: phoneE164 } : {}),
+        ...(addressBlock ? { address: addressBlock } : {}),
+      }
+    : undefined;
+
+  return {
+    businessType,
+    accountCountry,
+    company,
+    business_profile,
+    individual,
+    representative,
+  };
 }
 
 /** Message client (FR) — jamais de clé API ni message Stripe brut. */
@@ -524,7 +559,7 @@ export class StripeConnectService {
       type: 'express',
       country,
       email: params.email.trim(),
-      business_type: CONNECT_BUSINESS_TYPE,
+      business_type: VENDOR_CONNECT_BUSINESS_TYPE,
       capabilities: {
         card_payments: { requested: true },
         transfers: { requested: true },
@@ -532,6 +567,9 @@ export class StripeConnectService {
       business_profile: {
         name: params.businessName.trim() || 'Restaurant',
         mcc: DEFAULT_RESTAURANT_MCC,
+      },
+      company: {
+        name: params.businessName.trim() || 'Restaurant',
       },
       metadata: { platform: 'africa-meals' },
     })) as StripeConnectAccountRecord;
@@ -673,6 +711,38 @@ export class StripeConnectService {
       .exec();
   }
 
+  /**
+   * Livreur avec compte Express créé en `company` (legacy) : supprime le compte
+   * Stripe incomplet et repart sur `individual` à la prochaine création.
+   */
+  private async resetMisconfiguredDeliveryConnectAccount(
+    user: UserModel,
+    userId: Types.ObjectId,
+    account: StripeConnectAccountRecord,
+  ): Promise<boolean> {
+    if (user.type !== UserTypeEnum.DELIVERY) return false;
+    if (account.business_type === DELIVERY_CONNECT_BUSINESS_TYPE) return false;
+    if (isConnectFullyActive(account)) return false;
+
+    const accountId = account.id?.trim();
+    if (!accountId) return false;
+
+    this.logger.warn(
+      `Resetting delivery Connect account ${accountId} (was business_type=${account.business_type ?? 'unknown'}) for user ${userId.toString()}`,
+    );
+
+    try {
+      await this.stripe().accounts.del(accountId);
+    } catch (e) {
+      this.logger.warn(
+        `Stripe Connect account delete skipped for ${accountId}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+
+    await this.clearStaleConnectAccount(userId);
+    return true;
+  }
+
   private async primaryStoreForVendor(
     userId: Types.ObjectId,
   ): Promise<(StoreModel & { address?: AddressModel }) | null> {
@@ -717,7 +787,7 @@ export class StripeConnectService {
     user: UserModel,
     store: (StoreModel & { address?: AddressModel }) | null,
     userAddress: AddressModel | null,
-  ): VendorPrefill {
+  ): ConnectPrefill {
     return buildVendorPrefill(
       user,
       store,
@@ -756,7 +826,7 @@ export class StripeConnectService {
    * Ces champs sont envoyés uniquement à `accounts.create`.
    */
   private buildExpressSafeUpdateBody(
-    prefill: VendorPrefill,
+    prefill: ConnectPrefill,
   ): Record<string, unknown> {
     return {
       business_profile: prefill.business_profile,
@@ -766,8 +836,9 @@ export class StripeConnectService {
   /** Représentant légal (comptes `company` uniquement). */
   private async syncRepresentativePerson(
     accountId: string,
-    prefill: VendorPrefill,
+    prefill: ConnectPrefill,
   ): Promise<void> {
+    if (prefill.businessType !== VENDOR_CONNECT_BUSINESS_TYPE) return;
     const rep = prefill.representative;
     if (!rep.email?.trim()) return;
 
@@ -861,7 +932,11 @@ export class StripeConnectService {
 
   private statusFromAccount(
     account: StripeConnectAccountRecord | null,
+    user?: UserModel,
   ): StripeConnectStatus {
+    const defaultBusinessType = user
+      ? resolveConnectBusinessType(user)
+      : VENDOR_CONNECT_BUSINESS_TYPE;
     if (!account) {
       return {
         accountId: null,
@@ -870,7 +945,7 @@ export class StripeConnectService {
         detailsSubmitted: false,
         onboardingComplete: false,
         status: 'not_created',
-        businessType: CONNECT_BUSINESS_TYPE,
+        businessType: defaultBusinessType,
         country: null,
         defaultCurrency: null,
         requirementsDue: [],
@@ -886,7 +961,11 @@ export class StripeConnectService {
       detailsSubmitted: Boolean(account.details_submitted),
       onboardingComplete: isConnectFullyActive(account),
       status: resolveConnectLifecycleStatus(account),
-      businessType: CONNECT_BUSINESS_TYPE,
+      businessType:
+        account.business_type === DELIVERY_CONNECT_BUSINESS_TYPE ||
+        account.business_type === VENDOR_CONNECT_BUSINESS_TYPE
+          ? account.business_type
+          : defaultBusinessType,
       country: account.country ?? null,
       defaultCurrency: account.default_currency ?? null,
       requirementsDue: requirements?.currently_due ?? [],
@@ -914,7 +993,7 @@ export class StripeConnectService {
     if (!user) return;
     const uid = this.userId(user);
     await this.syncAccountFlags(uid, account);
-    const status = this.statusFromAccount(account);
+    const status = this.statusFromAccount(account, user);
     this.pushConnectStatusRealtime(uid, status);
     this.logger.log(
       `Stripe Connect account.updated synced for user ${uid} (status=${status.status})`,
@@ -932,19 +1011,19 @@ export class StripeConnectService {
       .exec();
     const accountId = doc?.stripeConnectAccountId?.trim() || null;
     if (!accountId) {
-      return this.statusFromAccount(null);
+      return this.statusFromAccount(null, user);
     }
     try {
       const account = await this.stripe().accounts.retrieve(accountId);
       await this.syncAccountFlags(uid, account);
-      return this.statusFromAccount(account);
+      return this.statusFromAccount(account, user);
     } catch (e) {
       this.logger.warn(
         `Stripe account retrieve failed for ${accountId}: ${e instanceof Error ? e.message : String(e)}`,
       );
       if (isStripeConnectAccountUnavailableError(e)) {
         await this.clearStaleConnectAccount(uid);
-        const reset = this.statusFromAccount(null);
+        const reset = this.statusFromAccount(null, user);
         this.pushConnectStatusRealtime(uid, reset);
         return reset;
       }
@@ -959,7 +1038,7 @@ export class StripeConnectService {
           past_due: doc?.stripeConnectRequirementsPastDue ?? [],
         },
       };
-      return this.statusFromAccount(cachedAccount);
+      return this.statusFromAccount(cachedAccount, user);
     }
   }
 
@@ -987,6 +1066,17 @@ export class StripeConnectService {
     if (accountId) {
       try {
         account = await stripe.accounts.retrieve(accountId);
+        if (
+          account &&
+          (await this.resetMisconfiguredDeliveryConnectAccount(
+            user,
+            uid,
+            account,
+          ))
+        ) {
+          accountId = undefined;
+          account = null;
+        }
       } catch (retrieveErr) {
         if (isStripeConnectAccountUnavailableError(retrieveErr)) {
           await this.clearStaleConnectAccount(uid);
@@ -998,11 +1088,11 @@ export class StripeConnectService {
 
     if (!accountId) {
       try {
-        account = (await stripe.accounts.create({
+        const createBody: Record<string, unknown> = {
           type: 'express',
           country: prefill.accountCountry,
           email: user.email?.trim(),
-          business_type: CONNECT_BUSINESS_TYPE,
+          business_type: prefill.businessType,
           capabilities: {
             card_payments: { requested: true },
             transfers: { requested: true },
@@ -1010,12 +1100,25 @@ export class StripeConnectService {
           metadata: {
             platform: 'africa-meals',
             userId: uid.toString(),
+            recipientRole:
+              prefill.businessType === DELIVERY_CONNECT_BUSINESS_TYPE
+                ? 'delivery'
+                : 'vendor',
           },
-          company: prefill.company,
           business_profile: prefill.business_profile,
-        })) as StripeConnectAccountRecord;
+        };
+        if (prefill.businessType === VENDOR_CONNECT_BUSINESS_TYPE) {
+          createBody.company = prefill.company;
+        } else if (prefill.individual) {
+          createBody.individual = prefill.individual;
+        }
+        account = (await stripe.accounts.create(
+          createBody,
+        )) as StripeConnectAccountRecord;
         accountId = account.id;
-        await this.syncRepresentativePerson(accountId, prefill);
+        if (prefill.businessType === VENDOR_CONNECT_BUSINESS_TYPE) {
+          await this.syncRepresentativePerson(accountId, prefill);
+        }
         await this.syncAccountFlags(uid, account);
       } catch (createErr) {
         this.logger.error(

@@ -14,6 +14,9 @@ export type OrderWsTrackingPayload = {
   courierLongitude?: number;
   remainingDistanceKm?: number;
   elapsedMinutes?: number;
+  /** Livreur mobile assigné (`User` DELIVERY) — chat client ↔ livreur. */
+  assignedDeliveryUserId?: string;
+  canMessageDeliveryAgent?: boolean;
 };
 
 /**

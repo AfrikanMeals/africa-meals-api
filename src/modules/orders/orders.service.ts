@@ -19,6 +19,7 @@ import {
   OrderRefundRequestEntryStatusEnum,
   OrderStatusEnum,
 } from '@schemas/order.schema';
+import { DeliveryAgentApplicationModel } from '@schemas/delivery-agent-application.schema';
 import {
   DeliveryDriverModel,
   DeliveryDriverStatutEnum,
@@ -62,6 +63,9 @@ export class OrdersService {
 
   @InjectModel(DeliveryDriverModel.name)
   private readonly _deliveryDriverModel: Model<DeliveryDriverModel>;
+
+  @InjectModel(DeliveryAgentApplicationModel.name)
+  private readonly _deliveryAgentApplications: Model<DeliveryAgentApplicationModel>;
 
   @Inject(CartService)
   private readonly _cartService: CartService;
@@ -308,11 +312,14 @@ export class OrdersService {
     const enriched = rows.map((o) => {
       const id = o['_id'] != null ? String(o['_id']) : '';
       const refund = this.clientRefundFlags(o);
+      const delivery = this.clientDeliveryAgentFlags(o);
       return {
         ...o,
         hasBusinessReport: reported.has(id),
         canRequestRefund: refund.canRequestRefund,
         refundRequestState: refund.refundRequestState,
+        assignedDeliveryUserId: delivery.assignedDeliveryUserId,
+        canMessageDeliveryAgent: delivery.canMessageDeliveryAgent,
       };
     });
     return this.attachStatusEventsToOrders(enriched);
@@ -400,6 +407,9 @@ export class OrdersService {
         throw new NotFoundException('order_not_found');
       }
       filter['store'] = { $in: storeIds };
+    } else if (user.type === UserTypeEnum.DELIVERY) {
+      filter['assigned_delivery_user'] = new Types.ObjectId(String(user.id));
+      filter['shouldShip'] = true;
     } else {
       filter['user'] = new Types.ObjectId(String(user.id));
     }
@@ -1372,9 +1382,16 @@ export class OrdersService {
     status: OrderStatusEnum,
     extra?: Partial<OrderWsTrackingPayload>,
   ): void {
-    const tracking = {
+    const delivery = this.clientDeliveryAgentFlags(
+      order as Record<string, unknown>,
+    );
+    const tracking: OrderWsTrackingPayload = {
       ...this.buildOrderTrackingPayload(order, status),
       ...extra,
+      ...(delivery.assignedDeliveryUserId
+        ? { assignedDeliveryUserId: delivery.assignedDeliveryUserId }
+        : {}),
+      canMessageDeliveryAgent: delivery.canMessageDeliveryAgent,
     };
     const customerId = this.userIdFromOrderDoc(order as OrderModel);
     if (customerId) {
@@ -1386,6 +1403,18 @@ export class OrdersService {
     if (vendorId && vendorId !== customerId) {
       this._wsOrderNotify.notifyCustomerOrderUpdate(vendorId, tracking);
       this._wsOrderNotify.notifyCustomerOrderTracking(vendorId, tracking);
+    }
+    const deliveryAgentId = this.assignedDeliveryUserIdFromOrderDoc(order);
+    if (
+      deliveryAgentId &&
+      deliveryAgentId !== customerId &&
+      deliveryAgentId !== vendorId
+    ) {
+      this._wsOrderNotify.notifyCustomerOrderUpdate(deliveryAgentId, tracking);
+      this._wsOrderNotify.notifyCustomerOrderTracking(
+        deliveryAgentId,
+        tracking,
+      );
     }
     this._wsOrderNotify.notifyStaffOrderBroadcast(tracking);
   }
@@ -1613,6 +1642,44 @@ export class OrdersService {
     return undefined;
   }
 
+  /** Indicateurs chat client ↔ livreur (commande livraison avec livreur assigné). */
+  private clientDeliveryAgentFlags(order: Record<string, unknown>): {
+    assignedDeliveryUserId: string | null;
+    canMessageDeliveryAgent: boolean;
+  } {
+    const agentId = this.assignedDeliveryUserIdFromOrderDoc(order);
+    const shouldShip =
+      order['shouldShip'] === true || order['should_ship'] === true;
+    if (!shouldShip || !agentId) {
+      return {
+        assignedDeliveryUserId: agentId,
+        canMessageDeliveryAgent: false,
+      };
+    }
+    const status = String(order['status'] ?? '').trim().toLowerCase();
+    const canMessage = ['approved', 'shipped', 'completed'].includes(status);
+    return {
+      assignedDeliveryUserId: agentId,
+      canMessageDeliveryAgent: canMessage,
+    };
+  }
+
+  private assignedDeliveryUserIdFromOrderDoc(
+    order: OrderModel | Record<string, unknown>,
+  ): string | null {
+    const raw =
+      (order as OrderModel).assignedDeliveryUser ??
+      (order as Record<string, unknown>).assigned_delivery_user ??
+      (order as Record<string, unknown>).assignedDeliveryUser;
+    if (raw == null) return null;
+    if (typeof raw === 'object' && '_id' in (raw as object)) {
+      const id = String((raw as { _id: unknown })._id).trim();
+      return id.length > 0 ? id : null;
+    }
+    const id = String(raw).trim();
+    return id.length > 0 ? id : null;
+  }
+
   private userIdFromOrderDoc(order: OrderModel): string | undefined {
     const raw = order.user as unknown;
     if (raw instanceof Types.ObjectId) return raw.toHexString();
@@ -1837,7 +1904,6 @@ export class OrdersService {
       status === OrderStatusEnum.SHIPPED &&
       Types.ObjectId.isValid(oid)
     ) {
-      const driver = await this.findDeliveryDriverForOrder(oid);
       const storeCoords = this.coordsFromAddressLike(
         plain.store &&
           typeof plain.store === 'object' &&
@@ -1847,16 +1913,15 @@ export class OrdersService {
       );
       const userAddr = this.defaultUserAddressFromPopulated(plain.user);
       const userCoords = userAddr?.coords;
+      const courier = await this.resolveShippedCourierCoordinates(oid, plain);
 
       if (
-        driver &&
-        typeof driver.latitude === 'number' &&
-        typeof driver.longitude === 'number' &&
+        courier &&
         storeCoords &&
         userCoords
       ) {
-        const courierLat = driver.latitude;
-        const courierLng = driver.longitude;
+        const courierLat = courier.latitude;
+        const courierLng = courier.longitude;
         const totalKm = +haversineDistance(storeCoords, userCoords).toFixed(2);
         const remainingKm = +haversineDistance(
           [courierLng, courierLat],
@@ -1929,6 +1994,112 @@ export class OrdersService {
     if (!start || Number.isNaN(start.getTime())) return undefined;
     const mins = Math.floor((Date.now() - start.getTime()) / 60000);
     return mins < 1 ? 1 : mins;
+  }
+
+  /**
+   * Pousse la position du livreur mobile sur la commande expédiée (WS + polling client).
+   */
+  async publishCourierPosition(
+    orderId: string,
+    courierLat: number,
+    courierLng: number,
+  ): Promise<void> {
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) return;
+
+    const order = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .populate({
+        path: 'store',
+        populate: [{ path: 'address' }],
+      })
+      .populate(OrdersService.orderUserWithAddressesPopulate)
+      .exec();
+    if (!order) return;
+
+    const plain = order.toObject() as Record<string, unknown>;
+    const status = String(plain.status ?? '') as OrderStatusEnum;
+    if (status !== OrderStatusEnum.SHIPPED) return;
+
+    const extra = this.buildShippedCourierTrackingExtra(
+      plain,
+      courierLat,
+      courierLng,
+      status,
+    );
+    if (!extra) return;
+    this.notifyPartiesOrderRealtimeFromDoc(order, status, extra);
+  }
+
+  private buildShippedCourierTrackingExtra(
+    plain: Record<string, unknown>,
+    courierLat: number,
+    courierLng: number,
+    status: OrderStatusEnum,
+  ): Partial<OrderWsTrackingPayload> | null {
+    const storeCoords = this.coordsFromAddressLike(
+      plain.store &&
+        typeof plain.store === 'object' &&
+        'address' in (plain.store as object)
+        ? (plain.store as { address?: unknown }).address
+        : undefined,
+    );
+    const userAddr = this.defaultUserAddressFromPopulated(plain.user);
+    const userCoords = userAddr?.coords;
+    if (!storeCoords || !userCoords) return null;
+
+    const totalKm = +haversineDistance(storeCoords, userCoords).toFixed(2);
+    const remainingKm = +haversineDistance(
+      [courierLng, courierLat],
+      userCoords,
+    ).toFixed(2);
+    const fromStore = +haversineDistance(storeCoords, [
+      courierLng,
+      courierLat,
+    ]).toFixed(2);
+    const progress =
+      totalKm > 0
+        ? Math.min(0.98, Math.max(0.1, fromStore / totalKm))
+        : this.trackingProgressForStatus(status, false);
+
+    return {
+      distanceKm: totalKm,
+      remainingDistanceKm: remainingKm,
+      progress,
+      courierLatitude: courierLat,
+      courierLongitude: courierLng,
+    };
+  }
+
+  private async resolveShippedCourierCoordinates(
+    orderId: string,
+    plain: Record<string, unknown>,
+  ): Promise<{ latitude: number; longitude: number } | null> {
+    const driver = await this.findDeliveryDriverForOrder(orderId);
+    if (
+      driver &&
+      typeof driver.latitude === 'number' &&
+      typeof driver.longitude === 'number'
+    ) {
+      return { latitude: driver.latitude, longitude: driver.longitude };
+    }
+
+    const agentId = this.assignedDeliveryUserIdFromOrderDoc(plain);
+    if (!agentId || !Types.ObjectId.isValid(agentId)) return null;
+
+    const app = await this._deliveryAgentApplications
+      .findOne({ user: new Types.ObjectId(agentId) })
+      .select('lastLatitude lastLongitude')
+      .lean()
+      .exec();
+    if (
+      app &&
+      typeof app.lastLatitude === 'number' &&
+      typeof app.lastLongitude === 'number'
+    ) {
+      return { latitude: app.lastLatitude, longitude: app.lastLongitude };
+    }
+    return null;
   }
 
   private async findDeliveryDriverForOrder(

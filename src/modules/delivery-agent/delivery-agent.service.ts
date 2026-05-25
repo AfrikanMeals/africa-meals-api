@@ -27,6 +27,7 @@ import { haversineDistance } from 'src/utils/helpers';
 import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
 import { PlatformShippingSettingsService } from '@modules/platform-shipping-settings/platform-shipping-settings.service';
 import { PatchDeliveryAgentApplicationDto } from './dto/delivery-agent-application.dto';
+import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
 
 type LeanApp = {
   status: DeliveryAgentApplicationStatus;
@@ -523,61 +524,9 @@ ${safeReason ? `<p><strong>Motif :</strong> ${safeReason}</p>` : ''}
       .lean()
       .exec();
 
-    const mapped = rows.map((row) => {
-      const id = String(row._id);
-      const tail = id.slice(-6).toUpperCase();
-      const shippingAddress = this.shippingLineFromOrder(row);
-      const store =
-        row.store && typeof row.store === 'object'
-          ? (row.store as {
-              name?: string;
-              address?: unknown;
-            })
-          : null;
-      const storeName = store?.name?.trim() || undefined;
-      const storeAddr =
-        store?.address && typeof store.address === 'object'
-          ? (store.address as Record<string, unknown>)
-          : undefined;
-      const storeCoords = this.coordsFromAddressLike(storeAddr);
-      const userAddr = this.defaultUserAddressFromPopulated(row.user);
-      let distanceKm: number | undefined;
-      if (storeCoords && userAddr?.coords) {
-        distanceKm = +haversineDistance(
-          storeCoords,
-          userAddr.coords,
-        ).toFixed(2);
-      }
-      const destLng = userAddr?.coords?.[0];
-      const destLat = userAddr?.coords?.[1];
-      const storeLat = storeCoords?.[1];
-      const storeLng = storeCoords?.[0];
-      return {
-        id,
-        orderRef: `#AE-${tail}`,
-        priceCad: Number(row.totalPrice) || 0,
-        distanceKm: distanceKm ?? null,
-        storeLat:
-          storeLat != null && Number.isFinite(storeLat) ? storeLat : null,
-        storeLng:
-          storeLng != null && Number.isFinite(storeLng) ? storeLng : null,
-        destinationLat:
-          destLat != null && Number.isFinite(destLat) ? destLat : null,
-        destinationLng:
-          destLng != null && Number.isFinite(destLng) ? destLng : null,
-        shippingAddress,
-        storeName: storeName ?? null,
-        customerName: (() => {
-          const u = row.user;
-          if (!u || typeof u !== 'object') return null;
-          const name = String(
-            (u as { fullName?: string }).fullName ?? '',
-          ).trim();
-          return name || null;
-        })(),
-        eta: distanceKm != null ? this.etaLabelFromKm(distanceKm) : null,
-      };
-    });
+    const mapped = rows.map((row) =>
+      this.mapOrderRowForAgent(row as Record<string, unknown>),
+    );
 
     const items = mapped.filter((item) => {
       if (item.distanceKm == null) return false;
@@ -585,6 +534,83 @@ ${safeReason ? `<p><strong>Motif :</strong> ${safeReason}</p>` : ''}
     });
 
     return { items, maxDeliveryRadiusKm };
+  }
+
+  /** Commande expédiée assignée au livreur connecté (carte + suivi). */
+  async getActiveOrder(user: UserModel) {
+    this.assertDeliveryAgent(user);
+    const agentId = new Types.ObjectId(String(user._id ?? user.id));
+    const row = await this._orders
+      .findOne({
+        assigned_delivery_user: agentId,
+        shouldShip: true,
+        status: OrderStatusEnum.SHIPPED,
+      })
+      .populate({
+        path: 'store',
+        select: 'name address',
+        populate: {
+          path: 'address',
+          select: 'address city zipCode location',
+        },
+      })
+      .populate({
+        path: 'user',
+        select: 'fullName addresses',
+        populate: {
+          path: 'addresses',
+          select: 'isDefault address city zipCode location label',
+        },
+      })
+      .lean()
+      .exec();
+    if (!row) {
+      return { item: null };
+    }
+    return {
+      item: this.mapOrderRowForAgent(row as Record<string, unknown>),
+    };
+  }
+
+  /** Met à jour la position GPS et notifie le suivi temps réel de la course active. */
+  async reportLocation(user: UserModel, dto: DeliveryAgentLocationDto) {
+    this.assertDeliveryAgent(user);
+    const lat = Number(dto.latitude);
+    const lng = Number(dto.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      throw new BadRequestException('invalid_coordinates');
+    }
+    const agentId = new Types.ObjectId(String(user._id ?? user.id));
+    await this._applications
+      .updateOne(
+        { user: agentId },
+        {
+          $set: {
+            lastLatitude: lat,
+            lastLongitude: lng,
+            locationUpdatedAt: new Date(),
+          },
+        },
+      )
+      .exec();
+
+    const active = await this._orders
+      .findOne({
+        assigned_delivery_user: agentId,
+        shouldShip: true,
+        status: OrderStatusEnum.SHIPPED,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    if (active?._id) {
+      await this._ordersService.publishCourierPosition(
+        String(active._id),
+        lat,
+        lng,
+      );
+    }
+    return { ok: true };
   }
 
   async assignSelfToOrder(user: UserModel, orderId: string) {
@@ -688,6 +714,23 @@ ${safeReason ? `<p><strong>Motif :</strong> ${safeReason}</p>` : ''}
       OrderStatusEnum.SHIPPED,
     );
 
+    const appLoc = await this._applications
+      .findOne({ user: agentId })
+      .select('lastLatitude lastLongitude')
+      .lean()
+      .exec();
+    if (
+      appLoc &&
+      typeof appLoc.lastLatitude === 'number' &&
+      typeof appLoc.lastLongitude === 'number'
+    ) {
+      await this._ordersService.publishCourierPosition(
+        orderDoc._id.toString(),
+        appLoc.lastLatitude,
+        appLoc.lastLongitude,
+      );
+    }
+
     return { ok: true, orderId: orderDoc._id.toString(), orderRef };
   }
 
@@ -731,6 +774,21 @@ ${safeReason ? `<p><strong>Motif :</strong> ${safeReason}</p>` : ''}
   listPayouts(user: UserModel, limit?: number, startingAfter?: string) {
     this.assertDeliveryAgent(user);
     return this._stripeConnect.listPayouts(user, limit, startingAfter);
+  }
+
+  getConnectBalance(user: UserModel) {
+    this.assertDeliveryAgent(user);
+    return this._stripeConnect.getConnectBalance(user);
+  }
+
+  getPayoutEstimate(user: UserModel) {
+    this.assertDeliveryAgent(user);
+    return this._stripeConnect.getPayoutEstimate(user);
+  }
+
+  requestPayout(user: UserModel) {
+    this.assertDeliveryAgent(user);
+    return this._stripeConnect.requestPayout(user);
   }
 
   async listShippingPaymentHistory(user: UserModel) {
@@ -789,6 +847,55 @@ ${safeReason ? `<p><strong>Motif :</strong> ${safeReason}</p>` : ''}
         ? (ship * (Number(settings.deliveryWithheldFeePercent) || 0)) / 100
         : Number(settings.deliveryWithheldFeeFixed) || 0;
     return Math.max(0, Math.round((ship - withheld) * 100) / 100);
+  }
+
+  private mapOrderRowForAgent(row: Record<string, unknown>) {
+    const id = String(row._id);
+    const tail = id.slice(-6).toUpperCase();
+    const shippingAddress = this.shippingLineFromOrder(row);
+    const store =
+      row.store && typeof row.store === 'object'
+        ? (row.store as {
+            name?: string;
+            address?: unknown;
+          })
+        : null;
+    const storeName = store?.name?.trim() || undefined;
+    const storeAddr =
+      store?.address && typeof store.address === 'object'
+        ? (store.address as Record<string, unknown>)
+        : undefined;
+    const storeCoords = this.coordsFromAddressLike(storeAddr);
+    const userAddr = this.defaultUserAddressFromPopulated(row.user);
+    let distanceKm: number | undefined;
+    if (storeCoords && userAddr?.coords) {
+      distanceKm = +haversineDistance(storeCoords, userAddr.coords).toFixed(2);
+    }
+    const destLng = userAddr?.coords?.[0];
+    const destLat = userAddr?.coords?.[1];
+    const storeLat = storeCoords?.[1];
+    const storeLng = storeCoords?.[0];
+    return {
+      id,
+      orderRef: `#AE-${tail}`,
+      priceCad: Number(row.totalPrice) || 0,
+      distanceKm: distanceKm ?? null,
+      storeLat: storeLat != null && Number.isFinite(storeLat) ? storeLat : null,
+      storeLng: storeLng != null && Number.isFinite(storeLng) ? storeLng : null,
+      destinationLat:
+        destLat != null && Number.isFinite(destLat) ? destLat : null,
+      destinationLng:
+        destLng != null && Number.isFinite(destLng) ? destLng : null,
+      shippingAddress,
+      storeName: storeName ?? null,
+      customerName: (() => {
+        const u = row.user;
+        if (!u || typeof u !== 'object') return null;
+        const name = String((u as { fullName?: string }).fullName ?? '').trim();
+        return name || null;
+      })(),
+      eta: distanceKm != null ? this.etaLabelFromKm(distanceKm) : null,
+    };
   }
 
   private shippingLineFromOrder(

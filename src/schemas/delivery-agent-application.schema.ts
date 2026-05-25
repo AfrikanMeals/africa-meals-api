@@ -51,6 +51,16 @@ export class DeliveryAgentApplicationModel extends BaseSchema {
 
   @Prop({ required: false, maxlength: 500, name: 'rejection_reason' })
   rejectionReason?: string;
+
+  /** Dernière position GPS reportée par l’app livreur (suivi temps réel). */
+  @Prop({ required: false, min: -90, max: 90 })
+  lastLatitude?: number;
+
+  @Prop({ required: false, min: -180, max: 180 })
+  lastLongitude?: number;
+
+  @Prop({ required: false })
+  locationUpdatedAt?: Date;
 }
 
 export const DeliveryAgentApplicationSchema = SchemaFactory.createForClass(
