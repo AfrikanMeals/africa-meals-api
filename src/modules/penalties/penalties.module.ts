@@ -1,4 +1,4 @@
-import { StripeChargeFeeService } from '@modules/billing/stripe/stripe-charge-fee.service';
+import { StripeConnectTransferModule } from '@modules/billing/stripe/stripe-connect-transfer.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
@@ -14,6 +14,7 @@ import { StripePenaltyTransferService } from './stripe-penalty-transfer.service'
 
 @Module({
   imports: [
+    StripeConnectTransferModule,
     MongooseModule.forFeature([
       { name: PenaltyTransferModel.name, schema: PenaltyTransferSchema },
       { name: OrderModel.name, schema: OrderSchema },
@@ -22,11 +23,7 @@ import { StripePenaltyTransferService } from './stripe-penalty-transfer.service'
     ]),
   ],
   controllers: [PenaltiesController],
-  providers: [
-    PenaltiesService,
-    StripePenaltyTransferService,
-    StripeChargeFeeService,
-  ],
+  providers: [PenaltiesService, StripePenaltyTransferService],
   exports: [PenaltiesService, StripePenaltyTransferService],
 })
 export class PenaltiesModule {}

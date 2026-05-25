@@ -2720,16 +2720,12 @@ export class DashboardService {
     radiusKm: number,
     includeAllApprovedForAdmin: boolean,
   ): Promise<DashboardLivreurRow[]> {
-    const fromAddresses = await this.listRegionalDeliveryUsersAsRows(
-      storePoints,
-      radiusKm,
-    );
-    const fromGps = await this.listDeliveryUsersFromApplicationGps(
+    const rows = await this.listDeliveryUsersFromApplicationGps(
       storePoints,
       radiusKm,
       includeAllApprovedForAdmin,
     );
-    return this.mergeLivreurRowsById([...fromAddresses, ...fromGps]);
+    return this.mergeLivreurRowsById(rows);
   }
 
   private async listDeliveryUsersFromApplicationGps(
@@ -2817,89 +2813,6 @@ export class DashboardService {
           bestStoreId,
           initialStatut,
           app,
-        ),
-      );
-    }
-    return rows;
-  }
-
-  private async listRegionalDeliveryUsersAsRows(
-    storePoints: VendorStorePoint[],
-    radiusKm: number,
-  ): Promise<DashboardLivreurRow[]> {
-    if (!storePoints.length) return [];
-    const radiusRad = radiusKm / EARTH_RADIUS_KM;
-    const geoClauses = storePoints.map((p) => ({
-      location: {
-        $geoWithin: {
-          $centerSphere: [[p.lng, p.lat], radiusRad],
-        },
-      },
-    }));
-    const nearAddresses = await this.addressModel
-      .find({ $or: geoClauses })
-      .select('_id')
-      .lean()
-      .exec();
-    const addressIds = nearAddresses
-      .map((a) => a._id)
-      .filter((id) => id instanceof Types.ObjectId);
-    if (!addressIds.length) return [];
-
-    const users = await this.userModel
-      .find({
-        type: UserTypeEnum.DELIVERY,
-        addresses: { $in: addressIds },
-      })
-      .populate({ path: 'addresses', select: 'isDefault city location' })
-      .lean()
-      .exec();
-
-    const addressIdSet = new Set(addressIds.map((id) => String(id)));
-    const rows: DashboardLivreurRow[] = [];
-
-    for (const raw of users) {
-      const u = raw as unknown as DeliveryUserLean;
-      const addrs = (u.addresses ?? []).filter((a) =>
-        addressIdSet.has(String(a._id)),
-      );
-      if (!addrs.length) continue;
-
-      const withCoords = addrs.filter((a) => {
-        const c = a.location?.coordinates;
-        return (
-          Array.isArray(c) &&
-          c.length >= 2 &&
-          !(Number(c[0]) === 0 && Number(c[1]) === 0)
-        );
-      });
-      if (!withCoords.length) continue;
-
-      const chosen =
-        withCoords.find((a) => a.isDefault) ?? withCoords[0];
-      if (!chosen) continue;
-      const lng = Number(chosen.location!.coordinates![0]);
-      const lat = Number(chosen.location!.coordinates![1]);
-
-      let bestStoreId = storePoints[0]!.storeId;
-      let bestKm = Number.POSITIVE_INFINITY;
-      for (const sp of storePoints) {
-        const d = haversineKm(lng, lat, sp.lng, sp.lat);
-        if (d < bestKm) {
-          bestKm = d;
-          bestStoreId = sp.storeId;
-        }
-      }
-
-      rows.push(
-        this.toDashboardLivreurRowFromDeliveryUser(
-          u,
-          chosen.city?.trim() || '—',
-          lng,
-          lat,
-          bestStoreId,
-          'disponible',
-          undefined,
         ),
       );
     }
