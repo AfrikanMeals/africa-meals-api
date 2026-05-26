@@ -1,6 +1,9 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
-import { LOYALTY_TIER_THRESHOLDS } from '@modules/loyalty/loyalty.constants';
+import {
+  LOYALTY_REWARD_CATALOG,
+  LOYALTY_TIER_THRESHOLDS,
+} from '@modules/loyalty/loyalty.constants';
 
 @Schema({ _id: false })
 export class LoyaltyTierSetting {
@@ -28,6 +31,30 @@ export class LoyaltyTierSetting {
 
 export const LoyaltyTierSettingSchema =
   SchemaFactory.createForClass(LoyaltyTierSetting);
+
+@Schema({ _id: false })
+export class LoyaltyRewardSetting {
+  @Prop({ required: true, trim: true })
+  id: string;
+
+  @Prop({ required: true, trim: true })
+  title: string;
+
+  @Prop({ required: true, default: '🎁' })
+  icon: string;
+
+  @Prop({ required: true, default: 0 })
+  points: number;
+
+  @Prop({ required: true, trim: true })
+  category: string;
+
+  @Prop({ required: true, default: true })
+  active: boolean;
+}
+
+export const LoyaltyRewardSettingSchema =
+  SchemaFactory.createForClass(LoyaltyRewardSetting);
 
 /** Singleton programme fidélité (`key === 'default'`). */
 @Schema({ timestamps: true, collection: 'loyalty_settings' })
@@ -65,6 +92,20 @@ export class LoyaltySettingsModel {
       })),
   })
   tiers: LoyaltyTierSetting[];
+
+  @Prop({
+    type: [LoyaltyRewardSettingSchema],
+    default: () =>
+      LOYALTY_REWARD_CATALOG.map((r) => ({
+        id: r.id,
+        title: r.title,
+        icon: r.icon,
+        points: r.points,
+        category: r.category,
+        active: r.active,
+      })),
+  })
+  rewards: LoyaltyRewardSetting[];
 }
 
 export type LoyaltySettingsDocument =

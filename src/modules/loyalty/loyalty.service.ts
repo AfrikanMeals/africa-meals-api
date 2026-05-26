@@ -14,7 +14,6 @@ import { UpdateLoyaltySettingsDto } from './dto/update-loyalty-settings.dto';
 import {
   LOYALTY_CURRENCY,
   LOYALTY_ORDER_CREDIT_REASON_PREFIX,
-  LOYALTY_REWARD_CATALOG,
 } from './loyalty.constants';
 import {
   isMemberActive,
@@ -29,7 +28,9 @@ import {
   mergeTierMetadata,
   type ResolvedLoyaltyConfig,
   validateTierChain,
+  type LoyaltyRewardItem,
 } from './loyalty-settings.util';
+import { normalizeRewardsUpdate } from './loyalty-rewards.util';
 
 const SETTINGS_KEY = 'default';
 
@@ -77,7 +78,7 @@ export type LoyaltyDashboardResponse = {
   };
   tierCounts: Array<{ tier: string; count: number }>;
   members: LoyaltyMemberRow[];
-  rewardsCatalog: typeof LOYALTY_REWARD_CATALOG;
+  rewardsCatalog: LoyaltyRewardItem[];
 };
 
 @Injectable()
@@ -110,6 +111,7 @@ export class LoyaltyService {
         cadPerPoint: def.cadPerPoint,
         welcomeBonusPoints: def.welcomeBonusPoints,
         tiers: def.tiers,
+        rewards: def.rewards,
       });
       doc = created.toObject();
     }
@@ -134,7 +136,14 @@ export class LoyaltyService {
         bg: t.bg,
         advantages: t.advantages,
       })),
+      rewards: config.rewards,
     };
+  }
+
+  /** Récompenses actives pour l’app client (échange futur). */
+  async getActiveRewardsCatalog(): Promise<LoyaltyRewardItem[]> {
+    const config = await this.resolveConfig();
+    return config.rewards.filter((r) => r.active);
   }
 
   async updateSettings(caller: UserModel, dto: UpdateLoyaltySettingsDto) {
@@ -169,6 +178,11 @@ export class LoyaltyService {
       validateTierChain(tiers);
     }
 
+    let rewards = current.rewards;
+    if (dto.rewards?.length) {
+      rewards = normalizeRewardsUpdate(dto.rewards);
+    }
+
     await this._settingsModel
       .findOneAndUpdate(
         { key: SETTINGS_KEY },
@@ -179,6 +193,7 @@ export class LoyaltyService {
             cadPerPoint,
             welcomeBonusPoints,
             tiers,
+            rewards,
           },
         },
         { upsert: true, new: true },
@@ -400,8 +415,9 @@ export class LoyaltyService {
 
     return {
       config: {
+        currency: config.currency,
         inactiveDays: config.inactiveDays,
-        fcfaPerPoint: config.fcfaPerPoint,
+        cadPerPoint: config.cadPerPoint,
         welcomeBonusPoints: config.welcomeBonusPoints,
         tiers: config.tiers,
         accumulationRules: accumulationRulesFromConfig(config),
@@ -418,7 +434,7 @@ export class LoyaltyService {
       },
       tierCounts,
       members,
-      rewardsCatalog: LOYALTY_REWARD_CATALOG,
+      rewardsCatalog: config.rewards,
     };
   }
 
@@ -450,7 +466,7 @@ export class LoyaltyService {
         count: 0,
       })),
       members: [],
-      rewardsCatalog: LOYALTY_REWARD_CATALOG,
+      rewardsCatalog: config.rewards,
     };
   }
 

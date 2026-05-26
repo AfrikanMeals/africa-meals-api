@@ -4,6 +4,12 @@ import {
   LOYALTY_TIER_THRESHOLDS,
   type LoyaltyTierName,
 } from './loyalty.constants';
+import {
+  mergeRewardsCatalog,
+  type LoyaltyRewardItem,
+} from './loyalty-rewards.util';
+
+export type { LoyaltyRewardItem } from './loyalty-rewards.util';
 
 export type ResolvedLoyaltyTier = {
   name: LoyaltyTierName;
@@ -21,6 +27,7 @@ export type ResolvedLoyaltyConfig = {
   cadPerPoint: number;
   welcomeBonusPoints: number;
   tiers: ResolvedLoyaltyTier[];
+  rewards: LoyaltyRewardItem[];
 };
 
 /** Lit `cadPerPoint` ou l’ancien champ `fcfaPerPoint` en base. */
@@ -60,6 +67,7 @@ export function defaultLoyaltyConfig(): ResolvedLoyaltyConfig {
       bg: t.bg,
       advantages: [...t.advantages],
     })),
+    rewards: mergeRewardsCatalog(null),
   };
 }
 
@@ -154,6 +162,11 @@ export function configFromDocument(doc: Record<string, unknown>): ResolvedLoyalt
       Math.floor(Number(doc.welcomeBonusPoints ?? base.welcomeBonusPoints)),
     ),
     tiers,
+    rewards: mergeRewardsCatalog(
+      Array.isArray(doc.rewards)
+        ? (doc.rewards as Array<Partial<LoyaltyRewardItem>>)
+        : null,
+    ),
   };
 }
 

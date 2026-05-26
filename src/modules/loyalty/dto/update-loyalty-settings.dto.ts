@@ -1,11 +1,12 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsInt,
-  IsNumber,
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -22,6 +23,31 @@ export class LoyaltyTierSettingDto {
   @IsInt()
   @Min(0)
   max?: number | null;
+}
+
+export class LoyaltyRewardSettingDto {
+  @IsString()
+  id: string;
+
+  @IsString()
+  @MaxLength(120)
+  title: string;
+
+  @IsString()
+  @MaxLength(8)
+  icon: string;
+
+  @IsInt()
+  @Min(0)
+  @Max(100_000)
+  points: number;
+
+  @IsString()
+  @MaxLength(32)
+  category: string;
+
+  @IsBoolean()
+  active: boolean;
 }
 
 export class UpdateLoyaltySettingsDto {
@@ -48,4 +74,10 @@ export class UpdateLoyaltySettingsDto {
   @ValidateNested({ each: true })
   @Type(() => LoyaltyTierSettingDto)
   tiers?: LoyaltyTierSettingDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => LoyaltyRewardSettingDto)
+  rewards?: LoyaltyRewardSettingDto[];
 }

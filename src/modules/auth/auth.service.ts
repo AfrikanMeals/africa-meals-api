@@ -691,10 +691,12 @@ export class AuthService {
     );
     const score = Number(doc.loyaltyPoints ?? 0);
     const tier = await this._loyaltyService.tierLabelForPointsAsync(score);
+    const catalog = await this._loyaltyService.getActiveRewardsCatalog();
     return {
       eligible: true,
       score,
       tier,
+      catalog,
       history: history.map((h) => ({
         points: Number(h.points),
         reason: String(h.reason ?? ''),
