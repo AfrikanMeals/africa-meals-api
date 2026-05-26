@@ -3,6 +3,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { LoyaltySettingsModel } from '@schemas/loyalty-settings.schema';
@@ -17,6 +18,7 @@ import {
 } from './loyalty.constants';
 import {
   isMemberActive,
+  loyaltyNextTierProgress,
   loyaltyProgressPercent,
   loyaltyTierFromPoints,
   pointsUsedFromRewardHistory,
@@ -144,6 +146,104 @@ export class LoyaltyService {
   async getActiveRewardsCatalog(): Promise<LoyaltyRewardItem[]> {
     const config = await this.resolveConfig();
     return config.rewards.filter((r) => r.active);
+  }
+
+  /** État fidélité client (app mobile) — aligné config admin + éligibilité. */
+  async getCustomerRewardsView(userId: string) {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new ForbiddenException('invalid_user');
+    }
+    const u = await this._userModel
+      .findById(userId)
+      .select('loyaltyPoints rewardHistory rewardProgramEligible')
+      .lean()
+      .exec();
+    if (!u) {
+      throw new NotFoundException('user_not_found');
+    }
+    const doc = u as Record<string, unknown>;
+    const eligible = Boolean(
+      doc.rewardProgramEligible ?? doc.reward_program_eligible ?? false,
+    );
+    const score = Math.max(0, Math.floor(Number(doc.loyaltyPoints ?? 0)));
+    const config = await this.resolveConfig();
+    const tier = loyaltyTierFromPoints(score, config.tiers);
+    const progressPercent = loyaltyProgressPercent(score, config.tiers);
+    const { nextTier, pointsToNextTier } = loyaltyNextTierProgress(
+      score,
+      config.tiers,
+    );
+
+    const activeRewards = config.rewards.filter((r) => r.active);
+    const catalog = activeRewards.map((r) => {
+      const autoReward = r.points <= 0;
+      const affordable = !autoReward && score >= r.points;
+      return {
+        ...r,
+        affordable,
+        autoReward,
+        pointsRemaining: autoReward
+          ? 0
+          : Math.max(0, r.points - score),
+      };
+    });
+
+    const rawHistory = eligible
+      ? ((doc.rewardHistory as Record<string, unknown>[]) ?? [])
+      : [];
+    const history = [...rawHistory]
+      .sort(
+        (a, b) =>
+          new Date(String(b.createdAt)).getTime() -
+          new Date(String(a.createdAt)).getTime(),
+      )
+      .map((h) => ({
+        points: Number(h.points),
+        reason: String(h.reason ?? ''),
+        createdAt: h.createdAt,
+      }));
+
+    const program = {
+      currency: config.currency,
+      cadPerPoint: config.cadPerPoint,
+      welcomeBonusPoints: config.welcomeBonusPoints,
+      earnDescription: `1 point pour chaque tranche de ${config.cadPerPoint} ${config.currency} sur une commande livrée (statut terminée).`,
+    };
+    const tiers = config.tiers.map((t) => ({
+      name: t.name,
+      min: t.min,
+      max: t.max,
+      icon: t.icon,
+      color: t.color,
+    }));
+
+    if (!eligible) {
+      return {
+        eligible: false,
+        score,
+        tier: 'Bronze',
+        progressPercent: 0,
+        nextTier: null,
+        pointsToNextTier: 0,
+        catalog: [],
+        history: [],
+        program,
+        tiers,
+      };
+    }
+
+    return {
+      eligible: true,
+      score,
+      tier,
+      progressPercent,
+      nextTier,
+      pointsToNextTier,
+      catalog,
+      history,
+      program,
+      tiers,
+    };
   }
 
   async updateSettings(caller: UserModel, dto: UpdateLoyaltySettingsDto) {

@@ -668,41 +668,9 @@ export class AuthService {
       .exec();
   }
 
-  /** Score fidélité + historique (plus récent en premier). */
+  /** Score fidélité, catalogue actif et historique (config admin synchronisée). */
   async getMyRewards(userId: string) {
-    const u = await this._usersModel
-      .findById(userId)
-      .select('loyaltyPoints rewardHistory rewardProgramEligible')
-      .lean()
-      .exec();
-    if (!u) throw new NotFoundException('user_not_found');
-    const doc = u as Record<string, unknown>;
-    const eligible = Boolean(
-      doc.rewardProgramEligible ?? doc.reward_program_eligible ?? false,
-    );
-    if (!eligible) {
-      throw new ForbiddenException('reward_program_not_eligible');
-    }
-    const raw = (doc.rewardHistory as Record<string, unknown>[]) ?? [];
-    const history = [...raw].sort(
-      (a, b) =>
-        new Date(String(b.createdAt)).getTime() -
-        new Date(String(a.createdAt)).getTime(),
-    );
-    const score = Number(doc.loyaltyPoints ?? 0);
-    const tier = await this._loyaltyService.tierLabelForPointsAsync(score);
-    const catalog = await this._loyaltyService.getActiveRewardsCatalog();
-    return {
-      eligible: true,
-      score,
-      tier,
-      catalog,
-      history: history.map((h) => ({
-        points: Number(h.points),
-        reason: String(h.reason ?? ''),
-        createdAt: h.createdAt,
-      })),
-    };
+    return this._loyaltyService.getCustomerRewardsView(userId);
   }
 
   async updateProfile(userId: string, args: UpdateProfileDto) {

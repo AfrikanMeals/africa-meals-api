@@ -37,6 +37,23 @@ export function pointsUsedFromRewardHistory(
   }, 0);
 }
 
+export function loyaltyNextTierProgress(
+  points: number,
+  tiers: ResolvedLoyaltyTier[],
+): { nextTier: string | null; pointsToNextTier: number } {
+  const p = Math.max(0, Math.floor(points));
+  const current = loyaltyTierFromPoints(p, tiers);
+  const idx = tiers.findIndex((t) => t.name === current);
+  if (idx < 0 || idx >= tiers.length - 1) {
+    return { nextTier: null, pointsToNextTier: 0 };
+  }
+  const next = tiers[idx + 1];
+  return {
+    nextTier: next.name,
+    pointsToNextTier: Math.max(0, next.min - p),
+  };
+}
+
 export function isMemberActive(lastOrderAt: Date | null, inactiveDays: number): boolean {
   if (!lastOrderAt) return false;
   const ms = inactiveDays * 24 * 60 * 60 * 1000;

@@ -262,14 +262,17 @@ export class OrdersService {
     ) {
       enriched = this.attachDashboardOrderRefundFlags(enriched);
     }
-    if (user.type !== UserTypeEnum.USER) {
+    if (
+      user.type === UserTypeEnum.VENDOR ||
+      user.type === UserTypeEnum.DELIVERY
+    ) {
       enriched = this.stripPickupCodeForNonClients(enriched);
     }
 
     return { data: enriched as unknown as OrderModel[] };
   }
 
-  /** Le code retrait n’est visible que dans l’app client (pas admin / vendeur). */
+  /** Code retrait/livraison : visible client + admin support ; masqué vendeur / livreur. */
   private stripPickupCodeForNonClients(
     rows: Record<string, unknown>[],
   ): Record<string, unknown>[] {
@@ -450,7 +453,7 @@ export class OrdersService {
     }
     const [enriched] = await this.attachStatusEventsToOrders([row]);
     const out = enriched;
-    if (user.type === UserTypeEnum.USER) {
+    if (user.type === UserTypeEnum.USER || user.type === UserTypeEnum.ADMIN) {
       return out as unknown as typeof order;
     }
     return this.stripPickupCodeForNonClients([out])[0] as unknown as typeof order;
