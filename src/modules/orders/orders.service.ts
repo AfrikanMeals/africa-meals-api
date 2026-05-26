@@ -1673,6 +1673,10 @@ export class OrdersService {
 
     await this.assertUserCanManageOrderStore(user, order);
 
+    if (user.type === UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('admin_cannot_confirm_handoff');
+    }
+
     const isPickup = this.isPickupOrder(order);
     const st = order.status as OrderStatusEnum;
     if (st === OrderStatusEnum.COMPLETED) {
