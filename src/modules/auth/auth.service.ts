@@ -61,6 +61,9 @@ export class AuthService {
   @Inject('FIREBASE_ADMIN')
   private readonly _firebaseApp: App;
 
+  @Inject(LoyaltyService)
+  private readonly _loyaltyService: LoyaltyService;
+
   /**
    * Inscription en deux temps : aucune ligne dans `users` tant que le code e-mail
    * n’est pas validé (`register/complete`), sauf si SMTP désactivé / compte test.
@@ -687,24 +690,17 @@ export class AuthService {
         new Date(String(a.createdAt)).getTime(),
     );
     const score = Number(doc.loyaltyPoints ?? 0);
+    const tier = await this._loyaltyService.tierLabelForPointsAsync(score);
     return {
       eligible: true,
       score,
-      tier: this._loyaltyTierLabel(score),
+      tier,
       history: history.map((h) => ({
         points: Number(h.points),
         reason: String(h.reason ?? ''),
         createdAt: h.createdAt,
       })),
     };
-  }
-
-  private _loyaltyTierLabel(points: number): string {
-    const p = Math.max(0, Math.floor(points));
-    if (p >= 3000) return 'Platinum';
-    if (p >= 1500) return 'Gold';
-    if (p >= 500) return 'Silver';
-    return 'Bronze';
   }
 
   async updateProfile(userId: string, args: UpdateProfileDto) {

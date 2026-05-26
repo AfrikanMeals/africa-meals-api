@@ -39,9 +39,13 @@ export class LoyaltySettingsModel {
   @Prop({ type: Number, default: 30 })
   inactiveDays: number;
 
-  /** Montant FCFA dépensé pour gagner 1 point. */
-  @Prop({ type: Number, default: 100 })
-  fcfaPerPoint: number;
+  /** Devise des montants (ex. commandes). */
+  @Prop({ type: String, default: 'CAD', trim: true })
+  currency: string;
+
+  /** Montant en devise (`currency`) dépensé pour gagner 1 point. */
+  @Prop({ type: Number, default: 100, name: 'cad_per_point' })
+  cadPerPoint: number;
 
   /** Points offerts à l’activation admin du programme. */
   @Prop({ type: Number, default: 50 })

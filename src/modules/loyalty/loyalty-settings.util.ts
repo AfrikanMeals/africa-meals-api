@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import {
+  LOYALTY_CURRENCY,
   LOYALTY_TIER_THRESHOLDS,
   type LoyaltyTierName,
 } from './loyalty.constants';
@@ -15,11 +16,23 @@ export type ResolvedLoyaltyTier = {
 };
 
 export type ResolvedLoyaltyConfig = {
+  currency: string;
   inactiveDays: number;
-  fcfaPerPoint: number;
+  cadPerPoint: number;
   welcomeBonusPoints: number;
   tiers: ResolvedLoyaltyTier[];
 };
+
+/** Lit `cadPerPoint` ou l’ancien champ `fcfaPerPoint` en base. */
+export function readCadPerPointFromDoc(doc: Record<string, unknown>): number {
+  const raw =
+    doc.cadPerPoint ??
+    doc.cad_per_point ??
+    doc.fcfaPerPoint ??
+    doc.fcfa_per_point;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 100;
+}
 
 const TIER_NAMES: LoyaltyTierName[] = [
   'Bronze',
@@ -34,8 +47,9 @@ const DEFAULT_BY_NAME = new Map(
 
 export function defaultLoyaltyConfig(): ResolvedLoyaltyConfig {
   return {
+    currency: LOYALTY_CURRENCY,
     inactiveDays: 30,
-    fcfaPerPoint: 100,
+    cadPerPoint: 100,
     welcomeBonusPoints: 50,
     tiers: LOYALTY_TIER_THRESHOLDS.map((t) => ({
       name: t.name,
@@ -104,23 +118,14 @@ export function validateTierChain(tiers: ResolvedLoyaltyTier[]): void {
   }
 }
 
-export function configFromDocument(doc: {
-  inactiveDays?: number;
-  fcfaPerPoint?: number;
-  welcomeBonusPoints?: number;
-  tiers?: Array<{
-    name: string;
-    min: number;
-    max?: number | null;
-    icon?: string;
-    color?: string;
-    bg?: string;
-    advantages?: string[];
-  }>;
-}): ResolvedLoyaltyConfig {
+export function configFromDocument(doc: Record<string, unknown>): ResolvedLoyaltyConfig {
   const base = defaultLoyaltyConfig();
-  const tiersRaw = Array.isArray(doc.tiers) && doc.tiers.length
-    ? doc.tiers
+  const tiersRaw = Array.isArray(doc.tiers) && (doc.tiers as unknown[]).length
+    ? (doc.tiers as Array<{
+        name: string;
+        min: number;
+        max?: number | null;
+      }>)
     : base.tiers;
   const tiers = mergeTierMetadata(
     tiersRaw.map((t) => ({
@@ -134,15 +139,16 @@ export function configFromDocument(doc: {
   } catch {
     return base;
   }
+  const currencyRaw = String(doc.currency ?? doc.currency_code ?? '').trim();
+  const currency =
+    currencyRaw.length >= 3 ? currencyRaw.toUpperCase() : LOYALTY_CURRENCY;
   return {
+    currency,
     inactiveDays: Math.max(
       1,
       Math.floor(Number(doc.inactiveDays ?? base.inactiveDays)),
     ),
-    fcfaPerPoint: Math.max(
-      1,
-      Math.floor(Number(doc.fcfaPerPoint ?? base.fcfaPerPoint)),
-    ),
+    cadPerPoint: readCadPerPointFromDoc(doc),
     welcomeBonusPoints: Math.max(
       0,
       Math.floor(Number(doc.welcomeBonusPoints ?? base.welcomeBonusPoints)),
@@ -151,13 +157,21 @@ export function configFromDocument(doc: {
   };
 }
 
+function formatCadAmount(amount: number): string {
+  return new Intl.NumberFormat('fr-CA', {
+    style: 'currency',
+    currency: LOYALTY_CURRENCY,
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
 export function accumulationRulesFromConfig(
   config: ResolvedLoyaltyConfig,
 ): Array<{ key: string; value: string }> {
   return [
     {
       key: '1 point équivaut à',
-      value: `${config.fcfaPerPoint.toLocaleString('fr-FR')} FCFA dépensés`,
+      value: `${formatCadAmount(config.cadPerPoint)} dépensés`,
     },
     {
       key: 'Bonus activation programme',

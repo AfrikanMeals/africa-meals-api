@@ -3,8 +3,11 @@ export type LoyaltyTierName = 'Bronze' | 'Silver' | 'Gold' | 'Platinum';
 
 export const LOYALTY_INACTIVE_DAYS = 30;
 
-/** 1 point par tranche de 100 FCFA (montant commande `totalPrice`). */
-export const LOYALTY_POINTS_PER_100_FCFA = 1;
+/** Devise du programme fidélité (montants commande `totalPrice`). */
+export const LOYALTY_CURRENCY = 'CAD';
+
+/** 1 point par tranche de 100 CAD (montant commande `totalPrice`). */
+export const LOYALTY_POINTS_PER_CAD_UNIT = 1;
 
 /** Bonus crédité à l’activation manuelle du programme (admin). */
 export const LOYALTY_WELCOME_BONUS_POINTS = 50;
@@ -102,7 +105,7 @@ export const LOYALTY_REWARD_CATALOG = [
   },
   {
     id: 'free_dish',
-    title: "Plat offert (jusqu'à 5 000 FCFA)",
+    title: "Plat offert (jusqu'à 50 $ CA)",
     icon: '🍽️',
     points: 1000,
     category: 'plat',

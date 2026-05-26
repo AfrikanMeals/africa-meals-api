@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -13,6 +12,7 @@ import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { UpdateLoyaltySettingsDto } from './dto/update-loyalty-settings.dto';
 import {
+  LOYALTY_CURRENCY,
   LOYALTY_ORDER_CREDIT_REASON_PREFIX,
   LOYALTY_REWARD_CATALOG,
 } from './loyalty.constants';
@@ -58,8 +58,9 @@ export type LoyaltyMemberRow = {
 
 export type LoyaltyDashboardResponse = {
   config: {
+    currency: string;
     inactiveDays: number;
-    fcfaPerPoint: number;
+    cadPerPoint: number;
     welcomeBonusPoints: number;
     tiers: ResolvedLoyaltyConfig['tiers'];
     accumulationRules: Array<{ key: string; value: string }>;
@@ -104,8 +105,9 @@ export class LoyaltyService {
       const def = defaultLoyaltyConfig();
       const created = await this._settingsModel.create({
         key: SETTINGS_KEY,
+        currency: def.currency,
         inactiveDays: def.inactiveDays,
-        fcfaPerPoint: def.fcfaPerPoint,
+        cadPerPoint: def.cadPerPoint,
         welcomeBonusPoints: def.welcomeBonusPoints,
         tiers: def.tiers,
       });
@@ -119,8 +121,9 @@ export class LoyaltyService {
     const config = await this.resolveConfig();
     return {
       key: SETTINGS_KEY,
+      currency: config.currency,
       inactiveDays: config.inactiveDays,
-      fcfaPerPoint: config.fcfaPerPoint,
+      cadPerPoint: config.cadPerPoint,
       welcomeBonusPoints: config.welcomeBonusPoints,
       tiers: config.tiers.map((t) => ({
         name: t.name,
@@ -137,10 +140,10 @@ export class LoyaltyService {
   async updateSettings(caller: UserModel, dto: UpdateLoyaltySettingsDto) {
     this._assertAdmin(caller);
     const current = await this.resolveConfig();
-    const fcfaPerPoint =
-      dto.fcfaPerPoint != null
-        ? Math.floor(dto.fcfaPerPoint)
-        : current.fcfaPerPoint;
+    const cadPerPoint =
+      dto.cadPerPoint != null
+        ? Math.floor(dto.cadPerPoint)
+        : current.cadPerPoint;
     const inactiveDays =
       dto.inactiveDays != null
         ? Math.floor(dto.inactiveDays)
@@ -171,8 +174,9 @@ export class LoyaltyService {
         { key: SETTINGS_KEY },
         {
           $set: {
+            currency: LOYALTY_CURRENCY,
             inactiveDays,
-            fcfaPerPoint,
+            cadPerPoint,
             welcomeBonusPoints,
             tiers,
           },
@@ -205,7 +209,7 @@ export class LoyaltyService {
     config: ResolvedLoyaltyConfig,
   ): number {
     const amount = Math.max(0, Number(totalPrice) || 0);
-    const unit = Math.max(1, config.fcfaPerPoint);
+    const unit = Math.max(1, config.cadPerPoint);
     return Math.floor(amount / unit);
   }
 
@@ -424,8 +428,9 @@ export class LoyaltyService {
   ): LoyaltyDashboardResponse {
     return {
       config: {
+        currency: config.currency,
         inactiveDays: config.inactiveDays,
-        fcfaPerPoint: config.fcfaPerPoint,
+        cadPerPoint: config.cadPerPoint,
         welcomeBonusPoints: config.welcomeBonusPoints,
         tiers: config.tiers,
         accumulationRules: accumulationRulesFromConfig(config),

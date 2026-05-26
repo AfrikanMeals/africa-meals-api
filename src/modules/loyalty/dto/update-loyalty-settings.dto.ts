@@ -35,7 +35,7 @@ export class UpdateLoyaltySettingsDto {
   @IsInt()
   @Min(1)
   @Max(1_000_000)
-  fcfaPerPoint?: number;
+  cadPerPoint?: number;
 
   @IsOptional()
   @IsInt()
