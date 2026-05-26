@@ -20,6 +20,7 @@ import * as bcrypt from 'bcryptjs';
 import { Model } from 'mongoose';
 import { App } from 'firebase-admin/app';
 import { DecodedIdToken, getAuth } from 'firebase-admin/auth';
+import { LoyaltyService } from '@modules/loyalty/loyalty.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import {
   CheckAccountDto,

@@ -1,22 +1,26 @@
-import {
-  LOYALTY_TIER_THRESHOLDS,
-  type LoyaltyTierName,
-} from './loyalty.constants';
+import type { LoyaltyTierName } from './loyalty.constants';
+import type { ResolvedLoyaltyTier } from './loyalty-settings.util';
 
-export function loyaltyTierFromPoints(points: number): LoyaltyTierName {
+export function loyaltyTierFromPoints(
+  points: number,
+  tiers: ResolvedLoyaltyTier[],
+): LoyaltyTierName {
   const p = Math.max(0, Math.floor(points));
   let tier: LoyaltyTierName = 'Bronze';
-  for (const t of LOYALTY_TIER_THRESHOLDS) {
+  for (const t of tiers) {
     if (p >= t.min) tier = t.name;
   }
   return tier;
 }
 
-export function loyaltyProgressPercent(points: number): number {
+export function loyaltyProgressPercent(
+  points: number,
+  tiers: ResolvedLoyaltyTier[],
+): number {
   const p = Math.max(0, Math.floor(points));
-  const tier = loyaltyTierFromPoints(p);
-  const idx = LOYALTY_TIER_THRESHOLDS.findIndex((t) => t.name === tier);
-  const current = LOYALTY_TIER_THRESHOLDS[idx];
+  const tier = loyaltyTierFromPoints(p, tiers);
+  const idx = tiers.findIndex((t) => t.name === tier);
+  const current = tiers[idx];
   if (!current || current.max == null) return 100;
   const span = current.max - current.min;
   if (span <= 0) return 100;

@@ -1,21 +1,20 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Inject,
   Injectable,
   Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { LoyaltySettingsModel } from '@schemas/loyalty-settings.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
+import { UpdateLoyaltySettingsDto } from './dto/update-loyalty-settings.dto';
 import {
-  LOYALTY_INACTIVE_DAYS,
   LOYALTY_ORDER_CREDIT_REASON_PREFIX,
-  LOYALTY_POINTS_PER_100_FCFA,
   LOYALTY_REWARD_CATALOG,
-  LOYALTY_TIER_THRESHOLDS,
-  LOYALTY_WELCOME_BONUS_POINTS,
 } from './loyalty.constants';
 import {
   isMemberActive,
@@ -23,6 +22,16 @@ import {
   loyaltyTierFromPoints,
   pointsUsedFromRewardHistory,
 } from './loyalty.helpers';
+import {
+  accumulationRulesFromConfig,
+  configFromDocument,
+  defaultLoyaltyConfig,
+  mergeTierMetadata,
+  type ResolvedLoyaltyConfig,
+  validateTierChain,
+} from './loyalty-settings.util';
+
+const SETTINGS_KEY = 'default';
 
 const CLIENT_ORDER_STATUSES: OrderStatusEnum[] = [
   OrderStatusEnum.PAIED,
@@ -50,10 +59,11 @@ export type LoyaltyMemberRow = {
 export type LoyaltyDashboardResponse = {
   config: {
     inactiveDays: number;
-    pointsPer100Fcfa: number;
+    fcfaPerPoint: number;
     welcomeBonusPoints: number;
-    tiers: typeof LOYALTY_TIER_THRESHOLDS;
+    tiers: ResolvedLoyaltyConfig['tiers'];
     accumulationRules: Array<{ key: string; value: string }>;
+    canEdit: boolean;
   };
   stats: {
     activeMembers: number;
@@ -82,9 +92,121 @@ export class LoyaltyService {
   @InjectModel(StoreModel.name)
   private readonly _storeModel: Model<StoreModel>;
 
-  pointsForOrderTotal(totalPrice: number): number {
+  @InjectModel(LoyaltySettingsModel.name)
+  private readonly _settingsModel: Model<LoyaltySettingsModel>;
+
+  private async resolveConfig(): Promise<ResolvedLoyaltyConfig> {
+    let doc = await this._settingsModel
+      .findOne({ key: SETTINGS_KEY })
+      .lean()
+      .exec();
+    if (!doc) {
+      const def = defaultLoyaltyConfig();
+      const created = await this._settingsModel.create({
+        key: SETTINGS_KEY,
+        inactiveDays: def.inactiveDays,
+        fcfaPerPoint: def.fcfaPerPoint,
+        welcomeBonusPoints: def.welcomeBonusPoints,
+        tiers: def.tiers,
+      });
+      doc = created.toObject();
+    }
+    return configFromDocument(doc as Record<string, unknown>);
+  }
+
+  async getSettings(caller: UserModel) {
+    this._assertAdmin(caller);
+    const config = await this.resolveConfig();
+    return {
+      key: SETTINGS_KEY,
+      inactiveDays: config.inactiveDays,
+      fcfaPerPoint: config.fcfaPerPoint,
+      welcomeBonusPoints: config.welcomeBonusPoints,
+      tiers: config.tiers.map((t) => ({
+        name: t.name,
+        min: t.min,
+        max: t.max,
+        icon: t.icon,
+        color: t.color,
+        bg: t.bg,
+        advantages: t.advantages,
+      })),
+    };
+  }
+
+  async updateSettings(caller: UserModel, dto: UpdateLoyaltySettingsDto) {
+    this._assertAdmin(caller);
+    const current = await this.resolveConfig();
+    const fcfaPerPoint =
+      dto.fcfaPerPoint != null
+        ? Math.floor(dto.fcfaPerPoint)
+        : current.fcfaPerPoint;
+    const inactiveDays =
+      dto.inactiveDays != null
+        ? Math.floor(dto.inactiveDays)
+        : current.inactiveDays;
+    const welcomeBonusPoints =
+      dto.welcomeBonusPoints != null
+        ? Math.floor(dto.welcomeBonusPoints)
+        : current.welcomeBonusPoints;
+
+    let tiers = current.tiers;
+    if (dto.tiers?.length) {
+      const patchByName = new Map(dto.tiers.map((t) => [t.name, t]));
+      tiers = mergeTierMetadata(
+        current.tiers.map((t) => {
+          const patch = patchByName.get(t.name);
+          return {
+            name: t.name,
+            min: patch?.min ?? t.min,
+            max: null,
+          };
+        }),
+      );
+      validateTierChain(tiers);
+    }
+
+    await this._settingsModel
+      .findOneAndUpdate(
+        { key: SETTINGS_KEY },
+        {
+          $set: {
+            inactiveDays,
+            fcfaPerPoint,
+            welcomeBonusPoints,
+            tiers,
+          },
+        },
+        { upsert: true, new: true },
+      )
+      .exec();
+
+    return this.getSettings(caller);
+  }
+
+  tierLabelForPoints(points: number, config?: ResolvedLoyaltyConfig): string {
+    const cfg = config ?? defaultLoyaltyConfig();
+    return loyaltyTierFromPoints(points, cfg.tiers);
+  }
+
+  async tierLabelForPointsAsync(points: number): Promise<string> {
+    const config = await this.resolveConfig();
+    return loyaltyTierFromPoints(points, config.tiers);
+  }
+
+  private _assertAdmin(caller: UserModel) {
+    if (!caller || caller.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('admin_only');
+    }
+  }
+
+  private pointsForOrderTotal(
+    totalPrice: number,
+    config: ResolvedLoyaltyConfig,
+  ): number {
     const amount = Math.max(0, Number(totalPrice) || 0);
-    return Math.floor(amount / 100) * LOYALTY_POINTS_PER_100_FCFA;
+    const unit = Math.max(1, config.fcfaPerPoint);
+    return Math.floor(amount / unit);
   }
 
   /**
@@ -103,13 +225,8 @@ export class LoyaltyService {
     if (order.status !== OrderStatusEnum.COMPLETED) return;
     if (order.loyaltyPointsCredited === true) return;
 
-    const userId = order.user;
-    if (!userId) return;
-    const uid =
-      userId instanceof Types.ObjectId
-        ? userId.toHexString()
-        : String(userId);
-    if (!Types.ObjectId.isValid(uid)) return;
+    const uid = this._userIdFromOrderLean(order.user);
+    if (!uid) return;
 
     const user = await this._userModel
       .findById(uid)
@@ -122,7 +239,8 @@ export class LoyaltyService {
         (order as { total_price?: number }).total_price ??
         0,
     );
-    const points = this.pointsForOrderTotal(total);
+    const config = await this.resolveConfig();
+    const points = this.pointsForOrderTotal(total, config);
     if (points <= 0) {
       await this._orderModel.updateOne(
         { _id: oid },
@@ -161,18 +279,21 @@ export class LoyaltyService {
     const user = await this._userModel.findById(userId).exec();
     if (!user?.rewardProgramEligible) return;
 
+    const config = await this.resolveConfig();
     const welcomeReason = 'welcome:loyalty_program';
     const history = user.rewardHistory ?? [];
     if (history.some((h) => h.reason === welcomeReason)) return;
 
+    const bonus = config.welcomeBonusPoints;
+    if (bonus <= 0) return;
+
     history.push({
-      points: LOYALTY_WELCOME_BONUS_POINTS,
+      points: bonus,
       reason: 'Bienvenue au programme fidélité',
       createdAt: new Date(),
     });
     user.rewardHistory = history;
-    user.loyaltyPoints =
-      Number(user.loyaltyPoints ?? 0) + LOYALTY_WELCOME_BONUS_POINTS;
+    user.loyaltyPoints = Number(user.loyaltyPoints ?? 0) + bonus;
     await user.save();
   }
 
@@ -191,13 +312,16 @@ export class LoyaltyService {
         ? await this._vendorStoreIds(caller)
         : null;
 
+    const config = await this.resolveConfig();
+    const canEdit = caller.type === UserTypeEnum.ADMIN;
+
     if (caller.type === UserTypeEnum.VENDOR && !storeFilter?.length) {
-      return this._emptyDashboard();
+      return this._emptyDashboard(config, canEdit);
     }
 
     const userIds = await this._distinctBuyerIds(storeFilter);
     if (!userIds.length) {
-      return this._emptyDashboard();
+      return this._emptyDashboard(config, canEdit);
     }
 
     const users = await this._userModel
@@ -239,14 +363,14 @@ export class LoyaltyService {
           (u as { profileImage: string }).profileImage.trim()
             ? (u as { profileImage: string }).profileImage.trim()
             : null,
-        tier: loyaltyTierFromPoints(points),
+        tier: loyaltyTierFromPoints(points, config.tiers),
         loyaltyPoints: points,
         pointsUsed: pointsUsedFromRewardHistory(history),
         ordersCount: stats?.orderCount ?? 0,
         totalSpent: Math.round((stats?.totalSpent ?? 0) * 100) / 100,
         lastOrderAt: lastOrderAt ? lastOrderAt.toISOString() : null,
-        active: isMemberActive(lastOrderAt, LOYALTY_INACTIVE_DAYS),
-        progressPercent: loyaltyProgressPercent(points),
+        active: isMemberActive(lastOrderAt, config.inactiveDays),
+        progressPercent: loyaltyProgressPercent(points, config.tiers),
         rewardProgramEligible: true,
       };
     });
@@ -265,35 +389,19 @@ export class LoyaltyService {
         ? Math.round((activeMembers / members.length) * 100)
         : 0;
 
-    const tierCounts = LOYALTY_TIER_THRESHOLDS.map((t) => ({
+    const tierCounts = config.tiers.map((t) => ({
       tier: t.name,
       count: members.filter((m) => m.tier === t.name).length,
     }));
 
     return {
       config: {
-        inactiveDays: LOYALTY_INACTIVE_DAYS,
-        pointsPer100Fcfa: LOYALTY_POINTS_PER_100_FCFA,
-        welcomeBonusPoints: LOYALTY_WELCOME_BONUS_POINTS,
-        tiers: LOYALTY_TIER_THRESHOLDS,
-        accumulationRules: [
-          {
-            key: '1 point équivaut à',
-            value: `${LOYALTY_POINTS_PER_100_FCFA * 100} FCFA dépensés`,
-          },
-          {
-            key: 'Bonus activation programme',
-            value: `${LOYALTY_WELCOME_BONUS_POINTS} points`,
-          },
-          {
-            key: 'Crédit automatique',
-            value: 'À chaque commande livrée (statut completed)',
-          },
-          {
-            key: 'Éligibilité',
-            value: 'Activation manuelle par un administrateur',
-          },
-        ],
+        inactiveDays: config.inactiveDays,
+        fcfaPerPoint: config.fcfaPerPoint,
+        welcomeBonusPoints: config.welcomeBonusPoints,
+        tiers: config.tiers,
+        accumulationRules: accumulationRulesFromConfig(config),
+        canEdit,
       },
       stats: {
         activeMembers,
@@ -310,31 +418,18 @@ export class LoyaltyService {
     };
   }
 
-  private _emptyDashboard(): LoyaltyDashboardResponse {
+  private _emptyDashboard(
+    config: ResolvedLoyaltyConfig,
+    canEdit: boolean,
+  ): LoyaltyDashboardResponse {
     return {
       config: {
-        inactiveDays: LOYALTY_INACTIVE_DAYS,
-        pointsPer100Fcfa: LOYALTY_POINTS_PER_100_FCFA,
-        welcomeBonusPoints: LOYALTY_WELCOME_BONUS_POINTS,
-        tiers: LOYALTY_TIER_THRESHOLDS,
-        accumulationRules: [
-          {
-            key: '1 point équivaut à',
-            value: `${LOYALTY_POINTS_PER_100_FCFA * 100} FCFA dépensés`,
-          },
-          {
-            key: 'Bonus activation programme',
-            value: `${LOYALTY_WELCOME_BONUS_POINTS} points`,
-          },
-          {
-            key: 'Crédit automatique',
-            value: 'À chaque commande livrée (statut completed)',
-          },
-          {
-            key: 'Éligibilité',
-            value: 'Activation manuelle par un administrateur',
-          },
-        ],
+        inactiveDays: config.inactiveDays,
+        fcfaPerPoint: config.fcfaPerPoint,
+        welcomeBonusPoints: config.welcomeBonusPoints,
+        tiers: config.tiers,
+        accumulationRules: accumulationRulesFromConfig(config),
+        canEdit,
       },
       stats: {
         activeMembers: 0,
@@ -345,7 +440,7 @@ export class LoyaltyService {
         eligibleMembers: 0,
         pendingEnrollment: 0,
       },
-      tierCounts: LOYALTY_TIER_THRESHOLDS.map((t) => ({
+      tierCounts: config.tiers.map((t) => ({
         tier: t.name,
         count: 0,
       })),
@@ -441,5 +536,16 @@ export class LoyaltyService {
       });
     }
     return map;
+  }
+
+  private _userIdFromOrderLean(raw: unknown): string | undefined {
+    if (raw == null) return undefined;
+    if (raw instanceof Types.ObjectId) return raw.toHexString();
+    if (raw && typeof raw === 'object' && '_id' in raw) {
+      const id = (raw as { _id: unknown })._id;
+      return id instanceof Types.ObjectId ? id.toHexString() : String(id);
+    }
+    const s = String(raw).trim();
+    return Types.ObjectId.isValid(s) ? s : undefined;
   }
 }

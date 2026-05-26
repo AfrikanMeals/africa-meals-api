@@ -1,3 +1,4 @@
+import { LoyaltyModule } from '@modules/loyalty/loyalty.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { MediasModule } from '@modules/medias/medias.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
@@ -32,6 +33,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     NotificationsModule,
     SupportedCountriesModule,
     TeamsModule,
+    LoyaltyModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
