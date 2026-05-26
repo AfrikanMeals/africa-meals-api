@@ -64,6 +64,8 @@ type GroupedStripeBuilt = {
   >;
   groups: CartGroup[];
   coupons: Array<{ storeId: string; code: string }>;
+  /** Adresse livraison choisie au checkout (si au moins une boutique en livraison). */
+  checkoutAddressId?: string;
 };
 
 function storeMongoId(store: CartGroup['store']): string {
@@ -677,6 +679,7 @@ export class StripeGroupedCheckoutService {
       payoutByStore,
       groups,
       coupons,
+      checkoutAddressId: needsAddress ? dto.addressId?.trim() : undefined,
     };
   }
 
@@ -745,6 +748,9 @@ export class StripeGroupedCheckoutService {
         .join(','),
       shipB64,
     };
+    if (built.checkoutAddressId) {
+      base.addressId = built.checkoutAddressId;
+    }
     return {
       ...base,
       ...this.payoutMetadataChunks(built.payoutByStore),
@@ -955,6 +961,9 @@ export class StripeGroupedCheckoutService {
 
     const payoutMap = parsePayoutFromStripeMetadata(metadata);
     const couponByStore = parseCouponsFromStripeMetadata(metadata);
+    const checkoutAddressId = String(
+      metadata?.addressId ?? metadata?.address_id ?? '',
+    ).trim();
 
     const storeIds = storesCsv
       .split(',')
@@ -1159,6 +1168,10 @@ export class StripeGroupedCheckoutService {
             couponCode,
             chargedGoodsCents: useStripeCents ? goodsCents : undefined,
             chargedShipCents: useStripeCents ? shipCents : undefined,
+            deliveryAddressId:
+              shipCents > 0 && checkoutAddressId
+                ? checkoutAddressId
+                : undefined,
           },
         );
         const paidOk = await this.ordersService.isOrderPaidForStripePayment(

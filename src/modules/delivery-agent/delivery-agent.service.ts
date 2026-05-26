@@ -999,7 +999,9 @@ ${safeReason ? `<p><strong>Motif :</strong> ${safeReason}</p>` : ''}
         ? (store.address as Record<string, unknown>)
         : undefined;
     const storeCoords = this.coordsFromAddressLike(storeAddr);
-    const userAddr = this.defaultUserAddressFromPopulated(row.user);
+    const userAddr =
+      this.deliveryAddressFromOrder(row) ??
+      this.defaultUserAddressFromPopulated(row.user);
     let distanceKm: number | undefined;
     if (storeCoords && userAddr?.coords) {
       distanceKm = +haversineDistance(storeCoords, userAddr.coords).toFixed(2);
@@ -1031,12 +1033,39 @@ ${safeReason ? `<p><strong>Motif :</strong> ${safeReason}</p>` : ''}
     };
   }
 
+  private deliveryAddressFromOrder(order: Record<string, unknown>): {
+    line?: string;
+    coords?: [number, number];
+  } | null {
+    const snap =
+      order['deliveryAddressSnapshot'] ?? order['delivery_address_snapshot'];
+    if (!snap || typeof snap !== 'object') return null;
+    const doc = snap as Record<string, unknown>;
+    const line = this.lineFromAddressDoc(doc);
+    const coords = this.coordsFromAddressLike(doc);
+    if (!line && !coords) return null;
+    return { line: line || undefined, coords };
+  }
+
   private shippingLineFromOrder(
     order: Record<string, unknown>,
   ): string {
+    const fromOrder = this.deliveryAddressFromOrder(order);
+    if (fromOrder?.line) return fromOrder.line;
     const userAddr = this.defaultUserAddressFromPopulated(order.user);
     if (userAddr?.line) return userAddr.line;
     return '—';
+  }
+
+  private lineFromAddressDoc(doc: Record<string, unknown>): string {
+    const street = String(doc.address ?? '').trim();
+    const city = String(doc.city ?? '').trim();
+    const zip = String(doc.zipCode ?? doc.zip_code ?? '').trim();
+    const parts = [
+      street,
+      [city, zip].filter((s) => s.length > 0).join(' '),
+    ].filter((s) => s.length > 0);
+    return parts.join(', ');
   }
 
   private etaLabelFromKm(km: number): string {

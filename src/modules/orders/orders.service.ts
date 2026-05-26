@@ -12,6 +12,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { AddressModel } from '@schemas/address.schema';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
 import {
   OrdeLineItem,
@@ -56,6 +57,12 @@ export class OrdersService {
   @InjectModel(OrderModel.name)
   private readonly _orderModel: Model<OrderModel>;
 
+  @InjectModel(AddressModel.name)
+  private readonly _addressModel: Model<AddressModel>;
+
+  @InjectModel(UserModel.name)
+  private readonly _userModel: Model<UserModel>;
+
   @InjectModel(StoreModel.name)
   private readonly _storeModel: Model<StoreModel>;
 
@@ -91,6 +98,48 @@ export class OrdersService {
 
   @Inject(LoyaltyService)
   private readonly _loyaltyService: LoyaltyService;
+
+  /** Expose l’adresse de livraison figée au paiement dans `user.addresses`. */
+  static enrichOrdersWithDeliveryAddress(
+    rows: Record<string, unknown>[],
+  ): Record<string, unknown>[] {
+    return rows.map((row) => OrdersService.enrichOrderWithDeliveryAddress(row));
+  }
+
+  private static enrichOrderWithDeliveryAddress(
+    row: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const shouldShip =
+      row['shouldShip'] === true || row['should_ship'] === true;
+    if (!shouldShip) return row;
+    const snap =
+      row['deliveryAddressSnapshot'] ?? row['delivery_address_snapshot'];
+    if (!snap || typeof snap !== 'object') return row;
+    const user = row['user'];
+    if (!user || typeof user !== 'object') return row;
+    const s = snap as Record<string, unknown>;
+    const deliveryId =
+      row['deliveryAddress'] ?? row['delivery_address'] ?? undefined;
+    const addrDoc: Record<string, unknown> = {
+      _id: deliveryId != null ? String(deliveryId) : undefined,
+      id: deliveryId != null ? String(deliveryId) : undefined,
+      label: s['label'],
+      address: s['address'],
+      city: s['city'],
+      country: s['country'],
+      countryCode: s['countryCode'] ?? s['country_code'],
+      zipCode: s['zipCode'] ?? s['zip_code'],
+      location: s['location'],
+      isDefault: false,
+    };
+    return {
+      ...row,
+      user: {
+        ...(user as Record<string, unknown>),
+        addresses: [addrDoc],
+      },
+    };
+  }
 
   /** Client + adresses de livraison (refs `addresses` peuplées). */
   private static readonly orderUserWithAddressesPopulate = {
@@ -252,10 +301,10 @@ export class OrdersService {
       .lean()
       .exec();
 
-    let enriched = await this.attachClientOrderFlags(
+    let enriched = OrdersService.enrichOrdersWithDeliveryAddress(
       data as unknown as Record<string, unknown>[],
-      user,
     );
+    enriched = await this.attachClientOrderFlags(enriched, user);
     if (
       user.type === UserTypeEnum.VENDOR ||
       user.type === UserTypeEnum.ADMIN
@@ -441,7 +490,8 @@ export class OrdersService {
     await this.ensurePickupCodeForOrderDoc(order);
 
     const plain = order.toObject() as Record<string, unknown>;
-    let row: Record<string, unknown> = plain;
+    let row: Record<string, unknown> =
+      OrdersService.enrichOrderWithDeliveryAddress(plain);
     if (user.type === UserTypeEnum.USER) {
       const [withFlags] = await this.attachClientOrderFlags([plain], user);
       row = withFlags;
@@ -630,6 +680,47 @@ export class OrdersService {
    * Si `opts.charged*Cents` sont fournis (métadonnées Stripe / payout), le total
    * suit le montant réellement encaissé (ex. panier avec code promo).
    */
+  private async deliveryAddressSnapshotForUser(
+    customerUserId: string,
+    addressId: string,
+  ): Promise<OrderModel['deliveryAddressSnapshot'] | null> {
+    const aid = addressId.trim();
+    if (!aid) return null;
+    const userDoc = await this._userModel
+      .findById(customerUserId)
+      .select('addresses')
+      .lean()
+      .exec();
+    const addrRefs = (userDoc as { addresses?: unknown[] } | null)?.addresses;
+    const owned = (addrRefs ?? []).some((ref) => ref?.toString() === aid);
+    if (!owned) {
+      this.logger.warn(
+        `markOrderPaid: address ${aid} not owned by user ${customerUserId}`,
+      );
+      return null;
+    }
+    const addr = await this._addressModel.findById(aid).lean().exec();
+    if (!addr) return null;
+    const loc = addr.location as
+      | { type?: string; coordinates?: number[] }
+      | undefined;
+    return {
+      label: addr.label,
+      address: addr.address,
+      city: addr.city,
+      country: addr.country,
+      countryCode: addr.countryCode,
+      zipCode: addr.zipCode,
+      location:
+        loc?.coordinates?.length === 2
+          ? {
+              type: loc.type ?? 'Point',
+              coordinates: loc.coordinates,
+            }
+          : undefined,
+    };
+  }
+
   async markOrderPaidWithShipping(
     orderId: string,
     shippingPrice: number,
@@ -638,6 +729,7 @@ export class OrdersService {
       couponCode?: string;
       chargedGoodsCents?: number;
       chargedShipCents?: number;
+      deliveryAddressId?: string;
     },
   ): Promise<void> {
     const ship = Math.max(0, Number(shippingPrice) || 0);
@@ -699,6 +791,30 @@ export class OrdersService {
     }
     if (sC != null) {
       $set['stripeChargedShipCents'] = sC;
+    }
+
+    if (!isPickup && opts?.deliveryAddressId?.trim()) {
+      const customerId = (() => {
+        const raw = o.user as unknown;
+        if (raw instanceof Types.ObjectId) return raw.toHexString();
+        if (raw && typeof raw === 'object' && '_id' in raw) {
+          const uid = (raw as { _id: unknown })._id;
+          return uid instanceof Types.ObjectId
+            ? uid.toHexString()
+            : String(uid);
+        }
+        return String(raw ?? '');
+      })();
+      const snap = await this.deliveryAddressSnapshotForUser(
+        customerId,
+        opts.deliveryAddressId,
+      );
+      if (snap) {
+        $set['deliveryAddress'] = new Types.ObjectId(
+          opts.deliveryAddressId.trim(),
+        );
+        $set['deliveryAddressSnapshot'] = snap;
+      }
     }
 
     await this._orderModel
@@ -1246,6 +1362,28 @@ export class OrdersService {
     }
   }
 
+  private deliveryAddressFromOrder(order: Record<string, unknown>): {
+    line?: string;
+    coords?: [number, number];
+    raw?: Record<string, unknown>;
+  } | null {
+    const snap =
+      order['deliveryAddressSnapshot'] ?? order['delivery_address_snapshot'];
+    if (!snap || typeof snap !== 'object') return null;
+    const doc = snap as Record<string, unknown>;
+    const coords = this.coordsFromAddressLike(doc);
+    const street = String(doc.address ?? '').trim();
+    const city = String(doc.city ?? '').trim();
+    const zip = String(doc.zipCode ?? doc.zip_code ?? '').trim();
+    const parts = [
+      street,
+      [city, zip].filter((s) => s.length > 0).join(' '),
+    ].filter((s) => s.length > 0);
+    const line = parts.join(', ');
+    if (!line && !coords) return null;
+    return { line: line || undefined, coords, raw: doc };
+  }
+
   private resolveOrderTrackingGeo(
     order: OrderModel | Record<string, unknown>,
     isPickup: boolean,
@@ -1254,15 +1392,18 @@ export class OrdersService {
     destinationLine?: string;
     originLine?: string;
   } {
-    const store = (order as { store?: unknown }).store;
-    const user = (order as { user?: unknown }).user;
+    const orderRec = order as Record<string, unknown>;
+    const store = orderRec.store;
+    const user = orderRec.user;
 
     const storeCoords = this.coordsFromAddressLike(
       store && typeof store === 'object' && 'address' in store
         ? (store as { address?: unknown }).address
         : undefined,
     );
-    const userAddr = this.defaultUserAddressFromPopulated(user);
+    const userAddr =
+      this.deliveryAddressFromOrder(orderRec) ??
+      this.defaultUserAddressFromPopulated(user);
     const userCoords = userAddr?.coords;
 
     let distanceKm: number | undefined;
@@ -1932,7 +2073,9 @@ export class OrdersService {
           ? (plain.store as { address?: unknown }).address
           : undefined,
       );
-      const userAddr = this.defaultUserAddressFromPopulated(plain.user);
+      const userAddr =
+        this.deliveryAddressFromOrder(plain) ??
+        this.defaultUserAddressFromPopulated(plain.user);
       const userCoords = userAddr?.coords;
       const courier = await this.resolveShippedCourierCoordinates(oid, plain);
 

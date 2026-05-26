@@ -124,6 +124,50 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'shipping_price', default: 0 })
   shippingPrice?: number;
 
+  /** Adresse de livraison choisie au paiement (référence `addresses`). */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'AddressModel',
+    required: false,
+    name: 'delivery_address',
+  })
+  deliveryAddress?: MongooseSchema.Types.ObjectId;
+
+  /**
+   * Copie figée au paiement (si l’utilisateur modifie ou supprime l’adresse ensuite).
+   */
+  @Prop({
+    required: false,
+    name: 'delivery_address_snapshot',
+    type: {
+      label: { type: String, required: false },
+      address: { type: String, required: true },
+      city: { type: String, required: true },
+      country: { type: String, required: true },
+      countryCode: { type: String, required: true, name: 'country_code' },
+      zipCode: { type: String, required: true, name: 'zip_code' },
+      location: {
+        type: {
+          type: { type: String, enum: ['Point'], default: 'Point' },
+          coordinates: { type: [Number], required: true },
+        },
+        required: false,
+      },
+    },
+  })
+  deliveryAddressSnapshot?: {
+    label?: string;
+    address: string;
+    city: string;
+    country: string;
+    countryCode: string;
+    zipCode: string;
+    location?: {
+      type: string;
+      coordinates: number[];
+    };
+  };
+
   @Prop({ required: true, name: 'total_price' })
   totalPrice: number;
 
