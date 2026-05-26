@@ -43,7 +43,13 @@ export class LoyaltyController {
 
   @Put('settings')
   @UseGuards(JwtGuard)
-  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      transformOptions: { enableImplicitConversion: true },
+    }),
+  )
   @ApiOperation({ summary: 'Mettre à jour la configuration fidélité (ADMIN)' })
   async updateSettings(
     @Req() req: Request,

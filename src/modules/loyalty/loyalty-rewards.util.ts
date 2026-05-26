@@ -10,7 +10,23 @@ export type LoyaltyRewardItem = {
   active: boolean;
 };
 
-const CATALOG_IDS = new Set(LOYALTY_REWARD_CATALOG.map((r) => r.id));
+const CATALOG_IDS = new Set<string>(
+  LOYALTY_REWARD_CATALOG.map((r) => String(r.id)),
+);
+
+function readRewardActive(
+  patch: Partial<LoyaltyRewardItem> | undefined,
+  defaultActive: boolean,
+): boolean {
+  if (!patch || !('active' in patch)) {
+    return defaultActive;
+  }
+  const v = patch.active;
+  if (typeof v === 'boolean') return v;
+  if (v === 'true' || v === 1 || v === '1') return true;
+  if (v === 'false' || v === 0 || v === '0') return false;
+  return defaultActive;
+}
 
 /** Fusionne les récompenses stockées avec le catalogue par défaut (ids fixes). */
 export function mergeRewardsCatalog(
@@ -37,7 +53,7 @@ export function mergeRewardsCatalog(
       icon: icon || def.icon,
       points: Number.isFinite(points) ? points : def.points,
       category,
-      active: patch?.active !== undefined ? Boolean(patch.active) : def.active,
+      active: readRewardActive(patch, def.active),
     };
   });
 }
