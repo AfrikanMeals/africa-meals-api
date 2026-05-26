@@ -187,7 +187,17 @@ export class OrdersController {
 
   @Get(':id')
   @UseGuards(JwtGuard)
-  async findOneById(@Req() req: Request, @Param('id') id: string) {
-    return this._ordersService.findOneById(id, req.user as UserModel);
+  async findOneById(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Query('asCustomer') asCustomer?: string,
+  ) {
+    const flag = String(asCustomer ?? '')
+      .trim()
+      .toLowerCase();
+    return this._ordersService.findOneById(id, req.user as UserModel, {
+      asCustomer:
+        flag === '1' || flag === 'true' || flag === 'yes' || flag === 'on',
+    });
   }
 }

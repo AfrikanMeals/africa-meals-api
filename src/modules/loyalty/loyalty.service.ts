@@ -207,7 +207,7 @@ export class LoyaltyService {
       currency: config.currency,
       cadPerPoint: config.cadPerPoint,
       welcomeBonusPoints: config.welcomeBonusPoints,
-      earnDescription: `1 point pour chaque tranche de ${config.cadPerPoint} ${config.currency} sur une commande livrée (statut terminée).`,
+      earnDescription: `1 point pour chaque tranche de ${config.cadPerPoint} ${config.currency} sur une commande payée (encaissement confirmé).`,
     };
     const tiers = config.tiers.map((t) => ({
       name: t.name,
@@ -329,7 +329,7 @@ export class LoyaltyService {
   }
 
   /**
-   * Crédite les points après commande `completed` (idempotent par commande).
+   * Crédite les points après commande encaissée (idempotent par commande).
    */
   async creditOrderCompletion(orderId: string): Promise<void> {
     const oid = String(orderId ?? '').trim();
@@ -341,7 +341,7 @@ export class LoyaltyService {
       .lean()
       .exec();
     if (!order) return;
-    if (order.status !== OrderStatusEnum.COMPLETED) return;
+    if (!CLIENT_ORDER_STATUSES.includes(order.status as OrderStatusEnum)) return;
     if (order.loyaltyPointsCredited === true) return;
 
     const uid = this._userIdFromOrderLean(order.user);
@@ -380,7 +380,7 @@ export class LoyaltyService {
 
     history.push({
       points,
-      reason: `Commande livrée (+${points} pts)`,
+      reason: `Commande payée (+${points} pts)`,
       createdAt: new Date(),
     });
     user.rewardHistory = history;

@@ -1,6 +1,6 @@
 import { OrderStatusEnum } from '@schemas/order.schema';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsEnum,
   IsIn,
@@ -63,6 +63,21 @@ export class FilterOrdersDto {
   @IsString()
   @MaxLength(120)
   q?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "Force le scope client (commandes de l'utilisateur connecté) même pour ADMIN/VENDOR/DELIVERY.",
+    example: true,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    const s = String(value ?? '')
+      .trim()
+      .toLowerCase();
+    return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+  })
+  asCustomer?: boolean;
 }
 
 export class ConfirmPickupDto {

@@ -236,8 +236,14 @@ export class OrdersService {
     user: UserModel,
   ): Promise<{ data: OrderModel[] }> {
     const filter: Record<string, unknown> = {};
+    const asCustomerScope = Boolean(args.asCustomer);
 
-    if (user.type === UserTypeEnum.ADMIN) {
+    if (asCustomerScope) {
+      filter['user'] = new Types.ObjectId(String(user.id));
+      if (args.storeId) {
+        filter['store'] = { _id: args.storeId };
+      }
+    } else if (user.type === UserTypeEnum.ADMIN) {
       if (args.storeId) {
         filter['store'] = { _id: args.storeId };
       }
@@ -304,21 +310,21 @@ export class OrdersService {
     let enriched = OrdersService.enrichOrdersWithDeliveryAddress(
       data as unknown as Record<string, unknown>[],
     );
-    enriched = await this.attachClientOrderFlags(enriched, user);
+    enriched = await this.attachClientOrderFlags(enriched, user, asCustomerScope);
     if (
-      user.type === UserTypeEnum.VENDOR ||
-      user.type === UserTypeEnum.ADMIN
+      !asCustomerScope &&
+      (user.type === UserTypeEnum.VENDOR || user.type === UserTypeEnum.ADMIN)
     ) {
       enriched = this.attachDashboardOrderRefundFlags(enriched);
     }
     if (
-      user.type === UserTypeEnum.VENDOR ||
-      user.type === UserTypeEnum.DELIVERY
+      !asCustomerScope &&
+      (user.type === UserTypeEnum.VENDOR || user.type === UserTypeEnum.DELIVERY)
     ) {
       enriched = this.stripPickupCodeForNonClients(enriched);
     }
 
-    if (user.type === UserTypeEnum.ADMIN) {
+    if (!asCustomerScope && user.type === UserTypeEnum.ADMIN) {
       await this.ensureHandoffCodesForAdminSupport(enriched);
     }
 
@@ -367,8 +373,9 @@ export class OrdersService {
   private async attachClientOrderFlags(
     rows: Record<string, unknown>[],
     user: UserModel,
+    asCustomerScope = false,
   ): Promise<Record<string, unknown>[]> {
-    if (user.type !== UserTypeEnum.USER || !rows.length) {
+    if ((user.type !== UserTypeEnum.USER && !asCustomerScope) || !rows.length) {
       return rows;
     }
     const orderIds = rows
@@ -460,10 +467,17 @@ export class OrdersService {
     return { canRequestRefund: false, refundRequestState: 'unavailable' };
   }
 
-  async findOneById(id: string, user: UserModel) {
+  async findOneById(
+    id: string,
+    user: UserModel,
+    opts?: { asCustomer?: boolean },
+  ) {
     const filter: Record<string, unknown> = { _id: id };
+    const asCustomerScope = Boolean(opts?.asCustomer);
 
-    if (user.type === UserTypeEnum.ADMIN) {
+    if (asCustomerScope) {
+      filter['user'] = new Types.ObjectId(String(user.id));
+    } else if (user.type === UserTypeEnum.ADMIN) {
       // accès à toute commande
     } else if (user.type === UserTypeEnum.VENDOR) {
       const rawStores = user.stores || [];
@@ -473,10 +487,13 @@ export class OrdersService {
         }
         return String(s);
       });
-      if (!storeIds.length) {
-        throw new NotFoundException('order_not_found');
+      const vendorUserId = new Types.ObjectId(String(user.id));
+      if (storeIds.length) {
+        filter['$or'] = [{ store: { $in: storeIds } }, { user: vendorUserId }];
+      } else {
+        // Un vendeur peut aussi consulter ses achats personnels (mode client).
+        filter['user'] = vendorUserId;
       }
-      filter['store'] = { $in: storeIds };
     } else if (user.type === UserTypeEnum.DELIVERY) {
       filter['assigned_delivery_user'] = new Types.ObjectId(String(user.id));
       filter['shouldShip'] = true;
@@ -506,8 +523,12 @@ export class OrdersService {
     const plain = order.toObject() as Record<string, unknown>;
     let row: Record<string, unknown> =
       OrdersService.enrichOrderWithDeliveryAddress(plain);
-    if (user.type === UserTypeEnum.USER) {
-      const [withFlags] = await this.attachClientOrderFlags([plain], user);
+    if (user.type === UserTypeEnum.USER || asCustomerScope) {
+      const [withFlags] = await this.attachClientOrderFlags(
+        [plain],
+        user,
+        asCustomerScope,
+      );
       row = withFlags;
     } else if (
       user.type === UserTypeEnum.VENDOR ||
@@ -517,7 +538,11 @@ export class OrdersService {
     }
     const [enriched] = await this.attachStatusEventsToOrders([row]);
     const out = enriched;
-    if (user.type === UserTypeEnum.USER || user.type === UserTypeEnum.ADMIN) {
+    if (
+      asCustomerScope ||
+      user.type === UserTypeEnum.USER ||
+      user.type === UserTypeEnum.ADMIN
+    ) {
       return out as unknown as typeof order;
     }
     return this.stripPickupCodeForNonClients([out])[0] as unknown as typeof order;
@@ -949,6 +974,15 @@ export class OrdersService {
       void this.notifyPartiesOrderRealtimeByOrderId(
         orderId,
         OrderStatusEnum.PAIED,
+      );
+
+      // Fidélité : crédit dès encaissement confirmé (respecte éligibilité + réglages admin).
+      void this._loyaltyService.creditOrderCompletion(orderId).catch((err) =>
+        this.logger.warn(
+          `Loyalty credit on paid order=${orderId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
       );
     }
   }
@@ -1608,10 +1642,6 @@ export class OrdersService {
     orderId: string,
     user: UserModel,
   ): Promise<{ orderId: string; pickupCode: string }> {
-    if (user.type !== UserTypeEnum.USER) {
-      throw new ForbiddenException('client_only');
-    }
-
     const oid = orderId.trim();
     if (!Types.ObjectId.isValid(oid)) {
       throw new NotFoundException('order_not_found');

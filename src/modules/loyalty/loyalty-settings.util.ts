@@ -192,7 +192,7 @@ export function accumulationRulesFromConfig(
     },
     {
       key: 'Crédit automatique',
-      value: 'À chaque commande livrée (statut completed)',
+      value: 'À chaque commande payée (encaissement confirmé)',
     },
     {
       key: 'Éligibilité',

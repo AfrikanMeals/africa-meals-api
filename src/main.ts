@@ -20,6 +20,9 @@ async function bootstrap() {
   app.use(compressionMiddleware({ threshold: 1024 }));
   app.use(unifiedJsonBodyParser({ limit: '60mb', preserveRawBody: true }));
   app.use(express.urlencoded({ extended: true, limit: '60mb' }));
+  app.use('/robots.txt', (_req, res) => {
+    res.type('text/plain').send('User-agent: *\nDisallow: /\n');
+  });
   await configureApplication(app);
 
   const port = Number(process.env.NODE_PORT || process.env.PORT || 3000);

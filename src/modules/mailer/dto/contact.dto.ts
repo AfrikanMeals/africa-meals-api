@@ -37,4 +37,11 @@ export class ContactDto {
   @IsString()
   @MaxLength(200)
   website?: string;
+
+  /** Token reCAPTCHA Enterprise (côté web). */
+  @ApiPropertyOptional({ description: 'Token reCAPTCHA Enterprise' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(4096)
+  recaptchaToken?: string;
 }

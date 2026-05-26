@@ -23,7 +23,8 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "bench:api": "node scripts/api-performance-report.mjs"
+    "bench:api": "node scripts/api-performance-report.mjs",
+    "loyalty:backfill": "ts-node -r tsconfig-paths/register src/scripts/loyalty-backfill-paid-orders.ts"
   },
   "dependencies": {
     "@nestjs/apollo": "^10.2.1",
@@ -52,6 +53,7 @@
     "firebase": "^10.12.2",
     "firebase-admin": "^12.0.0",
     "firebase-functions": "^7.2.2",
+    "google-auth-library": "^10.6.2",
     "graphql": "^16.13.2",
     "graphql-scalars": "^1.25.0",
     "libphonenumber-js": "^1.12.40",
