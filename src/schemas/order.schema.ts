@@ -23,6 +23,46 @@ export enum OrderRefundRequestEntryStatusEnum {
   COMPLETED = 'completed',
 }
 
+@Schema({ _id: false })
+export class OrderDeliveryAddressSnapshot {
+  @Prop({ required: false })
+  label?: string;
+
+  @Prop({ required: true })
+  address: string;
+
+  @Prop({ required: true })
+  city: string;
+
+  @Prop({ required: true })
+  country: string;
+
+  @Prop({ required: true, name: 'country_code' })
+  countryCode: string;
+
+  @Prop({ required: true, name: 'zip_code' })
+  zipCode: string;
+
+  @Prop({
+    type: {
+      type: MongooseSchema.Types.String,
+      enum: ['Point'],
+      default: 'Point',
+    },
+    coordinates: {
+      type: [Number],
+    },
+  })
+  location?: {
+    type: string;
+    coordinates: number[];
+  };
+}
+
+export const OrderDeliveryAddressSnapshotSchema = SchemaFactory.createForClass(
+  OrderDeliveryAddressSnapshot,
+);
+
 @Schema({
   toJSON: {
     getters: true,
@@ -128,7 +168,6 @@ export class OrderModel extends BaseSchema {
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'AddressModel',
-    required: false,
     name: 'delivery_address',
   })
   deliveryAddress?: MongooseSchema.Types.ObjectId;
@@ -137,36 +176,10 @@ export class OrderModel extends BaseSchema {
    * Copie figée au paiement (si l’utilisateur modifie ou supprime l’adresse ensuite).
    */
   @Prop({
-    required: false,
     name: 'delivery_address_snapshot',
-    type: {
-      label: { type: String, required: false },
-      address: { type: String, required: true },
-      city: { type: String, required: true },
-      country: { type: String, required: true },
-      countryCode: { type: String, required: true, name: 'country_code' },
-      zipCode: { type: String, required: true, name: 'zip_code' },
-      location: {
-        type: {
-          type: { type: String, enum: ['Point'], default: 'Point' },
-          coordinates: { type: [Number], required: true },
-        },
-        required: false,
-      },
-    },
+    type: OrderDeliveryAddressSnapshotSchema,
   })
-  deliveryAddressSnapshot?: {
-    label?: string;
-    address: string;
-    city: string;
-    country: string;
-    countryCode: string;
-    zipCode: string;
-    location?: {
-      type: string;
-      coordinates: number[];
-    };
-  };
+  deliveryAddressSnapshot?: OrderDeliveryAddressSnapshot;
 
   @Prop({ required: true, name: 'total_price' })
   totalPrice: number;

@@ -318,7 +318,21 @@ export class OrdersService {
       enriched = this.stripPickupCodeForNonClients(enriched);
     }
 
+    if (user.type === UserTypeEnum.ADMIN) {
+      await this.ensureHandoffCodesForAdminSupport(enriched);
+    }
+
     return { data: enriched as unknown as OrderModel[] };
+  }
+
+  /** Génère les codes retrait/livraison manquants pour le support admin (liste commandes). */
+  private async ensureHandoffCodesForAdminSupport(
+    rows: Record<string, unknown>[],
+  ): Promise<void> {
+    if (!rows.length) return;
+    await mapInChunks(rows, 6, async (row) => {
+      await this.ensurePickupCodeForOrderDoc(row);
+    });
   }
 
   /** Code retrait/livraison : visible client + admin support ; masqué vendeur / livreur. */
