@@ -54,8 +54,10 @@ export type IntegrityTestRunResult = {
   totalRuns: number;
   score: number;
   confidence: number;
+  severity: 'critical' | 'high' | 'medium' | 'low';
   summary: string;
   checkedAt: string;
+  failureReasonCounts: Array<{ reason: string; count: number }>;
   sampleFailures: Array<{
     orderId: string;
     issues: string[];
@@ -90,6 +92,30 @@ export class DbMaintenanceService {
       description:
         'Vérifie toutes les commandes marquées payées: transaction Stripe liée, montants et statut.',
     },
+    {
+      key: 'order-data-safety-test',
+      label: 'Order Data Safety Test',
+      description:
+        'Vérifie la cohérence des commandes (total, items, flux livraison/retrait, lien paiement).',
+    },
+    {
+      key: 'stripe-processed-checkout-test',
+      label: 'Stripe Processed Checkout Test',
+      description:
+        'Vérifie la qualité des enregistrements stripe_processed_checkouts (session, montants, breakdown).',
+    },
+    {
+      key: 'stuck-created-orders-test',
+      label: 'Stuck Created Orders Test',
+      description:
+        'Détecte les commandes restant trop longtemps en statut created (risque incident checkout/webhook).',
+    },
+    {
+      key: 'operational-guards-test',
+      label: 'Operational Guards Test',
+      description:
+        'Vérifie des garde-fous critiques de configuration (JWT, Stripe webhook, reCAPTCHA monitor/enforce).',
+    },
   ];
   private readonly systemHealthChecks: SystemHealthCheckDefinition[] = [
     {
@@ -111,6 +137,12 @@ export class DbMaintenanceService {
       key: 'stripe-payment-status',
       label: 'Stripe payment Status',
       description: 'Vérifie la connectivité Stripe via balance.retrieve.',
+    },
+    {
+      key: 'stripe-webhook-last-activity',
+      label: 'Webhook Stripe last activity',
+      description:
+        'Vérifie la dernière activité de traitement Stripe et son ancienneté.',
     },
     {
       key: 'map-engine-status',
@@ -225,6 +257,14 @@ export class DbMaintenanceService {
     switch (normalized) {
       case 'order-payment-test':
         return { result: await this.runOrderPaymentIntegrityTest() };
+      case 'order-data-safety-test':
+        return { result: await this.runOrderDataSafetyIntegrityTest() };
+      case 'stripe-processed-checkout-test':
+        return { result: await this.runStripeProcessedCheckoutIntegrityTest() };
+      case 'stuck-created-orders-test':
+        return { result: await this.runStuckCreatedOrdersIntegrityTest() };
+      case 'operational-guards-test':
+        return { result: await this.runOperationalGuardsIntegrityTest() };
       default:
         throw new BadRequestException(`unknown_integrity_test:${normalized}`);
     }
@@ -252,6 +292,8 @@ export class DbMaintenanceService {
         return { result: await this.runApiFunctionHealthCheck() };
       case 'stripe-payment-status':
         return { result: await this.runStripeHealthCheck() };
+      case 'stripe-webhook-last-activity':
+        return { result: await this.runStripeWebhookLastActivityHealthCheck() };
       case 'map-engine-status':
         return { result: await this.runMapEngineHealthCheck() };
       default:
@@ -279,7 +321,7 @@ export class DbMaintenanceService {
 
     const totalRuns = paidOrders.length;
     if (!totalRuns) {
-      return {
+      return this.decorateIntegrityResult({
         key: 'order-payment-test',
         label,
         totalEvaluateTimeMs: Date.now() - startedAt,
@@ -290,7 +332,7 @@ export class DbMaintenanceService {
         summary: 'Aucune commande marquée payée à vérifier.',
         checkedAt: checkedAtIso,
         sampleFailures: [],
-      };
+      });
     }
 
     const paymentIds = [...new Set(
@@ -400,7 +442,7 @@ export class DbMaintenanceService {
     const confidenceRaw = (0.55 * coverage + 0.45 * (1 - failureRate)) * 100;
     const confidence = Math.max(35, Math.min(99, Number(confidenceRaw.toFixed(2))));
 
-    return {
+    return this.decorateIntegrityResult({
       key: 'order-payment-test',
       label,
       totalEvaluateTimeMs: Date.now() - startedAt,
@@ -411,7 +453,400 @@ export class DbMaintenanceService {
       summary: `${successRuns}/${totalRuns} commandes payées valides`,
       checkedAt: checkedAtIso,
       sampleFailures,
+    });
+  }
+
+  private async runOrderDataSafetyIntegrityTest(): Promise<IntegrityTestRunResult> {
+    const startedAt = Date.now();
+    const checkedAtIso = new Date().toISOString();
+    const key = 'order-data-safety-test';
+    const label = 'Order Data Safety Test';
+    const scanLimit = this.getIntegrityScanLimit();
+    const paidLike = [
+      OrderStatusEnum.PAIED,
+      OrderStatusEnum.APPROVED,
+      OrderStatusEnum.SHIPPED,
+      OrderStatusEnum.COMPLETED,
+    ];
+
+    const totalOrders = await this.orderModel.countDocuments({});
+    const docs = await this.orderModel
+      .find({})
+      .sort({ createdAt: -1 })
+      .limit(scanLimit)
+      .select([
+        '_id',
+        'status',
+        'totalPrice',
+        'items',
+        'stripeParentPaymentId',
+        'shouldShip',
+        'shippingPrice',
+        'deliveryAddress',
+        'deliveryAddressSnapshot',
+      ])
+      .lean()
+      .exec();
+
+    let successRuns = 0;
+    const sampleFailures: IntegrityTestRunResult['sampleFailures'] = [];
+
+    for (const order of docs) {
+      const orderId = String(order._id);
+      const issues: string[] = [];
+      const status = String((order as { status?: unknown }).status ?? '');
+      const totalPrice = Number((order as { totalPrice?: unknown }).totalPrice ?? 0);
+      const shouldShip = Boolean((order as { shouldShip?: unknown }).shouldShip);
+      const shippingPrice = Number(
+        (order as { shippingPrice?: unknown }).shippingPrice ?? 0,
+      );
+      const stripeParentPaymentId = String(
+        (order as { stripeParentPaymentId?: unknown }).stripeParentPaymentId ?? '',
+      ).trim();
+      const items = Array.isArray((order as { items?: unknown }).items)
+        ? ((order as { items: Array<Record<string, unknown>> }).items ?? [])
+        : [];
+
+      if (totalPrice <= 0) {
+        issues.push('non_positive_total_price');
+      }
+      if (!items.length) {
+        issues.push('missing_order_items');
+      } else {
+        for (const [idx, item] of items.entries()) {
+          const q = Number(item.quantity ?? 0);
+          const p = Number(item.price ?? 0);
+          if (!Number.isFinite(q) || q <= 0) {
+            issues.push(`invalid_item_quantity:${idx}`);
+            break;
+          }
+          if (!Number.isFinite(p) || p < 0) {
+            issues.push(`invalid_item_price:${idx}`);
+            break;
+          }
+        }
+      }
+
+      if (paidLike.includes(status as OrderStatusEnum) && !stripeParentPaymentId) {
+        issues.push('paid_like_status_without_stripe_parent_payment_id');
+      }
+
+      const hasDeliveryAddress = Boolean(
+        (order as { deliveryAddress?: unknown }).deliveryAddress,
+      );
+      const hasDeliverySnapshot = Boolean(
+        (order as { deliveryAddressSnapshot?: unknown }).deliveryAddressSnapshot,
+      );
+      if (shouldShip) {
+        if (!hasDeliveryAddress && !hasDeliverySnapshot) {
+          issues.push('shipping_order_missing_delivery_address');
+        }
+        if (shippingPrice <= 0) {
+          issues.push('shipping_order_non_positive_shipping_price');
+        }
+      } else if (shippingPrice > 0) {
+        issues.push('pickup_order_has_shipping_price');
+      }
+
+      if (!issues.length) {
+        successRuns += 1;
+      } else if (sampleFailures.length < 25) {
+        sampleFailures.push({ orderId, issues });
+      }
+    }
+
+    const totalRuns = docs.length;
+    const score = totalRuns
+      ? Number(((successRuns / totalRuns) * 100).toFixed(2))
+      : 100;
+    const confidence = Number(
+      (Math.min(99, 60 + Math.min(totalRuns, 3000) / 50)).toFixed(2),
+    );
+    return this.decorateIntegrityResult({
+      key,
+      label,
+      totalEvaluateTimeMs: Date.now() - startedAt,
+      successRuns,
+      totalRuns,
+      score,
+      confidence,
+      summary:
+        totalOrders > scanLimit
+          ? `${successRuns}/${totalRuns} valides (scan limité aux ${scanLimit} commandes les plus récentes sur ${totalOrders}).`
+          : `${successRuns}/${totalRuns} commandes valides.`,
+      checkedAt: checkedAtIso,
+      sampleFailures,
+    });
+  }
+
+  private async runStripeProcessedCheckoutIntegrityTest(): Promise<IntegrityTestRunResult> {
+    const startedAt = Date.now();
+    const checkedAtIso = new Date().toISOString();
+    const key = 'stripe-processed-checkout-test';
+    const label = 'Stripe Processed Checkout Test';
+    const scanLimit = this.getIntegrityScanLimit();
+    const totalDocs = await this.processedModel.countDocuments({});
+    const docs = await this.processedModel
+      .find({})
+      .sort({ createdAt: -1 })
+      .limit(scanLimit)
+      .select(['_id', 'sessionId', 'orderIds', 'amountTotalCents', 'perStoreBreakdown'])
+      .lean()
+      .exec();
+
+    let successRuns = 0;
+    const sampleFailures: IntegrityTestRunResult['sampleFailures'] = [];
+
+    for (const doc of docs) {
+      const docId = String((doc as { _id?: unknown })._id ?? '');
+      const sessionId = String((doc as { sessionId?: unknown }).sessionId ?? '').trim();
+      const amountTotalCents = Number(
+        (doc as { amountTotalCents?: unknown }).amountTotalCents ?? 0,
+      );
+      const orderIds = Array.isArray((doc as { orderIds?: unknown }).orderIds)
+        ? (doc as { orderIds: unknown[] }).orderIds.map((x) => String(x))
+        : [];
+      const rows = Array.isArray(
+        (doc as { perStoreBreakdown?: unknown }).perStoreBreakdown,
+      )
+        ? ((doc as { perStoreBreakdown: Array<Record<string, unknown>> }).perStoreBreakdown ??
+          [])
+        : [];
+      const issues: string[] = [];
+
+      if (!sessionId.startsWith('pi_') && !sessionId.startsWith('cs_')) {
+        issues.push('invalid_session_id_format');
+      }
+      if (!orderIds.length) {
+        issues.push('missing_order_ids');
+      }
+      if (new Set(orderIds).size !== orderIds.length) {
+        issues.push('duplicate_order_ids');
+      }
+      if (amountTotalCents <= 0) {
+        issues.push('non_positive_amount_total_cents');
+      }
+      if (!rows.length) {
+        issues.push('missing_per_store_breakdown');
+      } else {
+        for (const [idx, row] of rows.entries()) {
+          const storeId = String(row.storeId ?? '').trim();
+          const goodsCents = Number(row.goodsCents ?? 0);
+          const shipCents = Number(row.shipCents ?? 0);
+          if (!storeId) {
+            issues.push(`breakdown_missing_store_id:${idx}`);
+            break;
+          }
+          if (!Number.isFinite(goodsCents) || goodsCents < 0) {
+            issues.push(`breakdown_invalid_goods:${idx}`);
+            break;
+          }
+          if (!Number.isFinite(shipCents) || shipCents < 0) {
+            issues.push(`breakdown_invalid_ship:${idx}`);
+            break;
+          }
+        }
+      }
+
+      if (!issues.length) {
+        successRuns += 1;
+      } else if (sampleFailures.length < 25) {
+        sampleFailures.push({ orderId: docId || sessionId || 'unknown', issues });
+      }
+    }
+
+    const totalRuns = docs.length;
+    const score = totalRuns
+      ? Number(((successRuns / totalRuns) * 100).toFixed(2))
+      : 100;
+    const confidence = Number(
+      (Math.min(99, 65 + Math.min(totalRuns, 3000) / 60)).toFixed(2),
+    );
+    return this.decorateIntegrityResult({
+      key,
+      label,
+      totalEvaluateTimeMs: Date.now() - startedAt,
+      successRuns,
+      totalRuns,
+      score,
+      confidence,
+      summary:
+        totalDocs > scanLimit
+          ? `${successRuns}/${totalRuns} documents valides (scan limité aux ${scanLimit} plus récents sur ${totalDocs}).`
+          : `${successRuns}/${totalRuns} documents valides.`,
+      checkedAt: checkedAtIso,
+      sampleFailures,
+    });
+  }
+
+  private async runStuckCreatedOrdersIntegrityTest(): Promise<IntegrityTestRunResult> {
+    const startedAt = Date.now();
+    const checkedAtIso = new Date().toISOString();
+    const key = 'stuck-created-orders-test';
+    const label = 'Stuck Created Orders Test';
+    const maxAgeHours = this.getCreatedOrderMaxAgeHours();
+    const cutoff = new Date(Date.now() - maxAgeHours * 3600 * 1000);
+
+    const totalRuns = await this.orderModel.countDocuments({
+      status: OrderStatusEnum.CREATED,
+    });
+    const stuckCount = await this.orderModel.countDocuments({
+      status: OrderStatusEnum.CREATED,
+      createdAt: { $lt: cutoff },
+    });
+    const sampleDocs = await this.orderModel
+      .find({
+        status: OrderStatusEnum.CREATED,
+        createdAt: { $lt: cutoff },
+      })
+      .sort({ createdAt: 1 })
+      .limit(25)
+      .select(['_id', 'createdAt'])
+      .lean()
+      .exec();
+
+    const successRuns = Math.max(0, totalRuns - stuckCount);
+    const sampleFailures: IntegrityTestRunResult['sampleFailures'] = sampleDocs.map(
+      (doc) => ({
+        orderId: String(doc._id),
+        issues: [
+          `created_order_stuck_over_${maxAgeHours}h`,
+          `created_at:${new Date(String((doc as { createdAt?: unknown }).createdAt ?? '')).toISOString()}`,
+        ],
+      }),
+    );
+    const score = totalRuns
+      ? Number(((successRuns / totalRuns) * 100).toFixed(2))
+      : 100;
+    const confidence = totalRuns > 0 ? 95 : 80;
+
+    return this.decorateIntegrityResult({
+      key,
+      label,
+      totalEvaluateTimeMs: Date.now() - startedAt,
+      successRuns,
+      totalRuns,
+      score,
+      confidence,
+      summary: `${stuckCount} commande(s) created bloquée(s) au-delà de ${maxAgeHours}h.`,
+      checkedAt: checkedAtIso,
+      sampleFailures,
+    });
+  }
+
+  private async runOperationalGuardsIntegrityTest(): Promise<IntegrityTestRunResult> {
+    const startedAt = Date.now();
+    const checkedAtIso = new Date().toISOString();
+    const key = 'operational-guards-test';
+    const label = 'Operational Guards Test';
+
+    const checks: Array<{
+      id: string;
+      ok: boolean;
+      issue: string;
+    }> = [];
+
+    const jwtSecret = String(this.config.get<string>('JWT_SECRET') ?? '').trim();
+    checks.push({
+      id: 'JWT_SECRET',
+      ok: jwtSecret.length >= 16,
+      issue: 'jwt_secret_too_short_or_missing',
+    });
+
+    const stripeSecretKey = String(
+      this.config.get<string>('STRIPE_SECRET_KEY') ?? '',
+    ).trim();
+    checks.push({
+      id: 'STRIPE_SECRET_KEY',
+      ok: stripeSecretKey.startsWith('sk_'),
+      issue: 'stripe_secret_key_missing_or_invalid',
+    });
+
+    const stripeWebhookSecret = String(
+      this.config.get<string>('STRIPE_WEBHOOK_SECRET') ?? '',
+    ).trim();
+    checks.push({
+      id: 'STRIPE_WEBHOOK_SECRET',
+      ok: stripeWebhookSecret.startsWith('whsec_'),
+      issue: 'stripe_webhook_secret_missing_or_invalid',
+    });
+
+    const recaptchaEnforce = String(
+      this.config.get<string>('RECAPTCHA_ENTERPRISE_ENFORCE') ?? '',
+    )
+      .trim()
+      .toLowerCase();
+    const recaptchaSiteKey = String(
+      this.config.get<string>('RECAPTCHA_ENTERPRISE_SITE_KEY') ?? '',
+    ).trim();
+    checks.push({
+      id: 'RECAPTCHA_ENTERPRISE',
+      ok: recaptchaEnforce !== 'true' || recaptchaSiteKey.length > 10,
+      issue: 'recaptcha_enforce_without_site_key',
+    });
+
+    const totalRuns = checks.length;
+    const successRuns = checks.filter((c) => c.ok).length;
+    const sampleFailures: IntegrityTestRunResult['sampleFailures'] = checks
+      .filter((c) => !c.ok)
+      .map((c) => ({
+        orderId: c.id,
+        issues: [c.issue],
+      }));
+    const score = Number(((successRuns / totalRuns) * 100).toFixed(2));
+    const confidence = 98;
+
+    return this.decorateIntegrityResult({
+      key,
+      label,
+      totalEvaluateTimeMs: Date.now() - startedAt,
+      successRuns,
+      totalRuns,
+      score,
+      confidence,
+      summary: `${successRuns}/${totalRuns} garde-fous opérationnels conformes.`,
+      checkedAt: checkedAtIso,
+      sampleFailures,
+    });
+  }
+
+  private decorateIntegrityResult(
+    base: Omit<IntegrityTestRunResult, 'severity' | 'failureReasonCounts'>,
+  ): IntegrityTestRunResult {
+    const severity = this.severityFromScore(base.score);
+    const failureReasonCounts = this.buildFailureReasonCounts(base.sampleFailures);
+    return {
+      ...base,
+      severity,
+      failureReasonCounts,
     };
+  }
+
+  private severityFromScore(
+    score: number,
+  ): IntegrityTestRunResult['severity'] {
+    if (score < 70) return 'critical';
+    if (score < 90) return 'high';
+    if (score < 98) return 'medium';
+    return 'low';
+  }
+
+  private buildFailureReasonCounts(
+    failures: IntegrityTestRunResult['sampleFailures'],
+  ): Array<{ reason: string; count: number }> {
+    const map = new Map<string, number>();
+    for (const f of failures) {
+      for (const issue of f.issues ?? []) {
+        const reason = String(issue || '')
+          .trim()
+          .split(':')[0];
+        if (!reason) continue;
+        map.set(reason, (map.get(reason) ?? 0) + 1);
+      }
+    }
+    return [...map.entries()]
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
   }
 
   private stripeClient(): InstanceType<typeof Stripe> | null {
@@ -592,6 +1027,80 @@ export class DbMaintenanceService {
     }
   }
 
+  private async runStripeWebhookLastActivityHealthCheck(): Promise<SystemHealthCheckResult> {
+    const startedAtMs = Date.now();
+    const key = 'stripe-webhook-last-activity';
+    const label = 'Webhook Stripe last activity';
+    const maxAgeMin = Number(
+      this.config.get<string>('STRIPE_WEBHOOK_ACTIVITY_MAX_AGE_MIN') ?? '30',
+    );
+    const thresholdMin = Number.isFinite(maxAgeMin) && maxAgeMin > 0 ? maxAgeMin : 30;
+
+    try {
+      const latest = await this.processedModel
+        .findOne({})
+        .sort({ createdAt: -1 })
+        .select(['sessionId', 'stripeEventKind', 'createdAt'])
+        .lean()
+        .exec();
+
+      if (!latest) {
+        return this.normalizeHealthResult({
+          key,
+          label,
+          startedAtMs,
+          status: 'down',
+          details: 'Aucune activité Stripe traitée pour le moment.',
+        });
+      }
+
+      const createdAtRaw = (latest as { createdAt?: unknown }).createdAt;
+      const createdAtMs =
+        createdAtRaw instanceof Date
+          ? createdAtRaw.getTime()
+          : new Date(String(createdAtRaw ?? '')).getTime();
+      if (!Number.isFinite(createdAtMs) || createdAtMs <= 0) {
+        return this.normalizeHealthResult({
+          key,
+          label,
+          startedAtMs,
+          status: 'degraded',
+          details: 'Dernière activité Stripe trouvée mais date invalide.',
+        });
+      }
+
+      const ageMin = (Date.now() - createdAtMs) / 60000;
+      const eventKind = String(
+        (latest as { stripeEventKind?: unknown }).stripeEventKind ?? 'unknown',
+      );
+      const paymentId = String((latest as { sessionId?: unknown }).sessionId ?? '');
+      const status: SystemHealthCheckResult['status'] =
+        ageMin <= thresholdMin
+          ? 'healthy'
+          : ageMin <= thresholdMin * 3
+            ? 'degraded'
+            : 'down';
+
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status,
+        details: `Dernière activité il y a ${ageMin.toFixed(1)} min (threshold ${thresholdMin} min) — ${eventKind} / ${paymentId}.`,
+      });
+    } catch (e) {
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: 'down',
+        details: `Lecture activité Stripe impossible: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      });
+    }
+  }
+
   private async runMapEngineHealthCheck(): Promise<SystemHealthCheckResult> {
     const startedAtMs = Date.now();
     const key = 'map-engine-status';
@@ -694,6 +1203,20 @@ export class DbMaintenanceService {
       }
     }
     return out;
+  }
+
+  private getIntegrityScanLimit(): number {
+    const raw = Number(this.config.get<string>('INTEGRITY_TEST_SCAN_LIMIT') ?? '5000');
+    if (!Number.isFinite(raw)) return 5000;
+    return Math.max(100, Math.min(50000, Math.trunc(raw)));
+  }
+
+  private getCreatedOrderMaxAgeHours(): number {
+    const raw = Number(
+      this.config.get<string>('INTEGRITY_CREATED_ORDER_MAX_AGE_HOURS') ?? '2',
+    );
+    if (!Number.isFinite(raw)) return 2;
+    return Math.max(1, Math.min(72, raw));
   }
 
   private toListItem(
