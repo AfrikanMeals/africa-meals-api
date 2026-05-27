@@ -438,6 +438,9 @@ export class SubscriptionsStripeCheckoutService {
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       currency: ctx.currency.toLowerCase(),
+      // Apple Pay est exposé via `card` sur Stripe Checkout
+      // quand les prérequis Stripe/Apple sont satisfaits.
+      payment_method_types: ['card'],
       client_reference_id: String(user.id ?? user._id),
       customer_email: user.email || undefined,
       line_items: [

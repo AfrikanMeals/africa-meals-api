@@ -30,6 +30,7 @@ import {
   CheckAccountDto,
   EmailVerificationDto,
   ForgotPasswordDto,
+  AppleAuthDto,
   GoogleAuthDto,
   LoginDto,
   RegisterDto,
@@ -94,6 +95,14 @@ export class AuthController {
       `google auth: idToken présent (longueur=${args.idToken?.length ?? 0})`,
     );
     return this._authService.authWithGoogle(args);
+  }
+
+  @Post('apple')
+  async authWithApple(@Body(ValidationPipe) args: AppleAuthDto) {
+    this.logger.log(
+      `apple auth: idToken présent (longueur=${args.idToken?.length ?? 0})`,
+    );
+    return this._authService.authWithApple(args);
   }
 
   @Post('verify-email')

@@ -208,3 +208,16 @@ export class GoogleAuthDto {
   @IsString()
   idToken: string;
 }
+
+/** Jeton Firebase ID (utilisateur connecté via Apple dans Firebase Auth), vérifié côté serveur. */
+export class AppleAuthDto {
+  @ApiProperty({
+    description:
+      'ID token JWT émis par Firebase après connexion Apple (Firebase Auth).',
+    example: 'eyJhbGciOiJSUzI1NiIs...',
+  })
+  @IsNotEmpty()
+  @Trim()
+  @IsString()
+  idToken: string;
+}

@@ -23,6 +23,7 @@ import { DecodedIdToken, getAuth } from 'firebase-admin/auth';
 import { LoyaltyService } from '@modules/loyalty/loyalty.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import {
+  AppleAuthDto,
   CheckAccountDto,
   EmailVerificationDto,
   ForgotPasswordDto,
@@ -440,6 +441,88 @@ export class AuthService {
       password: `google_${googleId}_${Date.now()}`,
       emailVerifiedAt: new Date(),
       ...(pictureFromGoogle ? { profileImage: pictureFromGoogle } : {}),
+    });
+    return {
+      authToken: this._jwtService.sign({ sub: newUser._id.toString() }),
+    };
+  }
+
+  /**
+   * Connexion / inscription Apple : vérifie le jeton Firebase (provider Apple),
+   * puis trouve ou crée l’utilisateur Mongo (appleId = identifiant Apple/Firebase).
+   */
+  async authWithApple(args: AppleAuthDto) {
+    let decoded: DecodedIdToken;
+    try {
+      decoded = await getAuth(this._firebaseApp).verifyIdToken(args.idToken);
+    } catch (err) {
+      this.logger.warn(`verifyIdToken Apple: ${String(err)}`);
+      throw new UnauthorizedException('invalid_apple_token');
+    }
+
+    if (decoded.firebase?.sign_in_provider !== 'apple.com') {
+      throw new UnauthorizedException('invalid_apple_token');
+    }
+
+    const appleId = decoded.firebase?.identities?.['apple.com']?.[0] ?? decoded.sub;
+    const emailRaw = decoded.email?.trim().toLowerCase();
+    const fullName =
+      (typeof decoded.name === 'string' && decoded.name.trim()) ||
+      (emailRaw != null ? emailRaw.split('@')[0] : '') ||
+      'Utilisateur';
+
+    const pictureRaw = decoded.picture;
+    const pictureFromApple =
+      typeof pictureRaw === 'string' &&
+      (pictureRaw.startsWith('https://') || pictureRaw.startsWith('http://'))
+        ? pictureRaw.trim()
+        : undefined;
+
+    let user = await this._usersModel.findOne({ appleId }).exec();
+    if (user) {
+      if (pictureFromApple && !user.profileImage) {
+        await this._usersModel
+          .updateOne(
+            { _id: user._id },
+            { $set: { profileImage: pictureFromApple } },
+          )
+          .exec();
+      }
+      return {
+        authToken: this._jwtService.sign({ sub: user._id.toString() }),
+      };
+    }
+
+    if (emailRaw) {
+      user = await this._usersModel.findOne({ email: emailRaw }).exec();
+      if (user) {
+        const setDoc: Record<string, unknown> = {
+          appleId,
+          emailVerifiedAt: new Date(),
+        };
+        if (pictureFromApple && !user.profileImage) {
+          setDoc.profileImage = pictureFromApple;
+        }
+        await this._usersModel
+          .updateOne({ _id: user._id }, { $set: setDoc })
+          .exec();
+        return {
+          authToken: this._jwtService.sign({ sub: user._id.toString() }),
+        };
+      }
+    }
+
+    if (!emailRaw) {
+      throw new BadRequestException('apple_email_required_first_login');
+    }
+
+    const newUser = await this._usersModel.create({
+      email: emailRaw,
+      fullName,
+      appleId,
+      password: `apple_${appleId}_${Date.now()}`,
+      emailVerifiedAt: new Date(),
+      ...(pictureFromApple ? { profileImage: pictureFromApple } : {}),
     });
     return {
       authToken: this._jwtService.sign({ sub: newUser._id.toString() }),

@@ -77,6 +77,9 @@ export class UserModel extends BaseSchema {
   @Prop({ required: false, name: 'google_id' })
   googleId?: string;
 
+  @Prop({ required: false, name: 'apple_id' })
+  appleId?: string;
+
   @Prop({
     required: false,
     name: 'address',

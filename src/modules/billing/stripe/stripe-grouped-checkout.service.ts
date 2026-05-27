@@ -808,6 +808,9 @@ export class StripeGroupedCheckoutService {
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       currency: built.currency,
+      // Apple Pay passe par la méthode `card` sur Stripe Checkout
+      // (affichage conditionné par la config Stripe + device/browser compatibles).
+      payment_method_types: ['card'],
       client_reference_id: String(user.id),
       customer_email: user.email,
       line_items: built.lineItems,
@@ -1486,17 +1489,27 @@ export class StripeGroupedCheckoutService {
     signature: string | undefined,
     rawBody: Buffer | undefined,
   ): Promise<{ received: boolean }> {
-    const whSecret = this.config.get<string>('STRIPE_WEBHOOK_SECRET');
-    if (!whSecret || !signature || !rawBody?.length) {
+    const webhookSecrets = this.getStripeWebhookSecrets();
+    if (!webhookSecrets.length || !signature || !rawBody?.length) {
       this.logger.warn('Stripe webhook: missing secret, signature or body');
       return { received: false };
     }
     const stripe = this.stripe();
     let event: ReturnType<StripeClient['webhooks']['constructEvent']>;
-    try {
-      event = stripe.webhooks.constructEvent(rawBody, signature, whSecret);
-    } catch (err) {
-      this.logger.warn(`Stripe webhook signature: ${err}`);
+    let lastError: unknown = null;
+    for (const secret of webhookSecrets) {
+      try {
+        event = stripe.webhooks.constructEvent(rawBody, signature, secret);
+        lastError = null;
+        break;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    if (lastError) {
+      this.logger.warn(
+        `Stripe webhook signature: no secret matched (configured=${webhookSecrets.length}) — ${String(lastError)}`,
+      );
       throw new BadRequestException('stripe_invalid_signature');
     }
 
@@ -1619,5 +1632,14 @@ export class StripeGroupedCheckoutService {
     }
 
     return { received: true };
+  }
+
+  private getStripeWebhookSecrets(): string[] {
+    const primary = this.config.get<string>('STRIPE_WEBHOOK_SECRET') ?? '';
+    const extra = this.config.get<string>('STRIPE_WEBHOOK_SECRETS') ?? '';
+    return `${primary},${extra}`
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.startsWith('whsec_'));
   }
 }
