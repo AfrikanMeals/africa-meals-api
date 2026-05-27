@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   Inject,
+  Param,
   Post,
   Req,
   UseGuards,
@@ -45,5 +46,44 @@ export class DbMaintenanceAdminController {
       req.user as UserModel,
       dto.tables,
     );
+  }
+
+  @Get('admin/integrity-tests')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      "Liste des tests d'intégrité manuels disponibles (admin.settings)",
+  })
+  async listIntegrityTests(@Req() req: Request) {
+    return this._dbMaintenance.listIntegrityTests(req.user as UserModel);
+  }
+
+  @Post('admin/integrity-tests/:key/run')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      "Exécute un test d'intégrité manuellement et retourne les métriques",
+  })
+  async runIntegrityTest(@Req() req: Request, @Param('key') key: string) {
+    return this._dbMaintenance.runIntegrityTest(req.user as UserModel, key);
+  }
+
+  @Get('admin/system-health/checks')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Liste des checks System Health disponibles (admin.settings)',
+  })
+  async listSystemHealthChecks(@Req() req: Request) {
+    return this._dbMaintenance.listSystemHealthChecks(req.user as UserModel);
+  }
+
+  @Post('admin/system-health/:key/run')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Exécute un check System Health manuellement',
+  })
+  async runSystemHealthCheck(@Req() req: Request, @Param('key') key: string) {
+    return this._dbMaintenance.runSystemHealthCheck(req.user as UserModel, key);
   }
 }
