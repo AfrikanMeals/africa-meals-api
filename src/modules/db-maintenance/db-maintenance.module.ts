@@ -5,6 +5,7 @@ import {
   StripeProcessedCheckoutModel,
   StripeProcessedCheckoutSchema,
 } from '@schemas/stripe-processed-checkout.schema';
+import { SharedModule } from '../shared/shared.module';
 import { TeamsModule } from '../teams/teams.module';
 import { DbMaintenanceAdminController } from './db-maintenance-admin.controller';
 import { DbMaintenanceService } from './db-maintenance.service';
@@ -12,6 +13,7 @@ import { DbMaintenanceService } from './db-maintenance.service';
 @Module({
   imports: [
     TeamsModule,
+    SharedModule,
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       {

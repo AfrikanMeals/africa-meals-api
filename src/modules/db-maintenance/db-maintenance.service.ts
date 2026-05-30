@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
 } from '@nestjs/common';
@@ -14,7 +15,12 @@ import {
   StripeProcessedCheckoutModel,
 } from '@schemas/stripe-processed-checkout.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
+import { App } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
+import { getMessaging } from 'firebase-admin/messaging';
+import { getStorage } from 'firebase-admin/storage';
 import { Connection, Model } from 'mongoose';
+import * as nodemailer from 'nodemailer';
 import { StoreAccessService } from '../teams/store-access.service';
 import { InjectModel } from '@nestjs/mongoose';
 import Stripe = require('stripe');
@@ -149,6 +155,17 @@ export class DbMaintenanceService {
       label: 'Map Engine Status',
       description: 'Vérifie la disponibilité Mapbox geocoding.',
     },
+    {
+      key: 'mail-health-status',
+      label: 'Mail health status',
+      description: 'Vérifie la configuration e-mail et la connectivité SMTP.',
+    },
+    {
+      key: 'firebase-services-status',
+      label: 'Firebase services status',
+      description:
+        'Vérifie Firebase Admin (Auth, Messaging, Storage) avec les credentials actifs.',
+    },
   ];
 
   constructor(
@@ -159,6 +176,8 @@ export class DbMaintenanceService {
     private readonly orderModel: Model<OrderModel>,
     @InjectModel(StripeProcessedCheckoutModel.name)
     private readonly processedModel: Model<StripeProcessedCheckoutModel>,
+    @Inject('FIREBASE_ADMIN')
+    private readonly firebaseApp: App,
   ) {}
 
   private assertMaintenanceEnabled(): void {
@@ -296,6 +315,10 @@ export class DbMaintenanceService {
         return { result: await this.runStripeWebhookLastActivityHealthCheck() };
       case 'map-engine-status':
         return { result: await this.runMapEngineHealthCheck() };
+      case 'mail-health-status':
+        return { result: await this.runMailHealthCheck() };
+      case 'firebase-services-status':
+        return { result: await this.runFirebaseServicesHealthCheck() };
       default:
         throw new BadRequestException(`unknown_system_health_check:${normalized}`);
     }
@@ -1147,6 +1170,169 @@ export class DbMaintenanceService {
         details: `Map engine error: ${e instanceof Error ? e.message : String(e)}`,
       });
     }
+  }
+
+  private async runMailHealthCheck(): Promise<SystemHealthCheckResult> {
+    const startedAtMs = Date.now();
+    const key = 'mail-health-status';
+    const label = 'Mail health status';
+
+    const smtpHost = String(this.config.get<string>('SMTP_HOST') ?? '').trim();
+    const smtpPortRaw = Number(this.config.get<string>('SMTP_PORT') ?? '587');
+    const smtpPort = Number.isFinite(smtpPortRaw) ? smtpPortRaw : 587;
+    const smtpSecure = String(this.config.get<string>('SMTP_SECURE') ?? 'false')
+      .trim()
+      .toLowerCase() === 'true';
+    const smtpUser = String(this.config.get<string>('SMTP_USER') ?? '').trim();
+    const smtpPass = String(
+      this.config.get<string>('SMTP_APP_PASSWORD') ??
+        this.config.get<string>('SMTP_PASS') ??
+        '',
+    ).trim();
+    const mailerApiKey = String(this.config.get<string>('MAILER_API_KEY') ?? '').trim();
+    const mailerSender = String(this.config.get<string>('MAILER_SENDER') ?? '').trim();
+
+    const smtpConfigured = Boolean(smtpHost && smtpUser && smtpPass);
+    const mailerSendConfigured = Boolean(mailerApiKey && mailerSender);
+
+    if (!smtpConfigured && !mailerSendConfigured) {
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: 'down',
+        details:
+          'Aucune config email active (SMTP_HOST/SMTP_USER/SMTP_APP_PASSWORD ou MAILER_API_KEY/MAILER_SENDER).',
+      });
+    }
+
+    if (!smtpConfigured && mailerSendConfigured) {
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: 'degraded',
+        details:
+          'MailerSend configuré, SMTP absent. Vérification active SMTP non exécutée.',
+      });
+    }
+
+    try {
+      const transport = nodemailer.createTransport({
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpSecure,
+        auth: {
+          user: smtpUser,
+          pass: smtpPass,
+        },
+        connectionTimeout: 5000,
+        greetingTimeout: 5000,
+        socketTimeout: 5000,
+      });
+      await transport.verify();
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: 'healthy',
+        details: `SMTP reachable (${smtpHost}:${smtpPort}).`,
+      });
+    } catch (e) {
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: mailerSendConfigured ? 'degraded' : 'down',
+        details: `SMTP verify failed: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+  }
+
+  private async runFirebaseServicesHealthCheck(): Promise<SystemHealthCheckResult> {
+    const startedAtMs = Date.now();
+    const key = 'firebase-services-status';
+    const label = 'Firebase services status';
+
+    const projectId = String(this.firebaseApp?.options?.projectId ?? '').trim();
+    if (!projectId) {
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: 'down',
+        details: 'Firebase Admin projectId manquant (AM_FIREBASE_PROJECT_ID / service account).',
+      });
+    }
+
+    const checks: Array<{ id: string; ok: boolean; details: string }> = [];
+
+    try {
+      await getAuth(this.firebaseApp).listUsers(1);
+      checks.push({ id: 'auth', ok: true, details: 'Auth OK' });
+    } catch (e) {
+      checks.push({
+        id: 'auth',
+        ok: false,
+        details: `Auth KO: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+
+    try {
+      const appName = getMessaging(this.firebaseApp).app.name;
+      checks.push({
+        id: 'messaging',
+        ok: true,
+        details: `Messaging initialized (${appName})`,
+      });
+    } catch (e) {
+      checks.push({
+        id: 'messaging',
+        ok: false,
+        details: `Messaging KO: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+
+    const bucketName =
+      String(this.config.get<string>('AM_FIREBASE_STORAGE_BUCKET') ?? '').trim() ||
+      String(this.firebaseApp.options.storageBucket ?? '').trim();
+    if (!bucketName) {
+      checks.push({
+        id: 'storage',
+        ok: false,
+        details: 'Storage bucket manquant (AM_FIREBASE_STORAGE_BUCKET).',
+      });
+    } else {
+      try {
+        const [exists] = await getStorage(this.firebaseApp).bucket(bucketName).exists();
+        checks.push({
+          id: 'storage',
+          ok: Boolean(exists),
+          details: exists
+            ? `Storage bucket OK (${bucketName})`
+            : `Storage bucket introuvable (${bucketName})`,
+        });
+      } catch (e) {
+        checks.push({
+          id: 'storage',
+          ok: false,
+          details: `Storage KO: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
+    }
+
+    const okCount = checks.filter((c) => c.ok).length;
+    const status: SystemHealthCheckResult['status'] =
+      okCount === checks.length ? 'healthy' : okCount > 0 ? 'degraded' : 'down';
+    const details = checks.map((c) => `${c.id}:${c.ok ? 'ok' : 'ko'} (${c.details})`).join(' | ');
+
+    return this.normalizeHealthResult({
+      key,
+      label,
+      startedAtMs,
+      status,
+      details,
+    });
   }
 
   private async fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {

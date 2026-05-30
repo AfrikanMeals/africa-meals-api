@@ -33,6 +33,7 @@ import {
   AppleAuthDto,
   GoogleAuthDto,
   LoginDto,
+  RefreshTokenDto,
   RegisterDto,
   RegisterFcmTokenDto,
   RemoveFcmTokenDto,
@@ -87,6 +88,11 @@ export class AuthController {
   async login(@Body(ValidationPipe) args: LoginDto) {
     this.logger.log(`login body: ${JSON.stringify(args)}`);
     return this._authService.login(args);
+  }
+
+  @Post('refresh')
+  async refresh(@Body(ValidationPipe) args: RefreshTokenDto) {
+    return this._authService.refreshSession(args.refreshToken);
   }
 
   @Post('google')

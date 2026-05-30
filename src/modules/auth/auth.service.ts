@@ -37,6 +37,7 @@ import {
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly defaultRefreshExpiration = '30d';
 
   @InjectModel(UserModel.name)
   private readonly _usersModel: Model<UserModel>;
@@ -88,12 +89,10 @@ export class AuthService {
 
     if (skipEmailVerification || isTestAccount) {
       const user = await this.registerCreateUserDirectly(args);
-      const authToken = this._jwtService.sign({
-        sub: user._id.toString(),
-      });
+      const tokens = this.issueAuthTokens(user._id.toString());
       return {
         step: 'done' as const,
-        authToken,
+        ...tokens,
         user,
       };
     }
@@ -173,11 +172,8 @@ export class AuthService {
     }
 
     await this._pendingSignupModel.deleteOne({ _id: pending._id }).exec();
-    const authToken = this._jwtService.sign({
-      sub: newUser._id.toString(),
-    });
     const user = await this.findUserById(newUser._id.toString());
-    return { authToken, user };
+    return { ...this.issueAuthTokens(newUser._id.toString()), user };
   }
 
   async resendPendingSignupCode(emailRaw: string) {
@@ -417,7 +413,7 @@ export class AuthService {
           .exec();
       }
       return {
-        authToken: this._jwtService.sign({ sub: user._id.toString() }),
+        ...this.issueAuthTokens(user._id.toString()),
       };
     }
     user = await this._usersModel.findOne({ email: emailRaw }).exec();
@@ -431,7 +427,7 @@ export class AuthService {
       }
       await this._usersModel.updateOne({ _id: user._id }, { $set: setDoc }).exec();
       return {
-        authToken: this._jwtService.sign({ sub: user._id.toString() }),
+        ...this.issueAuthTokens(user._id.toString()),
       };
     }
     const newUser = await this._usersModel.create({
@@ -443,7 +439,7 @@ export class AuthService {
       ...(pictureFromGoogle ? { profileImage: pictureFromGoogle } : {}),
     });
     return {
-      authToken: this._jwtService.sign({ sub: newUser._id.toString() }),
+      ...this.issueAuthTokens(newUser._id.toString()),
     };
   }
 
@@ -489,7 +485,7 @@ export class AuthService {
           .exec();
       }
       return {
-        authToken: this._jwtService.sign({ sub: user._id.toString() }),
+        ...this.issueAuthTokens(user._id.toString()),
       };
     }
 
@@ -507,7 +503,7 @@ export class AuthService {
           .updateOne({ _id: user._id }, { $set: setDoc })
           .exec();
         return {
-          authToken: this._jwtService.sign({ sub: user._id.toString() }),
+          ...this.issueAuthTokens(user._id.toString()),
         };
       }
     }
@@ -525,7 +521,7 @@ export class AuthService {
       ...(pictureFromApple ? { profileImage: pictureFromApple } : {}),
     });
     return {
-      authToken: this._jwtService.sign({ sub: newUser._id.toString() }),
+      ...this.issueAuthTokens(newUser._id.toString()),
     };
   }
 
@@ -554,8 +550,37 @@ export class AuthService {
 
     // TODO add user role(admin, user, etc) claims
     return {
-      authToken: this._jwtService.sign({ sub: user._id.toString() }),
+      ...this.issueAuthTokens(user._id.toString()),
     };
+  }
+
+  async refreshSession(refreshTokenRaw: string) {
+    const refreshToken = String(refreshTokenRaw ?? '').trim();
+    if (!refreshToken) {
+      throw new UnauthorizedException('invalid_refresh_token');
+    }
+    const secret = this.getRefreshTokenSecret();
+    type RefreshPayload = { sub?: unknown; typ?: unknown };
+    let payload: RefreshPayload;
+    try {
+      payload = (await this._jwtService.verifyAsync(refreshToken, {
+        secret,
+      })) as RefreshPayload;
+    } catch {
+      throw new UnauthorizedException('invalid_refresh_token');
+    }
+    if (payload?.typ !== 'refresh') {
+      throw new UnauthorizedException('invalid_refresh_token');
+    }
+    const userId = String(payload?.sub ?? '').trim();
+    if (!userId) {
+      throw new UnauthorizedException('invalid_refresh_token');
+    }
+    const user = await this.findUserById(userId);
+    if (!user) {
+      throw new UnauthorizedException('invalid_refresh_token');
+    }
+    return this.issueAuthTokens(userId);
   }
 
   async checkAccount(args: CheckAccountDto) {
@@ -959,5 +984,39 @@ export class AuthService {
       result += characters.charAt(Math.floor(Math.random() * charactersLength));
     }
     return result;
+  }
+
+  private issueAuthTokens(userId: string): {
+    authToken: string;
+    refreshToken: string;
+  } {
+    const authToken = this._jwtService.sign({ sub: userId });
+    const refreshToken = this._jwtService.sign(
+      { sub: userId, typ: 'refresh' },
+      {
+        secret: this.getRefreshTokenSecret(),
+        expiresIn: this.getRefreshTokenExpiration(),
+      },
+    );
+    return { authToken, refreshToken };
+  }
+
+  private getRefreshTokenSecret(): string {
+    const explicit = String(
+      this._configService.get<string>('JWT_REFRESH_SECRET') ?? '',
+    ).trim();
+    if (explicit) return explicit;
+    const accessSecret = String(
+      this._configService.get<string>('JWT_SECRET') ?? '',
+    ).trim();
+    if (accessSecret) return accessSecret;
+    throw new UnauthorizedException('jwt_secret_not_configured');
+  }
+
+  private getRefreshTokenExpiration(): string {
+    const explicit = String(
+      this._configService.get<string>('JWT_REFRESH_EXPIRATION') ?? '',
+    ).trim();
+    return explicit || this.defaultRefreshExpiration;
   }
 }

@@ -221,3 +221,14 @@ export class AppleAuthDto {
   @IsString()
   idToken: string;
 }
+
+export class RefreshTokenDto {
+  @ApiProperty({
+    description: 'Refresh token JWT émis par /auth/login ou /auth/refresh.',
+    example: 'eyJhbGciOiJIUzI1NiIs...',
+  })
+  @IsNotEmpty()
+  @Trim()
+  @IsString()
+  refreshToken: string;
+}
