@@ -11,6 +11,7 @@ import {
 } from '@schemas/vendor-subscription.schema';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { SubscriptionsController } from './subscriptions.controller';
+import { SubscriptionLifecycleCron } from './subscription-lifecycle.cron';
 import { SubscriptionTrialReminderCron } from './subscription-trial-reminder.cron';
 import { SubscriptionTrialReminderService } from './subscription-trial-reminder.service';
 import { SubscriptionsService } from './subscriptions.service';
@@ -32,6 +33,7 @@ import { SubscriptionsStripeCheckoutService } from './subscriptions-stripe-check
   providers: [
     SubscriptionsService,
     SubscriptionsStripeCheckoutService,
+    SubscriptionLifecycleCron,
     SubscriptionTrialReminderService,
     SubscriptionTrialReminderCron,
   ],

@@ -78,11 +78,15 @@ export class SubscriptionsStripeCheckoutService {
     const server =
       this.config.get<string>('SERVER_URL')?.replace(/\/$/, '') ??
       'http://localhost:9000';
+    const adminBase =
+      this.config.get<string>('FRONTEND_URL')?.trim() ||
+      this.config.get<string>('ADMIN_APP_URL')?.trim() ||
+      this.config.get<string>('CLIENT_APP_URL')?.trim() ||
+      'http://localhost:3000';
+    const adminSubscriptionUrl = `${adminBase.replace(/\/$/, '')}/settings/subscription`;
     const configured =
       this.config.get<string>('STRIPE_SUBSCRIPTION_SUCCESS_URL')?.trim() || '';
-    const raw =
-      configured ||
-      `${server}/api/billing/stripe/subscription-return?session_id={CHECKOUT_SESSION_ID}`;
+    const raw = configured || adminSubscriptionUrl;
     if (raw.startsWith('wise-eat://')) {
       return `${server}/api/billing/stripe/subscription-return?session_id={CHECKOUT_SESSION_ID}`;
     }
@@ -436,36 +440,63 @@ export class SubscriptionsStripeCheckoutService {
     const pmcId = this.config
       .get<string>('STRIPE_PAYMENT_METHOD_CONFIGURATION')
       ?.trim();
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      currency: ctx.currency.toLowerCase(),
-      // Apple Pay est exposé via `card` sur Stripe Checkout
-      // quand les prérequis Stripe/Apple sont satisfaits.
-      payment_method_types: ['card'],
-      client_reference_id: String(user.id ?? user._id),
-      customer_email: user.email || undefined,
-      line_items: [
-        {
-          quantity: 1,
-          price_data: {
-            currency: ctx.currency.toLowerCase(),
-            unit_amount: ctx.unitAmountCents,
-            product_data: {
-              name: `Afrika Meals · ${ctx.planName}`,
-              description: `Abonnement vendeur (${periodLabel}) — sans frais plateforme`,
+    const session = pmcId
+      ? await stripe.checkout.sessions.create({
+          mode: 'payment',
+          currency: ctx.currency.toLowerCase(),
+          client_reference_id: String(user.id ?? user._id),
+          customer_email: user.email || undefined,
+          line_items: [
+            {
+              quantity: 1,
+              price_data: {
+                currency: ctx.currency.toLowerCase(),
+                unit_amount: ctx.unitAmountCents,
+                product_data: {
+                  name: `Afrika Meals · ${ctx.planName}`,
+                  description: `Abonnement vendeur (${periodLabel}) — sans frais plateforme`,
+                },
+              },
             },
+          ],
+          success_url: this.subscriptionSuccessUrl(),
+          cancel_url: this.subscriptionCancelUrl(),
+          metadata: ctx.meta,
+          payment_intent_data: {
+            description: `Afrika Meals · Abonnement ${ctx.planName}`,
+            metadata: ctx.meta,
           },
-        },
-      ],
-      success_url: this.subscriptionSuccessUrl(),
-      cancel_url: this.subscriptionCancelUrl(),
-      metadata: ctx.meta,
-      payment_intent_data: {
-        description: `Afrika Meals · Abonnement ${ctx.planName}`,
-        metadata: ctx.meta,
-      },
-      ...(pmcId ? { payment_method_configuration: pmcId } : {}),
-    });
+          payment_method_configuration: pmcId,
+        })
+      : await stripe.checkout.sessions.create({
+          mode: 'payment',
+          currency: ctx.currency.toLowerCase(),
+          // Apple Pay est exposé via `card` sur Stripe Checkout
+          // quand les prérequis Stripe/Apple sont satisfaits.
+          payment_method_types: ['card'],
+          client_reference_id: String(user.id ?? user._id),
+          customer_email: user.email || undefined,
+          line_items: [
+            {
+              quantity: 1,
+              price_data: {
+                currency: ctx.currency.toLowerCase(),
+                unit_amount: ctx.unitAmountCents,
+                product_data: {
+                  name: `Afrika Meals · ${ctx.planName}`,
+                  description: `Abonnement vendeur (${periodLabel}) — sans frais plateforme`,
+                },
+              },
+            },
+          ],
+          success_url: this.subscriptionSuccessUrl(),
+          cancel_url: this.subscriptionCancelUrl(),
+          metadata: ctx.meta,
+          payment_intent_data: {
+            description: `Afrika Meals · Abonnement ${ctx.planName}`,
+            metadata: ctx.meta,
+          },
+        });
 
     const url = session.url;
     if (!url) {

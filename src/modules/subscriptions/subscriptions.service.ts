@@ -125,6 +125,10 @@ export class SubscriptionsService implements OnModuleInit {
 
   async onModuleInit() {
     await this.ensureDefaultPlansSeeded();
+    await this.deactivateRemovedPlans();
+    await this.migrateLegacyPlanNames();
+    await this.migrateLegacyPlanReferencesToPro();
+    await this.expireElapsedActiveSubscriptions();
     await this.ensureDefaultFreePlanForStoresWithoutActiveSubscription();
   }
 
@@ -181,7 +185,7 @@ export class SubscriptionsService implements OnModuleInit {
       );
       return valid[0] ?? null;
     }
-    return rows[0] ?? null;
+    return null;
   }
 
   private async findPreferredStoreSubscription(
@@ -247,6 +251,109 @@ export class SubscriptionsService implements OnModuleInit {
         mobileAccess: seed.mobileAccess === true,
       });
       this.logger.log(`Seed abonnement créé: ${seed.name}`);
+    }
+  }
+
+  /**
+   * Expire les abonnements actifs dont la date de fin est dépassée.
+   * Idempotent: rejouable sans effet secondaire.
+   */
+  async expireElapsedActiveSubscriptions(now = new Date()): Promise<number> {
+    const result = await this.vendorSubModel
+      .updateMany(
+        {
+          status: 'ACTIVE',
+          endsAt: { $lte: now },
+        },
+        {
+          $set: {
+            status: 'EXPIRED',
+            endsAt: now,
+          },
+        },
+      )
+      .exec();
+    const modified = Number(result.modifiedCount ?? 0);
+    if (modified > 0) {
+      this.logger.log(
+        `Abonnements expirés automatiquement: ${modified} ligne(s)`,
+      );
+    }
+    return modified;
+  }
+
+  private async deactivateRemovedPlans() {
+    const deprecatedNames = ['PRO+'];
+    for (const planName of deprecatedNames) {
+      await this.planModel
+        .updateMany(
+          { name: planName, active: true },
+          { $set: { active: false } },
+        )
+        .exec();
+    }
+  }
+
+  /**
+   * Harmonise les abonnements historiques après suppression de PRO+.
+   * Idempotent: rejouable sans effet secondaire.
+   */
+  private async migrateLegacyPlanNames() {
+    const legacyNames = ['PRO+', 'PROPLUS'];
+    const result = await this.vendorSubModel
+      .updateMany(
+        { planName: { $in: legacyNames } },
+        { $set: { planName: 'PRO' } },
+      )
+      .exec();
+    if ((result.modifiedCount ?? 0) > 0) {
+      this.logger.log(
+        `Migration abonnements legacy PRO+ -> PRO: ${result.modifiedCount} ligne(s)`,
+      );
+    }
+  }
+
+  /**
+   * Réaligne les références ObjectId `plan` des abonnements historiques
+   * pointant vers des plans legacy (PRO+) vers le plan PRO courant.
+   * Idempotent: rejouable sans effet secondaire.
+   */
+  private async migrateLegacyPlanReferencesToPro() {
+    const proPlan = await this.planModel
+      .findOne({ name: 'PRO' })
+      .sort({ active: -1, sortOrder: 1, createdAt: 1 })
+      .select('_id')
+      .lean()
+      .exec();
+    if (!proPlan?._id) {
+      this.logger.warn(
+        'Migration legacy PRO+ ignorée: aucun plan PRO trouvé.',
+      );
+      return;
+    }
+
+    const legacyPlans = await this.planModel
+      .find({ name: { $in: ['PRO+', 'PROPLUS'] } })
+      .select('_id')
+      .lean()
+      .exec();
+    const legacyPlanIds = legacyPlans
+      .map((p) => p?._id)
+      .filter((id): id is Types.ObjectId => id instanceof Types.ObjectId);
+    if (!legacyPlanIds.length) {
+      return;
+    }
+
+    const result = await this.vendorSubModel
+      .updateMany(
+        { plan: { $in: legacyPlanIds } },
+        { $set: { plan: proPlan._id, planName: 'PRO' } },
+      )
+      .exec();
+    if ((result.modifiedCount ?? 0) > 0) {
+      this.logger.log(
+        `Migration références plan legacy PRO+ -> PRO: ${result.modifiedCount} ligne(s)`,
+      );
     }
   }
 
@@ -404,6 +511,37 @@ export class SubscriptionsService implements OnModuleInit {
       bestLimit = Math.max(bestLimit, limit);
     }
     return bestLimit;
+  }
+
+  /**
+   * Liste des boutiques accessibles pour un propriétaire selon son quota courant.
+   * En cas de downgrade, les boutiques excédentaires les plus récentes deviennent inaccessibles
+   * (elles ne sont pas supprimées).
+   */
+  async resolveAccessibleStoreIdsForOwner(
+    ownerId: string | Types.ObjectId,
+  ): Promise<string[]> {
+    const oid = this.normalizeUserObjectId(ownerId);
+    const rows = await this.storeModel
+      .find({ owner: oid })
+      .select('_id')
+      .sort({ createdAt: 1, _id: 1 })
+      .lean()
+      .exec();
+    const all = rows.map((r) => String(r._id));
+    const limit = await this.resolveStoreCreationLimitForOwner(oid);
+    if (limit == null) return all;
+    if (limit <= 0) return [];
+    return all.slice(0, limit);
+  }
+
+  /**
+   * Entretien lifecycle: expire abonnements échus puis garantit un FREE actif
+   * sur les boutiques sans abonnement en cours.
+   */
+  async reconcileSubscriptionLifecycle(now = new Date()): Promise<void> {
+    await this.expireElapsedActiveSubscriptions(now);
+    await this.ensureDefaultFreePlanForStoresWithoutActiveSubscription();
   }
 
   private async ensureDefaultFreePlanForStoresWithoutActiveSubscription() {

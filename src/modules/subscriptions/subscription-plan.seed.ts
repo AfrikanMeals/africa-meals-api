@@ -56,25 +56,4 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     maxStores: 0,
     mobileAccess: true,
   },
-  {
-    name: 'PRO+',
-    description:
-      'Pour les enseignes qui veulent le maximum de contrôle et d’automatisation.',
-    priceMonthly: 99,
-    priceYearly: 990,
-    currency: 'CAD',
-    features: [
-      'Tout le plan PRO',
-      'Multi-boutiques et supervision centralisée',
-      'Automatisations avancées',
-      'Support prioritaire premium',
-      'Accompagnement onboarding dédié',
-    ],
-    sortOrder: 3,
-    active: true,
-    trialDays: 14,
-    trialReminderDays: [7, 3, 1],
-    maxStores: 0,
-    mobileAccess: true,
-  },
 ];

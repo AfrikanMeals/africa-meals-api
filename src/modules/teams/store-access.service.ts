@@ -123,16 +123,21 @@ export class StoreAccessService {
       }));
     }
 
-    const userId = user._id;
+    const userId = user._id as Types.ObjectId;
     const entries: StoreAccessEntry[] = [];
+    const accessibleOwnedStoreIds = new Set(
+      await this.subscriptionsService.resolveAccessibleStoreIdsForOwner(userId),
+    );
 
     const owned = await this.storeModel
       .find({ owner: userId })
       .select('name')
+      .sort({ createdAt: 1, _id: 1 })
       .lean()
       .exec();
     for (const s of owned) {
       const storeId = String(s._id);
+      if (!accessibleOwnedStoreIds.has(storeId)) continue;
       const ownerRole = await this.storeRoleModel
         .findOne({ store: storeId, isOwnerRole: true })
         .lean()
@@ -173,11 +178,31 @@ export class StoreAccessService {
       .lean()
       .exec();
     const storeById = new Map(stores.map((s) => [String(s._id), s]));
+    const ownerIds = [
+      ...new Set(
+        stores
+          .map((s) => String((s as { owner?: unknown }).owner ?? ''))
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ];
+    const allowedStoreIdsByOwner = new Map<string, Set<string>>();
+    for (const ownerId of ownerIds) {
+      const ids =
+        await this.subscriptionsService.resolveAccessibleStoreIdsForOwner(
+          ownerId,
+        );
+      allowedStoreIdsByOwner.set(ownerId, new Set(ids));
+    }
 
     for (const m of memberships) {
       const storeId = String(m.store);
       if (entries.some((e) => e.storeId === storeId)) continue;
       const store = storeById.get(storeId);
+      const storeOwnerId = String((store as { owner?: unknown })?.owner ?? '');
+      const allowedForOwner = allowedStoreIdsByOwner.get(storeOwnerId);
+      if (allowedForOwner && !allowedForOwner.has(storeId)) {
+        continue;
+      }
       const memberRoleIds = normalizeStoreMemberRoleIds(
         m as { role?: Types.ObjectId; roles?: Types.ObjectId[] },
       );
@@ -244,13 +269,26 @@ export class StoreAccessService {
   ): Promise<void> {
     const exists = await this.storeModel
       .findById(storeId)
-      .select('_id')
+      .select('_id owner')
       .lean()
       .exec();
     if (!exists) throw new NotFoundException('store_not_found');
 
     const perms = await this.getStorePermissions(user, storeId);
     if (!perms.length) {
+      if (user.type === UserTypeEnum.VENDOR) {
+        const ownerId = String((exists as { owner?: unknown }).owner ?? '');
+        const userId = String(user._id ?? '');
+        if (ownerId && ownerId === userId) {
+          const allowedStoreIds =
+            await this.subscriptionsService.resolveAccessibleStoreIdsForOwner(
+              user._id as Types.ObjectId,
+            );
+          if (!allowedStoreIds.includes(storeId)) {
+            throw new ForbiddenException('store_locked_by_plan_limit');
+          }
+        }
+      }
       throw new NotFoundException('store_not_found');
     }
     if (permission) {
