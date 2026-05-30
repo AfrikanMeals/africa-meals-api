@@ -141,6 +141,24 @@ export class UserModel extends BaseSchema {
   @Prop({ required: false, name: 'password_reset_code', select: false })
   passwordResetCode?: string;
 
+  /** Demande de suppression de compte (soft delete), exécution différée. */
+  @Prop({
+    required: false,
+    default: null,
+    type: 'date',
+    name: 'account_deletion_requested_at',
+  })
+  accountDeletionRequestedAt?: Date | null;
+
+  /** Date prévue de suppression définitive (cron). */
+  @Prop({
+    required: false,
+    default: null,
+    type: 'date',
+    name: 'account_deletion_scheduled_for',
+  })
+  accountDeletionScheduledFor?: Date | null;
+
   /**
    * Jetons FCM (mobile / web) pour les notifications push — plusieurs appareils par utilisateur.
    */

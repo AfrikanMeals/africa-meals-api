@@ -222,6 +222,19 @@ export class AppleAuthDto {
   idToken: string;
 }
 
+/** Jeton Firebase ID (utilisateur connecté via Facebook dans Firebase Auth), vérifié côté serveur. */
+export class FacebookAuthDto {
+  @ApiProperty({
+    description:
+      'ID token JWT émis par Firebase après connexion Facebook (Firebase Auth).',
+    example: 'eyJhbGciOiJSUzI1NiIs...',
+  })
+  @IsNotEmpty()
+  @Trim()
+  @IsString()
+  idToken: string;
+}
+
 export class RefreshTokenDto {
   @ApiProperty({
     description: 'Refresh token JWT émis par /auth/login ou /auth/refresh.',

@@ -6,6 +6,7 @@ import {
   Get,
   Inject,
   Logger,
+  Param,
   Patch,
   Post,
   Req,
@@ -31,6 +32,7 @@ import {
   EmailVerificationDto,
   ForgotPasswordDto,
   AppleAuthDto,
+  FacebookAuthDto,
   GoogleAuthDto,
   LoginDto,
   RefreshTokenDto,
@@ -103,12 +105,44 @@ export class AuthController {
     return this._authService.authWithGoogle(args);
   }
 
+  @Post('admin/google')
+  async authWithGoogleAdmin(@Body(ValidationPipe) args: GoogleAuthDto) {
+    this.logger.log(
+      `admin google auth: idToken présent (longueur=${args.idToken?.length ?? 0})`,
+    );
+    return this._authService.authWithGoogleAsVendor(args);
+  }
+
   @Post('apple')
   async authWithApple(@Body(ValidationPipe) args: AppleAuthDto) {
     this.logger.log(
       `apple auth: idToken présent (longueur=${args.idToken?.length ?? 0})`,
     );
     return this._authService.authWithApple(args);
+  }
+
+  @Post('admin/apple')
+  async authWithAppleAdmin(@Body(ValidationPipe) args: AppleAuthDto) {
+    this.logger.log(
+      `admin apple auth: idToken présent (longueur=${args.idToken?.length ?? 0})`,
+    );
+    return this._authService.authWithAppleAsVendor(args);
+  }
+
+  @Post('facebook')
+  async authWithFacebook(@Body(ValidationPipe) args: FacebookAuthDto) {
+    this.logger.log(
+      `facebook auth: idToken présent (longueur=${args.idToken?.length ?? 0})`,
+    );
+    return this._authService.authWithFacebook(args);
+  }
+
+  @Post('admin/facebook')
+  async authWithFacebookAdmin(@Body(ValidationPipe) args: FacebookAuthDto) {
+    this.logger.log(
+      `admin facebook auth: idToken présent (longueur=${args.idToken?.length ?? 0})`,
+    );
+    return this._authService.authWithFacebookAsVendor(args);
   }
 
   @Post('verify-email')
@@ -161,12 +195,15 @@ export class AuthController {
   async getMe(@Req() req: Request) {
     const user = req.user as UserModel;
     const access = await this._teamsService.buildAccessPayload(user);
+    const deletionPending =
+      user.accountDeletionRequestedAt instanceof Date &&
+      user.accountDeletionScheduledFor instanceof Date;
     const plain =
       typeof (user as { toObject?: () => Record<string, unknown> }).toObject ===
       'function'
         ? (user as { toObject: () => Record<string, unknown> }).toObject()
         : { ...(user as unknown as Record<string, unknown>) };
-    return { ...plain, access };
+    return { ...plain, access, accountDeletionPending: deletionPending };
   }
 
   @Post('me/fcm-token')
@@ -209,7 +246,56 @@ export class AuthController {
   @UseGuards(JwtGuard)
   async deleteAccount(@Req() req: Request) {
     const user = req.user as UserModel;
-    return this._authService.deleteAccount(user._id.toString());
+    return this._authService.requestAccountDeletion(user._id.toString());
+  }
+
+  @Get('me/deletion-status')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async getAccountDeletionStatus(@Req() req: Request) {
+    const user = req.user as UserModel;
+    return this._authService.getAccountDeletionStatus(user._id.toString());
+  }
+
+  @Post('me/cancel-deletion')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async cancelAccountDeletion(@Req() req: Request) {
+    const user = req.user as UserModel;
+    return this._authService.cancelAccountDeletion(user._id.toString());
+  }
+
+  @Get('admin/deletion-requests')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async listDeletionRequests(@Req() req: Request) {
+    const user = req.user as UserModel;
+    return this._authService.listAccountDeletionRequests(user._id.toString());
+  }
+
+  @Post('admin/deletion-requests/:userId/cancel')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async adminCancelDeletionRequest(
+    @Req() req: Request,
+    @Param('userId') userId: string,
+  ) {
+    const user = req.user as UserModel;
+    return this._authService.adminCancelAccountDeletion(
+      user._id.toString(),
+      userId,
+    );
+  }
+
+  @Delete('admin/deletion-requests/:userId')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async adminDeleteAccountNow(
+    @Req() req: Request,
+    @Param('userId') userId: string,
+  ) {
+    const user = req.user as UserModel;
+    return this._authService.adminDeleteAccountNow(user._id.toString(), userId);
   }
 
   @Patch('me')

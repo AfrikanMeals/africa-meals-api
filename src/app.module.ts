@@ -38,6 +38,7 @@ import { AppPoliciesModule } from './modules/app-policies/app-policies.module';
 import { DbMaintenanceModule } from './modules/db-maintenance/db-maintenance.module';
 import { RequestStatsModule } from './modules/request-stats/request-stats.module';
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
+import { MobileAppSettingsModule } from './modules/mobile-app-settings/mobile-app-settings.module';
 
 @Module({
   imports: [
@@ -103,6 +104,7 @@ import { FieldSelectionModule } from './common/field-selection/field-selection.m
     DbMaintenanceModule,
     RequestStatsModule,
     FieldSelectionModule,
+    MobileAppSettingsModule,
     // SharedModule,
   ],
   controllers: [AppController, EnvDebugController],

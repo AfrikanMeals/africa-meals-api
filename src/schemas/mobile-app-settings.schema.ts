@@ -1,0 +1,20 @@
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument } from 'mongoose';
+
+/** Paramètres globaux de l'app mobile (document singleton `key=default`). */
+@Schema({ timestamps: true, collection: 'mobile_app_settings' })
+export class MobileAppSettingsModel {
+  @Prop({ type: String, default: 'default', unique: true, index: true })
+  key: string;
+
+  @Prop({ type: String, default: '' })
+  appStoreUrl: string;
+
+  @Prop({ type: String, default: '' })
+  playStoreUrl: string;
+}
+
+export type MobileAppSettingsDocument = HydratedDocument<MobileAppSettingsModel>;
+
+export const MobileAppSettingsSchema =
+  SchemaFactory.createForClass(MobileAppSettingsModel);

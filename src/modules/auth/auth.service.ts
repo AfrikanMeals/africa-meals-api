@@ -26,6 +26,7 @@ import {
   AppleAuthDto,
   CheckAccountDto,
   EmailVerificationDto,
+  FacebookAuthDto,
   ForgotPasswordDto,
   GoogleAuthDto,
   LoginDto,
@@ -38,6 +39,7 @@ import {
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly defaultRefreshExpiration = '30d';
+  private static readonly ACCOUNT_DELETION_DELAY_DAYS = 30;
 
   @InjectModel(UserModel.name)
   private readonly _usersModel: Model<UserModel>;
@@ -371,6 +373,18 @@ export class AuthService {
    * puis trouve ou crée l’utilisateur Mongo (googleId = identifiant Google dans le jeton).
    */
   async authWithGoogle(args: GoogleAuthDto) {
+    return this._authWithGoogle(args, UserTypeEnum.USER);
+  }
+
+  /** Variante dashboard/admin : création sociale par défaut en VENDOR. */
+  async authWithGoogleAsVendor(args: GoogleAuthDto) {
+    return this._authWithGoogle(args, UserTypeEnum.VENDOR);
+  }
+
+  private async _authWithGoogle(
+    args: GoogleAuthDto,
+    defaultTypeForNewUser: UserTypeEnum,
+  ) {
     let decoded: DecodedIdToken;
     try {
       decoded = await getAuth(this._firebaseApp).verifyIdToken(args.idToken);
@@ -434,6 +448,7 @@ export class AuthService {
       email: emailRaw,
       fullName,
       googleId,
+      type: defaultTypeForNewUser,
       password: `google_${googleId}_${Date.now()}`,
       emailVerifiedAt: new Date(),
       ...(pictureFromGoogle ? { profileImage: pictureFromGoogle } : {}),
@@ -448,6 +463,18 @@ export class AuthService {
    * puis trouve ou crée l’utilisateur Mongo (appleId = identifiant Apple/Firebase).
    */
   async authWithApple(args: AppleAuthDto) {
+    return this._authWithApple(args, UserTypeEnum.USER);
+  }
+
+  /** Variante dashboard/admin : création sociale par défaut en VENDOR. */
+  async authWithAppleAsVendor(args: AppleAuthDto) {
+    return this._authWithApple(args, UserTypeEnum.VENDOR);
+  }
+
+  private async _authWithApple(
+    args: AppleAuthDto,
+    defaultTypeForNewUser: UserTypeEnum,
+  ) {
     let decoded: DecodedIdToken;
     try {
       decoded = await getAuth(this._firebaseApp).verifyIdToken(args.idToken);
@@ -516,9 +543,104 @@ export class AuthService {
       email: emailRaw,
       fullName,
       appleId,
+      type: defaultTypeForNewUser,
       password: `apple_${appleId}_${Date.now()}`,
       emailVerifiedAt: new Date(),
       ...(pictureFromApple ? { profileImage: pictureFromApple } : {}),
+    });
+    return {
+      ...this.issueAuthTokens(newUser._id.toString()),
+    };
+  }
+
+  /**
+   * Connexion / inscription Facebook : vérifie le jeton Firebase (provider Facebook),
+   * puis trouve ou crée l’utilisateur Mongo (facebookId = identifiant Facebook/Firebase).
+   */
+  async authWithFacebook(args: FacebookAuthDto) {
+    return this._authWithFacebook(args, UserTypeEnum.USER);
+  }
+
+  /** Variante dashboard/admin : création sociale par défaut en VENDOR. */
+  async authWithFacebookAsVendor(args: FacebookAuthDto) {
+    return this._authWithFacebook(args, UserTypeEnum.VENDOR);
+  }
+
+  private async _authWithFacebook(
+    args: FacebookAuthDto,
+    defaultTypeForNewUser: UserTypeEnum,
+  ) {
+    let decoded: DecodedIdToken;
+    try {
+      decoded = await getAuth(this._firebaseApp).verifyIdToken(args.idToken);
+    } catch (err) {
+      this.logger.warn(`verifyIdToken Facebook: ${String(err)}`);
+      throw new UnauthorizedException('invalid_facebook_token');
+    }
+
+    if (decoded.firebase?.sign_in_provider !== 'facebook.com') {
+      throw new UnauthorizedException('invalid_facebook_token');
+    }
+
+    const facebookId =
+      decoded.firebase?.identities?.['facebook.com']?.[0] ?? decoded.sub;
+    const emailRaw = decoded.email?.trim().toLowerCase();
+    if (!emailRaw) {
+      throw new BadRequestException('facebook_email_required');
+    }
+
+    const fullName =
+      (typeof decoded.name === 'string' && decoded.name.trim()) ||
+      emailRaw.split('@')[0] ||
+      'Utilisateur';
+
+    const pictureRaw = decoded.picture;
+    const pictureFromFacebook =
+      typeof pictureRaw === 'string' &&
+      (pictureRaw.startsWith('https://') || pictureRaw.startsWith('http://'))
+        ? pictureRaw.trim()
+        : undefined;
+
+    let user = await this._usersModel.findOne({ facebookId }).exec();
+    if (user) {
+      if (pictureFromFacebook && !user.profileImage) {
+        await this._usersModel
+          .updateOne(
+            { _id: user._id },
+            { $set: { profileImage: pictureFromFacebook } },
+          )
+          .exec();
+      }
+      return {
+        ...this.issueAuthTokens(user._id.toString()),
+      };
+    }
+
+    user = await this._usersModel.findOne({ email: emailRaw }).exec();
+    if (user) {
+      const setDoc: Record<string, unknown> = {
+        facebookId,
+        emailVerifiedAt: new Date(),
+      };
+      if (pictureFromFacebook && !user.profileImage) {
+        setDoc.profileImage = pictureFromFacebook;
+      }
+      await this._usersModel
+        .updateOne({ _id: user._id }, { $set: setDoc })
+        .exec();
+      return {
+        ...this.issueAuthTokens(user._id.toString()),
+      };
+    }
+
+    const newUser = await this._usersModel.create({
+      email: emailRaw,
+      fullName,
+      facebookId,
+      type: defaultTypeForNewUser,
+      password: `facebook_${facebookId}_${Date.now()}`,
+      emailVerifiedAt: new Date(),
+      ...(pictureFromFacebook ? { profileImage: pictureFromFacebook } : {}),
     });
     return {
       ...this.issueAuthTokens(newUser._id.toString()),
@@ -936,11 +1058,227 @@ export class AuthService {
     return this._usersModel.findOne({ email }).exec();
   }
 
-  /** Supprime le compte utilisateur (irréversible). */
-  async deleteAccount(userId: string) {
+  /**
+   * Demande la suppression du compte :
+   * - compte toujours accessible (connexion autorisée),
+   * - tag de suppression actif,
+   * - exécution définitive par cron après délai.
+   */
+  async requestAccountDeletion(userId: string) {
     const user = await this._usersModel.findById(userId).exec();
     if (!user) {
       throw new NotFoundException('user_not_found');
+    }
+
+    const now = new Date();
+    const existingRequestedAt =
+      user.accountDeletionRequestedAt instanceof Date
+        ? user.accountDeletionRequestedAt
+        : null;
+    const existingScheduledFor =
+      user.accountDeletionScheduledFor instanceof Date
+        ? user.accountDeletionScheduledFor
+        : null;
+    const scheduledFor = new Date(
+      now.getTime() +
+        AuthService.ACCOUNT_DELETION_DELAY_DAYS * 24 * 60 * 60 * 1000,
+    );
+
+    await this._usersModel
+      .updateOne(
+        { _id: userId },
+        {
+          $set: {
+            accountDeletionRequestedAt: existingRequestedAt ?? now,
+            accountDeletionScheduledFor: existingScheduledFor ?? scheduledFor,
+          },
+        },
+      )
+      .exec();
+
+    return {
+      message: 'account_deletion_requested',
+      requestedAt: (existingRequestedAt ?? now).toISOString(),
+      scheduledFor: (existingScheduledFor ?? scheduledFor).toISOString(),
+      daysUntilDeletion: AuthService.ACCOUNT_DELETION_DELAY_DAYS,
+      canCancel: true,
+    };
+  }
+
+  /** Annule une demande de suppression de compte en attente. */
+  async cancelAccountDeletion(userId: string) {
+    const user = await this._usersModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('user_not_found');
+    }
+    const hasPending =
+      user.accountDeletionRequestedAt instanceof Date &&
+      user.accountDeletionScheduledFor instanceof Date;
+    if (!hasPending) {
+      return { message: 'no_pending_account_deletion', deleted: false };
+    }
+
+    await this._usersModel
+      .updateOne(
+        { _id: userId },
+        {
+          $unset: {
+            account_deletion_requested_at: 1,
+            account_deletion_scheduled_for: 1,
+          },
+        },
+      )
+      .exec();
+
+    return { message: 'account_deletion_cancelled', deleted: false };
+  }
+
+  /** Statut courant de suppression planifiée pour l’utilisateur connecté. */
+  async getAccountDeletionStatus(userId: string) {
+    const user = await this._usersModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('user_not_found');
+    }
+
+    const requestedAt =
+      user.accountDeletionRequestedAt instanceof Date
+        ? user.accountDeletionRequestedAt
+        : null;
+    const scheduledFor =
+      user.accountDeletionScheduledFor instanceof Date
+        ? user.accountDeletionScheduledFor
+        : null;
+    const pending = !!requestedAt && !!scheduledFor;
+    const remainingMs =
+      pending && scheduledFor
+        ? Math.max(0, scheduledFor.getTime() - Date.now())
+        : 0;
+    const remainingDays = pending
+      ? Math.ceil(remainingMs / (24 * 60 * 60 * 1000))
+      : 0;
+
+    return {
+      pending,
+      taggedDeleted: pending,
+      requestedAt: requestedAt?.toISOString() ?? null,
+      scheduledFor: scheduledFor?.toISOString() ?? null,
+      remainingDays,
+      canCancel: pending,
+    };
+  }
+
+  /** Liste admin des demandes de suppression de comptes en attente. */
+  async listAccountDeletionRequests(adminUserId: string) {
+    const admin = await this._usersModel.findById(adminUserId).exec();
+    if (!admin) throw new NotFoundException('user_not_found');
+    if (admin.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('admin_only');
+    }
+
+    const rows = await this._usersModel
+      .find({
+        accountDeletionRequestedAt: { $ne: null },
+        accountDeletionScheduledFor: { $ne: null },
+      })
+      .select(
+        '_id fullName email type accountDeletionRequestedAt accountDeletionScheduledFor',
+      )
+      .sort({ accountDeletionScheduledFor: 1 })
+      .lean()
+      .exec();
+
+    return rows.map((row) => {
+      const requestedAt =
+        row.accountDeletionRequestedAt instanceof Date
+          ? row.accountDeletionRequestedAt
+          : null;
+      const scheduledFor =
+        row.accountDeletionScheduledFor instanceof Date
+          ? row.accountDeletionScheduledFor
+          : null;
+      const remainingDays =
+        scheduledFor == null
+          ? 0
+          : Math.max(
+              0,
+              Math.ceil(
+                (scheduledFor.getTime() - Date.now()) / (24 * 60 * 60 * 1000),
+              ),
+            );
+      return {
+        userId: String(row._id),
+        fullName: row.fullName ?? '',
+        email: row.email ?? '',
+        type: row.type ?? null,
+        requestedAt: requestedAt?.toISOString() ?? null,
+        scheduledFor: scheduledFor?.toISOString() ?? null,
+        remainingDays,
+        taggedDeleted: !!requestedAt && !!scheduledFor,
+        canCancel: !!requestedAt && !!scheduledFor,
+      };
+    });
+  }
+
+  /** Action admin: annuler une demande de suppression pour un compte cible. */
+  async adminCancelAccountDeletion(adminUserId: string, targetUserId: string) {
+    const admin = await this._usersModel.findById(adminUserId).exec();
+    if (!admin) throw new NotFoundException('user_not_found');
+    if (admin.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('admin_only');
+    }
+    return this.cancelAccountDeletion(targetUserId);
+  }
+
+  /** Action admin: suppression définitive immédiate d’un compte cible. */
+  async adminDeleteAccountNow(adminUserId: string, targetUserId: string) {
+    const admin = await this._usersModel.findById(adminUserId).exec();
+    if (!admin) throw new NotFoundException('user_not_found');
+    if (admin.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('admin_only');
+    }
+    await this._hardDeleteAccount(targetUserId);
+    return { message: 'account_deleted_now', deleted: true };
+  }
+
+  /** Exécution réelle (cron) des comptes arrivés à échéance. */
+  async runScheduledAccountDeletionPass() {
+    const now = new Date();
+    const dueUsers = await this._usersModel
+      .find({
+        accountDeletionRequestedAt: { $ne: null },
+        accountDeletionScheduledFor: { $ne: null, $lte: now },
+      })
+      .select('_id')
+      .lean()
+      .exec();
+
+    if (!dueUsers.length) {
+      return { scanned: 0, deleted: 0 };
+    }
+
+    let deleted = 0;
+    for (const row of dueUsers) {
+      const userId = String(row._id ?? '').trim();
+      if (!userId) continue;
+      try {
+        await this._hardDeleteAccount(userId);
+        deleted += 1;
+      } catch (e) {
+        this.logger.error(
+          `[account-deletion-cron] suppression échouée user=${userId}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+    }
+    return { scanned: dueUsers.length, deleted };
+  }
+
+  /** Suppression définitive et irréversible des données utilisateur. */
+  private async _hardDeleteAccount(userId: string) {
+    const user = await this._usersModel.findById(userId).exec();
+    if (!user) {
+      return;
     }
     if (user.profileImage) {
       try {
@@ -949,11 +1287,8 @@ export class AuthService {
         // ignore
       }
     }
-    await this._mediasService.deleteFilesWithPrefix(
-      `users/${userId}/profile`,
-    );
+    await this._mediasService.deleteFilesWithPrefix(`users/${userId}/profile`);
     await this._usersModel.deleteOne({ _id: userId }).exec();
-    return { message: 'account_deleted' };
   }
 
   /** Rôles du formulaire d’inscription Dashboard → `UserModel.type` */
