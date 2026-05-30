@@ -23,6 +23,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -48,6 +49,8 @@ import { TeamsService } from '@modules/teams/teams.service';
 
 @Injectable()
 export class StoreService {
+  private readonly _logger = new Logger(StoreService.name);
+
   /**
    * Dossier vendeur : adresse textuelle complète + coordonnées réelles sur la carte
    * (requis pour la recherche par proximité et la validation du dossier).
@@ -1741,6 +1744,14 @@ export class StoreService {
       throw new NotFoundException('store_not_found');
     }
     const previousStatus = doc.status;
+    const emailNotification: {
+      attempted: boolean;
+      sent: boolean;
+      error?: string;
+    } = {
+      attempted: false,
+      sent: false,
+    };
     doc.status = status;
     if (status === StoreStatusEnum.INACTIVE) {
       doc.acceptsOrders = false;
@@ -1760,6 +1771,32 @@ export class StoreService {
           createdAt: new Date(),
         },
       ];
+      const ownerId = (() => {
+        const o = doc.owner as unknown;
+        if (o && typeof o === 'object' && '_id' in o) {
+          return String((o as { _id: { toString(): string } })._id);
+        }
+        if (
+          o != null &&
+          typeof (o as { toString?: () => string }).toString === 'function'
+        ) {
+          return String(o);
+        }
+        return '';
+      })();
+      if (ownerId) {
+        emailNotification.attempted = true;
+        try {
+          await this._sendVendorStoreStatusUpdatedEmail(ownerId, doc, status);
+          emailNotification.sent = true;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          emailNotification.error = msg;
+          this._logger.warn(
+            `status_update_email_failed store=${storeId} owner=${ownerId} ${msg}`,
+          );
+        }
+      }
     }
     await doc.save();
 
@@ -1786,7 +1823,57 @@ export class StoreService {
       })
       .lean()
       .exec();
-    return this._mapStoreToAdminVendorRow(lean as Record<string, unknown>);
+    return {
+      store: this._mapStoreToAdminVendorRow(lean as Record<string, unknown>),
+      emailNotification,
+    };
+  }
+
+  private async _sendVendorStoreStatusUpdatedEmail(
+    ownerId: string,
+    store: StoreModel,
+    status: StoreStatusEnum.ACTIVE | StoreStatusEnum.INACTIVE,
+  ): Promise<void> {
+    const owner = await this._userModel
+      .findById(ownerId)
+      .select('fullName email')
+      .lean()
+      .exec();
+    const emailTo = String(owner?.email ?? '').trim().toLowerCase();
+    if (!emailTo) return;
+    const ownerName = String(owner?.fullName ?? '').trim();
+    const appName = this._configService.get<string>('APP_NAME') ?? 'AfrikanEats';
+    const statusLabel = status === StoreStatusEnum.ACTIVE ? 'Actif' : 'Inactif';
+    const safeStore = this._escapeHtml(String(store.name ?? 'Votre restaurant'));
+    const safeOwner = this._escapeHtml(ownerName || 'restaurant');
+    const safeStatus = this._escapeHtml(statusLabel);
+    const html = `
+<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:system-ui,Segoe UI,sans-serif;line-height:1.5;color:#374151;">
+  <p>Bonjour ${safeOwner},</p>
+  <p>Le statut de votre restaurant <strong>${safeStore}</strong> a ete mis a jour par l'equipe <strong>${this._escapeHtml(appName)}</strong>.</p>
+  <p>Nouveau statut : <strong>${safeStatus}</strong>.</p>
+  <p style="font-size:14px;color:#6b7280;">
+    ${status === StoreStatusEnum.ACTIVE ? "Votre boutique est maintenant active et peut recevoir des commandes." : "Votre boutique est actuellement inactive. Si besoin, contactez l'equipe support pour plus d'informations."}
+  </p>
+  <p style="font-size:14px;color:#9ca3af;">— L’equipe ${this._escapeHtml(appName)}</p>
+</body></html>`.trim();
+    const text = [
+      `Bonjour ${ownerName || 'restaurant'},`,
+      ``,
+      `Le statut de votre restaurant "${String(store.name ?? 'Restaurant')}" a ete mis a jour par l'equipe ${appName}.`,
+      `Nouveau statut : ${statusLabel}.`,
+      ``,
+      status === StoreStatusEnum.ACTIVE
+        ? 'Votre boutique est maintenant active et peut recevoir des commandes.'
+        : "Votre boutique est actuellement inactive. Si besoin, contactez l'equipe support pour plus d'informations.",
+    ].join('\n');
+    await this._mailerService.sendSimple({
+      to: emailTo,
+      toName: ownerName || undefined,
+      subject: `${appName} — Statut de votre restaurant mis a jour`,
+      html,
+      text,
+    });
   }
 
   private _escapeHtml(s: string): string {
