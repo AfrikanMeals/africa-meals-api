@@ -348,12 +348,6 @@ export class StoreService {
       throw new ConflictException('address_not_found');
     }
 
-    const hasStore = await this._usersService.hasStore(user);
-
-    if (hasStore) {
-      throw new ConflictException('user_has_store');
-    }
-
     const store = await this._storeModel.create({
       ...args,
       currency: derivedCurrency,

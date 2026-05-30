@@ -2,7 +2,6 @@ import { AddressesService } from '@modules/addresses/addresses.service';
 import { CreateAddressDto } from '@modules/addresses/dto/addresses.dto';
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -412,15 +411,10 @@ export class UsersService {
   }
 
   async addStore(store: StoreModel, authUser: UserModel) {
-    // TODO users have only one store for now
-    const hasStore = await this.hasStore(authUser);
-    if (hasStore) {
-      throw new ConflictException('user_has_store');
-    }
     return this._userModel.updateOne(
       { _id: authUser._id },
       {
-        $push: { stores: store._id },
+        $addToSet: { stores: store._id },
         $set: { type: UserTypeEnum.VENDOR },
       },
     );
