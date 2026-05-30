@@ -109,6 +109,15 @@ export class SupportedCountriesService implements OnModuleInit {
     return doc?.phoneRegion ?? null;
   }
 
+  async getCurrency(code: string): Promise<string | null> {
+    const doc = await this._model
+      .findOne({ code: (code || '').toUpperCase(), active: true })
+      .lean()
+      .exec();
+    if (!doc?.currency) return null;
+    return String(doc.currency).toUpperCase();
+  }
+
   async listAllForAdmin(): Promise<
     Array<{
       code: string;

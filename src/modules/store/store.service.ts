@@ -76,6 +76,19 @@ export class StoreService {
     }
   }
 
+  /** Devise imposée par le pays sélectionné (régions actives). */
+  private async _resolveCurrencyForCountryCode(countryCode: string): Promise<string> {
+    const code = String(countryCode ?? '').toUpperCase();
+    if (!code) {
+      throw new BadRequestException('address_country_required');
+    }
+    const currency = await this._supportedCountries.getCurrency(code);
+    if (!currency) {
+      throw new BadRequestException('country_currency_not_configured');
+    }
+    return currency;
+  }
+
   @InjectModel(StoreModel.name)
   private readonly _storeModel: Model<StoreModel>;
 
@@ -314,6 +327,9 @@ export class StoreService {
       fullUser,
       dto,
     );
+    const derivedCurrency = await this._resolveCurrencyForCountryCode(
+      dto.address.countryCode,
+    );
     const exists = await this._storeModel.findOne({ name: args.name }).exec();
 
     if (exists) {
@@ -340,6 +356,7 @@ export class StoreService {
 
     const store = await this._storeModel.create({
       ...args,
+      currency: derivedCurrency,
       address: addr._id,
       owner: user._id,
     });
@@ -938,6 +955,9 @@ export class StoreService {
       fullUser,
       args,
     );
+    const derivedCurrency = await this._resolveCurrencyForCountryCode(
+      args.address.countryCode,
+    );
     this._assertVendorShopAddressForOnboarding(args.address);
     const store = await this._storeModel
       .findOne({ owner: user._id })
@@ -977,6 +997,7 @@ export class StoreService {
         bio: args.bio,
         email: args.email,
         phoneNumber: args.phoneNumber,
+        currency: derivedCurrency,
         supportsShipping: args.supportsShipping,
         shippingZones,
         ...(wasRevision && { status: StoreStatusEnum.PENDING }),
