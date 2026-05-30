@@ -1122,9 +1122,9 @@ export class AuthService {
       .updateOne(
         { _id: userId },
         {
-          $unset: {
-            account_deletion_requested_at: 1,
-            account_deletion_scheduled_for: 1,
+          $set: {
+            accountDeletionRequestedAt: null,
+            accountDeletionScheduledFor: null,
           },
         },
       )
