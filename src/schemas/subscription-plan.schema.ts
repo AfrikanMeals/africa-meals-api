@@ -36,6 +36,14 @@ export class SubscriptionPlanModel {
   /** Rappels push : jours restants avant fin d’essai (ex. [7, 3, 1]). */
   @Prop({ type: [Number], default: [] })
   trialReminderDays: number[];
+
+  /** Nombre max de boutiques créables par vendeur (0 = illimité). */
+  @Prop({ type: Number, default: 0, min: 0 })
+  maxStores: number;
+
+  /** Active les options d’accès mobile liées à la formule. */
+  @Prop({ type: Boolean, default: false })
+  mobileAccess: boolean;
 }
 
 export type SubscriptionPlanDocument = HydratedDocument<SubscriptionPlanModel>;

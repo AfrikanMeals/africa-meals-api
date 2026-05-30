@@ -58,6 +58,8 @@ function mapPlan(doc: Record<string, unknown>) {
     trialReminderDays: Array.isArray(doc.trialReminderDays)
       ? doc.trialReminderDays.map((d) => Number(d)).filter((d) => d > 0)
       : [],
+    maxStores: Math.max(0, Number(doc.maxStores ?? 0)),
+    mobileAccess: doc.mobileAccess === true,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -98,6 +100,14 @@ function mapVendorSubscription(
     updatedAt: doc.updatedAt,
     plan: plan ? mapPlan(plan) : undefined,
   };
+}
+
+function normalizedPlanName(raw: unknown): string {
+  return String(raw ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/_/g, '');
 }
 
 @Injectable()
@@ -233,6 +243,8 @@ export class SubscriptionsService implements OnModuleInit {
         sortOrder: seed.sortOrder ?? 0,
         trialDays: trial.trialDays,
         trialReminderDays: trial.trialReminderDays,
+        maxStores: Math.max(0, Number(seed.maxStores ?? 0)),
+        mobileAccess: seed.mobileAccess === true,
       });
       this.logger.log(`Seed abonnement créé: ${seed.name}`);
     }
@@ -306,6 +318,94 @@ export class SubscriptionsService implements OnModuleInit {
     });
   }
 
+  private storeLimitFromPlanName(name: string): number | null | undefined {
+    const normalized = normalizedPlanName(name);
+    if (!normalized) return undefined;
+    if (normalized === 'FREE' || normalized.startsWith('FREE')) return 1;
+    if (normalized === 'STANDARD') return 3;
+    if (
+      normalized === 'PRO' ||
+      normalized === 'PRO+' ||
+      normalized === 'PROPLUS' ||
+      normalized.startsWith('PROPLUS') ||
+      normalized.startsWith('PRO+')
+    ) {
+      return null;
+    }
+    return undefined;
+  }
+
+  private storeLimitFromPlanDoc(plan: Record<string, unknown> | null): number | null {
+    if (!plan) return null;
+    if (Object.prototype.hasOwnProperty.call(plan, 'maxStores')) {
+      const configured = Math.max(0, Number(plan.maxStores ?? 0));
+      if (configured === 0) return null;
+      return configured;
+    }
+    const byName = this.storeLimitFromPlanName(String(plan.name ?? ''));
+    if (byName !== undefined) return byName;
+    const free = isFreeSubscriptionPlan({
+      name: String(plan.name ?? ''),
+      priceMonthly: Number(plan.priceMonthly ?? 0),
+      priceYearly: Number(plan.priceYearly ?? 0),
+    });
+    return free ? 1 : null;
+  }
+
+  /**
+   * Limite de création de boutiques par propriétaire selon sa meilleure formule active.
+   * - FREE => 1
+   * - STANDARD => 3
+   * - PRO / PRO+ (et autres formules payantes) => illimité (null)
+   */
+  async resolveStoreCreationLimitForOwner(
+    ownerId: string | Types.ObjectId,
+  ): Promise<number | null> {
+    const oid = this.normalizeUserObjectId(ownerId);
+    const now = new Date();
+    const subs = await this.vendorSubModel
+      .find({
+        owner: oid,
+        status: 'ACTIVE',
+        endsAt: { $gt: now },
+      })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+    if (!subs.length) {
+      return 1;
+    }
+
+    const planIds = [
+      ...new Set(
+        (subs as Array<{ plan?: Types.ObjectId }>)
+          .map((s) => String(s.plan ?? ''))
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ];
+    const plans = await this.planModel
+      .find({ _id: { $in: planIds } })
+      .lean()
+      .exec();
+    const planById = new Map(
+      (plans as Record<string, unknown>[]).map((p) => [String(p._id), p]),
+    );
+
+    let bestLimit: number = 1;
+    for (const sub of subs as Record<string, unknown>[]) {
+      const byName = this.storeLimitFromPlanName(String(sub.planName ?? ''));
+      const limit =
+        byName !== undefined
+          ? byName
+          : this.storeLimitFromPlanDoc(
+              planById.get(String(sub.plan ?? '')) ?? null,
+            );
+      if (limit === null) return null;
+      bestLimit = Math.max(bestLimit, limit);
+    }
+    return bestLimit;
+  }
+
   private async ensureDefaultFreePlanForStoresWithoutActiveSubscription() {
     const stores = await this.storeModel
       .find({})
@@ -341,6 +441,8 @@ export class SubscriptionsService implements OnModuleInit {
       sortOrder: dto.sortOrder ?? 0,
       trialDays: trial.trialDays,
       trialReminderDays: trial.trialReminderDays,
+      maxStores: Math.max(0, Math.floor(Number(dto.maxStores ?? 0))),
+      mobileAccess: dto.mobileAccess === true,
     });
     return mapPlan(doc.toObject() as Record<string, unknown>);
   }
@@ -367,6 +469,10 @@ export class SubscriptionsService implements OnModuleInit {
     }
     if (dto.active != null) patch.active = dto.active;
     if (dto.sortOrder != null) patch.sortOrder = dto.sortOrder;
+    if (dto.maxStores != null) {
+      patch.maxStores = Math.max(0, Math.floor(Number(dto.maxStores)));
+    }
+    if (dto.mobileAccess != null) patch.mobileAccess = dto.mobileAccess === true;
 
     if (
       dto.trialDays != null ||

@@ -348,6 +348,16 @@ export class StoreService {
     const derivedCurrency = await this._resolveCurrencyForCountryCode(
       dto.address.countryCode,
     );
+    const ownerStoreCount = await this._storeModel
+      .countDocuments({ owner: user._id })
+      .exec();
+    const creationLimit =
+      await this._subscriptionsService.resolveStoreCreationLimitForOwner(
+        user._id as Types.ObjectId,
+      );
+    if (creationLimit != null && ownerStoreCount >= creationLimit) {
+      throw new ForbiddenException('store_limit_reached_for_plan');
+    }
     const exists = await this._storeModel.findOne({ name: args.name }).exec();
 
     if (exists) {

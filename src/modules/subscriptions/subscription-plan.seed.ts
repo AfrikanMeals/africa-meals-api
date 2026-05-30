@@ -9,6 +9,8 @@ export type SubscriptionPlanSeed = {
   active: boolean;
   trialDays?: number;
   trialReminderDays?: number[];
+  maxStores?: number;
+  mobileAccess?: boolean;
 };
 
 export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
@@ -30,6 +32,8 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     active: true,
     trialDays: 0,
     trialReminderDays: [],
+    maxStores: 1,
+    mobileAccess: false,
   },
   {
     name: 'PRO',
@@ -49,6 +53,8 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     active: true,
     trialDays: 14,
     trialReminderDays: [7, 3, 1],
+    maxStores: 0,
+    mobileAccess: true,
   },
   {
     name: 'PRO+',
@@ -68,5 +74,7 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     active: true,
     trialDays: 14,
     trialReminderDays: [7, 3, 1],
+    maxStores: 0,
+    mobileAccess: true,
   },
 ];

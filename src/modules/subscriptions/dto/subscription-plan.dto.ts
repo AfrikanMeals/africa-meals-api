@@ -58,6 +58,15 @@ export class CreateSubscriptionPlanDto {
   @Min(1, { each: true })
   @Max(90, { each: true })
   trialReminderDays?: number[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxStores?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  mobileAccess?: boolean;
 }
 
 export class UpdateSubscriptionPlanDto {
@@ -110,6 +119,15 @@ export class UpdateSubscriptionPlanDto {
   @Min(1, { each: true })
   @Max(90, { each: true })
   trialReminderDays?: number[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxStores?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  mobileAccess?: boolean;
 }
 
 export class SubscribeVendorDto {
