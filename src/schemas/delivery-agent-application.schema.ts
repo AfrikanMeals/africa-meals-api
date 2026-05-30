@@ -89,5 +89,5 @@ export const DeliveryAgentApplicationSchema = SchemaFactory.createForClass(
   DeliveryAgentApplicationModel,
 );
 
-export type DeliveryAgentApplicationDocument =
-  DeliveryAgentApplicationModel & Document;
+export type DeliveryAgentApplicationDocument = DeliveryAgentApplicationModel &
+  Document;

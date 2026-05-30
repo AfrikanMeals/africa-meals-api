@@ -58,10 +58,6 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
       { name: OrderModel.name, schema: OrderSchema },
     ]),
   ],
-  exports: [
-    BillingService,
-    StripeConnectService,
-    StripeConnectTransferModule,
-  ],
+  exports: [BillingService, StripeConnectService, StripeConnectTransferModule],
 })
 export class BillingModule {}

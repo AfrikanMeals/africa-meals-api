@@ -15,4 +15,3 @@ export * from './store.schema';
 export * from './store_coupon.schema';
 export * from './store_rating.schema';
 export * from './user.schema';
-

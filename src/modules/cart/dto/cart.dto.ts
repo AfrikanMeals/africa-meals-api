@@ -50,7 +50,10 @@ export class AddItemToCartDto {
   @Transform(({ value }) => +value)
   price: number;
 
-  @ApiProperty({ example: '507f1f77bcf86cd799439012', description: 'Requis si type = PRODUCT_EXTRA' })
+  @ApiProperty({
+    example: '507f1f77bcf86cd799439012',
+    description: 'Requis si type = PRODUCT_EXTRA',
+  })
   @IsNotEmpty()
   @ValidateIf((o) => o.type === CartItemTypeEnum.PRODUCT_EXTRA)
   productId: string;

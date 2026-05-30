@@ -342,7 +342,9 @@ export function isClearableTableKey(key: string): boolean {
   return KEY_SET.has(key);
 }
 
-export function getClearableTable(key: string): DbClearableTableDef | undefined {
+export function getClearableTable(
+  key: string,
+): DbClearableTableDef | undefined {
   return DB_CLEARABLE_TABLES.find((t) => t.key === key);
 }
 

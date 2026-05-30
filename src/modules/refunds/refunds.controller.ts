@@ -30,7 +30,9 @@ export class RefundsController {
 
   @Get()
   @UseGuards(JwtGuard)
-  @ApiOperation({ summary: 'File des remboursements (admin ou vendeur lecture)' })
+  @ApiOperation({
+    summary: 'File des remboursements (admin ou vendeur lecture)',
+  })
   list(
     @Req() req: Request,
     @Query('page') page?: string,
@@ -54,10 +56,7 @@ export class RefundsController {
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   pauseGlobal(@Req() req: Request, @Body() body: RefundAdminNoteDto) {
-    return this.refunds.pauseGlobalProcessing(
-      req.user as UserModel,
-      body.note,
-    );
+    return this.refunds.pauseGlobalProcessing(req.user as UserModel, body.note);
   }
 
   @Post('settings/resume')
@@ -74,11 +73,7 @@ export class RefundsController {
     @Param('orderId') orderId: string,
     @Body() body: RefundAdminNoteDto,
   ) {
-    return this.refunds.pauseRefund(
-      req.user as UserModel,
-      orderId,
-      body.note,
-    );
+    return this.refunds.pauseRefund(req.user as UserModel, orderId, body.note);
   }
 
   @Post(':orderId/resume')
@@ -95,11 +90,7 @@ export class RefundsController {
     @Param('orderId') orderId: string,
     @Body() body: RefundAdminNoteDto,
   ) {
-    return this.refunds.cancelRefund(
-      req.user as UserModel,
-      orderId,
-      body.note,
-    );
+    return this.refunds.cancelRefund(req.user as UserModel, orderId, body.note);
   }
 
   @Post(':orderId/fee-override')

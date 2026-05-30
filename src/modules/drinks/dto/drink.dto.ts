@@ -53,7 +53,8 @@ export class CreateDrinkDto {
 /** Création boisson : JSON + image base64 optionnelle (évite multipart tronqué). */
 export class CreateDrinkJsonDto extends CreateDrinkDto {
   @ApiPropertyOptional({
-    description: 'Image optionnelle (base64 pur ou préfixe data:image/...;base64,)',
+    description:
+      'Image optionnelle (base64 pur ou préfixe data:image/...;base64,)',
   })
   @IsOptional()
   @IsString()

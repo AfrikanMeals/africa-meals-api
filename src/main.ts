@@ -28,8 +28,6 @@ async function bootstrap() {
   const port = Number(process.env.NODE_PORT || process.env.PORT || 3000);
   await app.listen(port);
   applyHttpServerTimeouts(app.getHttpServer());
-  console.warn(
-    `🚀 API: http://localhost:/api (docs: /api/docs)`,
-  );
+  console.warn(`🚀 API: http://localhost:/api (docs: /api/docs)`);
 }
 bootstrap();

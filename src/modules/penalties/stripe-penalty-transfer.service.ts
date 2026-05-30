@@ -1,10 +1,6 @@
 import { isStripeConnectOnboardingCompleteUser } from '@modules/billing/stripe/stripe-connect-visibility';
 import { StripeChargeFeeService } from '@modules/billing/stripe/stripe-charge-fee.service';
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { OrderModel } from '@schemas/order.schema';
@@ -66,7 +62,10 @@ export class StripePenaltyTransferService {
   private currency(raw?: string): string {
     return (
       raw?.trim().toLowerCase() ||
-      this.config.get<string>('STRIPE_CONNECT_TRANSFER_CURRENCY')?.trim().toLowerCase() ||
+      this.config
+        .get<string>('STRIPE_CONNECT_TRANSFER_CURRENCY')
+        ?.trim()
+        .toLowerCase() ||
       'cad'
     );
   }
@@ -76,7 +75,7 @@ export class StripePenaltyTransferService {
     vendorUserId?: string;
   }): Promise<{ accountId: string; storeId?: string; vendorUserId?: string }> {
     let ownerId = args.vendorUserId?.trim() || '';
-    let storeId = args.storeId?.trim() || '';
+    const storeId = args.storeId?.trim() || '';
 
     if (storeId && Types.ObjectId.isValid(storeId)) {
       const store = await this.storeModel
@@ -195,7 +194,9 @@ export class StripePenaltyTransferService {
         if (!deliveryUserId) {
           throw new BadRequestException('delivery_user_required');
         }
-        const delivery = await this.resolveDeliveryConnectAccount(deliveryUserId);
+        const delivery = await this.resolveDeliveryConnectAccount(
+          deliveryUserId,
+        );
         const step = await this.transferFromPlatform({
           destinationAccountId: delivery.accountId,
           amountCents,
@@ -216,7 +217,8 @@ export class StripePenaltyTransferService {
         }
         const order = await this.loadOrderForPenalty(orderId);
         const vendor = await this.resolveVendorConnectAccount({
-          storeId: args.storeId || (order.store ? String(order.store) : undefined),
+          storeId:
+            args.storeId || (order.store ? String(order.store) : undefined),
           vendorUserId: args.vendorUserId,
         });
         const step = await this.reverseTransferToPlatform({
@@ -240,7 +242,8 @@ export class StripePenaltyTransferService {
           throw new BadRequestException('order_id_required_for_route');
         }
         const order = await this.loadOrderForPenalty(orderId);
-        const agentId = args.deliveryUserId?.trim() ||
+        const agentId =
+          args.deliveryUserId?.trim() ||
           (order.assignedDeliveryUser
             ? String(order.assignedDeliveryUser)
             : '');
@@ -458,7 +461,9 @@ export class StripePenaltyTransferService {
       { idempotencyKey: args.idempotencyKey },
     );
     this.logger.log(
-      `Penalty transfer ${transfer.id}: ${args.amountCents / 100} ${args.currency} → ${args.destinationAccountId}`,
+      `Penalty transfer ${transfer.id}: ${args.amountCents / 100} ${
+        args.currency
+      } → ${args.destinationAccountId}`,
     );
     return {
       kind: PenaltyStripeStepKindEnum.TRANSFER,
@@ -514,7 +519,9 @@ export class StripePenaltyTransferService {
     await this.orderModel.updateOne({ _id: args.orderId }, { $set: update });
 
     this.logger.log(
-      `Penalty reversal ${reversal.id}: ${reversalCents / 100} on ${transferId} (order ${args.orderId})`,
+      `Penalty reversal ${reversal.id}: ${
+        reversalCents / 100
+      } on ${transferId} (order ${args.orderId})`,
     );
 
     return {

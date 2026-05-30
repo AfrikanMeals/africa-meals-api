@@ -37,10 +37,7 @@ export function productDailyMenuListingPipelineStages(): PipelineStage[] {
               input: '$__todaySlotItems',
               as: 'it',
               cond: {
-                $eq: [
-                  { $toString: '$$it.productId' },
-                  { $toString: '$_id' },
-                ],
+                $eq: [{ $toString: '$$it.productId' }, { $toString: '$_id' }],
               },
             },
           },
@@ -53,11 +50,11 @@ export function productDailyMenuListingPipelineStages(): PipelineStage[] {
                   input: '$__todaySlotItems',
                   as: 'it',
                   cond: {
-                $eq: [
-                  { $toString: '$$it.productId' },
-                  { $toString: '$_id' },
-                ],
-              },
+                    $eq: [
+                      { $toString: '$$it.productId' },
+                      { $toString: '$_id' },
+                    ],
+                  },
                 },
               },
             },
@@ -72,10 +69,7 @@ export function productDailyMenuListingPipelineStages(): PipelineStage[] {
           $and: [
             { $ne: ['$__menuItem', null] },
             {
-              $eq: [
-                { $ifNull: ['$__menuItem.stockUnlimited', true] },
-                false,
-              ],
+              $eq: [{ $ifNull: ['$__menuItem.stockUnlimited', true] }, false],
             },
             { $lte: [{ $ifNull: ['$__menuItem.stockRemaining', 0] }, 0] },
           ],

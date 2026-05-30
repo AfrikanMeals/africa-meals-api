@@ -68,9 +68,7 @@ export class RatingsController {
   })
   landingProductReviews(@Query('limit') limitRaw?: string) {
     const parsed =
-      limitRaw != null && limitRaw !== ''
-        ? parseInt(limitRaw, 10)
-        : undefined;
+      limitRaw != null && limitRaw !== '' ? parseInt(limitRaw, 10) : undefined;
     return this.ratingsService.listLandingProductReviews(parsed);
   }
 }

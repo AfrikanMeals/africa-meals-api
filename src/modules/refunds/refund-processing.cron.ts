@@ -28,7 +28,9 @@ export class RefundProcessingCron {
       }
     } catch (e) {
       this.logger.error(
-        `Refund cron failed: ${e instanceof Error ? e.stack ?? e.message : String(e)}`,
+        `Refund cron failed: ${
+          e instanceof Error ? e.stack ?? e.message : String(e)
+        }`,
       );
     }
   }

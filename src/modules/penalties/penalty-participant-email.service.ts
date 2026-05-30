@@ -49,8 +49,11 @@ export class PenaltyParticipantEmailService {
     const recipients = await this.resolveRecipients(args);
     if (!recipients.length) return [];
 
-    const appName = this.config.get<string>('APP_NAME')?.trim() || 'Afrika Meals';
-    const amountStr = `${(args.amountCents / 100).toFixed(2)} ${args.currency.toUpperCase()}`;
+    const appName =
+      this.config.get<string>('APP_NAME')?.trim() || 'Afrika Meals';
+    const amountStr = `${(args.amountCents / 100).toFixed(
+      2,
+    )} ${args.currency.toUpperCase()}`;
     const routeLabel = penaltyRouteLabelFr(args.route);
     const orderRef = args.orderId
       ? await this.orderDisplayRef(args.orderId)
@@ -77,9 +80,7 @@ export class PenaltyParticipantEmailService {
       const text = lines.join('\n');
       const html = lines
         .map((line) =>
-          line === ''
-            ? '<br/>'
-            : `<p>${this.escapeHtml(line)}</p>`,
+          line === '' ? '<br/>' : `<p>${this.escapeHtml(line)}</p>`,
         )
         .join('\n');
 
@@ -131,7 +132,8 @@ export class PenaltyParticipantEmailService {
     }>
   > {
     const parties = new Set<PenaltyPartyEnum>();
-    if (args.fromParty !== PenaltyPartyEnum.PLATFORM) parties.add(args.fromParty);
+    if (args.fromParty !== PenaltyPartyEnum.PLATFORM)
+      parties.add(args.fromParty);
     if (args.toParty !== PenaltyPartyEnum.PLATFORM) parties.add(args.toParty);
 
     const out: Array<{
@@ -142,7 +144,7 @@ export class PenaltyParticipantEmailService {
     }> = [];
 
     let vendorUserId = args.vendorUserId?.trim() || '';
-    let deliveryUserId = args.deliveryUserId?.trim() || '';
+    const deliveryUserId = args.deliveryUserId?.trim() || '';
 
     if (args.storeId?.trim()) {
       const store = await this.storeModel
@@ -157,18 +159,13 @@ export class PenaltyParticipantEmailService {
         const ownerRow = vendorUserId
           ? await this.userEmailRow(vendorUserId)
           : null;
-        const email =
-          ownerRow?.email || store?.email?.trim() || '';
+        const email = ownerRow?.email || store?.email?.trim() || '';
         if (email) {
           out.push({
             party: PenaltyPartyEnum.VENDOR,
-            role:
-              args.fromParty === PenaltyPartyEnum.VENDOR ? 'from' : 'to',
+            role: args.fromParty === PenaltyPartyEnum.VENDOR ? 'from' : 'to',
             email,
-            name:
-              ownerRow?.name ||
-              store?.name?.trim() ||
-              'Restaurant',
+            name: ownerRow?.name || store?.name?.trim() || 'Restaurant',
           });
           parties.delete(PenaltyPartyEnum.VENDOR);
         }
@@ -232,7 +229,11 @@ export class PenaltyParticipantEmailService {
 
   private async orderDisplayRef(orderId: string): Promise<string | null> {
     if (!Types.ObjectId.isValid(orderId)) return null;
-    const o = await this.orderModel.findById(orderId).select('_id').lean().exec();
+    const o = await this.orderModel
+      .findById(orderId)
+      .select('_id')
+      .lean()
+      .exec();
     if (!o) return null;
     const tail = String(o._id).slice(-6).toUpperCase();
     return `#AE-${tail}`;

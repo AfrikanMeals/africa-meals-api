@@ -33,13 +33,17 @@ export class SearchController {
   ) {
     const sid = (storeId ?? '').trim();
     const page = Math.max(1, parseInt(pageRaw ?? '1', 10) || 1);
-    const take = Math.min(120, Math.max(8, parseInt(takeRaw ?? '24', 10) || 24));
-    const { items, total } = await this._searchService.storeMenuProductsLeanPage(
-      sid,
-      page,
-      take,
-      req.user as UserModel,
+    const take = Math.min(
+      120,
+      Math.max(8, parseInt(takeRaw ?? '24', 10) || 24),
     );
+    const { items, total } =
+      await this._searchService.storeMenuProductsLeanPage(
+        sid,
+        page,
+        take,
+        req.user as UserModel,
+      );
     return {
       products: {
         items,

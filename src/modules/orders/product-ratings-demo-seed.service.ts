@@ -126,13 +126,17 @@ export class ProductRatingsDemoSeedService implements OnModuleInit {
       const n = Math.min(NUM_REVIEWS_PER_STORE, products.length);
       if (n === 0) {
         this.logger.warn(
-          `Avis démo plats : boutique « ${(store as { name?: string }).name ?? storeId} » sans plat — ignorée.`,
+          `Avis démo plats : boutique « ${
+            (store as { name?: string }).name ?? storeId
+          } » sans plat — ignorée.`,
         );
         continue;
       }
       if (n < NUM_REVIEWS_PER_STORE) {
         this.logger.warn(
-          `Avis démo plats : boutique « ${(store as { name?: string }).name ?? storeId} » — seulement ${n} plat(s), ${n} avis insérés (objectif ${NUM_REVIEWS_PER_STORE}).`,
+          `Avis démo plats : boutique « ${
+            (store as { name?: string }).name ?? storeId
+          } » — seulement ${n} plat(s), ${n} avis insérés (objectif ${NUM_REVIEWS_PER_STORE}).`,
         );
       }
 
@@ -151,10 +155,7 @@ export class ProductRatingsDemoSeedService implements OnModuleInit {
         });
 
         await this.productModel
-          .updateOne(
-            { _id: product._id },
-            { $push: { ratings: rating._id } },
-          )
+          .updateOne({ _id: product._id }, { $push: { ratings: rating._id } })
           .exec();
 
         totalInserted += 1;
@@ -206,7 +207,9 @@ export class ProductRatingsDemoSeedService implements OnModuleInit {
 
     if ((delR.deletedCount ?? 0) > 0 || (delU.deletedCount ?? 0) > 0) {
       this.logger.log(
-        `Avis démo plats : nettoyage — ${delR.deletedCount ?? 0} avis, ${delU.deletedCount ?? 0} comptes seed.`,
+        `Avis démo plats : nettoyage — ${delR.deletedCount ?? 0} avis, ${
+          delU.deletedCount ?? 0
+        } comptes seed.`,
       );
     }
   }

@@ -53,7 +53,13 @@ function normalizeRanges(
 ): { minKm: number; maxKm: number; fee: number }[] {
   const sorted = [...ranges].sort((a, b) => a.minKm - b.minKm);
   for (const r of sorted) {
-    if (!(Number.isFinite(r.minKm) && Number.isFinite(r.maxKm) && Number.isFinite(r.fee))) {
+    if (
+      !(
+        Number.isFinite(r.minKm) &&
+        Number.isFinite(r.maxKm) &&
+        Number.isFinite(r.fee)
+      )
+    ) {
       throw new BadRequestException('invalid_range_numbers');
     }
     if (r.minKm < 0 || r.maxKm <= r.minKm) {
@@ -114,7 +120,10 @@ export class PlatformShippingSettingsService {
     return this._toResponse(doc as PlatformShippingSettingsModel);
   }
 
-  async updateSettings(user: UserModel, dto: UpdatePlatformShippingSettingsDto) {
+  async updateSettings(
+    user: UserModel,
+    dto: UpdatePlatformShippingSettingsDto,
+  ) {
     assertAdmin(user);
     const current = await this.getPublicSettings();
     const ranges = normalizeRanges(dto.ranges ?? []);

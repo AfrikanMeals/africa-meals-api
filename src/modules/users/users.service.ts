@@ -180,9 +180,7 @@ export class UsersService {
   private async _orderSpendByUser(
     userIds: Types.ObjectId[],
     storeFilter?: Types.ObjectId[],
-  ): Promise<
-    Map<string, { orderCount: number; totalSpent: number }>
-  > {
+  ): Promise<Map<string, { orderCount: number; totalSpent: number }>> {
     const map = new Map<string, { orderCount: number; totalSpent: number }>();
     if (!userIds.length) {
       return map;
@@ -232,8 +230,7 @@ export class UsersService {
     const fullName = String(u.fullName ?? u.full_name ?? '').trim();
     const parts = fullName.split(/\s+/).filter(Boolean);
     const prenom = parts.length > 1 ? parts[0] : '';
-    const nom =
-      parts.length > 1 ? parts.slice(1).join(' ') : parts[0] ?? '';
+    const nom = parts.length > 1 ? parts.slice(1).join(' ') : parts[0] ?? '';
 
     const rawAddresses = u.addresses as Record<string, unknown>[] | undefined;
     const addresses = Array.isArray(rawAddresses) ? rawAddresses : [];
@@ -241,8 +238,7 @@ export class UsersService {
       addresses.find((a) => a?.isDefault === true) ?? addresses[0];
     let addressSummary = '';
     if (defaultAddr && typeof defaultAddr.address === 'string') {
-      const city =
-        typeof defaultAddr.city === 'string' ? defaultAddr.city : '';
+      const city = typeof defaultAddr.city === 'string' ? defaultAddr.city : '';
       addressSummary = city
         ? `${defaultAddr.address}, ${city}`
         : defaultAddr.address;
@@ -293,9 +289,7 @@ export class UsersService {
     for (const raw of rawIds) {
       if (raw == null) continue;
       const id =
-        raw instanceof Types.ObjectId
-          ? raw.toHexString()
-          : String(raw).trim();
+        raw instanceof Types.ObjectId ? raw.toHexString() : String(raw).trim();
       if (!Types.ObjectId.isValid(id) || seen.has(id)) continue;
       seen.add(id);
       out.push(new Types.ObjectId(id));

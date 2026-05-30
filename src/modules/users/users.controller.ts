@@ -15,9 +15,7 @@ import {
 } from '@nestjs/common';
 import { SetClientRewardProgramDto } from './dto/set-client-reward-program.dto';
 import { ApiOperation, ApiQuery } from '@nestjs/swagger';
-import {
-  parseClientsPageQuery,
-} from './dto/clients-page.dto';
+import { parseClientsPageQuery } from './dto/clients-page.dto';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';

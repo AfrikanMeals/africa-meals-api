@@ -43,7 +43,8 @@ export class FilterOrdersDto {
   limit?: number;
 
   @ApiPropertyOptional({
-    description: 'Pagination : nombre de commandes à sauter (tri `createdAt` desc). Max 10 000.',
+    description:
+      'Pagination : nombre de commandes à sauter (tri `createdAt` desc). Max 10 000.',
     minimum: 0,
     maximum: 10_000,
   })

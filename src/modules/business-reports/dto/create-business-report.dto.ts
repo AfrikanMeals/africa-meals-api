@@ -1,6 +1,12 @@
 import { BusinessStoreReportCategoryEnum } from '@schemas/business-store-report.schema';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsEnum,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 export class CreateBusinessReportDto {
   @ApiProperty({

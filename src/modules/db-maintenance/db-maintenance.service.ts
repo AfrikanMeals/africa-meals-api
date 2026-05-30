@@ -7,13 +7,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectConnection } from '@nestjs/mongoose';
-import {
-  OrderModel,
-  OrderStatusEnum,
-} from '@schemas/order.schema';
-import {
-  StripeProcessedCheckoutModel,
-} from '@schemas/stripe-processed-checkout.schema';
+import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
+import { StripeProcessedCheckoutModel } from '@schemas/stripe-processed-checkout.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
@@ -182,14 +177,22 @@ export class DbMaintenanceService {
 
   private assertMaintenanceEnabled(): void {
     const raw = this.config.get<string>('ALLOW_DB_MAINTENANCE');
-    const normalized = String(raw ?? '').trim().toLowerCase();
+    const normalized = String(raw ?? '')
+      .trim()
+      .toLowerCase();
     if (normalized === 'false' || normalized === '0') {
       throw new ForbiddenException('db_maintenance_disabled');
     }
-    const nodeEnv = String(this.config.get('NODE_ENV') ?? process.env.NODE_ENV ?? '')
+    const nodeEnv = String(
+      this.config.get('NODE_ENV') ?? process.env.NODE_ENV ?? '',
+    )
       .trim()
       .toLowerCase();
-    if (nodeEnv === 'production' && normalized !== 'true' && normalized !== '1') {
+    if (
+      nodeEnv === 'production' &&
+      normalized !== 'true' &&
+      normalized !== '1'
+    ) {
       throw new ForbiddenException('db_maintenance_disabled');
     }
   }
@@ -272,7 +275,9 @@ export class DbMaintenanceService {
     key: string,
   ): Promise<{ result: IntegrityTestRunResult }> {
     await this.assertAdminSettingsPermission(user);
-    const normalized = String(key || '').trim().toLowerCase();
+    const normalized = String(key || '')
+      .trim()
+      .toLowerCase();
     switch (normalized) {
       case 'order-payment-test':
         return { result: await this.runOrderPaymentIntegrityTest() };
@@ -301,7 +306,9 @@ export class DbMaintenanceService {
     key: string,
   ): Promise<{ result: SystemHealthCheckResult }> {
     await this.assertAdminSettingsPermission(user);
-    const normalized = String(key || '').trim().toLowerCase();
+    const normalized = String(key || '')
+      .trim()
+      .toLowerCase();
     switch (normalized) {
       case 'mongodb-status':
         return { result: await this.runMongoHealthCheck() };
@@ -320,7 +327,9 @@ export class DbMaintenanceService {
       case 'firebase-services-status':
         return { result: await this.runFirebaseServicesHealthCheck() };
       default:
-        throw new BadRequestException(`unknown_system_health_check:${normalized}`);
+        throw new BadRequestException(
+          `unknown_system_health_check:${normalized}`,
+        );
     }
   }
 
@@ -358,15 +367,27 @@ export class DbMaintenanceService {
       });
     }
 
-    const paymentIds = [...new Set(
-      paidOrders
-        .map((o) => String((o as { stripeParentPaymentId?: unknown }).stripeParentPaymentId ?? '').trim())
-        .filter((x) => x.length > 0),
-    )];
+    const paymentIds = [
+      ...new Set(
+        paidOrders
+          .map((o) =>
+            String(
+              (o as { stripeParentPaymentId?: unknown })
+                .stripeParentPaymentId ?? '',
+            ).trim(),
+          )
+          .filter((x) => x.length > 0),
+      ),
+    ];
 
     const processedDocs = await this.processedModel
       .find({ sessionId: { $in: paymentIds } })
-      .select(['sessionId', 'orderIds', 'perStoreBreakdown', 'amountTotalCents'])
+      .select([
+        'sessionId',
+        'orderIds',
+        'perStoreBreakdown',
+        'amountTotalCents',
+      ])
       .lean()
       .exec();
     const processedByPaymentId = new Map(
@@ -382,7 +403,8 @@ export class DbMaintenanceService {
       const orderId = String(order._id);
       const issues: string[] = [];
       const paymentId = String(
-        (order as { stripeParentPaymentId?: unknown }).stripeParentPaymentId ?? '',
+        (order as { stripeParentPaymentId?: unknown }).stripeParentPaymentId ??
+          '',
       ).trim();
 
       if (!paymentId) {
@@ -405,7 +427,8 @@ export class DbMaintenanceService {
           const inBreakdown = Array.isArray(processed.perStoreBreakdown)
             ? processed.perStoreBreakdown.some(
                 (row) =>
-                  String((row as { orderId?: unknown }).orderId ?? '') === orderId,
+                  String((row as { orderId?: unknown }).orderId ?? '') ===
+                  orderId,
               )
             : false;
           if (!inOrderIds && !inBreakdown) {
@@ -439,10 +462,12 @@ export class DbMaintenanceService {
       }
 
       const chargedGoods = Number(
-        (order as { stripeChargedGoodsCents?: unknown }).stripeChargedGoodsCents ?? 0,
+        (order as { stripeChargedGoodsCents?: unknown })
+          .stripeChargedGoodsCents ?? 0,
       );
       const chargedShip = Number(
-        (order as { stripeChargedShipCents?: unknown }).stripeChargedShipCents ?? 0,
+        (order as { stripeChargedShipCents?: unknown })
+          .stripeChargedShipCents ?? 0,
       );
       const chargedTotal = chargedGoods + chargedShip;
       if (chargedTotal <= 0) {
@@ -463,7 +488,10 @@ export class DbMaintenanceService {
     const coverage = remoteStatusChecked / totalRuns;
     const failureRate = 1 - successRuns / totalRuns;
     const confidenceRaw = (0.55 * coverage + 0.45 * (1 - failureRate)) * 100;
-    const confidence = Math.max(35, Math.min(99, Number(confidenceRaw.toFixed(2))));
+    const confidence = Math.max(
+      35,
+      Math.min(99, Number(confidenceRaw.toFixed(2))),
+    );
 
     return this.decorateIntegrityResult({
       key: 'order-payment-test',
@@ -518,16 +546,21 @@ export class DbMaintenanceService {
       const orderId = String(order._id);
       const issues: string[] = [];
       const status = String((order as { status?: unknown }).status ?? '');
-      const totalPrice = Number((order as { totalPrice?: unknown }).totalPrice ?? 0);
-      const shouldShip = Boolean((order as { shouldShip?: unknown }).shouldShip);
+      const totalPrice = Number(
+        (order as { totalPrice?: unknown }).totalPrice ?? 0,
+      );
+      const shouldShip = Boolean(
+        (order as { shouldShip?: unknown }).shouldShip,
+      );
       const shippingPrice = Number(
         (order as { shippingPrice?: unknown }).shippingPrice ?? 0,
       );
       const stripeParentPaymentId = String(
-        (order as { stripeParentPaymentId?: unknown }).stripeParentPaymentId ?? '',
+        (order as { stripeParentPaymentId?: unknown }).stripeParentPaymentId ??
+          '',
       ).trim();
       const items = Array.isArray((order as { items?: unknown }).items)
-        ? ((order as { items: Array<Record<string, unknown>> }).items ?? [])
+        ? (order as { items: Array<Record<string, unknown>> }).items ?? []
         : [];
 
       if (totalPrice <= 0) {
@@ -550,7 +583,10 @@ export class DbMaintenanceService {
         }
       }
 
-      if (paidLike.includes(status as OrderStatusEnum) && !stripeParentPaymentId) {
+      if (
+        paidLike.includes(status as OrderStatusEnum) &&
+        !stripeParentPaymentId
+      ) {
         issues.push('paid_like_status_without_stripe_parent_payment_id');
       }
 
@@ -558,7 +594,8 @@ export class DbMaintenanceService {
         (order as { deliveryAddress?: unknown }).deliveryAddress,
       );
       const hasDeliverySnapshot = Boolean(
-        (order as { deliveryAddressSnapshot?: unknown }).deliveryAddressSnapshot,
+        (order as { deliveryAddressSnapshot?: unknown })
+          .deliveryAddressSnapshot,
       );
       if (shouldShip) {
         if (!hasDeliveryAddress && !hasDeliverySnapshot) {
@@ -583,7 +620,7 @@ export class DbMaintenanceService {
       ? Number(((successRuns / totalRuns) * 100).toFixed(2))
       : 100;
     const confidence = Number(
-      (Math.min(99, 60 + Math.min(totalRuns, 3000) / 50)).toFixed(2),
+      Math.min(99, 60 + Math.min(totalRuns, 3000) / 50).toFixed(2),
     );
     return this.decorateIntegrityResult({
       key,
@@ -613,7 +650,13 @@ export class DbMaintenanceService {
       .find({})
       .sort({ createdAt: -1 })
       .limit(scanLimit)
-      .select(['_id', 'sessionId', 'orderIds', 'amountTotalCents', 'perStoreBreakdown'])
+      .select([
+        '_id',
+        'sessionId',
+        'orderIds',
+        'amountTotalCents',
+        'perStoreBreakdown',
+      ])
       .lean()
       .exec();
 
@@ -622,7 +665,9 @@ export class DbMaintenanceService {
 
     for (const doc of docs) {
       const docId = String((doc as { _id?: unknown })._id ?? '');
-      const sessionId = String((doc as { sessionId?: unknown }).sessionId ?? '').trim();
+      const sessionId = String(
+        (doc as { sessionId?: unknown }).sessionId ?? '',
+      ).trim();
       const amountTotalCents = Number(
         (doc as { amountTotalCents?: unknown }).amountTotalCents ?? 0,
       );
@@ -632,8 +677,8 @@ export class DbMaintenanceService {
       const rows = Array.isArray(
         (doc as { perStoreBreakdown?: unknown }).perStoreBreakdown,
       )
-        ? ((doc as { perStoreBreakdown: Array<Record<string, unknown>> }).perStoreBreakdown ??
-          [])
+        ? (doc as { perStoreBreakdown: Array<Record<string, unknown>> })
+            .perStoreBreakdown ?? []
         : [];
       const issues: string[] = [];
 
@@ -674,7 +719,10 @@ export class DbMaintenanceService {
       if (!issues.length) {
         successRuns += 1;
       } else if (sampleFailures.length < 25) {
-        sampleFailures.push({ orderId: docId || sessionId || 'unknown', issues });
+        sampleFailures.push({
+          orderId: docId || sessionId || 'unknown',
+          issues,
+        });
       }
     }
 
@@ -683,7 +731,7 @@ export class DbMaintenanceService {
       ? Number(((successRuns / totalRuns) * 100).toFixed(2))
       : 100;
     const confidence = Number(
-      (Math.min(99, 65 + Math.min(totalRuns, 3000) / 60)).toFixed(2),
+      Math.min(99, 65 + Math.min(totalRuns, 3000) / 60).toFixed(2),
     );
     return this.decorateIntegrityResult({
       key,
@@ -729,15 +777,16 @@ export class DbMaintenanceService {
       .exec();
 
     const successRuns = Math.max(0, totalRuns - stuckCount);
-    const sampleFailures: IntegrityTestRunResult['sampleFailures'] = sampleDocs.map(
-      (doc) => ({
+    const sampleFailures: IntegrityTestRunResult['sampleFailures'] =
+      sampleDocs.map((doc) => ({
         orderId: String(doc._id),
         issues: [
           `created_order_stuck_over_${maxAgeHours}h`,
-          `created_at:${new Date(String((doc as { createdAt?: unknown }).createdAt ?? '')).toISOString()}`,
+          `created_at:${new Date(
+            String((doc as { createdAt?: unknown }).createdAt ?? ''),
+          ).toISOString()}`,
         ],
-      }),
-    );
+      }));
     const score = totalRuns
       ? Number(((successRuns / totalRuns) * 100).toFixed(2))
       : 100;
@@ -769,7 +818,9 @@ export class DbMaintenanceService {
       issue: string;
     }> = [];
 
-    const jwtSecret = String(this.config.get<string>('JWT_SECRET') ?? '').trim();
+    const jwtSecret = String(
+      this.config.get<string>('JWT_SECRET') ?? '',
+    ).trim();
     checks.push({
       id: 'JWT_SECRET',
       ok: jwtSecret.length >= 16,
@@ -837,7 +888,9 @@ export class DbMaintenanceService {
     base: Omit<IntegrityTestRunResult, 'severity' | 'failureReasonCounts'>,
   ): IntegrityTestRunResult {
     const severity = this.severityFromScore(base.score);
-    const failureReasonCounts = this.buildFailureReasonCounts(base.sampleFailures);
+    const failureReasonCounts = this.buildFailureReasonCounts(
+      base.sampleFailures,
+    );
     return {
       ...base,
       severity,
@@ -845,9 +898,7 @@ export class DbMaintenanceService {
     };
   }
 
-  private severityFromScore(
-    score: number,
-  ): IntegrityTestRunResult['severity'] {
+  private severityFromScore(score: number): IntegrityTestRunResult['severity'] {
     if (score < 70) return 'critical';
     if (score < 90) return 'high';
     if (score < 98) return 'medium';
@@ -873,7 +924,9 @@ export class DbMaintenanceService {
   }
 
   private stripeClient(): InstanceType<typeof Stripe> | null {
-    const sk = String(this.config.get<string>('STRIPE_SECRET_KEY') ?? '').trim();
+    const sk = String(
+      this.config.get<string>('STRIPE_SECRET_KEY') ?? '',
+    ).trim();
     if (!sk.startsWith('sk_')) return null;
     return new this.stripeFactory(sk);
   }
@@ -929,7 +982,9 @@ export class DbMaintenanceService {
         label,
         startedAtMs,
         status: ok ? 'healthy' : 'degraded',
-        details: ok ? 'Ping MongoDB OK.' : `Ping MongoDB inattendu: ${JSON.stringify(pingRes)}`,
+        details: ok
+          ? 'Ping MongoDB OK.'
+          : `Ping MongoDB inattendu: ${JSON.stringify(pingRes)}`,
       });
     } catch (e) {
       return this.normalizeHealthResult({
@@ -937,7 +992,9 @@ export class DbMaintenanceService {
         label,
         startedAtMs,
         status: 'down',
-        details: `Erreur ping MongoDB: ${e instanceof Error ? e.message : String(e)}`,
+        details: `Erreur ping MongoDB: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       });
     }
   }
@@ -947,8 +1004,9 @@ export class DbMaintenanceService {
     const key = 'websocket-service-status';
     const label = 'Websocket Service status';
     const base =
-      String(this.config.get<string>('AFRICA_MEALS_WS_INTERNAL_URL') ?? '').trim() ||
-      'http://localhost:8000';
+      String(
+        this.config.get<string>('AFRICA_MEALS_WS_INTERNAL_URL') ?? '',
+      ).trim() || 'http://localhost:8000';
     const url = `${base.replace(/\/$/, '')}/api/health`;
     try {
       const res = await this.fetchWithTimeout(url, 5000);
@@ -975,7 +1033,9 @@ export class DbMaintenanceService {
         label,
         startedAtMs,
         status: 'down',
-        details: `WS health unreachable: ${e instanceof Error ? e.message : String(e)}`,
+        details: `WS health unreachable: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       });
     }
   }
@@ -1010,7 +1070,9 @@ export class DbMaintenanceService {
         label,
         startedAtMs,
         status: 'degraded',
-        details: `API up mais DB ping KO: ${e instanceof Error ? e.message : String(e)}`,
+        details: `API up mais DB ping KO: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       });
     }
   }
@@ -1037,7 +1099,9 @@ export class DbMaintenanceService {
         label,
         startedAtMs,
         status: 'healthy',
-        details: `Stripe reachable. Solde disponible entrées=${bal.available?.length ?? 0}${cur ? ` (${cur})` : ''}.`,
+        details: `Stripe reachable. Solde disponible entrées=${
+          bal.available?.length ?? 0
+        }${cur ? ` (${cur})` : ''}.`,
       });
     } catch (e) {
       return this.normalizeHealthResult({
@@ -1057,7 +1121,8 @@ export class DbMaintenanceService {
     const maxAgeMin = Number(
       this.config.get<string>('STRIPE_WEBHOOK_ACTIVITY_MAX_AGE_MIN') ?? '30',
     );
-    const thresholdMin = Number.isFinite(maxAgeMin) && maxAgeMin > 0 ? maxAgeMin : 30;
+    const thresholdMin =
+      Number.isFinite(maxAgeMin) && maxAgeMin > 0 ? maxAgeMin : 30;
 
     try {
       const latest = await this.processedModel
@@ -1096,20 +1161,24 @@ export class DbMaintenanceService {
       const eventKind = String(
         (latest as { stripeEventKind?: unknown }).stripeEventKind ?? 'unknown',
       );
-      const paymentId = String((latest as { sessionId?: unknown }).sessionId ?? '');
+      const paymentId = String(
+        (latest as { sessionId?: unknown }).sessionId ?? '',
+      );
       const status: SystemHealthCheckResult['status'] =
         ageMin <= thresholdMin
           ? 'healthy'
           : ageMin <= thresholdMin * 3
-            ? 'degraded'
-            : 'down';
+          ? 'degraded'
+          : 'down';
 
       return this.normalizeHealthResult({
         key,
         label,
         startedAtMs,
         status,
-        details: `Dernière activité il y a ${ageMin.toFixed(1)} min (threshold ${thresholdMin} min) — ${eventKind} / ${paymentId}.`,
+        details: `Dernière activité il y a ${ageMin.toFixed(
+          1,
+        )} min (threshold ${thresholdMin} min) — ${eventKind} / ${paymentId}.`,
       });
     } catch (e) {
       return this.normalizeHealthResult({
@@ -1128,8 +1197,12 @@ export class DbMaintenanceService {
     const startedAtMs = Date.now();
     const key = 'map-engine-status';
     const label = 'Map Engine Status';
-    const apiUrl = String(this.config.get<string>('MAP_BOX_API_URL') ?? '').trim();
-    const token = String(this.config.get<string>('MAPBOX_ACCESS_TOKEN') ?? '').trim();
+    const apiUrl = String(
+      this.config.get<string>('MAP_BOX_API_URL') ?? '',
+    ).trim();
+    const token = String(
+      this.config.get<string>('MAPBOX_ACCESS_TOKEN') ?? '',
+    ).trim();
     if (!apiUrl || !token) {
       return this.normalizeHealthResult({
         key,
@@ -1141,7 +1214,7 @@ export class DbMaintenanceService {
     }
     try {
       const url = new URL(apiUrl);
-      url.searchParams.set('q', 'Montreal')
+      url.searchParams.set('q', 'Montreal');
       url.searchParams.set('limit', '1');
       url.searchParams.set('access_token', token);
       const res = await this.fetchWithTimeout(url.toString(), 7000);
@@ -1167,7 +1240,9 @@ export class DbMaintenanceService {
         label,
         startedAtMs,
         status: 'down',
-        details: `Map engine error: ${e instanceof Error ? e.message : String(e)}`,
+        details: `Map engine error: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       });
     }
   }
@@ -1180,17 +1255,22 @@ export class DbMaintenanceService {
     const smtpHost = String(this.config.get<string>('SMTP_HOST') ?? '').trim();
     const smtpPortRaw = Number(this.config.get<string>('SMTP_PORT') ?? '587');
     const smtpPort = Number.isFinite(smtpPortRaw) ? smtpPortRaw : 587;
-    const smtpSecure = String(this.config.get<string>('SMTP_SECURE') ?? 'false')
-      .trim()
-      .toLowerCase() === 'true';
+    const smtpSecure =
+      String(this.config.get<string>('SMTP_SECURE') ?? 'false')
+        .trim()
+        .toLowerCase() === 'true';
     const smtpUser = String(this.config.get<string>('SMTP_USER') ?? '').trim();
     const smtpPass = String(
       this.config.get<string>('SMTP_APP_PASSWORD') ??
         this.config.get<string>('SMTP_PASS') ??
         '',
     ).trim();
-    const mailerApiKey = String(this.config.get<string>('MAILER_API_KEY') ?? '').trim();
-    const mailerSender = String(this.config.get<string>('MAILER_SENDER') ?? '').trim();
+    const mailerApiKey = String(
+      this.config.get<string>('MAILER_API_KEY') ?? '',
+    ).trim();
+    const mailerSender = String(
+      this.config.get<string>('MAILER_SENDER') ?? '',
+    ).trim();
 
     const smtpConfigured = Boolean(smtpHost && smtpUser && smtpPass);
     const mailerSendConfigured = Boolean(mailerApiKey && mailerSender);
@@ -1244,7 +1324,9 @@ export class DbMaintenanceService {
         label,
         startedAtMs,
         status: mailerSendConfigured ? 'degraded' : 'down',
-        details: `SMTP verify failed: ${e instanceof Error ? e.message : String(e)}`,
+        details: `SMTP verify failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       });
     }
   }
@@ -1261,7 +1343,8 @@ export class DbMaintenanceService {
         label,
         startedAtMs,
         status: 'down',
-        details: 'Firebase Admin projectId manquant (AM_FIREBASE_PROJECT_ID / service account).',
+        details:
+          'Firebase Admin projectId manquant (AM_FIREBASE_PROJECT_ID / service account).',
       });
     }
 
@@ -1294,8 +1377,9 @@ export class DbMaintenanceService {
     }
 
     const bucketName =
-      String(this.config.get<string>('AM_FIREBASE_STORAGE_BUCKET') ?? '').trim() ||
-      String(this.firebaseApp.options.storageBucket ?? '').trim();
+      String(
+        this.config.get<string>('AM_FIREBASE_STORAGE_BUCKET') ?? '',
+      ).trim() || String(this.firebaseApp.options.storageBucket ?? '').trim();
     if (!bucketName) {
       checks.push({
         id: 'storage',
@@ -1304,7 +1388,9 @@ export class DbMaintenanceService {
       });
     } else {
       try {
-        const [exists] = await getStorage(this.firebaseApp).bucket(bucketName).exists();
+        const [exists] = await getStorage(this.firebaseApp)
+          .bucket(bucketName)
+          .exists();
         checks.push({
           id: 'storage',
           ok: Boolean(exists),
@@ -1324,7 +1410,9 @@ export class DbMaintenanceService {
     const okCount = checks.filter((c) => c.ok).length;
     const status: SystemHealthCheckResult['status'] =
       okCount === checks.length ? 'healthy' : okCount > 0 ? 'degraded' : 'down';
-    const details = checks.map((c) => `${c.id}:${c.ok ? 'ok' : 'ko'} (${c.details})`).join(' | ');
+    const details = checks
+      .map((c) => `${c.id}:${c.ok ? 'ok' : 'ko'} (${c.details})`)
+      .join(' | ');
 
     return this.normalizeHealthResult({
       key,
@@ -1335,7 +1423,10 @@ export class DbMaintenanceService {
     });
   }
 
-  private async fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  private async fetchWithTimeout(
+    url: string,
+    timeoutMs: number,
+  ): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -1347,7 +1438,9 @@ export class DbMaintenanceService {
 
   private async fetchStripePaymentsById(
     paymentIds: string[],
-  ): Promise<Map<string, { status: string; isPaid: boolean; amountCents: number }>> {
+  ): Promise<
+    Map<string, { status: string; isPaid: boolean; amountCents: number }>
+  > {
     const out = new Map<
       string,
       { status: string; isPaid: boolean; amountCents: number }
@@ -1366,18 +1459,22 @@ export class DbMaintenanceService {
               typeof pi.amount_received === 'number'
                 ? pi.amount_received
                 : typeof pi.amount === 'number'
-                  ? pi.amount
-                  : 0,
+                ? pi.amount
+                : 0,
           });
           continue;
         }
         if (id.startsWith('cs_')) {
           const session = await stripe.checkout.sessions.retrieve(id);
           out.set(id, {
-            status: String(session.payment_status ?? session.status ?? 'unknown'),
+            status: String(
+              session.payment_status ?? session.status ?? 'unknown',
+            ),
             isPaid: session.payment_status === 'paid',
             amountCents:
-              typeof session.amount_total === 'number' ? session.amount_total : 0,
+              typeof session.amount_total === 'number'
+                ? session.amount_total
+                : 0,
           });
         }
       } catch (e) {
@@ -1392,7 +1489,9 @@ export class DbMaintenanceService {
   }
 
   private getIntegrityScanLimit(): number {
-    const raw = Number(this.config.get<string>('INTEGRITY_TEST_SCAN_LIMIT') ?? '5000');
+    const raw = Number(
+      this.config.get<string>('INTEGRITY_TEST_SCAN_LIMIT') ?? '5000',
+    );
     if (!Number.isFinite(raw)) return 5000;
     return Math.max(100, Math.min(50000, Math.trunc(raw)));
   }

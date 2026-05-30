@@ -28,10 +28,7 @@ export const LOYALTY_TIER_THRESHOLDS: ReadonlyArray<{
     icon: '🥉',
     color: '#cd7f32',
     bg: '#1a1208',
-    advantages: [
-      'Accumulation de points',
-      'Offres spéciales occasionnelles',
-    ],
+    advantages: ['Accumulation de points', 'Offres spéciales occasionnelles'],
   },
   {
     name: 'Silver',

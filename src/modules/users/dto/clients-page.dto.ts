@@ -29,8 +29,12 @@ export function parseClientsPageQuery(
 ): { page: number; take: number } {
   const pageNum = pageRaw != null ? Number(pageRaw) : 1;
   const takeNum = takeRaw != null ? Number(takeRaw) : 20;
-  const page = Number.isFinite(pageNum) && pageNum >= 1 ? Math.floor(pageNum) : 1;
-  const take = Number.isFinite(takeNum) && takeNum >= 1 ? Math.min(100, Math.floor(takeNum)) : 20;
+  const page =
+    Number.isFinite(pageNum) && pageNum >= 1 ? Math.floor(pageNum) : 1;
+  const take =
+    Number.isFinite(takeNum) && takeNum >= 1
+      ? Math.min(100, Math.floor(takeNum))
+      : 20;
   return { page, take };
 }
 

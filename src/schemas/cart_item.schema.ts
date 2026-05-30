@@ -57,7 +57,11 @@ export class CartItemModel extends BaseSchema {
   user: string;
 
   // Computed properties (boisson panier : objet minimal type « produit » pour le client)
-  entity?: ProductModel | ProductExtraModel | OfferModel | Record<string, unknown>;
+  entity?:
+    | ProductModel
+    | ProductExtraModel
+    | OfferModel
+    | Record<string, unknown>;
 
   /** Renseigné à la lecture panier pour un produit (menu du jour à stock limité) ; null = illimité / hors scope. */
   dailyMenuStockRemaining?: number | null;

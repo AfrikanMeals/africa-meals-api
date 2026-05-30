@@ -27,7 +27,10 @@ import {
   UseInterceptors,
   ValidationPipe,
 } from '@nestjs/common';
-import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
+import {
+  FileFieldsInterceptor,
+  FileInterceptor,
+} from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
@@ -89,9 +92,7 @@ function multerFileFromVendorProductBase64(
   if (!/\.(jpe?g|png)$/i.test(name)) {
     throw new BadRequestException('invalid_file_type');
   }
-  const mime = name.toLowerCase().endsWith('.png')
-    ? 'image/png'
-    : 'image/jpeg';
+  const mime = name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
   return {
     fieldname,
     originalname: name,
@@ -161,8 +162,8 @@ function multerFileFromDrinkImageJson(
   const mime = lower.endsWith('.png')
     ? 'image/png'
     : lower.endsWith('.webp')
-      ? 'image/webp'
-      : 'image/jpeg';
+    ? 'image/webp'
+    : 'image/jpeg';
   return {
     fieldname: 'image',
     originalname: name,
@@ -250,10 +251,7 @@ export class StoreController {
   /** Produits du magasin (propriétaire uniquement). */
   @Get(':id/products')
   @UseGuards(JwtGuard)
-  async listStoreProducts(
-    @Param('id') id: string,
-    @Req() req: Request,
-  ) {
+  async listStoreProducts(@Param('id') id: string, @Req() req: Request) {
     return this._storeService.listStoreProducts(id, req.user as UserModel);
   }
 
@@ -328,11 +326,11 @@ export class StoreController {
   /** Lignes de stock (ingrédients) — propriétaire de la boutique. */
   @Get(':id/stock-items')
   @UseGuards(JwtGuard)
-  async listStockItems(
-    @Param('id') id: string,
-    @Req() req: Request,
-  ) {
-    return this._stockItemsService.findByStoreForOwner(id, req.user as UserModel);
+  async listStockItems(@Param('id') id: string, @Req() req: Request) {
+    return this._stockItemsService.findByStoreForOwner(
+      id,
+      req.user as UserModel,
+    );
   }
 
   @Post(':id/stock-items')
@@ -593,16 +591,15 @@ export class StoreController {
 
   /** Boissons (`drinks`) visibles client — sans auth (même source que l’admin, filtrées stock > 0). */
   @Get(':id/drinks-catalog')
-  async listDrinksCatalog(
-    @Param('id') id: string,
-    @Query('q') q?: string,
-  ) {
+  async listDrinksCatalog(@Param('id') id: string, @Query('q') q?: string) {
     return this._drinksService.findByStoreForCatalog(id, q);
   }
 
   @Get('/:id')
   async findOneById(@Param('id') id: string) {
-    return this._storeService.findOneById(id, { requireMobileVisibility: true });
+    return this._storeService.findOneById(id, {
+      requireMobileVisibility: true,
+    });
   }
 
   @Post('')

@@ -269,11 +269,11 @@ export class StripeConnectTransferService {
     });
     const stripeProcessingFeeShareCents =
       this.stripeFees.allocateProcessingFeeShareCents({
-      totalStripeFeeCents,
-      paymentAmountCents,
-      sliceAmountCents: goodsCents,
-      maxDeductibleCents: vendorBeforeStripe,
-    });
+        totalStripeFeeCents,
+        paymentAmountCents,
+        sliceAmountCents: goodsCents,
+        maxDeductibleCents: vendorBeforeStripe,
+      });
     const transferCents = Math.max(
       0,
       vendorBeforeStripe - stripeProcessingFeeShareCents,
@@ -341,7 +341,11 @@ export class StripeConnectTransferService {
       );
 
       this.logger.log(
-        `Connect vendor transfer ${transfer.id}: ${transferCents / 100} ${currency} → ${accountId} (order ${args.orderId}, stripeFee=${stripeProcessingFeeShareCents / 100})`,
+        `Connect vendor transfer ${transfer.id}: ${
+          transferCents / 100
+        } ${currency} → ${accountId} (order ${args.orderId}, stripeFee=${
+          stripeProcessingFeeShareCents / 100
+        })`,
       );
 
       return {
@@ -487,11 +491,11 @@ export class StripeConnectTransferService {
     });
     const stripeProcessingFeeShareCents =
       this.stripeFees.allocateProcessingFeeShareCents({
-      totalStripeFeeCents,
-      paymentAmountCents,
-      sliceAmountCents: shipCents,
-      maxDeductibleCents: deliveryNetBeforeStripe,
-    });
+        totalStripeFeeCents,
+        paymentAmountCents,
+        sliceAmountCents: shipCents,
+        maxDeductibleCents: deliveryNetBeforeStripe,
+      });
     const transferCents = Math.max(
       0,
       deliveryNetBeforeStripe - stripeProcessingFeeShareCents,
@@ -552,7 +556,11 @@ export class StripeConnectTransferService {
       );
 
       this.logger.log(
-        `Connect delivery transfer ${transfer.id}: ${transferCents / 100} ${currency} → ${accountId} (order ${args.orderId}, stripeFee=${stripeProcessingFeeShareCents / 100})`,
+        `Connect delivery transfer ${transfer.id}: ${
+          transferCents / 100
+        } ${currency} → ${accountId} (order ${args.orderId}, stripeFee=${
+          stripeProcessingFeeShareCents / 100
+        })`,
       );
 
       return {
@@ -583,7 +591,11 @@ export class StripeConnectTransferService {
   async reverseTransferForRefund(args: {
     orderId: string;
     customerRefundCents: number;
-  }): Promise<{ reversed: boolean; reversalId?: string; reversalCents: number }> {
+  }): Promise<{
+    reversed: boolean;
+    reversalId?: string;
+    reversalCents: number;
+  }> {
     if (!this.transfersEnabled()) {
       return { reversed: false, reversalCents: 0 };
     }
@@ -657,7 +669,11 @@ export class StripeConnectTransferService {
     grossCents: number;
     idempotencySuffix: string;
     orderFieldPrefix: 'stripeTransfer' | 'stripeDeliveryTransfer';
-  }): Promise<{ reversed: boolean; reversalId?: string; reversalCents: number }> {
+  }): Promise<{
+    reversed: boolean;
+    reversalId?: string;
+    reversalCents: number;
+  }> {
     const transferCents = Math.max(0, args.transferCents);
     const alreadyReversed = Math.max(0, args.alreadyReversedCents);
     const remaining = transferCents - alreadyReversed;
@@ -711,7 +727,9 @@ export class StripeConnectTransferService {
       );
 
       this.logger.log(
-        `Connect transfer reversal ${reversal.id}: ${reversalCents / 100} CAD on ${args.transferId} (${args.idempotencySuffix})`,
+        `Connect transfer reversal ${reversal.id}: ${
+          reversalCents / 100
+        } CAD on ${args.transferId} (${args.idempotencySuffix})`,
       );
 
       return {

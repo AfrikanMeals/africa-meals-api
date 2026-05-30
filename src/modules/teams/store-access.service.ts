@@ -7,7 +7,12 @@ import {
   ALL_ADMIN_PERMISSIONS,
   isAdminPermission,
 } from '../../common/permissions/admin-permissions';
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { PlatformRoleModel } from '@schemas/platform-role.schema';
 import { StoreMemberModel } from '@schemas/store-member.schema';
@@ -20,6 +25,7 @@ import {
   normalizeStoreMemberRoleIds,
   unionStorePermissionsFromRoles,
 } from './teams-role-ids.util';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 
 export type StoreAccessEntry = {
   storeId: string;
@@ -32,10 +38,14 @@ export type StoreAccessEntry = {
   roleName: string;
   permissions: StorePermission[];
   isOwner: boolean;
+  isFreePlan: boolean;
 };
 
 @Injectable()
 export class StoreAccessService {
+  @Inject(SubscriptionsService)
+  private readonly subscriptionsService: SubscriptionsService;
+
   @InjectModel(StoreModel.name)
   private readonly storeModel: Model<StoreModel>;
 
@@ -54,7 +64,10 @@ export class StoreAccessService {
   async listAdminPermissions(user: UserModel): Promise<string[]> {
     if (user.type !== UserTypeEnum.ADMIN) return [];
     const roleIds = normalizePlatformRoleIds(
-      user as { platformRoleId?: Types.ObjectId; platformRoleIds?: Types.ObjectId[] },
+      user as {
+        platformRoleId?: Types.ObjectId;
+        platformRoleIds?: Types.ObjectId[];
+      },
     );
     if (!roleIds.length) {
       return [...ALL_ADMIN_PERMISSIONS];
@@ -106,6 +119,7 @@ export class StoreAccessService {
         roleName: 'Administrateur',
         permissions: [...ALL_STORE_PERMISSIONS],
         isOwner: false,
+        isFreePlan: false,
       }));
     }
 
@@ -134,6 +148,7 @@ export class StoreAccessService {
         roleName: ownerRoleName,
         permissions: [...ALL_STORE_PERMISSIONS],
         isOwner: true,
+        isFreePlan: false,
       });
     }
 
@@ -142,7 +157,9 @@ export class StoreAccessService {
       .lean()
       .exec();
     const allRoleIds = memberships.flatMap((m) =>
-      normalizeStoreMemberRoleIds(m as { role?: Types.ObjectId; roles?: Types.ObjectId[] }),
+      normalizeStoreMemberRoleIds(
+        m as { role?: Types.ObjectId; roles?: Types.ObjectId[] },
+      ),
     );
     const roles = await this.storeRoleModel
       .find({ _id: { $in: allRoleIds } })
@@ -178,7 +195,14 @@ export class StoreAccessService {
         roleName: roleNames.join(', '),
         permissions: unionStorePermissionsFromRoles(memberRoles),
         isOwner: false,
+        isFreePlan: false,
       });
+    }
+
+    for (const entry of entries) {
+      entry.isFreePlan = await this.subscriptionsService.isStoreOnFreePlan(
+        entry.storeId,
+      );
     }
 
     return entries;

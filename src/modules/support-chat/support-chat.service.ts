@@ -149,7 +149,9 @@ export class SupportChatService {
         const last = row['lastMessage'] as Record<string, unknown>;
         const storeArr = row['store'] as { name?: string }[];
         const storeName =
-          Array.isArray(storeArr) && storeArr[0]?.name ? String(storeArr[0].name) : null;
+          Array.isArray(storeArr) && storeArr[0]?.name
+            ? String(storeArr[0].name)
+            : null;
         const pid = (row['_id'] as { toString(): string }).toString();
         return {
           participant: {
@@ -157,13 +159,17 @@ export class SupportChatService {
             fullName: String(u['fullName'] ?? ''),
             email: String(u['email'] ?? ''),
             type: String(u['type'] ?? ''),
-            profileImage: u['profileImage'] ? String(u['profileImage']) : undefined,
+            profileImage: u['profileImage']
+              ? String(u['profileImage'])
+              : undefined,
             storeName,
           },
           lastMessage: last
             ? {
                 text: String(last['text'] ?? ''),
-                authorRole: String(last['authorRole'] ?? last['author_role'] ?? ''),
+                authorRole: String(
+                  last['authorRole'] ?? last['author_role'] ?? '',
+                ),
                 createdAt: last['createdAt'],
                 messageKind: String(
                   last['messageKind'] ??
@@ -173,9 +179,7 @@ export class SupportChatService {
                 satisfactionOutcome: (() => {
                   const raw =
                     last['satisfactionOutcome'] ?? last['satisfaction_outcome'];
-                  return raw != null && raw !== ''
-                    ? String(raw)
-                    : undefined;
+                  return raw != null && raw !== '' ? String(raw) : undefined;
                 })(),
               }
             : null,
@@ -189,7 +193,11 @@ export class SupportChatService {
     if (!isValidObjectId(participantId)) {
       throw new BadRequestException('invalid_participant_id');
     }
-    const p = await this._users.findById(participantId).select('type').lean().exec();
+    const p = await this._users
+      .findById(participantId)
+      .select('type')
+      .lean()
+      .exec();
     if (!p) throw new NotFoundException('participant_not_found');
     if (p.type === UserTypeEnum.ADMIN) {
       throw new BadRequestException('invalid_participant');
@@ -238,7 +246,9 @@ export class SupportChatService {
       .findOne({
         threadOwnerId: threadOwner,
         messageKind: SupportChatMessageKind.SATISFACTION_PROMPT,
-        satisfactionOutcome: { $ne: SupportChatSatisfactionOutcome.NO_CONTINUE },
+        satisfactionOutcome: {
+          $ne: SupportChatSatisfactionOutcome.NO_CONTINUE,
+        },
       })
       .exec();
     if (pending) {

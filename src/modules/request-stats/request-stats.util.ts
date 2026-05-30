@@ -1,7 +1,6 @@
 import type { Request } from 'express';
 
-const OBJECT_ID_RE =
-  /\b[0-9a-fA-F]{24}\b/g;
+const OBJECT_ID_RE = /\b[0-9a-fA-F]{24}\b/g;
 const UUID_RE =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
 
@@ -13,7 +12,9 @@ const SKIP_PATH_PREFIXES = [
 ];
 
 export function isRequestStatsEnabled(raw: string | undefined): boolean {
-  const v = String(raw ?? '').trim().toLowerCase();
+  const v = String(raw ?? '')
+    .trim()
+    .toLowerCase();
   return v !== 'false' && v !== '0';
 }
 
@@ -42,9 +43,7 @@ export function normalizeRequestRoute(path: string): string {
 export function extractStoreIdFromRequest(req: Request): string | null {
   const params = req.params as Record<string, string | undefined>;
   const fromParam =
-    params.storeId?.trim() ||
-    params.store_id?.trim() ||
-    params.id?.trim();
+    params.storeId?.trim() || params.store_id?.trim() || params.id?.trim();
   if (fromParam && /^[0-9a-fA-F]{24}$/.test(fromParam)) {
     const path = req.path ?? req.url ?? '';
     if (/\/stores\//i.test(path)) return fromParam;
@@ -56,8 +55,8 @@ export function extractStoreIdFromRequest(req: Request): string | null {
     typeof qStore === 'string'
       ? qStore.trim()
       : Array.isArray(qStore)
-        ? String(qStore[0] ?? '').trim()
-        : '';
+      ? String(qStore[0] ?? '').trim()
+      : '';
   if (fromQuery && /^[0-9a-fA-F]{24}$/.test(fromQuery)) return fromQuery;
 
   const body = req.body as Record<string, unknown> | undefined;
@@ -67,8 +66,8 @@ export function extractStoreIdFromRequest(req: Request): string | null {
       typeof raw === 'string'
         ? raw.trim()
         : raw && typeof raw === 'object' && '_id' in (raw as object)
-          ? String((raw as { _id?: unknown })._id ?? '').trim()
-          : '';
+        ? String((raw as { _id?: unknown })._id ?? '').trim()
+        : '';
     if (id && /^[0-9a-fA-F]{24}$/.test(id)) return id;
   }
 

@@ -1,8 +1,4 @@
-import {
-  ForbiddenException,
-  Injectable,
-  Logger,
-} from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import {
   OrderStatusChangeSourceEnum,
@@ -41,9 +37,11 @@ export class OrderStatusEventsService {
     if (!Object.values(OrderStatusEnum).includes(toStatus)) {
       return;
     }
-    const fromRaw = params.fromStatus != null ? String(params.fromStatus).trim() : '';
+    const fromRaw =
+      params.fromStatus != null ? String(params.fromStatus).trim() : '';
     const fromStatus =
-      fromRaw && Object.values(OrderStatusEnum).includes(fromRaw as OrderStatusEnum)
+      fromRaw &&
+      Object.values(OrderStatusEnum).includes(fromRaw as OrderStatusEnum)
         ? (fromRaw as OrderStatusEnum)
         : undefined;
 
@@ -59,8 +57,7 @@ export class OrderStatusEventsService {
             ? new Types.ObjectId(params.storeId)
             : undefined,
         customerUser:
-          params.customerUserId &&
-          Types.ObjectId.isValid(params.customerUserId)
+          params.customerUserId && Types.ObjectId.isValid(params.customerUserId)
             ? new Types.ObjectId(params.customerUserId)
             : undefined,
         fromStatus,
@@ -74,7 +71,9 @@ export class OrderStatusEventsService {
       });
     } catch (err) {
       this.logger.warn(
-        `order status event: ${err instanceof Error ? err.message : String(err)}`,
+        `order status event: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
       );
     }
   }
@@ -195,9 +194,7 @@ export class OrderStatusEventsService {
   }
 
   /** Journal minimal par commande (client / vendeur / admin avec accès à la commande). */
-  async listTimelineByOrderIds(
-    orderIds: string[],
-  ): Promise<
+  async listTimelineByOrderIds(orderIds: string[]): Promise<
     Map<
       string,
       Array<{
@@ -237,8 +234,8 @@ export class OrderStatusEventsService {
         ord instanceof Types.ObjectId
           ? ord.toHexString()
           : ord != null
-            ? String(ord)
-            : '';
+          ? String(ord)
+          : '';
       if (!orderKey) continue;
 
       const entry = {

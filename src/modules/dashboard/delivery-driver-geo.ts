@@ -9,10 +9,10 @@ export const DAKAR_FLOTTE_BBOX = {
   south: 14.635,
 } as const;
 
-export function lngLatFromPercentCoords(coords: {
-  x: number;
-  y: number;
-}): { longitude: number; latitude: number } {
+export function lngLatFromPercentCoords(coords: { x: number; y: number }): {
+  longitude: number;
+  latitude: number;
+} {
   const { west, east, north, south } = DAKAR_FLOTTE_BBOX;
   const u = coords.x / 100;
   const t = coords.y / 100;

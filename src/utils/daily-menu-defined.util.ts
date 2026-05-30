@@ -10,10 +10,7 @@ export function storeHasDailyMenuForWeekday(
   for (const row of rows) {
     if (!row || typeof row !== 'object') continue;
     const r = row as Record<string, unknown>;
-    const dow = Math.min(
-      6,
-      Math.max(0, Math.floor(Number(r.dayOfWeek ?? -1))),
-    );
+    const dow = Math.min(6, Math.max(0, Math.floor(Number(r.dayOfWeek ?? -1))));
     if (dow !== target) continue;
 
     const items = r.items;

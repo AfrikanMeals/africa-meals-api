@@ -66,7 +66,9 @@ async function run() {
 
   try {
     const loyalty = app.get(LoyaltyService);
-    const orderModel = app.get<Model<OrderModel>>(getModelToken(OrderModel.name));
+    const orderModel = app.get<Model<OrderModel>>(
+      getModelToken(OrderModel.name),
+    );
 
     const match: Record<string, unknown> = {
       status: { $in: statuses },
@@ -82,9 +84,11 @@ async function run() {
 
     const totalCandidates = await orderModel.countDocuments(match).exec();
     console.log(
-      `[loyalty-backfill] candidates=${totalCandidates} apply=${opts.apply} limit=${
-        opts.limit ?? 'none'
-      } since=${opts.since ? opts.since.toISOString() : 'none'}`,
+      `[loyalty-backfill] candidates=${totalCandidates} apply=${
+        opts.apply
+      } limit=${opts.limit ?? 'none'} since=${
+        opts.since ? opts.since.toISOString() : 'none'
+      }`,
     );
 
     if (!opts.apply) {

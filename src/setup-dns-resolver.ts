@@ -12,7 +12,10 @@ function parseDnsServers(): string[] | null {
   const raw = process.env.DNS_SERVERS?.trim();
   if (!raw || raw === 'system' || raw === 'default') return null;
   if (raw === 'off' || raw === 'false' || raw === '0') return null;
-  return raw.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+  return raw
+    .split(/[\s,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /**

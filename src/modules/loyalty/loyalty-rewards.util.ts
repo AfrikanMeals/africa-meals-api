@@ -42,11 +42,9 @@ export function mergeRewardsCatalog(
     const patch = byId.get(def.id);
     const title = String(patch?.title ?? def.title).trim();
     const icon = String(patch?.icon ?? def.icon).trim();
-    const points = Math.max(
-      0,
-      Math.floor(Number(patch?.points ?? def.points)),
-    );
-    const category = String(patch?.category ?? def.category).trim() || def.category;
+    const points = Math.max(0, Math.floor(Number(patch?.points ?? def.points)));
+    const category =
+      String(patch?.category ?? def.category).trim() || def.category;
     return {
       id: def.id,
       title: title || def.title,
@@ -76,8 +74,7 @@ export function normalizeRewardsUpdate(
   if (seen.size !== CATALOG_IDS.size) {
     throw new BadRequestException('loyalty_rewards_incomplete');
   }
-  const title = (r: Partial<LoyaltyRewardItem>) =>
-    String(r.title ?? '').trim();
+  const title = (r: Partial<LoyaltyRewardItem>) => String(r.title ?? '').trim();
   for (const row of input) {
     if (!title(row)) {
       throw new BadRequestException('invalid_loyalty_reward_title');

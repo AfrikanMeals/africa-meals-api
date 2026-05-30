@@ -13,9 +13,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
-import {
-  StoreCouponDiscountTypeEnum,
-} from '@schemas/store_coupon.schema';
+import { StoreCouponDiscountTypeEnum } from '@schemas/store_coupon.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
@@ -40,9 +38,7 @@ const cartStorePopulate = {
   },
 } as const;
 
-function storeIdFromPopulatedCartItem(item: {
-  store?: unknown;
-}): string {
+function storeIdFromPopulatedCartItem(item: { store?: unknown }): string {
   const s = item.store;
   if (s && typeof s === 'object') {
     const o = s as { _id?: unknown; id?: unknown };
@@ -120,7 +116,10 @@ export class CartService {
     user: UserModel,
   ): Promise<CartItemApiResponse> {
     const items = await this._cartItemModel
-      .find({ store: new Types.ObjectId(storeId), user: new Types.ObjectId(user.id) })
+      .find({
+        store: new Types.ObjectId(storeId),
+        user: new Types.ObjectId(user.id),
+      })
       .populate(cartStorePopulate)
       .exec();
 
@@ -247,10 +246,8 @@ export class CartService {
     // Ne pas masquer les lignes déjà en panier : le client doit les voir.
     // Le blocage Stripe / menu du jour reste sur validate-checkout et le paiement.
     const data = await mapInChunks(storeGroups, 2, async (group) => {
-      const lineItems = await mapInChunks(
-        group.items ?? [],
-        4,
-        (line) => this.findOneByItemId(line._id.toString(), user),
+      const lineItems = await mapInChunks(group.items ?? [], 4, (line) =>
+        this.findOneByItemId(line._id.toString(), user),
       );
       const items = lineItems.map(({ store, ...rest }) => rest);
 
@@ -307,7 +304,8 @@ export class CartService {
       .lean()
       .exec();
     return (rows ?? []).reduce(
-      (acc, r) => acc + Math.max(0, Number((r as { quantity?: number }).quantity ?? 0)),
+      (acc, r) =>
+        acc + Math.max(0, Number((r as { quantity?: number }).quantity ?? 0)),
       0,
     );
   }
@@ -376,7 +374,10 @@ export class CartService {
 
   async removeItemById(id: string, user: UserModel): Promise<void> {
     await this._cartItemModel
-      .deleteOne({ _id: new Types.ObjectId(id), user: new Types.ObjectId(user.id) })
+      .deleteOne({
+        _id: new Types.ObjectId(id),
+        user: new Types.ObjectId(user.id),
+      })
       .exec();
   }
 
@@ -406,9 +407,7 @@ export class CartService {
         storeId,
         String(item.entityId ?? ''),
       );
-      const maxOrder = drink
-        ? maxDrinkOrderQuantity(drink.quantite)
-        : 0;
+      const maxOrder = drink ? maxDrinkOrderQuantity(drink.quantite) : 0;
       if (!drink || q > maxOrder) {
         throw new BadRequestException('drink_quantity_limit_exceeded');
       }
@@ -472,8 +471,7 @@ export class CartService {
     return {
       subtotal,
       discountAmount,
-      totalAfterDiscount:
-        Math.round(total * 100 + Number.EPSILON) / 100,
+      totalAfterDiscount: Math.round(total * 100 + Number.EPSILON) / 100,
       code: coupon.code,
       discountType: coupon.discountType,
       value: coupon.value,
@@ -566,17 +564,13 @@ export class CartService {
         .select('dailyMenuByWeekday name')
         .lean()
         .exec();
-      const storeName = String(
-        (store as { name?: string } | null)?.name ?? '',
-      );
+      const storeName = String((store as { name?: string } | null)?.name ?? '');
 
       const menuRows = Array.isArray(
         (store as { dailyMenuByWeekday?: unknown } | null)?.dailyMenuByWeekday,
       )
-        ? ((store as { dailyMenuByWeekday: unknown[] }).dailyMenuByWeekday as Record<
-            string,
-            unknown
-          >[])
+        ? ((store as { dailyMenuByWeekday: unknown[] })
+            .dailyMenuByWeekday as Record<string, unknown>[])
         : [];
 
       const productQty = new Map<string, number>();
@@ -636,8 +630,7 @@ export class CartService {
           if (!did) continue;
           drinkQty.set(
             did,
-            (drinkQty.get(did) ?? 0) +
-              Math.max(0, Number(line.quantity ?? 0)),
+            (drinkQty.get(did) ?? 0) + Math.max(0, Number(line.quantity ?? 0)),
           );
         }
       }
@@ -647,9 +640,7 @@ export class CartService {
           storeId,
           did,
         );
-        const maxOrder = drink
-          ? maxDrinkOrderQuantity(drink.quantite)
-          : 0;
+        const maxOrder = drink ? maxDrinkOrderQuantity(drink.quantite) : 0;
         if (!drink || drink.quantite < qty) {
           stockIssues.push({
             storeId,
@@ -725,9 +716,7 @@ export class CartService {
           c.expectedDiscountAmount != null &&
           Number.isFinite(c.expectedDiscountAmount)
         ) {
-          const diff = Math.abs(
-            snap.discountAmount - c.expectedDiscountAmount,
-          );
+          const diff = Math.abs(snap.discountAmount - c.expectedDiscountAmount);
           if (diff > 0.015) {
             couponWarnings.push({
               storeId: sid,
@@ -747,8 +736,7 @@ export class CartService {
       }
     }
 
-    const ok =
-      stockIssues.length === 0 && couponIssues.length === 0;
+    const ok = stockIssues.length === 0 && couponIssues.length === 0;
 
     return {
       ok,

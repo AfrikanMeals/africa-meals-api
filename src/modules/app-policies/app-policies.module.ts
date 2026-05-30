@@ -1,9 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import {
-  AppPolicyModel,
-  AppPolicySchema,
-} from '@schemas/app-policy.schema';
+import { AppPolicyModel, AppPolicySchema } from '@schemas/app-policy.schema';
 import { MediasModule } from '@modules/medias/medias.module';
 import { AppPoliciesController } from './app-policies.controller';
 import { AppPoliciesService } from './app-policies.service';

@@ -14,7 +14,9 @@ export class MobileAppSettingsModel {
   playStoreUrl: string;
 }
 
-export type MobileAppSettingsDocument = HydratedDocument<MobileAppSettingsModel>;
+export type MobileAppSettingsDocument =
+  HydratedDocument<MobileAppSettingsModel>;
 
-export const MobileAppSettingsSchema =
-  SchemaFactory.createForClass(MobileAppSettingsModel);
+export const MobileAppSettingsSchema = SchemaFactory.createForClass(
+  MobileAppSettingsModel,
+);

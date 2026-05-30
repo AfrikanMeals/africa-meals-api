@@ -1,4 +1,7 @@
-import { isStorePermission, StorePermission } from '../../common/permissions/store-permissions';
+import {
+  isStorePermission,
+  StorePermission,
+} from '../../common/permissions/store-permissions';
 import { Types } from 'mongoose';
 
 export function normalizeStoreMemberRoleIds(doc: {
@@ -23,7 +26,10 @@ export function normalizePlatformRoleIds(user: {
       Types.ObjectId.isValid(String(id)),
     );
   }
-  if (user.platformRoleId && Types.ObjectId.isValid(String(user.platformRoleId))) {
+  if (
+    user.platformRoleId &&
+    Types.ObjectId.isValid(String(user.platformRoleId))
+  ) {
     return [user.platformRoleId];
   }
   return [];

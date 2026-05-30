@@ -30,14 +30,13 @@ export class ProductCategoryController {
   private readonly _productCategoryService: ProductCategoryService;
 
   @Get('')
-  @Header(
-    'Cache-Control',
-    'public, max-age=60, stale-while-revalidate=300',
-  )
+  @Header('Cache-Control', 'public, max-age=60, stale-while-revalidate=300')
   async filter() {
     const rows = await this._productCategoryService.filter();
     return rows.map((r) =>
-      slimProductCategoryForPublicClient(r as unknown as Record<string, unknown>),
+      slimProductCategoryForPublicClient(
+        r as unknown as Record<string, unknown>,
+      ),
     );
   }
 
@@ -48,10 +47,7 @@ export class ProductCategoryController {
     @Body(ValidationPipe) body: CreateProductCategoryDto,
     @Req() req: Request,
   ) {
-    return this._productCategoryService.create(
-      body,
-      req.user as UserModel,
-    );
+    return this._productCategoryService.create(body, req.user as UserModel);
   }
 
   @Patch(':id')

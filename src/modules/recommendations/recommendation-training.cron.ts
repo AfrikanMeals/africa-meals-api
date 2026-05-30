@@ -23,7 +23,9 @@ export class RecommendationTrainingCron {
       await this._training.runTrainingPass();
     } catch (e) {
       this._logger.error(
-        `recommendation training failed: ${(e as Error).stack ?? (e as Error).message}`,
+        `recommendation training failed: ${
+          (e as Error).stack ?? (e as Error).message
+        }`,
       );
     }
   }

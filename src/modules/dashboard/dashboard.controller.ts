@@ -174,10 +174,7 @@ export class DashboardController {
   @Post('livreurs')
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  createLivreur(
-    @Req() req: Request,
-    @Body() body: CreateDashboardLivreurDto,
-  ) {
+  createLivreur(@Req() req: Request, @Body() body: CreateDashboardLivreurDto) {
     return this._dashboardService.createDashboardLivreur(
       req.user as UserModel,
       body,

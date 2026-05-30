@@ -19,7 +19,8 @@ export class RecommendationTrackInput {
 
   @Field({
     nullable: true,
-    description: 'Obligatoire pour `SEARCH_QUERY` (2–200 car. après normalisation).',
+    description:
+      'Obligatoire pour `SEARCH_QUERY` (2–200 car. après normalisation).',
   })
   searchTerm?: string;
 }

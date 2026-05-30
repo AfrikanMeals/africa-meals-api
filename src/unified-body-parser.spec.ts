@@ -1,7 +1,4 @@
-import {
-  hasRequestBody,
-  shouldParseJsonBody,
-} from './unified-body-parser';
+import { hasRequestBody, shouldParseJsonBody } from './unified-body-parser';
 import type { IncomingMessage } from 'http';
 
 function mockReq(

@@ -21,7 +21,12 @@ export type VendorSubscriptionStatus =
 /** Abonnement souscrit par une boutique. */
 @Schema({ timestamps: true, collection: 'vendor_subscriptions' })
 export class VendorSubscriptionModel {
-  @Prop({ type: Types.ObjectId, ref: 'StoreModel', required: true, index: true })
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'StoreModel',
+    required: true,
+    index: true,
+  })
   store: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'UserModel', required: true, index: true })

@@ -137,7 +137,10 @@ type StripeConnectAccountRecord = {
   } | null;
 };
 
-function splitFullName(fullName: string): { firstName: string; lastName: string } {
+function splitFullName(fullName: string): {
+  firstName: string;
+  lastName: string;
+} {
   const parts = String(fullName ?? '')
     .trim()
     .split(/\s+/)
@@ -211,7 +214,19 @@ function phoneToE164ForStripeConnect(
 }
 
 const CA_PROVINCE_CODES = new Set([
-  'AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'NT', 'NU', 'ON', 'PE', 'QC', 'SK', 'YT',
+  'AB',
+  'BC',
+  'MB',
+  'NB',
+  'NL',
+  'NS',
+  'NT',
+  'NU',
+  'ON',
+  'PE',
+  'QC',
+  'SK',
+  'YT',
 ]);
 
 const CA_PROVINCE_NAMES: Record<string, string> = {
@@ -241,9 +256,7 @@ function resolveCanadianProvinceCode(text: string): string | undefined {
   for (const [name, code] of Object.entries(CA_PROVINCE_NAMES)) {
     if (lower.includes(name)) return code;
   }
-  const codeMatch = text.match(
-    /\b(AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)\b/i,
-  );
+  const codeMatch = text.match(/\b(AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)\b/i);
   if (codeMatch && CA_PROVINCE_CODES.has(codeMatch[1].toUpperCase())) {
     return codeMatch[1].toUpperCase();
   }
@@ -271,7 +284,9 @@ function buildAddressBlock(
     undefined;
   if (!rawLine) return undefined;
 
-  const accountCountry = normalizeCountryCode(addr?.countryCode ?? countryFallback);
+  const accountCountry = normalizeCountryCode(
+    addr?.countryCode ?? countryFallback,
+  );
   let city = typeof addr?.city === 'string' ? addr.city.trim() : undefined;
   let postal_code = addr?.zipCode?.trim();
   let state: string | undefined;
@@ -279,9 +294,7 @@ function buildAddressBlock(
 
   if (accountCountry === 'CA') {
     state = resolveCanadianProvinceCode(rawLine);
-    const postalMatch = rawLine.match(
-      /([A-Za-z]\d[A-Za-z])\s*(\d[A-Za-z]\d)/i,
-    );
+    const postalMatch = rawLine.match(/([A-Za-z]\d[A-Za-z])\s*(\d[A-Za-z]\d)/i);
     if (postalMatch) {
       postal_code = `${postalMatch[1].toUpperCase()} ${postalMatch[2].toUpperCase()}`;
     }
@@ -354,9 +367,7 @@ function buildVendorPrefill(
     phoneToE164ForStripeConnect(store?.phoneNumber);
   const { firstName, lastName } = splitFullName(user.fullName);
   const addressBlockRaw = buildAddressBlock(
-    (store?.address as AddressModel | undefined) ??
-      userAddress ??
-      undefined,
+    (store?.address as AddressModel | undefined) ?? userAddress ?? undefined,
     undefined,
     STRIPE_CONNECT_ACCOUNT_COUNTRY,
   );
@@ -368,11 +379,11 @@ function buildVendorPrefill(
   const productDescription = isDelivery
     ? 'Livraison de repas pour la plateforme Afrika Meals. Versements liés aux courses effectuées.'
     : store?.bio?.trim()
-      ? `Restaurant et livraison de repas. ${store.bio.trim()} Les clients sont débités lors du passage de commande sur Afrika Meals.`.slice(
-          0,
-          1000,
-        )
-      : 'Restaurant et livraison de repas sur Afrika Meals. Les clients sont débités lors du passage de commande en ligne.';
+    ? `Restaurant et livraison de repas. ${store.bio.trim()} Les clients sont débités lors du passage de commande sur Afrika Meals.`.slice(
+        0,
+        1000,
+      )
+    : 'Restaurant et livraison de repas sur Afrika Meals. Les clients sont débités lors du passage de commande en ligne.';
 
   const company: Record<string, unknown> = {
     name: businessName.slice(0, 100),
@@ -421,13 +432,15 @@ function buildVendorPrefill(
 
 /** Message client (FR) — jamais de clé API ni message Stripe brut. */
 function userFacingStripeConnectError(error: unknown): string {
-  const msg =
-    error instanceof Error ? error.message : String(error ?? '');
+  const msg = error instanceof Error ? error.message : String(error ?? '');
   const lower = msg.toLowerCase();
   if (/individual.*parameters.*business_type/i.test(msg)) {
     return 'stripe_connect_company_prefill_error';
   }
-  if (/business_type|company|individual/i.test(lower) && /invalid/i.test(lower)) {
+  if (
+    /business_type|company|individual/i.test(lower) &&
+    /invalid/i.test(lower)
+  ) {
     return 'stripe_connect_company_prefill_error';
   }
   if (isStripeConnectAccountUnavailableError(error)) {
@@ -501,8 +514,7 @@ function isConnectFullyActive(account: {
   } | null;
 }): boolean {
   const r = account.requirements;
-  const noBlockingDue =
-    !(r?.currently_due?.length) && !(r?.past_due?.length);
+  const noBlockingDue = !r?.currently_due?.length && !r?.past_due?.length;
   return !!(
     account.details_submitted &&
     account.payouts_enabled &&
@@ -692,7 +704,9 @@ export class StripeConnectService {
   }
 
   /** Retire un `stripeConnectAccountId` obsolète (compte supprimé côté Stripe). */
-  private async clearStaleConnectAccount(userId: Types.ObjectId): Promise<void> {
+  private async clearStaleConnectAccount(
+    userId: Types.ObjectId,
+  ): Promise<void> {
     await this.userModel
       .updateOne(
         { _id: userId },
@@ -728,14 +742,18 @@ export class StripeConnectService {
     if (!accountId) return false;
 
     this.logger.warn(
-      `Resetting delivery Connect account ${accountId} (was business_type=${account.business_type ?? 'unknown'}) for user ${userId.toString()}`,
+      `Resetting delivery Connect account ${accountId} (was business_type=${
+        account.business_type ?? 'unknown'
+      }) for user ${userId.toString()}`,
     );
 
     try {
       await this.stripe().accounts.del(accountId);
     } catch (e) {
       this.logger.warn(
-        `Stripe Connect account delete skipped for ${accountId}: ${e instanceof Error ? e.message : String(e)}`,
+        `Stripe Connect account delete skipped for ${accountId}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       );
     }
 
@@ -863,13 +881,19 @@ export class StripeConnectService {
         (p) => p.relationship?.representative === true,
       );
       if (current?.id) {
-        await stripe.accounts.updatePerson(accountId, current.id, personPayload);
+        await stripe.accounts.updatePerson(
+          accountId,
+          current.id,
+          personPayload,
+        );
       } else {
         await stripe.accounts.createPerson(accountId, personPayload);
       }
     } catch (e) {
       this.logger.warn(
-        `Stripe Connect representative person skipped for ${accountId}: ${e instanceof Error ? e.message : String(e)}`,
+        `Stripe Connect representative person skipped for ${accountId}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       );
     }
   }
@@ -896,7 +920,9 @@ export class StripeConnectService {
     // Persons API souvent indisponible sur Express — adresse société via onboarding Stripe.
     const addr = prefill.company.address as StripeAddressBlock | undefined;
     this.logger.log(
-      `Stripe Connect prefill flushed for ${accountId} (website=${websiteUrl ?? 'none'}, province=${addr?.state ?? 'n/a'})`,
+      `Stripe Connect prefill flushed for ${accountId} (website=${
+        websiteUrl ?? 'none'
+      }, province=${addr?.state ?? 'n/a'})`,
     );
   }
 
@@ -924,7 +950,9 @@ export class StripeConnectService {
       return refreshed;
     } catch (e) {
       this.logger.warn(
-        `Stripe Connect prefill update skipped: ${e instanceof Error ? e.message : String(e)}`,
+        `Stripe Connect prefill update skipped: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       );
       return account;
     }
@@ -985,7 +1013,9 @@ export class StripeConnectService {
   }
 
   /** Webhook `account.updated` — synchronise le statut vendeur + push WS. */
-  async handleAccountUpdated(account: StripeConnectAccountRecord): Promise<void> {
+  async handleAccountUpdated(
+    account: StripeConnectAccountRecord,
+  ): Promise<void> {
     const accountId = account.id;
     const user = await this.userModel
       .findOne({ stripeConnectAccountId: accountId })
@@ -1019,7 +1049,9 @@ export class StripeConnectService {
       return this.statusFromAccount(account, user);
     } catch (e) {
       this.logger.warn(
-        `Stripe account retrieve failed for ${accountId}: ${e instanceof Error ? e.message : String(e)}`,
+        `Stripe account retrieve failed for ${accountId}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       );
       if (isStripeConnectAccountUnavailableError(e)) {
         await this.clearStaleConnectAccount(uid);
@@ -1047,8 +1079,9 @@ export class StripeConnectService {
   ): Promise<{ url: string; accountId: string }> {
     this.assertConnectRecipient(user);
     const uid = this.userId(user);
-    const { store, userAddress } =
-      await this.resolveConnectPrefillContext(user);
+    const { store, userAddress } = await this.resolveConnectPrefillContext(
+      user,
+    );
     const stripe = this.stripe();
     const { returnUrl, refreshUrl } = this.connectReturnUrls();
     const prefill = this.buildPrefillForUser(user, store, userAddress);
@@ -1122,7 +1155,9 @@ export class StripeConnectService {
         await this.syncAccountFlags(uid, account);
       } catch (createErr) {
         this.logger.error(
-          `Stripe Connect account create failed: ${createErr instanceof Error ? createErr.message : String(createErr)}`,
+          `Stripe Connect account create failed: ${
+            createErr instanceof Error ? createErr.message : String(createErr)
+          }`,
         );
         throw new BadRequestException(userFacingStripeConnectError(createErr));
       }
@@ -1207,7 +1242,9 @@ export class StripeConnectService {
       );
     } catch (e) {
       this.logger.warn(
-        `Stripe Connect business_profile sync skipped: ${e instanceof Error ? e.message : String(e)}`,
+        `Stripe Connect business_profile sync skipped: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       );
     }
   }
@@ -1224,8 +1261,9 @@ export class StripeConnectService {
       throw new BadRequestException('stripe_connect_not_linked');
     }
 
-    const { store, userAddress } =
-      await this.resolveConnectPrefillContext(user);
+    const { store, userAddress } = await this.resolveConnectPrefillContext(
+      user,
+    );
     const stripe = this.stripe();
     const { returnUrl, refreshUrl } = this.connectReturnUrls();
 
@@ -1266,7 +1304,9 @@ export class StripeConnectService {
           }
         } catch (loginErr) {
           this.logger.warn(
-            `Stripe Express login link unavailable for ${accountId}: ${loginErr instanceof Error ? loginErr.message : String(loginErr)}`,
+            `Stripe Express login link unavailable for ${accountId}: ${
+              loginErr instanceof Error ? loginErr.message : String(loginErr)
+            }`,
           );
         }
       }
@@ -1295,7 +1335,9 @@ export class StripeConnectService {
         throw new BadRequestException('stripe_connect_account_unavailable');
       }
       this.logger.error(
-        `Stripe dashboard link failed: ${e instanceof Error ? e.message : String(e)}`,
+        `Stripe dashboard link failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       );
       throw new BadRequestException('stripe_dashboard_link_failed');
     }
@@ -1327,7 +1369,9 @@ export class StripeConnectService {
       });
     } catch (e) {
       this.logger.warn(
-        `Stripe payouts list failed: ${e instanceof Error ? e.message : String(e)}`,
+        `Stripe payouts list failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       );
       if (isStripeConnectAccountUnavailableError(e)) {
         await this.clearStaleConnectAccount(uid);
@@ -1374,7 +1418,9 @@ export class StripeConnectService {
       };
     } catch (e) {
       this.logger.warn(
-        `Stripe balance retrieve failed: ${e instanceof Error ? e.message : String(e)}`,
+        `Stripe balance retrieve failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       );
       if (isStripeConnectAccountUnavailableError(e)) {
         await this.clearStaleConnectAccount(this.userId(user));
@@ -1383,11 +1429,17 @@ export class StripeConnectService {
     }
   }
 
-  async getPayoutEstimate(user: UserModel): Promise<StripeConnectPayoutEstimate> {
+  async getPayoutEstimate(
+    user: UserModel,
+  ): Promise<StripeConnectPayoutEstimate> {
     this.assertConnectRecipient(user);
     const status = await this.getConnectStatus(user);
     const currency = (status.defaultCurrency ?? 'cad').toLowerCase();
-    if (!status.accountId || !status.payoutsEnabled || !status.onboardingComplete) {
+    if (
+      !status.accountId ||
+      !status.payoutsEnabled ||
+      !status.onboardingComplete
+    ) {
       return {
         available: 0,
         payoutFee: 0,
@@ -1423,8 +1475,9 @@ export class StripeConnectService {
       };
     }
 
-    const split =
-      await this.platformFees.computePayoutFeeFromSettings(availableCents);
+    const split = await this.platformFees.computePayoutFeeFromSettings(
+      availableCents,
+    );
     const payoutFeeCents = Math.max(0, split.platformFeeCents);
     const netPayoutCents = Math.max(0, split.payoutCents);
 
@@ -1479,8 +1532,9 @@ export class StripeConnectService {
       throw new BadRequestException('stripe_payout_no_balance');
     }
 
-    const payoutSplit =
-      await this.platformFees.computePayoutFeeFromSettings(availableCents);
+    const payoutSplit = await this.platformFees.computePayoutFeeFromSettings(
+      availableCents,
+    );
     const payoutFeeCents = Math.max(0, payoutSplit.platformFeeCents);
     const payoutCents = Math.max(0, payoutSplit.payoutCents);
     if (payoutCents < 100) {
@@ -1503,7 +1557,9 @@ export class StripeConnectService {
         { stripeAccount: accountId },
       );
       this.logger.log(
-        `Stripe manual payout ${payout.id} for ${accountId}: gross=${availableCents / 100} ${currency}, fee=${payoutFeeCents / 100}, net=${payoutCents / 100}`,
+        `Stripe manual payout ${payout.id} for ${accountId}: gross=${
+          availableCents / 100
+        } ${currency}, fee=${payoutFeeCents / 100}, net=${payoutCents / 100}`,
       );
       return {
         id: payout.id,
@@ -1519,7 +1575,9 @@ export class StripeConnectService {
       };
     } catch (e) {
       this.logger.error(
-        `Stripe payout create failed: ${e instanceof Error ? e.message : String(e)}`,
+        `Stripe payout create failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       );
       if (isStripeConnectAccountUnavailableError(e)) {
         await this.clearStaleConnectAccount(uid);

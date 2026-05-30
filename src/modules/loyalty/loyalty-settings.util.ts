@@ -41,12 +41,7 @@ export function readCadPerPointFromDoc(doc: Record<string, unknown>): number {
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 100;
 }
 
-const TIER_NAMES: LoyaltyTierName[] = [
-  'Bronze',
-  'Silver',
-  'Gold',
-  'Platinum',
-];
+const TIER_NAMES: LoyaltyTierName[] = ['Bronze', 'Silver', 'Gold', 'Platinum'];
 
 const DEFAULT_BY_NAME = new Map(
   LOYALTY_TIER_THRESHOLDS.map((t) => [t.name, t]),
@@ -114,8 +109,7 @@ export function validateTierChain(tiers: ResolvedLoyaltyTier[]): void {
     if (i > 0 && t.min <= tiers[i - 1].min) {
       throw new BadRequestException('loyalty_tier_mins_must_increase');
     }
-    const expectedMax =
-      i < tiers.length - 1 ? tiers[i + 1].min : null;
+    const expectedMax = i < tiers.length - 1 ? tiers[i + 1].min : null;
     if (i < tiers.length - 1) {
       if (t.max == null || t.max !== expectedMax) {
         throw new BadRequestException('loyalty_tier_max_must_match_next_min');
@@ -126,15 +120,18 @@ export function validateTierChain(tiers: ResolvedLoyaltyTier[]): void {
   }
 }
 
-export function configFromDocument(doc: Record<string, unknown>): ResolvedLoyaltyConfig {
+export function configFromDocument(
+  doc: Record<string, unknown>,
+): ResolvedLoyaltyConfig {
   const base = defaultLoyaltyConfig();
-  const tiersRaw = Array.isArray(doc.tiers) && (doc.tiers as unknown[]).length
-    ? (doc.tiers as Array<{
-        name: string;
-        min: number;
-        max?: number | null;
-      }>)
-    : base.tiers;
+  const tiersRaw =
+    Array.isArray(doc.tiers) && (doc.tiers as unknown[]).length
+      ? (doc.tiers as Array<{
+          name: string;
+          min: number;
+          max?: number | null;
+        }>)
+      : base.tiers;
   const tiers = mergeTierMetadata(
     tiersRaw.map((t) => ({
       name: t.name,

@@ -108,9 +108,7 @@ export class LoyaltySettingsModel {
   rewards: LoyaltyRewardSetting[];
 }
 
-export type LoyaltySettingsDocument =
-  HydratedDocument<LoyaltySettingsModel>;
+export type LoyaltySettingsDocument = HydratedDocument<LoyaltySettingsModel>;
 
-export const LoyaltySettingsSchema = SchemaFactory.createForClass(
-  LoyaltySettingsModel,
-);
+export const LoyaltySettingsSchema =
+  SchemaFactory.createForClass(LoyaltySettingsModel);

@@ -38,8 +38,7 @@ export class SubscriptionPlanModel {
   trialReminderDays: number[];
 }
 
-export type SubscriptionPlanDocument =
-  HydratedDocument<SubscriptionPlanModel>;
+export type SubscriptionPlanDocument = HydratedDocument<SubscriptionPlanModel>;
 
 export const SubscriptionPlanSchema = SchemaFactory.createForClass(
   SubscriptionPlanModel,

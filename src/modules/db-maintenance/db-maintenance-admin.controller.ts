@@ -42,17 +42,13 @@ export class DbMaintenanceAdminController {
       'Supprime tous les documents des collections sélectionnées (irréversible)',
   })
   async clearTables(@Req() req: Request, @Body() dto: ClearDbTablesDto) {
-    return this._dbMaintenance.clearTables(
-      req.user as UserModel,
-      dto.tables,
-    );
+    return this._dbMaintenance.clearTables(req.user as UserModel, dto.tables);
   }
 
   @Get('admin/integrity-tests')
   @UseGuards(JwtGuard)
   @ApiOperation({
-    summary:
-      "Liste des tests d'intégrité manuels disponibles (admin.settings)",
+    summary: "Liste des tests d'intégrité manuels disponibles (admin.settings)",
   })
   async listIntegrityTests(@Req() req: Request) {
     return this._dbMaintenance.listIntegrityTests(req.user as UserModel);
@@ -71,8 +67,7 @@ export class DbMaintenanceAdminController {
   @Get('admin/system-health/checks')
   @UseGuards(JwtGuard)
   @ApiOperation({
-    summary:
-      'Liste des checks System Health disponibles (admin.settings)',
+    summary: 'Liste des checks System Health disponibles (admin.settings)',
   })
   async listSystemHealthChecks(@Req() req: Request) {
     return this._dbMaintenance.listSystemHealthChecks(req.user as UserModel);

@@ -154,7 +154,9 @@ export class AppService {
       mongodb.error = (e as Error).message;
     }
 
-    const status: HealthPayload['status'] = mongodb.reachable ? 'ok' : 'degraded';
+    const status: HealthPayload['status'] = mongodb.reachable
+      ? 'ok'
+      : 'degraded';
 
     return {
       status,

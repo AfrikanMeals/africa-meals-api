@@ -53,10 +53,7 @@ function mergeDeep(a: unknown, b: unknown): unknown {
  * Construit un sous-arbre depuis [root] en suivant les segments.
  * Si une propriété est un tableau, applique les segments restants à chaque élément.
  */
-export function buildIncludeBranch(
-  obj: unknown,
-  segments: string[],
-): unknown {
+export function buildIncludeBranch(obj: unknown, segments: string[]): unknown {
   if (obj === undefined) return undefined;
   if (segments.length === 0) {
     return toPlainJson(obj);
@@ -149,9 +146,7 @@ export function applyFieldSelection(
   return out;
 }
 
-function normalizeQueryList(
-  value: string | string[] | undefined,
-): string[] {
+function normalizeQueryList(value: string | string[] | undefined): string[] {
   if (value === undefined) return [];
   const parts: string[] = [];
   const pushRaw = (s: string) => {

@@ -53,10 +53,7 @@ export class SubscriptionsController {
   @Post('plans')
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  createPlan(
-    @Req() req: Request,
-    @Body() body: CreateSubscriptionPlanDto,
-  ) {
+  createPlan(@Req() req: Request, @Body() body: CreateSubscriptionPlanDto) {
     return this.subscriptions.createPlan(req.user as UserModel, body);
   }
 
@@ -68,11 +65,7 @@ export class SubscriptionsController {
     @Param('planId') planId: string,
     @Body() body: UpdateSubscriptionPlanDto,
   ) {
-    return this.subscriptions.updatePlan(
-      req.user as UserModel,
-      planId,
-      body,
-    );
+    return this.subscriptions.updatePlan(req.user as UserModel, planId, body);
   }
 
   @Delete('plans/:planId')
@@ -83,10 +76,7 @@ export class SubscriptionsController {
 
   @Delete('plans/:planId/permanent')
   @UseGuards(JwtGuard)
-  permanentlyDeletePlan(
-    @Req() req: Request,
-    @Param('planId') planId: string,
-  ) {
+  permanentlyDeletePlan(@Req() req: Request, @Param('planId') planId: string) {
     return this.subscriptions.permanentlyDeletePlan(
       req.user as UserModel,
       planId,
@@ -135,10 +125,7 @@ export class SubscriptionsController {
   @Post('payment-intent')
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  createPaymentIntent(
-    @Req() req: Request,
-    @Body() body: SubscribeVendorDto,
-  ) {
+  createPaymentIntent(@Req() req: Request, @Body() body: SubscribeVendorDto) {
     return this.subscriptionStripe.createPaymentIntent(
       req.user as UserModel,
       body,
@@ -170,10 +157,7 @@ export class SubscriptionsController {
   @Post('checkout-session')
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  createCheckoutSession(
-    @Req() req: Request,
-    @Body() body: SubscribeVendorDto,
-  ) {
+  createCheckoutSession(@Req() req: Request, @Body() body: SubscribeVendorDto) {
     return this.subscriptionStripe.createCheckoutSession(
       req.user as UserModel,
       body,

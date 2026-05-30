@@ -64,10 +64,7 @@ export class CouponsService {
   }
 
   private assertVendorOrAdmin(user: UserModel) {
-    if (
-      user.type !== UserTypeEnum.ADMIN &&
-      user.type !== UserTypeEnum.VENDOR
-    ) {
+    if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('vendor_or_admin_only');
     }
   }
@@ -183,14 +180,14 @@ export class CouponsService {
         doc.createdAt instanceof Date
           ? doc.createdAt.toISOString()
           : doc.createdAt != null
-            ? String(doc.createdAt)
-            : undefined,
+          ? String(doc.createdAt)
+          : undefined,
       updatedAt:
         doc.updatedAt instanceof Date
           ? doc.updatedAt.toISOString()
           : doc.updatedAt != null
-            ? String(doc.updatedAt)
-            : undefined,
+          ? String(doc.updatedAt)
+          : undefined,
     };
   }
 
@@ -227,7 +224,10 @@ export class CouponsService {
     return docs.map((d) => this.toRow(d as Record<string, unknown>));
   }
 
-  async create(user: UserModel, dto: CreateStoreCouponDto): Promise<StoreCouponApiRow> {
+  async create(
+    user: UserModel,
+    dto: CreateStoreCouponDto,
+  ): Promise<StoreCouponApiRow> {
     this.assertVendorOrAdmin(user);
     this.validateValue(dto.discountType, dto.value);
     const validFrom = new Date(dto.validFrom);

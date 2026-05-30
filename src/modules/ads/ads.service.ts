@@ -19,14 +19,8 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import {
-  AdEventModel,
-  AdEventTypeEnum,
-} from '@schemas/ad-event.schema';
-import {
-  AdModel,
-  StoreAdActionTypeEnum,
-} from '@schemas/ad.schema';
+import { AdEventModel, AdEventTypeEnum } from '@schemas/ad-event.schema';
+import { AdModel, StoreAdActionTypeEnum } from '@schemas/ad.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
@@ -116,10 +110,7 @@ export class AdsService implements OnModuleInit {
   }
 
   private assertVendorOrAdmin(user: UserModel) {
-    if (
-      user.type !== UserTypeEnum.ADMIN &&
-      user.type !== UserTypeEnum.VENDOR
-    ) {
+    if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('vendor_or_admin_only');
     }
   }
@@ -166,8 +157,8 @@ export class AdsService implements OnModuleInit {
     const mime = lower.endsWith('.png')
       ? 'image/png'
       : lower.endsWith('.webp')
-        ? 'image/webp'
-        : 'image/jpeg';
+      ? 'image/webp'
+      : 'image/jpeg';
     const file = {
       fieldname: 'file',
       originalname: name,
@@ -296,20 +287,11 @@ export class AdsService implements OnModuleInit {
     const vf = doc.validFrom as Date | string | undefined | null;
     const vu = doc.validUntil as Date | string | undefined | null;
     const at =
-      (doc.actionType as StoreAdActionTypeEnum) ??
-      StoreAdActionTypeEnum.SHOP;
+      (doc.actionType as StoreAdActionTypeEnum) ?? StoreAdActionTypeEnum.SHOP;
     const validFromIso =
-      vf == null
-        ? null
-        : vf instanceof Date
-          ? vf.toISOString()
-          : String(vf);
+      vf == null ? null : vf instanceof Date ? vf.toISOString() : String(vf);
     const validUntilIso =
-      vu == null
-        ? null
-        : vu instanceof Date
-          ? vu.toISOString()
-          : String(vu);
+      vu == null ? null : vu instanceof Date ? vu.toISOString() : String(vu);
     const actTarget =
       doc.actionTarget != null && String(doc.actionTarget).trim() !== ''
         ? String(doc.actionTarget).trim()
@@ -334,14 +316,14 @@ export class AdsService implements OnModuleInit {
         doc.createdAt instanceof Date
           ? doc.createdAt.toISOString()
           : doc.createdAt != null
-            ? String(doc.createdAt)
-            : undefined,
+          ? String(doc.createdAt)
+          : undefined,
       updatedAt:
         doc.updatedAt instanceof Date
           ? doc.updatedAt.toISOString()
           : doc.updatedAt != null
-            ? String(doc.updatedAt)
-            : undefined,
+          ? String(doc.updatedAt)
+          : undefined,
     };
   }
 
@@ -464,7 +446,11 @@ export class AdsService implements OnModuleInit {
     const remainingGlobals = [...globalAds];
     const out: AdModel[] = [];
     while (out.length < n) {
-      for (let k = 0; k < 2 && remainingShops.length > 0 && out.length < n; k++) {
+      for (
+        let k = 0;
+        k < 2 && remainingShops.length > 0 && out.length < n;
+        k++
+      ) {
         out.push(remainingShops.shift()!);
       }
       if (out.length >= n) break;
@@ -570,7 +556,9 @@ export class AdsService implements OnModuleInit {
         .sort({ sortOrder: 1, createdAt: -1 })
         .lean()
         .exec();
-      return docs.map((d) => this.toManagementRow(d as Record<string, unknown>));
+      return docs.map((d) =>
+        this.toManagementRow(d as Record<string, unknown>),
+      );
     }
     const ids = await this.vendorStoreIds(user);
     if (!ids.length) {
@@ -635,7 +623,10 @@ export class AdsService implements OnModuleInit {
       if (!dto.productId || !storeOid) {
         throw new BadRequestException('product_required_for_action');
       }
-      await this.assertProductBelongsToStore(dto.productId, storeOid.toString());
+      await this.assertProductBelongsToStore(
+        dto.productId,
+        storeOid.toString(),
+      );
     }
 
     const linkTarget = isAdLinkActionType(dto.actionType)
@@ -702,14 +693,14 @@ export class AdsService implements OnModuleInit {
         dto.validFrom != null
           ? new Date(dto.validFrom)
           : existing.validFrom
-            ? new Date(existing.validFrom as Date)
-            : null;
+          ? new Date(existing.validFrom as Date)
+          : null;
       const nu =
         dto.validUntil != null
           ? new Date(dto.validUntil)
           : existing.validUntil
-            ? new Date(existing.validUntil as Date)
-            : null;
+          ? new Date(existing.validUntil as Date)
+          : null;
       if (!nf || !nu) {
         throw new BadRequestException('ad_dates_incomplete');
       }
@@ -749,10 +740,7 @@ export class AdsService implements OnModuleInit {
         existing.actionTarget =
           dto.actionTarget === null || dto.actionTarget === ''
             ? undefined
-            : this.assertActionTargetValue(
-                dto.actionType,
-                dto.actionTarget,
-              );
+            : this.assertActionTargetValue(dto.actionType, dto.actionTarget);
       }
     }
 
@@ -771,9 +759,7 @@ export class AdsService implements OnModuleInit {
     if (
       dto.actionTarget !== undefined &&
       dto.actionType == null &&
-      isAdLinkActionType(
-        existing.actionType as StoreAdActionTypeEnum,
-      )
+      isAdLinkActionType(existing.actionType as StoreAdActionTypeEnum)
     ) {
       existing.actionTarget =
         dto.actionTarget === null || dto.actionTarget === ''
@@ -956,11 +942,7 @@ export class AdsService implements OnModuleInit {
               },
               clicks: {
                 $sum: {
-                  $cond: [
-                    { $eq: ['$eventType', AdEventTypeEnum.CLICK] },
-                    1,
-                    0,
-                  ],
+                  $cond: [{ $eq: ['$eventType', AdEventTypeEnum.CLICK] }, 1, 0],
                 },
               },
             },
@@ -988,7 +970,11 @@ export class AdsService implements OnModuleInit {
       let userEmail: string | null = null;
       let userFullName: string | null = null;
       if (u && typeof u === 'object' && '_id' in u) {
-        const pop = u as { _id?: Types.ObjectId; email?: string; fullName?: string };
+        const pop = u as {
+          _id?: Types.ObjectId;
+          email?: string;
+          fullName?: string;
+        };
         userId = pop._id ? pop._id.toString() : null;
         userEmail = pop.email != null ? String(pop.email) : null;
         userFullName = pop.fullName != null ? String(pop.fullName) : null;

@@ -54,7 +54,10 @@ export function loyaltyNextTierProgress(
   };
 }
 
-export function isMemberActive(lastOrderAt: Date | null, inactiveDays: number): boolean {
+export function isMemberActive(
+  lastOrderAt: Date | null,
+  inactiveDays: number,
+): boolean {
   if (!lastOrderAt) return false;
   const ms = inactiveDays * 24 * 60 * 60 * 1000;
   return Date.now() - lastOrderAt.getTime() <= ms;

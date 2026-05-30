@@ -15,7 +15,10 @@ import {
 } from 'class-validator';
 
 export class OfferItemDto {
-  @ApiProperty({ enum: OfferItemTypeEnum, description: 'Type d’élément (produit, extra, etc.)' })
+  @ApiProperty({
+    enum: OfferItemTypeEnum,
+    description: 'Type d’élément (produit, extra, etc.)',
+  })
   @IsNotEmpty()
   @IsEnum(OfferItemTypeEnum)
   type: OfferItemTypeEnum;
@@ -30,11 +33,17 @@ export class OfferItemDto {
   @IsNumber()
   price: number;
 
-  @ApiProperty({ description: 'ID de l’entité (produit/store)', example: '507f1f77bcf86cd799439011' })
+  @ApiProperty({
+    description: 'ID de l’entité (produit/store)',
+    example: '507f1f77bcf86cd799439011',
+  })
   @IsNotEmpty()
   entityId: string;
 
-  @ApiPropertyOptional({ description: 'Requis si type = PRODUCT', example: '507f1f77bcf86cd799439012' })
+  @ApiPropertyOptional({
+    description: 'Requis si type = PRODUCT',
+    example: '507f1f77bcf86cd799439012',
+  })
   @IsNotEmpty()
   @ValidateIf((o) => o.type === OfferItemTypeEnum.PRODUCT)
   productId?: string;
@@ -51,12 +60,18 @@ export class CreateOfferDto {
   @Trim()
   description: string;
 
-  @ApiPropertyOptional({ format: 'date-time', example: '2025-03-01T00:00:00.000Z' })
+  @ApiPropertyOptional({
+    format: 'date-time',
+    example: '2025-03-01T00:00:00.000Z',
+  })
   @IsOptional()
   @IsDateString()
   startDate?: string;
 
-  @ApiPropertyOptional({ format: 'date-time', example: '2025-03-31T23:59:59.000Z' })
+  @ApiPropertyOptional({
+    format: 'date-time',
+    example: '2025-03-31T23:59:59.000Z',
+  })
   @IsOptional()
   @IsDateString()
   endDate?: string;
@@ -78,7 +93,11 @@ export class CreateOfferDto {
   @ValidateNested({ each: true })
   items: OfferItemDto[];
 
-  @ApiPropertyOptional({ type: 'string', format: 'binary', description: 'Image de l’offre' })
+  @ApiPropertyOptional({
+    type: 'string',
+    format: 'binary',
+    description: 'Image de l’offre',
+  })
   @IsOptional()
   image?: Express.Multer.File;
 

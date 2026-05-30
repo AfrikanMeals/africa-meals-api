@@ -66,7 +66,8 @@ export class SupportChatMessageModel extends BaseSchema {
   satisfactionOutcome?: SupportChatSatisfactionOutcome;
 }
 
-export const SupportChatMessageSchema =
-  SchemaFactory.createForClass(SupportChatMessageModel);
+export const SupportChatMessageSchema = SchemaFactory.createForClass(
+  SupportChatMessageModel,
+);
 
 SupportChatMessageSchema.index({ threadOwnerId: 1, createdAt: 1 });

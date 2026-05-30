@@ -6,4 +6,5 @@ export type FieldSelectionSpec = {
   excludePaths: string[];
 };
 
-export const FIELD_SELECTION_REQUEST_PROP = 'africaMealsFieldSelection' as const;
+export const FIELD_SELECTION_REQUEST_PROP =
+  'africaMealsFieldSelection' as const;

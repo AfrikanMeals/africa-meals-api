@@ -32,7 +32,11 @@ export class CreateStockItemDto {
   @Min(0)
   seuil: number;
 
-  @ApiProperty({ example: 1500, type: Number, description: 'Prix unitaire (ex. FCFA)' })
+  @ApiProperty({
+    example: 1500,
+    type: Number,
+    description: 'Prix unitaire (ex. FCFA)',
+  })
   @Type(() => Number)
   @IsNumber()
   @Min(0)

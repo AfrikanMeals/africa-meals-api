@@ -53,8 +53,10 @@ export class RequestStatsInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       tap({
-        next: () => this.record(req, res, started, method, route, storeId, userId),
-        error: () => this.record(req, res, started, method, route, storeId, userId),
+        next: () =>
+          this.record(req, res, started, method, route, storeId, userId),
+        error: () =>
+          this.record(req, res, started, method, route, storeId, userId),
       }),
     );
   }

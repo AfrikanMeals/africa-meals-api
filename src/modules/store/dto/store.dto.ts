@@ -18,19 +18,31 @@ import {
 } from 'class-validator';
 
 export class StoreShippingZoneDto {
-  @ApiProperty({ description: 'Distance minimale (km)', example: 0, type: Number })
+  @ApiProperty({
+    description: 'Distance minimale (km)',
+    example: 0,
+    type: Number,
+  })
   @IsNotEmpty()
   @IsNumber()
   @Transform(({ value }) => +value)
   minDistance: number;
 
-  @ApiProperty({ description: 'Distance maximale (km)', example: 10, type: Number })
+  @ApiProperty({
+    description: 'Distance maximale (km)',
+    example: 10,
+    type: Number,
+  })
   @IsNotEmpty()
   @IsNumber()
   @Transform(({ value }) => +value)
   maxDistance: number;
 
-  @ApiProperty({ description: 'Prix de livraison (unité)', example: 5.99, type: Number })
+  @ApiProperty({
+    description: 'Prix de livraison (unité)',
+    example: 5.99,
+    type: Number,
+  })
   @IsNotEmpty()
   @IsNumber()
   @Transform(({ value }) => +value)
@@ -50,7 +62,11 @@ export class CreateStoreDto {
   @IsNotEmpty()
   email: string;
 
-  @ApiProperty({ description: 'Livraison disponible', example: true, type: Boolean })
+  @ApiProperty({
+    description: 'Livraison disponible',
+    example: true,
+    type: Boolean,
+  })
   @IsNotEmpty()
   @IsBoolean()
   supportsShipping: boolean;
@@ -65,7 +81,10 @@ export class CreateStoreDto {
   @MinLength(8)
   phoneNumber: string;
 
-  @ApiProperty({ type: () => CreateAddressDto, description: 'Adresse du magasin' })
+  @ApiProperty({
+    type: () => CreateAddressDto,
+    description: 'Adresse du magasin',
+  })
   @IsNotEmpty()
   @ValidateNested()
   @Type(() => CreateAddressDto)
@@ -86,7 +105,9 @@ export class CreateStoreDto {
 }
 
 export class DailyMenuItemDto {
-  @ApiProperty({ description: 'Identifiant du plat (produit) dans le catalogue' })
+  @ApiProperty({
+    description: 'Identifiant du plat (produit) dans le catalogue',
+  })
   @IsNotEmpty()
   @IsString()
   productId: string;
@@ -111,7 +132,11 @@ export class DailyMenuItemDto {
 }
 
 export class DailyMenuSlotDto {
-  @ApiProperty({ description: '0 = dimanche … 6 = samedi (comme Date.getDay())', minimum: 0, maximum: 6 })
+  @ApiProperty({
+    description: '0 = dimanche … 6 = samedi (comme Date.getDay())',
+    minimum: 0,
+    maximum: 6,
+  })
   @IsInt()
   @Min(0)
   @Max(6)
@@ -129,7 +154,8 @@ export class DailyMenuSlotDto {
 
   @ApiPropertyOptional({
     type: () => [DailyMenuItemDto],
-    description: 'Plats du jour avec stock illimité ou nombre de portions restantes.',
+    description:
+      'Plats du jour avec stock illimité ou nombre de portions restantes.',
   })
   @IsOptional()
   @IsArray()
@@ -163,7 +189,6 @@ export class PatchVendorShippingZonesDto {
   @Type(() => StoreShippingZoneDto)
   shippingZones?: StoreShippingZoneDto[];
 }
-
 
 /** Logo boutique : évite multipart (souvent cassé derrière Cloud Functions / certains proxys). */
 export class StoreProfileImageJsonDto {

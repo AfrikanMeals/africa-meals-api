@@ -1,6 +1,12 @@
 import { AdEventTypeEnum } from '@schemas/ad-event.schema';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsMongoId, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsEnum,
+  IsMongoId,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 export class TrackAdEventDto {
   @ApiProperty({ description: 'ID Mongo de la bannière' })

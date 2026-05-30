@@ -11,9 +11,10 @@ function verifyBasicAuth(authorization: string | undefined): boolean {
     return false;
   }
   try {
-    const decoded = Buffer.from(authorization.slice(6).trim(), 'base64').toString(
-      'utf8',
-    );
+    const decoded = Buffer.from(
+      authorization.slice(6).trim(),
+      'base64',
+    ).toString('utf8');
     const i = decoded.indexOf(':');
     if (i < 0) {
       return false;
@@ -44,9 +45,6 @@ export class EnvDebugController {
     for (const key of Object.keys(process.env).sort()) {
       out[key] = process.env[key];
     }
-    res
-      .status(200)
-      .setHeader('Cache-Control', 'no-store')
-      .json(out);
+    res.status(200).setHeader('Cache-Control', 'no-store').json(out);
   }
 }

@@ -44,9 +44,8 @@ export class RecommendationTrainingSnapshotModel extends BaseSchema {
   runMeta: Record<string, unknown>;
 }
 
-export const RecommendationTrainingSnapshotSchema = SchemaFactory.createForClass(
-  RecommendationTrainingSnapshotModel,
-);
+export const RecommendationTrainingSnapshotSchema =
+  SchemaFactory.createForClass(RecommendationTrainingSnapshotModel);
 
 RecommendationTrainingSnapshotSchema.index({ docKey: 1 }, { unique: true });
 RecommendationTrainingSnapshotSchema.index({ computedAt: -1 });

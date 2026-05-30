@@ -18,13 +18,19 @@ export class PlatformShippingRangeDto {
   @Min(0)
   minKm: number;
 
-  @ApiProperty({ example: 5, description: 'Borne max (km), exclue [minKm, maxKm)' })
+  @ApiProperty({
+    example: 5,
+    description: 'Borne max (km), exclue [minKm, maxKm)',
+  })
   @Type(() => Number)
   @IsNumber()
   @Min(0)
   maxKm: number;
 
-  @ApiProperty({ example: 3.99, description: 'Forfait (devise plateforme) pour cette tranche' })
+  @ApiProperty({
+    example: 3.99,
+    description: 'Forfait (devise plateforme) pour cette tranche',
+  })
   @Type(() => Number)
   @IsNumber()
   @Min(0)

@@ -49,7 +49,8 @@ export class ContactController {
     }
     await this.verifyRecaptchaEnterprise(body.recaptchaToken);
 
-    const appName = this.configService.get<string>('APP_NAME')?.trim() || 'Wise Eat';
+    const appName =
+      this.configService.get<string>('APP_NAME')?.trim() || 'Wise Eat';
     const to =
       this.configService.get<string>('SUPPORT_EMAIL')?.trim() ||
       this.configService.get<string>('SMTP_FROM')?.trim() ||
@@ -99,7 +100,9 @@ export class ContactController {
       this.configService.get<string>('RECAPTCHA_ENTERPRISE_API_KEY')?.trim() ||
       '';
     const projectId =
-      this.configService.get<string>('RECAPTCHA_ENTERPRISE_PROJECT_ID')?.trim() ||
+      this.configService
+        .get<string>('RECAPTCHA_ENTERPRISE_PROJECT_ID')
+        ?.trim() ||
       this.configService.get<string>('AM_FIREBASE_PROJECT_ID')?.trim() ||
       this.configService.get<string>('GOOGLE_CLOUD_PROJECT')?.trim() ||
       '';
@@ -196,7 +199,9 @@ export class ContactController {
         );
       }
       this.logger.warn(
-        `reCAPTCHA assessment non-OK (monitor mode): ${data?.error?.message || resp.status}`,
+        `reCAPTCHA assessment non-OK (monitor mode): ${
+          data?.error?.message || resp.status
+        }`,
       );
       return;
     }
@@ -214,7 +219,9 @@ export class ContactController {
     if (action !== 'CONTACT_FORM_SUBMIT') {
       if (enforce) throw new BadRequestException('recaptcha_action_mismatch');
       this.logger.warn(
-        `reCAPTCHA action mismatch (monitor mode): received=${action || 'empty'}`,
+        `reCAPTCHA action mismatch (monitor mode): received=${
+          action || 'empty'
+        }`,
       );
       return;
     }
@@ -234,9 +241,15 @@ export class ContactController {
     apiKey: string;
     projectId: string;
     enforce: boolean;
-  }): Promise<{ url: string; headers: Record<string, string>; skip?: boolean }> {
+  }): Promise<{
+    url: string;
+    headers: Record<string, string>;
+    skip?: boolean;
+  }> {
     const { apiKey, projectId, enforce } = args;
-    const baseUrl = `https://recaptchaenterprise.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/assessments`;
+    const baseUrl = `https://recaptchaenterprise.googleapis.com/v1/projects/${encodeURIComponent(
+      projectId,
+    )}/assessments`;
 
     // Priorité: clé API explicite (simple et compatible partout).
     if (apiKey) {
@@ -254,8 +267,8 @@ export class ContactController {
         typeof access === 'string'
           ? access
           : typeof access?.token === 'string'
-            ? access.token
-            : '';
+          ? access.token
+          : '';
       if (!token) {
         throw new Error('missing_access_token');
       }

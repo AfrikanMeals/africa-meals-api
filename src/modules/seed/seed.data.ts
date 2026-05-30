@@ -40,7 +40,7 @@ const STORE_NAMES = [
   'Fufu & Soup',
   'African Delight',
   'Spice Road Kitchen',
-  'Mama\'s Kitchen',
+  "Mama's Kitchen",
 ];
 
 const MEAL_NAMES = [
@@ -52,7 +52,7 @@ const MEAL_NAMES = [
   'Eru',
   'Okok',
   'Koki',
-  'Pâte d\'arachide',
+  "Pâte d'arachide",
   'Riz au gras',
   'Attiéké',
   'Alloco',
@@ -66,7 +66,15 @@ const MEAL_NAMES = [
   'Bobolo',
 ];
 
-const ORIGIN_COUNTRIES = ['Cameroun', 'Sénégal', 'Côte d\'Ivoire', 'Nigeria', 'Ghana', 'Bénin', 'Togo'];
+const ORIGIN_COUNTRIES = [
+  'Cameroun',
+  'Sénégal',
+  "Côte d'Ivoire",
+  'Nigeria',
+  'Ghana',
+  'Bénin',
+  'Togo',
+];
 
 export interface MockAddress {
   address: string;
@@ -96,7 +104,11 @@ export interface MockStore {
   acceptsOrders: boolean;
   canCreateProducts: boolean;
   supportsShipping: boolean;
-  shippingZones: Array<{ minDistance: number; maxDistance: number; price: number }>;
+  shippingZones: Array<{
+    minDistance: number;
+    maxDistance: number;
+    price: number;
+  }>;
 }
 
 export interface MockProduct {
@@ -171,7 +183,12 @@ export function getMockProductsForStore(count: number): MockProduct[] {
   for (let i = 0; i < count; i++) {
     let title = pick(MEAL_NAMES);
     while (used.has(title)) {
-      title = `${pick(MEAL_NAMES)} ${pick(['traditionnel', 'spécial', 'maison', 'du chef'])}`;
+      title = `${pick(MEAL_NAMES)} ${pick([
+        'traditionnel',
+        'spécial',
+        'maison',
+        'du chef',
+      ])}`;
     }
     used.add(title);
     const price = randomPrice(8, 28);

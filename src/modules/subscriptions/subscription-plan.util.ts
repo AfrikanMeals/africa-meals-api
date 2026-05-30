@@ -45,7 +45,10 @@ export function resolvePlanTrialFields(plan: {
   if (isFreeSubscriptionPlan(plan)) {
     return { trialDays: 0, trialReminderDays: [] };
   }
-  const trialDays = Math.max(0, Math.min(365, Math.floor(Number(plan.trialDays ?? 0))));
+  const trialDays = Math.max(
+    0,
+    Math.min(365, Math.floor(Number(plan.trialDays ?? 0))),
+  );
   return {
     trialDays,
     trialReminderDays: normalizeTrialReminderDays(

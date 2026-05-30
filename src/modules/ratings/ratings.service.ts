@@ -148,8 +148,7 @@ export class RatingsService {
 
     const items: ProductReviewPublicRow[] = raw.map((r) => {
       const usr = r._u as LeanUser | null | undefined;
-      const commentRaw =
-        typeof r.comment === 'string' ? r.comment.trim() : '';
+      const commentRaw = typeof r.comment === 'string' ? r.comment.trim() : '';
       const uid =
         usr && typeof usr === 'object' && usr._id != null
           ? String(usr._id)
@@ -261,8 +260,7 @@ export class RatingsService {
     const items: StoreReviewPublicRow[] = raw.map((r) => {
       const usr = r._u as LeanUser | null | undefined;
       const prod = r._p as LeanProduct | null | undefined;
-      const commentRaw =
-        typeof r.comment === 'string' ? r.comment.trim() : '';
+      const commentRaw = typeof r.comment === 'string' ? r.comment.trim() : '';
       const uid =
         usr && typeof usr === 'object' && usr._id != null
           ? String(usr._id)
@@ -302,7 +300,9 @@ export class RatingsService {
     return { items, total, page, take, hasMore };
   }
 
-  async listLandingProductReviews(maxRaw?: number): Promise<LandingProductReviewsResponse> {
+  async listLandingProductReviews(
+    maxRaw?: number,
+  ): Promise<LandingProductReviewsResponse> {
     const max = Math.min(10, Math.max(1, Math.round(Number(maxRaw)) || 10));
 
     type LeanUser = { fullName?: string; email?: string };
@@ -328,7 +328,9 @@ export class RatingsService {
       if (reviews.length >= max) break;
 
       const comment =
-        typeof r.comment === 'string' ? r.comment.trim().replace(/\s+/g, ' ') : '';
+        typeof r.comment === 'string'
+          ? r.comment.trim().replace(/\s+/g, ' ')
+          : '';
       if (comment.length < 12) continue;
 
       const usr = r.user as LeanUser | null;

@@ -182,14 +182,12 @@ export class LoyaltyService {
         ...r,
         affordable,
         autoReward,
-        pointsRemaining: autoReward
-          ? 0
-          : Math.max(0, r.points - score),
+        pointsRemaining: autoReward ? 0 : Math.max(0, r.points - score),
       };
     });
 
     const rawHistory = eligible
-      ? ((doc.rewardHistory as Record<string, unknown>[]) ?? [])
+      ? (doc.rewardHistory as Record<string, unknown>[]) ?? []
       : [];
     const history = [...rawHistory]
       .sort(
@@ -341,7 +339,8 @@ export class LoyaltyService {
       .lean()
       .exec();
     if (!order) return;
-    if (!CLIENT_ORDER_STATUSES.includes(order.status as OrderStatusEnum)) return;
+    if (!CLIENT_ORDER_STATUSES.includes(order.status as OrderStatusEnum))
+      return;
     if (order.loyaltyPointsCredited === true) return;
 
     const uid = this._userIdFromOrderLean(order.user);
@@ -452,15 +451,11 @@ export class LoyaltyService {
       .exec();
 
     const spendMap = await this._orderStatsByUser(userIds, storeFilter);
-    const eligibleUsers = users.filter(
-      (u) =>
-        Boolean(
-          (u as { rewardProgramEligible?: boolean }).rewardProgramEligible,
-        ),
+    const eligibleUsers = users.filter((u) =>
+      Boolean((u as { rewardProgramEligible?: boolean }).rewardProgramEligible),
     );
     const pendingEnrollment = users.filter(
-      (u) =>
-        !(u as { rewardProgramEligible?: boolean }).rewardProgramEligible,
+      (u) => !(u as { rewardProgramEligible?: boolean }).rewardProgramEligible,
     ).length;
 
     const members: LoyaltyMemberRow[] = eligibleUsers.map((u) => {
@@ -594,8 +589,7 @@ export class LoyaltyService {
     const out: Types.ObjectId[] = [];
     const seen = new Set<string>();
     for (const id of raw as (Types.ObjectId | string)[]) {
-      const hex =
-        id instanceof Types.ObjectId ? id.toHexString() : String(id);
+      const hex = id instanceof Types.ObjectId ? id.toHexString() : String(id);
       if (!Types.ObjectId.isValid(hex) || seen.has(hex)) continue;
       seen.add(hex);
       out.push(new Types.ObjectId(hex));

@@ -66,9 +66,7 @@ export class RequestStatsStore {
     }
     const routeContains = q.routeContains?.trim().toLowerCase();
     if (routeContains) {
-      list = list.filter((e) =>
-        e.route.toLowerCase().includes(routeContains),
-      );
+      list = list.filter((e) => e.route.toLowerCase().includes(routeContains));
     }
     const limit = Math.min(Math.max(q.limit ?? 200, 1), 500);
     return list.slice(-limit).reverse();
@@ -84,9 +82,7 @@ export class RequestStatsStore {
       const avgMs =
         count === 0
           ? 0
-          : Math.round(
-              rows.reduce((s, e) => s + e.durationMs, 0) / count,
-            );
+          : Math.round(rows.reduce((s, e) => s + e.durationMs, 0) / count);
       return { count, avgMs };
     };
     return { http: bucket('http'), ws: bucket('ws') };

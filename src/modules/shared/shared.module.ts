@@ -53,9 +53,7 @@ function resolveFirebaseAdminInit(config: ConfigService): FirebaseAdminInit {
   const saKey = String(sa?.private_key ?? sa?.privateKey ?? '').trim();
   if (sa && saProjectId && saEmail && saKey) {
     const projectId =
-      saProjectId ||
-      getAmFirebaseProjectId(config)?.trim() ||
-      '';
+      saProjectId || getAmFirebaseProjectId(config)?.trim() || '';
     const storageBucket =
       getAmFirebaseStorageBucket(config)?.trim() ||
       (projectId ? `${projectId}.appspot.com` : '');
@@ -88,12 +86,16 @@ function getOrCreateFirebaseApp(options: FirebaseAdminInit): App {
     {
       credential: options.credential,
       projectId: options.projectId || undefined,
-      ...(options.storageBucket ? { storageBucket: options.storageBucket } : {}),
+      ...(options.storageBucket
+        ? { storageBucket: options.storageBucket }
+        : {}),
     },
     FIREBASE_APP_NAME,
   );
   firebaseBootstrapLog.log(
-    `Initialisé (projet=${options.projectId || '—'}, bucket=${options.storageBucket || '—'})`,
+    `Initialisé (projet=${options.projectId || '—'}, bucket=${
+      options.storageBucket || '—'
+    })`,
   );
   return app;
 }

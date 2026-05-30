@@ -231,7 +231,10 @@ export class PenaltiesService {
     } catch (e) {
       const code =
         e instanceof BadRequestException
-          ? String((e.getResponse() as { message?: string | string[] })?.message ?? 'bad_request')
+          ? String(
+              (e.getResponse() as { message?: string | string[] })?.message ??
+                'bad_request',
+            )
           : 'penalty_execution_failed';
       const msg = e instanceof Error ? e.message : String(e);
       const failed = await this.penaltyModel
@@ -325,7 +328,11 @@ export class PenaltiesService {
         dto.route === PenaltyRouteEnum.PLATFORM_TO_DELIVERY ||
         (meta.from === PenaltyPartyEnum.DELIVERY &&
           dto.route !== PenaltyRouteEnum.DELIVERY_TO_PLATFORM);
-      if (needsDeliveryExplicit && !dto.deliveryUserId?.trim() && !dto.orderId) {
+      if (
+        needsDeliveryExplicit &&
+        !dto.deliveryUserId?.trim() &&
+        !dto.orderId
+      ) {
         throw new BadRequestException('delivery_user_required');
       }
     }

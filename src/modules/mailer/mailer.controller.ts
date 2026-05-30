@@ -14,7 +14,8 @@ export class MailerController {
 
   @Post('test-email')
   async sendTestEmail(@Body(ValidationPipe) body: TestEmailDto) {
-    const appName = this.configService.get<string>('APP_NAME') ?? 'Africa Meals';
+    const appName =
+      this.configService.get<string>('APP_NAME') ?? 'Africa Meals';
 
     await this.mailerService.sendSimple({
       to: body.to,

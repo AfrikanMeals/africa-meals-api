@@ -27,7 +27,10 @@ import { NotificationsService } from './notifications.service';
       },
     ]),
   ],
-  controllers: [InternalNotificationsController, AppInboxNotificationsController],
+  controllers: [
+    InternalNotificationsController,
+    AppInboxNotificationsController,
+  ],
   providers: [NotificationsService, InternalSecretGuard],
   exports: [NotificationsService],
 })

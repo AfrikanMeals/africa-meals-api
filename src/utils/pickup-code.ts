@@ -7,9 +7,7 @@ const PICKUP_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export function generatePickupCode(length = 6): string {
   let code = '';
   for (let i = 0; i < length; i += 1) {
-    code += PICKUP_CODE_ALPHABET[
-      randomInt(0, PICKUP_CODE_ALPHABET.length)
-    ]!;
+    code += PICKUP_CODE_ALPHABET[randomInt(0, PICKUP_CODE_ALPHABET.length)]!;
   }
   return code;
 }

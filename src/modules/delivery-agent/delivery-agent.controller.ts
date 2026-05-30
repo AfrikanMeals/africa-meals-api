@@ -82,8 +82,7 @@ export class DeliveryAgentController {
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
   @ApiOperation({
-    summary:
-      'Position GPS du livreur (carte + suivi client en temps réel).',
+    summary: 'Position GPS du livreur (carte + suivi client en temps réel).',
   })
   async reportLocation(
     @Req() req: Request,
@@ -98,10 +97,7 @@ export class DeliveryAgentController {
     summary:
       'Le livreur connecté s’assigne une commande en attente (passe en expédiée).',
   })
-  assignSelfToOrder(
-    @Req() req: Request,
-    @Param('orderId') orderId: string,
-  ) {
+  assignSelfToOrder(@Req() req: Request, @Param('orderId') orderId: string) {
     return this._deliveryAgent.assignSelfToOrder(
       req.user as UserModel,
       orderId,
@@ -132,7 +128,8 @@ export class DeliveryAgentController {
   @Get('payments/payout-estimate')
   @UseGuards(JwtGuard)
   @ApiOperation({
-    summary: 'Aperçu net estimé avant demande de versement Stripe Connect (livreur).',
+    summary:
+      'Aperçu net estimé avant demande de versement Stripe Connect (livreur).',
   })
   stripeConnectPayoutEstimate(@Req() req: Request) {
     return this._deliveryAgent.getPayoutEstimate(req.user as UserModel);
@@ -141,7 +138,8 @@ export class DeliveryAgentController {
   @Post('payments/request-payout')
   @UseGuards(JwtGuard)
   @ApiOperation({
-    summary: 'Demander un versement du solde disponible vers le compte bancaire (livreur).',
+    summary:
+      'Demander un versement du solde disponible vers le compte bancaire (livreur).',
   })
   stripeConnectRequestPayout(@Req() req: Request) {
     return this._deliveryAgent.requestPayout(req.user as UserModel);

@@ -79,8 +79,7 @@ function storeMongoId(store: CartGroup['store']): string {
 /** Libellé lisible pour une ligne panier (Checkout Stripe). */
 function stripeLabelForCartLine(line: Record<string, unknown>): string {
   const ent = line['entity'] as Record<string, unknown> | undefined;
-  const raw =
-    ent != null ? (ent['title'] ?? ent['name'] ?? ent['label']) : null;
+  const raw = ent != null ? ent['title'] ?? ent['name'] ?? ent['label'] : null;
   const t = raw != null ? String(raw).trim() : '';
   if (t) return t.slice(0, 120);
   const typ = String(line['type'] ?? '');
@@ -191,11 +190,14 @@ function stripeProductMetadata(params: {
   const fromEntity =
     ent != null && ent['_id'] != null ? String(ent['_id']).trim() : '';
   const entityId = (
-    fromEntity ||
-    String(line['entityId'] ?? line['entity_id'] ?? '').trim()
+    fromEntity || String(line['entityId'] ?? line['entity_id'] ?? '').trim()
   ).slice(0, 80);
-  const typ = String(line['type'] ?? '').trim().slice(0, 40);
-  const cartLineId = String(line['_id'] ?? line['id'] ?? '').trim().slice(0, 32);
+  const typ = String(line['type'] ?? '')
+    .trim()
+    .slice(0, 40);
+  const cartLineId = String(line['_id'] ?? line['id'] ?? '')
+    .trim()
+    .slice(0, 32);
   const meta: Record<string, string> = {
     afrika_store_id: storeId.slice(0, 60),
     afrika_store_name: storeName.slice(0, 120),
@@ -460,11 +462,7 @@ export class StripeGroupedCheckoutService {
       }
 
       let shipFee = 0;
-      if (
-        mode === 'delivery' &&
-        g.store?.supportsShipping &&
-        dto.addressId
-      ) {
+      if (mode === 'delivery' && g.store?.supportsShipping && dto.addressId) {
         const q = await this.quoteService.quoteForUser(user, {
           storeId,
           addressId: dto.addressId,
@@ -648,9 +646,8 @@ export class StripeGroupedCheckoutService {
     }
 
     const subtotalCents = sumCheckoutLineItemsCents(lineItems);
-    const paymentFee = await this.platformFees.computeOrderPaymentFeeFromSettings(
-      subtotalCents,
-    );
+    const paymentFee =
+      await this.platformFees.computeOrderPaymentFeeFromSettings(subtotalCents);
     if (paymentFee.platformFeeCents > 0) {
       const feeLabel =
         paymentFee.feeMode === 'percent'
@@ -792,7 +789,9 @@ export class StripeGroupedCheckoutService {
 
     const successUrl = rawSuccess.includes('{CHECKOUT_SESSION_ID}')
       ? rawSuccess
-      : `${rawSuccess}${rawSuccess.includes('?') ? '&' : '?'}session_id={CHECKOUT_SESSION_ID}`;
+      : `${rawSuccess}${
+          rawSuccess.includes('?') ? '&' : '?'
+        }session_id={CHECKOUT_SESSION_ID}`;
     const cancelUrl = rawCancel;
 
     const meta = this.groupedMetadata(user, built);
@@ -923,7 +922,10 @@ export class StripeGroupedCheckoutService {
       }
       if (r && typeof r === 'object' && 'message' in r) {
         const m = (r as { message?: unknown }).message;
-        return m === 'cart_is_empty' || (Array.isArray(m) && m.includes('cart_is_empty'));
+        return (
+          m === 'cart_is_empty' ||
+          (Array.isArray(m) && m.includes('cart_is_empty'))
+        );
       }
     }
     const msg = e instanceof Error ? e.message : String(e);
@@ -1065,10 +1067,11 @@ export class StripeGroupedCheckoutService {
     for (const storeId of storeIds) {
       const prior = priorByStore.get(storeId);
       if (prior?.orderId && !prior.error) {
-        const alreadyPaid = await this.ordersService.isOrderPaidForStripePayment(
-          prior.orderId,
-          stripePaymentId,
-        );
+        const alreadyPaid =
+          await this.ordersService.isOrderPaidForStripePayment(
+            prior.orderId,
+            stripePaymentId,
+          );
         if (alreadyPaid) {
           const g = prior.goodsCents ?? 0;
           const s = prior.shipCents ?? 0;
@@ -1329,7 +1332,9 @@ export class StripeGroupedCheckoutService {
 
     const storeIdSet = new Set<string>();
     for (const d of docs) {
-      const rows = d.perStoreBreakdown as StripePerStoreBreakdownRow[] | undefined;
+      const rows = d.perStoreBreakdown as
+        | StripePerStoreBreakdownRow[]
+        | undefined;
       if (!Array.isArray(rows)) continue;
       for (const r of rows) {
         const sid = String(r.storeId ?? '').trim();
@@ -1357,7 +1362,8 @@ export class StripeGroupedCheckoutService {
       const id = String(doc._id);
       const createdAt = (doc as { createdAt?: Date }).createdAt;
       const updatedAt = (doc as { updatedAt?: Date }).updatedAt;
-      const rows = (doc.perStoreBreakdown ?? []) as StripePerStoreBreakdownRow[];
+      const rows = (doc.perStoreBreakdown ??
+        []) as StripePerStoreBreakdownRow[];
       const orderedStoreIds: string[] = [];
       for (const r of rows) {
         const sid = String(r.storeId ?? '').trim();
@@ -1461,10 +1467,9 @@ export class StripeGroupedCheckoutService {
       pi.amount_received != null
         ? pi.amount_received
         : pi.amount != null
-          ? pi.amount
-          : undefined;
-    const currency =
-      pi.currency != null ? String(pi.currency) : undefined;
+        ? pi.amount
+        : undefined;
+    const currency = pi.currency != null ? String(pi.currency) : undefined;
     const result = await this.fulfillOrdersAfterStripePayment({
       stripePaymentId: pi.id,
       uid: String(uid),
@@ -1508,7 +1513,9 @@ export class StripeGroupedCheckoutService {
     }
     if (lastError) {
       this.logger.warn(
-        `Stripe webhook signature: no secret matched (configured=${webhookSecrets.length}) — ${String(lastError)}`,
+        `Stripe webhook signature: no secret matched (configured=${
+          webhookSecrets.length
+        }) — ${String(lastError)}`,
       );
       throw new BadRequestException('stripe_invalid_signature');
     }
@@ -1592,10 +1599,9 @@ export class StripeGroupedCheckoutService {
         pi.amount_received != null
           ? pi.amount_received
           : pi.amount != null
-            ? pi.amount
-            : undefined;
-      const currency =
-        pi.currency != null ? String(pi.currency) : undefined;
+          ? pi.amount
+          : undefined;
+      const currency = pi.currency != null ? String(pi.currency) : undefined;
       const piResult = await this.fulfillOrdersAfterStripePayment({
         stripePaymentId: pi.id,
         uid,
@@ -1607,9 +1613,7 @@ export class StripeGroupedCheckoutService {
         stripeEventKind: 'payment_intent',
       });
       if (!piResult.complete) {
-        this.logger.warn(
-          `Stripe webhook: incomplete payment_intent ${pi.id}`,
-        );
+        this.logger.warn(`Stripe webhook: incomplete payment_intent ${pi.id}`);
       }
       return { received: true };
     }

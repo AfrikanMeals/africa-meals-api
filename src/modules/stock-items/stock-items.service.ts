@@ -1,12 +1,6 @@
-import {
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import {
-  StockItemModel,
-  StockStatutEnum,
-} from '@schemas/stock-item.schema';
+import { StockItemModel, StockStatutEnum } from '@schemas/stock-item.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
@@ -67,14 +61,14 @@ export class StockItemsService {
         created instanceof Date
           ? created.toISOString()
           : typeof created === 'string'
-            ? created
-            : undefined,
+          ? created
+          : undefined,
       updatedAt:
         updated instanceof Date
           ? updated.toISOString()
           : typeof updated === 'string'
-            ? updated
-            : undefined,
+          ? updated
+          : undefined,
     };
   }
 
@@ -162,9 +156,10 @@ export class StockItemsService {
       LEGACY_STOCK_COLLECTION,
     ];
     for (const name of names) {
-      const hit = (await db
-        .collection(name)
-        .findOne(query)) as Record<string, unknown> | null;
+      const hit = (await db.collection(name).findOne(query)) as Record<
+        string,
+        unknown
+      > | null;
       if (hit) {
         return { collectionName: name, doc: hit };
       }
@@ -191,9 +186,7 @@ export class StockItemsService {
     const seuil =
       dto.seuil !== undefined ? Number(dto.seuil) : Number(hit.seuil ?? 0);
     const produit =
-      dto.produit != null
-        ? dto.produit.trim()
-        : String(hit.produit ?? '');
+      dto.produit != null ? dto.produit.trim() : String(hit.produit ?? '');
     const unite =
       dto.unite != null ? dto.unite.trim() : String(hit.unite ?? '');
     const prix =

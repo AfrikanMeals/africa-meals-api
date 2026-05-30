@@ -41,7 +41,9 @@ export class UserModel extends BaseSchema {
 
   /** Rôles plateforme (utilisateurs ADMIN) — permissions = union des rôles. */
   @Prop({
-    type: [{ type: MongooseSchema.Types.ObjectId, ref: PlatformRoleModel.name }],
+    type: [
+      { type: MongooseSchema.Types.ObjectId, ref: PlatformRoleModel.name },
+    ],
     default: [],
     name: 'platform_role_ids',
   })
@@ -179,22 +181,44 @@ export class UserModel extends BaseSchema {
   @Prop({ required: false, name: 'stripe_connect_account_id', trim: true })
   stripeConnectAccountId?: string;
 
-  @Prop({ required: false, name: 'stripe_connect_charges_enabled', default: false })
+  @Prop({
+    required: false,
+    name: 'stripe_connect_charges_enabled',
+    default: false,
+  })
   stripeConnectChargesEnabled?: boolean;
 
-  @Prop({ required: false, name: 'stripe_connect_payouts_enabled', default: false })
+  @Prop({
+    required: false,
+    name: 'stripe_connect_payouts_enabled',
+    default: false,
+  })
   stripeConnectPayoutsEnabled?: boolean;
 
-  @Prop({ required: false, name: 'stripe_connect_details_submitted', default: false })
+  @Prop({
+    required: false,
+    name: 'stripe_connect_details_submitted',
+    default: false,
+  })
   stripeConnectDetailsSubmitted?: boolean;
 
   @Prop({ required: false, name: 'stripe_connect_disabled_reason', trim: true })
   stripeConnectDisabledReason?: string;
 
-  @Prop({ required: false, name: 'stripe_connect_requirements_due', type: [String], default: [] })
+  @Prop({
+    required: false,
+    name: 'stripe_connect_requirements_due',
+    type: [String],
+    default: [],
+  })
   stripeConnectRequirementsDue?: string[];
 
-  @Prop({ required: false, name: 'stripe_connect_requirements_past_due', type: [String], default: [] })
+  @Prop({
+    required: false,
+    name: 'stripe_connect_requirements_past_due',
+    type: [String],
+    default: [],
+  })
   stripeConnectRequirementsPastDue?: string[];
 
   // @Prop({
@@ -228,7 +252,11 @@ UserSchema.pre('save', async function (next) {
     }
     const pwd = String(this['password'] ?? '');
     /** Déjà hashé (ex. finalisation inscription depuis `pending_signups`). */
-    if (pwd.startsWith('$2a$') || pwd.startsWith('$2b$') || pwd.startsWith('$2y$')) {
+    if (
+      pwd.startsWith('$2a$') ||
+      pwd.startsWith('$2b$') ||
+      pwd.startsWith('$2y$')
+    ) {
       return next();
     }
     const hashed = await bcrypt.hash(pwd, 10);

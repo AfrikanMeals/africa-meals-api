@@ -28,7 +28,8 @@ export class CreateBroadcastNotificationDto {
   type?: string;
 
   @ApiPropertyOptional({
-    description: 'Payload JSON stocké avec la notification (clés string recommandées côté mobile).',
+    description:
+      'Payload JSON stocké avec la notification (clés string recommandées côté mobile).',
     example: { screen: 'home' },
   })
   @IsOptional()

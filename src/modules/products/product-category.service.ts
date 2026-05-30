@@ -59,18 +59,12 @@ export class ProductCategoryService implements OnModuleInit {
   }
 
   private assertCanManageCategories(user: UserModel) {
-    if (
-      user.type !== UserTypeEnum.VENDOR &&
-      user.type !== UserTypeEnum.ADMIN
-    ) {
+    if (user.type !== UserTypeEnum.VENDOR && user.type !== UserTypeEnum.ADMIN) {
       throw new ForbiddenException('forbidden');
     }
   }
 
-  private mapLeanCategory(
-    cat: Record<string, unknown>,
-    productCount: number,
-  ) {
+  private mapLeanCategory(cat: Record<string, unknown>, productCount: number) {
     return {
       id: cat._id,
       _id: cat._id,
@@ -87,7 +81,12 @@ export class ProductCategoryService implements OnModuleInit {
     this.assertCanManageCategories(user);
     const title = args.title.trim();
     const dup = await this._productCategoryModel
-      .findOne({ title: new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') })
+      .findOne({
+        title: new RegExp(
+          `^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+          'i',
+        ),
+      })
       .exec();
     if (dup) {
       throw new ConflictException('category_title_exists');
@@ -221,9 +220,7 @@ export class ProductCategoryService implements OnModuleInit {
       }
       return result;
     } catch (e) {
-      this._logger.warn(
-        `filter aggregate fallback: ${(e as Error).message}`,
-      );
+      this._logger.warn(`filter aggregate fallback: ${(e as Error).message}`);
       try {
         const fallback = await this._filterWithCounts();
         if (fallback.length > 0) {
@@ -244,7 +241,9 @@ export class ProductCategoryService implements OnModuleInit {
   }
 
   /** Objet JSON strict (ids string) pour éviter les soucis de sérialisation côté client. */
-  private serializeCategoryRow(doc: Record<string, unknown>): PublicProductCategoryRow {
+  private serializeCategoryRow(
+    doc: Record<string, unknown>,
+  ): PublicProductCategoryRow {
     const id = String(doc._id ?? '');
     return {
       id,

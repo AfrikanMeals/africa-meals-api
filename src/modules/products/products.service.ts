@@ -172,7 +172,14 @@ export class ProductsService {
                               $trim: {
                                 input: {
                                   $ifNull: [
-                                    { $convert: { input: '$$g.imageUrl', to: 'string', onError: '', onNull: '' } },
+                                    {
+                                      $convert: {
+                                        input: '$$g.imageUrl',
+                                        to: 'string',
+                                        onError: '',
+                                        onNull: '',
+                                      },
+                                    },
                                     '',
                                   ],
                                 },
@@ -251,8 +258,8 @@ export class ProductsService {
         typeof row.imageUrl === 'string'
           ? row.imageUrl
           : typeof row.image_url === 'string'
-            ? row.image_url
-            : '';
+          ? row.image_url
+          : '';
       if (u.startsWith('http')) {
         await this._mediasService.delete(u).catch(() => undefined);
       }
@@ -306,125 +313,117 @@ export class ProductsService {
   }
 
   private mapVendorProductRow(p: Record<string, unknown>) {
-      const cat = p.category as Record<string, unknown> | undefined;
-      const catId =
-        cat?._id != null
-          ? String(cat._id)
-          : p.category != null
-            ? String(p.category)
+    const cat = p.category as Record<string, unknown> | undefined;
+    const catId =
+      cat?._id != null
+        ? String(cat._id)
+        : p.category != null
+        ? String(p.category)
+        : '';
+    const catTitle = cat && typeof cat.title === 'string' ? cat.title : '';
+    const mime =
+      typeof p.imageMimeType === 'string'
+        ? p.imageMimeType
+        : typeof p.image_mime_type === 'string'
+        ? p.image_mime_type
+        : '';
+    const b64 =
+      typeof p.imageBase64 === 'string'
+        ? p.imageBase64
+        : typeof p.image_base64 === 'string'
+        ? p.image_base64
+        : '';
+    const imageFromDb = mime && b64 ? `data:${mime};base64,${b64}` : undefined;
+    const urlImage =
+      typeof p.profileImage === 'string'
+        ? p.profileImage
+        : typeof p.profile_image === 'string'
+        ? p.profile_image
+        : undefined;
+    const mainSrc = imageFromDb ?? urlImage;
+    const rawGallery =
+      (p.galleryImages as unknown[]) ?? (p.gallery_images as unknown[]) ?? [];
+    const galleryUrls: string[] = [];
+    if (Array.isArray(rawGallery)) {
+      for (const g of rawGallery) {
+        const row = g as Record<string, unknown>;
+        const gUrl =
+          typeof row.imageUrl === 'string'
+            ? row.imageUrl
+            : typeof row.image_url === 'string'
+            ? row.image_url
             : '';
-      const catTitle =
-        cat && typeof cat.title === 'string' ? cat.title : '';
-      const mime =
-        typeof p.imageMimeType === 'string'
-          ? p.imageMimeType
-          : typeof p.image_mime_type === 'string'
-            ? p.image_mime_type
+        if (gUrl) {
+          galleryUrls.push(gUrl);
+          continue;
+        }
+        const gm =
+          typeof row.imageMimeType === 'string'
+            ? row.imageMimeType
+            : typeof row.image_mime_type === 'string'
+            ? row.image_mime_type
             : '';
-      const b64 =
-        typeof p.imageBase64 === 'string'
-          ? p.imageBase64
-          : typeof p.image_base64 === 'string'
-            ? p.image_base64
+        const gb =
+          typeof row.imageBase64 === 'string'
+            ? row.imageBase64
+            : typeof row.image_base64 === 'string'
+            ? row.image_base64
             : '';
-      const imageFromDb =
-        mime && b64 ? `data:${mime};base64,${b64}` : undefined;
-      const urlImage =
-        typeof p.profileImage === 'string'
-          ? p.profileImage
-          : typeof p.profile_image === 'string'
-            ? p.profile_image
-            : undefined;
-      const mainSrc = imageFromDb ?? urlImage;
-      const rawGallery =
-        (p.galleryImages as unknown[]) ??
-        (p.gallery_images as unknown[]) ??
-        [];
-      const galleryUrls: string[] = [];
-      if (Array.isArray(rawGallery)) {
-        for (const g of rawGallery) {
-          const row = g as Record<string, unknown>;
-          const gUrl =
-            typeof row.imageUrl === 'string'
-              ? row.imageUrl
-              : typeof row.image_url === 'string'
-                ? row.image_url
-                : '';
-          if (gUrl) {
-            galleryUrls.push(gUrl);
-            continue;
-          }
-          const gm =
-            typeof row.imageMimeType === 'string'
-              ? row.imageMimeType
-              : typeof row.image_mime_type === 'string'
-                ? row.image_mime_type
-                : '';
-          const gb =
-            typeof row.imageBase64 === 'string'
-              ? row.imageBase64
-              : typeof row.image_base64 === 'string'
-                ? row.image_base64
-                : '';
-          if (gm && gb) {
-            galleryUrls.push(`data:${gm};base64,${gb}`);
-          }
+        if (gm && gb) {
+          galleryUrls.push(`data:${gm};base64,${gb}`);
         }
       }
-      const profileImages = [
-        ...(mainSrc ? [mainSrc] : []),
-        ...galleryUrls,
-      ];
-      const galleryHasBase64InDb =
-        Array.isArray(rawGallery) &&
-        rawGallery.some((g) => {
-          const row = g as Record<string, unknown>;
-          const gb =
-            typeof row.imageBase64 === 'string'
-              ? row.imageBase64
-              : typeof row.image_base64 === 'string'
-                ? row.image_base64
-                : '';
-          return Boolean(gb);
-        });
-      return {
-        id: String(p._id),
-        title: String(p.title ?? ''),
-        bio: String(p.bio ?? ''),
-        about: String(p.about ?? ''),
-        originCountry: String(
-          p.originCountry ?? p.origin_country ?? '',
-        ),
-        price: Number(p.price ?? 0),
-        discountPrice: Number(
-          p.discountPrice ?? p.discount_price ?? 0,
-        ),
-        currency: String(p.currency ?? 'CAD'),
-        status: String(p.status ?? ProductStatusEnum.PENDING),
-        categoryId: catId,
-        categoryTitle: catTitle,
-        profileImage: mainSrc,
-        profileImages,
-        imageMimeType: mime || undefined,
-        imageStoredInDb: Boolean(b64) || galleryHasBase64InDb,
-        createdAt:
-          p.createdAt instanceof Date
-            ? p.createdAt.toISOString()
-            : typeof p.createdAt === 'string'
-              ? p.createdAt
-              : undefined,
-        updatedAt:
-          p.updatedAt instanceof Date
-            ? p.updatedAt.toISOString()
-            : typeof p.updatedAt === 'string'
-              ? p.updatedAt
-              : undefined,
-      };
+    }
+    const profileImages = [...(mainSrc ? [mainSrc] : []), ...galleryUrls];
+    const galleryHasBase64InDb =
+      Array.isArray(rawGallery) &&
+      rawGallery.some((g) => {
+        const row = g as Record<string, unknown>;
+        const gb =
+          typeof row.imageBase64 === 'string'
+            ? row.imageBase64
+            : typeof row.image_base64 === 'string'
+            ? row.image_base64
+            : '';
+        return Boolean(gb);
+      });
+    return {
+      id: String(p._id),
+      title: String(p.title ?? ''),
+      bio: String(p.bio ?? ''),
+      about: String(p.about ?? ''),
+      originCountry: String(p.originCountry ?? p.origin_country ?? ''),
+      price: Number(p.price ?? 0),
+      discountPrice: Number(p.discountPrice ?? p.discount_price ?? 0),
+      currency: String(p.currency ?? 'CAD'),
+      status: String(p.status ?? ProductStatusEnum.PENDING),
+      categoryId: catId,
+      categoryTitle: catTitle,
+      profileImage: mainSrc,
+      profileImages,
+      imageMimeType: mime || undefined,
+      imageStoredInDb: Boolean(b64) || galleryHasBase64InDb,
+      createdAt:
+        p.createdAt instanceof Date
+          ? p.createdAt.toISOString()
+          : typeof p.createdAt === 'string'
+          ? p.createdAt
+          : undefined,
+      updatedAt:
+        p.updatedAt instanceof Date
+          ? p.updatedAt.toISOString()
+          : typeof p.updatedAt === 'string'
+          ? p.updatedAt
+          : undefined,
+    };
   }
 
   /** Détail plat — propriétaire (sans base64, URLs galerie uniquement). */
   async findOneForStoreOwner(storeId: string, productId: string) {
-    if (!Types.ObjectId.isValid(storeId) || !Types.ObjectId.isValid(productId)) {
+    if (
+      !Types.ObjectId.isValid(storeId) ||
+      !Types.ObjectId.isValid(productId)
+    ) {
       throw new NotFoundException('product_not_found');
     }
     const row = await this._productModel
@@ -479,22 +478,22 @@ export class ProductsService {
       typeof p.categoryTitle === 'string'
         ? p.categoryTitle
         : cat && typeof cat.title === 'string'
-          ? cat.title
-          : '';
+        ? cat.title
+        : '';
     const url =
       typeof p.profileImage === 'string'
         ? p.profileImage
         : typeof p.profile_image === 'string'
-          ? p.profile_image
-          : '';
+        ? p.profile_image
+        : '';
     const profileImage =
       url.startsWith('http://') || url.startsWith('https://') ? url : undefined;
     const catId =
       cat?._id != null
         ? String(cat._id)
         : p.category != null
-          ? String(p.category)
-          : '';
+        ? String(p.category)
+        : '';
     return {
       id: String(p._id ?? p.id ?? ''),
       title: String(p.title ?? ''),
@@ -801,8 +800,7 @@ export class ProductsService {
       doc.set('profileImage', url);
     }
 
-    const rawExistingGallery =
-      (doc.galleryImages as unknown[])?.slice() ?? [];
+    const rawExistingGallery = (doc.galleryImages as unknown[])?.slice() ?? [];
     if (gallery && gallery.length > 0) {
       await this.deleteRemoteGalleryItems(rawExistingGallery);
       const { items } = await this.uploadGalleryToFirebase(
@@ -830,9 +828,7 @@ export class ProductsService {
     if (doc.profileImage?.startsWith('http')) {
       await this._mediasService.delete(doc.profileImage).catch(() => undefined);
     }
-    await this.deleteRemoteGalleryItems(
-      (doc.galleryImages as unknown[]) ?? [],
-    );
+    await this.deleteRemoteGalleryItems((doc.galleryImages as unknown[]) ?? []);
     await doc.deleteOne();
   }
 
@@ -960,7 +956,9 @@ export class ProductsService {
 
   private bumpFavoriteListCache(userId: Types.ObjectId | string) {
     const id =
-      typeof userId === 'string' ? userId : (userId as Types.ObjectId).toString();
+      typeof userId === 'string'
+        ? userId
+        : (userId as Types.ObjectId).toString();
     this._favoriteListRevision.set(
       id,
       (this._favoriteListRevision.get(id) ?? 0) + 1,
@@ -1021,77 +1019,77 @@ export class ProductsService {
                 $addFields: {
                   categoryPayload: {
                     $cond: [
-                    { $gt: [{ $size: { $ifNull: ['$_cat', []] } }, 0] },
-                    {
-                      id: {
-                        $toString: { $arrayElemAt: ['$_cat._id', 0] },
+                      { $gt: [{ $size: { $ifNull: ['$_cat', []] } }, 0] },
+                      {
+                        id: {
+                          $toString: { $arrayElemAt: ['$_cat._id', 0] },
+                        },
+                        title: { $arrayElemAt: ['$_cat.title', 0] },
+                        icon: { $arrayElemAt: ['$_cat.icon', 0] },
+                        isEnabled: {
+                          $ifNull: [
+                            { $arrayElemAt: ['$_cat.isEnabled', 0] },
+                            true,
+                          ],
+                        },
                       },
-                      title: { $arrayElemAt: ['$_cat.title', 0] },
-                      icon: { $arrayElemAt: ['$_cat.icon', 0] },
-                      isEnabled: {
-                        $ifNull: [
-                          { $arrayElemAt: ['$_cat.isEnabled', 0] },
-                          true,
-                        ],
+                      null,
+                    ],
+                  },
+                  storePayload: {
+                    $cond: [
+                      { $gt: [{ $size: { $ifNull: ['$_st', []] } }, 0] },
+                      {
+                        id: {
+                          $toString: { $arrayElemAt: ['$_st._id', 0] },
+                        },
+                        name: { $arrayElemAt: ['$_st.name', 0] },
+                        status: {
+                          $toString: { $arrayElemAt: ['$_st.status', 0] },
+                        },
                       },
-                    },
-                    null,
-                  ],
-                },
-                storePayload: {
-                  $cond: [
-                    { $gt: [{ $size: { $ifNull: ['$_st', []] } }, 0] },
-                    {
-                      id: {
-                        $toString: { $arrayElemAt: ['$_st._id', 0] },
-                      },
-                      name: { $arrayElemAt: ['$_st.name', 0] },
-                      status: {
-                        $toString: { $arrayElemAt: ['$_st.status', 0] },
-                      },
-                    },
-                    null,
-                  ],
+                      null,
+                    ],
+                  },
                 },
               },
-            },
-            {
-              $project: {
-                _id: 1,
-                title: 1,
-                profileImage: 1,
-                price: 1,
-                discountPrice: { $ifNull: ['$discountPrice', 0] },
-                currency: 1,
-                bio: 1,
-                originCountry: { $ifNull: ['$originCountry', ''] },
-                likesCount: 1,
-                averageRating: { $ifNull: ['$averageRating', 0] },
-                inCart: { $literal: false },
-                category: '$categoryPayload',
-                store: '$storePayload',
-              },
-            },
-          ] as any[],
-        },
-      },
-      {
-        $project: {
-          total: {
-            $ifNull: [
               {
-                $let: {
-                  vars: { m: { $arrayElemAt: ['$meta', 0] } },
-                  in: '$$m.total',
+                $project: {
+                  _id: 1,
+                  title: 1,
+                  profileImage: 1,
+                  price: 1,
+                  discountPrice: { $ifNull: ['$discountPrice', 0] },
+                  currency: 1,
+                  bio: 1,
+                  originCountry: { $ifNull: ['$originCountry', ''] },
+                  likesCount: 1,
+                  averageRating: { $ifNull: ['$averageRating', 0] },
+                  inCart: { $literal: false },
+                  category: '$categoryPayload',
+                  store: '$storePayload',
                 },
               },
-              0,
-            ],
+            ] as any[],
           },
-          data: 1,
         },
-      },
-    ];
+        {
+          $project: {
+            total: {
+              $ifNull: [
+                {
+                  $let: {
+                    vars: { m: { $arrayElemAt: ['$meta', 0] } },
+                    in: '$$m.total',
+                  },
+                },
+                0,
+              ],
+            },
+            data: 1,
+          },
+        },
+      ];
 
       const agg = await this._productModel
         .aggregate(pipeline)

@@ -74,8 +74,8 @@ export class SubscriptionTrialReminderService {
         trialEndRaw instanceof Date
           ? trialEndRaw
           : trialEndRaw
-            ? new Date(String(trialEndRaw))
-            : null;
+          ? new Date(String(trialEndRaw))
+          : null;
       if (!trialEnd || Number.isNaN(trialEnd.getTime())) {
         result.skipped++;
         continue;
@@ -101,7 +101,9 @@ export class SubscriptionTrialReminderService {
         continue;
       }
 
-      const plan = planById.get(String((sub as { plan?: Types.ObjectId }).plan));
+      const plan = planById.get(
+        String((sub as { plan?: Types.ObjectId }).plan),
+      );
       const reminderDays = Array.isArray(
         (plan as { trialReminderDays?: number[] } | undefined)
           ?.trialReminderDays,
@@ -113,7 +115,8 @@ export class SubscriptionTrialReminderService {
         continue;
       }
 
-      const sent = (sub as { trialRemindersSent?: number[] }).trialRemindersSent ?? [];
+      const sent =
+        (sub as { trialRemindersSent?: number[] }).trialRemindersSent ?? [];
       if (sent.includes(daysLeft)) {
         result.skipped++;
         continue;

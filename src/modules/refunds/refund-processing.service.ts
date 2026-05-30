@@ -22,9 +22,7 @@ import {
   OrderRefundRequestEntryStatusEnum,
   OrderStatusEnum,
 } from '@schemas/order.schema';
-import {
-  RefundProcessingSettingsModel,
-} from '@schemas/refund-processing-settings.schema';
+import { RefundProcessingSettingsModel } from '@schemas/refund-processing-settings.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
@@ -257,10 +255,7 @@ export class RefundProcessingService {
     user: UserModel,
     opts?: { page?: number; take?: number },
   ): Promise<RefundListResponse> {
-    if (
-      user.type !== UserTypeEnum.ADMIN &&
-      user.type !== UserTypeEnum.VENDOR
-    ) {
+    if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('forbidden');
     }
 
@@ -366,8 +361,7 @@ export class RefundProcessingService {
         stripeProcessingFeeCents,
         stripeProcessingFeeOnCustomerCents,
         customerRefundCents,
-        totalPrice:
-          typeof o.totalPrice === 'number' ? o.totalPrice : 0,
+        totalPrice: typeof o.totalPrice === 'number' ? o.totalPrice : 0,
         shippingPrice:
           typeof o.shippingPrice === 'number' ? o.shippingPrice : 0,
         stripeParentPaymentId: stripeParentIdFromOrder(raw),
@@ -386,18 +380,13 @@ export class RefundProcessingService {
           (st === OrderRefundRequestEntryStatusEnum.PENDING ||
             st === OrderRefundRequestEntryStatusEnum.PAUSED ||
             st === OrderRefundRequestEntryStatusEnum.APPROVED),
-        canPause:
-          isAdmin && st === OrderRefundRequestEntryStatusEnum.PENDING,
-        canResume:
-          isAdmin && st === OrderRefundRequestEntryStatusEnum.PAUSED,
+        canPause: isAdmin && st === OrderRefundRequestEntryStatusEnum.PENDING,
+        canResume: isAdmin && st === OrderRefundRequestEntryStatusEnum.PAUSED,
         canCancel:
           isAdmin &&
           (st === OrderRefundRequestEntryStatusEnum.PENDING ||
             st === OrderRefundRequestEntryStatusEnum.PAUSED),
-        canSetFeeOverride:
-          isAdmin &&
-          active &&
-          !isVendorCancel,
+        canSetFeeOverride: isAdmin && active && !isVendorCancel,
         cancelReasonSource: cancelSource,
         platformRefundFeeOverrideCents:
           overrideCents !== undefined && overrideCents !== null
@@ -472,8 +461,8 @@ export class RefundProcessingService {
     const userId = u?._id
       ? String(u._id)
       : u?.id
-        ? String(u.id)
-        : String(order.user ?? '');
+      ? String(u.id)
+      : String(order.user ?? '');
     return {
       userId,
       fullName: u?.fullName?.trim() || 'Client',
@@ -490,7 +479,10 @@ export class RefundProcessingService {
     if (!parentId.trim()) {
       return {
         paymentAmountCents: grossCents,
-        totalStripeFeeCents: effectiveStripeProcessingFeeCents(null, grossCents),
+        totalStripeFeeCents: effectiveStripeProcessingFeeCents(
+          null,
+          grossCents,
+        ),
       };
     }
     const paymentAmountCents = await this.stripeFees.paymentTotalCentsForParent(
@@ -521,8 +513,9 @@ export class RefundProcessingService {
     const { paymentAmountCents, totalStripeFeeCents } =
       await this.stripeContextForRefund(order);
 
-    const standard =
-      await this.platformFeesService.computeRefundSplit(grossCents);
+    const standard = await this.platformFeesService.computeRefundSplit(
+      grossCents,
+    );
 
     let platformFeeCents = standard.platformFeeCents;
     if (
@@ -560,7 +553,10 @@ export class RefundProcessingService {
       sliceAmountCents: afterPlatformCents,
       maxDeductibleCents: afterPlatformCents,
     });
-    const customerRefundCents = Math.max(0, afterPlatformCents - stripeOnCustomer);
+    const customerRefundCents = Math.max(
+      0,
+      afterPlatformCents - stripeOnCustomer,
+    );
 
     return {
       ...standard,
@@ -610,7 +606,8 @@ export class RefundProcessingService {
       orderId,
       platformRefundFeeOverrideCents: fee,
       customerRefundCents: split.customerRefundCents,
-      stripeProcessingFeeOnCustomerCents: split.stripeProcessingFeeOnCustomerCents,
+      stripeProcessingFeeOnCustomerCents:
+        split.stripeProcessingFeeOnCustomerCents,
     };
   }
 
@@ -626,9 +623,7 @@ export class RefundProcessingService {
 
   private patchLatestEntry(
     order: OrderModel,
-    patch: Partial<
-      NonNullable<OrderModel['refundRequestLog']>[number]
-    >,
+    patch: Partial<NonNullable<OrderModel['refundRequestLog']>[number]>,
   ): void {
     const log = [...(order.refundRequestLog ?? [])];
     if (!log.length) {
@@ -817,15 +812,21 @@ export class RefundProcessingService {
 
     const feeNote =
       split.platformFeeCents > 0
-        ? ` (frais plateforme ${(split.platformFeeCents / 100).toFixed(2)} $ CA)`
+        ? ` (frais plateforme ${(split.platformFeeCents / 100).toFixed(
+            2,
+          )} $ CA)`
         : '';
     const stripeNote =
       split.stripeProcessingFeeOnCustomerCents > 0
-        ? ` · frais Stripe ${(split.stripeProcessingFeeOnCustomerCents / 100).toFixed(2)} $ CA`
+        ? ` · frais Stripe ${(
+            split.stripeProcessingFeeOnCustomerCents / 100
+          ).toFixed(2)} $ CA`
         : '';
     const vendorPenaltyNote =
       split.vendorPenaltyCents > 0
-        ? ` · pénalité restaurant ${(split.vendorPenaltyCents / 100).toFixed(2)} $ CA`
+        ? ` · pénalité restaurant ${(split.vendorPenaltyCents / 100).toFixed(
+            2,
+          )} $ CA`
         : '';
 
     this.patchLatestEntry(order, {
@@ -836,7 +837,8 @@ export class RefundProcessingService {
       refundGrossCents: split.grossCents,
       platformRefundFeeCents: split.platformFeeCents,
       stripeProcessingFeeCents: split.stripeProcessingFeeCents,
-      stripeProcessingFeeOnCustomerCents: split.stripeProcessingFeeOnCustomerCents,
+      stripeProcessingFeeOnCustomerCents:
+        split.stripeProcessingFeeOnCustomerCents,
       customerRefundCents: split.customerRefundCents,
       vendorPenaltyCents: split.vendorPenaltyCents,
     });
@@ -863,7 +865,9 @@ export class RefundProcessingService {
       });
     } catch (revErr) {
       this.logger.warn(
-        `Transfer reversal before refund ${args.orderId}: ${revErr instanceof Error ? revErr.message : String(revErr)}`,
+        `Transfer reversal before refund ${args.orderId}: ${
+          revErr instanceof Error ? revErr.message : String(revErr)
+        }`,
       );
     }
 
@@ -890,15 +894,27 @@ export class RefundProcessingService {
 
     let completedNote =
       split.platformFeeCents > 0
-        ? `Remboursement de ${netCad.toFixed(2)} $ CA effectué (frais plateforme ${(split.platformFeeCents / 100).toFixed(2)} $ CA retenus).`
+        ? `Remboursement de ${netCad.toFixed(
+            2,
+          )} $ CA effectué (frais plateforme ${(
+            split.platformFeeCents / 100
+          ).toFixed(2)} $ CA retenus).`
         : 'Remboursement effectué sur votre moyen de paiement.';
     if (split.stripeProcessingFeeOnCustomerCents > 0) {
-      completedNote += ` Frais Stripe : ${(split.stripeProcessingFeeOnCustomerCents / 100).toFixed(2)} $ CA.`;
+      completedNote += ` Frais Stripe : ${(
+        split.stripeProcessingFeeOnCustomerCents / 100
+      ).toFixed(2)} $ CA.`;
     }
     if (split.isVendorCancellationRefund) {
-      completedNote = `Remboursement intégral de ${netCad.toFixed(2)} $ CA effectué (annulation par le restaurant, sans frais plateforme pour le client).`;
+      completedNote = `Remboursement intégral de ${netCad.toFixed(
+        2,
+      )} $ CA effectué (annulation par le restaurant, sans frais plateforme pour le client).`;
       if (split.vendorPenaltyCents > 0) {
-        completedNote += ` Pénalité restaurant : ${(split.vendorPenaltyCents / 100).toFixed(2)} $ CA (frais plateforme + Stripe, reprise du virement Connect).`;
+        completedNote += ` Pénalité restaurant : ${(
+          split.vendorPenaltyCents / 100
+        ).toFixed(
+          2,
+        )} $ CA (frais plateforme + Stripe, reprise du virement Connect).`;
       }
     }
 
@@ -912,7 +928,8 @@ export class RefundProcessingService {
       refundGrossCents: split.grossCents,
       platformRefundFeeCents: split.platformFeeCents,
       stripeProcessingFeeCents: split.stripeProcessingFeeCents,
-      stripeProcessingFeeOnCustomerCents: split.stripeProcessingFeeOnCustomerCents,
+      stripeProcessingFeeOnCustomerCents:
+        split.stripeProcessingFeeOnCustomerCents,
       customerRefundCents: split.customerRefundCents,
       vendorPenaltyCents: split.vendorPenaltyCents,
     });
@@ -932,7 +949,9 @@ export class RefundProcessingService {
       .notifyPartiesOrderRealtimeByOrderId(args.orderId, order.status)
       .catch((err) =>
         this.logger.warn(
-          `WS after refund: ${err instanceof Error ? err.message : String(err)}`,
+          `WS after refund: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
         ),
       );
 
@@ -987,7 +1006,9 @@ export class RefundProcessingService {
       } catch (e) {
         failed += 1;
         this.logger.warn(
-          `Cron refund skip/fail ${oid}: ${e instanceof Error ? e.message : String(e)}`,
+          `Cron refund skip/fail ${oid}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
         );
       }
     }
@@ -1014,7 +1035,11 @@ export class RefundProcessingService {
     };
     const bodies: Record<typeof args.kind, string> = {
       processing: `${args.storeName} : votre remboursement est en cours de traitement.`,
-      completed: `${args.storeName} : votre remboursement a été effectué (${args.amountCad.toFixed(2)} $ CA).`,
+      completed: `${
+        args.storeName
+      } : votre remboursement a été effectué (${args.amountCad.toFixed(
+        2,
+      )} $ CA).`,
       rejected: `${args.storeName} : votre demande de remboursement a été refusée.`,
       paused: `${args.storeName} : le traitement de votre remboursement est temporairement en pause.`,
       resumed: `${args.storeName} : le traitement de votre remboursement reprend.`,
@@ -1036,7 +1061,9 @@ export class RefundProcessingService {
       });
     } catch (e) {
       this.logger.warn(
-        `notifyCustomerRefundStatus: ${e instanceof Error ? e.message : String(e)}`,
+        `notifyCustomerRefundStatus: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       );
     }
 
@@ -1047,7 +1074,9 @@ export class RefundProcessingService {
     const html = `
       <p>Bonjour ${args.customer.fullName},</p>
       <p>${body}</p>
-      <p>Commande : <strong>#AE-${args.orderId.slice(-6).toUpperCase()}</strong></p>
+      <p>Commande : <strong>#AE-${args.orderId
+        .slice(-6)
+        .toUpperCase()}</strong></p>
       ${args.note ? `<p><em>${args.note}</em></p>` : ''}
       <p>— ${appName}</p>
     `;

@@ -11,7 +11,10 @@ import { BusinessReportsService } from './business-reports.service';
 @Module({
   imports: [
     MongooseModule.forFeature([
-      { name: BusinessStoreReportModel.name, schema: BusinessStoreReportSchema },
+      {
+        name: BusinessStoreReportModel.name,
+        schema: BusinessStoreReportSchema,
+      },
       { name: OrderModel.name, schema: OrderSchema },
     ]),
   ],

@@ -18,10 +18,7 @@ import {
   DeliveryAgentApplicationStatus,
 } from '@schemas/delivery-agent-application.schema';
 import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema';
-import {
-  OrderModel,
-  OrderStatusEnum,
-} from '@schemas/order.schema';
+import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { haversineDistance } from 'src/utils/helpers';
 import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
@@ -94,10 +91,7 @@ export class DeliveryAgentService {
   }
 
   assertEligible(user: UserModel) {
-    if (
-      user.type === UserTypeEnum.VENDOR ||
-      user.type === UserTypeEnum.ADMIN
-    ) {
+    if (user.type === UserTypeEnum.VENDOR || user.type === UserTypeEnum.ADMIN) {
       throw new ForbiddenException('delivery_agent_not_available_for_account');
     }
   }
@@ -136,9 +130,7 @@ export class DeliveryAgentService {
         ? new Date(doc.submittedAt).toISOString()
         : null,
       rejectionReason: doc.rejectionReason ?? null,
-      updatedAt: doc.updatedAt
-        ? new Date(doc.updatedAt).toISOString()
-        : null,
+      updatedAt: doc.updatedAt ? new Date(doc.updatedAt).toISOString() : null,
     };
   }
 
@@ -324,16 +316,11 @@ export class DeliveryAgentService {
       userPhone: String(user?.phoneNumber ?? '').trim(),
       userProfileImageUrl: profile.length > 0 ? profile : null,
       userType: String(user?.type ?? ''),
-      createdAt: doc.createdAt
-        ? new Date(doc.createdAt).toISOString()
-        : null,
+      createdAt: doc.createdAt ? new Date(doc.createdAt).toISOString() : null,
     };
   }
 
-  async listApplicationsAdmin(
-    user: UserModel,
-    statusFilter?: string,
-  ) {
+  async listApplicationsAdmin(user: UserModel, statusFilter?: string) {
     this.assertAdmin(user);
     const filter: Record<string, unknown> = {};
     const status = (statusFilter ?? '').trim().toUpperCase();
@@ -352,7 +339,11 @@ export class DeliveryAgentService {
       .exec();
 
     const userIds = [
-      ...new Set(rows.map((r) => String(r.user)).filter((id) => Types.ObjectId.isValid(id))),
+      ...new Set(
+        rows
+          .map((r) => String(r.user))
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
     ];
     const users = await this._users
       .find({ _id: { $in: userIds } })
@@ -393,10 +384,7 @@ export class DeliveryAgentService {
     await app.save();
 
     await this._users
-      .updateOne(
-        { _id: app.user },
-        { $set: { type: UserTypeEnum.DELIVERY } },
-      )
+      .updateOne({ _id: app.user }, { $set: { type: UserTypeEnum.DELIVERY } })
       .exec();
 
     void this._notifyApplicationReview({
@@ -414,12 +402,15 @@ export class DeliveryAgentService {
       .select('fullName email phoneNumber profileImage type')
       .lean()
       .exec();
-    return this.mapAdminRow(lean!, u as {
-      fullName?: string;
-      email?: string;
-      phoneNumber?: string;
-      type?: string;
-    });
+    return this.mapAdminRow(
+      lean!,
+      u as {
+        fullName?: string;
+        email?: string;
+        phoneNumber?: string;
+        type?: string;
+      },
+    );
   }
 
   async rejectApplicationAdmin(
@@ -462,12 +453,15 @@ export class DeliveryAgentService {
       .select('fullName email phoneNumber profileImage type')
       .lean()
       .exec();
-    return this.mapAdminRow(lean!, u as {
-      fullName?: string;
-      email?: string;
-      phoneNumber?: string;
-      type?: string;
-    });
+    return this.mapAdminRow(
+      lean!,
+      u as {
+        fullName?: string;
+        email?: string;
+        phoneNumber?: string;
+        type?: string;
+      },
+    );
   }
 
   async suspendApplicationAdmin(
@@ -495,10 +489,7 @@ export class DeliveryAgentService {
     await app.save();
 
     await this._users
-      .updateOne(
-        { _id: app.user },
-        { $set: { type: UserTypeEnum.USER } },
-      )
+      .updateOne({ _id: app.user }, { $set: { type: UserTypeEnum.USER } })
       .exec();
 
     void this._notifyApplicationReview({
@@ -517,12 +508,15 @@ export class DeliveryAgentService {
       .select('fullName email phoneNumber profileImage type')
       .lean()
       .exec();
-    return this.mapAdminRow(lean!, u as {
-      fullName?: string;
-      email?: string;
-      phoneNumber?: string;
-      type?: string;
-    });
+    return this.mapAdminRow(
+      lean!,
+      u as {
+        fullName?: string;
+        email?: string;
+        phoneNumber?: string;
+        type?: string;
+      },
+    );
   }
 
   private escapeHtml(value: string): string {
@@ -569,13 +563,17 @@ export class DeliveryAgentService {
     const title = approved
       ? 'Candidature livreur acceptée'
       : suspended
-        ? 'Compte livreur suspendu'
-        : 'Candidature livreur refusée';
+      ? 'Compte livreur suspendu'
+      : 'Candidature livreur refusée';
     const body = approved
       ? 'Félicitations ! Votre candidature livreur a été acceptée. Ouvrez l’application et passez en mode livreur pour commencer.'
       : suspended
-        ? `Votre compte livreur a été suspendu. Vous ne pouvez plus prendre de courses.${reason ? ` Motif : ${reason}` : ''} Contactez le support pour plus d’informations.`
-        : `Votre candidature livreur n’a pas été retenue.${reason ? ` Motif : ${reason}` : ''} Vous pouvez mettre à jour votre dossier et soumettre à nouveau.`;
+      ? `Votre compte livreur a été suspendu. Vous ne pouvez plus prendre de courses.${
+          reason ? ` Motif : ${reason}` : ''
+        } Contactez le support pour plus d’informations.`
+      : `Votre candidature livreur n’a pas été retenue.${
+          reason ? ` Motif : ${reason}` : ''
+        } Vous pouvez mettre à jour votre dossier et soumettre à nouveau.`;
     const safeName = this.escapeHtml(name);
     const safeBody = this.escapeHtml(body);
     const safeReason = reason ? this.escapeHtml(reason) : '';
@@ -586,12 +584,12 @@ export class DeliveryAgentService {
 <p>${safeBody}</p>
 <p>— L’équipe ${this.escapeHtml(appName)}</p>`.trim()
       : suspended
-        ? `
+      ? `
 <p>Bonjour ${safeName},</p>
 <p>${safeBody}</p>
 ${safeReason ? `<p><strong>Motif :</strong> ${safeReason}</p>` : ''}
 <p>— L’équipe ${this.escapeHtml(appName)}</p>`.trim()
-        : `
+      : `
 <p>Bonjour ${safeName},</p>
 <p>${safeBody}</p>
 ${safeReason ? `<p><strong>Motif :</strong> ${safeReason}</p>` : ''}
@@ -783,10 +781,7 @@ ${safeReason ? `<p><strong>Motif :</strong> ${safeReason}</p>` : ''}
       throw new BadRequestException('order_not_shippable');
     }
     const existingAssignee = orderDoc.assignedDeliveryUser;
-    if (
-      existingAssignee &&
-      String(existingAssignee) !== String(agentId)
-    ) {
+    if (existingAssignee && String(existingAssignee) !== String(agentId)) {
       throw new BadRequestException('order_assigned_to_other');
     }
     if (
@@ -1047,9 +1042,7 @@ ${safeReason ? `<p><strong>Motif :</strong> ${safeReason}</p>` : ''}
     return { line: line || undefined, coords };
   }
 
-  private shippingLineFromOrder(
-    order: Record<string, unknown>,
-  ): string {
+  private shippingLineFromOrder(order: Record<string, unknown>): string {
     const fromOrder = this.deliveryAddressFromOrder(order);
     if (fromOrder?.line) return fromOrder.line;
     const userAddr = this.defaultUserAddressFromPopulated(order.user);
@@ -1118,9 +1111,7 @@ ${safeReason ? `<p><strong>Motif :</strong> ${safeReason}</p>` : ''}
     };
   }
 
-  private coordsFromAddressLike(
-    addr: unknown,
-  ): [number, number] | undefined {
+  private coordsFromAddressLike(addr: unknown): [number, number] | undefined {
     if (!addr || typeof addr !== 'object') return undefined;
     const loc = (addr as { location?: { coordinates?: unknown } }).location;
     const c = loc?.coordinates;

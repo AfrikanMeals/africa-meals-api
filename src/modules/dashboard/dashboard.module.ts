@@ -6,10 +6,7 @@ import {
   ProductRatingModel,
   ProductRatingSchema,
 } from '@schemas/product_rating.schema';
-import {
-  StockItemModel,
-  StockItemSchema,
-} from '@schemas/stock-item.schema';
+import { StockItemModel, StockItemSchema } from '@schemas/stock-item.schema';
 import {
   StoreRatingModel,
   StoreRatingSchema,

@@ -124,7 +124,11 @@ export class AuthService {
     });
 
     try {
-      await this._sendSignupVerificationEmail(email, args.fullName.trim(), code);
+      await this._sendSignupVerificationEmail(
+        email,
+        args.fullName.trim(),
+        code,
+      );
     } catch (err: unknown) {
       await this._pendingSignupModel.deleteMany({ email }).exec();
       const msg = err instanceof Error ? err.message : String(err);
@@ -242,7 +246,11 @@ export class AuthService {
     const { source, signupRole, ...rest } = args;
     const userType = this._mapSignupRoleToUserType(signupRole);
     this.logger.log(
-      `[register] demande source=${source} email=${args.email ?? '—'} fullName=${args.fullName ?? '—'} signupRole=${signupRole ?? '—'} type=${userType}`,
+      `[register] demande source=${source} email=${
+        args.email ?? '—'
+      } fullName=${args.fullName ?? '—'} signupRole=${
+        signupRole ?? '—'
+      } type=${userType}`,
     );
 
     const user = await this._usersModel.findOne({
@@ -250,7 +258,9 @@ export class AuthService {
     });
     if (user) {
       this.logger.warn(
-        `[register] conflit user_${source}_conflict pour ${args.email ?? args[source]}`,
+        `[register] conflit user_${source}_conflict pour ${
+          args.email ?? args[source]
+        }`,
       );
       throw new ConflictException(`user_${source}_conflict`);
     }
@@ -268,8 +278,7 @@ export class AuthService {
       source === 'email' && rest.email && rest.email.includes('test');
 
     /** Compte vérifié tout de suite : pas d’SMTP / pas d’email à envoyer */
-    const verifyImmediately =
-      skipEmailVerification || isTestAccount;
+    const verifyImmediately = skipEmailVerification || isTestAccount;
 
     const activationCode = verifyImmediately
       ? undefined
@@ -311,19 +320,29 @@ export class AuthService {
         message?: string;
       };
       this.logger.error(
-        `[register] échec Mongoose create code=${mongo.code ?? 'n/a'} keyPattern=${JSON.stringify(mongo.keyPattern)} keyValue=${JSON.stringify(mongo.keyValue)} message=${mongo.message ?? err}`,
+        `[register] échec Mongoose create code=${
+          mongo.code ?? 'n/a'
+        } keyPattern=${JSON.stringify(
+          mongo.keyPattern,
+        )} keyValue=${JSON.stringify(mongo.keyValue)} message=${
+          mongo.message ?? err
+        }`,
         err instanceof Error ? err.stack : undefined,
       );
       if (mongo.code === 11000) {
-        throw new ConflictException(
-          `user_${source}_conflict`,
-        );
+        throw new ConflictException(`user_${source}_conflict`);
       }
       throw err;
     }
 
     this.logger.log(
-      `[register] utilisateur créé id=${newUser._id.toString()} email=${newUser.email} type=${newUser.type} emailVerifiedAt=${verifyImmediately ? newUser.emailVerifiedAt?.toISOString?.() ?? 'oui' : 'non'}`,
+      `[register] utilisateur créé id=${newUser._id.toString()} email=${
+        newUser.email
+      } type=${newUser.type} emailVerifiedAt=${
+        verifyImmediately
+          ? newUser.emailVerifiedAt?.toISOString?.() ?? 'oui'
+          : 'non'
+      }`,
     );
 
     if (!verifyImmediately && activationCode) {
@@ -346,11 +365,9 @@ export class AuthService {
           err && typeof err === 'object' && 'body' in err
             ? JSON.stringify((err as { body?: unknown }).body)
             : err instanceof Error
-              ? err.message
-              : String(err);
-        this.logger.warn(
-          `Échec envoi email d'inscription (SMTP) : ${detail}`,
-        );
+            ? err.message
+            : String(err);
+        this.logger.warn(`Échec envoi email d'inscription (SMTP) : ${detail}`);
         // En local, clé invalide / 401 « Unauthenticated » : on valide quand même le compte pour pouvoir se connecter
         if (process.env.NODE_ENV !== 'production') {
           await this._usersModel.findByIdAndUpdate(newUser._id, {
@@ -439,7 +456,9 @@ export class AuthService {
       if (pictureFromGoogle && !user.profileImage) {
         setDoc.profileImage = pictureFromGoogle;
       }
-      await this._usersModel.updateOne({ _id: user._id }, { $set: setDoc }).exec();
+      await this._usersModel
+        .updateOne({ _id: user._id }, { $set: setDoc })
+        .exec();
       return {
         ...this.issueAuthTokens(user._id.toString()),
       };
@@ -487,7 +506,8 @@ export class AuthService {
       throw new UnauthorizedException('invalid_apple_token');
     }
 
-    const appleId = decoded.firebase?.identities?.['apple.com']?.[0] ?? decoded.sub;
+    const appleId =
+      decoded.firebase?.identities?.['apple.com']?.[0] ?? decoded.sub;
     const emailRaw = decoded.email?.trim().toLowerCase();
     const fullName =
       (typeof decoded.name === 'string' && decoded.name.trim()) ||
@@ -844,9 +864,7 @@ export class AuthService {
           `[forgot-password] SMTP non configuré — code pour ${email} : ${code}`,
         );
       } else {
-        this.logger.warn(
-          `[forgot-password] SMTP non configuré pour ${email}`,
-        );
+        this.logger.warn(`[forgot-password] SMTP non configuré pour ${email}`);
       }
       return generic;
     }
@@ -988,9 +1006,7 @@ export class AuthService {
   ) {
     let url: string | undefined;
     try {
-      const existing = await this._usersModel
-        .findOne({ _id: userId })
-        .exec();
+      const existing = await this._usersModel.findOne({ _id: userId }).exec();
       if (!existing) throw new NotFoundException('user_not_found');
       if (user._id.toString() !== userId) {
         throw new ForbiddenException('forbidden');
@@ -1042,14 +1058,9 @@ export class AuthService {
       }
     }
     // Dossier profil : supprime aussi d’éventuels fichiers orphelins (anciens uploads)
-    await this._mediasService.deleteFilesWithPrefix(
-      `users/${userId}/profile`,
-    );
+    await this._mediasService.deleteFilesWithPrefix(`users/${userId}/profile`);
     await this._usersModel
-      .updateOne(
-        { _id: userId },
-        { $unset: { profile_image: 1 } },
-      )
+      .updateOne({ _id: userId }, { $unset: { profile_image: 1 } })
       .exec();
     return this.findUserById(userId);
   }

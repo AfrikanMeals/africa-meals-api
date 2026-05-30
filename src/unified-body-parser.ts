@@ -43,11 +43,12 @@ export function unifiedJsonBodyParser(options?: {
     req.on('end', () => {
       try {
         const raw = Buffer.concat(chunks);
-        const encoding = String(req.headers['content-encoding'] || '').toLowerCase();
-        const decoded =
-          encoding.includes('gzip')
-            ? zlib.gunzipSync(raw)
-            : zlib.inflateSync(raw);
+        const encoding = String(
+          req.headers['content-encoding'] || '',
+        ).toLowerCase();
+        const decoded = encoding.includes('gzip')
+          ? zlib.gunzipSync(raw)
+          : zlib.inflateSync(raw);
         if (preserveRawBody) {
           req.rawBody = decoded;
         }

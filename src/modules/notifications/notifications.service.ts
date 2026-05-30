@@ -66,9 +66,7 @@ export class NotificationsService implements OnModuleInit {
       if (!Array.isArray(arr)) continue;
       for (const row of arr) {
         if (!row || typeof row !== 'object') continue;
-        const token = String(
-          (row as { token?: unknown }).token ?? '',
-        ).trim();
+        const token = String((row as { token?: unknown }).token ?? '').trim();
         if (!token || seen.has(token)) continue;
         seen.add(token);
         out.push({ token });
@@ -157,9 +155,7 @@ export class NotificationsService implements OnModuleInit {
 
     const last = page[page.length - 1];
     const nextCursor =
-      hasMore && last
-        ? (last._id as Types.ObjectId).toString()
-        : null;
+      hasMore && last ? (last._id as Types.ObjectId).toString() : null;
 
     const unreadCount = await this.countUnreadForUser(userId);
 
@@ -308,7 +304,9 @@ export class NotificationsService implements OnModuleInit {
       await this.pushGlobalToAllFcmUsers({
         title: args.title,
         body: args.body,
-        data: this.stringifyDataPayload(args.data, { type: args.type ?? 'in_app' }),
+        data: this.stringifyDataPayload(args.data, {
+          type: args.type ?? 'in_app',
+        }),
       });
     }
 
@@ -394,9 +392,7 @@ export class NotificationsService implements OnModuleInit {
     const chunk: string[] = [];
     for await (const u of cur) {
       const id = u._id;
-      chunk.push(
-        id instanceof Types.ObjectId ? id.toString() : String(id),
-      );
+      chunk.push(id instanceof Types.ObjectId ? id.toString() : String(id));
       if (chunk.length >= 500) {
         await this.sendMulticastNotification({
           recipientUserIds: [...chunk],
@@ -448,8 +444,8 @@ export class NotificationsService implements OnModuleInit {
         id instanceof Types.ObjectId
           ? id.toHexString()
           : Types.ObjectId.isValid(String(id))
-            ? new Types.ObjectId(String(id)).toHexString()
-            : String(id);
+          ? new Types.ObjectId(String(id)).toHexString()
+          : String(id);
       const merged = this.mergeFcmTokenRows(raw.fcm_tokens, raw.fcmTokens);
       for (const row of merged) {
         tokenRows.push({ userId: uid, token: row.token });
@@ -530,15 +526,12 @@ export class NotificationsService implements OnModuleInit {
 
     if (invalidTokens.size > 0) {
       const arr = [...invalidTokens];
-      await this.userModel.collection.updateMany(
-        {},
-        {
-          $pull: {
-            fcm_tokens: { token: { $in: arr } },
-            fcmTokens: { token: { $in: arr } },
-          },
-        } as Record<string, unknown>,
-      );
+      await this.userModel.collection.updateMany({}, {
+        $pull: {
+          fcm_tokens: { token: { $in: arr } },
+          fcmTokens: { token: { $in: arr } },
+        },
+      } as Record<string, unknown>);
     }
 
     return { sent, failures, deviceCount };
@@ -600,7 +593,9 @@ export class NotificationsService implements OnModuleInit {
       await this.createUserScopedNotification({
         recipientUserId: args.userId,
         title,
-        body: (args.body ?? '').trim() || NotificationsService.orderStatusLabelFr(args.status),
+        body:
+          (args.body ?? '').trim() ||
+          NotificationsService.orderStatusLabelFr(args.status),
         type: 'order',
         data,
         sendPush: false,
@@ -833,13 +828,21 @@ export class NotificationsService implements OnModuleInit {
     const title = approved
       ? 'Candidature livreur acceptée'
       : suspended
-        ? 'Compte livreur suspendu'
-        : 'Candidature livreur refusée';
+      ? 'Compte livreur suspendu'
+      : 'Candidature livreur refusée';
     const body = approved
       ? 'Félicitations ! Vous pouvez maintenant utiliser le mode livreur dans l’application.'
       : suspended
-        ? `Votre compte livreur a été suspendu.${args.rejectionReason?.trim() ? ` Motif : ${args.rejectionReason.trim()}` : ''}`
-        : `Votre candidature n’a pas été retenue.${args.rejectionReason?.trim() ? ` Motif : ${args.rejectionReason.trim()}` : ''}`;
+      ? `Votre compte livreur a été suspendu.${
+          args.rejectionReason?.trim()
+            ? ` Motif : ${args.rejectionReason.trim()}`
+            : ''
+        }`
+      : `Votre candidature n’a pas été retenue.${
+          args.rejectionReason?.trim()
+            ? ` Motif : ${args.rejectionReason.trim()}`
+            : ''
+        }`;
     const data: Record<string, unknown> = {
       type: 'delivery_agent_application',
       audience: 'customer',
@@ -942,7 +945,9 @@ export class NotificationsService implements OnModuleInit {
       });
       if (res.deviceCount === 0) {
         this.logger.warn(
-          `pushVendorOrderNotify: aucun jeton FCM pour les IDs ${ids.join(', ')}`,
+          `pushVendorOrderNotify: aucun jeton FCM pour les IDs ${ids.join(
+            ', ',
+          )}`,
         );
       }
     } catch (e) {
@@ -986,8 +991,7 @@ export class NotificationsService implements OnModuleInit {
       data.storeName = sname;
     }
 
-    const displayTitle =
-      sname || args.title?.trim() || 'African Meals';
+    const displayTitle = sname || args.title?.trim() || 'African Meals';
 
     await this.appNotificationModel.insertMany(
       valid.map((uid) => ({
@@ -1076,32 +1080,29 @@ export class NotificationsService implements OnModuleInit {
     const now = new Date();
     // Mise à jour atomique (évite VersionError si d’autres requêtes modifient l’utilisateur en parallèle).
     // Champ MongoDB = `fcm_tokens` (@Prop name), pas `fcmTokens`.
-    await this.userModel.updateOne(
-      { _id: new Types.ObjectId(userId) },
-      [
-        {
-          $set: {
-            fcm_tokens: {
-              $slice: [
-                {
-                  $concatArrays: [
-                    [{ token: t, platform: p, updatedAt: now }],
-                    {
-                      $filter: {
-                        input: { $ifNull: ['$fcm_tokens', []] },
-                        as: 'x',
-                        cond: { $ne: ['$$x.token', t] },
-                      },
+    await this.userModel.updateOne({ _id: new Types.ObjectId(userId) }, [
+      {
+        $set: {
+          fcm_tokens: {
+            $slice: [
+              {
+                $concatArrays: [
+                  [{ token: t, platform: p, updatedAt: now }],
+                  {
+                    $filter: {
+                      input: { $ifNull: ['$fcm_tokens', []] },
+                      as: 'x',
+                      cond: { $ne: ['$$x.token', t] },
                     },
-                  ],
-                },
-                MAX_TOKENS_PER_USER,
-              ],
-            },
+                  },
+                ],
+              },
+              MAX_TOKENS_PER_USER,
+            ],
           },
         },
-      ],
-    );
+      },
+    ]);
   }
 
   async removeUserFcmToken(userId: string, token: string): Promise<void> {

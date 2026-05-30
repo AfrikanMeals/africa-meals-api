@@ -43,7 +43,9 @@ export class CreatePenaltyDto {
   @IsMongoId()
   storeId?: string;
 
-  @ApiPropertyOptional({ description: 'Propriétaire vendeur (si pas de storeId).' })
+  @ApiPropertyOptional({
+    description: 'Propriétaire vendeur (si pas de storeId).',
+  })
   @IsOptional()
   @IsMongoId()
   vendorUserId?: string;

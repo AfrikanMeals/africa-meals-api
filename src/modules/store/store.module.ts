@@ -14,6 +14,7 @@ import { TeamsModule } from '@modules/teams/teams.module';
 import { UsersModule } from '@modules/users/users.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { BillingModule } from '@modules/billing/billing.module';
+import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -49,6 +50,7 @@ import { StoreService } from './store.service';
     TeamsModule,
     SupportedCountriesModule,
     OffersModule,
+    SubscriptionsModule,
     CartModule,
     OrdersModule,
     StockItemsModule,

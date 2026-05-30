@@ -3,7 +3,12 @@ import { HydratedDocument, Types } from 'mongoose';
 
 @Schema({ timestamps: true, collection: 'store_roles' })
 export class StoreRoleModel {
-  @Prop({ type: Types.ObjectId, ref: 'StoreModel', required: true, index: true })
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'StoreModel',
+    required: true,
+    index: true,
+  })
   store: Types.ObjectId;
 
   @Prop({ type: String, required: true, trim: true })

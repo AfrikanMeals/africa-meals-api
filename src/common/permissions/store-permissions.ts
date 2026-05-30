@@ -37,9 +37,7 @@ export const STORE_PERMISSION_LABELS: Record<StorePermission, string> = {
   'chat.view': 'Messagerie / chat',
 };
 
-export const ALL_STORE_PERMISSIONS: StorePermission[] = [
-  ...STORE_PERMISSIONS,
-];
+export const ALL_STORE_PERMISSIONS: StorePermission[] = [...STORE_PERMISSIONS];
 
 /** Ordre d’affichage des rôles système prédéfinis. */
 export const STORE_ROLE_TEMPLATE_ORDER = [

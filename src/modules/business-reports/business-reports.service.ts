@@ -56,11 +56,7 @@ export class BusinessReportsService {
     let storeId: Types.ObjectId | null = null;
     if (rawStore instanceof Types.ObjectId) {
       storeId = rawStore;
-    } else if (
-      rawStore &&
-      typeof rawStore === 'object' &&
-      '_id' in rawStore
-    ) {
+    } else if (rawStore && typeof rawStore === 'object' && '_id' in rawStore) {
       const sid = (rawStore as { _id: unknown })._id;
       if (sid instanceof Types.ObjectId) {
         storeId = sid;
@@ -193,8 +189,7 @@ export class BusinessReportsService {
 
     for (const r of rows as Record<string, unknown>[]) {
       const st = r['store'] as Record<string, unknown> | null;
-      const storeId =
-        st && st['_id'] != null ? String(st['_id']) : 'unknown';
+      const storeId = st && st['_id'] != null ? String(st['_id']) : 'unknown';
       const storeName =
         typeof st?.['name'] === 'string' && st['name'].trim()
           ? String(st['name']).trim()
@@ -258,8 +253,7 @@ export class BusinessReportsService {
         _id: String(r['_id']),
         createdAt: r['createdAt'] as Date | undefined,
         details: String(r['details'] ?? ''),
-        category:
-          typeof r['category'] === 'string' ? r['category'] : undefined,
+        category: typeof r['category'] === 'string' ? r['category'] : undefined,
         order: orderPayload,
         reporter: reporterPayload,
       });

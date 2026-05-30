@@ -1,4 +1,7 @@
-import { prepareIncomingUploadFile, isGzipBuffer } from './incoming-upload-file';
+import {
+  prepareIncomingUploadFile,
+  isGzipBuffer,
+} from './incoming-upload-file';
 import zlib from 'zlib';
 
 describe('incoming-upload-file', () => {

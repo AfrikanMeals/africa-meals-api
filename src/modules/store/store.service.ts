@@ -38,14 +38,22 @@ import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
-import { CreateStoreDto, DailyMenuSlotDto, PatchVendorShippingZonesDto } from './dto/store.dto';
+import {
+  CreateStoreDto,
+  DailyMenuSlotDto,
+  PatchVendorShippingZonesDto,
+} from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
-import { DrinksService, maxDrinkOrderQuantity } from '@modules/drinks/drinks.service';
+import {
+  DrinksService,
+  maxDrinkOrderQuantity,
+} from '@modules/drinks/drinks.service';
 import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
 import { isStripeConnectOnboardingCompleteUser } from '@modules/billing/stripe/stripe-connect-visibility';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { TeamsService } from '@modules/teams/teams.service';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 
 @Injectable()
 export class StoreService {
@@ -80,7 +88,9 @@ export class StoreService {
   }
 
   /** Devise imposée par le pays sélectionné (régions actives). */
-  private async _resolveCurrencyForCountryCode(countryCode: string): Promise<string> {
+  private async _resolveCurrencyForCountryCode(
+    countryCode: string,
+  ): Promise<string> {
     const code = String(countryCode ?? '').toUpperCase();
     if (!code) {
       throw new BadRequestException('address_country_required');
@@ -154,6 +164,9 @@ export class StoreService {
 
   @Inject(StripeConnectService)
   private readonly _stripeConnect: StripeConnectService;
+
+  @Inject(SubscriptionsService)
+  private readonly _subscriptionsService: SubscriptionsService;
 
   getStoreModel() {
     return this._storeModel;
@@ -270,8 +283,7 @@ export class StoreService {
     if (count === 0) {
       return { averageRating: 0, reviewCount: 0 };
     }
-    const averageRating =
-      Math.round((sum / count) * 10) / 10;
+    const averageRating = Math.round((sum / count) * 10) / 10;
     return { averageRating, reviewCount: count };
   }
 
@@ -312,7 +324,10 @@ export class StoreService {
       ordersCount,
     };
     const oid = o['_id'];
-    if (oid != null && typeof (oid as { toString?: () => string }).toString === 'function') {
+    if (
+      oid != null &&
+      typeof (oid as { toString?: () => string }).toString === 'function'
+    ) {
       plain['id'] = (oid as { toString: () => string }).toString();
     }
     delete plain['_id'];
@@ -387,6 +402,11 @@ export class StoreService {
       user._id as Types.ObjectId,
     );
 
+    await this._subscriptionsService.ensureStoreDefaultFreePlan(
+      store._id as Types.ObjectId,
+      user._id as Types.ObjectId,
+    );
+
     return this.findOneById(store._id.toString());
   }
 
@@ -396,7 +416,8 @@ export class StoreService {
     const requested = storeId?.trim();
     let targetId = requested;
     if (!targetId) {
-      const owned = access.find((a) => a.isOwner)?.storeId ?? access[0]?.storeId;
+      const owned =
+        access.find((a) => a.isOwner)?.storeId ?? access[0]?.storeId;
       targetId = owned;
     }
     if (!targetId) {
@@ -472,9 +493,8 @@ export class StoreService {
         : undefined;
 
     const rawMenu =
-      (doc.dailyMenuByWeekday as
-        | Array<Record<string, unknown>>
-        | undefined) ?? [];
+      (doc.dailyMenuByWeekday as Array<Record<string, unknown>> | undefined) ??
+      [];
     const dailyMenuByWeekday = this.normalizeDailyMenuForApi(rawMenu);
 
     return {
@@ -555,7 +575,9 @@ export class StoreService {
         items: itemList.map((it) => ({
           productId: new Types.ObjectId(it.productId),
           stockUnlimited: it.stockUnlimited,
-          stockRemaining: it.stockUnlimited ? 0 : Math.max(0, it.stockRemaining),
+          stockRemaining: it.stockUnlimited
+            ? 0
+            : Math.max(0, it.stockRemaining),
         })),
       }),
     );
@@ -744,7 +766,13 @@ export class StoreService {
     productId: string,
     qty: number,
   ): Promise<'skip' | 'ok' | 'fail'> {
-    if (!(await this.dailyMenuNeedsLimitedDecrement(storeId, dayOfWeek, productId))) {
+    if (
+      !(await this.dailyMenuNeedsLimitedDecrement(
+        storeId,
+        dayOfWeek,
+        productId,
+      ))
+    ) {
       return 'skip';
     }
     const ok = await this.doAtomicDecrementDailyMenuProductStock(
@@ -815,7 +843,9 @@ export class StoreService {
 
   private async assertDailyMenuStockForCart(
     store: StoreModel,
-    cart: { items: Array<{ type?: string; entityId?: string; quantity?: number }> },
+    cart: {
+      items: Array<{ type?: string; entityId?: string; quantity?: number }>;
+    },
   ): Promise<void> {
     const raw = (store as { dailyMenuByWeekday?: unknown }).dailyMenuByWeekday;
     const rows = this.normalizeDailyMenuForApi(
@@ -871,16 +901,17 @@ export class StoreService {
     for (const st of stores) {
       const sid = String(st._id);
       const name = String(st.name ?? '');
-      const raw = (
-        st as {
-          vendorMessages?: Array<{
-            _id?: { toString(): string };
-            message?: string;
-            from?: string;
-            createdAt?: Date;
-          }>;
-        }
-      ).vendorMessages ?? [];
+      const raw =
+        (
+          st as {
+            vendorMessages?: Array<{
+              _id?: { toString(): string };
+              message?: string;
+              from?: string;
+              createdAt?: Date;
+            }>;
+          }
+        ).vendorMessages ?? [];
       for (const m of raw) {
         const mid =
           m._id != null
@@ -924,9 +955,13 @@ export class StoreService {
       const sign = pts > 0 ? '+' : '';
       const abs = Math.abs(pts);
       items.push({
-        id: `user:reward:${String(r.createdAt ?? '')}:${String(r.reason ?? '').slice(0, 24)}`,
+        id: `user:reward:${String(r.createdAt ?? '')}:${String(
+          r.reason ?? '',
+        ).slice(0, 24)}`,
         source: 'user',
-        message: `${sign}${pts} point${abs !== 1 ? 's' : ''} fidélité — ${String(r.reason ?? '')}`,
+        message: `${sign}${pts} point${
+          abs !== 1 ? 's' : ''
+        } fidélité — ${String(r.reason ?? '')}`,
         from: 'FIDÉLITÉ',
         createdAt:
           r.createdAt instanceof Date
@@ -964,7 +999,9 @@ export class StoreService {
       throw new NotFoundException('store_not_found');
     }
     if (
-      ![StoreStatusEnum.PENDING, StoreStatusEnum.REVISION].includes(store.status)
+      ![StoreStatusEnum.PENDING, StoreStatusEnum.REVISION].includes(
+        store.status,
+      )
     ) {
       throw new ForbiddenException('store_not_editable');
     }
@@ -974,7 +1011,9 @@ export class StoreService {
     if (dup) {
       throw new ConflictException('store_already_exists');
     }
-    const addrDoc = store.address as AddressModel & { _id: { toString(): string } };
+    const addrDoc = store.address as AddressModel & {
+      _id: { toString(): string };
+    };
     const addrId = addrDoc._id.toString();
     await this._addressesService.patchById(addrId, {
       ...args.address,
@@ -1038,9 +1077,7 @@ export class StoreService {
     if (store.status === StoreStatusEnum.INACTIVE) {
       throw new ForbiddenException('store_not_editable');
     }
-    const shippingZones = args.supportsShipping
-      ? args.shippingZones ?? []
-      : [];
+    const shippingZones = args.supportsShipping ? args.shippingZones ?? [] : [];
     if (args.supportsShipping && shippingZones.length > 0) {
       for (const z of shippingZones) {
         if (z.minDistance > z.maxDistance) {
@@ -1601,11 +1638,7 @@ export class StoreService {
           await rollbackDrinks();
           throw new BadRequestException('drink_quantity_limit_exceeded');
         }
-        const ok = await this._drinksService.tryConsumeStock(
-          storeId,
-          did,
-          qty,
-        );
+        const ok = await this._drinksService.tryConsumeStock(storeId, did, qty);
         if (!ok) {
           await rollbackDrinks();
           throw new BadRequestException('drink_insufficient_stock');
@@ -1708,7 +1741,8 @@ export class StoreService {
     const updatedRaw = s.updatedAt ?? s.updated_at;
     const toIso = (raw: unknown) => {
       if (raw instanceof Date) return raw.toISOString();
-      if (typeof raw === 'string' && raw.length) return new Date(raw).toISOString();
+      if (typeof raw === 'string' && raw.length)
+        return new Date(raw).toISOString();
       return undefined;
     };
 
@@ -1762,7 +1796,8 @@ export class StoreService {
     }
 
     if (previousStatus !== status) {
-      const statusLabel = status === StoreStatusEnum.ACTIVE ? 'actif' : 'inactif';
+      const statusLabel =
+        status === StoreStatusEnum.ACTIVE ? 'actif' : 'inactif';
       doc.vendorMessages = [
         ...(doc.vendorMessages || []),
         {
@@ -1805,7 +1840,10 @@ export class StoreService {
       if (o && typeof o === 'object' && '_id' in o) {
         return String((o as { _id: { toString(): string } })._id);
       }
-      if (o != null && typeof (o as { toString?: () => string }).toString === 'function') {
+      if (
+        o != null &&
+        typeof (o as { toString?: () => string }).toString === 'function'
+      ) {
         return String(o);
       }
       return '';
@@ -1839,28 +1877,43 @@ export class StoreService {
       .select('fullName email')
       .lean()
       .exec();
-    const emailTo = String(owner?.email ?? '').trim().toLowerCase();
+    const emailTo = String(owner?.email ?? '')
+      .trim()
+      .toLowerCase();
     if (!emailTo) return;
     const ownerName = String(owner?.fullName ?? '').trim();
-    const appName = this._configService.get<string>('APP_NAME') ?? 'AfrikanEats';
+    const appName =
+      this._configService.get<string>('APP_NAME') ?? 'AfrikanEats';
     const statusLabel = status === StoreStatusEnum.ACTIVE ? 'Actif' : 'Inactif';
-    const safeStore = this._escapeHtml(String(store.name ?? 'Votre restaurant'));
+    const safeStore = this._escapeHtml(
+      String(store.name ?? 'Votre restaurant'),
+    );
     const safeOwner = this._escapeHtml(ownerName || 'restaurant');
     const safeStatus = this._escapeHtml(statusLabel);
     const html = `
 <!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:system-ui,Segoe UI,sans-serif;line-height:1.5;color:#374151;">
   <p>Bonjour ${safeOwner},</p>
-  <p>Le statut de votre restaurant <strong>${safeStore}</strong> a ete mis a jour par l'equipe <strong>${this._escapeHtml(appName)}</strong>.</p>
+  <p>Le statut de votre restaurant <strong>${safeStore}</strong> a ete mis a jour par l'equipe <strong>${this._escapeHtml(
+      appName,
+    )}</strong>.</p>
   <p>Nouveau statut : <strong>${safeStatus}</strong>.</p>
   <p style="font-size:14px;color:#6b7280;">
-    ${status === StoreStatusEnum.ACTIVE ? "Votre boutique est maintenant active et peut recevoir des commandes." : "Votre boutique est actuellement inactive. Si besoin, contactez l'equipe support pour plus d'informations."}
+    ${
+      status === StoreStatusEnum.ACTIVE
+        ? 'Votre boutique est maintenant active et peut recevoir des commandes.'
+        : "Votre boutique est actuellement inactive. Si besoin, contactez l'equipe support pour plus d'informations."
+    }
   </p>
-  <p style="font-size:14px;color:#9ca3af;">— L’equipe ${this._escapeHtml(appName)}</p>
+  <p style="font-size:14px;color:#9ca3af;">— L’equipe ${this._escapeHtml(
+    appName,
+  )}</p>
 </body></html>`.trim();
     const text = [
       `Bonjour ${ownerName || 'restaurant'},`,
       ``,
-      `Le statut de votre restaurant "${String(store.name ?? 'Restaurant')}" a ete mis a jour par l'equipe ${appName}.`,
+      `Le statut de votre restaurant "${String(
+        store.name ?? 'Restaurant',
+      )}" a ete mis a jour par l'equipe ${appName}.`,
       `Nouveau statut : ${statusLabel}.`,
       ``,
       status === StoreStatusEnum.ACTIVE
@@ -1938,10 +1991,14 @@ export class StoreService {
     const html = `
 <!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:system-ui,Segoe UI,sans-serif;line-height:1.5;color:#374151;">
   <p>Bonjour ${safe.prenom} ${safe.nom},</p>
-  <p>Vous avez été invité·e à créer un compte <strong>restaurant</strong> sur <strong>${safe.app}</strong>.</p>
+  <p>Vous avez été invité·e à créer un compte <strong>restaurant</strong> sur <strong>${
+    safe.app
+  }</strong>.</p>
   <p>Cliquez sur le lien ci-dessous pour commencer votre inscription :</p>
   <p><a href="${hrefAttr}" style="display:inline-block;margin:12px 0;padding:12px 20px;background:#7c3aed;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">Créer mon compte restaurant</a></p>
-  <p style="word-break:break-all;font-size:14px;color:#6b7280;">${this._escapeHtml(signupUrl)}</p>
+  <p style="word-break:break-all;font-size:14px;color:#6b7280;">${this._escapeHtml(
+    signupUrl,
+  )}</p>
   <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;" />
   <p style="font-size:14px;color:#6b7280;">Coordonnées communiquées :<br/>
   Téléphone : ${safe.phone}<br/>

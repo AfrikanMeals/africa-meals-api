@@ -1,4 +1,10 @@
-import { IsBoolean, IsMongoId, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsMongoId,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 export class PostSupportChatMessageDto {
   @IsString()

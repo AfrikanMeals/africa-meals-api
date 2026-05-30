@@ -3,11 +3,7 @@ import { Types } from 'mongoose';
 
 /** Normalise une requête de recherche pour stockage / dédup / agrégation. */
 export function normalizeRecommendationSearchTerm(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .slice(0, 200);
+  return raw.trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 200);
 }
 
 /**

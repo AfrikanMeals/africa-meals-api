@@ -6,7 +6,12 @@ export type StoreMemberStatus = (typeof STORE_MEMBER_STATUSES)[number];
 
 @Schema({ timestamps: true, collection: 'store_members' })
 export class StoreMemberModel {
-  @Prop({ type: Types.ObjectId, ref: 'StoreModel', required: true, index: true })
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'StoreModel',
+    required: true,
+    index: true,
+  })
   store: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'UserModel', required: true, index: true })

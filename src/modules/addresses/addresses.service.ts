@@ -90,15 +90,10 @@ export class AddressesService {
       { _id: authUser._id },
       { $push: { addresses: created._id } },
     );
-    const address = await this.addressModel
-      .findById(created._id)
-      .lean()
-      .exec();
+    const address = await this.addressModel.findById(created._id).lean().exec();
     const addresses = await this.listUserAddresses(authUser._id.toString());
     return {
-      address: address
-        ? (address as unknown as Record<string, unknown>)
-        : null,
+      address: address ? (address as unknown as Record<string, unknown>) : null,
       addresses,
     };
   }
@@ -207,15 +202,16 @@ export class AddressesService {
     const address = await this.addressModel.findById(id).lean().exec();
     const addresses = await this.listUserAddresses(user._id.toString());
     return {
-      address: address
-        ? (address as unknown as Record<string, unknown>)
-        : null,
+      address: address ? (address as unknown as Record<string, unknown>) : null,
       addresses,
     };
   }
 
   /** Supprime une adresse et la retire de l’utilisateur. */
-  async delete(id: string, user: UserModel): Promise<UserAddressesMutationResult> {
+  async delete(
+    id: string,
+    user: UserModel,
+  ): Promise<UserAddressesMutationResult> {
     const u = await this.userModel
       .findById(user._id)
       .select('addresses')
@@ -259,9 +255,7 @@ export class AddressesService {
     const address = await this.addressModel.findById(id).lean().exec();
     const addresses = await this.listUserAddresses(user._id.toString());
     return {
-      address: address
-        ? (address as unknown as Record<string, unknown>)
-        : null,
+      address: address ? (address as unknown as Record<string, unknown>) : null,
       addresses,
     };
   }

@@ -3,9 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { DeliveryDriverModel } from '@schemas/delivery-driver.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { AnyBulkWriteOperation, Model, Types } from 'mongoose';
-import {
-  randomLngLatInBbox,
-} from './delivery-driver-geo';
+import { randomLngLatInBbox } from './delivery-driver-geo';
 
 type StoreGeo = {
   _id: Types.ObjectId;
@@ -52,7 +50,9 @@ function deterministicPercentCoords(seed: string): { x: number; y: number } {
 export class DeliveryDriversCityMigrationService
   implements OnApplicationBootstrap
 {
-  private readonly logger = new Logger(DeliveryDriversCityMigrationService.name);
+  private readonly logger = new Logger(
+    DeliveryDriversCityMigrationService.name,
+  );
 
   constructor(
     @InjectModel(DeliveryDriverModel.name)

@@ -7,7 +7,8 @@ import { GraphQLJSONObject } from 'graphql-scalars';
 })
 export class StoreMenuPayloadGql {
   @Field(() => GraphQLJSONObject, {
-    description: 'Champs `menu-meta` (bio, profileImage, averageRating, name, …).',
+    description:
+      'Champs `menu-meta` (bio, profileImage, averageRating, name, …).',
   })
   store: Record<string, unknown>;
 

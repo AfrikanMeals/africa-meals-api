@@ -40,8 +40,9 @@ export class ShopHomeService {
 
   private cacheKey(user?: UserModel) {
     const id =
-      (user as unknown as { _id?: { toString?: () => string } })?._id?.toString?.() ??
-      '';
+      (
+        user as unknown as { _id?: { toString?: () => string } }
+      )?._id?.toString?.() ?? '';
     return `shophome:v2-stripe:${id || 'anon'}`;
   }
 

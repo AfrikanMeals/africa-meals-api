@@ -64,7 +64,9 @@ export class OrdersController {
   /** Motifs d’annulation / refus (codes pour listes déroulantes). */
   @Get('cancel-reasons')
   @UseGuards(JwtGuard)
-  @ApiOperation({ summary: 'Codes motifs annulation commande (vendeur / client)' })
+  @ApiOperation({
+    summary: 'Codes motifs annulation commande (vendeur / client)',
+  })
   listCancelReasons() {
     return {
       vendor: [...VENDOR_ORDER_CANCEL_REASON_CODES],
@@ -144,7 +146,9 @@ export class OrdersController {
   /** Retrait : le vendeur / l’admin valide le code → commande livrée (`completed`). */
   @Post(':id/confirm-pickup')
   @UseGuards(JwtGuard)
-  @ApiOperation({ summary: 'Confirmer un retrait avec le code client (VENDOR / ADMIN)' })
+  @ApiOperation({
+    summary: 'Confirmer un retrait avec le code client (VENDOR / ADMIN)',
+  })
   async confirmPickup(
     @Req() req: Request,
     @Param('id') id: string,
@@ -161,7 +165,9 @@ export class OrdersController {
   /** Demande de remboursement (client propriétaire de la commande). */
   @Post(':id/refund-request')
   @UseGuards(JwtGuard)
-  @ApiOperation({ summary: 'Demander un remboursement (journal sur la commande)' })
+  @ApiOperation({
+    summary: 'Demander un remboursement (journal sur la commande)',
+  })
   async requestRefund(
     @Req() req: Request,
     @Param('id') id: string,

@@ -61,7 +61,9 @@ export class AuthController {
   @Post('register')
   async register(@Body(ValidationPipe) args: RegisterDto) {
     this.logger.log(
-      `[POST /auth/register] corps validé email=${args.email} fullName=${args.fullName} source=${args.source} signupRole=${args.signupRole ?? '—'}`,
+      `[POST /auth/register] corps validé email=${args.email} fullName=${
+        args.fullName
+      } source=${args.source} signupRole=${args.signupRole ?? '—'}`,
     );
     return this._authService.register(args);
   }
@@ -108,7 +110,9 @@ export class AuthController {
   @Post('admin/google')
   async authWithGoogleAdmin(@Body(ValidationPipe) args: GoogleAuthDto) {
     this.logger.log(
-      `admin google auth: idToken présent (longueur=${args.idToken?.length ?? 0})`,
+      `admin google auth: idToken présent (longueur=${
+        args.idToken?.length ?? 0
+      })`,
     );
     return this._authService.authWithGoogleAsVendor(args);
   }
@@ -124,7 +128,9 @@ export class AuthController {
   @Post('admin/apple')
   async authWithAppleAdmin(@Body(ValidationPipe) args: AppleAuthDto) {
     this.logger.log(
-      `admin apple auth: idToken présent (longueur=${args.idToken?.length ?? 0})`,
+      `admin apple auth: idToken présent (longueur=${
+        args.idToken?.length ?? 0
+      })`,
     );
     return this._authService.authWithAppleAsVendor(args);
   }
@@ -140,7 +146,9 @@ export class AuthController {
   @Post('admin/facebook')
   async authWithFacebookAdmin(@Body(ValidationPipe) args: FacebookAuthDto) {
     this.logger.log(
-      `admin facebook auth: idToken présent (longueur=${args.idToken?.length ?? 0})`,
+      `admin facebook auth: idToken présent (longueur=${
+        args.idToken?.length ?? 0
+      })`,
     );
     return this._authService.authWithFacebookAsVendor(args);
   }
@@ -229,10 +237,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Retirer un jeton FCM' })
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  async removeFcmToken(
-    @Req() req: Request,
-    @Body() body: RemoveFcmTokenDto,
-  ) {
+  async removeFcmToken(@Req() req: Request, @Body() body: RemoveFcmTokenDto) {
     const user = req.user as UserModel;
     await this._notifications.removeUserFcmToken(
       user._id.toString(),
@@ -375,9 +380,7 @@ export class AuthController {
     const mimeIn = (body.mimeType || '').trim();
     const nameOk = /\.(m4a|mp3|aac|wav|webm|ogg)$/i.test(name);
     const mimeOk =
-      /^(audio\/(mpeg|mp4|webm|wav|x-m4a|aac|3gpp)|video\/webm)$/i.test(
-        mimeIn,
-      );
+      /^(audio\/(mpeg|mp4|webm|wav|x-m4a|aac|3gpp)|video\/webm)$/i.test(mimeIn);
     if (!nameOk && !mimeOk) {
       throw new BadRequestException('invalid_file_type');
     }

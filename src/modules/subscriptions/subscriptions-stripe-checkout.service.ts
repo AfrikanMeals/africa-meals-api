@@ -79,8 +79,7 @@ export class SubscriptionsStripeCheckoutService {
       this.config.get<string>('SERVER_URL')?.replace(/\/$/, '') ??
       'http://localhost:9000';
     const configured =
-      this.config.get<string>('STRIPE_SUBSCRIPTION_SUCCESS_URL')?.trim() ||
-      '';
+      this.config.get<string>('STRIPE_SUBSCRIPTION_SUCCESS_URL')?.trim() || '';
     const raw =
       configured ||
       `${server}/api/billing/stripe/subscription-return?session_id={CHECKOUT_SESSION_ID}`;
@@ -89,7 +88,9 @@ export class SubscriptionsStripeCheckoutService {
     }
     return raw.includes('{CHECKOUT_SESSION_ID}')
       ? raw
-      : `${raw}${raw.includes('?') ? '&' : '?'}session_id={CHECKOUT_SESSION_ID}`;
+      : `${raw}${
+          raw.includes('?') ? '&' : '?'
+        }session_id={CHECKOUT_SESSION_ID}`;
   }
 
   private subscriptionCancelUrl(): string {
@@ -155,8 +156,7 @@ export class SubscriptionsStripeCheckoutService {
           )
           .exec();
       } else {
-        const samePlan =
-          String(activeExisting.plan) === String(dto.planId);
+        const samePlan = String(activeExisting.plan) === String(dto.planId);
         const samePeriod = activeExisting.billingPeriod === period;
         if (samePlan && samePeriod) {
           throw new BadRequestException('subscription_unchanged');
@@ -265,9 +265,7 @@ export class SubscriptionsStripeCheckoutService {
     }
 
     const pricePaid =
-      opts.amountCents != null
-        ? opts.amountCents / 100
-        : existing.pricePaid;
+      opts.amountCents != null ? opts.amountCents / 100 : existing.pricePaid;
 
     const patch: Record<string, unknown> = {
       status: 'ACTIVE' as VendorSubscriptionStatus,
@@ -300,7 +298,12 @@ export class SubscriptionsStripeCheckoutService {
           status: 'ACTIVE',
           _id: { $ne: existing._id },
         },
-        { $set: { status: 'EXPIRED' as VendorSubscriptionStatus, endsAt: nowExpire } },
+        {
+          $set: {
+            status: 'EXPIRED' as VendorSubscriptionStatus,
+            endsAt: nowExpire,
+          },
+        },
       )
       .exec();
 
@@ -359,9 +362,7 @@ export class SubscriptionsStripeCheckoutService {
       return { activated: false };
     }
     if (pi.status != null && pi.status !== 'succeeded') {
-      this.logger.warn(
-        `Subscription PI ${pi.id}: status=${pi.status}`,
-      );
+      this.logger.warn(`Subscription PI ${pi.id}: status=${pi.status}`);
       return { activated: false };
     }
 
@@ -375,8 +376,8 @@ export class SubscriptionsStripeCheckoutService {
       pi.amount_received != null
         ? pi.amount_received
         : pi.amount != null
-          ? pi.amount
-          : undefined;
+        ? pi.amount
+        : undefined;
 
     return this.activatePendingSubscription(pendingSubId, {
       expectedOwnerId,
@@ -506,10 +507,7 @@ export class SubscriptionsStripeCheckoutService {
       return { activated: false };
     }
 
-    if (
-      session.payment_status !== 'paid' &&
-      session.status !== 'complete'
-    ) {
+    if (session.payment_status !== 'paid' && session.status !== 'complete') {
       this.logger.warn(
         `Subscription checkout ${session.id}: not paid (status=${session.status}, payment=${session.payment_status})`,
       );
@@ -531,8 +529,7 @@ export class SubscriptionsStripeCheckoutService {
       expectedOwnerId,
       metaUid: session.metadata?.uid?.trim(),
       amountCents,
-      currency:
-        session.currency != null ? String(session.currency) : undefined,
+      currency: session.currency != null ? String(session.currency) : undefined,
       stripeCheckoutSessionId: session.id,
     });
   }

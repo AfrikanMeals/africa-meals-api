@@ -40,10 +40,7 @@ export class PlatformShippingSettingsController {
     @Req() req: Request,
     @Body() body: UpdatePlatformShippingSettingsDto,
   ) {
-    return this._platformShipping.updateSettings(
-      req.user as UserModel,
-      body,
-    );
+    return this._platformShipping.updateSettings(req.user as UserModel, body);
   }
 
   /**

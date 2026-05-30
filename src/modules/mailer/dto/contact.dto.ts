@@ -25,7 +25,10 @@ export class ContactDto {
   @MaxLength(200)
   subject?: string;
 
-  @ApiProperty({ example: 'Bonjour, j’aimerais en savoir plus sur…', maxLength: 5000 })
+  @ApiProperty({
+    example: 'Bonjour, j’aimerais en savoir plus sur…',
+    maxLength: 5000,
+  })
   @IsString()
   @IsNotEmpty()
   @MaxLength(5000)

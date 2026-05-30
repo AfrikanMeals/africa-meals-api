@@ -1,10 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import {
-  AddressModel,
-  AddressTypeEnum,
-} from '@schemas/address.schema';
+import { AddressModel, AddressTypeEnum } from '@schemas/address.schema';
 import { CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { ProductCategoryModel } from '@schemas/product-category.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
@@ -12,8 +9,7 @@ import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 
 /** Comptes créés par le seed (idempotent, commandes remplacées à chaque passage). */
-const SYNTHETIC_EMAIL_RE =
-  /^afrikan-demo-client-[0-9]+@seed\.local$/;
+const SYNTHETIC_EMAIL_RE = /^afrikan-demo-client-[0-9]+@seed\.local$/;
 
 const LEGACY_SIM_CLIENT = 'simclient@demo.africameals.local';
 
@@ -64,13 +60,7 @@ const DEMO_DISHES: Array<{
   },
   {
     label: 'Puff-puff',
-    categoryKeywords: [
-      'Fruits',
-      'desert',
-      'dessert',
-      'snack',
-      'Fast Food',
-    ],
+    categoryKeywords: ['Fruits', 'desert', 'dessert', 'snack', 'Fast Food'],
     unitPrice: 6.5,
     qty: 3,
   },
@@ -206,7 +196,8 @@ export class OrdersDemoSeedService implements OnModuleInit {
 
       for (let i = 0; i < DEMO_DISHES.length; i++) {
         const dish = DEMO_DISHES[i]!;
-        const st = ORDER_STATUSES[i] ?? ORDER_STATUSES[ORDER_STATUSES.length - 1]!;
+        const st =
+          ORDER_STATUSES[i] ?? ORDER_STATUSES[ORDER_STATUSES.length - 1]!;
         const client = clientPool[i % clientPool.length]!;
         const categoryTitle = this.pickCategoryTitle(
           dish.categoryKeywords,
@@ -296,9 +287,7 @@ export class OrdersDemoSeedService implements OnModuleInit {
         return hit.title;
       }
     }
-    const repas = categories.find((c) =>
-      /repas|plat|meal/i.test(c.title),
-    );
+    const repas = categories.find((c) => /repas|plat|meal/i.test(c.title));
     return repas?.title ?? categories[0]!.title;
   }
 
@@ -353,7 +342,9 @@ export class OrdersDemoSeedService implements OnModuleInit {
 
     if (deleted > 0) {
       this.logger.log(
-        `Commandes démo : ${deleted} ancienne(s) commande(s) retirée(s) pour la boutique ${String(storeId)}.`,
+        `Commandes démo : ${deleted} ancienne(s) commande(s) retirée(s) pour la boutique ${String(
+          storeId,
+        )}.`,
       );
     }
   }

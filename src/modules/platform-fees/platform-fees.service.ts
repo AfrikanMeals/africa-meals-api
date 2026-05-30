@@ -356,7 +356,9 @@ export class PlatformFeesService {
   }
 
   /** Frais appliqués lors d'un versement manuel vendeur (request payout). */
-  async computePayoutFeeFromSettings(grossCents: number): Promise<PayoutFeeSplit> {
+  async computePayoutFeeFromSettings(
+    grossCents: number,
+  ): Promise<PayoutFeeSplit> {
     const doc = await this._ensureDoc();
     const settings = this._toResponse(doc);
     return computePayoutFeeSplit(grossCents, {
@@ -462,14 +464,11 @@ export class PlatformFeesService {
     $set.platformOrderFeeMode = platformOrderFeeMode;
     $set.payoutFeeMode = payoutFeeMode;
 
-    const refundFeeFixed =
-      dto.refundFeeFixed ?? current.refundFeeFixed ?? 0;
+    const refundFeeFixed = dto.refundFeeFixed ?? current.refundFeeFixed ?? 0;
     const refundFeePercent =
       dto.refundFeePercent ?? current.refundFeePercent ?? 0;
-    $set.refundFeeFixed =
-      refundFeeMode === 'fixed' ? refundFeeFixed : 0;
-    $set.refundFeePercent =
-      refundFeeMode === 'percent' ? refundFeePercent : 0;
+    $set.refundFeeFixed = refundFeeMode === 'fixed' ? refundFeeFixed : 0;
+    $set.refundFeePercent = refundFeeMode === 'percent' ? refundFeePercent : 0;
 
     const orderPaymentFeeFixed =
       dto.orderPaymentFeeFixed ?? current.orderPaymentFeeFixed ?? 0;

@@ -6,7 +6,9 @@ export class ShippingQuoteDto {
   @IsMongoId()
   storeId: string;
 
-  @ApiProperty({ description: 'ID Mongo de l’adresse de livraison (profil client)' })
+  @ApiProperty({
+    description: 'ID Mongo de l’adresse de livraison (profil client)',
+  })
   @IsMongoId()
   addressId: string;
 }

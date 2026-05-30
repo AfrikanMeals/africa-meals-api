@@ -66,10 +66,7 @@ export class SearchService {
     const la = args.latitude;
     const ln = args.longitude;
     return (
-      la != null &&
-      ln != null &&
-      Number.isFinite(la) &&
-      Number.isFinite(ln)
+      la != null && ln != null && Number.isFinite(la) && Number.isFinite(ln)
     );
   }
 
@@ -201,20 +198,14 @@ export class SearchService {
                 $gte: [
                   {
                     $size: {
-                      $ifNull: [
-                        '$_searchGeoResAddr.location.coordinates',
-                        [],
-                      ],
+                      $ifNull: ['$_searchGeoResAddr.location.coordinates', []],
                     },
                   },
                   2,
                 ],
               },
               {
-                $arrayElemAt: [
-                  '$_searchGeoResAddr.location.coordinates',
-                  1,
-                ],
+                $arrayElemAt: ['$_searchGeoResAddr.location.coordinates', 1],
               },
               null,
             ],
@@ -225,20 +216,14 @@ export class SearchService {
                 $gte: [
                   {
                     $size: {
-                      $ifNull: [
-                        '$_searchGeoResAddr.location.coordinates',
-                        [],
-                      ],
+                      $ifNull: ['$_searchGeoResAddr.location.coordinates', []],
                     },
                   },
                   2,
                 ],
               },
               {
-                $arrayElemAt: [
-                  '$_searchGeoResAddr.location.coordinates',
-                  0,
-                ],
+                $arrayElemAt: ['$_searchGeoResAddr.location.coordinates', 0],
               },
               null,
             ],
@@ -366,7 +351,7 @@ export class SearchService {
             createdAt: -1,
           };
         }
-        return { createdAt: (-dir) as 1 | -1 };
+        return { createdAt: -dir as 1 | -1 };
       case SortBy.PRICE:
         return { price: dir };
       case SortBy.NAME:
@@ -392,7 +377,7 @@ export class SearchService {
             createdAt: -1,
           };
         }
-        return { createdAt: (-dir) as 1 | -1 };
+        return { createdAt: -dir as 1 | -1 };
       case SortBy.NAME:
         return { name: dir };
       case SortBy.PRICE:
@@ -618,10 +603,7 @@ export class SearchService {
                   ],
                 },
                 {
-                  $arrayElemAt: [
-                    '$_storeResolvedAddr.location.coordinates',
-                    1,
-                  ],
+                  $arrayElemAt: ['$_storeResolvedAddr.location.coordinates', 1],
                 },
                 null,
               ],
@@ -647,10 +629,7 @@ export class SearchService {
                   ],
                 },
                 {
-                  $arrayElemAt: [
-                    '$_storeResolvedAddr.location.coordinates',
-                    0,
-                  ],
+                  $arrayElemAt: ['$_storeResolvedAddr.location.coordinates', 0],
                 },
                 null,
               ],
@@ -947,7 +926,9 @@ export class SearchService {
   }
 
   /** Normalise une ligne d’agrégation « home feed » / menu boutique (JSON client, sans BSON). */
-  private _mapHomeFeedLeanDoc(doc: Record<string, unknown>): Record<string, unknown> {
+  private _mapHomeFeedLeanDoc(
+    doc: Record<string, unknown>,
+  ): Record<string, unknown> {
     const toIso = (v: unknown): string => {
       if (v instanceof Date) return v.toISOString();
       if (typeof v === 'string' || typeof v === 'number') return String(v);
@@ -961,8 +942,8 @@ export class SearchService {
       ownerRaw != null && typeof ownerRaw === 'object' && 'toString' in ownerRaw
         ? (ownerRaw as Types.ObjectId).toString()
         : ownerRaw != null
-          ? String(ownerRaw)
-          : '';
+        ? String(ownerRaw)
+        : '';
 
     const likedByRaw = st?.['likedBy'];
     const storeLikedBy = Array.isArray(likedByRaw)
@@ -973,7 +954,10 @@ export class SearchService {
         )
       : [];
 
-    const addrRaw = st?.['address'] as Record<string, unknown> | null | undefined;
+    const addrRaw = st?.['address'] as
+      | Record<string, unknown>
+      | null
+      | undefined;
     const storeAddress =
       addrRaw != null &&
       typeof addrRaw === 'object' &&
@@ -1026,7 +1010,10 @@ export class SearchService {
     }
 
     const productIdStr = String(doc._id);
-    const dailyMenuToday = this._buildDailyMenuTodayForProduct(st, productIdStr);
+    const dailyMenuToday = this._buildDailyMenuTodayForProduct(
+      st,
+      productIdStr,
+    );
     const distRaw = doc.distanceKm;
     const distanceKm =
       distRaw != null && Number.isFinite(Number(distRaw))
@@ -1061,7 +1048,8 @@ export class SearchService {
               _id: String(cat['_id'] ?? cat['id'] ?? ''),
               title: String(cat['title'] ?? ''),
               icon: String(cat['icon'] ?? ''),
-              isEnabled: cat['isEnabled'] !== false && cat['is_enabled'] !== false,
+              isEnabled:
+                cat['isEnabled'] !== false && cat['is_enabled'] !== false,
               createdAt: toIso(cat['createdAt']),
               updatedAt: toIso(cat['updatedAt']),
             }
@@ -1351,10 +1339,7 @@ export class SearchService {
                   ],
                 },
                 {
-                  $arrayElemAt: [
-                    '$_storeResolvedAddr.location.coordinates',
-                    1,
-                  ],
+                  $arrayElemAt: ['$_storeResolvedAddr.location.coordinates', 1],
                 },
                 null,
               ],
@@ -1380,10 +1365,7 @@ export class SearchService {
                   ],
                 },
                 {
-                  $arrayElemAt: [
-                    '$_storeResolvedAddr.location.coordinates',
-                    0,
-                  ],
+                  $arrayElemAt: ['$_storeResolvedAddr.location.coordinates', 0],
                 },
                 null,
               ],

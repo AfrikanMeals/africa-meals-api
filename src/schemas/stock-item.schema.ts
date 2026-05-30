@@ -47,4 +47,3 @@ export class StockItemModel extends BaseSchema {
 }
 
 export const StockItemSchema = SchemaFactory.createForClass(StockItemModel);
-

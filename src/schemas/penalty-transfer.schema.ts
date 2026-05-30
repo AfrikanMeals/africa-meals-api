@@ -134,9 +134,8 @@ export class PenaltyTransferModel extends BaseSchema {
   idempotencyKey?: string;
 }
 
-export const PenaltyTransferSchema = SchemaFactory.createForClass(
-  PenaltyTransferModel,
-);
+export const PenaltyTransferSchema =
+  SchemaFactory.createForClass(PenaltyTransferModel);
 
 PenaltyTransferSchema.index({ createdAt: -1 });
 PenaltyTransferSchema.index({ status: 1, createdAt: -1 });

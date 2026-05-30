@@ -29,15 +29,14 @@ function mapDrinkCatalogListRow(doc: Record<string, unknown>) {
     doc.imageUrl != null
       ? String(doc.imageUrl)
       : doc.image_url != null
-        ? String(doc.image_url)
-        : '';
+      ? String(doc.image_url)
+      : '';
   const imageUrl =
     img.startsWith('http://') || img.startsWith('https://') ? img : undefined;
   return {
     id: String(doc._id),
     name: String(doc.name ?? ''),
-    description:
-      doc.description != null ? String(doc.description) : '',
+    description: doc.description != null ? String(doc.description) : '',
     priceCad: Number(doc.priceCad ?? doc.price_cad ?? 0),
     quantite: Number(doc.quantite ?? 0),
     seuil: Number(doc.seuil ?? 0),
@@ -61,20 +60,20 @@ function mapDrinkDoc(doc: Record<string, unknown>) {
       doc.imageUrl != null
         ? String(doc.imageUrl)
         : doc.image_url != null
-          ? String(doc.image_url)
-          : undefined,
+        ? String(doc.image_url)
+        : undefined,
     createdAt:
       created instanceof Date
         ? created.toISOString()
         : typeof created === 'string'
-          ? created
-          : undefined,
+        ? created
+        : undefined,
     updatedAt:
       updated instanceof Date
         ? updated.toISOString()
         : typeof updated === 'string'
-          ? updated
-          : undefined,
+        ? updated
+        : undefined,
   };
 }
 
@@ -108,7 +107,8 @@ export class DrinksService {
     if (!store || store.status !== StoreStatusEnum.ACTIVE) {
       return false;
     }
-    const owner = await this._userModel.findById(store.owner)
+    const owner = await this._userModel
+      .findById(store.owner)
       .select(
         'stripeConnectAccountId stripeConnectChargesEnabled stripeConnectPayoutsEnabled stripeConnectDetailsSubmitted stripeConnectDisabledReason stripeConnectRequirementsDue stripeConnectRequirementsPastDue',
       )
@@ -319,11 +319,13 @@ export class DrinksService {
       const raw = r as unknown as Record<string, unknown>;
       const storeRef = raw['store'];
       const storeId =
-        storeRef != null && typeof storeRef === 'object' && 'toString' in storeRef
+        storeRef != null &&
+        typeof storeRef === 'object' &&
+        'toString' in storeRef
           ? String(storeRef)
           : storeRef != null
-            ? String(storeRef)
-            : '';
+          ? String(storeRef)
+          : '';
       return {
         ...mapDrinkDoc(raw),
         storeId,

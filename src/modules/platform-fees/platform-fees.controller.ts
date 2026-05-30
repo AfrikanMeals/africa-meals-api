@@ -22,8 +22,7 @@ export class PlatformFeesController {
 
   @Get('checkout')
   @ApiOperation({
-    summary:
-      'Frais de transaction paiement commande (public, apps mobile)',
+    summary: 'Frais de transaction paiement commande (public, apps mobile)',
   })
   getPublicCheckoutFees() {
     return this._platformFees.getPublicCheckoutFees();
@@ -42,10 +41,7 @@ export class PlatformFeesController {
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({ summary: 'Mettre à jour les frais plateforme (ADMIN)' })
-  updateSettings(
-    @Req() req: Request,
-    @Body() body: UpdatePlatformFeesDto,
-  ) {
+  updateSettings(@Req() req: Request, @Body() body: UpdatePlatformFeesDto) {
     return this._platformFees.updateSettings(req.user as UserModel, body);
   }
 }

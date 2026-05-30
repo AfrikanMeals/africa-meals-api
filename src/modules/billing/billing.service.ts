@@ -113,10 +113,7 @@ export class BillingService {
     }
   }
 
-  async deletePaypalPaymentMethod(
-    id: string,
-    user: UserModel,
-  ): Promise<void> {
+  async deletePaypalPaymentMethod(id: string, user: UserModel): Promise<void> {
     try {
       // TODO should check payment provider
       //! TODO should check if payment method is default ??
@@ -217,11 +214,7 @@ export class BillingService {
       };
     }
 
-    const target = this.pickVendorStore(
-      withStripe,
-      vendorIds,
-      opts.storeId,
-    );
+    const target = this.pickVendorStore(withStripe, vendorIds, opts.storeId);
 
     const limit = Math.min(Math.max(opts.limit ?? 25, 1), 100);
     const list = await this._stripeConnectService.listBalanceTransactions(
@@ -268,7 +261,9 @@ export class BillingService {
     if (!this._stripeConnectService.isConfigured()) {
       throw new ServiceUnavailableException('stripe_not_configured');
     }
-    const dashboardBase = this._config.get<string>('DASHBOARD_BASE_URL')?.trim();
+    const dashboardBase = this._config
+      .get<string>('DASHBOARD_BASE_URL')
+      ?.trim();
     if (!dashboardBase) {
       throw new BadRequestException('dashboard_base_url_missing');
     }
@@ -332,8 +327,8 @@ export class BillingService {
         countryFromAddr.length === 2
           ? countryFromAddr
           : fromUser.length === 2
-            ? fromUser
-            : fallbackCountry;
+          ? fromUser
+          : fallbackCountry;
 
       let accountId = String(target.stripeConnectAccountId || '').trim();
 
@@ -366,7 +361,9 @@ export class BillingService {
 
       const base = dashboardBase.replace(/\/+$/, '');
       const sid = target._id.toString();
-      const refreshUrl = `${base}/settings/billing/onboarding?storeId=${encodeURIComponent(sid)}`;
+      const refreshUrl = `${base}/settings/billing/onboarding?storeId=${encodeURIComponent(
+        sid,
+      )}`;
       const returnUrl = `${base}/settings/billing/onboarding/return`;
 
       const link = await this._stripeConnectService.createAccountOnboardingLink(

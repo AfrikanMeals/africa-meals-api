@@ -53,10 +53,7 @@ export class TeamsController {
 
   @Get('stores/:storeId/roles')
   @UseGuards(JwtGuard)
-  listStoreRoles(
-    @Req() req: Request,
-    @Param('storeId') storeId: string,
-  ) {
+  listStoreRoles(@Req() req: Request, @Param('storeId') storeId: string) {
     return this.teams.listStoreRoles(req.user as UserModel, storeId);
   }
 
@@ -100,10 +97,7 @@ export class TeamsController {
 
   @Get('stores/:storeId/members')
   @UseGuards(JwtGuard)
-  listStoreMembers(
-    @Req() req: Request,
-    @Param('storeId') storeId: string,
-  ) {
+  listStoreMembers(@Req() req: Request, @Param('storeId') storeId: string) {
     return this.teams.listStoreMembers(req.user as UserModel, storeId);
   }
 
@@ -142,7 +136,11 @@ export class TeamsController {
     @Param('storeId') storeId: string,
     @Param('memberId') memberId: string,
   ) {
-    return this.teams.removeStoreMember(req.user as UserModel, storeId, memberId);
+    return this.teams.removeStoreMember(
+      req.user as UserModel,
+      storeId,
+      memberId,
+    );
   }
 
   @Get('admin/roles')
@@ -154,10 +152,7 @@ export class TeamsController {
   @Post('admin/roles')
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  createPlatformRole(
-    @Req() req: Request,
-    @Body() body: CreatePlatformRoleDto,
-  ) {
+  createPlatformRole(@Req() req: Request, @Body() body: CreatePlatformRoleDto) {
     return this.teams.createPlatformRole(req.user as UserModel, body);
   }
 

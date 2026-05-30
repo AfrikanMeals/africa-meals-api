@@ -21,8 +21,8 @@ export class InternalSecretGuard implements CanActivate {
       typeof header === 'string'
         ? header
         : Array.isArray(header)
-          ? header[0]
-          : '';
+        ? header[0]
+        : '';
     if (provided !== secret) {
       throw new ForbiddenException('invalid_internal_secret');
     }

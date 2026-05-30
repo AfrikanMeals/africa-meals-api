@@ -36,9 +36,7 @@ export class DailyMenuReminderService {
   ) {}
 
   private reminderTimezone(): string {
-    return (
-      process.env.DAILY_MENU_REMINDER_TZ?.trim() || 'America/Montreal'
-    );
+    return process.env.DAILY_MENU_REMINDER_TZ?.trim() || 'America/Montreal';
   }
 
   async runReminderPass(): Promise<DailyMenuReminderPassResult> {
@@ -71,9 +69,7 @@ export class DailyMenuReminderService {
         continue;
       }
 
-      if (
-        storeHasDailyMenuForWeekday(store.dailyMenuByWeekday, dayOfWeek)
-      ) {
+      if (storeHasDailyMenuForWeekday(store.dailyMenuByWeekday, dayOfWeek)) {
         result.skippedHasMenu++;
         continue;
       }
@@ -97,9 +93,7 @@ export class DailyMenuReminderService {
     return result;
   }
 
-  private ownerIdFromStore(store: {
-    owner?: unknown;
-  }): string | null {
+  private ownerIdFromStore(store: { owner?: unknown }): string | null {
     const raw = store.owner;
     if (raw == null) return null;
     if (typeof raw === 'object' && '_id' in (raw as object)) {

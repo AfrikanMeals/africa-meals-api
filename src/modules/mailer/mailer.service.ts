@@ -40,7 +40,8 @@ export class MailerService {
   private async sendSimpleSmtp(args: SendSimpleMailDto): Promise<void> {
     const host =
       this._configService.get<string>('SMTP_HOST')?.trim() || 'smtp.gmail.com';
-    const portRaw = this._configService.get<string>('SMTP_PORT')?.trim() || '587';
+    const portRaw =
+      this._configService.get<string>('SMTP_PORT')?.trim() || '587';
     const port = parseInt(portRaw, 10) || 587;
     const user = this._configService.get<string>('SMTP_USER')!.trim();
     const passRaw =
@@ -48,9 +49,9 @@ export class MailerService {
       this._configService.get<string>('SMTP_PASS')?.trim() ||
       '';
     const pass = passRaw.replace(/\s/g, '');
-    const from =
-      this._configService.get<string>('SMTP_FROM')?.trim() || user;
-    const appName = this._configService.get<string>('APP_NAME') ?? 'Africa Meals';
+    const from = this._configService.get<string>('SMTP_FROM')?.trim() || user;
+    const appName =
+      this._configService.get<string>('APP_NAME') ?? 'Africa Meals';
 
     const transporter = nodemailer.createTransport({
       host,
@@ -116,7 +117,9 @@ export class MailerService {
     }
 
     const apiKey = this._configService.get<string>('MAILER_API_KEY')?.trim();
-    const senderEmail = this._configService.get<string>('MAILER_SENDER')?.trim();
+    const senderEmail = this._configService
+      .get<string>('MAILER_SENDER')
+      ?.trim();
     if (!apiKey) {
       throw new BadGatewayException(
         'email_not_configured — SMTP_USER + SMTP_APP_PASSWORD ou MAILER_API_KEY + MAILER_SENDER',

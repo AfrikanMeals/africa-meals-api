@@ -37,9 +37,7 @@ export const ADMIN_PERMISSION_LABELS: Record<AdminPermission, string> = {
   'admin.settings': 'Paramètres plateforme',
 };
 
-export const ALL_ADMIN_PERMISSIONS: AdminPermission[] = [
-  ...ADMIN_PERMISSIONS,
-];
+export const ALL_ADMIN_PERMISSIONS: AdminPermission[] = [...ADMIN_PERMISSIONS];
 
 export const DEFAULT_ADMIN_ROLE_TEMPLATES: Array<{
   key: string;

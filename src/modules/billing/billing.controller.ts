@@ -256,7 +256,8 @@ export class BillingController {
   @Post('stripe/connect/request-payout')
   @UseGuards(JwtGuard)
   @ApiOperation({
-    summary: 'Demander un versement du solde disponible vers le compte bancaire',
+    summary:
+      'Demander un versement du solde disponible vers le compte bancaire',
   })
   stripeConnectRequestPayout(@Req() req: Request) {
     return this._stripeConnect.requestPayout(req.user as UserModel);
@@ -302,7 +303,9 @@ export class BillingController {
    */
   @Get('stripe/subscription-return')
   @Header('Content-Type', 'text/html; charset=utf-8')
-  @ApiOperation({ summary: 'Pont HTTPS → app après paiement abonnement Stripe' })
+  @ApiOperation({
+    summary: 'Pont HTTPS → app après paiement abonnement Stripe',
+  })
   async stripeSubscriptionReturnPage(
     @Query('session_id') sessionId?: string,
   ): Promise<string> {

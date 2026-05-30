@@ -116,7 +116,8 @@ export class PatchProductDto {
   category?: string;
 
   @ApiPropertyOptional({
-    description: 'Si true, supprime les images de galerie (sans en envoyer de nouvelles).',
+    description:
+      'Si true, supprime les images de galerie (sans en envoyer de nouvelles).',
   })
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true')
@@ -129,7 +130,8 @@ export class PatchProductDto {
  */
 export class CreateProductJsonDto extends CreateProductDto {
   @ApiPropertyOptional({
-    description: 'Image principale (base64 pur ou préfixe data:image/...;base64,)',
+    description:
+      'Image principale (base64 pur ou préfixe data:image/...;base64,)',
   })
   @IsOptional()
   @IsString()
@@ -163,7 +165,8 @@ export class CreateProductJsonDto extends CreateProductDto {
  */
 export class PatchProductJsonDto extends PatchProductDto {
   @ApiPropertyOptional({
-    description: 'Nouvelle image principale (base64 pur ou préfixe data:image/...;base64,)',
+    description:
+      'Nouvelle image principale (base64 pur ou préfixe data:image/...;base64,)',
   })
   @IsOptional()
   @IsString()

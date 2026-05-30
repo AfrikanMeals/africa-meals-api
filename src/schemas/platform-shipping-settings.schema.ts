@@ -1,4 +1,7 @@
-import { PLATFORM_FEE_MODES, PlatformFeeMode } from '@schemas/platform-fees-settings.schema';
+import {
+  PLATFORM_FEE_MODES,
+  PlatformFeeMode,
+} from '@schemas/platform-fees-settings.schema';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
 

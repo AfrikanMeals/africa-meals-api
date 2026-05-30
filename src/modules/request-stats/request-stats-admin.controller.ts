@@ -27,8 +27,7 @@ export class RequestStatsAdminController {
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({
-    summary:
-      'Journal des requêtes HTTP API (admin, permission admin.settings)',
+    summary: 'Journal des requêtes HTTP API (admin, permission admin.settings)',
   })
   async list(@Req() req: Request, @Query() query: QueryRequestStatsDto) {
     return this.requestStats.list(req.user as UserModel, query);

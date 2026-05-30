@@ -213,9 +213,7 @@ export class OrdersService {
       const arr = (cur as { $in: unknown[] }).$in;
       const narrowed = arr.filter((oid) => {
         const idStr =
-          oid instanceof Types.ObjectId
-            ? oid.toHexString()
-            : String(oid);
+          oid instanceof Types.ObjectId ? oid.toHexString() : String(oid);
         return matchIds.includes(idStr);
       });
       if (!narrowed.length) {
@@ -310,7 +308,11 @@ export class OrdersService {
     let enriched = OrdersService.enrichOrdersWithDeliveryAddress(
       data as unknown as Record<string, unknown>[],
     );
-    enriched = await this.attachClientOrderFlags(enriched, user, asCustomerScope);
+    enriched = await this.attachClientOrderFlags(
+      enriched,
+      user,
+      asCustomerScope,
+    );
     if (
       !asCustomerScope &&
       (user.type === UserTypeEnum.VENDOR || user.type === UserTypeEnum.ADMIN)
@@ -410,8 +412,9 @@ export class OrdersService {
     const orderIds = rows
       .map((o) => (o['_id'] != null ? String(o['_id']) : ''))
       .filter((id) => id.length > 0);
-    const byOrder =
-      await this._orderStatusEvents.listTimelineByOrderIds(orderIds);
+    const byOrder = await this._orderStatusEvents.listTimelineByOrderIds(
+      orderIds,
+    );
     return rows.map((o) => {
       const id = o['_id'] != null ? String(o['_id']) : '';
       const events = byOrder.get(id);
@@ -434,11 +437,10 @@ export class OrdersService {
     refundRequestState: 'eligible' | 'pending' | 'processed' | 'unavailable';
   } {
     const status = String(order['status'] ?? '');
-    const log = (
-      (order['refundRequestLog'] ?? order['refund_request_log']) as
+    const log =
+      ((order['refundRequestLog'] ?? order['refund_request_log']) as
         | Array<{ status?: string }>
-        | undefined
-    ) ?? [];
+        | undefined) ?? [];
 
     for (const row of log) {
       const s = String(row?.status ?? '');
@@ -545,7 +547,9 @@ export class OrdersService {
     ) {
       return out as unknown as typeof order;
     }
-    return this.stripPickupCodeForNonClients([out])[0] as unknown as typeof order;
+    return this.stripPickupCodeForNonClients([
+      out,
+    ])[0] as unknown as typeof order;
   }
 
   async createFromCart(storeId: string, user: UserModel) {
@@ -560,20 +564,24 @@ export class OrdersService {
     //   throw new ForbiddenException('store_does_not_accept_orders');
     // }
 
-    const items: OrdeLineItem[] = await mapInChunks(cart.items, 4, async (item) => {
-      const e = item.entity as
-        | { title?: string; name?: string; profileImage?: string }
-        | undefined;
-      const label = (e?.title || e?.name || 'Article').trim() || 'Article';
-      return {
-        label,
-        itemType: item.type!,
-        pictureUrl: e?.profileImage,
-        quantity: item.quantity!,
-        price: item.price!,
-        categoryTitle: await this.categoryTitleForCartLine(item),
-      };
-    });
+    const items: OrdeLineItem[] = await mapInChunks(
+      cart.items,
+      4,
+      async (item) => {
+        const e = item.entity as
+          | { title?: string; name?: string; profileImage?: string }
+          | undefined;
+        const label = (e?.title || e?.name || 'Article').trim() || 'Article';
+        return {
+          label,
+          itemType: item.type!,
+          pictureUrl: e?.profileImage,
+          quantity: item.quantity!,
+          price: item.price!,
+          categoryTitle: await this.categoryTitleForCartLine(item),
+        };
+      },
+    );
 
     const calculatedPrice = items.reduce(
       (acc, item) => acc + item.price * item.quantity,
@@ -629,7 +637,9 @@ export class OrdersService {
         .pushVendorOrderNotify({
           vendorUserIds: vendorIds,
           title: 'Nouvelle commande',
-          body: `${sname || 'Boutique'} : nouvelle commande (en attente de paiement).`,
+          body: `${
+            sname || 'Boutique'
+          } : nouvelle commande (en attente de paiement).`,
           orderId: created._id.toString(),
           storeName: sname,
           reason: 'new_order',
@@ -637,7 +647,9 @@ export class OrdersService {
         })
         .catch((err) =>
           this.logger.warn(
-            `FCM vendor new order: ${err instanceof Error ? err.message : String(err)}`,
+            `FCM vendor new order: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
           ),
         );
     }
@@ -801,7 +813,7 @@ export class OrdersService {
     let totalPrice: number;
     let shippingStored: number;
     if (gC != null && sC != null) {
-      totalPrice = Math.round((gC + sC + Number.EPSILON)) / 100;
+      totalPrice = Math.round(gC + sC + Number.EPSILON) / 100;
       shippingStored = sC / 100;
     } else {
       shippingStored = ship;
@@ -944,7 +956,9 @@ export class OrdersService {
           })
           .catch((err) =>
             this.logger.warn(
-              `FCM order paid: ${err instanceof Error ? err.message : String(err)}`,
+              `FCM order paid: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
             ),
           );
         const storeIdPaid = storeIdForNotif;
@@ -965,7 +979,9 @@ export class OrdersService {
               })
               .catch((err) =>
                 this.logger.warn(
-                  `FCM vendor order paid: ${err instanceof Error ? err.message : String(err)}`,
+                  `FCM vendor order paid: ${
+                    err instanceof Error ? err.message : String(err)
+                  }`,
                 ),
               );
           }
@@ -977,13 +993,15 @@ export class OrdersService {
       );
 
       // Fidélité : crédit dès encaissement confirmé (respecte éligibilité + réglages admin).
-      void this._loyaltyService.creditOrderCompletion(orderId).catch((err) =>
-        this.logger.warn(
-          `Loyalty credit on paid order=${orderId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        ),
-      );
+      void this._loyaltyService
+        .creditOrderCompletion(orderId)
+        .catch((err) =>
+          this.logger.warn(
+            `Loyalty credit on paid order=${orderId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
     }
   }
 
@@ -1133,7 +1151,10 @@ export class OrdersService {
 
     const code = generatePickupCode();
     await this._orderModel
-      .updateOne({ _id: new Types.ObjectId(oid) }, { $set: { pickupCode: code } })
+      .updateOne(
+        { _id: new Types.ObjectId(oid) },
+        { $set: { pickupCode: code } },
+      )
       .exec();
     (order as { pickupCode?: string }).pickupCode = code;
   }
@@ -1208,7 +1229,9 @@ export class OrdersService {
         })
         .catch((err) =>
           this.logger.warn(
-            `FCM order ready: ${err instanceof Error ? err.message : String(err)}`,
+            `FCM order ready: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
           ),
         );
     }
@@ -1238,7 +1261,9 @@ export class OrdersService {
     }
 
     const source =
-      user.type === UserTypeEnum.ADMIN ? ('admin' as const) : ('vendor' as const);
+      user.type === UserTypeEnum.ADMIN
+        ? ('admin' as const)
+        : ('vendor' as const);
 
     try {
       assertOrderCancelReasonPayload({
@@ -1303,8 +1328,8 @@ export class OrdersService {
         source === 'vendor'
           ? 'Annulation par le restaurant — remboursement client intégral (sans frais plateforme).'
           : source === 'admin'
-            ? 'Annulation par l’administration — remboursement à traiter.'
-            : 'Annulation — remboursement à traiter.';
+          ? 'Annulation par l’administration — remboursement à traiter.'
+          : 'Annulation — remboursement à traiter.';
       order.refundRequestLog = [
         ...(order.refundRequestLog ?? []),
         {
@@ -1346,7 +1371,9 @@ export class OrdersService {
         })
         .catch((err) =>
           this.logger.warn(
-            `FCM order reject: ${err instanceof Error ? err.message : String(err)}`,
+            `FCM order reject: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
           ),
         );
     }
@@ -1456,10 +1483,7 @@ export class OrdersService {
 
     let distanceKm: number | undefined;
     if (storeCoords && userCoords) {
-      distanceKm = +haversineDistance(
-        userCoords,
-        storeCoords,
-      )?.toFixed(2);
+      distanceKm = +haversineDistance(userCoords, storeCoords)?.toFixed(2);
     }
 
     const storeLine = this.formatAddressLine(
@@ -1529,9 +1553,7 @@ export class OrdersService {
     };
   }
 
-  private coordsFromAddressLike(
-    addr: unknown,
-  ): [number, number] | undefined {
+  private coordsFromAddressLike(addr: unknown): [number, number] | undefined {
     if (!addr || typeof addr !== 'object') return undefined;
     const loc = (addr as { location?: { coordinates?: unknown } }).location;
     const c = loc?.coordinates;
@@ -1678,7 +1700,10 @@ export class OrdersService {
 
     const code = generatePickupCode();
     await this._orderModel
-      .updateOne({ _id: new Types.ObjectId(oid) }, { $set: { pickupCode: code } })
+      .updateOne(
+        { _id: new Types.ObjectId(oid) },
+        { $set: { pickupCode: code } },
+      )
       .exec();
 
     void this.notifyPartiesOrderRealtimeByOrderId(
@@ -1744,9 +1769,7 @@ export class OrdersService {
     }
 
     await this.ensurePickupCodeForOrderDoc(order);
-    const expected = normalizePickupCodeInput(
-      String(order.pickupCode ?? ''),
-    );
+    const expected = normalizePickupCodeInput(String(order.pickupCode ?? ''));
     const provided = normalizePickupCodeInput(dto.code);
     if (!expected || expected !== provided) {
       throw new BadRequestException('pickup_code_invalid');
@@ -1785,7 +1808,9 @@ export class OrdersService {
         })
         .catch((err) =>
           this.logger.warn(
-            `FCM order completed: ${err instanceof Error ? err.message : String(err)}`,
+            `FCM order completed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
           ),
         );
     }
@@ -1803,13 +1828,15 @@ export class OrdersService {
       OrderStatusEnum.COMPLETED,
     );
 
-    void this._loyaltyService.creditOrderCompletion(oid).catch((err) =>
-      this.logger.warn(
-        `Loyalty credit order=${oid}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      ),
-    );
+    void this._loyaltyService
+      .creditOrderCompletion(oid)
+      .catch((err) =>
+        this.logger.warn(
+          `Loyalty credit order=${oid}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
 
     if (!isPickup && order.shouldShip === true) {
       void this._wsChatNotify.archiveOrderDeliveryChats(oid);
@@ -1864,7 +1891,9 @@ export class OrdersService {
         deliveryChatArchived: false,
       };
     }
-    const status = String(order['status'] ?? '').trim().toLowerCase();
+    const status = String(order['status'] ?? '')
+      .trim()
+      .toLowerCase();
     const archived = status === 'completed';
     const canMessage = ['approved', 'shipped', 'completed'].includes(status);
     return {
@@ -2018,7 +2047,9 @@ export class OrdersService {
       })
       .catch((err) =>
         this.logger.warn(
-          `FCM cancel+refund: ${err instanceof Error ? err.message : String(err)}`,
+          `FCM cancel+refund: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
         ),
       );
 
@@ -2127,11 +2158,7 @@ export class OrdersService {
       const userCoords = userAddr?.coords;
       const courier = await this.resolveShippedCourierCoordinates(oid, plain);
 
-      if (
-        courier &&
-        storeCoords &&
-        userCoords
-      ) {
+      if (courier && storeCoords && userCoords) {
         const courierLat = courier.latitude;
         const courierLng = courier.longitude;
         const totalKm = +haversineDistance(storeCoords, userCoords).toFixed(2);
@@ -2192,8 +2219,8 @@ export class OrdersService {
           raw instanceof Date
             ? raw
             : typeof raw === 'string'
-              ? new Date(raw)
-              : null;
+            ? new Date(raw)
+            : null;
         if (at && !Number.isNaN(at.getTime())) {
           if (!start || at < start) start = at;
         }

@@ -26,7 +26,8 @@ function stripLeadingApiPathWhenNoNestPrefix() {
     const query = q === -1 ? '' : raw.slice(q);
     let pathOnly = pathOriginal;
     while (pathOnly === '/api' || pathOnly.startsWith('/api/')) {
-      pathOnly = pathOnly === '/api' ? '/' : pathOnly.slice('/api'.length) || '/';
+      pathOnly =
+        pathOnly === '/api' ? '/' : pathOnly.slice('/api'.length) || '/';
     }
     if (pathOnly !== pathOriginal) {
       req.url = pathOnly + query;
@@ -73,8 +74,8 @@ export async function configureApplication(
       const body = isMultipart
         ? '(multipart)'
         : req.body
-          ? JSON.stringify(req.body)
-          : '(no body)';
+        ? JSON.stringify(req.body)
+        : '(no body)';
       console.warn(`[REQ] ${req.method} ${req.originalUrl} body: ${body}`);
       next();
     });
@@ -137,8 +138,7 @@ export async function configureApplication(
     .build();
 
   const document = SwaggerModule.createDocument(app, config, {
-    operationIdFactory: (controllerKey: string, methodKey: string) =>
-      methodKey,
+    operationIdFactory: (controllerKey: string, methodKey: string) => methodKey,
   });
   SwaggerModule.setup('docs', app, document, {
     useGlobalPrefix: true,

@@ -36,6 +36,7 @@ import {
   UpdateStoreRoleDto,
 } from './dto/teams.dto';
 import { StoreAccessService } from './store-access.service';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import {
   normalizePlatformRoleIds,
   normalizeStoreMemberRoleIds,
@@ -109,6 +110,9 @@ export class TeamsService {
   @Inject(StoreAccessService)
   private readonly storeAccess: StoreAccessService;
 
+  @Inject(SubscriptionsService)
+  private readonly subscriptionsService: SubscriptionsService;
+
   @InjectModel(StoreModel.name)
   private readonly storeModel: Model<StoreModel>;
 
@@ -157,9 +161,7 @@ export class TeamsService {
           .lean()
           .exec();
         for (const role of roles) {
-          platformRoles.push(
-            mapPlatformRole(role as Record<string, unknown>),
-          );
+          platformRoles.push(mapPlatformRole(role as Record<string, unknown>));
         }
       }
     }
@@ -264,8 +266,18 @@ export class TeamsService {
     return first.storeId;
   }
 
+  private async assertTeamFeatureAvailableForStore(
+    storeId: string,
+  ): Promise<void> {
+    const isFree = await this.subscriptionsService.isStoreOnFreePlan(storeId);
+    if (isFree) {
+      throw new ForbiddenException('team_feature_not_available_on_free_plan');
+    }
+  }
+
   async listStoreRoles(user: UserModel, storeId: string) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.view');
+    await this.assertTeamFeatureAvailableForStore(storeId);
     const store = await this.storeModel.findById(storeId).lean().exec();
     if (!store) throw new NotFoundException('store_not_found');
     await this.bootstrapStoreTeam(
@@ -273,7 +285,10 @@ export class TeamsService {
       new Types.ObjectId(String(store.owner)),
     );
 
-    const rows = await this.storeRoleModel.find({ store: storeId }).lean().exec();
+    const rows = await this.storeRoleModel
+      .find({ store: storeId })
+      .lean()
+      .exec();
     const sorted = sortStoreRolesByTemplate(
       rows as Array<{
         templateKey?: string;
@@ -290,6 +305,7 @@ export class TeamsService {
     dto: CreateStoreRoleDto,
   ) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.manage');
+    await this.assertTeamFeatureAvailableForStore(storeId);
     const perms = dto.permissions.filter(isStorePermission);
     if (!perms.length) {
       throw new BadRequestException('invalid_permissions');
@@ -312,6 +328,7 @@ export class TeamsService {
     dto: UpdateStoreRoleDto,
   ) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.manage');
+    await this.assertTeamFeatureAvailableForStore(storeId);
     const role = await this.storeRoleModel
       .findOne({ _id: roleId, store: storeId })
       .exec();
@@ -335,6 +352,7 @@ export class TeamsService {
 
   async deleteStoreRole(user: UserModel, storeId: string, roleId: string) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.manage');
+    await this.assertTeamFeatureAvailableForStore(storeId);
     const role = await this.storeRoleModel
       .findOne({ _id: roleId, store: storeId })
       .exec();
@@ -356,6 +374,7 @@ export class TeamsService {
 
   async listStoreMembers(user: UserModel, storeId: string) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.view');
+    await this.assertTeamFeatureAvailableForStore(storeId);
     const store = await this.storeModel.findById(storeId).lean().exec();
     if (!store) throw new NotFoundException('store_not_found');
     await this.bootstrapStoreTeam(
@@ -440,6 +459,7 @@ export class TeamsService {
     dto: AddStoreMemberDto,
   ) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.manage');
+    await this.assertTeamFeatureAvailableForStore(storeId);
     const email = dto.email.trim().toLowerCase();
     const target = await this.userModel.findOne({ email }).exec();
     if (!target) {
@@ -492,6 +512,7 @@ export class TeamsService {
     dto: UpdateStoreMemberDto,
   ) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.manage');
+    await this.assertTeamFeatureAvailableForStore(storeId);
     const roleObjectIds = await this.resolveStoreRoleObjectIds(storeId, dto);
     const roleDocs = await this.storeRoleModel
       .find({ _id: { $in: roleObjectIds } })
@@ -514,12 +535,9 @@ export class TeamsService {
     });
   }
 
-  async removeStoreMember(
-    user: UserModel,
-    storeId: string,
-    memberId: string,
-  ) {
+  async removeStoreMember(user: UserModel, storeId: string, memberId: string) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.manage');
+    await this.assertTeamFeatureAvailableForStore(storeId);
     const member = await this.storeMemberModel
       .findOne({ _id: memberId, store: storeId })
       .exec();
@@ -536,7 +554,11 @@ export class TeamsService {
   async listPlatformRoles(user: UserModel) {
     await this.storeAccess.assertAdminPermission(user, 'admin.team.view');
     await this.ensurePlatformRolesSeeded();
-    const rows = await this.platformRoleModel.find({}).sort({ name: 1 }).lean().exec();
+    const rows = await this.platformRoleModel
+      .find({})
+      .sort({ name: 1 })
+      .lean()
+      .exec();
     return (rows as Record<string, unknown>[]).map(mapPlatformRole);
   }
 
@@ -580,7 +602,8 @@ export class TeamsService {
     await this.storeAccess.assertAdminPermission(user, 'admin.team.manage');
     const role = await this.platformRoleModel.findById(roleId).exec();
     if (!role) throw new NotFoundException('role_not_found');
-    if (role.isSystem) throw new ForbiddenException('cannot_delete_system_role');
+    if (role.isSystem)
+      throw new ForbiddenException('cannot_delete_system_role');
     const inUse = await this.userModel.countDocuments({
       $or: [{ platformRoleId: roleId }, { platformRoleIds: roleId }],
     });
@@ -629,9 +652,7 @@ export class TeamsService {
         platformRoleNames: roleNames,
         platformRoleId: pids[0] ?? null,
         platformRoleName:
-          roleNames.length > 0
-            ? roleNames.join(', ')
-            : 'Super administrateur',
+          roleNames.length > 0 ? roleNames.join(', ') : 'Super administrateur',
         createdAt: u.createdAt,
       };
     });

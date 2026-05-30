@@ -1,9 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import {
-  StockItemModel,
-  StockItemSchema,
-} from '@schemas/stock-item.schema';
+import { StockItemModel, StockItemSchema } from '@schemas/stock-item.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { StockItemsService } from './stock-items.service';
 

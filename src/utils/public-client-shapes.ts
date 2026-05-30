@@ -46,8 +46,7 @@ function slimAnnouncementConfig(cfg: unknown): Record<string, unknown> {
     styleOut['id'] = mongoIdToString(s['id'] ?? s['_id']);
   }
   return {
-    navigationType:
-      c['navigationType'] ?? c['navigation_type'] ?? 'internal',
+    navigationType: c['navigationType'] ?? c['navigation_type'] ?? 'internal',
     url: c['url'] != null ? String(c['url']) : '',
     query: queryOut,
     style: styleOut,
@@ -92,7 +91,11 @@ export function slimAdForPublicClient(
   let storeId: string | undefined;
   let storeName: string | undefined;
   let storeProfileImageUrl: string | undefined;
-  if (storeRaw != null && typeof storeRaw === 'object' && !(storeRaw instanceof Date)) {
+  if (
+    storeRaw != null &&
+    typeof storeRaw === 'object' &&
+    !(storeRaw instanceof Date)
+  ) {
     const st = storeRaw as Record<string, unknown>;
     storeId = mongoIdToString(st['_id'] ?? st['id']);
     if (storeId === '') storeId = undefined;
@@ -121,7 +124,10 @@ export function slimAdForPublicClient(
     title: String(raw['title'] ?? ''),
     subtitle: String(raw['subtitle'] ?? ''),
     actionText: String(raw['actionText'] ?? raw['action_text'] ?? ''),
-    imageUrl: (raw['imageUrl'] ?? raw['image_url']) as string | null | undefined,
+    imageUrl: (raw['imageUrl'] ?? raw['image_url']) as
+      | string
+      | null
+      | undefined,
     sortOrder: Number(raw['sortOrder'] ?? raw['sort_order'] ?? 0),
     ...(storeId != null ? { storeId } : {}),
     ...(storeName != null ? { storeName } : {}),

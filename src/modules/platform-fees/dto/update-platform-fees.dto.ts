@@ -21,7 +21,10 @@ export class UpdatePlatformFeesDto {
   @IsIn(PLATFORM_FEE_MODES)
   refundFeeMode?: (typeof PLATFORM_FEE_MODES)[number];
 
-  @ApiPropertyOptional({ example: 1.5, description: 'Frais fixe par remboursement' })
+  @ApiPropertyOptional({
+    example: 1.5,
+    description: 'Frais fixe par remboursement',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsNumber()

@@ -1,9 +1,4 @@
-import {
-  ArrayMinSize,
-  IsArray,
-  IsString,
-  Equals,
-} from 'class-validator';
+import { ArrayMinSize, IsArray, IsString, Equals } from 'class-validator';
 import { DB_CLEAR_CONFIRM_PHRASE } from '../db-clearable-tables';
 
 export class ClearDbTablesDto {

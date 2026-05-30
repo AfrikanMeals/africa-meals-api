@@ -472,10 +472,7 @@ export class DashboardService {
     negativeReviewStores: NegativeReviewStoreAlert[];
     stockAlerts: StockAlertRow[];
   }> {
-    if (
-      user.type !== UserTypeEnum.ADMIN &&
-      user.type !== UserTypeEnum.VENDOR
-    ) {
+    if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       return {
         delayedDeliveries: [],
         negativeReviewStores: [],
@@ -524,7 +521,9 @@ export class DashboardService {
     return null;
   }
 
-  private storeNameForOrderPush(order: { store?: unknown }): string | undefined {
+  private storeNameForOrderPush(order: {
+    store?: unknown;
+  }): string | undefined {
     const s = order.store;
     if (s && typeof s === 'object' && s !== null && 'name' in s) {
       const n = String((s as { name?: string }).name ?? '').trim();
@@ -533,7 +532,9 @@ export class DashboardService {
     return undefined;
   }
 
-  private storeOwnerUserIdForOrderPush(order: { store?: unknown }): string | null {
+  private storeOwnerUserIdForOrderPush(order: {
+    store?: unknown;
+  }): string | null {
     const s = order.store;
     if (!s || typeof s !== 'object' || s === null || !('owner' in s)) {
       return null;
@@ -560,11 +561,10 @@ export class DashboardService {
    * - **livraisons** : heure de `updatedAt` pour statuts expédié / livré
    * La courbe affiche la somme des deux (`cmd`).
    */
-  async listPeakHoursActivity(user: UserModel): Promise<DashboardPeakHourRow[]> {
-    if (
-      user.type !== UserTypeEnum.VENDOR &&
-      user.type !== UserTypeEnum.ADMIN
-    ) {
+  async listPeakHoursActivity(
+    user: UserModel,
+  ): Promise<DashboardPeakHourRow[]> {
+    if (user.type !== UserTypeEnum.VENDOR && user.type !== UserTypeEnum.ADMIN) {
       return emptyPeakHourSlots();
     }
 
@@ -609,10 +609,7 @@ export class DashboardService {
                 {
                   $match: {
                     status: {
-                      $in: [
-                        OrderStatusEnum.SHIPPED,
-                        OrderStatusEnum.COMPLETED,
-                      ],
+                      $in: [OrderStatusEnum.SHIPPED, OrderStatusEnum.COMPLETED],
                     },
                   },
                 },
@@ -644,10 +641,7 @@ export class DashboardService {
                 {
                   $match: {
                     status: {
-                      $in: [
-                        OrderStatusEnum.SHIPPED,
-                        OrderStatusEnum.COMPLETED,
-                      ],
+                      $in: [OrderStatusEnum.SHIPPED, OrderStatusEnum.COMPLETED],
                     },
                   },
                 },
@@ -698,10 +692,7 @@ export class DashboardService {
     if (!products.length) return [];
 
     const titleLcToProductId = new Map<string, Types.ObjectId>();
-    const productById = new Map<
-      string,
-      { title: string; price: number }
-    >();
+    const productById = new Map<string, { title: string; price: number }>();
     for (const p of products) {
       const id = String(p._id);
       const title = String(p.title ?? '').trim();
@@ -727,7 +718,16 @@ export class DashboardService {
 
     const byProduct = new Map<string, { commandes: number; revenu: number }>();
     for (const ord of orders) {
-      const items = (ord as { items?: Array<{ label?: string; quantity?: number; price?: number }> }).items ?? [];
+      const items =
+        (
+          ord as {
+            items?: Array<{
+              label?: string;
+              quantity?: number;
+              price?: number;
+            }>;
+          }
+        ).items ?? [];
       for (const it of items) {
         const lc = String(it.label ?? '')
           .trim()
@@ -737,9 +737,7 @@ export class DashboardService {
         if (!pidObj) continue;
         const pid = String(pidObj);
         const q =
-          typeof it.quantity === 'number' && it.quantity > 0
-            ? it.quantity
-            : 1;
+          typeof it.quantity === 'number' && it.quantity > 0 ? it.quantity : 1;
         const line = (Number(it.price) || 0) * q;
         const cur = byProduct.get(pid) ?? { commandes: 0, revenu: 0 };
         cur.commandes += q;
@@ -749,7 +747,11 @@ export class DashboardService {
     }
 
     const productObjectIds = products.map((p) => p._id as Types.ObjectId);
-    type RatingAgg = { _id: Types.ObjectId; avgRate: number; ratingCount: number };
+    type RatingAgg = {
+      _id: Types.ObjectId;
+      avgRate: number;
+      ratingCount: number;
+    };
     const ratingAgg = (await this.productRatingModel
       .aggregate<RatingAgg>([
         { $match: { product: { $in: productObjectIds } } },
@@ -763,10 +765,7 @@ export class DashboardService {
       ])
       .exec()) as RatingAgg[];
 
-    const ratingByProduct = new Map<
-      string,
-      { avg: number; count: number }
-    >();
+    const ratingByProduct = new Map<string, { avg: number; count: number }>();
     for (const r of ratingAgg) {
       if (!r._id) continue;
       ratingByProduct.set(String(r._id), {
@@ -819,17 +818,18 @@ export class DashboardService {
   async listDashboardTopPlatsDaily(
     user: UserModel,
   ): Promise<DashboardTopPlatDailyRow[]> {
-    if (
-      user.type !== UserTypeEnum.VENDOR &&
-      user.type !== UserTypeEnum.ADMIN
-    ) {
+    if (user.type !== UserTypeEnum.VENDOR && user.type !== UserTypeEnum.ADMIN) {
       return [];
     }
 
     const z = PEAK_HOURS_TZ;
     const startToday = dayjs().tz(z).startOf('day').toDate();
     const endToday = dayjs().tz(z).endOf('day').toDate();
-    const startYesterday = dayjs().tz(z).subtract(1, 'day').startOf('day').toDate();
+    const startYesterday = dayjs()
+      .tz(z)
+      .subtract(1, 'day')
+      .startOf('day')
+      .toDate();
     const endYesterday = dayjs().tz(z).subtract(1, 'day').endOf('day').toDate();
     const startRanking = dayjs()
       .tz(z)
@@ -851,7 +851,9 @@ export class DashboardService {
         .exec();
       allowedLc = new Set<string>();
       for (const p of products) {
-        const lc = String(p.title ?? '').trim().toLowerCase();
+        const lc = String(p.title ?? '')
+          .trim()
+          .toLowerCase();
         if (lc) allowedLc.add(lc);
       }
       if (!allowedLc.size) return [];
@@ -885,7 +887,12 @@ export class DashboardService {
     const startY = startYesterday.getTime();
     const endY = endYesterday.getTime();
 
-    const bump = (map: Map<string, Agg>, lc: string, raw: string, q: number) => {
+    const bump = (
+      map: Map<string, Agg>,
+      lc: string,
+      raw: string,
+      q: number,
+    ) => {
       const prev = map.get(lc);
       if (!prev) {
         map.set(lc, { title: raw || lc, n: q });
@@ -1103,8 +1110,7 @@ export class DashboardService {
       baseMatch.store = { $in: storeIds };
     } else if (user.type === UserTypeEnum.USER) {
       const rawId =
-        (user as UserModel & { _id?: Types.ObjectId | string })._id ??
-        user.id;
+        (user as UserModel & { _id?: Types.ObjectId | string })._id ?? user.id;
       if (rawId == null || rawId === '') return empty;
       baseMatch.user =
         rawId instanceof Types.ObjectId
@@ -1162,10 +1168,7 @@ export class DashboardService {
   async getProductReviewsDashboard(
     user: UserModel,
   ): Promise<DashboardProductReviewsPayload> {
-    if (
-      user.type !== UserTypeEnum.ADMIN &&
-      user.type !== UserTypeEnum.VENDOR
-    ) {
+    if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('dashboard_reviews_access_denied');
     }
 
@@ -1218,8 +1221,7 @@ export class DashboardService {
     };
 
     const allowStore = (storeId: string) =>
-      !vendorIds?.length ||
-      vendorIds.some((id) => id.toString() === storeId);
+      !vendorIds?.length || vendorIds.some((id) => id.toString() === storeId);
 
     const reviews: DashboardProductReviewRow[] = [];
     const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
@@ -1347,19 +1349,14 @@ export class DashboardService {
   async getDashboardRevenueSummary(
     user: UserModel,
   ): Promise<DashboardRevenueSummary> {
-    const empty = (
-      target: number,
-    ): DashboardRevenueSummary => ({
+    const empty = (target: number): DashboardRevenueSummary => ({
       revenueMonthToDate: 0,
       revenueComparablePriorMonth: 0,
       trendPercent: null,
       monthlyTarget: target,
     });
 
-    if (
-      user.type !== UserTypeEnum.ADMIN &&
-      user.type !== UserTypeEnum.VENDOR
-    ) {
+    if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       return empty(0);
     }
 
@@ -1420,10 +1417,7 @@ export class DashboardService {
    * KPIs du jour — admin (plateforme) ou vendeur (ses boutiques).
    */
   async getDailyKpis(user: UserModel): Promise<AdminDashboardKpis> {
-    if (
-      user.type !== UserTypeEnum.ADMIN &&
-      user.type !== UserTypeEnum.VENDOR
-    ) {
+    if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('forbidden');
     }
 
@@ -1584,10 +1578,7 @@ export class DashboardService {
     user: UserModel,
     period: '7d' | '30d' | '12m',
   ): Promise<DashboardRevenueSeriesPayload> {
-    if (
-      user.type !== UserTypeEnum.ADMIN &&
-      user.type !== UserTypeEnum.VENDOR
-    ) {
+    if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('forbidden');
     }
 
@@ -1767,10 +1758,7 @@ export class DashboardService {
    * Top boutiques par CA du jour (fuseau Toronto) — admin ou vendeur (ses boutiques).
    */
   async listTopStoresToday(user: UserModel): Promise<DashboardTopStoreRow[]> {
-    if (
-      user.type !== UserTypeEnum.ADMIN &&
-      user.type !== UserTypeEnum.VENDOR
-    ) {
+    if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('forbidden');
     }
 
@@ -1889,10 +1877,7 @@ export class DashboardService {
       ])
       .exec();
     const byMonth = new Map(
-      rows.map((r) => [
-        r._id,
-        typeof r.revenue === 'number' ? r.revenue : 0,
-      ]),
+      rows.map((r) => [r._id, typeof r.revenue === 'number' ? r.revenue : 0]),
     );
 
     const out: Array<{ monthKey: string; revenue: number }> = [];
@@ -2099,10 +2084,7 @@ export class DashboardService {
     vendorStoreIds: Types.ObjectId[] | null,
   ): Promise<StockAlertRow[]> {
     const filter: Record<string, unknown> = {
-      $or: [
-        { quantite: { $lte: 0 } },
-        { statut: StockStatutEnum.ALERTE },
-      ],
+      $or: [{ quantite: { $lte: 0 } }, { statut: StockStatutEnum.ALERTE }],
     };
     if (vendorStoreIds?.length) {
       filter.store = { $in: vendorStoreIds };
@@ -2231,10 +2213,7 @@ export class DashboardService {
       .select('_id')
       .lean()
       .exec();
-    if (
-      activeForAgent &&
-      String(activeForAgent._id) !== orderId
-    ) {
+    if (activeForAgent && String(activeForAgent._id) !== orderId) {
       throw new BadRequestException('livreur_not_available');
     }
 
@@ -2266,10 +2245,7 @@ export class DashboardService {
     }
 
     const existingAssignee = orderDoc.assignedDeliveryUser;
-    if (
-      existingAssignee &&
-      String(existingAssignee) !== deliveryUserId
-    ) {
+    if (existingAssignee && String(existingAssignee) !== deliveryUserId) {
       throw new BadRequestException('order_assigned_to_other');
     }
     if (
@@ -2288,8 +2264,7 @@ export class DashboardService {
     await orderDoc.save();
 
     const customerId = this.customerUserIdForOrderPush(orderDoc);
-    const agentName =
-      deliveryUser.fullName?.trim() || 'Livreur app';
+    const agentName = deliveryUser.fullName?.trim() || 'Livreur app';
 
     if (prevOrderStatus !== OrderStatusEnum.SHIPPED) {
       await this.orderStatusEvents.record({
@@ -2330,14 +2305,17 @@ export class DashboardService {
 
     if (orderStoreId && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
       const sname = this.storeNameForOrderPush(orderDoc);
-      const vendorIds =
-        await this.storeAccess.listStorePushRecipientUserIds(orderStoreId);
+      const vendorIds = await this.storeAccess.listStorePushRecipientUserIds(
+        orderStoreId,
+      );
       if (vendorIds.length > 0) {
         void this.notificationsService
           .pushVendorOrderNotify({
             vendorUserIds: vendorIds,
             title: 'Commande en livraison',
-            body: `${sname ?? 'Boutique'} : commande prise en charge par ${agentName}.`,
+            body: `${
+              sname ?? 'Boutique'
+            } : commande prise en charge par ${agentName}.`,
             orderId: orderDoc._id.toString(),
             storeName: sname,
             reason: 'order_shipped',
@@ -2425,7 +2403,9 @@ export class DashboardService {
     return { storeName: '' };
   }
 
-  private mergeLivreurRowsById(rows: DashboardLivreurRow[]): DashboardLivreurRow[] {
+  private mergeLivreurRowsById(
+    rows: DashboardLivreurRow[],
+  ): DashboardLivreurRow[] {
     const byId = new Map<string, DashboardLivreurRow>();
     for (const r of rows) {
       const key = this.parseDeliveryUserId(r.id) ?? r.id;
@@ -2506,22 +2486,14 @@ export class DashboardService {
         .exec(),
     ]);
 
-    const todayByUser = new Map(
-      todayAgg.map((x) => [String(x._id), x.count]),
-    );
-    const totalByUser = new Map(
-      totalAgg.map((x) => [String(x._id), x.count]),
-    );
+    const todayByUser = new Map(todayAgg.map((x) => [String(x._id), x.count]));
+    const totalByUser = new Map(totalAgg.map((x) => [String(x._id), x.count]));
     const activeByUser = new Map<string, (typeof activeOrders)[0]>();
     for (const o of activeOrders) {
-      const uid = o.assignedDeliveryUser
-        ? String(o.assignedDeliveryUser)
-        : '';
+      const uid = o.assignedDeliveryUser ? String(o.assignedDeliveryUser) : '';
       if (uid && !activeByUser.has(uid)) activeByUser.set(uid, o);
     }
-    const appByUser = new Map(
-      applications.map((a) => [String(a.user), a]),
-    );
+    const appByUser = new Map(applications.map((a) => [String(a.user), a]));
 
     const enriched = rows.map((row) => {
       const uid = this.parseDeliveryUserId(row.id);
@@ -2602,11 +2574,10 @@ export class DashboardService {
         immatFromApp && immatFromApp.length > 0
           ? immatFromApp
           : appDoc?.vehicle === 'velo'
-            ? '—'
-            : '—';
+          ? '—'
+          : '—';
       const zoneSuffix = appDoc?.serviceZone?.trim();
-      const zone =
-        zoneSuffix && zoneSuffix.length > 0 ? zoneSuffix : row.zone;
+      const zone = zoneSuffix && zoneSuffix.length > 0 ? zoneSuffix : row.zone;
 
       return {
         ...row,
@@ -2614,8 +2585,8 @@ export class DashboardService {
         commande_en_cours,
         livraisons_jour: todayByUser.get(uid) ?? 0,
         livraisons_total: totalByUser.get(uid) ?? 0,
-      longitude,
-      latitude,
+        longitude,
+        latitude,
         coords: coordsFromLngLat(longitude, latitude),
         vehicule: vehiculeLabel,
         immat,
@@ -2769,13 +2740,13 @@ export class DashboardService {
         const chosen =
           addrs.find((a) => a.isDefault) ??
           addrs.find((a) => {
-        const c = a.location?.coordinates;
-        return (
-          Array.isArray(c) &&
-          c.length >= 2 &&
-          !(Number(c[0]) === 0 && Number(c[1]) === 0)
-        );
-      });
+            const c = a.location?.coordinates;
+            return (
+              Array.isArray(c) &&
+              c.length >= 2 &&
+              !(Number(c[0]) === 0 && Number(c[1]) === 0)
+            );
+          });
         if (chosen?.location?.coordinates) {
           lng = Number(chosen.location.coordinates[0]);
           lat = Number(chosen.location.coordinates[1]);
@@ -2792,18 +2763,20 @@ export class DashboardService {
       let bestStoreId = fallbackStore?.storeId ?? '';
       let bestKm = Number.POSITIVE_INFINITY;
       if (storePoints.length) {
-      for (const sp of storePoints) {
-        const d = haversineKm(lng, lat, sp.lng, sp.lat);
-        if (d < bestKm) {
-          bestKm = d;
-          bestStoreId = sp.storeId;
-        }
+        for (const sp of storePoints) {
+          const d = haversineKm(lng, lat, sp.lng, sp.lat);
+          if (d < bestKm) {
+            bestKm = d;
+            bestStoreId = sp.storeId;
+          }
         }
         if (!includeAllApprovedForAdmin && bestKm > radiusKm) continue;
       }
 
       const initialStatut =
-        app.dashboardAvailability === 'hors_ligne' ? 'hors_ligne' : 'disponible';
+        app.dashboardAvailability === 'hors_ligne'
+          ? 'hors_ligne'
+          : 'disponible';
       rows.push(
         this.toDashboardLivreurRowFromDeliveryUser(
           u,
@@ -2946,10 +2919,7 @@ export class DashboardService {
   async getFinanceWeeklyUserPerformance(
     user: UserModel,
   ): Promise<FinanceWeeklyUserPerformancePayload> {
-    if (
-      user.type !== UserTypeEnum.ADMIN &&
-      user.type !== UserTypeEnum.VENDOR
-    ) {
+    if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('forbidden');
     }
 
@@ -2996,8 +2966,8 @@ export class DashboardService {
       rawVendorId instanceof Types.ObjectId
         ? rawVendorId.toString()
         : rawVendorId != null
-          ? String(rawVendorId)
-          : '';
+        ? String(rawVendorId)
+        : '';
 
     const [
       clientsThis,
@@ -3080,7 +3050,9 @@ export class DashboardService {
         ordersTrendPercent: trendPercent(ordersThisWeek, ordersPriorWeek),
         activeClientsThisWeek: clientsThis.length,
         activeVendorsThisWeek:
-          user.type === UserTypeEnum.ADMIN ? vendorsThis.length : vendors.length,
+          user.type === UserTypeEnum.ADMIN
+            ? vendorsThis.length
+            : vendors.length,
       },
       clients,
       vendors,
@@ -3096,10 +3068,7 @@ export class DashboardService {
     fromStr: string,
     toStr: string,
   ): Promise<FinancePeriodReportPayload> {
-    if (
-      user.type !== UserTypeEnum.ADMIN &&
-      user.type !== UserTypeEnum.VENDOR
-    ) {
+    if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('forbidden');
     }
 
@@ -3204,8 +3173,7 @@ export class DashboardService {
             ? o.totalPrice
             : 0,
         shippingPrice:
-          typeof o.shippingPrice === 'number' &&
-          !Number.isNaN(o.shippingPrice)
+          typeof o.shippingPrice === 'number' && !Number.isNaN(o.shippingPrice)
             ? o.shippingPrice
             : 0,
         status: String(o.status ?? ''),
@@ -3260,7 +3228,10 @@ export class DashboardService {
             _id: null,
             total: {
               $sum: {
-                $ifNull: ['$shippingPrice', { $ifNull: ['$shipping_price', 0] }],
+                $ifNull: [
+                  '$shippingPrice',
+                  { $ifNull: ['$shipping_price', 0] },
+                ],
               },
             },
           },
@@ -3359,7 +3330,12 @@ export class DashboardService {
     storeIds: Types.ObjectId[] | null,
     limit: number,
   ): Promise<
-    { userId: string; orderCount: number; totalSpent: number; shippingTotal: number }[]
+    {
+      userId: string;
+      orderCount: number;
+      totalSpent: number;
+      shippingTotal: number;
+    }[]
   > {
     const match: Record<string, unknown> = {
       createdAt: { $gte: start, $lt: end },
@@ -3387,7 +3363,10 @@ export class DashboardService {
             },
             shippingTotal: {
               $sum: {
-                $ifNull: ['$shippingPrice', { $ifNull: ['$shipping_price', 0] }],
+                $ifNull: [
+                  '$shippingPrice',
+                  { $ifNull: ['$shipping_price', 0] },
+                ],
               },
             },
           },
@@ -3410,7 +3389,12 @@ export class DashboardService {
     storeIds: Types.ObjectId[] | null,
     limit: number,
   ): Promise<
-    { userId: string; orderCount: number; totalSpent: number; shippingTotal: number }[]
+    {
+      userId: string;
+      orderCount: number;
+      totalSpent: number;
+      shippingTotal: number;
+    }[]
   > {
     const match: Record<string, unknown> = {
       createdAt: { $gte: start, $lt: end },
@@ -3448,7 +3432,10 @@ export class DashboardService {
             },
             shippingTotal: {
               $sum: {
-                $ifNull: ['$shippingPrice', { $ifNull: ['$shipping_price', 0] }],
+                $ifNull: [
+                  '$shippingPrice',
+                  { $ifNull: ['$shipping_price', 0] },
+                ],
               },
             },
           },
@@ -3514,5 +3501,4 @@ export class DashboardService {
       };
     });
   }
-
 }

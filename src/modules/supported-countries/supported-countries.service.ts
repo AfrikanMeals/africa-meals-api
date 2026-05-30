@@ -32,17 +32,15 @@ export const DEFAULT_SUPPORTED_COUNTRIES: Array<{
 @Injectable()
 export class SupportedCountriesService implements OnModuleInit {
   private static readonly _LIST_ACTIVE_TTL_MS = 60_000;
-  private _listActiveCache:
-    | {
-        at: number;
-        data: Array<{
-          code: string;
-          name: string;
-          phoneRegion: string;
-          currency: string;
-        }>;
-      }
-    | null = null;
+  private _listActiveCache: {
+    at: number;
+    data: Array<{
+      code: string;
+      name: string;
+      phoneRegion: string;
+      currency: string;
+    }>;
+  } | null = null;
 
   @InjectModel(SupportedCountryModel.name)
   private readonly _model: Model<SupportedCountryModel>;
@@ -76,7 +74,8 @@ export class SupportedCountriesService implements OnModuleInit {
     const now = Date.now();
     if (
       this._listActiveCache &&
-      now - this._listActiveCache.at < SupportedCountriesService._LIST_ACTIVE_TTL_MS
+      now - this._listActiveCache.at <
+        SupportedCountriesService._LIST_ACTIVE_TTL_MS
     ) {
       return this._listActiveCache.data;
     }
@@ -97,7 +96,9 @@ export class SupportedCountriesService implements OnModuleInit {
 
   async isActiveCode(code: string): Promise<boolean> {
     const c = (code || '').toUpperCase();
-    const n = await this._model.countDocuments({ code: c, active: true }).exec();
+    const n = await this._model
+      .countDocuments({ code: c, active: true })
+      .exec();
     return n > 0;
   }
 
@@ -152,12 +153,20 @@ export class SupportedCountriesService implements OnModuleInit {
   ): Promise<void> {
     const seen = new Set<string>();
     for (const row of countries) {
-      const code = String(row.code ?? '').trim().toUpperCase();
+      const code = String(row.code ?? '')
+        .trim()
+        .toUpperCase();
       const name = String(row.name ?? '').trim();
-      const phoneRegion = String(row.phoneRegion ?? '').trim().toUpperCase();
-      const currency = String(row.currency ?? '').trim().toUpperCase();
+      const phoneRegion = String(row.phoneRegion ?? '')
+        .trim()
+        .toUpperCase();
+      const currency = String(row.currency ?? '')
+        .trim()
+        .toUpperCase();
       if (!/^[A-Z]{2}$/.test(code)) {
-        throw new BadRequestException(`invalid_country_code:${code || 'empty'}`);
+        throw new BadRequestException(
+          `invalid_country_code:${code || 'empty'}`,
+        );
       }
       if (!/^[A-Z]{2}$/.test(phoneRegion)) {
         throw new BadRequestException(`invalid_phone_region:${code}`);
@@ -213,8 +222,8 @@ export class SupportedCountriesService implements OnModuleInit {
         'Ce pays n’est pas encore pris en charge pour les vendeurs.',
       );
     }
-    const appCode = ((user as UserModel & { appCountryCode?: string })
-      .appCountryCode || 'CA'
+    const appCode = (
+      (user as UserModel & { appCountryCode?: string }).appCountryCode || 'CA'
     ).toUpperCase();
     if (!activeCodes.has(appCode)) {
       throw new BadRequestException(

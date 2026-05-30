@@ -2,14 +2,13 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
-  Inject,
   Injectable,
+  Logger,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import {
-  SubscriptionPlanModel,
-} from '@schemas/subscription-plan.schema';
+import { SubscriptionPlanModel } from '@schemas/subscription-plan.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { VendorSubscriptionModel } from '@schemas/vendor-subscription.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
@@ -24,6 +23,7 @@ import {
   isFreeSubscriptionPlan,
   resolvePlanTrialFields,
 } from './subscription-plan.util';
+import { DEFAULT_SUBSCRIPTION_PLAN_SEEDS } from './subscription-plan.seed';
 
 function vendorStoreObjectIds(user: UserModel): Types.ObjectId[] {
   const rawStores = user.stores || [];
@@ -92,8 +92,8 @@ function mapVendorSubscription(
       doc.trialEndsAt instanceof Date
         ? doc.trialEndsAt.toISOString()
         : doc.trialEndsAt
-          ? new Date(String(doc.trialEndsAt)).toISOString()
-          : null,
+        ? new Date(String(doc.trialEndsAt)).toISOString()
+        : null,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
     plan: plan ? mapPlan(plan) : undefined,
@@ -101,7 +101,9 @@ function mapVendorSubscription(
 }
 
 @Injectable()
-export class SubscriptionsService {
+export class SubscriptionsService implements OnModuleInit {
+  private readonly logger = new Logger(SubscriptionsService.name);
+
   @InjectModel(SubscriptionPlanModel.name)
   private readonly planModel: Model<SubscriptionPlanModel>;
 
@@ -110,6 +112,11 @@ export class SubscriptionsService {
 
   @InjectModel(StoreModel.name)
   private readonly storeModel: Model<StoreModel>;
+
+  async onModuleInit() {
+    await this.ensureDefaultPlansSeeded();
+    await this.ensureDefaultFreePlanForStoresWithoutActiveSubscription();
+  }
 
   private assertAdmin(user: UserModel) {
     if (user.type !== UserTypeEnum.ADMIN) {
@@ -130,11 +137,192 @@ export class SubscriptionsService {
     return (rows as Record<string, unknown>[]).map(mapPlan);
   }
 
+  private normalizeStoreObjectId(
+    storeId: string | Types.ObjectId,
+  ): Types.ObjectId {
+    return storeId instanceof Types.ObjectId
+      ? storeId
+      : new Types.ObjectId(String(storeId));
+  }
+
+  private normalizeUserObjectId(
+    userId: string | Types.ObjectId,
+  ): Types.ObjectId {
+    return userId instanceof Types.ObjectId
+      ? userId
+      : new Types.ObjectId(String(userId));
+  }
+
+  private pickPreferredStoreSubscription(
+    rows: Record<string, unknown>[],
+  ): Record<string, unknown> | null {
+    if (!rows.length) return null;
+    const nowMs = Date.now();
+    const valid = rows.filter((s) => {
+      if (String(s.status ?? '') !== 'ACTIVE') return false;
+      const end = new Date(String(s.endsAt ?? '')).getTime();
+      return !Number.isNaN(end) && end > nowMs;
+    });
+    if (valid.length) {
+      valid.sort(
+        (a, b) =>
+          new Date(String(b.endsAt ?? '')).getTime() -
+          new Date(String(a.endsAt ?? '')).getTime(),
+      );
+      return valid[0] ?? null;
+    }
+    return rows[0] ?? null;
+  }
+
+  private async findPreferredStoreSubscription(
+    storeId: string | Types.ObjectId,
+  ): Promise<Record<string, unknown> | null> {
+    const sid = this.normalizeStoreObjectId(storeId);
+    const rows = await this.vendorSubModel
+      .find({ store: sid, status: 'ACTIVE' })
+      .sort({ endsAt: -1, createdAt: -1 })
+      .lean()
+      .exec();
+    return this.pickPreferredStoreSubscription(
+      rows as Record<string, unknown>[],
+    );
+  }
+
+  private async findDefaultFreePlan(): Promise<Record<string, unknown> | null> {
+    const rows = await this.planModel
+      .find({ active: true })
+      .sort({ sortOrder: 1, createdAt: 1 })
+      .lean()
+      .exec();
+    for (const row of rows as Record<string, unknown>[]) {
+      const candidate = {
+        name: String(row.name ?? ''),
+        priceMonthly: Number(row.priceMonthly ?? 0),
+        priceYearly: Number(row.priceYearly ?? 0),
+      };
+      if (isFreeSubscriptionPlan(candidate)) {
+        return row;
+      }
+    }
+    return null;
+  }
+
+  private async ensureDefaultPlansSeeded() {
+    for (const seed of DEFAULT_SUBSCRIPTION_PLAN_SEEDS) {
+      const existing = await this.planModel
+        .findOne({ name: seed.name.trim() })
+        .select('_id')
+        .lean()
+        .exec();
+      if (existing) continue;
+      const trial = resolvePlanTrialFields({
+        name: seed.name,
+        priceMonthly: seed.priceMonthly,
+        priceYearly: seed.priceYearly,
+        trialDays: seed.trialDays,
+        trialReminderDays: seed.trialReminderDays,
+      });
+      await this.planModel.create({
+        name: seed.name.trim(),
+        description: seed.description.trim(),
+        priceMonthly: seed.priceMonthly,
+        priceYearly: seed.priceYearly,
+        currency: seed.currency.trim().toUpperCase() || 'CAD',
+        features: seed.features.map((f) => f.trim()).filter(Boolean),
+        active: seed.active !== false,
+        sortOrder: seed.sortOrder ?? 0,
+        trialDays: trial.trialDays,
+        trialReminderDays: trial.trialReminderDays,
+      });
+      this.logger.log(`Seed abonnement créé: ${seed.name}`);
+    }
+  }
+
+  async ensureStoreDefaultFreePlan(
+    storeId: string | Types.ObjectId,
+    ownerId: string | Types.ObjectId,
+  ): Promise<void> {
+    const sid = this.normalizeStoreObjectId(storeId);
+    const oid = this.normalizeUserObjectId(ownerId);
+    const preferred = await this.findPreferredStoreSubscription(sid);
+    if (preferred) return;
+
+    let freePlan = await this.findDefaultFreePlan();
+    if (!freePlan) {
+      await this.ensureDefaultPlansSeeded();
+      freePlan = await this.findDefaultFreePlan();
+    }
+    if (!freePlan) {
+      this.logger.warn(
+        `Aucun plan FREE disponible pour la boutique ${String(sid)}`,
+      );
+      return;
+    }
+
+    const now = new Date();
+    const endsAt = new Date(now);
+    endsAt.setFullYear(endsAt.getFullYear() + 50);
+    const planName = String(freePlan.name ?? 'FREE');
+    const currency =
+      String(freePlan.currency ?? 'CAD')
+        .trim()
+        .toUpperCase() || 'CAD';
+    await this.vendorSubModel.create({
+      store: sid,
+      owner: oid,
+      plan: freePlan._id as Types.ObjectId,
+      billingPeriod: 'MONTHLY',
+      status: 'ACTIVE',
+      startsAt: now,
+      endsAt,
+      pricePaid: 0,
+      currency,
+      planName,
+      isTrial: false,
+      trialEndsAt: null,
+      trialRemindersSent: [],
+    });
+  }
+
+  async isStoreOnFreePlan(storeId: string | Types.ObjectId): Promise<boolean> {
+    const preferred = await this.findPreferredStoreSubscription(storeId);
+    if (!preferred) {
+      return true;
+    }
+    const planName = String(preferred.planName ?? '');
+    if (isFreePlanName(planName)) {
+      return true;
+    }
+    const planId = String(preferred.plan ?? '');
+    if (!Types.ObjectId.isValid(planId)) {
+      return false;
+    }
+    const plan = await this.planModel.findById(planId).lean().exec();
+    if (!plan) return false;
+    return isFreeSubscriptionPlan({
+      name: String(plan.name ?? ''),
+      priceMonthly: Number(plan.priceMonthly ?? 0),
+      priceYearly: Number(plan.priceYearly ?? 0),
+    });
+  }
+
+  private async ensureDefaultFreePlanForStoresWithoutActiveSubscription() {
+    const stores = await this.storeModel
+      .find({})
+      .select('_id owner')
+      .lean()
+      .exec();
+    for (const store of stores) {
+      const ownerRaw = (store as { owner?: unknown }).owner;
+      const ownerId = ownerRaw ? String(ownerRaw) : '';
+      if (!Types.ObjectId.isValid(ownerId)) continue;
+      await this.ensureStoreDefaultFreePlan(String(store._id), ownerId);
+    }
+  }
+
   async createPlan(user: UserModel, dto: CreateSubscriptionPlanDto) {
     this.assertAdmin(user);
-    const features = (dto.features ?? [])
-      .map((f) => f.trim())
-      .filter(Boolean);
+    const features = (dto.features ?? []).map((f) => f.trim()).filter(Boolean);
     const trial = resolvePlanTrialFields({
       name: dto.name,
       priceMonthly: dto.priceMonthly,
@@ -200,8 +388,8 @@ export class SubscriptionsService {
         trialReminderDays:
           dto.trialReminderDays != null
             ? dto.trialReminderDays
-            : ((current as { trialReminderDays?: number[] }).trialReminderDays ??
-              []),
+            : (current as { trialReminderDays?: number[] }).trialReminderDays ??
+              [],
       };
       const trial = resolvePlanTrialFields(merged);
       patch.trialDays = trial.trialDays;
@@ -295,7 +483,10 @@ export class SubscriptionsService {
       isTrial: true,
       trialRemindersSent: [],
       pricePaid: 0,
-      currency: String(plan.currency ?? 'CAD').trim().toUpperCase() || 'CAD',
+      currency:
+        String(plan.currency ?? 'CAD')
+          .trim()
+          .toUpperCase() || 'CAD',
       planName: String(plan.name ?? ''),
     });
 
@@ -352,7 +543,10 @@ export class SubscriptionsService {
     if (!Types.ObjectId.isValid(subscriptionId)) {
       throw new NotFoundException('vendor_subscription_not_found');
     }
-    const existing = await this.vendorSubModel.findById(subscriptionId).lean().exec();
+    const existing = await this.vendorSubModel
+      .findById(subscriptionId)
+      .lean()
+      .exec();
     if (!existing) {
       throw new NotFoundException('vendor_subscription_not_found');
     }
@@ -362,7 +556,8 @@ export class SubscriptionsService {
     }
     const now = new Date();
     const endsAt =
-      existing.endsAt instanceof Date && existing.endsAt.getTime() < now.getTime()
+      existing.endsAt instanceof Date &&
+      existing.endsAt.getTime() < now.getTime()
         ? existing.endsAt
         : now;
     const updated = await this.vendorSubModel
@@ -387,10 +582,7 @@ export class SubscriptionsService {
     });
   }
 
-  async deleteVendorSubscriptionAdmin(
-    user: UserModel,
-    subscriptionId: string,
-  ) {
+  async deleteVendorSubscriptionAdmin(user: UserModel, subscriptionId: string) {
     this.assertAdmin(user);
     if (!Types.ObjectId.isValid(subscriptionId)) {
       throw new NotFoundException('vendor_subscription_not_found');
@@ -444,7 +636,9 @@ export class SubscriptionsService {
       const end = new Date(String(s.endsAt ?? '')).getTime();
       return !Number.isNaN(end) && end > nowMs;
     });
-    const pool = valid.length ? valid : rows.filter((s) => s.status === 'ACTIVE');
+    const pool = valid.length
+      ? valid
+      : rows.filter((s) => s.status === 'ACTIVE');
     if (!pool.length) return null;
 
     const scored = pool.map((s) => {
@@ -488,10 +682,7 @@ export class SubscriptionsService {
       .lean()
       .exec();
     const planById = new Map(
-      (plans as Record<string, unknown>[]).map((p) => [
-        String(p._id),
-        p,
-      ]),
+      (plans as Record<string, unknown>[]).map((p) => [String(p._id), p]),
     );
 
     const mapped = (rows as Record<string, unknown>[]).map((r) =>

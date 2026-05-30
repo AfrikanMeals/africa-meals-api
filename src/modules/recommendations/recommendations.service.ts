@@ -103,8 +103,8 @@ export class RecommendationsService {
       dto.kind === UserRecommendationSignalKind.STORE_VIEW
         ? dedupeStoreMs
         : dto.kind === UserRecommendationSignalKind.SEARCH_QUERY
-          ? dedupeSearchMs
-          : dedupeProductMs;
+        ? dedupeSearchMs
+        : dedupeProductMs;
     const since = new Date(Date.now() - Math.max(5_000, windowMs));
     const recent = await this._signalModel
       .findOne({
@@ -337,12 +337,7 @@ export class RecommendationsService {
         W.searchDigestMatch,
       );
       if (sb === 0) {
-        sb = searchBoostFor(
-          title,
-          bio,
-          globalSearchTerms,
-          W.searchGlobalMatch,
-        );
+        sb = searchBoostFor(title, bio, globalSearchTerms, W.searchGlobalMatch);
       }
       score += sb;
 
@@ -439,11 +434,7 @@ export class RecommendationsService {
             },
             likeCount: { $size: { $ifNull: ['$likedBy', []] } },
             boost: {
-              $cond: [
-                { $in: ['$_id', boostOids] },
-                18,
-                0,
-              ],
+              $cond: [{ $in: ['$_id', boostOids] }, 18, 0],
             },
           },
         },

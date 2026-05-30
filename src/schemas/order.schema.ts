@@ -125,7 +125,12 @@ export class OrderModel extends BaseSchema {
   pickedUpAt?: Date;
 
   /** Code motif annulation / refus (`out_of_stock`, `changed_mind`, `other`, …). */
-  @Prop({ required: false, name: 'cancel_reason_code', trim: true, maxlength: 64 })
+  @Prop({
+    required: false,
+    name: 'cancel_reason_code',
+    trim: true,
+    maxlength: 64,
+  })
   cancelReasonCode?: string;
 
   /** Libellé lisible ou précision (motif personnalisé si `other`). */

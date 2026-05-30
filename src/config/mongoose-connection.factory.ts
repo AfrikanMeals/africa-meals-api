@@ -51,9 +51,7 @@ export function buildMongooseRootOptions(
   defaultAppName: string,
 ) {
   const fullUri =
-    config.get<string>('MONGODB_URI') ||
-    config.get<string>('MONGO_URI') ||
-    '';
+    config.get<string>('MONGODB_URI') || config.get<string>('MONGO_URI') || '';
   const user = encodeURIComponent(config.get<string>('DB_USERNAME') ?? '');
   const pass = encodeURIComponent(config.get<string>('DB_PASSWORD') ?? '');
   const host = (config.get<string>('DB_HOST') ?? '').trim();

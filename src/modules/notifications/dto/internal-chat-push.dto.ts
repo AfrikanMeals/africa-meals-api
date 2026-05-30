@@ -2,7 +2,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsArray, IsMongoId, IsOptional, IsString } from 'class-validator';
 
 export class InternalChatPushDto {
-  @ApiProperty({ type: [String], description: 'Destinataires (autres que l’expéditeur)' })
+  @ApiProperty({
+    type: [String],
+    description: 'Destinataires (autres que l’expéditeur)',
+  })
   @IsArray()
   @IsMongoId({ each: true })
   recipientUserIds: string[];

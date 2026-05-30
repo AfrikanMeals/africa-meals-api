@@ -155,7 +155,9 @@ export class AppPoliciesService {
           updatedAt,
         };
       })
-      .filter((row): row is NonNullable<typeof row> => Boolean(row?.title?.trim()));
+      .filter((row): row is NonNullable<typeof row> =>
+        Boolean(row?.title?.trim()),
+      );
   }
 
   async getPublishedPublic(slugRaw: string, localeRaw?: string) {
@@ -199,7 +201,8 @@ export class AppPoliciesService {
     if (buffer.length > max) {
       throw new BadRequestException('file_too_large');
     }
-    const name = (dto.filename || 'policy-section.jpg').trim() || 'policy-section.jpg';
+    const name =
+      (dto.filename || 'policy-section.jpg').trim() || 'policy-section.jpg';
     if (!/\.(jpe?g|png|webp)$/i.test(name)) {
       throw new BadRequestException('invalid_file_type');
     }
@@ -207,19 +210,15 @@ export class AppPoliciesService {
     const mime = lower.endsWith('.png')
       ? 'image/png'
       : lower.endsWith('.webp')
-        ? 'image/webp'
-        : 'image/jpeg';
+      ? 'image/webp'
+      : 'image/jpeg';
     const file = {
       buffer,
       originalname: name,
       mimetype: mime,
       size: buffer.length,
     } as Express.Multer.File;
-    const url = await this._mediasService.upload(
-      file,
-      user,
-      'legal/policies',
-    );
+    const url = await this._mediasService.upload(file, user, 'legal/policies');
     return { url };
   }
 }

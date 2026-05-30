@@ -103,7 +103,9 @@ export class SeedService implements OnModuleInit {
     }
 
     console.log(
-      `Seed: Created ${stores.length} stores and ${stores.length * NUM_PRODUCTS_PER_STORE} products.`,
+      `Seed: Created ${stores.length} stores and ${
+        stores.length * NUM_PRODUCTS_PER_STORE
+      } products.`,
     );
   }
 

@@ -32,10 +32,7 @@ export class AppPoliciesController {
 
   @Get('public/:slug')
   @ApiOperation({ summary: 'Politique publiée (site / app)' })
-  getPublic(
-    @Param('slug') slug: string,
-    @Query('locale') locale?: string,
-  ) {
+  getPublic(@Param('slug') slug: string, @Query('locale') locale?: string) {
     return this._policies.getPublishedPublic(slug, locale);
   }
 
@@ -77,6 +74,10 @@ export class AppPoliciesController {
     @Param('slug') slug: string,
     @Query('locale') locale?: string,
   ) {
-    return this._policies.getForAdmin(req.user as UserModel, slug, locale ?? 'fr');
+    return this._policies.getForAdmin(
+      req.user as UserModel,
+      slug,
+      locale ?? 'fr',
+    );
   }
 }
