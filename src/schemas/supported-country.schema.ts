@@ -16,6 +16,10 @@ export class SupportedCountryModel extends BaseSchema {
   @Prop({ required: true })
   phoneRegion: string;
 
+  /** Devise principale utilisée dans l’app pour ce pays (ISO 4217, ex. CAD, XOF). */
+  @Prop({ required: true, uppercase: true, default: 'CAD' })
+  currency: string;
+
   @Prop({ default: true })
   active: boolean;
 }
