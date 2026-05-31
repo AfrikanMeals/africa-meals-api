@@ -4,12 +4,20 @@ import {
   isAdLinkActionType,
   PatchAdManagementDto,
 } from '@modules/ads/dto/ad-management.dto';
+import {
+  CampaignItemDto,
+  CreateAdCampaignDto,
+  PatchAdCampaignDto,
+} from '@modules/ads/dto/ad-campaign.dto';
+import { UpdateAdPricingDto } from '@modules/ads/dto/ad-pricing.dto';
 import { TrackAdEventDto } from '@modules/ads/dto/ad-tracking.dto';
+import { TrackAdCampaignEventDto } from '@modules/ads/dto/ad-campaign-tracking.dto';
 import {
   pipelineActiveStoresWithStripeOnboarded,
   resolveStoreIdsVisibleOnMobileApp,
 } from '@modules/billing/stripe/stripe-connect-visibility';
 import { MediasService } from '@modules/medias/medias.service';
+import { StoreAccessService } from '@modules/teams/store-access.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -20,7 +28,20 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { AdEventModel, AdEventTypeEnum } from '@schemas/ad-event.schema';
+import {
+  AdCampaignEventModel,
+  AdCampaignEventTypeEnum,
+} from '@schemas/ad-campaign-event.schema';
+import {
+  AdCampaignItemTypeEnum,
+  AdCampaignModel,
+} from '@schemas/ad-campaign.schema';
+import {
+  AdPricingSettingsDocument,
+  AdPricingSettingsModel,
+} from '@schemas/ad-pricing-settings.schema';
 import { AdModel, StoreAdActionTypeEnum } from '@schemas/ad.schema';
+import { DrinkModel } from '@schemas/drink.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
@@ -77,6 +98,140 @@ export type AdStatsPayload = {
   recentEvents: AdStatsRecentEvent[];
 };
 
+export type AdCampaignStatsRecentEvent = {
+  eventType: AdCampaignEventTypeEnum;
+  itemType: string;
+  itemId: string;
+  createdAt: string;
+  userId: string | null;
+  userEmail: string | null;
+  userFullName: string | null;
+  clientInstallId: string | null;
+};
+
+export type AdCampaignStatsDayBucket = {
+  date: string;
+  impressions: number;
+  clicks: number;
+  actionClicks: number;
+};
+
+export type AdCampaignItemPerformance = {
+  itemType: string;
+  itemId: string;
+  title: string;
+  impressions: number;
+  clicks: number;
+  ctrPercent: number;
+};
+
+export type AdCampaignStatsPayload = {
+  campaignId: string;
+  impressionsTotal: number;
+  clicksTotal: number;
+  actionClicksTotal: number;
+  uniqueUsersImpressions: number;
+  uniqueUsersClicks: number;
+  uniqueClientDevices: number;
+  last7Days: AdCampaignStatsDayBucket[];
+  itemPerformance: AdCampaignItemPerformance[];
+  recentEvents: AdCampaignStatsRecentEvent[];
+};
+
+export type AdCampaignItemRow = {
+  itemType: AdCampaignItemTypeEnum;
+  productId: string | null;
+  drinkId: string | null;
+  title: string;
+  imageUrl: string | null;
+  priceCad: number;
+};
+
+export type AdCampaignManagementRow = {
+  id: string;
+  storeId: string;
+  storeName: string;
+  storeProfileImageUrl?: string | null;
+  title: string;
+  subtitle: string;
+  description: string;
+  startsAt: string;
+  endsAt: string;
+  isActive: boolean;
+  actionType: StoreAdActionTypeEnum;
+  actionText: string;
+  actionTarget: string | null;
+  items: AdCampaignItemRow[];
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type PublicAdCampaignRow = {
+  id: string;
+  storeId: string;
+  storeName: string;
+  storeProfileImageUrl?: string | null;
+  title: string;
+  subtitle: string;
+  description: string;
+  startsAt: string;
+  endsAt: string;
+  actionType: StoreAdActionTypeEnum;
+  actionText: string;
+  actionTarget: string | null;
+  items: AdCampaignItemRow[];
+};
+
+export type AdCreditSummaryPayload = {
+  currency: string;
+  banners: {
+    impressions: number;
+    clicks: number;
+    due: number;
+  };
+  campaigns: {
+    impressions: number;
+    clicks: number;
+    actionClicks: number;
+    due: number;
+  };
+  stores: Array<{
+    storeId: string;
+    storeName: string;
+    banners: { impressions: number; clicks: number; due: number };
+    campaigns: {
+      impressions: number;
+      clicks: number;
+      actionClicks: number;
+      due: number;
+    };
+    totalDue: number;
+  }>;
+  totalDue: number;
+};
+
+export type AdPricingPayload = {
+  currency: string;
+  cpmCad: number;
+  cpcCad: number;
+  campaignCpmCad: number;
+  campaignCpcCad: number;
+  campaignActionCad: number;
+  minimumBudgetCad: number;
+  updatedAt: string | null;
+};
+
+const ADS_PRICING_KEY = 'default';
+const ADS_PRICING_DEFAULTS: Omit<AdPricingPayload, 'updatedAt'> = {
+  currency: 'CAD',
+  cpmCad: 0,
+  cpcCad: 0,
+  campaignCpmCad: 0,
+  campaignCpcCad: 0,
+  campaignActionCad: 0,
+  minimumBudgetCad: 0,
+};
+
 @Injectable()
 export class AdsService implements OnModuleInit {
   private static readonly _LIST_TTL_MS = 30_000;
@@ -92,14 +247,29 @@ export class AdsService implements OnModuleInit {
   @InjectModel(AdEventModel.name)
   private readonly _adEventModel: Model<AdEventModel>;
 
+  @InjectModel(AdCampaignModel.name)
+  private readonly _adCampaignModel: Model<AdCampaignModel>;
+
+  @InjectModel(AdCampaignEventModel.name)
+  private readonly _adCampaignEventModel: Model<AdCampaignEventModel>;
+
+  @InjectModel(AdPricingSettingsModel.name)
+  private readonly _adPricingModel: Model<AdPricingSettingsDocument>;
+
   @InjectModel(StoreModel.name)
   private readonly _storeModel: Model<StoreModel>;
 
   @InjectModel(ProductModel.name)
   private readonly _productModel: Model<ProductModel>;
 
+  @InjectModel(DrinkModel.name)
+  private readonly _drinkModel: Model<DrinkModel>;
+
   @Inject(MediasService)
   private readonly _mediasService: MediasService;
+
+  @Inject(StoreAccessService)
+  private readonly _storeAccess: StoreAccessService;
 
   async onModuleInit() {
     await this.seedIfEmpty();
@@ -113,6 +283,815 @@ export class AdsService implements OnModuleInit {
     if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('vendor_or_admin_only');
     }
+  }
+
+  private assertAdmin(user: UserModel) {
+    if (user.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('admin_only');
+    }
+  }
+
+  private async assertCanManageCampaignStore(
+    user: UserModel,
+    storeId: string,
+  ): Promise<void> {
+    if (user.type === UserTypeEnum.ADMIN) return;
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_or_admin_only');
+    }
+    await this._storeAccess.assertStoreAccess(user, storeId, 'campaigns.manage');
+  }
+
+  private async resolveManageableCampaignStoreIds(
+    user: UserModel,
+  ): Promise<string[]> {
+    if (user.type === UserTypeEnum.ADMIN) {
+      return [];
+    }
+    if (user.type !== UserTypeEnum.VENDOR) {
+      return [];
+    }
+    const access = await this._storeAccess.resolveStoreAccess(user);
+    return access
+      .filter((a) => a.isOwner || a.permissions.includes('campaigns.manage'))
+      .map((a) => a.storeId)
+      .filter((id) => Types.ObjectId.isValid(id));
+  }
+
+  private _toPricingPayload(
+    doc: AdPricingSettingsModel &
+      Partial<{ updatedAt: Date | string | null }>,
+  ): AdPricingPayload {
+    const currency = String(doc.currency ?? ADS_PRICING_DEFAULTS.currency)
+      .trim()
+      .toUpperCase();
+    const updatedAt = doc.updatedAt;
+    return {
+      currency: currency || ADS_PRICING_DEFAULTS.currency,
+      cpmCad: Number(doc.cpmCad ?? ADS_PRICING_DEFAULTS.cpmCad),
+      cpcCad: Number(doc.cpcCad ?? ADS_PRICING_DEFAULTS.cpcCad),
+      campaignCpmCad: Number(
+        doc.campaignCpmCad ?? ADS_PRICING_DEFAULTS.campaignCpmCad,
+      ),
+      campaignCpcCad: Number(
+        doc.campaignCpcCad ?? ADS_PRICING_DEFAULTS.campaignCpcCad,
+      ),
+      campaignActionCad: Number(
+        doc.campaignActionCad ?? ADS_PRICING_DEFAULTS.campaignActionCad,
+      ),
+      minimumBudgetCad: Number(
+        doc.minimumBudgetCad ?? ADS_PRICING_DEFAULTS.minimumBudgetCad,
+      ),
+      updatedAt:
+        updatedAt instanceof Date
+          ? updatedAt.toISOString()
+          : typeof updatedAt === 'string'
+          ? updatedAt
+          : null,
+    };
+  }
+
+  private async _ensurePricingDoc(): Promise<AdPricingSettingsModel> {
+    const doc = await this._adPricingModel
+      .findOneAndUpdate(
+        { key: ADS_PRICING_KEY },
+        {
+          $setOnInsert: {
+            key: ADS_PRICING_KEY,
+            ...ADS_PRICING_DEFAULTS,
+          },
+        },
+        { upsert: true, new: true, lean: true, setDefaultsOnInsert: true },
+      )
+      .exec();
+    return doc as unknown as AdPricingSettingsModel;
+  }
+
+  async getPricing(user: UserModel): Promise<AdPricingPayload> {
+    this.assertAdmin(user);
+    const doc = await this._ensurePricingDoc();
+    return this._toPricingPayload(doc);
+  }
+
+  async updatePricing(
+    user: UserModel,
+    dto: UpdateAdPricingDto,
+  ): Promise<AdPricingPayload> {
+    this.assertAdmin(user);
+    const current = await this._ensurePricingDoc();
+    const nextCurrency = String(dto.currency ?? current.currency ?? 'CAD')
+      .trim()
+      .toUpperCase();
+    const cpmCad = Number(dto.cpmCad ?? current.cpmCad ?? 0);
+    const cpcCad = Number(dto.cpcCad ?? current.cpcCad ?? 0);
+    const campaignCpmCad = Number(
+      dto.campaignCpmCad ?? current.campaignCpmCad ?? 0,
+    );
+    const campaignCpcCad = Number(
+      dto.campaignCpcCad ?? current.campaignCpcCad ?? 0,
+    );
+    const campaignActionCad = Number(
+      dto.campaignActionCad ?? current.campaignActionCad ?? 0,
+    );
+    const minimumBudgetCad = Number(
+      dto.minimumBudgetCad ?? current.minimumBudgetCad ?? 0,
+    );
+    const updated = await this._adPricingModel
+      .findOneAndUpdate(
+        { key: ADS_PRICING_KEY },
+        {
+          $set: {
+            currency: nextCurrency || 'CAD',
+            cpmCad: cpmCad < 0 ? 0 : cpmCad,
+            cpcCad: cpcCad < 0 ? 0 : cpcCad,
+            campaignCpmCad: campaignCpmCad < 0 ? 0 : campaignCpmCad,
+            campaignCpcCad: campaignCpcCad < 0 ? 0 : campaignCpcCad,
+            campaignActionCad: campaignActionCad < 0 ? 0 : campaignActionCad,
+            minimumBudgetCad: minimumBudgetCad < 0 ? 0 : minimumBudgetCad,
+          },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      )
+      .exec();
+    return this._toPricingPayload(updated as unknown as AdPricingSettingsModel);
+  }
+
+  private _normalizeCampaignItems(items: CampaignItemDto[]): CampaignItemDto[] {
+    const out: CampaignItemDto[] = [];
+    const seen = new Set<string>();
+    for (const it of items) {
+      if (it.itemType === AdCampaignItemTypeEnum.PRODUCT && it.productId) {
+        const key = `P:${it.productId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ itemType: it.itemType, productId: it.productId });
+      } else if (it.itemType === AdCampaignItemTypeEnum.DRINK && it.drinkId) {
+        const key = `D:${it.drinkId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ itemType: it.itemType, drinkId: it.drinkId });
+      }
+    }
+    return out;
+  }
+
+  private _assertCampaignDateRange(startsAt: Date, endsAt: Date) {
+    if (Number.isNaN(startsAt.getTime())) {
+      throw new BadRequestException('invalid_campaign_starts_at');
+    }
+    if (Number.isNaN(endsAt.getTime())) {
+      throw new BadRequestException('invalid_campaign_ends_at');
+    }
+    if (endsAt.getTime() <= startsAt.getTime()) {
+      throw new BadRequestException('invalid_campaign_date_range');
+    }
+  }
+
+  private async _assertCampaignItemsBelongToStore(
+    storeId: string,
+    items: CampaignItemDto[],
+  ): Promise<void> {
+    const normalized = this._normalizeCampaignItems(items);
+    if (!normalized.length) {
+      throw new BadRequestException('campaign_items_required');
+    }
+    const productIds = normalized
+      .filter((i) => i.itemType === AdCampaignItemTypeEnum.PRODUCT)
+      .map((i) => i.productId!)
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    const drinkIds = normalized
+      .filter((i) => i.itemType === AdCampaignItemTypeEnum.DRINK)
+      .map((i) => i.drinkId!)
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    if (productIds.length > 0) {
+      const count = await this._productModel
+        .countDocuments({
+          _id: { $in: productIds },
+          store: new Types.ObjectId(storeId),
+        })
+        .exec();
+      if (count !== productIds.length) {
+        throw new BadRequestException('campaign_product_not_in_store');
+      }
+    }
+    if (drinkIds.length > 0) {
+      const count = await this._drinkModel
+        .countDocuments({
+          _id: { $in: drinkIds },
+          store: new Types.ObjectId(storeId),
+        })
+        .exec();
+      if (count !== drinkIds.length) {
+        throw new BadRequestException('campaign_drink_not_in_store');
+      }
+    }
+  }
+
+  private _toCampaignRow(
+    doc: Record<string, unknown>,
+  ): AdCampaignManagementRow {
+    const rawStore = doc.store as Record<string, unknown> | undefined | null;
+    const storeId = String(rawStore?._id ?? '');
+    const storeName = String(rawStore?.name ?? '').trim() || storeId;
+    const storeProfileImageUrl = rawStore?.profileImage
+      ? String(rawStore.profileImage)
+      : null;
+    const rawItems = Array.isArray(doc.items)
+      ? (doc.items as Record<string, unknown>[])
+      : [];
+    const items: AdCampaignItemRow[] = rawItems
+      .map((it) => {
+        const itemType = it.itemType as AdCampaignItemTypeEnum;
+        const p = it.product as Record<string, unknown> | undefined | null;
+        const d = it.drink as Record<string, unknown> | undefined | null;
+        if (itemType === AdCampaignItemTypeEnum.PRODUCT) {
+          return {
+            itemType,
+            productId: p?._id ? String(p._id) : null,
+            drinkId: null,
+            title: String(p?.title ?? '(produit supprimé)'),
+            imageUrl: p?.profileImage ? String(p.profileImage) : null,
+            priceCad: Number(p?.price ?? 0),
+          };
+        }
+        return {
+          itemType: AdCampaignItemTypeEnum.DRINK,
+          productId: null,
+          drinkId: d?._id ? String(d._id) : null,
+          title: String(d?.name ?? '(boisson supprimée)'),
+          imageUrl: d?.imageUrl ? String(d.imageUrl) : null,
+          priceCad: Number(d?.priceCad ?? 0),
+        };
+      })
+      .filter((it) => it.productId != null || it.drinkId != null);
+
+    return {
+      id: String(doc._id ?? ''),
+      storeId,
+      storeName,
+      storeProfileImageUrl,
+      title: String(doc.title ?? ''),
+      subtitle: String(doc.subtitle ?? ''),
+      description: String(doc.description ?? ''),
+      startsAt: new Date(String(doc.startsAt)).toISOString(),
+      endsAt: new Date(String(doc.endsAt)).toISOString(),
+      isActive: Boolean(doc.isActive),
+      actionType:
+        (doc.actionType as StoreAdActionTypeEnum) ?? StoreAdActionTypeEnum.SHOP,
+      actionText: String(doc.actionText ?? '').trim() || 'Découvrir',
+      actionTarget:
+        doc.actionTarget != null && String(doc.actionTarget).trim() !== ''
+          ? String(doc.actionTarget).trim()
+          : null,
+      items,
+      createdAt:
+        doc.createdAt instanceof Date
+          ? doc.createdAt.toISOString()
+          : doc.createdAt != null
+          ? String(doc.createdAt)
+          : undefined,
+      updatedAt:
+        doc.updatedAt instanceof Date
+          ? doc.updatedAt.toISOString()
+          : doc.updatedAt != null
+          ? String(doc.updatedAt)
+          : undefined,
+    };
+  }
+
+  async listCampaignsForManagement(
+    user: UserModel,
+  ): Promise<AdCampaignManagementRow[]> {
+    this.assertVendorOrAdmin(user);
+    const manageableStoreIds = await this.resolveManageableCampaignStoreIds(user);
+    const query: Record<string, unknown> = {};
+    if (user.type !== UserTypeEnum.ADMIN) {
+      if (!manageableStoreIds.length) return [];
+      query.store = {
+        $in: manageableStoreIds.map((id) => new Types.ObjectId(id)),
+      };
+    }
+    const docs = await this._adCampaignModel
+      .find(query)
+      .populate('store', 'name profileImage')
+      .populate('items.product', 'title profileImage price store')
+      .populate('items.drink', 'name imageUrl priceCad store')
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+    return (docs as Record<string, unknown>[]).map((d) => this._toCampaignRow(d));
+  }
+
+  async createCampaign(
+    user: UserModel,
+    dto: CreateAdCampaignDto,
+  ): Promise<AdCampaignManagementRow> {
+    this.assertVendorOrAdmin(user);
+    const storeId = dto.storeId.trim();
+    if (!Types.ObjectId.isValid(storeId)) {
+      throw new BadRequestException('store_not_found');
+    }
+    const store = await this._storeModel
+      .findById(storeId)
+      .select('_id')
+      .lean()
+      .exec();
+    if (!store) {
+      throw new BadRequestException('store_not_found');
+    }
+    await this.assertCanManageCampaignStore(user, storeId);
+    const startsAt = new Date(dto.startsAt);
+    const endsAt = new Date(dto.endsAt);
+    this._assertCampaignDateRange(startsAt, endsAt);
+    await this._assertCampaignItemsBelongToStore(storeId, dto.items);
+    const actionType = dto.actionType ?? StoreAdActionTypeEnum.SHOP;
+    if (actionType === StoreAdActionTypeEnum.PRODUCT) {
+      throw new BadRequestException('invalid_campaign_action_type');
+    }
+    const actionText = String(dto.actionText ?? 'Découvrir').trim() || 'Découvrir';
+    const actionTarget = isAdLinkActionType(actionType)
+      ? this.assertActionTargetValue(actionType, dto.actionTarget)
+      : undefined;
+    const items = this._normalizeCampaignItems(dto.items).map((it) => ({
+      itemType: it.itemType,
+      product:
+        it.itemType === AdCampaignItemTypeEnum.PRODUCT && it.productId
+          ? new Types.ObjectId(it.productId)
+          : undefined,
+      drink:
+        it.itemType === AdCampaignItemTypeEnum.DRINK && it.drinkId
+          ? new Types.ObjectId(it.drinkId)
+          : undefined,
+    }));
+    const created = await this._adCampaignModel.create({
+      store: new Types.ObjectId(storeId),
+      title: dto.title.trim(),
+      subtitle: dto.subtitle?.trim() || '',
+      description: dto.description?.trim() || '',
+      startsAt,
+      endsAt,
+      isActive: dto.isActive !== false,
+      actionType,
+      actionText,
+      actionTarget: actionTarget || undefined,
+      items,
+    });
+    const row = await this._adCampaignModel
+      .findById(created._id)
+      .populate('store', 'name profileImage')
+      .populate('items.product', 'title profileImage price store')
+      .populate('items.drink', 'name imageUrl priceCad store')
+      .lean()
+      .exec();
+    return this._toCampaignRow(row as unknown as Record<string, unknown>);
+  }
+
+  async patchCampaign(
+    user: UserModel,
+    id: string,
+    dto: PatchAdCampaignDto,
+  ): Promise<AdCampaignManagementRow> {
+    this.assertVendorOrAdmin(user);
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('campaign_not_found');
+    }
+    const existing = await this._adCampaignModel.findById(id).exec();
+    if (!existing) {
+      throw new NotFoundException('campaign_not_found');
+    }
+    const existingStoreId = String(existing.store);
+    await this.assertCanManageCampaignStore(user, existingStoreId);
+    if (dto.title != null) existing.title = dto.title.trim();
+    if (dto.subtitle != null) existing.subtitle = dto.subtitle.trim();
+    if (dto.description != null) existing.description = dto.description.trim();
+    if (dto.isActive != null) existing.isActive = dto.isActive;
+    if (dto.startsAt != null) existing.startsAt = new Date(dto.startsAt);
+    if (dto.endsAt != null) existing.endsAt = new Date(dto.endsAt);
+    if (dto.actionType != null) {
+      if (dto.actionType === StoreAdActionTypeEnum.PRODUCT) {
+        throw new BadRequestException('invalid_campaign_action_type');
+      }
+      existing.actionType = dto.actionType;
+    }
+    if (dto.actionText != null) {
+      const v = dto.actionText.trim();
+      existing.actionText = v || 'Découvrir';
+    }
+    if (dto.actionTarget !== undefined) {
+      existing.actionTarget =
+        dto.actionTarget == null || dto.actionTarget.trim() === ''
+          ? undefined
+          : dto.actionTarget.trim();
+    }
+    const effectiveActionType =
+      (existing.actionType as StoreAdActionTypeEnum) ?? StoreAdActionTypeEnum.SHOP;
+    if (isAdLinkActionType(effectiveActionType)) {
+      existing.actionTarget = this.assertActionTargetValue(
+        effectiveActionType,
+        existing.actionTarget,
+      );
+    } else {
+      existing.actionTarget = undefined;
+    }
+    this._assertCampaignDateRange(
+      new Date(existing.startsAt as Date),
+      new Date(existing.endsAt as Date),
+    );
+    if (dto.items != null) {
+      const sid = existingStoreId;
+      await this._assertCampaignItemsBelongToStore(sid, dto.items);
+      existing.items = this._normalizeCampaignItems(dto.items).map((it) => ({
+        itemType: it.itemType,
+        product:
+          it.itemType === AdCampaignItemTypeEnum.PRODUCT && it.productId
+            ? (new Types.ObjectId(it.productId) as unknown as ProductModel)
+            : undefined,
+        drink:
+          it.itemType === AdCampaignItemTypeEnum.DRINK && it.drinkId
+            ? (new Types.ObjectId(it.drinkId) as unknown as DrinkModel)
+            : undefined,
+      }));
+    }
+    await existing.save();
+    const row = await this._adCampaignModel
+      .findById(existing._id)
+      .populate('store', 'name profileImage')
+      .populate('items.product', 'title profileImage price store')
+      .populate('items.drink', 'name imageUrl priceCad store')
+      .lean()
+      .exec();
+    return this._toCampaignRow(row as unknown as Record<string, unknown>);
+  }
+
+  async removeCampaign(user: UserModel, id: string): Promise<void> {
+    this.assertVendorOrAdmin(user);
+    const existing = await this._adCampaignModel
+      .findById(id)
+      .select('store')
+      .lean()
+      .exec();
+    if (!existing) {
+      throw new NotFoundException('campaign_not_found');
+    }
+    await this.assertCanManageCampaignStore(user, String(existing.store));
+    const res = await this._adCampaignModel.deleteOne({ _id: id }).exec();
+    if (!res.deletedCount) {
+      throw new NotFoundException('campaign_not_found');
+    }
+  }
+
+  async listCampaignsPublic(): Promise<{ items: PublicAdCampaignRow[] }> {
+    const now = new Date();
+    const docs = await this._adCampaignModel
+      .find({
+        isActive: true,
+        startsAt: { $lte: now },
+        endsAt: { $gte: now },
+      })
+      .populate('store', 'name status profileImage')
+      .populate('items.product', 'title profileImage price status')
+      .populate('items.drink', 'name imageUrl priceCad')
+      .sort({ startsAt: -1, createdAt: -1 })
+      .lean()
+      .exec();
+    const rows = (docs as Record<string, unknown>[])
+      .map((d) => this._toCampaignRow(d))
+      .filter((row) => row.items.length > 0);
+    return {
+      items: rows.map((row) => ({
+        id: row.id,
+        storeId: row.storeId,
+        storeName: row.storeName,
+        storeProfileImageUrl: row.storeProfileImageUrl ?? null,
+        title: row.title,
+        subtitle: row.subtitle,
+        description: row.description,
+        startsAt: row.startsAt,
+        endsAt: row.endsAt,
+        actionType: row.actionType,
+        actionText: row.actionText,
+        actionTarget: row.actionTarget,
+        items: row.items,
+      })),
+    };
+  }
+
+  async trackCampaignEvent(
+    user: UserModel | null,
+    dto: TrackAdCampaignEventDto,
+  ): Promise<{ ok: true }> {
+    const campaignId = dto.campaignId.trim();
+    if (!Types.ObjectId.isValid(campaignId)) {
+      throw new BadRequestException('campaign_not_found');
+    }
+    const now = new Date();
+    const campaign = await this._adCampaignModel
+      .findOne({
+        _id: new Types.ObjectId(campaignId),
+        isActive: true,
+        startsAt: { $lte: now },
+        endsAt: { $gte: now },
+      })
+      .select('_id store')
+      .lean()
+      .exec();
+    if (!campaign) {
+      throw new NotFoundException('campaign_not_found');
+    }
+
+    const itemType = String(dto.itemType ?? '').trim().toUpperCase();
+    if (
+      itemType !== AdCampaignItemTypeEnum.PRODUCT &&
+      itemType !== AdCampaignItemTypeEnum.DRINK &&
+      itemType !== 'STORE_ACTION'
+    ) {
+      throw new BadRequestException('invalid_campaign_item_type');
+    }
+    const itemId = String(dto.itemId ?? '').trim();
+    if (!itemId || !Types.ObjectId.isValid(itemId)) {
+      throw new BadRequestException('invalid_campaign_item_id');
+    }
+    if (itemType === 'STORE_ACTION') {
+      const campaignStoreId = String((campaign as { store?: unknown }).store ?? '');
+      if (!campaignStoreId || campaignStoreId !== itemId) {
+        throw new BadRequestException('campaign_item_not_found');
+      }
+    } else {
+      const existsInCampaign = await this._adCampaignModel
+        .exists({
+          _id: new Types.ObjectId(campaignId),
+          items: {
+            $elemMatch:
+              itemType === AdCampaignItemTypeEnum.PRODUCT
+                ? { itemType, product: new Types.ObjectId(itemId) }
+                : { itemType, drink: new Types.ObjectId(itemId) },
+          },
+        })
+        .exec();
+      if (!existsInCampaign) {
+        throw new BadRequestException('campaign_item_not_found');
+      }
+    }
+
+    await this._adCampaignEventModel.create({
+      campaign: new Types.ObjectId(campaignId),
+      user:
+        user?._id && Types.ObjectId.isValid(String(user._id))
+          ? new Types.ObjectId(String(user._id))
+          : undefined,
+      eventType: dto.eventType,
+      itemType,
+      itemId,
+      clientInstallId: dto.clientInstallId?.trim() || undefined,
+    });
+
+    return { ok: true };
+  }
+
+  async getMyAdCredit(user: UserModel): Promise<AdCreditSummaryPayload> {
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_only');
+    }
+    const pricing = this._toPricingPayload(await this._ensurePricingDoc());
+    const access = await this._storeAccess.resolveStoreAccess(user);
+    const storeMeta = access
+      .filter((a) => Types.ObjectId.isValid(a.storeId))
+      .map((a) => ({ storeId: a.storeId, storeName: a.storeName || a.storeId }));
+    const storeIds = storeMeta.map((a) => new Types.ObjectId(a.storeId));
+
+    if (!storeIds.length) {
+      return {
+        currency: pricing.currency,
+        banners: { impressions: 0, clicks: 0, due: 0 },
+        campaigns: { impressions: 0, clicks: 0, actionClicks: 0, due: 0 },
+        stores: [],
+        totalDue: 0,
+      };
+    }
+
+    const perStore = new Map<
+      string,
+      {
+        storeName: string;
+        banners: { impressions: number; clicks: number; due: number };
+        campaigns: {
+          impressions: number;
+          clicks: number;
+          actionClicks: number;
+          due: number;
+        };
+      }
+    >();
+    for (const s of storeMeta) {
+      perStore.set(s.storeId, {
+        storeName: s.storeName,
+        banners: { impressions: 0, clicks: 0, due: 0 },
+        campaigns: { impressions: 0, clicks: 0, actionClicks: 0, due: 0 },
+      });
+    }
+
+    const bannerDocs = await this.adModel
+      .find({
+        store: { $in: storeIds },
+      })
+      .select('_id store')
+      .lean()
+      .exec();
+    const adStoreById = new Map<string, string>();
+    for (const doc of bannerDocs as Array<Record<string, unknown>>) {
+      const adId = String(doc._id ?? '');
+      const sid = String(doc.store ?? '');
+      if (Types.ObjectId.isValid(adId) && Types.ObjectId.isValid(sid)) {
+        adStoreById.set(adId, sid);
+      }
+    }
+    const adObjectIds = bannerDocs
+      .map((x) => String(x._id))
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+
+    const [bannerImpressions, bannerClicks, bannerAgg] = adObjectIds.length
+      ? await Promise.all([
+          this._adEventModel.countDocuments({
+            ad: { $in: adObjectIds },
+            eventType: AdEventTypeEnum.IMPRESSION,
+          }),
+          this._adEventModel.countDocuments({
+            ad: { $in: adObjectIds },
+            eventType: AdEventTypeEnum.CLICK,
+          }),
+          this._adEventModel
+            .aggregate<
+              { _id: { ad: Types.ObjectId; eventType: AdEventTypeEnum }; count: number }
+            >([
+              {
+                $match: {
+                  ad: { $in: adObjectIds },
+                  eventType: { $in: [AdEventTypeEnum.IMPRESSION, AdEventTypeEnum.CLICK] },
+                },
+              },
+              {
+                $group: {
+                  _id: { ad: '$ad', eventType: '$eventType' },
+                  count: { $sum: 1 },
+                },
+              },
+            ])
+            .exec(),
+        ])
+      : [0, 0, []];
+    for (const row of bannerAgg) {
+      const adId = String(row._id.ad ?? '');
+      const storeId = adStoreById.get(adId);
+      if (!storeId) continue;
+      const current = perStore.get(storeId);
+      if (!current) continue;
+      if (row._id.eventType === AdEventTypeEnum.IMPRESSION) {
+        current.banners.impressions += row.count;
+      } else if (row._id.eventType === AdEventTypeEnum.CLICK) {
+        current.banners.clicks += row.count;
+      }
+    }
+
+    const campaignDocs = await this._adCampaignModel
+      .find({
+        store: { $in: storeIds },
+      })
+      .select('_id store')
+      .lean()
+      .exec();
+    const campaignStoreById = new Map<string, string>();
+    for (const doc of campaignDocs as Array<Record<string, unknown>>) {
+      const cid = String(doc._id ?? '');
+      const sid = String(doc.store ?? '');
+      if (Types.ObjectId.isValid(cid) && Types.ObjectId.isValid(sid)) {
+        campaignStoreById.set(cid, sid);
+      }
+    }
+    const campaignObjectIds = campaignDocs
+      .map((x) => String(x._id))
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+
+    const [campaignImpressions, campaignClicks, campaignActionClicks, campaignAgg] =
+      campaignObjectIds.length
+      ? await Promise.all([
+          this._adCampaignEventModel.countDocuments({
+            campaign: { $in: campaignObjectIds },
+            eventType: AdCampaignEventTypeEnum.IMPRESSION,
+          }),
+          this._adCampaignEventModel.countDocuments({
+            campaign: { $in: campaignObjectIds },
+            eventType: AdCampaignEventTypeEnum.CLICK,
+            itemType: { $in: [AdCampaignItemTypeEnum.PRODUCT, AdCampaignItemTypeEnum.DRINK] },
+          }),
+          this._adCampaignEventModel.countDocuments({
+            campaign: { $in: campaignObjectIds },
+            eventType: AdCampaignEventTypeEnum.CLICK,
+            itemType: 'STORE_ACTION',
+          }),
+          this._adCampaignEventModel
+            .aggregate<
+              {
+                _id: {
+                  campaign: Types.ObjectId;
+                  eventType: AdCampaignEventTypeEnum;
+                  itemType: string;
+                };
+                count: number;
+              }
+            >([
+              {
+                $match: {
+                  campaign: { $in: campaignObjectIds },
+                  eventType: {
+                    $in: [AdCampaignEventTypeEnum.IMPRESSION, AdCampaignEventTypeEnum.CLICK],
+                  },
+                },
+              },
+              {
+                $group: {
+                  _id: {
+                    campaign: '$campaign',
+                    eventType: '$eventType',
+                    itemType: '$itemType',
+                  },
+                  count: { $sum: 1 },
+                },
+              },
+            ])
+            .exec(),
+        ])
+      : [0, 0, 0, []];
+    for (const row of campaignAgg) {
+      const campaignId = String(row._id.campaign ?? '');
+      const storeId = campaignStoreById.get(campaignId);
+      if (!storeId) continue;
+      const current = perStore.get(storeId);
+      if (!current) continue;
+      if (row._id.eventType === AdCampaignEventTypeEnum.IMPRESSION) {
+        current.campaigns.impressions += row.count;
+        continue;
+      }
+      if (row._id.itemType === 'STORE_ACTION') {
+        current.campaigns.actionClicks += row.count;
+      } else {
+        current.campaigns.clicks += row.count;
+      }
+    }
+
+    const bannersDue =
+      (bannerImpressions / 1000) * pricing.cpmCad + bannerClicks * pricing.cpcCad;
+    const campaignsDue =
+      (campaignImpressions / 1000) * pricing.campaignCpmCad +
+      campaignClicks * pricing.campaignCpcCad +
+      campaignActionClicks * pricing.campaignActionCad;
+    const totalDue = bannersDue + campaignsDue;
+
+    const stores = [...perStore.entries()].map(([storeId, row]) => {
+      const bannerDue =
+        (row.banners.impressions / 1000) * pricing.cpmCad +
+        row.banners.clicks * pricing.cpcCad;
+      const campaignDue =
+        (row.campaigns.impressions / 1000) * pricing.campaignCpmCad +
+        row.campaigns.clicks * pricing.campaignCpcCad +
+        row.campaigns.actionClicks * pricing.campaignActionCad;
+      return {
+        storeId,
+        storeName: row.storeName,
+        banners: {
+          impressions: row.banners.impressions,
+          clicks: row.banners.clicks,
+          due: Number(bannerDue.toFixed(2)),
+        },
+        campaigns: {
+          impressions: row.campaigns.impressions,
+          clicks: row.campaigns.clicks,
+          actionClicks: row.campaigns.actionClicks,
+          due: Number(campaignDue.toFixed(2)),
+        },
+        totalDue: Number((bannerDue + campaignDue).toFixed(2)),
+      };
+    });
+
+    return {
+      currency: pricing.currency,
+      banners: {
+        impressions: bannerImpressions,
+        clicks: bannerClicks,
+        due: Number(bannersDue.toFixed(2)),
+      },
+      campaigns: {
+        impressions: campaignImpressions,
+        clicks: campaignClicks,
+        actionClicks: campaignActionClicks,
+        due: Number(campaignsDue.toFixed(2)),
+      },
+      stores,
+      totalDue: Number(totalDue.toFixed(2)),
+    };
   }
 
   async uploadBannerImage(
@@ -872,6 +1851,21 @@ export class AdsService implements OnModuleInit {
     }
   }
 
+  private async assertUserCanManageCampaignById(
+    user: UserModel,
+    campaignId: string,
+  ): Promise<void> {
+    const existing = await this._adCampaignModel
+      .findById(campaignId)
+      .select('store')
+      .lean()
+      .exec();
+    if (!existing) {
+      throw new NotFoundException('campaign_not_found');
+    }
+    await this.assertCanManageCampaignStore(user, String(existing.store));
+  }
+
   async getAdStats(user: UserModel, adId: string): Promise<AdStatsPayload> {
     this.assertVendorOrAdmin(user);
     await this.assertUserCanManageAdById(user, adId);
@@ -1006,6 +2000,319 @@ export class AdsService implements OnModuleInit {
       uniqueUsersClicks: clkUsers.filter(Boolean).length,
       uniqueClientDevices: deviceIds.filter(Boolean).length,
       last7Days,
+      recentEvents,
+    };
+  }
+
+  async getCampaignStats(
+    user: UserModel,
+    campaignId: string,
+  ): Promise<AdCampaignStatsPayload> {
+    this.assertVendorOrAdmin(user);
+    if (!Types.ObjectId.isValid(campaignId)) {
+      throw new NotFoundException('campaign_not_found');
+    }
+    await this.assertUserCanManageCampaignById(user, campaignId);
+    const oid = new Types.ObjectId(campaignId);
+
+    const campaign = await this._adCampaignModel
+      .findById(oid)
+      .populate('store', 'name')
+      .populate('items.product', 'title')
+      .populate('items.drink', 'name')
+      .select('store items')
+      .lean()
+      .exec();
+    if (!campaign) {
+      throw new NotFoundException('campaign_not_found');
+    }
+
+    const since = new Date();
+    since.setUTCDate(since.getUTCDate() - 6);
+    since.setUTCHours(0, 0, 0, 0);
+
+    const [
+      impressionsTotal,
+      clicksTotal,
+      actionClicksTotal,
+      impUsers,
+      clkUsers,
+      deviceIds,
+      byDay,
+      byItem,
+      recentDocs,
+    ] = await Promise.all([
+      this._adCampaignEventModel
+        .countDocuments({
+          campaign: oid,
+          eventType: AdCampaignEventTypeEnum.IMPRESSION,
+        })
+        .exec(),
+      this._adCampaignEventModel
+        .countDocuments({
+          campaign: oid,
+          eventType: AdCampaignEventTypeEnum.CLICK,
+        })
+        .exec(),
+      this._adCampaignEventModel
+        .countDocuments({
+          campaign: oid,
+          eventType: AdCampaignEventTypeEnum.CLICK,
+          itemType: 'STORE_ACTION',
+        })
+        .exec(),
+      this._adCampaignEventModel.distinct('user', {
+        campaign: oid,
+        eventType: AdCampaignEventTypeEnum.IMPRESSION,
+        user: { $exists: true, $ne: null },
+      }),
+      this._adCampaignEventModel.distinct('user', {
+        campaign: oid,
+        eventType: AdCampaignEventTypeEnum.CLICK,
+        user: { $exists: true, $ne: null },
+      }),
+      this._adCampaignEventModel.distinct('clientInstallId', {
+        campaign: oid,
+        clientInstallId: { $exists: true, $nin: [null, ''] },
+      }),
+      this._adCampaignEventModel
+        .aggregate<{
+          _id: string;
+          impressions: number;
+          clicks: number;
+          actionClicks: number;
+        }>([
+          {
+            $match: {
+              campaign: oid,
+              createdAt: { $gte: since },
+            },
+          },
+          {
+            $group: {
+              _id: {
+                $dateToString: {
+                  format: '%Y-%m-%d',
+                  date: '$createdAt',
+                  timezone: 'UTC',
+                },
+              },
+              impressions: {
+                $sum: {
+                  $cond: [
+                    { $eq: ['$eventType', AdCampaignEventTypeEnum.IMPRESSION] },
+                    1,
+                    0,
+                  ],
+                },
+              },
+              clicks: {
+                $sum: {
+                  $cond: [{ $eq: ['$eventType', AdCampaignEventTypeEnum.CLICK] }, 1, 0],
+                },
+              },
+              actionClicks: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ['$eventType', AdCampaignEventTypeEnum.CLICK] },
+                        { $eq: ['$itemType', 'STORE_ACTION'] },
+                      ],
+                    },
+                    1,
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+          { $sort: { _id: 1 } },
+        ])
+        .exec(),
+      this._adCampaignEventModel
+        .aggregate<{
+          _id: { itemType: string; itemId: string };
+          impressions: number;
+          clicks: number;
+        }>([
+          {
+            $match: {
+              campaign: oid,
+              eventType: {
+                $in: [AdCampaignEventTypeEnum.IMPRESSION, AdCampaignEventTypeEnum.CLICK],
+              },
+            },
+          },
+          {
+            $group: {
+              _id: {
+                itemType: '$itemType',
+                itemId: '$itemId',
+              },
+              impressions: {
+                $sum: {
+                  $cond: [
+                    { $eq: ['$eventType', AdCampaignEventTypeEnum.IMPRESSION] },
+                    1,
+                    0,
+                  ],
+                },
+              },
+              clicks: {
+                $sum: {
+                  $cond: [{ $eq: ['$eventType', AdCampaignEventTypeEnum.CLICK] }, 1, 0],
+                },
+              },
+            },
+          },
+          { $sort: { clicks: -1, impressions: -1 } },
+        ])
+        .exec(),
+      this._adCampaignEventModel
+        .find({ campaign: oid })
+        .sort({ createdAt: -1 })
+        .limit(80)
+        .populate('user', 'email fullName')
+        .lean()
+        .exec(),
+    ]);
+
+    const itemTitles = new Map<string, string>();
+    const store = campaign.store as Record<string, unknown> | undefined | null;
+    const storeId = store?._id ? String(store._id) : '';
+    const storeName = String(store?.name ?? '').trim() || 'Boutique';
+    if (storeId) {
+      itemTitles.set(`STORE_ACTION:${storeId}`, `Action finale (${storeName})`);
+    }
+    const campaignItems = Array.isArray(campaign.items)
+      ? (campaign.items as Record<string, unknown>[])
+      : [];
+    for (const item of campaignItems) {
+      const itemType = String(item.itemType ?? '').trim().toUpperCase();
+      if (itemType === AdCampaignItemTypeEnum.PRODUCT) {
+        const p = item.product as Record<string, unknown> | undefined | null;
+        const itemId = p?._id ? String(p._id) : '';
+        if (!itemId) continue;
+        const title = String(p?.title ?? '').trim() || '(produit supprimé)';
+        itemTitles.set(`PRODUCT:${itemId}`, title);
+      } else if (itemType === AdCampaignItemTypeEnum.DRINK) {
+        const d = item.drink as Record<string, unknown> | undefined | null;
+        const itemId = d?._id ? String(d._id) : '';
+        if (!itemId) continue;
+        const title = String(d?.name ?? '').trim() || '(boisson supprimée)';
+        itemTitles.set(`DRINK:${itemId}`, title);
+      }
+    }
+
+    const performanceMap = new Map<
+      string,
+      {
+        itemType: string;
+        itemId: string;
+        title: string;
+        impressions: number;
+        clicks: number;
+      }
+    >();
+    for (const [key, title] of itemTitles.entries()) {
+      const [itemType, itemId] = key.split(':');
+      if (!itemType || !itemId) continue;
+      performanceMap.set(key, {
+        itemType,
+        itemId,
+        title,
+        impressions: 0,
+        clicks: 0,
+      });
+    }
+    for (const row of byItem) {
+      const itemType = String(row._id.itemType ?? '').trim().toUpperCase();
+      const itemId = String(row._id.itemId ?? '').trim();
+      if (!itemType || !itemId) continue;
+      const key = `${itemType}:${itemId}`;
+      const current = performanceMap.get(key) ?? {
+        itemType,
+        itemId,
+        title: itemTitles.get(key) ?? itemId,
+        impressions: 0,
+        clicks: 0,
+      };
+      current.impressions = Number(row.impressions ?? 0);
+      current.clicks = Number(row.clicks ?? 0);
+      performanceMap.set(key, current);
+    }
+    const itemPerformance: AdCampaignItemPerformance[] = [
+      ...performanceMap.values(),
+    ]
+      .map((row) => ({
+        itemType: row.itemType,
+        itemId: row.itemId,
+        title: row.title,
+        impressions: row.impressions,
+        clicks: row.clicks,
+        ctrPercent:
+          row.impressions > 0
+            ? Number(((row.clicks / row.impressions) * 100).toFixed(2))
+            : 0,
+      }))
+      .sort(
+        (a, b) =>
+          b.clicks - a.clicks || b.impressions - a.impressions || a.title.localeCompare(b.title),
+      );
+
+    const recentEvents: AdCampaignStatsRecentEvent[] = recentDocs.map((row) => {
+      const r = row as Record<string, unknown>;
+      const u = r.user as
+        | { _id?: Types.ObjectId; email?: string; fullName?: string }
+        | Types.ObjectId
+        | null
+        | undefined;
+      let userId: string | null = null;
+      let userEmail: string | null = null;
+      let userFullName: string | null = null;
+      if (u && typeof u === 'object' && '_id' in u) {
+        const pop = u as {
+          _id?: Types.ObjectId;
+          email?: string;
+          fullName?: string;
+        };
+        userId = pop._id ? pop._id.toString() : null;
+        userEmail = pop.email != null ? String(pop.email) : null;
+        userFullName = pop.fullName != null ? String(pop.fullName) : null;
+      }
+      const ca = r.createdAt as Date | string | undefined;
+      return {
+        eventType: r.eventType as AdCampaignEventTypeEnum,
+        itemType: String(r.itemType ?? ''),
+        itemId: String(r.itemId ?? ''),
+        createdAt:
+          ca instanceof Date ? ca.toISOString() : String(ca ?? new Date()),
+        userId,
+        userEmail,
+        userFullName,
+        clientInstallId:
+          r.clientInstallId != null ? String(r.clientInstallId) : null,
+      };
+    });
+
+    const last7Days: AdCampaignStatsDayBucket[] = byDay.map((d) => ({
+      date: d._id,
+      impressions: d.impressions,
+      clicks: d.clicks,
+      actionClicks: d.actionClicks,
+    }));
+
+    return {
+      campaignId,
+      impressionsTotal,
+      clicksTotal,
+      actionClicksTotal,
+      uniqueUsersImpressions: impUsers.filter(Boolean).length,
+      uniqueUsersClicks: clkUsers.filter(Boolean).length,
+      uniqueClientDevices: deviceIds.filter(Boolean).length,
+      last7Days,
+      itemPerformance,
       recentEvents,
     };
   }

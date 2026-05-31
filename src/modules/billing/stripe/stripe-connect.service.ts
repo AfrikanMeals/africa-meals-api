@@ -677,7 +677,7 @@ export class StripeConnectService {
 
   /**
    * Site web affiché sur l’onboarding Stripe (« Business website »).
-   * `DASHBOARD_BASE_URL` (ex. https://afrikan-meals.com) — même variable que les liens vendeur.
+   * `DASHBOARD_BASE_URL` (ex. https://wise-eat.com) — même variable que les liens vendeur.
    */
   private resolveConnectBusinessWebsiteUrl(): string | undefined {
     const raw =

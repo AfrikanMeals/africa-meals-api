@@ -5,7 +5,12 @@ import {
 import { MediasService } from '@modules/medias/medias.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
-import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { DrinkModel, DrinkStatutEnum } from '@schemas/drink.schema';
 import { ProductModel } from '@schemas/product.schema';
@@ -147,12 +152,16 @@ export class DrinksService {
     return resolved.limit == null ? null : resolved.drinkIds;
   }
 
-  private async assertDrinkAccessibleForStore(storeId: string, drinkId: string) {
-    const isAllowed = await this._subscriptionsService.isCatalogItemAccessibleForStore(
-      storeId,
-      drinkId,
-      'drink',
-    );
+  private async assertDrinkAccessibleForStore(
+    storeId: string,
+    drinkId: string,
+  ) {
+    const isAllowed =
+      await this._subscriptionsService.isCatalogItemAccessibleForStore(
+        storeId,
+        drinkId,
+        'drink',
+      );
     if (!isAllowed) {
       throw new ForbiddenException('catalog_item_locked_by_plan_limit');
     }
@@ -421,8 +430,12 @@ export class DrinksService {
       await this._subscriptionsService.resolveCatalogItemLimitForStore(storeId);
     if (catalogLimit != null) {
       const [foods, drinks] = await Promise.all([
-        this._productModel.countDocuments({ store: new Types.ObjectId(storeId) }).exec(),
-        this._drinkModel.countDocuments({ store: new Types.ObjectId(storeId) }).exec(),
+        this._productModel
+          .countDocuments({ store: new Types.ObjectId(storeId) })
+          .exec(),
+        this._drinkModel
+          .countDocuments({ store: new Types.ObjectId(storeId) })
+          .exec(),
       ]);
       if (foods + drinks >= catalogLimit) {
         throw new ForbiddenException('catalog_limit_reached_for_plan');

@@ -6,15 +6,24 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { InjectConnection } from '@nestjs/mongoose';
+import { AdModel, StoreAdActionTypeEnum } from '@schemas/ad.schema';
+import { DrinkModel } from '@schemas/drink.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
+import { ProductModel } from '@schemas/product.schema';
+import {
+  StoreCouponDiscountTypeEnum,
+  StoreCouponModel,
+} from '@schemas/store_coupon.schema';
+import { StoreModel } from '@schemas/store.schema';
 import { StripeProcessedCheckoutModel } from '@schemas/stripe-processed-checkout.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getMessaging } from 'firebase-admin/messaging';
 import { getStorage } from 'firebase-admin/storage';
-import { Connection, Model } from 'mongoose';
+import { Connection, Model, Types } from 'mongoose';
 import * as nodemailer from 'nodemailer';
 import { StoreAccessService } from '../teams/store-access.service';
 import { InjectModel } from '@nestjs/mongoose';
@@ -117,6 +126,30 @@ export class DbMaintenanceService {
       description:
         'Vérifie des garde-fous critiques de configuration (JWT, Stripe webhook, reCAPTCHA monitor/enforce).',
     },
+    {
+      key: 'subscription-restrictions-test',
+      label: 'Subscription Restrictions Test',
+      description:
+        "Vérifie les quotas d'abonnement: max boutiques par vendeur et max catalogue par boutique.",
+    },
+    {
+      key: 'subscription-downgrade-impact-test',
+      label: 'Subscription Downgrade Impact Test',
+      description:
+        'Mesure l’impact potentiel de downgrade par vendeur (boutiques/articles qui deviendraient masqués).',
+    },
+    {
+      key: 'ads-integrity-test',
+      label: 'Ads Integrity Test',
+      description:
+        'Vérifie la cohérence des annonces publicitaires (dates, cible, références boutique/produit).',
+    },
+    {
+      key: 'coupon-codes-integrity-test',
+      label: 'Coupon Codes Integrity Test',
+      description:
+        'Vérifie la cohérence des codes promo (format, période de validité, quotas, boutique liée).',
+    },
   ];
   private readonly systemHealthChecks: SystemHealthCheckDefinition[] = [
     {
@@ -167,10 +200,21 @@ export class DbMaintenanceService {
     @InjectConnection() private readonly connection: Connection,
     private readonly config: ConfigService,
     private readonly storeAccess: StoreAccessService,
+    private readonly subscriptionsService: SubscriptionsService,
     @InjectModel(OrderModel.name)
     private readonly orderModel: Model<OrderModel>,
     @InjectModel(StripeProcessedCheckoutModel.name)
     private readonly processedModel: Model<StripeProcessedCheckoutModel>,
+    @InjectModel(StoreModel.name)
+    private readonly storeModel: Model<StoreModel>,
+    @InjectModel(ProductModel.name)
+    private readonly productModel: Model<ProductModel>,
+    @InjectModel(DrinkModel.name)
+    private readonly drinkModel: Model<DrinkModel>,
+    @InjectModel(AdModel.name)
+    private readonly adModel: Model<AdModel>,
+    @InjectModel(StoreCouponModel.name)
+    private readonly couponModel: Model<StoreCouponModel>,
     @Inject('FIREBASE_ADMIN')
     private readonly firebaseApp: App,
   ) {}
@@ -289,6 +333,18 @@ export class DbMaintenanceService {
         return { result: await this.runStuckCreatedOrdersIntegrityTest() };
       case 'operational-guards-test':
         return { result: await this.runOperationalGuardsIntegrityTest() };
+      case 'subscription-restrictions-test':
+        return {
+          result: await this.runSubscriptionRestrictionsIntegrityTest(),
+        };
+      case 'subscription-downgrade-impact-test':
+        return {
+          result: await this.runSubscriptionDowngradeImpactIntegrityTest(),
+        };
+      case 'ads-integrity-test':
+        return { result: await this.runAdsIntegrityTest() };
+      case 'coupon-codes-integrity-test':
+        return { result: await this.runCouponCodesIntegrityTest() };
       default:
         throw new BadRequestException(`unknown_integrity_test:${normalized}`);
     }
@@ -879,6 +935,675 @@ export class DbMaintenanceService {
       score,
       confidence,
       summary: `${successRuns}/${totalRuns} garde-fous opérationnels conformes.`,
+      checkedAt: checkedAtIso,
+      sampleFailures,
+    });
+  }
+
+  private async runSubscriptionRestrictionsIntegrityTest(): Promise<IntegrityTestRunResult> {
+    const startedAt = Date.now();
+    const checkedAtIso = new Date().toISOString();
+    const key = 'subscription-restrictions-test';
+    const label = 'Subscription Restrictions Test';
+    const scanLimit = this.getIntegrityScanLimit();
+
+    const stores = await this.storeModel
+      .find({})
+      .sort({ createdAt: 1, _id: 1 })
+      .limit(scanLimit)
+      .select(['_id', 'owner'])
+      .lean()
+      .exec();
+
+    if (!stores.length) {
+      return this.decorateIntegrityResult({
+        key,
+        label,
+        totalEvaluateTimeMs: Date.now() - startedAt,
+        successRuns: 0,
+        totalRuns: 0,
+        score: 100,
+        confidence: 100,
+        summary:
+          'Aucune boutique à auditer pour les restrictions d’abonnement.',
+        checkedAt: checkedAtIso,
+        sampleFailures: [],
+      });
+    }
+
+    const ownerStoreCounts = new Map<string, number>();
+    for (const store of stores as Array<Record<string, unknown>>) {
+      const ownerId = String(store.owner ?? '').trim();
+      if (!ownerId) continue;
+      ownerStoreCounts.set(ownerId, (ownerStoreCounts.get(ownerId) ?? 0) + 1);
+    }
+
+    const sampleFailures: IntegrityTestRunResult['sampleFailures'] = [];
+    let ownerChecksTotal = 0;
+    let ownerChecksSuccess = 0;
+    for (const [ownerId, storeCount] of ownerStoreCounts.entries()) {
+      ownerChecksTotal += 1;
+      const limit =
+        await this.subscriptionsService.resolveStoreCreationLimitForOwner(
+          ownerId,
+        );
+      if (limit == null || storeCount <= limit) {
+        ownerChecksSuccess += 1;
+        continue;
+      }
+      if (sampleFailures.length < 25) {
+        sampleFailures.push({
+          orderId: `owner:${ownerId}`,
+          issues: [
+            `owner_store_limit_exceeded:${storeCount}>${limit}`,
+            'store_quota_violation',
+          ],
+        });
+      }
+    }
+
+    let storeChecksSuccess = 0;
+    for (const store of stores as Array<Record<string, unknown>>) {
+      const storeId = String(store._id ?? '').trim();
+      const issues: string[] = [];
+
+      const catalogLimit =
+        await this.subscriptionsService.resolveCatalogItemLimitForStore(
+          storeId,
+        );
+      if (catalogLimit != null) {
+        const [foods, drinks] = await Promise.all([
+          this.productModel.countDocuments({ store: store._id }).exec(),
+          this.drinkModel.countDocuments({ store: store._id }).exec(),
+        ]);
+        const totalItems = Number(foods) + Number(drinks);
+        if (totalItems > catalogLimit) {
+          issues.push(
+            `store_catalog_limit_exceeded:${totalItems}>${catalogLimit}`,
+          );
+          issues.push('catalog_quota_violation');
+        }
+      }
+
+      if (!issues.length) {
+        storeChecksSuccess += 1;
+      } else if (sampleFailures.length < 25) {
+        sampleFailures.push({
+          orderId: `store:${storeId}`,
+          issues,
+        });
+      }
+    }
+
+    const totalRuns = ownerChecksTotal + stores.length;
+    const successRuns = ownerChecksSuccess + storeChecksSuccess;
+    const score =
+      totalRuns > 0
+        ? Number(((successRuns / totalRuns) * 100).toFixed(2))
+        : 100;
+    const confidence = Number(
+      Math.min(99, 70 + Math.min(totalRuns, 5000) / 80).toFixed(2),
+    );
+    const summary =
+      stores.length === scanLimit
+        ? `${successRuns}/${totalRuns} checks valides (scan limité à ${scanLimit} boutiques).`
+        : `${successRuns}/${totalRuns} checks valides (quotas boutiques + catalogue).`;
+
+    return this.decorateIntegrityResult({
+      key,
+      label,
+      totalEvaluateTimeMs: Date.now() - startedAt,
+      successRuns,
+      totalRuns,
+      score,
+      confidence,
+      summary,
+      checkedAt: checkedAtIso,
+      sampleFailures,
+    });
+  }
+
+  private async runSubscriptionDowngradeImpactIntegrityTest(): Promise<IntegrityTestRunResult> {
+    const startedAt = Date.now();
+    const checkedAtIso = new Date().toISOString();
+    const key = 'subscription-downgrade-impact-test';
+    const label = 'Subscription Downgrade Impact Test';
+    const scanLimit = this.getIntegrityScanLimit();
+
+    const stores = await this.storeModel
+      .find({})
+      .sort({ createdAt: 1, _id: 1 })
+      .limit(scanLimit)
+      .select(['_id', 'owner'])
+      .lean()
+      .exec();
+
+    const ownerIds = [
+      ...new Set(
+        (stores as Array<Record<string, unknown>>)
+          .map((s) => String(s.owner ?? '').trim())
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ];
+
+    if (!ownerIds.length) {
+      return this.decorateIntegrityResult({
+        key,
+        label,
+        totalEvaluateTimeMs: Date.now() - startedAt,
+        successRuns: 0,
+        totalRuns: 0,
+        score: 100,
+        confidence: 100,
+        summary:
+          'Aucun vendeur propriétaire de boutique à auditer pour le downgrade impact.',
+        checkedAt: checkedAtIso,
+        sampleFailures: [],
+      });
+    }
+
+    const sampleFailures: IntegrityTestRunResult['sampleFailures'] = [];
+    let successRuns = 0;
+    let impactedOwners = 0;
+    let impactedStores = 0;
+    let impactedItems = 0;
+
+    for (const ownerId of ownerIds) {
+      const issues: string[] = [];
+      const impact =
+        await this.subscriptionsService.resolvePlanDowngradeImpactForOwner(
+          ownerId,
+        );
+      const hiddenStores = Math.max(
+        0,
+        Number((impact as { hiddenStores?: unknown }).hiddenStores ?? 0),
+      );
+      const hiddenCatalogItems = Math.max(
+        0,
+        Number(
+          (impact as { hiddenCatalogItems?: unknown }).hiddenCatalogItems ?? 0,
+        ),
+      );
+
+      if (hiddenStores > 0) {
+        issues.push(`downgrade_hidden_stores:${hiddenStores}`);
+      }
+      if (hiddenCatalogItems > 0) {
+        issues.push(`downgrade_hidden_catalog_items:${hiddenCatalogItems}`);
+      }
+
+      if (!issues.length) {
+        successRuns += 1;
+      } else {
+        impactedOwners += 1;
+        impactedStores += hiddenStores;
+        impactedItems += hiddenCatalogItems;
+        if (sampleFailures.length < 25) {
+          sampleFailures.push({
+            orderId: `owner:${ownerId}`,
+            issues,
+          });
+        }
+      }
+    }
+
+    const totalRuns = ownerIds.length;
+    const score =
+      totalRuns > 0
+        ? Number(((successRuns / totalRuns) * 100).toFixed(2))
+        : 100;
+    const confidence = Number(
+      Math.min(99, 70 + Math.min(totalRuns, 5000) / 80).toFixed(2),
+    );
+    const summary =
+      impactedOwners === 0
+        ? `Aucun impact downgrade détecté sur ${totalRuns} vendeur(s).`
+        : `${impactedOwners}/${totalRuns} vendeur(s) impacté(s) — ${impactedStores} boutique(s) et ${impactedItems} article(s) potentiellement masqués.`;
+
+    return this.decorateIntegrityResult({
+      key,
+      label,
+      totalEvaluateTimeMs: Date.now() - startedAt,
+      successRuns,
+      totalRuns,
+      score,
+      confidence,
+      summary,
+      checkedAt: checkedAtIso,
+      sampleFailures,
+    });
+  }
+
+  private async runAdsIntegrityTest(): Promise<IntegrityTestRunResult> {
+    const startedAt = Date.now();
+    const checkedAtIso = new Date().toISOString();
+    const key = 'ads-integrity-test';
+    const label = 'Ads Integrity Test';
+    const scanLimit = this.getIntegrityScanLimit();
+    const nowMs = Date.now();
+
+    const ads = await this.adModel
+      .find({})
+      .sort({ createdAt: -1 })
+      .limit(scanLimit)
+      .select([
+        '_id',
+        'title',
+        'subtitle',
+        'actionText',
+        'isActive',
+        'validFrom',
+        'validUntil',
+        'actionType',
+        'actionTarget',
+        'store',
+        'product',
+      ])
+      .lean()
+      .exec();
+
+    if (!ads.length) {
+      return this.decorateIntegrityResult({
+        key,
+        label,
+        totalEvaluateTimeMs: Date.now() - startedAt,
+        successRuns: 0,
+        totalRuns: 0,
+        score: 100,
+        confidence: 100,
+        summary: 'Aucune annonce à auditer.',
+        checkedAt: checkedAtIso,
+        sampleFailures: [],
+      });
+    }
+
+    const storeIds = [
+      ...new Set(
+        (ads as Array<Record<string, unknown>>)
+          .map((a) => String(a.store ?? '').trim())
+          .filter(Boolean),
+      ),
+    ];
+    const productIds = [
+      ...new Set(
+        (ads as Array<Record<string, unknown>>)
+          .map((a) => String(a.product ?? '').trim())
+          .filter(Boolean),
+      ),
+    ];
+
+    const [stores, products] = await Promise.all([
+      storeIds.length
+        ? this.storeModel
+            .find({ _id: { $in: storeIds } })
+            .select('_id')
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+      productIds.length
+        ? this.productModel
+            .find({ _id: { $in: productIds } })
+            .select('_id store')
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+    ]);
+    const knownStores = new Set(
+      (stores as Array<Record<string, unknown>>).map((s) =>
+        String(s._id ?? '').trim(),
+      ),
+    );
+    const productStoreById = new Map(
+      (products as Array<Record<string, unknown>>).map((p) => [
+        String(p._id ?? '').trim(),
+        String(p.store ?? '').trim(),
+      ]),
+    );
+
+    const sampleFailures: IntegrityTestRunResult['sampleFailures'] = [];
+    let successRuns = 0;
+    const actionTypes = new Set<string>(Object.values(StoreAdActionTypeEnum));
+    const linkActionTypes = new Set<string>([
+      StoreAdActionTypeEnum.WHATSAPP,
+      StoreAdActionTypeEnum.CALL,
+      StoreAdActionTypeEnum.EMAIL,
+      StoreAdActionTypeEnum.WEBSITE,
+    ]);
+
+    for (const ad of ads as Array<Record<string, unknown>>) {
+      const adId = String(ad._id ?? '').trim();
+      const issues: string[] = [];
+      const title = String(ad.title ?? '').trim();
+      const subtitle = String(ad.subtitle ?? '').trim();
+      const actionText = String(ad.actionText ?? '').trim();
+      const actionType = String(ad.actionType ?? '').trim();
+      const actionTarget = String(ad.actionTarget ?? '').trim();
+      const storeId = String(ad.store ?? '').trim();
+      const productId = String(ad.product ?? '').trim();
+      const isActive = ad.isActive === true;
+
+      const validFrom = ad.validFrom ? new Date(String(ad.validFrom)) : null;
+      const validUntil = ad.validUntil ? new Date(String(ad.validUntil)) : null;
+
+      if (!title) issues.push('missing_ad_title');
+      if (!subtitle) issues.push('missing_ad_subtitle');
+      if (!actionText) issues.push('missing_ad_action_text');
+      if (!actionType || !actionTypes.has(actionType)) {
+        issues.push('invalid_ad_action_type');
+      }
+      if (storeId && !knownStores.has(storeId)) {
+        issues.push('ad_store_not_found');
+      }
+      if (validFrom && Number.isNaN(validFrom.getTime())) {
+        issues.push('invalid_valid_from');
+      }
+      if (validUntil && Number.isNaN(validUntil.getTime())) {
+        issues.push('invalid_valid_until');
+      }
+      if (
+        validFrom &&
+        validUntil &&
+        !Number.isNaN(validFrom.getTime()) &&
+        !Number.isNaN(validUntil.getTime()) &&
+        validUntil.getTime() <= validFrom.getTime()
+      ) {
+        issues.push('invalid_date_range');
+      }
+
+      if (actionType === StoreAdActionTypeEnum.PRODUCT) {
+        if (!productId) {
+          issues.push('missing_product_for_product_action');
+        } else if (!productStoreById.has(productId)) {
+          issues.push('ad_product_not_found');
+        } else if (storeId && productStoreById.get(productId) !== storeId) {
+          issues.push('ad_product_store_mismatch');
+        }
+      } else if (linkActionTypes.has(actionType)) {
+        if (!actionTarget) {
+          issues.push('missing_action_target');
+        } else if (actionType === StoreAdActionTypeEnum.EMAIL) {
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(actionTarget)) {
+            issues.push('invalid_action_target_email');
+          }
+        } else if (actionType === StoreAdActionTypeEnum.WEBSITE) {
+          try {
+            const u = new URL(
+              /^[a-z]+:/i.test(actionTarget)
+                ? actionTarget
+                : `https://${actionTarget}`,
+            );
+            if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+              issues.push('invalid_action_target_url');
+            }
+          } catch {
+            issues.push('invalid_action_target_url');
+          }
+        } else {
+          const digits = actionTarget.replace(/\D/g, '');
+          if (digits.length < 6) {
+            issues.push('invalid_action_target_phone');
+          }
+        }
+      }
+
+      if (isActive) {
+        if (
+          validFrom &&
+          !Number.isNaN(validFrom.getTime()) &&
+          validFrom.getTime() > nowMs
+        ) {
+          issues.push('active_ad_not_started');
+        }
+        if (
+          validUntil &&
+          !Number.isNaN(validUntil.getTime()) &&
+          validUntil.getTime() < nowMs
+        ) {
+          issues.push('active_ad_expired');
+        }
+      }
+
+      if (!issues.length) {
+        successRuns += 1;
+      } else if (sampleFailures.length < 25) {
+        sampleFailures.push({
+          orderId: `ad:${adId || 'unknown'}`,
+          issues,
+        });
+      }
+    }
+
+    const totalRuns = ads.length;
+    const score = Number(((successRuns / totalRuns) * 100).toFixed(2));
+    const confidence = Number(
+      Math.min(99, 65 + Math.min(totalRuns, 3000) / 60).toFixed(2),
+    );
+    const summary =
+      totalRuns === scanLimit
+        ? `${successRuns}/${totalRuns} annonces valides (scan limité à ${scanLimit}).`
+        : `${successRuns}/${totalRuns} annonces valides.`;
+
+    return this.decorateIntegrityResult({
+      key,
+      label,
+      totalEvaluateTimeMs: Date.now() - startedAt,
+      successRuns,
+      totalRuns,
+      score,
+      confidence,
+      summary,
+      checkedAt: checkedAtIso,
+      sampleFailures,
+    });
+  }
+
+  private async runCouponCodesIntegrityTest(): Promise<IntegrityTestRunResult> {
+    const startedAt = Date.now();
+    const checkedAtIso = new Date().toISOString();
+    const key = 'coupon-codes-integrity-test';
+    const label = 'Coupon Codes Integrity Test';
+    const scanLimit = this.getIntegrityScanLimit();
+    const nowMs = Date.now();
+
+    const coupons = await this.couponModel
+      .find({})
+      .sort({ createdAt: -1 })
+      .limit(scanLimit)
+      .select([
+        '_id',
+        'code',
+        'store',
+        'discountType',
+        'value',
+        'validFrom',
+        'validUntil',
+        'enabled',
+        'usedCount',
+        'maxUses',
+      ])
+      .lean()
+      .exec();
+
+    if (!coupons.length) {
+      return this.decorateIntegrityResult({
+        key,
+        label,
+        totalEvaluateTimeMs: Date.now() - startedAt,
+        successRuns: 0,
+        totalRuns: 0,
+        score: 100,
+        confidence: 100,
+        summary: 'Aucun code promo à auditer.',
+        checkedAt: checkedAtIso,
+        sampleFailures: [],
+      });
+    }
+
+    const storeIds = [
+      ...new Set(
+        (coupons as Array<Record<string, unknown>>)
+          .map((c) => String(c.store ?? '').trim())
+          .filter(Boolean),
+      ),
+    ];
+    const stores = storeIds.length
+      ? await this.storeModel
+          .find({ _id: { $in: storeIds } })
+          .select('_id')
+          .lean()
+          .exec()
+      : [];
+    const knownStores = new Set(
+      (stores as Array<Record<string, unknown>>).map((s) =>
+        String(s._id ?? '').trim(),
+      ),
+    );
+
+    const duplicateByStoreCode = new Set<string>();
+    const seenByStoreCode = new Set<string>();
+    for (const coupon of coupons as Array<Record<string, unknown>>) {
+      const code = String(coupon.code ?? '')
+        .trim()
+        .toUpperCase();
+      const storeId = String(coupon.store ?? '').trim();
+      if (!code || !storeId) continue;
+      const compound = `${storeId}::${code}`;
+      if (seenByStoreCode.has(compound)) {
+        duplicateByStoreCode.add(compound);
+      } else {
+        seenByStoreCode.add(compound);
+      }
+    }
+
+    const sampleFailures: IntegrityTestRunResult['sampleFailures'] = [];
+    let successRuns = 0;
+    const validTypes = new Set<string>(
+      Object.values(StoreCouponDiscountTypeEnum),
+    );
+    const codePattern = /^[A-Z0-9_-]+$/;
+
+    for (const coupon of coupons as Array<Record<string, unknown>>) {
+      const couponId = String(coupon._id ?? '').trim();
+      const storeId = String(coupon.store ?? '').trim();
+      const code = String(coupon.code ?? '')
+        .trim()
+        .toUpperCase();
+      const discountType = String(coupon.discountType ?? '').trim();
+      const value = Number(coupon.value ?? 0);
+      const usedCount = Number(coupon.usedCount ?? 0);
+      const maxUsesRaw = coupon.maxUses;
+      const enabled = coupon.enabled === true;
+      const issues: string[] = [];
+
+      const validFrom = coupon.validFrom
+        ? new Date(String(coupon.validFrom))
+        : null;
+      const validUntil = coupon.validUntil
+        ? new Date(String(coupon.validUntil))
+        : null;
+
+      if (!storeId || !knownStores.has(storeId)) {
+        issues.push('coupon_store_not_found');
+      }
+      if (!code) {
+        issues.push('missing_coupon_code');
+      } else if (!codePattern.test(code)) {
+        issues.push('coupon_code_invalid_chars');
+      }
+      if (!discountType || !validTypes.has(discountType)) {
+        issues.push('invalid_coupon_discount_type');
+      }
+      if (discountType === StoreCouponDiscountTypeEnum.FIXED) {
+        if (!Number.isFinite(value) || value < 0.01 || value > 999_999) {
+          issues.push('invalid_fixed_discount');
+        }
+      } else if (discountType === StoreCouponDiscountTypeEnum.PERCENTAGE) {
+        if (!Number.isFinite(value) || value < 1 || value > 100) {
+          issues.push('invalid_percentage_discount');
+        }
+      }
+
+      if (!(validFrom instanceof Date) || Number.isNaN(validFrom?.getTime())) {
+        issues.push('invalid_valid_from');
+      }
+      if (
+        !(validUntil instanceof Date) ||
+        Number.isNaN(validUntil?.getTime())
+      ) {
+        issues.push('invalid_valid_until');
+      }
+      if (
+        validFrom &&
+        validUntil &&
+        !Number.isNaN(validFrom.getTime()) &&
+        !Number.isNaN(validUntil.getTime()) &&
+        validUntil.getTime() <= validFrom.getTime()
+      ) {
+        issues.push('invalid_date_range');
+      }
+
+      if (!Number.isFinite(usedCount) || usedCount < 0) {
+        issues.push('invalid_used_count');
+      }
+      if (maxUsesRaw != null) {
+        const maxUses = Number(maxUsesRaw);
+        if (!Number.isFinite(maxUses) || maxUses < 1) {
+          issues.push('invalid_max_uses');
+        } else if (Number.isFinite(usedCount) && usedCount > maxUses) {
+          issues.push('used_count_exceeds_max_uses');
+        }
+      }
+
+      if (enabled) {
+        if (
+          validFrom &&
+          !Number.isNaN(validFrom.getTime()) &&
+          validFrom.getTime() > nowMs
+        ) {
+          issues.push('enabled_coupon_not_started');
+        }
+        if (
+          validUntil &&
+          !Number.isNaN(validUntil.getTime()) &&
+          validUntil.getTime() < nowMs
+        ) {
+          issues.push('enabled_coupon_expired');
+        }
+      }
+
+      if (storeId && code && duplicateByStoreCode.has(`${storeId}::${code}`)) {
+        issues.push('duplicate_coupon_code_in_store');
+      }
+
+      if (!issues.length) {
+        successRuns += 1;
+      } else if (sampleFailures.length < 25) {
+        sampleFailures.push({
+          orderId: `coupon:${couponId || 'unknown'}`,
+          issues,
+        });
+      }
+    }
+
+    const totalRuns = coupons.length;
+    const score = Number(((successRuns / totalRuns) * 100).toFixed(2));
+    const confidence = Number(
+      Math.min(99, 65 + Math.min(totalRuns, 3000) / 60).toFixed(2),
+    );
+    const summary =
+      totalRuns === scanLimit
+        ? `${successRuns}/${totalRuns} coupons valides (scan limité à ${scanLimit}).`
+        : `${successRuns}/${totalRuns} coupons valides.`;
+
+    return this.decorateIntegrityResult({
+      key,
+      label,
+      totalEvaluateTimeMs: Date.now() - startedAt,
+      successRuns,
+      totalRuns,
+      score,
+      confidence,
+      summary,
       checkedAt: checkedAtIso,
       sampleFailures,
     });

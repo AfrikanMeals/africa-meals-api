@@ -39,6 +39,7 @@ import { DbMaintenanceModule } from './modules/db-maintenance/db-maintenance.mod
 import { RequestStatsModule } from './modules/request-stats/request-stats.module';
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
 import { MobileAppSettingsModule } from './modules/mobile-app-settings/mobile-app-settings.module';
+import { AdsTargetingModule } from './modules/ads-targeting/ads-targeting.module';
 
 @Module({
   imports: [
@@ -105,6 +106,7 @@ import { MobileAppSettingsModule } from './modules/mobile-app-settings/mobile-ap
     RequestStatsModule,
     FieldSelectionModule,
     MobileAppSettingsModule,
+    AdsTargetingModule,
     // SharedModule,
   ],
   controllers: [AppController, EnvDebugController],

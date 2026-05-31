@@ -50,6 +50,10 @@ export class RequestStatsStore {
     return this.entries.length;
   }
 
+  snapshot(): RequestStatsEntry[] {
+    return [...this.entries];
+  }
+
   query(q: RequestStatsQuery): RequestStatsEntry[] {
     let list = [...this.entries];
     const storeId = q.storeId?.trim();

@@ -33,6 +33,11 @@ export class MobileAppSettingsService {
     return {
       appStoreUrl: this._normalizeUrl(doc.appStoreUrl),
       playStoreUrl: this._normalizeUrl(doc.playStoreUrl),
+      facebookUrl: this._normalizeUrl(doc.facebookUrl),
+      instagramUrl: this._normalizeUrl(doc.instagramUrl),
+      tiktokUrl: this._normalizeUrl(doc.tiktokUrl),
+      xUrl: this._normalizeUrl(doc.xUrl),
+      youtubeUrl: this._normalizeUrl(doc.youtubeUrl),
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
   }
@@ -46,6 +51,11 @@ export class MobileAppSettingsService {
             key: SETTINGS_KEY,
             appStoreUrl: '',
             playStoreUrl: '',
+            facebookUrl: '',
+            instagramUrl: '',
+            tiktokUrl: '',
+            xUrl: '',
+            youtubeUrl: '',
           },
         },
         { upsert: true, new: true, lean: true, setDefaultsOnInsert: true },
@@ -63,6 +73,11 @@ export class MobileAppSettingsService {
           $set: {
             appStoreUrl: this._normalizeUrl(dto.appStoreUrl),
             playStoreUrl: this._normalizeUrl(dto.playStoreUrl),
+            facebookUrl: this._normalizeUrl(dto.facebookUrl),
+            instagramUrl: this._normalizeUrl(dto.instagramUrl),
+            tiktokUrl: this._normalizeUrl(dto.tiktokUrl),
+            xUrl: this._normalizeUrl(dto.xUrl),
+            youtubeUrl: this._normalizeUrl(dto.youtubeUrl),
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },

@@ -119,6 +119,12 @@
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
+    "moduleNameMapper": {
+      "^@schemas/(.*)$": "<rootDir>/schemas/$1",
+      "^@modules/(.*)$": "<rootDir>/modules/$1",
+      "^@models/(.*)$": "<rootDir>/schema/$1",
+      "^@utils/(.*)$": "<rootDir>/utils/$1"
+    },
     "collectCoverageFrom": [
       "**/*.(t|j)s"
     ],

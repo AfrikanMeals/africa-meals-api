@@ -1164,7 +1164,9 @@ export class StoreService {
     const rows = await this._productsService.findByStoreId(storeId);
     const allowed = await this.accessibleProductIdsForStore(storeId);
     if (allowed == null) return rows;
-    return rows.filter((p) => allowed.has(String((p as { id?: unknown }).id ?? '')));
+    return rows.filter((p) =>
+      allowed.has(String((p as { id?: unknown }).id ?? '')),
+    );
   }
 
   private async assertVendorCatalogStoreAccess(
@@ -1232,8 +1234,8 @@ export class StoreService {
           ? productIds
           : productIds.filter((pid) => allowed.has(pid))
         : allowed == null
-          ? undefined
-          : [...allowed];
+        ? undefined
+        : [...allowed];
     const page = await this._productsService.findByStoreIdPaginated(storeId, {
       page: args.page,
       take: args.take,
@@ -1267,11 +1269,12 @@ export class StoreService {
     user: UserModel,
   ) {
     await this.assertVendorCatalogStoreAccess(storeId, user);
-    const isAllowed = await this._subscriptionsService.isCatalogItemAccessibleForStore(
-      storeId,
-      productId,
-      'product',
-    );
+    const isAllowed =
+      await this._subscriptionsService.isCatalogItemAccessibleForStore(
+        storeId,
+        productId,
+        'product',
+      );
     if (!isAllowed) {
       throw new ForbiddenException('catalog_item_locked_by_plan_limit');
     }
@@ -1287,11 +1290,12 @@ export class StoreService {
     gallery?: Express.Multer.File[],
   ) {
     await this._storeAccess.assertStoreAccess(user, storeId, 'catalog.edit');
-    const isAllowed = await this._subscriptionsService.isCatalogItemAccessibleForStore(
-      storeId,
-      productId,
-      'product',
-    );
+    const isAllowed =
+      await this._subscriptionsService.isCatalogItemAccessibleForStore(
+        storeId,
+        productId,
+        'product',
+      );
     if (!isAllowed) {
       throw new ForbiddenException('catalog_item_locked_by_plan_limit');
     }
@@ -1319,11 +1323,12 @@ export class StoreService {
     user: UserModel,
   ) {
     await this._storeAccess.assertStoreAccess(user, storeId, 'catalog.edit');
-    const isAllowed = await this._subscriptionsService.isCatalogItemAccessibleForStore(
-      storeId,
-      productId,
-      'product',
-    );
+    const isAllowed =
+      await this._subscriptionsService.isCatalogItemAccessibleForStore(
+        storeId,
+        productId,
+        'product',
+      );
     if (!isAllowed) {
       throw new ForbiddenException('catalog_item_locked_by_plan_limit');
     }
@@ -1345,7 +1350,10 @@ export class StoreService {
     gallery?: Express.Multer.File[],
   ) {
     await this._storeAccess.assertStoreAccess(user, id, 'catalog.edit');
-    const store = await this._storeModel.findById(id).populate('address').exec();
+    const store = await this._storeModel
+      .findById(id)
+      .populate('address')
+      .exec();
 
     if (!store) {
       throw new NotFoundException('store_not_found');
@@ -1393,11 +1401,12 @@ export class StoreService {
     user: UserModel,
   ) {
     await this._storeAccess.assertStoreAccess(user, storeId, 'catalog.edit');
-    const isAllowed = await this._subscriptionsService.isCatalogItemAccessibleForStore(
-      storeId,
-      productId,
-      'product',
-    );
+    const isAllowed =
+      await this._subscriptionsService.isCatalogItemAccessibleForStore(
+        storeId,
+        productId,
+        'product',
+      );
     if (!isAllowed) {
       throw new ForbiddenException('catalog_item_locked_by_plan_limit');
     }
@@ -1454,11 +1463,12 @@ export class StoreService {
     user: UserModel,
   ) {
     await this._storeAccess.assertStoreAccess(user, storeId, 'catalog.edit');
-    const isAllowed = await this._subscriptionsService.isCatalogItemAccessibleForStore(
-      storeId,
-      productId,
-      'product',
-    );
+    const isAllowed =
+      await this._subscriptionsService.isCatalogItemAccessibleForStore(
+        storeId,
+        productId,
+        'product',
+      );
     if (!isAllowed) {
       throw new ForbiddenException('catalog_item_locked_by_plan_limit');
     }

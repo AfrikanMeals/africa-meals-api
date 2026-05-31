@@ -83,7 +83,10 @@ export class SubscriptionsStripeCheckoutService {
       this.config.get<string>('ADMIN_APP_URL')?.trim() ||
       this.config.get<string>('CLIENT_APP_URL')?.trim() ||
       'http://localhost:3000';
-    const adminSubscriptionUrl = `${adminBase.replace(/\/$/, '')}/settings/subscription`;
+    const adminSubscriptionUrl = `${adminBase.replace(
+      /\/$/,
+      '',
+    )}/settings/subscription`;
     const configured =
       this.config.get<string>('STRIPE_SUBSCRIPTION_SUCCESS_URL')?.trim() || '';
     const raw = configured || adminSubscriptionUrl;

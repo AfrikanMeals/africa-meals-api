@@ -14,6 +14,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { QueryRequestStatsDto } from './dto/query-request-stats.dto';
+import { QueryVendorAnalyticsDto } from './dto/query-vendor-analytics.dto';
 import { RequestStatsService } from './request-stats.service';
 
 @ApiTags('request-stats')
@@ -40,5 +41,19 @@ export class RequestStatsAdminController {
   })
   async clear(@Req() req: Request) {
     return this.requestStats.clear(req.user as UserModel);
+  }
+
+  @Get('vendor-analytics')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Analytics vendeur (vues, commandes, paniers abandonnés, ads et coupons) avec filtre date',
+  })
+  async vendorAnalytics(
+    @Req() req: Request,
+    @Query() query: QueryVendorAnalyticsDto,
+  ) {
+    return this.requestStats.vendorAnalytics(req.user as UserModel, query);
   }
 }

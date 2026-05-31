@@ -8,6 +8,7 @@ export const STORE_PERMISSIONS = [
   'customers.view',
   'finances.view',
   'marketing.view',
+  'campaigns.manage',
   'coupons.manage',
   'promotions.manage',
   'team.view',
@@ -15,6 +16,7 @@ export const STORE_PERMISSIONS = [
   'settings.view',
   'settings.edit',
   'chat.view',
+  'analytics.view',
 ] as const;
 
 export type StorePermission = (typeof STORE_PERMISSIONS)[number];
@@ -28,6 +30,7 @@ export const STORE_PERMISSION_LABELS: Record<StorePermission, string> = {
   'customers.view': 'Clients',
   'finances.view': 'Finances',
   'marketing.view': 'Marketing',
+  'campaigns.manage': 'Ad Campaigns',
   'coupons.manage': 'Coupons',
   'promotions.manage': 'Promotions',
   'team.view': 'Équipe (lecture)',
@@ -35,6 +38,7 @@ export const STORE_PERMISSION_LABELS: Record<StorePermission, string> = {
   'settings.view': 'Paramètres (lecture)',
   'settings.edit': 'Paramètres (modification)',
   'chat.view': 'Messagerie / chat',
+  'analytics.view': 'Analytics vendeurs',
 };
 
 export const ALL_STORE_PERMISSIONS: StorePermission[] = [...STORE_PERMISSIONS];
@@ -83,6 +87,7 @@ export const DEFAULT_STORE_ROLE_TEMPLATES: Array<{
       'orders.manage',
       'customers.view',
       'chat.view',
+      'analytics.view',
     ],
   },
   {
@@ -94,6 +99,7 @@ export const DEFAULT_STORE_ROLE_TEMPLATES: Array<{
       'catalog.view',
       'catalog.edit',
       'marketing.view',
+      'campaigns.manage',
     ],
   },
   {
@@ -105,6 +111,7 @@ export const DEFAULT_STORE_ROLE_TEMPLATES: Array<{
       'orders.view',
       'customers.view',
       'finances.view',
+      'analytics.view',
     ],
   },
   {
@@ -114,9 +121,11 @@ export const DEFAULT_STORE_ROLE_TEMPLATES: Array<{
     permissions: [
       'dashboard.view',
       'marketing.view',
+      'campaigns.manage',
       'coupons.manage',
       'promotions.manage',
       'catalog.view',
+      'analytics.view',
     ],
   },
 ];

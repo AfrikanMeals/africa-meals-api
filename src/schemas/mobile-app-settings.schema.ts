@@ -12,6 +12,21 @@ export class MobileAppSettingsModel {
 
   @Prop({ type: String, default: '' })
   playStoreUrl: string;
+
+  @Prop({ type: String, default: '' })
+  facebookUrl: string;
+
+  @Prop({ type: String, default: '' })
+  instagramUrl: string;
+
+  @Prop({ type: String, default: '' })
+  tiktokUrl: string;
+
+  @Prop({ type: String, default: '' })
+  xUrl: string;
+
+  @Prop({ type: String, default: '' })
+  youtubeUrl: string;
 }
 
 export type MobileAppSettingsDocument =

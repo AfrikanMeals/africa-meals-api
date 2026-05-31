@@ -3,7 +3,13 @@ import {
   CreateAdManagementDto,
   PatchAdManagementDto,
 } from '@modules/ads/dto/ad-management.dto';
+import {
+  CreateAdCampaignDto,
+  PatchAdCampaignDto,
+} from '@modules/ads/dto/ad-campaign.dto';
+import { UpdateAdPricingDto } from '@modules/ads/dto/ad-pricing.dto';
 import { TrackAdEventDto } from '@modules/ads/dto/ad-tracking.dto';
+import { TrackAdCampaignEventDto } from '@modules/ads/dto/ad-campaign-tracking.dto';
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import { OptionalAuthGuard } from '@modules/auth/guards/optional.auth.guard';
 import {
@@ -14,10 +20,12 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
+  UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -45,6 +53,103 @@ export class AdsController {
   @ApiBearerAuth('bearer')
   async listManage(@Req() req: Request) {
     return this.adsService.listForManagement(req.user as UserModel);
+  }
+
+  @Get('campaigns')
+  @ApiOperation({
+    summary: 'Liste publique des campagnes actives (fenêtre dates automatique)',
+  })
+  async listCampaignsPublic() {
+    return this.adsService.listCampaignsPublic();
+  }
+
+  @Get('campaigns/manage')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  async listCampaignsManage(@Req() req: Request) {
+    return this.adsService.listCampaignsForManagement(req.user as UserModel);
+  }
+
+  @Post('campaigns/manage')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async createCampaignManage(
+    @Req() req: Request,
+    @Body() body: CreateAdCampaignDto,
+  ) {
+    return this.adsService.createCampaign(req.user as UserModel, body);
+  }
+
+  @Patch('campaigns/manage/:id')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async patchCampaignManage(
+    @Param('id') id: string,
+    @Req() req: Request,
+    @Body() body: PatchAdCampaignDto,
+  ) {
+    return this.adsService.patchCampaign(req.user as UserModel, id, body);
+  }
+
+  @Delete('campaigns/manage/:id')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  async deleteCampaignManage(@Param('id') id: string, @Req() req: Request) {
+    await this.adsService.removeCampaign(req.user as UserModel, id);
+  }
+
+  @Get('campaigns/manage/:id/stats')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  async campaignStats(@Param('id') id: string, @Req() req: Request) {
+    return this.adsService.getCampaignStats(req.user as UserModel, id);
+  }
+
+  @Post('campaigns/track')
+  @UseGuards(OptionalAuthGuard)
+  @ApiBearerAuth('bearer')
+  async trackCampaign(
+    @Req() req: Request,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: TrackAdCampaignEventDto,
+  ) {
+    return this.adsService.trackCampaignEvent(
+      (req.user as UserModel | undefined) ?? null,
+      body,
+    );
+  }
+
+  @Get('my-credit')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    summary:
+      'Synthèse crédit Ads du vendeur (bannières + campagnes, basé performances).',
+  })
+  async myCredit(@Req() req: Request) {
+    return this.adsService.getMyAdCredit(req.user as UserModel);
+  }
+
+  @Get('manage/pricing')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Lire le barème Ads (ADMIN)' })
+  async getManagePricing(@Req() req: Request) {
+    return this.adsService.getPricing(req.user as UserModel);
+  }
+
+  @Put('manage/pricing')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({ summary: 'Mettre à jour le barème Ads (ADMIN)' })
+  async updateManagePricing(
+    @Req() req: Request,
+    @Body() body: UpdateAdPricingDto,
+  ) {
+    return this.adsService.updatePricing(req.user as UserModel, body);
   }
 
   /** Image bannière → Firebase Storage (SDK Admin), dossier `marketing/ads`. */

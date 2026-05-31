@@ -104,7 +104,7 @@ function resolveBaseUrl(args) {
     fromPos ||
     process.env.API_BASE_URL ||
     process.env.BASE_URL ||
-    'https://api.afrikan-meals.com';
+    'https://api.wise-eat.com';
   return normalizeBase(raw);
 }
 

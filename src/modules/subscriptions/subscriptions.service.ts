@@ -336,9 +336,7 @@ export class SubscriptionsService implements OnModuleInit {
       .lean()
       .exec();
     if (!proPlan?._id) {
-      this.logger.warn(
-        'Migration legacy PRO+ ignorée: aucun plan PRO trouvé.',
-      );
+      this.logger.warn('Migration legacy PRO+ ignorée: aucun plan PRO trouvé.');
       return;
     }
 
@@ -435,7 +433,9 @@ export class SubscriptionsService implements OnModuleInit {
     });
   }
 
-  private catalogLimitFromPlanDoc(plan: Record<string, unknown> | null): number | null {
+  private catalogLimitFromPlanDoc(
+    plan: Record<string, unknown> | null,
+  ): number | null {
     if (!plan) return null;
     if (Object.prototype.hasOwnProperty.call(plan, 'maxCatalogItems')) {
       const configured = Math.max(0, Number(plan.maxCatalogItems ?? 0));
@@ -472,14 +472,26 @@ export class SubscriptionsService implements OnModuleInit {
 
   async resolveAccessibleCatalogIdsForStore(
     storeId: string | Types.ObjectId,
-  ): Promise<{ productIds: Set<string>; drinkIds: Set<string>; limit: number | null }> {
+  ): Promise<{
+    productIds: Set<string>;
+    drinkIds: Set<string>;
+    limit: number | null;
+  }> {
     const sid = this.normalizeStoreObjectId(storeId);
     const limit = await this.resolveCatalogItemLimitForStore(sid);
     if (limit == null) {
-      return { productIds: new Set<string>(), drinkIds: new Set<string>(), limit: null };
+      return {
+        productIds: new Set<string>(),
+        drinkIds: new Set<string>(),
+        limit: null,
+      };
     }
     if (limit <= 0) {
-      return { productIds: new Set<string>(), drinkIds: new Set<string>(), limit: 0 };
+      return {
+        productIds: new Set<string>(),
+        drinkIds: new Set<string>(),
+        limit: 0,
+      };
     }
 
     const [products, drinks] = await Promise.all([
@@ -568,7 +580,9 @@ export class SubscriptionsService implements OnModuleInit {
     return undefined;
   }
 
-  private storeLimitFromPlanDoc(plan: Record<string, unknown> | null): number | null {
+  private storeLimitFromPlanDoc(
+    plan: Record<string, unknown> | null,
+  ): number | null {
     if (!plan) return null;
     if (Object.prototype.hasOwnProperty.call(plan, 'maxStores')) {
       const configured = Math.max(0, Number(plan.maxStores ?? 0));
@@ -624,7 +638,7 @@ export class SubscriptionsService implements OnModuleInit {
       (plans as Record<string, unknown>[]).map((p) => [String(p._id), p]),
     );
 
-    let bestLimit: number = 1;
+    let bestLimit = 1;
     for (const sub of subs as Record<string, unknown>[]) {
       const byName = this.storeLimitFromPlanName(String(sub.planName ?? ''));
       const limit =
@@ -748,7 +762,10 @@ export class SubscriptionsService implements OnModuleInit {
       trialReminderDays: trial.trialReminderDays,
       maxStores: Math.max(0, Math.floor(Number(dto.maxStores ?? 0))),
       mobileAccess: dto.mobileAccess === true,
-      maxCatalogItems: Math.max(0, Math.floor(Number(dto.maxCatalogItems ?? 0))),
+      maxCatalogItems: Math.max(
+        0,
+        Math.floor(Number(dto.maxCatalogItems ?? 0)),
+      ),
     });
     return mapPlan(doc.toObject() as Record<string, unknown>);
   }
@@ -778,9 +795,13 @@ export class SubscriptionsService implements OnModuleInit {
     if (dto.maxStores != null) {
       patch.maxStores = Math.max(0, Math.floor(Number(dto.maxStores)));
     }
-    if (dto.mobileAccess != null) patch.mobileAccess = dto.mobileAccess === true;
+    if (dto.mobileAccess != null)
+      patch.mobileAccess = dto.mobileAccess === true;
     if (dto.maxCatalogItems != null) {
-      patch.maxCatalogItems = Math.max(0, Math.floor(Number(dto.maxCatalogItems)));
+      patch.maxCatalogItems = Math.max(
+        0,
+        Math.floor(Number(dto.maxCatalogItems)),
+      );
     }
 
     if (

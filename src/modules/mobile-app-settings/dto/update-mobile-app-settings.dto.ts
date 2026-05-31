@@ -29,4 +29,59 @@ export class UpdateMobileAppSettingsDto {
   @ValidateIf((_, value) => String(value ?? '').trim().length > 0)
   @IsUrl({ require_protocol: true }, { message: 'playStoreUrl_invalid' })
   playStoreUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'Lien page Facebook',
+    example: 'https://www.facebook.com/wiseeat',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  @ValidateIf((_, value) => String(value ?? '').trim().length > 0)
+  @IsUrl({ require_protocol: true }, { message: 'facebookUrl_invalid' })
+  facebookUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'Lien page Instagram',
+    example: 'https://www.instagram.com/wiseeat',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  @ValidateIf((_, value) => String(value ?? '').trim().length > 0)
+  @IsUrl({ require_protocol: true }, { message: 'instagramUrl_invalid' })
+  instagramUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'Lien page TikTok',
+    example: 'https://www.tiktok.com/@wiseeat',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  @ValidateIf((_, value) => String(value ?? '').trim().length > 0)
+  @IsUrl({ require_protocol: true }, { message: 'tiktokUrl_invalid' })
+  tiktokUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'Lien page X (Twitter)',
+    example: 'https://x.com/wiseeat',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  @ValidateIf((_, value) => String(value ?? '').trim().length > 0)
+  @IsUrl({ require_protocol: true }, { message: 'xUrl_invalid' })
+  xUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'Lien chaine YouTube',
+    example: 'https://www.youtube.com/@wiseeat',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  @ValidateIf((_, value) => String(value ?? '').trim().length > 0)
+  @IsUrl({ require_protocol: true }, { message: 'youtubeUrl_invalid' })
+  youtubeUrl?: string;
 }
