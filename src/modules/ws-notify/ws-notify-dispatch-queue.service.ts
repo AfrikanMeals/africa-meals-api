@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { InfraRuntimeSettingsModel } from '@schemas/infra-runtime-settings.schema';
 import { JobsOptions, Queue, Worker } from 'bullmq';
+import { connect as mqttConnect, type IClientOptions, type MqttClient } from 'mqtt';
 import { Model } from 'mongoose';
 
 type WsNotifyQueueJob = {
@@ -10,6 +11,15 @@ type WsNotifyQueueJob = {
   payload: Record<string, unknown>;
 };
 const INFRA_RUNTIME_SETTINGS_KEY = 'default';
+const WS_NOTIFY_SUFFIX_TO_TOPIC = {
+  'inbox/refresh': 'inbox/refresh',
+  'order/update': 'order/update',
+  'order/tracking': 'order/tracking',
+  'order/staff-broadcast': 'order/staff-broadcast',
+  'stripe/connect-status': 'stripe/connect-status',
+  'ads-targeting/event': 'ads-targeting/event',
+  'chat/archive-order-delivery': 'chat/archive-order-delivery',
+} as const;
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
@@ -29,6 +39,8 @@ export class WsNotifyDispatchQueueService
   private queue: Queue<WsNotifyQueueJob> | null = null;
   private worker: Worker<WsNotifyQueueJob, void> | null = null;
   private queueEnabled = false;
+  private mqttClient: MqttClient | null = null;
+  private mqttConnected = false;
   private infraSettingsCache = {
     redisManagerEnabled: true,
     mqBrokerEnabled: true,
@@ -42,6 +54,7 @@ export class WsNotifyDispatchQueueService
   ) {}
 
   async onModuleInit(): Promise<void> {
+    this.initMqttClient();
     const connection = this.redisConnectionConfig();
     if (!connection) {
       this.logger.log('BullMQ disabled (REDIS_* absent) -> direct notify mode');
@@ -72,6 +85,11 @@ export class WsNotifyDispatchQueueService
   }
 
   async onModuleDestroy(): Promise<void> {
+    if (this.mqttClient) {
+      this.mqttClient.end(true);
+      this.mqttClient = null;
+      this.mqttConnected = false;
+    }
     await this.worker?.close();
     await this.queue?.close();
     this.worker = null;
@@ -91,9 +109,9 @@ export class WsNotifyDispatchQueueService
     if (!suffix) return;
     const normalizedPayload = { ...payload };
     const infraSettings = await this.readInfraSettings();
-    if (!infraSettings.mqBrokerEnabled && suffix === 'ads-targeting/event') {
-      this.logger.log(`ws notify skipped (${suffix}): mq broker disabled`);
-      return;
+    if (infraSettings.mqBrokerEnabled) {
+      const mqttPublished = await this.publishViaMqtt(suffix, normalizedPayload);
+      if (mqttPublished) return;
     }
     if (!infraSettings.redisManagerEnabled || !this.queueEnabled || !this.queue) {
       await this.postInternal(suffix, normalizedPayload).catch((error: unknown) => {
@@ -252,6 +270,101 @@ export class WsNotifyDispatchQueueService
     });
     if (!response.ok) {
       throw new Error(`status=${response.status}`);
+    }
+  }
+
+  private initMqttClient(): void {
+    const cfg = this.mqttConfig();
+    if (!cfg) {
+      this.logger.log('MQTT disabled (MQTT_BROKER_* absent)');
+      return;
+    }
+    const client = mqttConnect(cfg.url, cfg.options);
+    client.on('connect', () => {
+      this.mqttConnected = true;
+      this.logger.log(`MQTT connected: ${cfg.url}`);
+    });
+    client.on('reconnect', () => {
+      this.logger.warn('MQTT reconnecting...');
+    });
+    client.on('error', (error) => {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`MQTT error: ${msg}`);
+    });
+    client.on('close', () => {
+      this.mqttConnected = false;
+    });
+    this.mqttClient = client;
+  }
+
+  private mqttConfig():
+    | {
+        url: string;
+        options: IClientOptions;
+      }
+    | null {
+    const direct = this.config.get<string>('MQTT_BROKER_URL')?.trim();
+    const host = this.config.get<string>('MQTT_BROKER_HOST')?.trim();
+    if (!direct && !host) return null;
+    const port = parsePositiveInt(
+      this.config.get<string>('MQTT_BROKER_PORT'),
+      8883,
+    );
+    const protocol = this.config.get<string>('MQTT_BROKER_PROTOCOL')?.trim() || 'mqtts';
+    const url = direct || `${protocol}://${host}:${port}`;
+    return {
+      url,
+      options: {
+        username: this.config.get<string>('MQTT_BROKER_USERNAME')?.trim(),
+        password: this.config.get<string>('MQTT_BROKER_PASSWORD')?.trim(),
+        connectTimeout: parsePositiveInt(
+          this.config.get<string>('MQTT_CONNECT_TIMEOUT_MS'),
+          8000,
+        ),
+        keepalive: parsePositiveInt(
+          this.config.get<string>('MQTT_KEEPALIVE_SEC'),
+          30,
+        ),
+        reconnectPeriod: parsePositiveInt(
+          this.config.get<string>('MQTT_RECONNECT_MS'),
+          2000,
+        ),
+      },
+    };
+  }
+
+  private async publishViaMqtt(
+    pathSuffix: string,
+    payload: Record<string, unknown>,
+  ): Promise<boolean> {
+    if (!this.mqttClient || !this.mqttConnected) return false;
+    const topicSuffix =
+      WS_NOTIFY_SUFFIX_TO_TOPIC[
+        pathSuffix as keyof typeof WS_NOTIFY_SUFFIX_TO_TOPIC
+      ];
+    if (!topicSuffix) return false;
+    const prefix =
+      this.config.get<string>('MQTT_TOPIC_PREFIX')?.trim() ||
+      'africameals/internal/ws';
+    const topic = `${prefix}/${topicSuffix}`;
+    const qosRaw = Number(this.config.get<string>('MQTT_QOS') ?? '1');
+    const qos = qosRaw === 2 ? 2 : qosRaw === 0 ? 0 : 1;
+    const body = JSON.stringify(payload);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        this.mqttClient!.publish(topic, body, { qos, retain: false }, (error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+      return true;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`MQTT publish failed topic=${topic}: ${msg}`);
+      return false;
     }
   }
 }

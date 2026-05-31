@@ -61,6 +61,7 @@
     "libphonenumber-js": "^1.12.40",
     "mailersend": "^2.2.0",
     "mongoose": "^8.4.1",
+    "mqtt": "^5.15.1",
     "nodemailer": "^8.0.3",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
