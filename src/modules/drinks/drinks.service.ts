@@ -3,9 +3,11 @@ import {
   resolveStoreIdsVisibleOnMobileApp,
 } from '@modules/billing/stripe/stripe-connect-visibility';
 import { MediasService } from '@modules/medias/medias.service';
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { DrinkModel, DrinkStatutEnum } from '@schemas/drink.schema';
+import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
@@ -89,11 +91,17 @@ export class DrinksService {
   @InjectModel(StoreModel.name)
   private readonly _storeModel: Model<StoreModel>;
 
+  @InjectModel(ProductModel.name)
+  private readonly _productModel: Model<ProductModel>;
+
   @InjectModel(UserModel.name)
   private readonly _userModel: Model<UserModel>;
 
   @Inject(MediasService)
   private readonly _mediasService: MediasService;
+
+  @Inject(SubscriptionsService)
+  private readonly _subscriptionsService: SubscriptionsService;
 
   private async isStoreVisibleOnMobileApp(storeId: string): Promise<boolean> {
     if (!Types.ObjectId.isValid(storeId)) {
@@ -127,6 +135,27 @@ export class DrinksService {
     }
   }
 
+  private async accessibleDrinkIdsForStore(
+    storeId: string,
+  ): Promise<Set<string> | null> {
+    const resolved =
+      await this._subscriptionsService.resolveAccessibleCatalogIdsForStore(
+        storeId,
+      );
+    return resolved.limit == null ? null : resolved.drinkIds;
+  }
+
+  private async assertDrinkAccessibleForStore(storeId: string, drinkId: string) {
+    const isAllowed = await this._subscriptionsService.isCatalogItemAccessibleForStore(
+      storeId,
+      drinkId,
+      'drink',
+    );
+    if (!isAllowed) {
+      throw new ForbiddenException('catalog_item_locked_by_plan_limit');
+    }
+  }
+
   /** Détail boisson — propriétaire boutique. */
   async findOneForStoreOwner(
     storeId: string,
@@ -134,6 +163,7 @@ export class DrinksService {
     user: UserModel,
   ) {
     await this.assertStoreOwner(storeId, user);
+    await this.assertDrinkAccessibleForStore(storeId, drinkId);
     if (!Types.ObjectId.isValid(storeId) || !Types.ObjectId.isValid(drinkId)) {
       throw new NotFoundException('drink_not_found');
     }
@@ -155,12 +185,28 @@ export class DrinksService {
     if (!Types.ObjectId.isValid(storeId)) {
       return [];
     }
+    const allowed = await this.accessibleDrinkIdsForStore(storeId);
+    const baseFilter: Record<string, unknown> = {
+      store: new Types.ObjectId(storeId),
+    };
+    if (allowed != null) {
+      const ids = [...allowed].filter((id) => Types.ObjectId.isValid(id));
+      if (!ids.length) return [];
+      baseFilter._id = { $in: ids.map((id) => new Types.ObjectId(id)) };
+    }
     const rows = await this._drinkModel
-      .find({ store: new Types.ObjectId(storeId) })
+      .find(baseFilter)
       .sort({ updatedAt: -1 })
       .lean()
       .exec();
     return rows.map((r) => mapDrinkDoc(r as Record<string, unknown>));
+  }
+
+  async countByStoreId(storeId: string): Promise<number> {
+    if (!Types.ObjectId.isValid(storeId)) return 0;
+    return this._drinkModel
+      .countDocuments({ store: new Types.ObjectId(storeId) })
+      .exec();
   }
 
   /** Catalogue boissons vendeur (pagination + recherche, payload minimal). */
@@ -173,8 +219,16 @@ export class DrinksService {
     if (!Types.ObjectId.isValid(storeId)) {
       return { items: [], total: 0, page: 1, limit: opts.take };
     }
+    const allowed = await this.accessibleDrinkIdsForStore(storeId);
     const storeOid = new Types.ObjectId(storeId);
     const match: Record<string, unknown> = { store: storeOid };
+    if (allowed != null) {
+      const ids = [...allowed].filter((id) => Types.ObjectId.isValid(id));
+      if (!ids.length) {
+        return { items: [], total: 0, page: 1, limit: opts.take };
+      }
+      match._id = { $in: ids.map((id) => new Types.ObjectId(id)) };
+    }
     const q = opts.q?.trim();
     if (q) {
       const esc = this._escapeRegex(q);
@@ -361,6 +415,17 @@ export class DrinksService {
     file?: Express.Multer.File,
   ) {
     await this.assertStoreOwner(storeId, user);
+    const catalogLimit =
+      await this._subscriptionsService.resolveCatalogItemLimitForStore(storeId);
+    if (catalogLimit != null) {
+      const [foods, drinks] = await Promise.all([
+        this._productModel.countDocuments({ store: new Types.ObjectId(storeId) }).exec(),
+        this._drinkModel.countDocuments({ store: new Types.ObjectId(storeId) }).exec(),
+      ]);
+      if (foods + drinks >= catalogLimit) {
+        throw new ForbiddenException('catalog_limit_reached_for_plan');
+      }
+    }
     const quantite = Number(dto.quantite);
     const seuil = Number(dto.seuil);
     const priceCad = Number(dto.priceCad);
@@ -394,6 +459,7 @@ export class DrinksService {
     file?: Express.Multer.File,
   ) {
     await this.assertStoreOwner(storeId, user);
+    await this.assertDrinkAccessibleForStore(storeId, drinkId);
     if (!Types.ObjectId.isValid(drinkId)) {
       throw new NotFoundException('drink_not_found');
     }
@@ -447,6 +513,7 @@ export class DrinksService {
 
   async deleteForStore(storeId: string, drinkId: string, user: UserModel) {
     await this.assertStoreOwner(storeId, user);
+    await this.assertDrinkAccessibleForStore(storeId, drinkId);
     if (!Types.ObjectId.isValid(drinkId)) {
       throw new NotFoundException('drink_not_found');
     }

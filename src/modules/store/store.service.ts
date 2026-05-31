@@ -1168,7 +1168,10 @@ export class StoreService {
       if (!exists) {
         throw new NotFoundException('store_not_found');
       }
-      return this._productsService.findByStoreId(storeId);
+      const rows = await this._productsService.findByStoreId(storeId);
+      const allowed = await this.accessibleProductIdsForStore(storeId);
+      if (allowed == null) return rows;
+      return rows.filter((p) => allowed.has(String((p as { id?: unknown }).id ?? '')));
     }
     const store = await this._storeModel
       .findOne({ _id: storeId, owner: user._id })
@@ -1177,7 +1180,10 @@ export class StoreService {
     if (!store) {
       throw new NotFoundException('store_not_found');
     }
-    return this._productsService.findByStoreId(storeId);
+    const rows = await this._productsService.findByStoreId(storeId);
+    const allowed = await this.accessibleProductIdsForStore(storeId);
+    if (allowed == null) return rows;
+    return rows.filter((p) => allowed.has(String((p as { id?: unknown }).id ?? '')));
   }
 
   private async assertVendorCatalogStoreAccess(
@@ -1185,6 +1191,16 @@ export class StoreService {
     user: UserModel,
   ) {
     await this._storeAccess.assertStoreAccess(user, storeId, 'catalog.view');
+  }
+
+  private async accessibleProductIdsForStore(
+    storeId: string,
+  ): Promise<Set<string> | null> {
+    const resolved =
+      await this._subscriptionsService.resolveAccessibleCatalogIdsForStore(
+        storeId,
+      );
+    return resolved.limit == null ? null : resolved.productIds;
   }
 
   /** Plats catalogue vendeur (food ou menu du jour du jour courant). */
@@ -1228,11 +1244,20 @@ export class StoreService {
       }
       productIds = [...dailyMenuByProductId.keys()];
     }
+    const allowed = await this.accessibleProductIdsForStore(storeId);
+    const scopedProductIds =
+      productIds != null
+        ? allowed == null
+          ? productIds
+          : productIds.filter((pid) => allowed.has(pid))
+        : allowed == null
+          ? undefined
+          : [...allowed];
     const page = await this._productsService.findByStoreIdPaginated(storeId, {
       page: args.page,
       take: args.take,
       q: args.q,
-      productIds: args.tab === 'daily_menu' ? productIds : undefined,
+      productIds: scopedProductIds,
     });
     if (args.tab !== 'daily_menu' || !dailyMenuByProductId.size) {
       return page;
@@ -1261,6 +1286,14 @@ export class StoreService {
     user: UserModel,
   ) {
     await this.assertVendorCatalogStoreAccess(storeId, user);
+    const isAllowed = await this._subscriptionsService.isCatalogItemAccessibleForStore(
+      storeId,
+      productId,
+      'product',
+    );
+    if (!isAllowed) {
+      throw new ForbiddenException('catalog_item_locked_by_plan_limit');
+    }
     return this._productsService.findOneForStoreOwner(storeId, productId);
   }
 
@@ -1272,6 +1305,14 @@ export class StoreService {
     image?: Express.Multer.File,
     gallery?: Express.Multer.File[],
   ) {
+    const isAllowed = await this._subscriptionsService.isCatalogItemAccessibleForStore(
+      storeId,
+      productId,
+      'product',
+    );
+    if (!isAllowed) {
+      throw new ForbiddenException('catalog_item_locked_by_plan_limit');
+    }
     const store = await this._storeModel
       .findOne({ _id: storeId, owner: user._id })
       .exec();
@@ -1297,6 +1338,14 @@ export class StoreService {
     productId: string,
     user: UserModel,
   ) {
+    const isAllowed = await this._subscriptionsService.isCatalogItemAccessibleForStore(
+      storeId,
+      productId,
+      'product',
+    );
+    if (!isAllowed) {
+      throw new ForbiddenException('catalog_item_locked_by_plan_limit');
+    }
     const store = await this._storeModel
       .findOne({ _id: storeId, owner: user._id })
       .exec();
@@ -1329,6 +1378,18 @@ export class StoreService {
       throw new ForbiddenException('can_not_create_products');
     }
 
+    const catalogLimit =
+      await this._subscriptionsService.resolveCatalogItemLimitForStore(id);
+    if (catalogLimit != null) {
+      const [foods, drinks] = await Promise.all([
+        this._productModel.countDocuments({ store: id }).exec(),
+        this._drinksService.countByStoreId(id),
+      ]);
+      if (foods + drinks >= catalogLimit) {
+        throw new ForbiddenException('catalog_limit_reached_for_plan');
+      }
+    }
+
     const exists = await this._productsService.existsInStore(
       args.title,
       store._id.toString(),
@@ -1354,6 +1415,14 @@ export class StoreService {
     args: CreateProductExtraDto,
     user: UserModel,
   ) {
+    const isAllowed = await this._subscriptionsService.isCatalogItemAccessibleForStore(
+      storeId,
+      productId,
+      'product',
+    );
+    if (!isAllowed) {
+      throw new ForbiddenException('catalog_item_locked_by_plan_limit');
+    }
     const store = await this._storeModel
       .findOne({ _id: storeId, owner: user._id })
       .exec();
@@ -1408,6 +1477,14 @@ export class StoreService {
     extraId: string,
     user: UserModel,
   ) {
+    const isAllowed = await this._subscriptionsService.isCatalogItemAccessibleForStore(
+      storeId,
+      productId,
+      'product',
+    );
+    if (!isAllowed) {
+      throw new ForbiddenException('catalog_item_locked_by_plan_limit');
+    }
     const product = await this._productsService.findOneById(productId);
     if (!product) {
       throw new NotFoundException('product_not_found');

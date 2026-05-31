@@ -67,6 +67,11 @@ export class CreateSubscriptionPlanDto {
   @IsOptional()
   @IsBoolean()
   mobileAccess?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxCatalogItems?: number;
 }
 
 export class UpdateSubscriptionPlanDto {
@@ -128,6 +133,11 @@ export class UpdateSubscriptionPlanDto {
   @IsOptional()
   @IsBoolean()
   mobileAccess?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxCatalogItems?: number;
 }
 
 export class SubscribeVendorDto {

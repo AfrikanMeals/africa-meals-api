@@ -11,6 +11,7 @@ export type SubscriptionPlanSeed = {
   trialReminderDays?: number[];
   maxStores?: number;
   mobileAccess?: boolean;
+  maxCatalogItems?: number;
 };
 
 export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
@@ -22,7 +23,7 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     priceYearly: 0,
     currency: 'CAD',
     features: [
-      'Jusqu’à 10 produits actifs',
+      'Jusqu’à 10 articles catalogue (plats + boissons)',
       'Réception des commandes',
       'Support standard par e-mail',
       'Statistiques de base',
@@ -34,6 +35,7 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     trialReminderDays: [],
     maxStores: 1,
     mobileAccess: false,
+    maxCatalogItems: 10,
   },
   {
     name: 'PRO',
@@ -55,5 +57,6 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     trialReminderDays: [7, 3, 1],
     maxStores: 0,
     mobileAccess: true,
+    maxCatalogItems: 0,
   },
 ];

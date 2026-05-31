@@ -165,11 +165,18 @@ export class TeamsService {
         }
       }
     }
+    const planDowngradeImpact =
+      user.type === UserTypeEnum.VENDOR
+        ? await this.subscriptionsService.resolvePlanDowngradeImpactForOwner(
+            user._id as Types.ObjectId,
+          )
+        : { hiddenStores: 0, hiddenCatalogItems: 0 };
     return {
       storeAccess,
       adminPermissions,
       platformRole: platformRoles[0] ?? null,
       platformRoles,
+      planDowngradeImpact,
     };
   }
 

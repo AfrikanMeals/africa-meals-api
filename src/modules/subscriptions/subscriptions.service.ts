@@ -8,6 +8,8 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { DrinkModel } from '@schemas/drink.schema';
+import { ProductModel } from '@schemas/product.schema';
 import { SubscriptionPlanModel } from '@schemas/subscription-plan.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { VendorSubscriptionModel } from '@schemas/vendor-subscription.schema';
@@ -60,6 +62,7 @@ function mapPlan(doc: Record<string, unknown>) {
       : [],
     maxStores: Math.max(0, Number(doc.maxStores ?? 0)),
     mobileAccess: doc.mobileAccess === true,
+    maxCatalogItems: Math.max(0, Number(doc.maxCatalogItems ?? 0)),
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -122,6 +125,12 @@ export class SubscriptionsService implements OnModuleInit {
 
   @InjectModel(StoreModel.name)
   private readonly storeModel: Model<StoreModel>;
+
+  @InjectModel(ProductModel.name)
+  private readonly productModel: Model<ProductModel>;
+
+  @InjectModel(DrinkModel.name)
+  private readonly drinkModel: Model<DrinkModel>;
 
   async onModuleInit() {
     await this.ensureDefaultPlansSeeded();
@@ -249,6 +258,7 @@ export class SubscriptionsService implements OnModuleInit {
         trialReminderDays: trial.trialReminderDays,
         maxStores: Math.max(0, Number(seed.maxStores ?? 0)),
         mobileAccess: seed.mobileAccess === true,
+        maxCatalogItems: Math.max(0, Number(seed.maxCatalogItems ?? 0)),
       });
       this.logger.log(`Seed abonnement créé: ${seed.name}`);
     }
@@ -425,6 +435,122 @@ export class SubscriptionsService implements OnModuleInit {
     });
   }
 
+  private catalogLimitFromPlanDoc(plan: Record<string, unknown> | null): number | null {
+    if (!plan) return null;
+    if (Object.prototype.hasOwnProperty.call(plan, 'maxCatalogItems')) {
+      const configured = Math.max(0, Number(plan.maxCatalogItems ?? 0));
+      return configured > 0 ? configured : null;
+    }
+    const free = isFreeSubscriptionPlan({
+      name: String(plan.name ?? ''),
+      priceMonthly: Number(plan.priceMonthly ?? 0),
+      priceYearly: Number(plan.priceYearly ?? 0),
+    });
+    // Compat legacy: anciens plans FREE sans champ explicite.
+    return free ? 10 : null;
+  }
+
+  async resolveCatalogItemLimitForStore(
+    storeId: string | Types.ObjectId,
+  ): Promise<number | null> {
+    const preferred = await this.findPreferredStoreSubscription(storeId);
+    if (!preferred) {
+      const freePlan = await this.findDefaultFreePlan();
+      return this.catalogLimitFromPlanDoc(freePlan);
+    }
+    const planName = String(preferred.planName ?? '');
+    const planId = String(preferred.plan ?? '');
+    if (!Types.ObjectId.isValid(planId)) {
+      return isFreePlanName(planName) ? 10 : null;
+    }
+    const plan = await this.planModel.findById(planId).lean().exec();
+    if (!plan) {
+      return isFreePlanName(planName) ? 10 : null;
+    }
+    return this.catalogLimitFromPlanDoc(plan as Record<string, unknown>);
+  }
+
+  async resolveAccessibleCatalogIdsForStore(
+    storeId: string | Types.ObjectId,
+  ): Promise<{ productIds: Set<string>; drinkIds: Set<string>; limit: number | null }> {
+    const sid = this.normalizeStoreObjectId(storeId);
+    const limit = await this.resolveCatalogItemLimitForStore(sid);
+    if (limit == null) {
+      return { productIds: new Set<string>(), drinkIds: new Set<string>(), limit: null };
+    }
+    if (limit <= 0) {
+      return { productIds: new Set<string>(), drinkIds: new Set<string>(), limit: 0 };
+    }
+
+    const [products, drinks] = await Promise.all([
+      this.productModel
+        .find({ store: sid })
+        .select('_id createdAt')
+        .lean()
+        .exec(),
+      this.drinkModel
+        .find({ store: sid })
+        .select('_id createdAt')
+        .lean()
+        .exec(),
+    ]);
+
+    const toCreatedAtMs = (raw: unknown): number => {
+      if (raw instanceof Date) return raw.getTime();
+      if (typeof raw === 'string') {
+        const ts = Date.parse(raw);
+        return Number.isFinite(ts) ? ts : Number.MIN_SAFE_INTEGER;
+      }
+      return Number.MIN_SAFE_INTEGER;
+    };
+
+    const timeline = [
+      ...products.map((p) => {
+        const row = p as Record<string, unknown>;
+        return {
+          id: String(row._id ?? ''),
+          type: 'product' as const,
+          createdAtMs: toCreatedAtMs(row.createdAt),
+        };
+      }),
+      ...drinks.map((d) => {
+        const row = d as Record<string, unknown>;
+        return {
+          id: String(row._id ?? ''),
+          type: 'drink' as const,
+          createdAtMs: toCreatedAtMs(row.createdAt),
+        };
+      }),
+    ];
+
+    timeline.sort((a, b) => {
+      if (a.createdAtMs !== b.createdAtMs) return a.createdAtMs - b.createdAtMs;
+      return a.id.localeCompare(b.id);
+    });
+
+    const kept = timeline.slice(0, limit);
+    const productIds = new Set(
+      kept.filter((e) => e.type === 'product').map((e) => e.id),
+    );
+    const drinkIds = new Set(
+      kept.filter((e) => e.type === 'drink').map((e) => e.id),
+    );
+    return { productIds, drinkIds, limit };
+  }
+
+  async isCatalogItemAccessibleForStore(
+    storeId: string | Types.ObjectId,
+    itemId: string | Types.ObjectId,
+    itemType: 'product' | 'drink',
+  ): Promise<boolean> {
+    const resolved = await this.resolveAccessibleCatalogIdsForStore(storeId);
+    if (resolved.limit == null) return true;
+    const id = String(itemId);
+    return itemType === 'product'
+      ? resolved.productIds.has(id)
+      : resolved.drinkIds.has(id);
+  }
+
   private storeLimitFromPlanName(name: string): number | null | undefined {
     const normalized = normalizedPlanName(name);
     if (!normalized) return undefined;
@@ -535,6 +661,47 @@ export class SubscriptionsService implements OnModuleInit {
     return all.slice(0, limit);
   }
 
+  async resolvePlanDowngradeImpactForOwner(
+    ownerId: string | Types.ObjectId,
+  ): Promise<{ hiddenStores: number; hiddenCatalogItems: number }> {
+    const oid = this.normalizeUserObjectId(ownerId);
+    const rows = await this.storeModel
+      .find({ owner: oid })
+      .select('_id')
+      .sort({ createdAt: 1, _id: 1 })
+      .lean()
+      .exec();
+    const allStoreIds = rows.map((r) => String(r._id));
+    if (!allStoreIds.length) {
+      return { hiddenStores: 0, hiddenCatalogItems: 0 };
+    }
+
+    const accessibleStoreIds = new Set(
+      await this.resolveAccessibleStoreIdsForOwner(oid),
+    );
+    const hiddenStores = allStoreIds.reduce(
+      (acc, storeId) => (accessibleStoreIds.has(storeId) ? acc : acc + 1),
+      0,
+    );
+
+    const hiddenCatalogCounts = await Promise.all(
+      allStoreIds.map(async (storeId) => {
+        const limit = await this.resolveCatalogItemLimitForStore(storeId);
+        if (limit == null || limit <= 0) return 0;
+        const [foods, drinks] = await Promise.all([
+          this.productModel.countDocuments({ store: storeId }).exec(),
+          this.drinkModel.countDocuments({ store: storeId }).exec(),
+        ]);
+        return Math.max(0, foods + drinks - limit);
+      }),
+    );
+
+    return {
+      hiddenStores,
+      hiddenCatalogItems: hiddenCatalogCounts.reduce((acc, n) => acc + n, 0),
+    };
+  }
+
   /**
    * Entretien lifecycle: expire abonnements échus puis garantit un FREE actif
    * sur les boutiques sans abonnement en cours.
@@ -581,6 +748,7 @@ export class SubscriptionsService implements OnModuleInit {
       trialReminderDays: trial.trialReminderDays,
       maxStores: Math.max(0, Math.floor(Number(dto.maxStores ?? 0))),
       mobileAccess: dto.mobileAccess === true,
+      maxCatalogItems: Math.max(0, Math.floor(Number(dto.maxCatalogItems ?? 0))),
     });
     return mapPlan(doc.toObject() as Record<string, unknown>);
   }
@@ -611,6 +779,9 @@ export class SubscriptionsService implements OnModuleInit {
       patch.maxStores = Math.max(0, Math.floor(Number(dto.maxStores)));
     }
     if (dto.mobileAccess != null) patch.mobileAccess = dto.mobileAccess === true;
+    if (dto.maxCatalogItems != null) {
+      patch.maxCatalogItems = Math.max(0, Math.floor(Number(dto.maxCatalogItems)));
+    }
 
     if (
       dto.trialDays != null ||

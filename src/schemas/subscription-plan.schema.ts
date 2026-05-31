@@ -44,6 +44,13 @@ export class SubscriptionPlanModel {
   /** Active les options d’accès mobile liées à la formule. */
   @Prop({ type: Boolean, default: false })
   mobileAccess: boolean;
+
+  /**
+   * Nombre max d’éléments catalogue (plats + boissons) pour la boutique.
+   * 0 = illimité.
+   */
+  @Prop({ type: Number, default: 0, min: 0 })
+  maxCatalogItems: number;
 }
 
 export type SubscriptionPlanDocument = HydratedDocument<SubscriptionPlanModel>;
