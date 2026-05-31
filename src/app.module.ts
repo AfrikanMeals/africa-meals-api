@@ -41,6 +41,34 @@ import { FieldSelectionModule } from './common/field-selection/field-selection.m
 import { MobileAppSettingsModule } from './modules/mobile-app-settings/mobile-app-settings.module';
 import { AdsTargetingModule } from './modules/ads-targeting/ads-targeting.module';
 
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : fallback;
+}
+
+function parseRedisPort(raw: string | undefined): number {
+  return parsePositiveInt(raw, 6379);
+}
+
+function buildRedisUrl(config: ConfigService): string | null {
+  const direct = config.get<string>('REDIS_URL')?.trim();
+  if (direct) return direct;
+
+  const host = config.get<string>('REDIS_HOST')?.trim();
+  if (!host) return null;
+  const port = parseRedisPort(config.get<string>('REDIS_PORT'));
+  const username = config.get<string>('REDIS_USERNAME')?.trim() ?? '';
+  const password = config.get<string>('REDIS_PASSWORD')?.trim() ?? '';
+  const auth = password
+    ? `${encodeURIComponent(username || 'default')}:${encodeURIComponent(password)}@`
+    : '';
+  return `redis://${auth}${host}:${port}`;
+}
+
+function redactRedisUrl(url: string): string {
+  return url.replace(/:\/\/[^@]+@/, '://***:***@');
+}
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -48,10 +76,48 @@ import { AdsTargetingModule } from './modules/ads-targeting/ads-targeting.module
       envFilePath: ['.env.local', '.env', '../.env'],
       isGlobal: true,
     }),
-    CacheModule.register({
+    CacheModule.registerAsync({
       isGlobal: true,
-      ttl: Number(process.env.FAVORITES_CACHE_TTL_MS) || 25_000,
-      max: Number(process.env.CACHE_MAX_ITEMS) || 500,
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: async (config: ConfigService) => {
+        const ttl = parsePositiveInt(
+          config.get<string>('FAVORITES_CACHE_TTL_MS'),
+          25_000,
+        );
+        const max = parsePositiveInt(config.get<string>('CACHE_MAX_ITEMS'), 500);
+        const redisUrl = buildRedisUrl(config);
+
+        if (!redisUrl) {
+          Logger.log('Cache store: memory (REDIS_* absent)', 'CacheModule');
+          return { ttl, max };
+        }
+
+        try {
+          const { redisStore } = await import('cache-manager-redis-yet');
+          const store = await redisStore({
+            url: redisUrl,
+            ttl,
+          });
+          Logger.log(
+            `Cache store: redis (${redactRedisUrl(redisUrl)})`,
+            'CacheModule',
+          );
+          return {
+            ttl,
+            max,
+            store,
+          };
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : 'unknown redis error';
+          Logger.warn(
+            `Cache Redis indisponible (${message}) -> fallback memory`,
+            'CacheModule',
+          );
+          return { ttl, max };
+        }
+      },
     }),
     ScheduleModule.forRoot(),
     MongooseModule.forRootAsync({

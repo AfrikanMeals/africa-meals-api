@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { WsNotifyDispatchQueueService } from './ws-notify-dispatch-queue.service';
 
 export type OrderWsTrackingPayload = {
   orderId: string;
@@ -28,7 +28,7 @@ export type OrderWsTrackingPayload = {
 export class WsOrderNotifyService {
   private readonly logger = new Logger(WsOrderNotifyService.name);
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(private readonly queue: WsNotifyDispatchQueueService) {}
 
   notifyCustomerOrderUpdate(
     userId: string,
@@ -58,31 +58,12 @@ export class WsOrderNotifyService {
     const orderId = payload.orderId?.trim();
     if (!uid || !orderId) return;
 
-    const raw = this.config.get<string>('AFRICA_MEALS_WS_INTERNAL_URL')?.trim();
-    const secret =
-      this.config.get<string>('INTERNAL_NOTIFY_SECRET')?.trim() ||
-      this.config.get<string>('INTERNAL_WS_NOTIFY_SECRET')?.trim();
-    if (!raw || !secret) {
-      return;
-    }
-
-    const base = raw.replace(/\/+$/, '');
-    const path = base.endsWith('/api')
-      ? `${base}/internal/${pathSuffix}`
-      : `${base}/api/internal/${pathSuffix}`;
-
-    void fetch(path, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Internal-Secret': secret,
-      },
-      body: JSON.stringify({ userId: uid, ...payload }),
-      signal: AbortSignal.timeout(8000),
-    }).catch((e: unknown) => {
+    try {
+      this.queue.dispatch(pathSuffix, { userId: uid, ...payload });
+    } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      this.logger.warn(`ws order notify (${pathSuffix}) failed: ${msg}`);
-    });
+      this.logger.warn(`ws order notify enqueue (${pathSuffix}) failed: ${msg}`);
+    }
   }
 
   private postInternalStaff(
@@ -92,30 +73,11 @@ export class WsOrderNotifyService {
     const orderId = payload.orderId?.trim();
     if (!orderId) return;
 
-    const raw = this.config.get<string>('AFRICA_MEALS_WS_INTERNAL_URL')?.trim();
-    const secret =
-      this.config.get<string>('INTERNAL_NOTIFY_SECRET')?.trim() ||
-      this.config.get<string>('INTERNAL_WS_NOTIFY_SECRET')?.trim();
-    if (!raw || !secret) {
-      return;
-    }
-
-    const base = raw.replace(/\/+$/, '');
-    const path = base.endsWith('/api')
-      ? `${base}/internal/${pathSuffix}`
-      : `${base}/api/internal/${pathSuffix}`;
-
-    void fetch(path, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Internal-Secret': secret,
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(8000),
-    }).catch((e: unknown) => {
+    try {
+      this.queue.dispatch(pathSuffix, payload);
+    } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      this.logger.warn(`ws order notify (${pathSuffix}) failed: ${msg}`);
-    });
+      this.logger.warn(`ws order notify enqueue (${pathSuffix}) failed: ${msg}`);
+    }
   }
 }
