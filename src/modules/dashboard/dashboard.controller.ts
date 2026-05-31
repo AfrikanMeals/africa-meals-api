@@ -16,7 +16,9 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
+import { AdminVendorFeedbacksQueryDto } from './dto/admin-vendor-feedbacks-query.dto';
 import { AssignDashboardOrderDto } from './dto/assign-dashboard-order.dto';
+import { CreateVendorFeedbackDto } from './dto/create-vendor-feedback.dto';
 import { CreateDashboardLivreurDto } from './dto/create-dashboard-livreur.dto';
 import { UpdateDashboardLivreurStatutDto } from './dto/update-dashboard-livreur-statut.dto';
 import { FinancePeriodReportQueryDto } from './dto/finance-period-report-query.dto';
@@ -160,6 +162,34 @@ export class DashboardController {
   productReviews(@Req() req: Request) {
     return this._dashboardService.getProductReviewsDashboard(
       req.user as UserModel,
+    );
+  }
+
+  /** Feedback produit du vendeur (qualité dashboard / expérience admin). */
+  @Post('vendor-feedback')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  submitVendorFeedback(
+    @Req() req: Request,
+    @Body() body: CreateVendorFeedbackDto,
+  ) {
+    return this._dashboardService.submitVendorFeedback(
+      req.user as UserModel,
+      body,
+    );
+  }
+
+  /** Consultation admin des feedbacks vendeurs (pagination + filtres date/note). */
+  @Get('admin/vendor-feedbacks')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  listVendorFeedbacks(
+    @Req() req: Request,
+    @Query() query: AdminVendorFeedbacksQueryDto,
+  ) {
+    return this._dashboardService.listVendorFeedbacksAdmin(
+      req.user as UserModel,
+      query,
     );
   }
 

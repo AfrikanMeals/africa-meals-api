@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class CreateVendorFeedbackDto {
   @ApiProperty({
@@ -10,6 +17,7 @@ export class CreateVendorFeedbackDto {
   })
   @IsInt()
   @Min(1)
+  @Max(5)
   rate: number;
 
   @ApiPropertyOptional({

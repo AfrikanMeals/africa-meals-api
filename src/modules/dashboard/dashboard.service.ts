@@ -24,9 +24,12 @@ import { StockItemModel, StockStatutEnum } from '@schemas/stock-item.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { StoreRatingModel } from '@schemas/store_rating.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
+import { VendorFeedbackModel } from '@schemas/vendor-feedback.schema';
 import { Model, Types } from 'mongoose';
+import { AdminVendorFeedbacksQueryDto } from './dto/admin-vendor-feedbacks-query.dto';
 import { CreateDashboardLivreurDto } from './dto/create-dashboard-livreur.dto';
 import { AssignDashboardOrderDto } from './dto/assign-dashboard-order.dto';
+import { CreateVendorFeedbackDto } from './dto/create-vendor-feedback.dto';
 import {
   coordsFromLngLat,
   lngLatFromPercentCoords,
@@ -458,6 +461,8 @@ export class DashboardService {
     private readonly deliveryAgentApplicationModel: Model<DeliveryAgentApplicationModel>,
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
+    @InjectModel(VendorFeedbackModel.name)
+    private readonly vendorFeedbackModel: Model<VendorFeedbackModel>,
     private readonly notificationsService: NotificationsService,
     private readonly orderStatusEvents: OrderStatusEventsService,
     @Inject(OrdersService)
@@ -1338,6 +1343,176 @@ export class DashboardService {
         negativeCount,
       },
       byStore,
+    };
+  }
+
+  async submitVendorFeedback(
+    user: UserModel,
+    body: CreateVendorFeedbackDto,
+  ): Promise<{
+    id: string;
+    rate: number;
+    comment: string | null;
+    createdAt: string;
+  }> {
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_feedback_vendor_only');
+    }
+
+    const commentRaw =
+      typeof body.comment === 'string' ? body.comment.trim() : '';
+    const comment = commentRaw.length ? commentRaw : undefined;
+    const rate = Math.min(5, Math.max(1, Math.round(Number(body.rate) || 0)));
+
+    const created = await this.vendorFeedbackModel.create({
+      user: user._id,
+      rate,
+      ...(comment ? { comment } : {}),
+    });
+
+    return {
+      id: String(created._id),
+      rate: Number(created.rate) || rate,
+      comment:
+        typeof created.comment === 'string' && created.comment.trim()
+          ? created.comment.trim()
+          : null,
+      createdAt:
+        created.createdAt instanceof Date
+          ? created.createdAt.toISOString()
+          : new Date().toISOString(),
+    };
+  }
+
+  async listVendorFeedbacksAdmin(
+    user: UserModel,
+    query: AdminVendorFeedbacksQueryDto,
+  ): Promise<{
+    items: Array<{
+      id: string;
+      rate: number;
+      comment: string | null;
+      createdAt: string;
+      vendor: {
+        id: string;
+        fullName: string;
+        email: string | null;
+        profileImage: string | null;
+      };
+    }>;
+    total: number;
+    page: number;
+    take: number;
+    hasMore: boolean;
+    filters: {
+      minRate: number | null;
+      maxRate: number | null;
+      from: string | null;
+      to: string | null;
+    };
+  }> {
+    if (user.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('vendor_feedback_admin_only');
+    }
+
+    const page = Math.max(1, Number(query.page) || 1);
+    const take = Math.min(100, Math.max(1, Number(query.take) || 20));
+    const minRateRaw =
+      query.minRate != null ? Math.round(Number(query.minRate)) : null;
+    const maxRateRaw =
+      query.maxRate != null ? Math.round(Number(query.maxRate)) : null;
+    const minRate =
+      minRateRaw != null ? Math.min(5, Math.max(1, minRateRaw)) : null;
+    const maxRate =
+      maxRateRaw != null ? Math.min(5, Math.max(1, maxRateRaw)) : null;
+    if (minRate != null && maxRate != null && minRate > maxRate) {
+      throw new BadRequestException('vendor_feedback_invalid_rate_range');
+    }
+
+    const fromRaw = typeof query.from === 'string' ? query.from.trim() : '';
+    const toRaw = typeof query.to === 'string' ? query.to.trim() : '';
+    const fromDate = fromRaw ? new Date(fromRaw) : null;
+    const toDate = toRaw ? new Date(toRaw) : null;
+    if (fromDate && Number.isNaN(fromDate.getTime())) {
+      throw new BadRequestException('vendor_feedback_invalid_from');
+    }
+    if (toDate && Number.isNaN(toDate.getTime())) {
+      throw new BadRequestException('vendor_feedback_invalid_to');
+    }
+    if (toDate) {
+      toDate.setHours(23, 59, 59, 999);
+    }
+    if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
+      throw new BadRequestException('vendor_feedback_invalid_date_range');
+    }
+
+    const where: Record<string, unknown> = {};
+    if (minRate != null || maxRate != null) {
+      const rateWhere: Record<string, number> = {};
+      if (minRate != null) rateWhere.$gte = minRate;
+      if (maxRate != null) rateWhere.$lte = maxRate;
+      where.rate = rateWhere;
+    }
+    if (fromDate || toDate) {
+      const createdAtWhere: Record<string, Date> = {};
+      if (fromDate) createdAtWhere.$gte = fromDate;
+      if (toDate) createdAtWhere.$lte = toDate;
+      where.createdAt = createdAtWhere;
+    }
+
+    const skip = (page - 1) * take;
+    const [rows, total] = await Promise.all([
+      this.vendorFeedbackModel
+        .find(where)
+        .populate({ path: 'user', select: 'fullName email profileImage' })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(take)
+        .lean()
+        .exec(),
+      this.vendorFeedbackModel.countDocuments(where).exec(),
+    ]);
+
+    type LeanUser = {
+      _id?: unknown;
+      fullName?: string;
+      email?: string;
+      profileImage?: string;
+    };
+    const items = rows.map((row) => {
+      const vendor = (row.user ?? null) as LeanUser | null;
+      return {
+        id: String(row._id),
+        rate: Number(row.rate) || 0,
+        comment:
+          typeof row.comment === 'string' && row.comment.trim()
+            ? row.comment.trim()
+            : null,
+        createdAt:
+          row.createdAt instanceof Date
+            ? row.createdAt.toISOString()
+            : new Date(String(row.createdAt ?? Date.now())).toISOString(),
+        vendor: {
+          id: String(vendor?._id ?? ''),
+          fullName: vendor?.fullName?.trim() || 'Vendeur',
+          email: vendor?.email?.trim() || null,
+          profileImage: vendor?.profileImage?.trim() || null,
+        },
+      };
+    });
+
+    return {
+      items,
+      total,
+      page,
+      take,
+      hasMore: page * take < total,
+      filters: {
+        minRate,
+        maxRate,
+        from: fromRaw || null,
+        to: toRaw || null,
+      },
     };
   }
 

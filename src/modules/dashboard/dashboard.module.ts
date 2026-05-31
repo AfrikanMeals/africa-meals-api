@@ -22,6 +22,10 @@ import {
 import { AddressModel, AddressSchema } from '@schemas/address.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
+import {
+  VendorFeedbackModel,
+  VendorFeedbackSchema,
+} from '@schemas/vendor-feedback.schema';
 import { DeliveryDriversCityMigrationService } from './delivery-drivers-city-migration.service';
 import { DeliveryDriversSeedService } from './delivery-drivers-seed.service';
 import { DashboardController } from './dashboard.controller';
@@ -51,6 +55,7 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
       },
       { name: StoreModel.name, schema: StoreSchema },
       { name: AddressModel.name, schema: AddressSchema },
+      { name: VendorFeedbackModel.name, schema: VendorFeedbackSchema },
     ]),
   ],
   controllers: [DashboardController],
