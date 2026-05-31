@@ -20,6 +20,7 @@ import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { SharedModule } from '../shared/shared.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { TeamsModule } from '../teams/teams.module';
+import { WsNotifyModule } from '../ws-notify/ws-notify.module';
 import { DbMaintenanceAdminController } from './db-maintenance-admin.controller';
 import { DbMaintenanceService } from './db-maintenance.service';
 
@@ -28,6 +29,7 @@ import { DbMaintenanceService } from './db-maintenance.service';
     TeamsModule,
     SharedModule,
     SubscriptionsModule,
+    WsNotifyModule,
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       {

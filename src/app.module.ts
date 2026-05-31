@@ -50,6 +50,84 @@ function parseRedisPort(raw: string | undefined): number {
   return parsePositiveInt(raw, 6379);
 }
 
+function buildMongoUriFromConfig(config: ConfigService): string | null {
+  const direct =
+    config.get<string>('MONGODB_URI')?.trim() ||
+    config.get<string>('MONGO_URI')?.trim();
+  if (direct) return direct;
+  const host = config.get<string>('DB_HOST')?.trim();
+  const username = config.get<string>('DB_USERNAME')?.trim();
+  const password = config.get<string>('DB_PASSWORD')?.trim();
+  const dbName = config.get<string>('DB_DATABASE')?.trim() || '';
+  if (!host || !username || !password) return null;
+  const encodedUser = encodeURIComponent(username);
+  const encodedPass = encodeURIComponent(password);
+  const encodedDb = dbName ? `/${encodeURIComponent(dbName)}` : '';
+  const appName = encodeURIComponent(
+    config.get<string>('MONGODB_APP_NAME')?.trim() || 'africa-meals-api',
+  );
+  return `mongodb+srv://${encodedUser}:${encodedPass}@${host}${encodedDb}?retryWrites=true&w=majority&appName=${appName}`;
+}
+
+function mongoDbNameFromUri(uri: string): string | null {
+  try {
+    const parsed = new URL(uri);
+    const p = parsed.pathname?.replace(/^\/+/, '').trim();
+    return p || null;
+  } catch {
+    return null;
+  }
+}
+
+let redisBootstrapToggleCache: boolean | null = null;
+
+async function readRedisManagerEnabledAtBootstrap(
+  config: ConfigService,
+): Promise<boolean> {
+  if (redisBootstrapToggleCache != null) return redisBootstrapToggleCache;
+  const uri = buildMongoUriFromConfig(config);
+  if (!uri) {
+    redisBootstrapToggleCache = true;
+    return true;
+  }
+  let client: import('mongodb').MongoClient | null = null;
+  try {
+    const { MongoClient } = await import('mongodb');
+    client = new MongoClient(uri, {
+      serverSelectionTimeoutMS: 5000,
+      connectTimeoutMS: 5000,
+    });
+    await client.connect();
+    const dbName =
+      mongoDbNameFromUri(uri) || config.get<string>('DB_DATABASE')?.trim() || '';
+    const db = dbName ? client.db(dbName) : client.db();
+    const doc = (await db.collection('infra_runtime_settings').findOne(
+      { key: 'default' },
+      { projection: { redis_manager_enabled: 1, redisManagerEnabled: 1 } },
+    )) as
+      | {
+          redis_manager_enabled?: unknown;
+          redisManagerEnabled?: unknown;
+        }
+      | null;
+    const enabled = doc
+      ? doc.redis_manager_enabled !== false && doc.redisManagerEnabled !== false
+      : true;
+    redisBootstrapToggleCache = enabled;
+    return enabled;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    Logger.warn(
+      `Redis bootstrap toggle read failed (${msg}) -> default enabled`,
+      'CacheModule',
+    );
+    redisBootstrapToggleCache = true;
+    return true;
+  } finally {
+    await client?.close().catch(() => undefined);
+  }
+}
+
 function buildRedisUrl(config: ConfigService): string | null {
   const direct = config.get<string>('REDIS_URL')?.trim();
   if (direct) return direct;
@@ -86,6 +164,15 @@ function redactRedisUrl(url: string): string {
           25_000,
         );
         const max = parsePositiveInt(config.get<string>('CACHE_MAX_ITEMS'), 500);
+        const redisManagerEnabled =
+          await readRedisManagerEnabledAtBootstrap(config);
+        if (!redisManagerEnabled) {
+          Logger.log(
+            'Cache store: memory (redis disabled by runtime toggle at bootstrap)',
+            'CacheModule',
+          );
+          return { ttl, max };
+        }
         const redisUrl = buildRedisUrl(config);
 
         if (!redisUrl) {

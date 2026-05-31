@@ -10,6 +10,13 @@ type WsNotifyQueueJob = {
   pathSuffix: string;
   payload: Record<string, unknown>;
 };
+export type MqttRuntimeStatus = {
+  enabled: boolean;
+  state: 'disabled' | 'connecting' | 'connected' | 'reconnecting' | 'error';
+  lastError: string | null;
+  lastTopicSeen: string | null;
+  lastMessageAt: string | null;
+};
 const INFRA_RUNTIME_SETTINGS_KEY = 'default';
 const WS_NOTIFY_SUFFIX_TO_TOPIC = {
   'inbox/refresh': 'inbox/refresh',
@@ -41,6 +48,10 @@ export class WsNotifyDispatchQueueService
   private queueEnabled = false;
   private mqttClient: MqttClient | null = null;
   private mqttConnected = false;
+  private mqttState: MqttRuntimeStatus['state'] = 'disabled';
+  private mqttLastError: string | null = null;
+  private mqttLastPublishedTopic: string | null = null;
+  private mqttLastPublishedAtMs: number | null = null;
   private infraSettingsCache = {
     redisManagerEnabled: true,
     mqBrokerEnabled: true,
@@ -89,6 +100,7 @@ export class WsNotifyDispatchQueueService
       this.mqttClient.end(true);
       this.mqttClient = null;
       this.mqttConnected = false;
+      this.mqttState = 'disabled';
     }
     await this.worker?.close();
     await this.queue?.close();
@@ -99,6 +111,18 @@ export class WsNotifyDispatchQueueService
 
   dispatch(pathSuffix: string, payload: Record<string, unknown>): void {
     void this.dispatchAsync(pathSuffix, payload);
+  }
+
+  getMqttStatus(): MqttRuntimeStatus {
+    return {
+      enabled: this.mqttClient != null,
+      state: this.mqttState,
+      lastError: this.mqttLastError,
+      lastTopicSeen: this.mqttLastPublishedTopic,
+      lastMessageAt: this.mqttLastPublishedAtMs
+        ? new Date(this.mqttLastPublishedAtMs).toISOString()
+        : null,
+    };
   }
 
   private async dispatchAsync(
@@ -277,22 +301,32 @@ export class WsNotifyDispatchQueueService
     const cfg = this.mqttConfig();
     if (!cfg) {
       this.logger.log('MQTT disabled (MQTT_BROKER_* absent)');
+      this.mqttState = 'disabled';
       return;
     }
+    this.mqttState = 'connecting';
     const client = mqttConnect(cfg.url, cfg.options);
     client.on('connect', () => {
       this.mqttConnected = true;
+       this.mqttState = 'connected';
+      this.mqttLastError = null;
       this.logger.log(`MQTT connected: ${cfg.url}`);
     });
     client.on('reconnect', () => {
+      this.mqttState = 'reconnecting';
       this.logger.warn('MQTT reconnecting...');
     });
     client.on('error', (error) => {
       const msg = error instanceof Error ? error.message : String(error);
+      this.mqttState = 'error';
+      this.mqttLastError = msg;
       this.logger.warn(`MQTT error: ${msg}`);
     });
     client.on('close', () => {
       this.mqttConnected = false;
+      if (this.mqttState !== 'error') {
+        this.mqttState = 'connecting';
+      }
     });
     this.mqttClient = client;
   }
@@ -360,6 +394,8 @@ export class WsNotifyDispatchQueueService
           resolve();
         });
       });
+      this.mqttLastPublishedTopic = topic;
+      this.mqttLastPublishedAtMs = Date.now();
       return true;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

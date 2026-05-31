@@ -110,4 +110,14 @@ export class DbMaintenanceAdminController {
       dto,
     );
   }
+
+  @Get('admin/runtime-services/mqtt-status')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Statut MQTT live API/WS (connected/reconnecting/error + dernier topic)',
+  })
+  async getMqttStatus(@Req() req: Request) {
+    return this._dbMaintenance.getInfraMqttStatus(req.user as UserModel);
+  }
 }

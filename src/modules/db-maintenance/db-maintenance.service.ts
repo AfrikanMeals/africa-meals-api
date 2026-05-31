@@ -7,6 +7,10 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import {
+  MqttRuntimeStatus,
+  WsNotifyDispatchQueueService,
+} from '@modules/ws-notify/ws-notify-dispatch-queue.service';
 import { InjectConnection } from '@nestjs/mongoose';
 import { AdModel, StoreAdActionTypeEnum } from '@schemas/ad.schema';
 import { DrinkModel } from '@schemas/drink.schema';
@@ -96,6 +100,11 @@ export type InfraRuntimeSettingsResponse = {
   redisManagerEnabled: boolean;
   mqBrokerEnabled: boolean;
   updatedAt: string | null;
+};
+export type InfraMqttStatusResponse = {
+  apiPublisher: MqttRuntimeStatus;
+  wsSubscriber: MqttRuntimeStatus & { source: 'ws-internal' | 'unknown' };
+  checkedAt: string;
 };
 
 const INFRA_RUNTIME_SETTINGS_KEY = 'default';
@@ -228,6 +237,7 @@ export class DbMaintenanceService {
     private readonly infraRuntimeSettingsModel: Model<InfraRuntimeSettingsModel>,
     @Inject('FIREBASE_ADMIN')
     private readonly firebaseApp: App,
+    private readonly wsNotifyDispatchQueue: WsNotifyDispatchQueueService,
   ) {}
 
   private assertMaintenanceEnabled(): void {
@@ -429,6 +439,17 @@ export class DbMaintenanceService {
     return this.toInfraRuntimeSettingsResponse(updated);
   }
 
+  async getInfraMqttStatus(user: UserModel): Promise<InfraMqttStatusResponse> {
+    await this.assertAdminSettingsPermission(user);
+    const apiPublisher = this.wsNotifyDispatchQueue.getMqttStatus();
+    const wsSubscriber = await this.fetchWsMqttStatus();
+    return {
+      apiPublisher,
+      wsSubscriber,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
   private async ensureInfraRuntimeSettings(): Promise<InfraRuntimeSettingsModel> {
     const doc = await this.infraRuntimeSettingsModel
       .findOneAndUpdate(
@@ -455,6 +476,69 @@ export class DbMaintenanceService {
       mqBrokerEnabled: doc.mqBrokerEnabled === true,
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
+  }
+
+  private async fetchWsMqttStatus(): Promise<
+    MqttRuntimeStatus & { source: 'ws-internal' | 'unknown' }
+  > {
+    const fallback: MqttRuntimeStatus & { source: 'ws-internal' | 'unknown' } = {
+      enabled: false,
+      state: 'error',
+      lastError: 'ws_status_unreachable',
+      lastTopicSeen: null,
+      lastMessageAt: null,
+      source: 'unknown',
+    };
+    const raw = this.config.get<string>('AFRICA_MEALS_WS_INTERNAL_URL')?.trim();
+    const secret =
+      this.config.get<string>('INTERNAL_NOTIFY_SECRET')?.trim() ||
+      this.config.get<string>('INTERNAL_WS_NOTIFY_SECRET')?.trim();
+    if (!raw || !secret) return fallback;
+    const base = raw.replace(/\/+$/, '');
+    const path = base.endsWith('/api')
+      ? `${base}/internal/mqtt/status`
+      : `${base}/api/internal/mqtt/status`;
+    try {
+      const response = await this.fetchWithTimeout(path, 5000, {
+        method: 'GET',
+        headers: {
+          'X-Internal-Secret': secret,
+        },
+      });
+      if (!response.ok) {
+        return {
+          ...fallback,
+          lastError: `ws_status_http_${response.status}`,
+        };
+      }
+      const data = (await response.json().catch(() => ({}))) as Record<
+        string,
+        unknown
+      >;
+      return {
+        enabled: data.enabled !== false,
+        state:
+          data.state === 'disabled' ||
+          data.state === 'connecting' ||
+          data.state === 'connected' ||
+          data.state === 'reconnecting' ||
+          data.state === 'error'
+            ? data.state
+            : 'error',
+        lastError: typeof data.lastError === 'string' ? data.lastError : null,
+        lastTopicSeen:
+          typeof data.lastTopicSeen === 'string' ? data.lastTopicSeen : null,
+        lastMessageAt:
+          typeof data.lastMessageAt === 'string' ? data.lastMessageAt : null,
+        source: 'ws-internal',
+      };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return {
+        ...fallback,
+        lastError: msg,
+      };
+    }
   }
 
   private async runOrderPaymentIntegrityTest(): Promise<IntegrityTestRunResult> {
@@ -2219,11 +2303,16 @@ export class DbMaintenanceService {
   private async fetchWithTimeout(
     url: string,
     timeoutMs: number,
+    init?: RequestInit,
   ): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await fetch(url, { signal: controller.signal, method: 'GET' });
+      return await fetch(url, {
+        signal: controller.signal,
+        method: 'GET',
+        ...(init ?? {}),
+      });
     } finally {
       clearTimeout(timer);
     }
