@@ -4,6 +4,7 @@ import {
 } from '@modules/billing/stripe/stripe-connect-visibility';
 import { MediasService } from '@modules/medias/medias.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import { StoreAccessService } from '@modules/teams/store-access.service';
 import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { DrinkModel, DrinkStatutEnum } from '@schemas/drink.schema';
@@ -103,6 +104,9 @@ export class DrinksService {
   @Inject(SubscriptionsService)
   private readonly _subscriptionsService: SubscriptionsService;
 
+  @Inject(StoreAccessService)
+  private readonly _storeAccess: StoreAccessService;
+
   private async isStoreVisibleOnMobileApp(storeId: string): Promise<boolean> {
     if (!Types.ObjectId.isValid(storeId)) {
       return false;
@@ -125,14 +129,12 @@ export class DrinksService {
     return isStripeConnectOnboardingCompleteUser(owner);
   }
 
-  private async assertStoreOwner(storeId: string, user: UserModel) {
-    const store = await this._storeModel
-      .findOne({ _id: storeId, owner: user._id })
-      .select('_id')
-      .exec();
-    if (!store) {
-      throw new NotFoundException('store_not_found');
-    }
+  private async assertStoreCatalogAccess(
+    storeId: string,
+    user: UserModel,
+    permission: 'catalog.view' | 'catalog.edit',
+  ) {
+    await this._storeAccess.assertStoreAccess(user, storeId, permission);
   }
 
   private async accessibleDrinkIdsForStore(
@@ -162,7 +164,7 @@ export class DrinksService {
     drinkId: string,
     user: UserModel,
   ) {
-    await this.assertStoreOwner(storeId, user);
+    await this.assertStoreCatalogAccess(storeId, user, 'catalog.view');
     await this.assertDrinkAccessibleForStore(storeId, drinkId);
     if (!Types.ObjectId.isValid(storeId) || !Types.ObjectId.isValid(drinkId)) {
       throw new NotFoundException('drink_not_found');
@@ -181,7 +183,7 @@ export class DrinksService {
   }
 
   async findByStoreForOwner(storeId: string, user: UserModel) {
-    await this.assertStoreOwner(storeId, user);
+    await this.assertStoreCatalogAccess(storeId, user, 'catalog.view');
     if (!Types.ObjectId.isValid(storeId)) {
       return [];
     }
@@ -215,7 +217,7 @@ export class DrinksService {
     user: UserModel,
     opts: { page: number; take: number; q?: string },
   ) {
-    await this.assertStoreOwner(storeId, user);
+    await this.assertStoreCatalogAccess(storeId, user, 'catalog.view');
     if (!Types.ObjectId.isValid(storeId)) {
       return { items: [], total: 0, page: 1, limit: opts.take };
     }
@@ -414,7 +416,7 @@ export class DrinksService {
     user: UserModel,
     file?: Express.Multer.File,
   ) {
-    await this.assertStoreOwner(storeId, user);
+    await this.assertStoreCatalogAccess(storeId, user, 'catalog.edit');
     const catalogLimit =
       await this._subscriptionsService.resolveCatalogItemLimitForStore(storeId);
     if (catalogLimit != null) {
@@ -458,7 +460,7 @@ export class DrinksService {
     user: UserModel,
     file?: Express.Multer.File,
   ) {
-    await this.assertStoreOwner(storeId, user);
+    await this.assertStoreCatalogAccess(storeId, user, 'catalog.edit');
     await this.assertDrinkAccessibleForStore(storeId, drinkId);
     if (!Types.ObjectId.isValid(drinkId)) {
       throw new NotFoundException('drink_not_found');
@@ -512,7 +514,7 @@ export class DrinksService {
   }
 
   async deleteForStore(storeId: string, drinkId: string, user: UserModel) {
-    await this.assertStoreOwner(storeId, user);
+    await this.assertStoreCatalogAccess(storeId, user, 'catalog.edit');
     await this.assertDrinkAccessibleForStore(storeId, drinkId);
     if (!Types.ObjectId.isValid(drinkId)) {
       throw new NotFoundException('drink_not_found');

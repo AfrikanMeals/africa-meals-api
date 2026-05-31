@@ -1160,26 +1160,7 @@ export class StoreService {
   }
 
   async listStoreProducts(storeId: string, user: UserModel) {
-    if (user.type === UserTypeEnum.ADMIN) {
-      const exists = await this._storeModel
-        .findById(storeId)
-        .select('_id')
-        .exec();
-      if (!exists) {
-        throw new NotFoundException('store_not_found');
-      }
-      const rows = await this._productsService.findByStoreId(storeId);
-      const allowed = await this.accessibleProductIdsForStore(storeId);
-      if (allowed == null) return rows;
-      return rows.filter((p) => allowed.has(String((p as { id?: unknown }).id ?? '')));
-    }
-    const store = await this._storeModel
-      .findOne({ _id: storeId, owner: user._id })
-      .select('_id')
-      .exec();
-    if (!store) {
-      throw new NotFoundException('store_not_found');
-    }
+    await this.assertVendorCatalogStoreAccess(storeId, user);
     const rows = await this._productsService.findByStoreId(storeId);
     const allowed = await this.accessibleProductIdsForStore(storeId);
     if (allowed == null) return rows;
@@ -1305,6 +1286,7 @@ export class StoreService {
     image?: Express.Multer.File,
     gallery?: Express.Multer.File[],
   ) {
+    await this._storeAccess.assertStoreAccess(user, storeId, 'catalog.edit');
     const isAllowed = await this._subscriptionsService.isCatalogItemAccessibleForStore(
       storeId,
       productId,
@@ -1313,9 +1295,7 @@ export class StoreService {
     if (!isAllowed) {
       throw new ForbiddenException('catalog_item_locked_by_plan_limit');
     }
-    const store = await this._storeModel
-      .findOne({ _id: storeId, owner: user._id })
-      .exec();
+    const store = await this._storeModel.findById(storeId).exec();
     if (!store) {
       throw new NotFoundException('store_not_found');
     }
@@ -1338,6 +1318,7 @@ export class StoreService {
     productId: string,
     user: UserModel,
   ) {
+    await this._storeAccess.assertStoreAccess(user, storeId, 'catalog.edit');
     const isAllowed = await this._subscriptionsService.isCatalogItemAccessibleForStore(
       storeId,
       productId,
@@ -1346,9 +1327,7 @@ export class StoreService {
     if (!isAllowed) {
       throw new ForbiddenException('catalog_item_locked_by_plan_limit');
     }
-    const store = await this._storeModel
-      .findOne({ _id: storeId, owner: user._id })
-      .exec();
+    const store = await this._storeModel.findById(storeId).exec();
     if (!store) {
       throw new NotFoundException('store_not_found');
     }
@@ -1365,10 +1344,8 @@ export class StoreService {
     image?: Express.Multer.File,
     gallery?: Express.Multer.File[],
   ) {
-    const store = await this._storeModel
-      .findOne({ _id: id, owner: user._id })
-      .populate('address')
-      .exec();
+    await this._storeAccess.assertStoreAccess(user, id, 'catalog.edit');
+    const store = await this._storeModel.findById(id).populate('address').exec();
 
     if (!store) {
       throw new NotFoundException('store_not_found');
@@ -1415,6 +1392,7 @@ export class StoreService {
     args: CreateProductExtraDto,
     user: UserModel,
   ) {
+    await this._storeAccess.assertStoreAccess(user, storeId, 'catalog.edit');
     const isAllowed = await this._subscriptionsService.isCatalogItemAccessibleForStore(
       storeId,
       productId,
@@ -1423,9 +1401,7 @@ export class StoreService {
     if (!isAllowed) {
       throw new ForbiddenException('catalog_item_locked_by_plan_limit');
     }
-    const store = await this._storeModel
-      .findOne({ _id: storeId, owner: user._id })
-      .exec();
+    const store = await this._storeModel.findById(storeId).exec();
 
     if (!store) {
       throw new NotFoundException('store_not_found');
@@ -1477,6 +1453,7 @@ export class StoreService {
     extraId: string,
     user: UserModel,
   ) {
+    await this._storeAccess.assertStoreAccess(user, storeId, 'catalog.edit');
     const isAllowed = await this._subscriptionsService.isCatalogItemAccessibleForStore(
       storeId,
       productId,

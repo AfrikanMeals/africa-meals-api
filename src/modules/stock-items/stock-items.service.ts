@@ -1,7 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { StoreAccessService } from '@modules/teams/store-access.service';
 import { StockItemModel, StockStatutEnum } from '@schemas/stock-item.schema';
-import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { CreateStockItemDto, PatchStockItemDto } from './dto/stock-item.dto';
@@ -15,20 +15,18 @@ function computeStatut(quantite: number, seuil: number): StockStatutEnum {
 
 @Injectable()
 export class StockItemsService {
+  @Inject(StoreAccessService)
+  private readonly _storeAccess: StoreAccessService;
+
   @InjectModel(StockItemModel.name)
   private readonly _stockItemModel: Model<StockItemModel>;
 
-  @InjectModel(StoreModel.name)
-  private readonly _storeModel: Model<StoreModel>;
-
-  private async assertStoreOwner(storeId: string, user: UserModel) {
-    const store = await this._storeModel
-      .findOne({ _id: storeId, owner: user._id })
-      .select('_id')
-      .exec();
-    if (!store) {
-      throw new NotFoundException('store_not_found');
-    }
+  private async assertStoreCatalogAccess(
+    storeId: string,
+    user: UserModel,
+    permission: 'catalog.view' | 'catalog.edit',
+  ) {
+    await this._storeAccess.assertStoreAccess(user, storeId, permission);
   }
 
   /** Compare `store` que ce soit un ObjectId ou une chaîne hex en base (imports manuels Mongo). */
@@ -73,7 +71,7 @@ export class StockItemsService {
   }
 
   async findByStoreForOwner(storeId: string, user: UserModel) {
-    await this.assertStoreOwner(storeId, user);
+    await this.assertStoreCatalogAccess(storeId, user, 'catalog.view');
     const storeFilter = this.filterByStoreId(storeId);
 
     const [primary, legacy] = await Promise.all([
@@ -117,7 +115,7 @@ export class StockItemsService {
     dto: CreateStockItemDto,
     user: UserModel,
   ) {
-    await this.assertStoreOwner(storeId, user);
+    await this.assertStoreCatalogAccess(storeId, user, 'catalog.edit');
     const quantite = Number(dto.quantite);
     const seuil = Number(dto.seuil);
     const statut = computeStatut(quantite, seuil);
@@ -173,7 +171,7 @@ export class StockItemsService {
     dto: PatchStockItemDto,
     user: UserModel,
   ) {
-    await this.assertStoreOwner(storeId, user);
+    await this.assertStoreCatalogAccess(storeId, user, 'catalog.edit');
     const found = await this.findRawInStockCollections(storeId, itemId);
     if (!found) {
       throw new NotFoundException('stock_item_not_found');
@@ -213,7 +211,7 @@ export class StockItemsService {
   }
 
   async deleteForStore(storeId: string, itemId: string, user: UserModel) {
-    await this.assertStoreOwner(storeId, user);
+    await this.assertStoreCatalogAccess(storeId, user, 'catalog.edit');
     const found = await this.findRawInStockCollections(storeId, itemId);
     if (!found) {
       throw new NotFoundException('stock_item_not_found');
