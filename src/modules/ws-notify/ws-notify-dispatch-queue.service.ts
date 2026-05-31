@@ -1,11 +1,15 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectModel } from '@nestjs/mongoose';
+import { InfraRuntimeSettingsModel } from '@schemas/infra-runtime-settings.schema';
 import { JobsOptions, Queue, Worker } from 'bullmq';
+import { Model } from 'mongoose';
 
 type WsNotifyQueueJob = {
   pathSuffix: string;
   payload: Record<string, unknown>;
 };
+const INFRA_RUNTIME_SETTINGS_KEY = 'default';
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
@@ -25,8 +29,17 @@ export class WsNotifyDispatchQueueService
   private queue: Queue<WsNotifyQueueJob> | null = null;
   private worker: Worker<WsNotifyQueueJob, void> | null = null;
   private queueEnabled = false;
+  private infraSettingsCache = {
+    redisManagerEnabled: true,
+    mqBrokerEnabled: true,
+  };
+  private infraSettingsReadAtMs = 0;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    @InjectModel(InfraRuntimeSettingsModel.name)
+    private readonly infraRuntimeSettingsModel: Model<InfraRuntimeSettingsModel>,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     const connection = this.redisConnectionConfig();
@@ -67,11 +80,23 @@ export class WsNotifyDispatchQueueService
   }
 
   dispatch(pathSuffix: string, payload: Record<string, unknown>): void {
+    void this.dispatchAsync(pathSuffix, payload);
+  }
+
+  private async dispatchAsync(
+    pathSuffix: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
     const suffix = pathSuffix.trim();
     if (!suffix) return;
     const normalizedPayload = { ...payload };
-    if (!this.queueEnabled || !this.queue) {
-      void this.postInternal(suffix, normalizedPayload).catch((error: unknown) => {
+    const infraSettings = await this.readInfraSettings();
+    if (!infraSettings.mqBrokerEnabled && suffix === 'ads-targeting/event') {
+      this.logger.log(`ws notify skipped (${suffix}): mq broker disabled`);
+      return;
+    }
+    if (!infraSettings.redisManagerEnabled || !this.queueEnabled || !this.queue) {
+      await this.postInternal(suffix, normalizedPayload).catch((error: unknown) => {
         const msg = error instanceof Error ? error.message : String(error);
         this.logger.warn(`ws notify direct failed (${suffix}): ${msg}`);
       });
@@ -100,14 +125,56 @@ export class WsNotifyDispatchQueueService
       ),
     };
 
-    void this.queue.add(`notify:${suffix}`, {
-      pathSuffix: suffix,
-      payload: normalizedPayload,
-    }, opts).catch((error: unknown) => {
+    await this.queue
+      .add(
+        `notify:${suffix}`,
+        {
+          pathSuffix: suffix,
+          payload: normalizedPayload,
+        },
+        opts,
+      )
+      .catch((error: unknown) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`ws notify enqueue failed (${suffix}): ${msg}`);
+        return this.postInternal(suffix, normalizedPayload).catch(() => undefined);
+      });
+  }
+
+  private async readInfraSettings(): Promise<{
+    redisManagerEnabled: boolean;
+    mqBrokerEnabled: boolean;
+  }> {
+    const ttlMs = parsePositiveInt(
+      this.config.get<string>('INFRA_RUNTIME_SETTINGS_CACHE_MS'),
+      10_000,
+    );
+    const now = Date.now();
+    if (now - this.infraSettingsReadAtMs < ttlMs) {
+      return this.infraSettingsCache;
+    }
+    this.infraSettingsReadAtMs = now;
+    try {
+      const doc = await this.infraRuntimeSettingsModel
+        .findOne({ key: INFRA_RUNTIME_SETTINGS_KEY })
+        .lean()
+        .exec();
+      if (!doc) {
+        this.infraSettingsCache = {
+          redisManagerEnabled: true,
+          mqBrokerEnabled: true,
+        };
+      } else {
+        this.infraSettingsCache = {
+          redisManagerEnabled: doc.redisManagerEnabled !== false,
+          mqBrokerEnabled: doc.mqBrokerEnabled !== false,
+        };
+      }
+    } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`ws notify enqueue failed (${suffix}): ${msg}`);
-      void this.postInternal(suffix, normalizedPayload).catch(() => undefined);
-    });
+      this.logger.warn(`infra settings read failed: ${msg}`);
+    }
+    return this.infraSettingsCache;
   }
 
   private redisConnectionConfig():

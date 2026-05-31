@@ -10,6 +10,7 @@ import { SubscriptionsService } from '@modules/subscriptions/subscriptions.servi
 import { InjectConnection } from '@nestjs/mongoose';
 import { AdModel, StoreAdActionTypeEnum } from '@schemas/ad.schema';
 import { DrinkModel } from '@schemas/drink.schema';
+import { InfraRuntimeSettingsModel } from '@schemas/infra-runtime-settings.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { ProductModel } from '@schemas/product.schema';
 import {
@@ -90,6 +91,14 @@ export type SystemHealthCheckResult = {
   details: string;
   checkedAt: string;
 };
+
+export type InfraRuntimeSettingsResponse = {
+  redisManagerEnabled: boolean;
+  mqBrokerEnabled: boolean;
+  updatedAt: string | null;
+};
+
+const INFRA_RUNTIME_SETTINGS_KEY = 'default';
 
 @Injectable()
 export class DbMaintenanceService {
@@ -215,6 +224,8 @@ export class DbMaintenanceService {
     private readonly adModel: Model<AdModel>,
     @InjectModel(StoreCouponModel.name)
     private readonly couponModel: Model<StoreCouponModel>,
+    @InjectModel(InfraRuntimeSettingsModel.name)
+    private readonly infraRuntimeSettingsModel: Model<InfraRuntimeSettingsModel>,
     @Inject('FIREBASE_ADMIN')
     private readonly firebaseApp: App,
   ) {}
@@ -387,6 +398,63 @@ export class DbMaintenanceService {
           `unknown_system_health_check:${normalized}`,
         );
     }
+  }
+
+  async getInfraRuntimeSettings(
+    user: UserModel,
+  ): Promise<InfraRuntimeSettingsResponse> {
+    await this.assertAdminSettingsPermission(user);
+    const doc = await this.ensureInfraRuntimeSettings();
+    return this.toInfraRuntimeSettingsResponse(doc);
+  }
+
+  async updateInfraRuntimeSettings(
+    user: UserModel,
+    input: { redisManagerEnabled: boolean; mqBrokerEnabled: boolean },
+  ): Promise<InfraRuntimeSettingsResponse> {
+    await this.assertAdminSettingsPermission(user);
+    const updated = await this.infraRuntimeSettingsModel
+      .findOneAndUpdate(
+        { key: INFRA_RUNTIME_SETTINGS_KEY },
+        {
+          $set: {
+            redisManagerEnabled: input.redisManagerEnabled === true,
+            mqBrokerEnabled: input.mqBrokerEnabled === true,
+          },
+          $setOnInsert: { key: INFRA_RUNTIME_SETTINGS_KEY },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      )
+      .exec();
+    return this.toInfraRuntimeSettingsResponse(updated);
+  }
+
+  private async ensureInfraRuntimeSettings(): Promise<InfraRuntimeSettingsModel> {
+    const doc = await this.infraRuntimeSettingsModel
+      .findOneAndUpdate(
+        { key: INFRA_RUNTIME_SETTINGS_KEY },
+        {
+          $setOnInsert: {
+            key: INFRA_RUNTIME_SETTINGS_KEY,
+            redisManagerEnabled: true,
+            mqBrokerEnabled: true,
+          },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      )
+      .exec();
+    return doc;
+  }
+
+  private toInfraRuntimeSettingsResponse(
+    doc: InfraRuntimeSettingsModel,
+  ): InfraRuntimeSettingsResponse {
+    const typed = doc as unknown as { updatedAt?: Date };
+    return {
+      redisManagerEnabled: doc.redisManagerEnabled === true,
+      mqBrokerEnabled: doc.mqBrokerEnabled === true,
+      updatedAt: typed.updatedAt?.toISOString?.() ?? null,
+    };
   }
 
   private async runOrderPaymentIntegrityTest(): Promise<IntegrityTestRunResult> {

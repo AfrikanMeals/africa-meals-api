@@ -1,4 +1,9 @@
 import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+import {
+  InfraRuntimeSettingsModel,
+  InfraRuntimeSettingsSchema,
+} from '@schemas/infra-runtime-settings.schema';
 import { WsAdsTargetingNotifyService } from './ws-ads-targeting-notify.service';
 import { WsChatNotifyService } from './ws-chat-notify.service';
 import { WsInboxNotifyService } from './ws-inbox-notify.service';
@@ -7,6 +12,14 @@ import { WsOrderNotifyService } from './ws-order-notify.service';
 import { WsStripeConnectNotifyService } from './ws-stripe-connect-notify.service';
 
 @Module({
+  imports: [
+    MongooseModule.forFeature([
+      {
+        name: InfraRuntimeSettingsModel.name,
+        schema: InfraRuntimeSettingsSchema,
+      },
+    ]),
+  ],
   providers: [
     WsNotifyDispatchQueueService,
     WsInboxNotifyService,

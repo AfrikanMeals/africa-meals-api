@@ -3,6 +3,10 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { AdModel, AdSchema } from '@schemas/ad.schema';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import {
+  InfraRuntimeSettingsModel,
+  InfraRuntimeSettingsSchema,
+} from '@schemas/infra-runtime-settings.schema';
+import {
   StripeProcessedCheckoutModel,
   StripeProcessedCheckoutSchema,
 } from '@schemas/stripe-processed-checkout.schema';
@@ -35,6 +39,10 @@ import { DbMaintenanceService } from './db-maintenance.service';
       { name: DrinkModel.name, schema: DrinkSchema },
       { name: AdModel.name, schema: AdSchema },
       { name: StoreCouponModel.name, schema: StoreCouponSchema },
+      {
+        name: InfraRuntimeSettingsModel.name,
+        schema: InfraRuntimeSettingsSchema,
+      },
     ]),
   ],
   controllers: [DbMaintenanceAdminController],

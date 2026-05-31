@@ -6,6 +6,7 @@ import {
   Inject,
   Param,
   Post,
+  Put,
   Req,
   UseGuards,
   UsePipes,
@@ -15,6 +16,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { ClearDbTablesDto } from './dto/clear-db-tables.dto';
+import { UpdateInfraRuntimeSettingsDto } from './dto/update-infra-runtime-settings.dto';
 import { DbMaintenanceService } from './db-maintenance.service';
 
 @ApiTags('db-maintenance')
@@ -80,5 +82,32 @@ export class DbMaintenanceAdminController {
   })
   async runSystemHealthCheck(@Req() req: Request, @Param('key') key: string) {
     return this._dbMaintenance.runSystemHealthCheck(req.user as UserModel, key);
+  }
+
+  @Get('admin/runtime-services')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Lit les flags runtime infra (Redis manager / MQ broker) pour le dashboard admin',
+  })
+  async getRuntimeServices(@Req() req: Request) {
+    return this._dbMaintenance.getInfraRuntimeSettings(req.user as UserModel);
+  }
+
+  @Put('admin/runtime-services')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+  @ApiOperation({
+    summary:
+      'Met à jour les flags runtime infra (Redis manager / MQ broker) depuis le dashboard admin',
+  })
+  async updateRuntimeServices(
+    @Req() req: Request,
+    @Body() dto: UpdateInfraRuntimeSettingsDto,
+  ) {
+    return this._dbMaintenance.updateInfraRuntimeSettings(
+      req.user as UserModel,
+      dto,
+    );
   }
 }
