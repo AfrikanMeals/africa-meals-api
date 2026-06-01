@@ -99,6 +99,42 @@ function cartLineUnitCents(line: Record<string, unknown>): number {
   return Math.max(0, Math.round(price * 100 + Number.EPSILON));
 }
 
+function normalizeStripeCurrencyCode(raw: unknown): string {
+  const t = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  return t || 'cad';
+}
+
+function cartLineCurrencyCode(line: Record<string, unknown>): string | null {
+  const direct = line['currency'] ?? line['currencyCode'] ?? line['currency_code'];
+  if (typeof direct === 'string' && direct.trim()) {
+    return normalizeStripeCurrencyCode(direct);
+  }
+  const ent = line['entity'];
+  if (ent && typeof ent === 'object' && !Array.isArray(ent)) {
+    const obj = ent as Record<string, unknown>;
+    const fromEnt =
+      obj['currency'] ?? obj['currencyCode'] ?? obj['currency_code'];
+    if (typeof fromEnt === 'string' && fromEnt.trim()) {
+      return normalizeStripeCurrencyCode(fromEnt);
+    }
+  }
+  return null;
+}
+
+function currencyForCartGroup(
+  lines: Record<string, unknown>[],
+  storeCurrency: unknown,
+): string {
+  const fromLines = new Set<string>();
+  for (const line of lines) {
+    const cur = cartLineCurrencyCode(line);
+    if (cur) fromLines.add(cur);
+  }
+  if (fromLines.size > 1) return 'multi';
+  if (fromLines.size === 1) return [...fromLines][0];
+  return normalizeStripeCurrencyCode(storeCurrency);
+}
+
 /** Stripe Checkout : miniatures uniquement si URL HTTPS absolue. */
 function stripeHttpsProductImages(
   line: Record<string, unknown>,
@@ -427,9 +463,19 @@ export class StripeGroupedCheckoutService {
       throw new BadRequestException('cart_is_empty');
     }
 
-    const currencies = new Set(
-      groups.map((g) => String(g.store?.currency ?? 'cad').toLowerCase()),
-    );
+    const currencies = new Set<string>();
+    for (const g of groups) {
+      const rawItems = Array.isArray(g.items) ? g.items : [];
+      const cartLines = rawItems.filter(
+        (x): x is Record<string, unknown> =>
+          x != null && typeof x === 'object' && !Array.isArray(x),
+      );
+      const cur = currencyForCartGroup(cartLines, g.store?.currency);
+      if (cur === 'multi') {
+        throw new BadRequestException('multi_currency_not_supported');
+      }
+      currencies.add(cur);
+    }
     if (currencies.size !== 1) {
       throw new BadRequestException('multi_currency_not_supported');
     }

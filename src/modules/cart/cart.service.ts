@@ -71,6 +71,7 @@ function drinkEntityForCartApi(drink: {
   name: string;
   description: string;
   priceCad: number;
+  currency?: string;
   imageUrl?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -83,6 +84,9 @@ function drinkEntityForCartApi(drink: {
     title: drink.name,
     description: drink.description ?? '',
     price: drink.priceCad,
+    currency: String(drink.currency ?? 'CAD')
+      .trim()
+      .toUpperCase(),
     profileImage: drink.imageUrl,
     createdAt: drink.createdAt ?? now,
     updatedAt: drink.updatedAt ?? now,
@@ -191,7 +195,10 @@ export class CartService {
       const maxOrder = maxDrinkOrderQuantity(drink.quantite);
       return {
         ...item.toJSON(),
-        entity: drinkEntityForCartApi(drink),
+        entity: drinkEntityForCartApi({
+          ...drink,
+          currency: String((item.store as { currency?: unknown })?.currency ?? 'CAD'),
+        }),
         drinkMaxOrderQuantity: maxOrder,
       } as unknown as Partial<CartItemModel>;
     } else {
