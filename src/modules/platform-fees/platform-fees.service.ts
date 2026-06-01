@@ -5,6 +5,7 @@ import {
   PlatformFeesSettingsDocument,
   PlatformFeesSettingsModel,
 } from '@schemas/platform-fees-settings.schema';
+import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 import { UpdatePlatformFeesDto } from './dto/update-platform-fees.dto';
@@ -267,6 +268,8 @@ export class PlatformFeesService {
   constructor(
     @InjectModel(PlatformFeesSettingsModel.name)
     private readonly _model: Model<PlatformFeesSettingsDocument>,
+    @InjectModel(StoreModel.name)
+    private readonly _storeModel: Model<StoreModel>,
   ) {}
 
   private _toResponse(doc: PlatformFeesSettingsModel) {
@@ -336,10 +339,29 @@ export class PlatformFeesService {
     return doc as PlatformFeesSettingsModel;
   }
 
+  private async _resolveCurrencyFromStoreSettings(): Promise<string> {
+    const store = await this._storeModel
+      .findOne({
+        currency: { $exists: true, $type: 'string', $ne: '' },
+      })
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .select('currency')
+      .lean()
+      .exec();
+    const cur = String(store?.currency ?? '')
+      .trim()
+      .toUpperCase();
+    return cur || DEFAULTS.currency;
+  }
+
   async getSettings(user: UserModel) {
     assertAdmin(user);
     const doc = await this._ensureDoc();
-    return this._toResponse(doc);
+    const storeCurrency = await this._resolveCurrencyFromStoreSettings();
+    return {
+      ...this._toResponse(doc),
+      currency: storeCurrency,
+    };
   }
 
   /** Commission plateforme + montant à transférer au vendeur Connect. */
@@ -383,8 +405,9 @@ export class PlatformFeesService {
   async getPublicCheckoutFees() {
     const doc = await this._ensureDoc();
     const settings = this._toResponse(doc);
+    const storeCurrency = await this._resolveCurrencyFromStoreSettings();
     return {
-      currency: settings.currency,
+      currency: storeCurrency,
       orderPaymentFeeMode: settings.orderPaymentFeeMode,
       orderPaymentFeeFixed: settings.orderPaymentFeeFixed,
       orderPaymentFeePercent: settings.orderPaymentFeePercent,
@@ -514,6 +537,10 @@ export class PlatformFeesService {
         { upsert: true, new: true, setDefaultsOnInsert: true },
       )
       .exec();
-    return this._toResponse(updated);
+    const storeCurrency = await this._resolveCurrencyFromStoreSettings();
+    return {
+      ...this._toResponse(updated),
+      currency: storeCurrency,
+    };
   }
 }

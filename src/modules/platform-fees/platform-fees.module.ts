@@ -4,6 +4,7 @@ import {
   PlatformFeesSettingsModel,
   PlatformFeesSettingsSchema,
 } from '@schemas/platform-fees-settings.schema';
+import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { PlatformFeesController } from './platform-fees.controller';
 import { PlatformFeesService } from './platform-fees.service';
 
@@ -13,6 +14,10 @@ import { PlatformFeesService } from './platform-fees.service';
       {
         name: PlatformFeesSettingsModel.name,
         schema: PlatformFeesSettingsSchema,
+      },
+      {
+        name: StoreModel.name,
+        schema: StoreSchema,
       },
     ]),
   ],
