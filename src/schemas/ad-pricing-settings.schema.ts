@@ -33,6 +33,10 @@ export class AdPricingSettingsModel {
   @Prop({ type: Number, default: 0 })
   campaignActionCad: number;
 
+  /** Coût facturé par conversion (achat attribué pub/campagne). */
+  @Prop({ type: Number, default: 0 })
+  conversionCad: number;
+
   /** Budget minimum recommandé (affichage admin). */
   @Prop({ type: Number, default: 0 })
   minimumBudgetCad: number;

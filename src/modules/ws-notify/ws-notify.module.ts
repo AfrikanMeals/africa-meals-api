@@ -29,6 +29,7 @@ import { WsStripeConnectNotifyService } from './ws-stripe-connect-notify.service
     WsAdsTargetingNotifyService,
   ],
   exports: [
+    WsNotifyDispatchQueueService,
     WsInboxNotifyService,
     WsOrderNotifyService,
     WsStripeConnectNotifyService,

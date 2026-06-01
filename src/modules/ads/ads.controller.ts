@@ -3,6 +3,7 @@ import {
   CreateAdManagementDto,
   PatchAdManagementDto,
 } from '@modules/ads/dto/ad-management.dto';
+import { ConfirmAdCreditCheckoutDto } from '@modules/ads/dto/confirm-ad-credit-checkout.dto';
 import {
   CreateAdCampaignDto,
   PatchAdCampaignDto,
@@ -70,6 +71,15 @@ export class AdsController {
     return this.adsService.listCampaignsForManagement(req.user as UserModel);
   }
 
+  @Get('campaigns/manage/archives')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  async listCampaignsManageArchives(@Req() req: Request) {
+    return this.adsService.listArchivedCampaignsForManagement(
+      req.user as UserModel,
+    );
+  }
+
   @Post('campaigns/manage')
   @UseGuards(JwtGuard)
   @ApiBearerAuth('bearer')
@@ -98,6 +108,13 @@ export class AdsController {
   @ApiBearerAuth('bearer')
   async deleteCampaignManage(@Param('id') id: string, @Req() req: Request) {
     await this.adsService.removeCampaign(req.user as UserModel, id);
+  }
+
+  @Post('campaigns/manage/:id/end')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  async endCampaignManage(@Param('id') id: string, @Req() req: Request) {
+    return this.adsService.endCampaign(req.user as UserModel, id);
   }
 
   @Get('campaigns/manage/:id/stats')
@@ -130,6 +147,27 @@ export class AdsController {
   })
   async myCredit(@Req() req: Request) {
     return this.adsService.getMyAdCredit(req.user as UserModel);
+  }
+
+  @Post('my-credit/checkout-session')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  async createAdCreditCheckoutSession(@Req() req: Request) {
+    return this.adsService.createAdCreditCheckoutSession(req.user as UserModel);
+  }
+
+  @Post('my-credit/confirm-checkout')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async confirmAdCreditCheckout(
+    @Req() req: Request,
+    @Body() body: ConfirmAdCreditCheckoutDto,
+  ) {
+    return this.adsService.confirmAdCreditCheckout(
+      req.user as UserModel,
+      body.sessionId,
+    );
   }
 
   @Get('manage/pricing')
@@ -210,6 +248,13 @@ export class AdsController {
     body: PatchAdManagementDto,
   ) {
     return this.adsService.patchManagement(req.user as UserModel, id, body);
+  }
+
+  @Post('manage/:id/end')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  async endManage(@Param('id') id: string, @Req() req: Request) {
+    return this.adsService.endManagement(req.user as UserModel, id);
   }
 
   @Delete('manage/:id')

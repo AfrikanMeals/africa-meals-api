@@ -83,6 +83,10 @@ export class OrdeLineItem {
   })
   itemType: CartItemTypeEnum;
 
+  /** Référence entité source (produit/boisson/offre) pour analytics et attribution pub. */
+  @Prop({ required: false, name: 'entity_id' })
+  entityId?: string;
+
   @Prop({ required: true, name: 'price' })
   price: number;
 

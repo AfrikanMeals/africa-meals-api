@@ -14,6 +14,7 @@ import { TrackAdEventDto } from '@modules/ads/dto/ad-tracking.dto';
 import { TrackAdCampaignEventDto } from '@modules/ads/dto/ad-campaign-tracking.dto';
 import {
   pipelineActiveStoresWithStripeOnboarded,
+  isStripeConnectOnboardingCompleteUser,
   resolveStoreIdsVisibleOnMobileApp,
 } from '@modules/billing/stripe/stripe-connect-visibility';
 import { MediasService } from '@modules/medias/medias.service';
@@ -26,13 +27,20 @@ import {
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
-import { AdEventModel, AdEventTypeEnum } from '@schemas/ad-event.schema';
 import {
+  AdConversionSourceEnum,
+  AdEventModel,
+  AdEventTypeEnum,
+} from '@schemas/ad-event.schema';
+import {
+  AdCampaignConversionSourceEnum,
   AdCampaignEventModel,
   AdCampaignEventTypeEnum,
 } from '@schemas/ad-campaign-event.schema';
 import {
+  AdCampaignArchiveReasonEnum,
   AdCampaignItemTypeEnum,
   AdCampaignModel,
 } from '@schemas/ad-campaign.schema';
@@ -40,12 +48,23 @@ import {
   AdPricingSettingsDocument,
   AdPricingSettingsModel,
 } from '@schemas/ad-pricing-settings.schema';
-import { AdModel, StoreAdActionTypeEnum } from '@schemas/ad.schema';
+import {
+  AdCreditPaymentModel,
+  AdCreditPaymentStatusEnum,
+} from '@schemas/ad-credit-payment.schema';
+import {
+  AdArchiveReasonEnum,
+  AdModel,
+  StoreAdActionTypeEnum,
+} from '@schemas/ad.schema';
 import { DrinkModel } from '@schemas/drink.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
+import Stripe = require('stripe');
+
+type StripeClient = InstanceType<typeof Stripe>;
 
 function productRefId(id: string): NonNullable<AdModel['product']> {
   return new Types.ObjectId(id) as unknown as NonNullable<AdModel['product']>;
@@ -68,12 +87,17 @@ export type AdManagementRow = {
   actionTarget: string | null;
   productId: string | null;
   productTitle: string | null;
+  archivedAt: string | null;
+  archiveReason: AdArchiveReasonEnum | null;
+  billingFinalizedAt: string | null;
+  billingFinalAmountCad: number;
   createdAt?: string;
   updatedAt?: string;
 };
 
 export type AdStatsRecentEvent = {
   eventType: AdEventTypeEnum;
+  conversionSource?: AdConversionSourceEnum | null;
   createdAt: string;
   userId: string | null;
   userEmail: string | null;
@@ -85,14 +109,17 @@ export type AdStatsDayBucket = {
   date: string;
   impressions: number;
   clicks: number;
+  conversions: number;
 };
 
 export type AdStatsPayload = {
   adId: string;
   impressionsTotal: number;
   clicksTotal: number;
+  conversionsTotal: number;
   uniqueUsersImpressions: number;
   uniqueUsersClicks: number;
+  uniqueUsersConversions: number;
   uniqueClientDevices: number;
   last7Days: AdStatsDayBucket[];
   recentEvents: AdStatsRecentEvent[];
@@ -100,6 +127,7 @@ export type AdStatsPayload = {
 
 export type AdCampaignStatsRecentEvent = {
   eventType: AdCampaignEventTypeEnum;
+  conversionSource?: AdCampaignConversionSourceEnum | null;
   itemType: string;
   itemId: string;
   createdAt: string;
@@ -114,6 +142,7 @@ export type AdCampaignStatsDayBucket = {
   impressions: number;
   clicks: number;
   actionClicks: number;
+  conversions: number;
 };
 
 export type AdCampaignItemPerformance = {
@@ -122,7 +151,9 @@ export type AdCampaignItemPerformance = {
   title: string;
   impressions: number;
   clicks: number;
+  conversions: number;
   ctrPercent: number;
+  conversionRatePercent: number;
 };
 
 export type AdCampaignStatsPayload = {
@@ -130,8 +161,10 @@ export type AdCampaignStatsPayload = {
   impressionsTotal: number;
   clicksTotal: number;
   actionClicksTotal: number;
+  conversionsTotal: number;
   uniqueUsersImpressions: number;
   uniqueUsersClicks: number;
+  uniqueUsersConversions: number;
   uniqueClientDevices: number;
   last7Days: AdCampaignStatsDayBucket[];
   itemPerformance: AdCampaignItemPerformance[];
@@ -162,6 +195,10 @@ export type AdCampaignManagementRow = {
   actionText: string;
   actionTarget: string | null;
   items: AdCampaignItemRow[];
+  archivedAt?: string | null;
+  archiveReason?: AdCampaignArchiveReasonEnum | null;
+  billingFinalizedAt?: string | null;
+  billingFinalAmountCad?: number;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -184,25 +221,31 @@ export type PublicAdCampaignRow = {
 
 export type AdCreditSummaryPayload = {
   currency: string;
+  grossDue: number;
+  paidTotal: number;
+  creditBalance: number;
   banners: {
     impressions: number;
     clicks: number;
+    conversions: number;
     due: number;
   };
   campaigns: {
     impressions: number;
     clicks: number;
     actionClicks: number;
+    conversions: number;
     due: number;
   };
   stores: Array<{
     storeId: string;
     storeName: string;
-    banners: { impressions: number; clicks: number; due: number };
+    banners: { impressions: number; clicks: number; conversions: number; due: number };
     campaigns: {
       impressions: number;
       clicks: number;
       actionClicks: number;
+      conversions: number;
       due: number;
     };
     totalDue: number;
@@ -217,11 +260,15 @@ export type AdPricingPayload = {
   campaignCpmCad: number;
   campaignCpcCad: number;
   campaignActionCad: number;
+  conversionCad: number;
   minimumBudgetCad: number;
   updatedAt: string | null;
 };
 
 const ADS_PRICING_KEY = 'default';
+const AD_CONVERSION_ATTRIBUTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const AD_CREDIT_CHECKOUT_METADATA_KIND = 'ad_credit_payment';
+const AD_CREDIT_STRIPE_MIN_CAD = 0.5;
 const ADS_PRICING_DEFAULTS: Omit<AdPricingPayload, 'updatedAt'> = {
   currency: 'CAD',
   cpmCad: 0,
@@ -229,6 +276,7 @@ const ADS_PRICING_DEFAULTS: Omit<AdPricingPayload, 'updatedAt'> = {
   campaignCpmCad: 0,
   campaignCpcCad: 0,
   campaignActionCad: 0,
+  conversionCad: 0,
   minimumBudgetCad: 0,
 };
 
@@ -256,6 +304,9 @@ export class AdsService implements OnModuleInit {
   @InjectModel(AdPricingSettingsModel.name)
   private readonly _adPricingModel: Model<AdPricingSettingsDocument>;
 
+  @InjectModel(AdCreditPaymentModel.name)
+  private readonly _adCreditPaymentModel: Model<AdCreditPaymentModel>;
+
   @InjectModel(StoreModel.name)
   private readonly _storeModel: Model<StoreModel>;
 
@@ -270,6 +321,9 @@ export class AdsService implements OnModuleInit {
 
   @Inject(StoreAccessService)
   private readonly _storeAccess: StoreAccessService;
+
+  @Inject(ConfigService)
+  private readonly _config: ConfigService;
 
   async onModuleInit() {
     await this.seedIfEmpty();
@@ -289,6 +343,143 @@ export class AdsService implements OnModuleInit {
     if (user.type !== UserTypeEnum.ADMIN) {
       throw new ForbiddenException('admin_only');
     }
+  }
+
+  private assertVendorStripeConnectReadyForWrites(user: UserModel): void {
+    if (user.type !== UserTypeEnum.VENDOR) return;
+    if (!isStripeConnectOnboardingCompleteUser(user as unknown as Record<string, unknown>)) {
+      throw new ForbiddenException('stripe_connect_required');
+    }
+  }
+
+  /**
+   * Bloque la création de nouvelles Ads tant que le crédit Ads finalisé
+   * (bannières/campagnes terminées ou expirées) n'est pas soldé.
+   */
+  private async assertVendorHasNoUnpaidAdCredit(user: UserModel): Promise<void> {
+    if (user.type !== UserTypeEnum.VENDOR) return;
+    const credit = await this.getMyAdCredit(user);
+    if (Number(credit.totalDue ?? 0) > 0) {
+      throw new ForbiddenException('ad_credit_payment_required');
+    }
+  }
+
+  private stripe(): StripeClient {
+    const key = this._config.get<string>('STRIPE_SECRET_KEY')?.trim();
+    if (!key) {
+      throw new BadRequestException('stripe_not_configured');
+    }
+    return new Stripe(key);
+  }
+
+  private adCreditSuccessUrl(): string {
+    const configured = this._config
+      .get<string>('STRIPE_AD_CREDIT_SUCCESS_URL')
+      ?.trim();
+    if (configured) {
+      return configured.includes('{CHECKOUT_SESSION_ID}')
+        ? configured
+        : `${configured}${
+            configured.includes('?') ? '&' : '?'
+          }ad_credit_session_id={CHECKOUT_SESSION_ID}`;
+    }
+    const adminBase =
+      this._config.get<string>('FRONTEND_URL')?.trim() ||
+      this._config.get<string>('ADMIN_APP_URL')?.trim() ||
+      'http://localhost:3000';
+    return `${adminBase.replace(
+      /\/$/,
+      '',
+    )}/?ad_credit_session_id={CHECKOUT_SESSION_ID}`;
+  }
+
+  private adCreditCancelUrl(): string {
+    const configured = this._config
+      .get<string>('STRIPE_AD_CREDIT_CANCEL_URL')
+      ?.trim();
+    if (configured) return configured;
+    const adminBase =
+      this._config.get<string>('FRONTEND_URL')?.trim() ||
+      this._config.get<string>('ADMIN_APP_URL')?.trim() ||
+      'http://localhost:3000';
+    return `${adminBase.replace(/\/$/, '')}/?ad_credit_payment=cancel`;
+  }
+
+  private async _adCreditPaidTotalCad(ownerId: Types.ObjectId): Promise<number> {
+    const rows = await this._adCreditPaymentModel
+      .aggregate<{ _id: null; total: number }>([
+        {
+          $match: {
+            owner: ownerId,
+            status: AdCreditPaymentStatusEnum.PAID,
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$amountPaidCad' },
+          },
+        },
+      ])
+      .exec();
+    return Number(rows[0]?.total ?? 0);
+  }
+
+  private applyPaidAmountToStoreBreakdown(
+    stores: AdCreditSummaryPayload['stores'],
+    paidAmountCad: number,
+  ): {
+    stores: AdCreditSummaryPayload['stores'];
+    bannersDue: number;
+    campaignsDue: number;
+    outstandingDue: number;
+    creditBalance: number;
+  } {
+    const remaining = stores.map((s) => ({
+      ...s,
+      banners: { ...s.banners },
+      campaigns: { ...s.campaigns },
+      totalDue: Number(s.totalDue ?? 0),
+    }));
+
+    let credit = Math.max(0, Number(paidAmountCad ?? 0));
+    for (const row of remaining) {
+      if (credit <= 0) break;
+      const campaignDue = Math.max(0, Number(row.campaigns.due ?? 0));
+      const campaignPaid = Math.min(campaignDue, credit);
+      row.campaigns.due = Number((campaignDue - campaignPaid).toFixed(2));
+      credit = Number((credit - campaignPaid).toFixed(2));
+
+      if (credit <= 0) {
+        row.totalDue = Number((row.campaigns.due + row.banners.due).toFixed(2));
+        continue;
+      }
+      const bannerDue = Math.max(0, Number(row.banners.due ?? 0));
+      const bannerPaid = Math.min(bannerDue, credit);
+      row.banners.due = Number((bannerDue - bannerPaid).toFixed(2));
+      credit = Number((credit - bannerPaid).toFixed(2));
+
+      row.totalDue = Number((row.campaigns.due + row.banners.due).toFixed(2));
+    }
+
+    const bannersDue = Number(
+      remaining
+        .reduce((acc, row) => acc + Number(row.banners.due ?? 0), 0)
+        .toFixed(2),
+    );
+    const campaignsDue = Number(
+      remaining
+        .reduce((acc, row) => acc + Number(row.campaigns.due ?? 0), 0)
+        .toFixed(2),
+    );
+    const outstandingDue = Number((bannersDue + campaignsDue).toFixed(2));
+    return {
+      stores: remaining,
+      bannersDue,
+      campaignsDue,
+      outstandingDue,
+      creditBalance: Number(Math.max(0, credit).toFixed(2)),
+    };
   }
 
   private async assertCanManageCampaignStore(
@@ -338,6 +529,9 @@ export class AdsService implements OnModuleInit {
       ),
       campaignActionCad: Number(
         doc.campaignActionCad ?? ADS_PRICING_DEFAULTS.campaignActionCad,
+      ),
+      conversionCad: Number(
+        doc.conversionCad ?? ADS_PRICING_DEFAULTS.conversionCad,
       ),
       minimumBudgetCad: Number(
         doc.minimumBudgetCad ?? ADS_PRICING_DEFAULTS.minimumBudgetCad,
@@ -393,6 +587,7 @@ export class AdsService implements OnModuleInit {
     const campaignActionCad = Number(
       dto.campaignActionCad ?? current.campaignActionCad ?? 0,
     );
+    const conversionCad = Number(dto.conversionCad ?? current.conversionCad ?? 0);
     const minimumBudgetCad = Number(
       dto.minimumBudgetCad ?? current.minimumBudgetCad ?? 0,
     );
@@ -407,6 +602,7 @@ export class AdsService implements OnModuleInit {
             campaignCpmCad: campaignCpmCad < 0 ? 0 : campaignCpmCad,
             campaignCpcCad: campaignCpcCad < 0 ? 0 : campaignCpcCad,
             campaignActionCad: campaignActionCad < 0 ? 0 : campaignActionCad,
+            conversionCad: conversionCad < 0 ? 0 : conversionCad,
             minimumBudgetCad: minimumBudgetCad < 0 ? 0 : minimumBudgetCad,
           },
         },
@@ -546,6 +742,23 @@ export class AdsService implements OnModuleInit {
           ? String(doc.actionTarget).trim()
           : null,
       items,
+      archivedAt:
+        doc.archivedAt instanceof Date
+          ? doc.archivedAt.toISOString()
+          : doc.archivedAt != null
+          ? String(doc.archivedAt)
+          : null,
+      archiveReason:
+        doc.archiveReason != null && String(doc.archiveReason).trim() !== ''
+          ? (String(doc.archiveReason).trim().toUpperCase() as AdCampaignArchiveReasonEnum)
+          : null,
+      billingFinalizedAt:
+        doc.billingFinalizedAt instanceof Date
+          ? doc.billingFinalizedAt.toISOString()
+          : doc.billingFinalizedAt != null
+          ? String(doc.billingFinalizedAt)
+          : null,
+      billingFinalAmountCad: Number(doc.billingFinalAmountCad ?? 0),
       createdAt:
         doc.createdAt instanceof Date
           ? doc.createdAt.toISOString()
@@ -561,12 +774,233 @@ export class AdsService implements OnModuleInit {
     };
   }
 
+  private async _campaignBillingMetrics(campaignId: Types.ObjectId): Promise<{
+    impressions: number;
+    clicks: number;
+    actionClicks: number;
+    conversions: number;
+  }> {
+    const [impressions, clicks, actionClicks, conversions] = await Promise.all([
+      this._adCampaignEventModel.countDocuments({
+        campaign: campaignId,
+        eventType: AdCampaignEventTypeEnum.IMPRESSION,
+      }),
+      this._adCampaignEventModel.countDocuments({
+        campaign: campaignId,
+        eventType: AdCampaignEventTypeEnum.CLICK,
+        itemType: { $in: [AdCampaignItemTypeEnum.PRODUCT, AdCampaignItemTypeEnum.DRINK] },
+      }),
+      this._adCampaignEventModel.countDocuments({
+        campaign: campaignId,
+        eventType: AdCampaignEventTypeEnum.CLICK,
+        itemType: 'STORE_ACTION',
+      }),
+      this._adCampaignEventModel.countDocuments({
+        campaign: campaignId,
+        eventType: AdCampaignEventTypeEnum.CONVERSION,
+      }),
+    ]);
+    return { impressions, clicks, actionClicks, conversions };
+  }
+
+  private _campaignBillingAmount(
+    pricing: AdPricingPayload,
+    metrics: { impressions: number; clicks: number; actionClicks: number; conversions: number },
+  ): number {
+    return (
+      (metrics.impressions / 1000) * pricing.campaignCpmCad +
+      metrics.clicks * pricing.campaignCpcCad +
+      metrics.actionClicks * pricing.campaignActionCad +
+      metrics.conversions * pricing.conversionCad
+    );
+  }
+
+  private async _finalizeCampaignBilling(
+    campaignId: Types.ObjectId,
+  ): Promise<void> {
+    const pricing = this._toPricingPayload(await this._ensurePricingDoc());
+    const metrics = await this._campaignBillingMetrics(campaignId);
+    const finalAmount = this._campaignBillingAmount(pricing, metrics);
+    await this._adCampaignModel
+      .updateOne(
+        { _id: campaignId },
+        {
+          $set: {
+            billingFinalizedAt: new Date(),
+            billingFinalAmountCad: Number(finalAmount.toFixed(2)),
+            billingSnapshot: {
+              metrics,
+              pricing: {
+                campaignCpmCad: pricing.campaignCpmCad,
+                campaignCpcCad: pricing.campaignCpcCad,
+                campaignActionCad: pricing.campaignActionCad,
+                conversionCad: pricing.conversionCad,
+                currency: pricing.currency,
+              },
+            },
+          },
+        },
+      )
+      .exec();
+  }
+
+  private async _archiveCampaignById(
+    campaignId: Types.ObjectId,
+    opts?: { forceEndsNow?: boolean; reason?: AdCampaignArchiveReasonEnum },
+  ): Promise<void> {
+    const now = new Date();
+    const update: Record<string, unknown> = {
+      isActive: false,
+      archivedAt: now,
+      archiveReason: opts?.reason ?? AdCampaignArchiveReasonEnum.ENDED,
+    };
+    if (opts?.forceEndsNow) {
+      update.endsAt = now;
+    }
+    await this._adCampaignModel
+      .updateOne(
+        {
+          _id: campaignId,
+          $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
+        },
+        { $set: update },
+      )
+      .exec();
+    await this._finalizeCampaignBilling(campaignId);
+  }
+
+  private async _autoArchiveExpiredCampaigns(): Promise<void> {
+    const now = new Date();
+    const expired = await this._adCampaignModel
+      .find({
+        $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
+        endsAt: { $lt: now },
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    for (const row of expired as Array<Record<string, unknown>>) {
+      const campaignId = String(row._id ?? '');
+      if (!Types.ObjectId.isValid(campaignId)) continue;
+      await this._archiveCampaignById(new Types.ObjectId(campaignId), {
+        reason: AdCampaignArchiveReasonEnum.EXPIRED,
+      });
+    }
+  }
+
+  private async _adBillingMetrics(adId: Types.ObjectId): Promise<{
+    impressions: number;
+    clicks: number;
+    conversions: number;
+  }> {
+    const [impressions, clicks, conversions] = await Promise.all([
+      this._adEventModel.countDocuments({
+        ad: adId,
+        eventType: AdEventTypeEnum.IMPRESSION,
+      }),
+      this._adEventModel.countDocuments({
+        ad: adId,
+        eventType: AdEventTypeEnum.CLICK,
+      }),
+      this._adEventModel.countDocuments({
+        ad: adId,
+        eventType: AdEventTypeEnum.CONVERSION,
+      }),
+    ]);
+    return { impressions, clicks, conversions };
+  }
+
+  private _adBillingAmount(
+    pricing: AdPricingPayload,
+    metrics: { impressions: number; clicks: number; conversions: number },
+  ): number {
+    return (
+      (metrics.impressions / 1000) * pricing.cpmCad +
+      metrics.clicks * pricing.cpcCad +
+      metrics.conversions * pricing.conversionCad
+    );
+  }
+
+  private async _finalizeAdBilling(adId: Types.ObjectId): Promise<void> {
+    const pricing = this._toPricingPayload(await this._ensurePricingDoc());
+    const metrics = await this._adBillingMetrics(adId);
+    const finalAmount = this._adBillingAmount(pricing, metrics);
+    await this.adModel
+      .updateOne(
+        { _id: adId },
+        {
+          $set: {
+            billingFinalizedAt: new Date(),
+            billingFinalAmountCad: Number(finalAmount.toFixed(2)),
+            billingSnapshot: {
+              metrics,
+              pricing: {
+                cpmCad: pricing.cpmCad,
+                cpcCad: pricing.cpcCad,
+                conversionCad: pricing.conversionCad,
+                currency: pricing.currency,
+              },
+            },
+          },
+        },
+      )
+      .exec();
+  }
+
+  private async _archiveAdById(
+    adId: Types.ObjectId,
+    opts?: { forceEndsNow?: boolean; reason?: AdArchiveReasonEnum },
+  ): Promise<void> {
+    const now = new Date();
+    const update: Record<string, unknown> = {
+      isActive: false,
+      archivedAt: now,
+      archiveReason: opts?.reason ?? AdArchiveReasonEnum.ENDED,
+    };
+    if (opts?.forceEndsNow) {
+      update.validUntil = now;
+    }
+    await this.adModel
+      .updateOne(
+        {
+          _id: adId,
+          $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
+        },
+        { $set: update },
+      )
+      .exec();
+    this.invalidateListCache();
+    await this._finalizeAdBilling(adId);
+  }
+
+  private async _autoArchiveExpiredAds(): Promise<void> {
+    const now = new Date();
+    const expired = await this.adModel
+      .find({
+        $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
+        validUntil: { $lt: now },
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    for (const row of expired as Array<Record<string, unknown>>) {
+      const adId = String(row._id ?? '');
+      if (!Types.ObjectId.isValid(adId)) continue;
+      await this._archiveAdById(new Types.ObjectId(adId), {
+        reason: AdArchiveReasonEnum.EXPIRED,
+      });
+    }
+  }
+
   async listCampaignsForManagement(
     user: UserModel,
   ): Promise<AdCampaignManagementRow[]> {
     this.assertVendorOrAdmin(user);
+    await this._autoArchiveExpiredCampaigns();
     const manageableStoreIds = await this.resolveManageableCampaignStoreIds(user);
-    const query: Record<string, unknown> = {};
+    const query: Record<string, unknown> = {
+      $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
+    };
     if (user.type !== UserTypeEnum.ADMIN) {
       if (!manageableStoreIds.length) return [];
       query.store = {
@@ -584,11 +1018,39 @@ export class AdsService implements OnModuleInit {
     return (docs as Record<string, unknown>[]).map((d) => this._toCampaignRow(d));
   }
 
+  async listArchivedCampaignsForManagement(
+    user: UserModel,
+  ): Promise<AdCampaignManagementRow[]> {
+    this.assertVendorOrAdmin(user);
+    await this._autoArchiveExpiredCampaigns();
+    const manageableStoreIds = await this.resolveManageableCampaignStoreIds(user);
+    const query: Record<string, unknown> = {
+      archivedAt: { $exists: true, $ne: null },
+    };
+    if (user.type !== UserTypeEnum.ADMIN) {
+      if (!manageableStoreIds.length) return [];
+      query.store = {
+        $in: manageableStoreIds.map((id) => new Types.ObjectId(id)),
+      };
+    }
+    const docs = await this._adCampaignModel
+      .find(query)
+      .populate('store', 'name profileImage')
+      .populate('items.product', 'title profileImage price store')
+      .populate('items.drink', 'name imageUrl priceCad store')
+      .sort({ archivedAt: -1, createdAt: -1 })
+      .lean()
+      .exec();
+    return (docs as Record<string, unknown>[]).map((d) => this._toCampaignRow(d));
+  }
+
   async createCampaign(
     user: UserModel,
     dto: CreateAdCampaignDto,
   ): Promise<AdCampaignManagementRow> {
     this.assertVendorOrAdmin(user);
+    this.assertVendorStripeConnectReadyForWrites(user);
+    await this.assertVendorHasNoUnpaidAdCredit(user);
     const storeId = dto.storeId.trim();
     if (!Types.ObjectId.isValid(storeId)) {
       throw new BadRequestException('store_not_found');
@@ -654,12 +1116,16 @@ export class AdsService implements OnModuleInit {
     dto: PatchAdCampaignDto,
   ): Promise<AdCampaignManagementRow> {
     this.assertVendorOrAdmin(user);
+    this.assertVendorStripeConnectReadyForWrites(user);
     if (!Types.ObjectId.isValid(id)) {
       throw new NotFoundException('campaign_not_found');
     }
     const existing = await this._adCampaignModel.findById(id).exec();
     if (!existing) {
       throw new NotFoundException('campaign_not_found');
+    }
+    if (existing.archivedAt) {
+      throw new BadRequestException('campaign_archived_locked');
     }
     const existingStoreId = String(existing.store);
     await this.assertCanManageCampaignStore(user, existingStoreId);
@@ -725,8 +1191,47 @@ export class AdsService implements OnModuleInit {
     return this._toCampaignRow(row as unknown as Record<string, unknown>);
   }
 
+  async endCampaign(
+    user: UserModel,
+    id: string,
+  ): Promise<{ ok: true; campaignId: string; archivedAt: string }> {
+    this.assertVendorOrAdmin(user);
+    this.assertVendorStripeConnectReadyForWrites(user);
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('campaign_not_found');
+    }
+    const existing = await this._adCampaignModel
+      .findById(id)
+      .select('_id store archivedAt')
+      .lean()
+      .exec();
+    if (!existing) {
+      throw new NotFoundException('campaign_not_found');
+    }
+    await this.assertCanManageCampaignStore(user, String(existing.store));
+    if (!existing.archivedAt) {
+      await this._archiveCampaignById(
+        new Types.ObjectId(String(existing._id)),
+        { forceEndsNow: true, reason: AdCampaignArchiveReasonEnum.ENDED },
+      );
+    }
+    const out = await this._adCampaignModel
+      .findById(id)
+      .select('_id archivedAt')
+      .lean()
+      .exec();
+    return {
+      ok: true,
+      campaignId: String(out?._id ?? id),
+      archivedAt: new Date(
+        String((out as { archivedAt?: Date | string } | null)?.archivedAt ?? new Date()),
+      ).toISOString(),
+    };
+  }
+
   async removeCampaign(user: UserModel, id: string): Promise<void> {
     this.assertVendorOrAdmin(user);
+    this.assertVendorStripeConnectReadyForWrites(user);
     const existing = await this._adCampaignModel
       .findById(id)
       .select('store')
@@ -743,9 +1248,11 @@ export class AdsService implements OnModuleInit {
   }
 
   async listCampaignsPublic(): Promise<{ items: PublicAdCampaignRow[] }> {
+    await this._autoArchiveExpiredCampaigns();
     const now = new Date();
     const docs = await this._adCampaignModel
       .find({
+        $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
         isActive: true,
         startsAt: { $lte: now },
         endsAt: { $gte: now },
@@ -782,6 +1289,12 @@ export class AdsService implements OnModuleInit {
     user: UserModel | null,
     dto: TrackAdCampaignEventDto,
   ): Promise<{ ok: true }> {
+    if (
+      dto.eventType !== AdCampaignEventTypeEnum.IMPRESSION &&
+      dto.eventType !== AdCampaignEventTypeEnum.CLICK
+    ) {
+      throw new BadRequestException('invalid_campaign_event_type');
+    }
     const campaignId = dto.campaignId.trim();
     if (!Types.ObjectId.isValid(campaignId)) {
       throw new BadRequestException('campaign_not_found');
@@ -790,6 +1303,7 @@ export class AdsService implements OnModuleInit {
     const campaign = await this._adCampaignModel
       .findOne({
         _id: new Types.ObjectId(campaignId),
+        $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
         isActive: true,
         startsAt: { $lte: now },
         endsAt: { $gte: now },
@@ -850,10 +1364,234 @@ export class AdsService implements OnModuleInit {
     return { ok: true };
   }
 
+  async trackOrderConversions(args: {
+    orderId: string;
+    userId: string;
+    storeId: string;
+    items: Array<{ itemType: string; entityId: string }>;
+  }): Promise<{ ok: true; bannerConversions: number; campaignConversions: number }> {
+    const orderId = String(args.orderId ?? '').trim();
+    const userId = String(args.userId ?? '').trim();
+    const storeId = String(args.storeId ?? '').trim();
+    if (
+      !Types.ObjectId.isValid(userId) ||
+      !Types.ObjectId.isValid(storeId) ||
+      orderId.length === 0
+    ) {
+      return { ok: true, bannerConversions: 0, campaignConversions: 0 };
+    }
+
+    const purchased = args.items
+      .map((it) => ({
+        itemType: String(it.itemType ?? '').trim().toUpperCase(),
+        itemId: String(it.entityId ?? '').trim(),
+      }))
+      .filter(
+        (it) =>
+          (it.itemType === AdCampaignItemTypeEnum.PRODUCT ||
+            it.itemType === AdCampaignItemTypeEnum.DRINK) &&
+          Types.ObjectId.isValid(it.itemId),
+      );
+    if (!purchased.length) {
+      return { ok: true, bannerConversions: 0, campaignConversions: 0 };
+    }
+
+    const purchasedProducts = new Set(
+      purchased
+        .filter((it) => it.itemType === AdCampaignItemTypeEnum.PRODUCT)
+        .map((it) => it.itemId),
+    );
+    const purchasedByKey = new Set(
+      purchased.map((it) => `${it.itemType}:${it.itemId}`),
+    );
+    const since = new Date(Date.now() - AD_CONVERSION_ATTRIBUTION_WINDOW_MS);
+    const userOid = new Types.ObjectId(userId);
+    const storeOid = new Types.ObjectId(storeId);
+
+    // Attribution campagne: dernier clic item (plat/boisson) de la campagne sur la même boutique.
+    let campaignConversions = 0;
+    const campaignClicks = await this._adCampaignEventModel
+      .find({
+        user: userOid,
+        eventType: AdCampaignEventTypeEnum.CLICK,
+        itemType: {
+          $in: [AdCampaignItemTypeEnum.PRODUCT, AdCampaignItemTypeEnum.DRINK],
+        },
+        createdAt: { $gte: since },
+      })
+      .select('campaign itemType itemId createdAt')
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+    if (campaignClicks.length > 0) {
+      const campaignIds = [
+        ...new Set(
+          campaignClicks
+            .map((row) => String(row.campaign ?? ''))
+            .filter((id) => Types.ObjectId.isValid(id)),
+        ),
+      ].map((id) => new Types.ObjectId(id));
+      const campaigns = campaignIds.length
+        ? await this._adCampaignModel
+            .find({ _id: { $in: campaignIds } })
+            .select('_id store')
+            .lean()
+            .exec()
+        : [];
+      const campaignStoreById = new Map<string, string>();
+      for (const row of campaigns as Array<Record<string, unknown>>) {
+        const cid = String(row._id ?? '');
+        const sid = String(row.store ?? '');
+        if (Types.ObjectId.isValid(cid) && Types.ObjectId.isValid(sid)) {
+          campaignStoreById.set(cid, sid);
+        }
+      }
+      const existingCampaignConversions = await this._adCampaignEventModel
+        .find({
+          campaign: { $in: campaignIds },
+          eventType: AdCampaignEventTypeEnum.CONVERSION,
+          orderId,
+        })
+        .select('campaign itemType itemId')
+        .lean()
+        .exec();
+      const existingCampaignKeys = new Set(
+        existingCampaignConversions.map(
+          (row) =>
+            `${String(row.campaign ?? '')}:${String(row.itemType ?? '').toUpperCase()}:${String(row.itemId ?? '')}`,
+        ),
+      );
+
+      const pendingRows: Array<{
+        campaign: Types.ObjectId;
+        itemType: string;
+        itemId: string;
+      }> = [];
+      const seenOrderItemKeys = new Set<string>();
+      for (const click of campaignClicks as Array<Record<string, unknown>>) {
+        const campaignId = String(click.campaign ?? '').trim();
+        const itemType = String(click.itemType ?? '').trim().toUpperCase();
+        const itemId = String(click.itemId ?? '').trim();
+        if (!Types.ObjectId.isValid(campaignId) || !Types.ObjectId.isValid(itemId)) {
+          continue;
+        }
+        if (campaignStoreById.get(campaignId) !== storeOid.toHexString()) {
+          continue;
+        }
+        const orderItemKey = `${itemType}:${itemId}`;
+        if (!purchasedByKey.has(orderItemKey) || seenOrderItemKeys.has(orderItemKey)) {
+          continue;
+        }
+        const dedupeKey = `${campaignId}:${itemType}:${itemId}`;
+        if (existingCampaignKeys.has(dedupeKey)) {
+          seenOrderItemKeys.add(orderItemKey);
+          continue;
+        }
+        existingCampaignKeys.add(dedupeKey);
+        seenOrderItemKeys.add(orderItemKey);
+        pendingRows.push({
+          campaign: new Types.ObjectId(campaignId),
+          itemType,
+          itemId,
+        });
+      }
+
+      if (pendingRows.length > 0) {
+        await this._adCampaignEventModel.insertMany(
+          pendingRows.map((row) => ({
+            campaign: row.campaign,
+            user: userOid,
+            eventType: AdCampaignEventTypeEnum.CONVERSION,
+            itemType: row.itemType,
+            itemId: row.itemId,
+            orderId,
+            conversionSource: AdCampaignConversionSourceEnum.CAMPAIGN_ITEM,
+          })),
+          { ordered: false },
+        );
+        campaignConversions = pendingRows.length;
+      }
+    }
+
+    // Attribution bannière: dernier clic éligible (produit exact ou boutique).
+    let bannerConversions = 0;
+    const adClicks = await this._adEventModel
+      .find({
+        user: userOid,
+        eventType: AdEventTypeEnum.CLICK,
+        createdAt: { $gte: since },
+      })
+      .select('ad createdAt')
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+    if (adClicks.length > 0) {
+      const adIds = [
+        ...new Set(
+          adClicks
+            .map((row) => String(row.ad ?? ''))
+            .filter((id) => Types.ObjectId.isValid(id)),
+        ),
+      ].map((id) => new Types.ObjectId(id));
+      const ads = adIds.length
+        ? await this.adModel
+            .find({ _id: { $in: adIds } })
+            .select('_id store product')
+            .lean()
+            .exec()
+        : [];
+      const adById = new Map<string, Record<string, unknown>>();
+      for (const ad of ads as Array<Record<string, unknown>>) {
+        adById.set(String(ad._id ?? ''), ad);
+      }
+      for (const click of adClicks as Array<Record<string, unknown>>) {
+        const adId = String(click.ad ?? '').trim();
+        if (!Types.ObjectId.isValid(adId)) continue;
+        const ad = adById.get(adId);
+        if (!ad) continue;
+        const adProductId = String(ad.product ?? '').trim();
+        const adStoreId = String(ad.store ?? '').trim();
+        const eligible =
+          (Types.ObjectId.isValid(adProductId) && purchasedProducts.has(adProductId)) ||
+          (Types.ObjectId.isValid(adStoreId) && adStoreId === storeOid.toHexString()) ||
+          (!Types.ObjectId.isValid(adProductId) && !Types.ObjectId.isValid(adStoreId));
+        if (!eligible) continue;
+        const conversionSource = Types.ObjectId.isValid(adProductId) &&
+          purchasedProducts.has(adProductId)
+          ? AdConversionSourceEnum.BANNER_PRODUCT
+          : Types.ObjectId.isValid(adStoreId) && adStoreId === storeOid.toHexString()
+          ? AdConversionSourceEnum.BANNER_STORE
+          : AdConversionSourceEnum.BANNER_GENERIC;
+        const exists = await this._adEventModel
+          .exists({
+            ad: new Types.ObjectId(adId),
+            user: userOid,
+            eventType: AdEventTypeEnum.CONVERSION,
+            orderId,
+          })
+          .exec();
+        if (exists) break;
+        await this._adEventModel.create({
+          ad: new Types.ObjectId(adId),
+          user: userOid,
+          eventType: AdEventTypeEnum.CONVERSION,
+          orderId,
+          conversionSource,
+        });
+        bannerConversions = 1;
+        break;
+      }
+    }
+
+    return { ok: true, bannerConversions, campaignConversions };
+  }
+
   async getMyAdCredit(user: UserModel): Promise<AdCreditSummaryPayload> {
     if (user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('vendor_only');
     }
+    await this._autoArchiveExpiredCampaigns();
+    await this._autoArchiveExpiredAds();
     const pricing = this._toPricingPayload(await this._ensurePricingDoc());
     const access = await this._storeAccess.resolveStoreAccess(user);
     const storeMeta = access
@@ -862,10 +1600,21 @@ export class AdsService implements OnModuleInit {
     const storeIds = storeMeta.map((a) => new Types.ObjectId(a.storeId));
 
     if (!storeIds.length) {
+      const ownerId = new Types.ObjectId(String(user._id));
+      const paidTotal = await this._adCreditPaidTotalCad(ownerId);
       return {
         currency: pricing.currency,
-        banners: { impressions: 0, clicks: 0, due: 0 },
-        campaigns: { impressions: 0, clicks: 0, actionClicks: 0, due: 0 },
+        grossDue: 0,
+        paidTotal: Number(paidTotal.toFixed(2)),
+        creditBalance: Number(paidTotal.toFixed(2)),
+        banners: { impressions: 0, clicks: 0, conversions: 0, due: 0 },
+        campaigns: {
+          impressions: 0,
+          clicks: 0,
+          actionClicks: 0,
+          conversions: 0,
+          due: 0,
+        },
         stores: [],
         totalDue: 0,
       };
@@ -875,11 +1624,12 @@ export class AdsService implements OnModuleInit {
       string,
       {
         storeName: string;
-        banners: { impressions: number; clicks: number; due: number };
+        banners: { impressions: number; clicks: number; conversions: number; due: number };
         campaigns: {
           impressions: number;
           clicks: number;
           actionClicks: number;
+          conversions: number;
           due: number;
         };
       }
@@ -887,8 +1637,8 @@ export class AdsService implements OnModuleInit {
     for (const s of storeMeta) {
       perStore.set(s.storeId, {
         storeName: s.storeName,
-        banners: { impressions: 0, clicks: 0, due: 0 },
-        campaigns: { impressions: 0, clicks: 0, actionClicks: 0, due: 0 },
+        banners: { impressions: 0, clicks: 0, conversions: 0, due: 0 },
+        campaigns: { impressions: 0, clicks: 0, actionClicks: 0, conversions: 0, due: 0 },
       });
     }
 
@@ -896,7 +1646,7 @@ export class AdsService implements OnModuleInit {
       .find({
         store: { $in: storeIds },
       })
-      .select('_id store')
+      .select('_id store archivedAt billingFinalAmountCad')
       .lean()
       .exec();
     const adStoreById = new Map<string, string>();
@@ -912,7 +1662,7 @@ export class AdsService implements OnModuleInit {
       .filter((id) => Types.ObjectId.isValid(id))
       .map((id) => new Types.ObjectId(id));
 
-    const [bannerImpressions, bannerClicks, bannerAgg] = adObjectIds.length
+    const [bannerImpressions, bannerClicks, bannerConversions, bannerAgg] = adObjectIds.length
       ? await Promise.all([
           this._adEventModel.countDocuments({
             ad: { $in: adObjectIds },
@@ -922,6 +1672,10 @@ export class AdsService implements OnModuleInit {
             ad: { $in: adObjectIds },
             eventType: AdEventTypeEnum.CLICK,
           }),
+          this._adEventModel.countDocuments({
+            ad: { $in: adObjectIds },
+            eventType: AdEventTypeEnum.CONVERSION,
+          }),
           this._adEventModel
             .aggregate<
               { _id: { ad: Types.ObjectId; eventType: AdEventTypeEnum }; count: number }
@@ -929,7 +1683,13 @@ export class AdsService implements OnModuleInit {
               {
                 $match: {
                   ad: { $in: adObjectIds },
-                  eventType: { $in: [AdEventTypeEnum.IMPRESSION, AdEventTypeEnum.CLICK] },
+                  eventType: {
+                    $in: [
+                      AdEventTypeEnum.IMPRESSION,
+                      AdEventTypeEnum.CLICK,
+                      AdEventTypeEnum.CONVERSION,
+                    ],
+                  },
                 },
               },
               {
@@ -941,7 +1701,7 @@ export class AdsService implements OnModuleInit {
             ])
             .exec(),
         ])
-      : [0, 0, []];
+      : [0, 0, 0, []];
     for (const row of bannerAgg) {
       const adId = String(row._id.ad ?? '');
       const storeId = adStoreById.get(adId);
@@ -952,14 +1712,56 @@ export class AdsService implements OnModuleInit {
         current.banners.impressions += row.count;
       } else if (row._id.eventType === AdEventTypeEnum.CLICK) {
         current.banners.clicks += row.count;
+      } else if (row._id.eventType === AdEventTypeEnum.CONVERSION) {
+        current.banners.conversions += row.count;
       }
+    }
+    const bannerMetricsById = new Map<
+      string,
+      { impressions: number; clicks: number; conversions: number }
+    >();
+    for (const row of bannerAgg) {
+      const adId = String(row._id.ad ?? '');
+      if (!adId || !Types.ObjectId.isValid(adId)) continue;
+      const current = bannerMetricsById.get(adId) ?? {
+        impressions: 0,
+        clicks: 0,
+        conversions: 0,
+      };
+      if (row._id.eventType === AdEventTypeEnum.IMPRESSION) {
+        current.impressions += row.count;
+      } else if (row._id.eventType === AdEventTypeEnum.CLICK) {
+        current.clicks += row.count;
+      } else if (row._id.eventType === AdEventTypeEnum.CONVERSION) {
+        current.conversions += row.count;
+      }
+      bannerMetricsById.set(adId, current);
+    }
+    const bannerDueByStore = new Map<string, number>();
+    for (const doc of bannerDocs as Array<Record<string, unknown>>) {
+      const adId = String(doc._id ?? '');
+      const storeId = String(doc.store ?? '');
+      if (!Types.ObjectId.isValid(adId) || !Types.ObjectId.isValid(storeId)) {
+        continue;
+      }
+      const metrics = bannerMetricsById.get(adId) ?? {
+        impressions: 0,
+        clicks: 0,
+        conversions: 0,
+      };
+      const archivedAt = doc.archivedAt;
+      const isArchived = archivedAt != null && String(archivedAt).trim() !== '';
+      const due = isArchived
+        ? Number(doc.billingFinalAmountCad ?? this._adBillingAmount(pricing, metrics))
+        : 0;
+      bannerDueByStore.set(storeId, (bannerDueByStore.get(storeId) ?? 0) + due);
     }
 
     const campaignDocs = await this._adCampaignModel
       .find({
         store: { $in: storeIds },
       })
-      .select('_id store')
+      .select('_id store archivedAt billingFinalAmountCad')
       .lean()
       .exec();
     const campaignStoreById = new Map<string, string>();
@@ -975,7 +1777,13 @@ export class AdsService implements OnModuleInit {
       .filter((id) => Types.ObjectId.isValid(id))
       .map((id) => new Types.ObjectId(id));
 
-    const [campaignImpressions, campaignClicks, campaignActionClicks, campaignAgg] =
+    const [
+      campaignImpressions,
+      campaignClicks,
+      campaignActionClicks,
+      campaignConversions,
+      campaignAgg,
+    ] =
       campaignObjectIds.length
       ? await Promise.all([
           this._adCampaignEventModel.countDocuments({
@@ -992,6 +1800,10 @@ export class AdsService implements OnModuleInit {
             eventType: AdCampaignEventTypeEnum.CLICK,
             itemType: 'STORE_ACTION',
           }),
+          this._adCampaignEventModel.countDocuments({
+            campaign: { $in: campaignObjectIds },
+            eventType: AdCampaignEventTypeEnum.CONVERSION,
+          }),
           this._adCampaignEventModel
             .aggregate<
               {
@@ -1007,7 +1819,11 @@ export class AdsService implements OnModuleInit {
                 $match: {
                   campaign: { $in: campaignObjectIds },
                   eventType: {
-                    $in: [AdCampaignEventTypeEnum.IMPRESSION, AdCampaignEventTypeEnum.CLICK],
+                    $in: [
+                      AdCampaignEventTypeEnum.IMPRESSION,
+                      AdCampaignEventTypeEnum.CLICK,
+                      AdCampaignEventTypeEnum.CONVERSION,
+                    ],
                   },
                 },
               },
@@ -1024,7 +1840,7 @@ export class AdsService implements OnModuleInit {
             ])
             .exec(),
         ])
-      : [0, 0, 0, []];
+      : [0, 0, 0, 0, []];
     for (const row of campaignAgg) {
       const campaignId = String(row._id.campaign ?? '');
       const storeId = campaignStoreById.get(campaignId);
@@ -1035,63 +1851,237 @@ export class AdsService implements OnModuleInit {
         current.campaigns.impressions += row.count;
         continue;
       }
-      if (row._id.itemType === 'STORE_ACTION') {
+      if (row._id.eventType === AdCampaignEventTypeEnum.CONVERSION) {
+        current.campaigns.conversions += row.count;
+      } else if (row._id.itemType === 'STORE_ACTION') {
         current.campaigns.actionClicks += row.count;
       } else {
         current.campaigns.clicks += row.count;
       }
     }
 
-    const bannersDue =
-      (bannerImpressions / 1000) * pricing.cpmCad + bannerClicks * pricing.cpcCad;
-    const campaignsDue =
-      (campaignImpressions / 1000) * pricing.campaignCpmCad +
-      campaignClicks * pricing.campaignCpcCad +
-      campaignActionClicks * pricing.campaignActionCad;
-    const totalDue = bannersDue + campaignsDue;
+    const bannersDue = [...bannerDueByStore.values()].reduce((acc, v) => acc + v, 0);
+    const campaignMetricsById = new Map<
+      string,
+      { impressions: number; clicks: number; actionClicks: number; conversions: number }
+    >();
+    for (const row of campaignAgg) {
+      const campaignId = String(row._id.campaign ?? '');
+      if (!campaignId || !Types.ObjectId.isValid(campaignId)) continue;
+      const current = campaignMetricsById.get(campaignId) ?? {
+        impressions: 0,
+        clicks: 0,
+        actionClicks: 0,
+        conversions: 0,
+      };
+      if (row._id.eventType === AdCampaignEventTypeEnum.IMPRESSION) {
+        current.impressions += row.count;
+      } else if (row._id.eventType === AdCampaignEventTypeEnum.CONVERSION) {
+        current.conversions += row.count;
+      } else if (row._id.itemType === 'STORE_ACTION') {
+        current.actionClicks += row.count;
+      } else {
+        current.clicks += row.count;
+      }
+      campaignMetricsById.set(campaignId, current);
+    }
+    const campaignDueByStore = new Map<string, number>();
+    for (const doc of campaignDocs as Array<Record<string, unknown>>) {
+      const campaignId = String(doc._id ?? '');
+      const storeId = String(doc.store ?? '');
+      if (!Types.ObjectId.isValid(campaignId) || !Types.ObjectId.isValid(storeId)) {
+        continue;
+      }
+      const metrics = campaignMetricsById.get(campaignId) ?? {
+        impressions: 0,
+        clicks: 0,
+        actionClicks: 0,
+        conversions: 0,
+      };
+      const archivedAt = doc.archivedAt;
+      const isArchived = archivedAt != null && String(archivedAt).trim() !== '';
+      const due = isArchived
+        ? Number(
+            doc.billingFinalAmountCad ??
+              this._campaignBillingAmount(pricing, metrics),
+          )
+        : 0;
+      campaignDueByStore.set(storeId, (campaignDueByStore.get(storeId) ?? 0) + due);
+    }
+    const campaignsDue = [...campaignDueByStore.values()].reduce(
+      (acc, v) => acc + v,
+      0,
+    );
+    const grossDue = Number((bannersDue + campaignsDue).toFixed(2));
 
     const stores = [...perStore.entries()].map(([storeId, row]) => {
       const bannerDue =
-        (row.banners.impressions / 1000) * pricing.cpmCad +
-        row.banners.clicks * pricing.cpcCad;
+        bannerDueByStore.get(storeId) ??
+        ((row.banners.impressions / 1000) * pricing.cpmCad +
+          row.banners.clicks * pricing.cpcCad +
+          row.banners.conversions * pricing.conversionCad);
       const campaignDue =
-        (row.campaigns.impressions / 1000) * pricing.campaignCpmCad +
-        row.campaigns.clicks * pricing.campaignCpcCad +
-        row.campaigns.actionClicks * pricing.campaignActionCad;
+        campaignDueByStore.get(storeId) ??
+        ((row.campaigns.impressions / 1000) * pricing.campaignCpmCad +
+          row.campaigns.clicks * pricing.campaignCpcCad +
+          row.campaigns.actionClicks * pricing.campaignActionCad +
+          row.campaigns.conversions * pricing.conversionCad);
       return {
         storeId,
         storeName: row.storeName,
         banners: {
           impressions: row.banners.impressions,
           clicks: row.banners.clicks,
+          conversions: row.banners.conversions,
           due: Number(bannerDue.toFixed(2)),
         },
         campaigns: {
           impressions: row.campaigns.impressions,
           clicks: row.campaigns.clicks,
           actionClicks: row.campaigns.actionClicks,
+          conversions: row.campaigns.conversions,
           due: Number(campaignDue.toFixed(2)),
         },
         totalDue: Number((bannerDue + campaignDue).toFixed(2)),
       };
     });
 
+    const ownerId = new Types.ObjectId(String(user._id));
+    const paidTotal = await this._adCreditPaidTotalCad(ownerId);
+    const applied = this.applyPaidAmountToStoreBreakdown(stores, paidTotal);
     return {
       currency: pricing.currency,
+      grossDue,
+      paidTotal: Number(paidTotal.toFixed(2)),
+      creditBalance: applied.creditBalance,
       banners: {
         impressions: bannerImpressions,
         clicks: bannerClicks,
-        due: Number(bannersDue.toFixed(2)),
+        conversions: bannerConversions,
+        due: applied.bannersDue,
       },
       campaigns: {
         impressions: campaignImpressions,
         clicks: campaignClicks,
         actionClicks: campaignActionClicks,
-        due: Number(campaignsDue.toFixed(2)),
+        conversions: campaignConversions,
+        due: applied.campaignsDue,
       },
-      stores,
-      totalDue: Number(totalDue.toFixed(2)),
+      stores: applied.stores,
+      totalDue: applied.outstandingDue,
     };
+  }
+
+  async createAdCreditCheckoutSession(
+    user: UserModel,
+  ): Promise<{ url: string; sessionId: string; amountCad: number }> {
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_only');
+    }
+    const credit = await this.getMyAdCredit(user);
+    const outstanding = Number(credit.totalDue ?? 0);
+    if (outstanding <= 0) {
+      throw new BadRequestException('ad_credit_already_settled');
+    }
+    const amountCad = Number(
+      Math.max(outstanding, AD_CREDIT_STRIPE_MIN_CAD).toFixed(2),
+    );
+    const unitAmount = Math.round(amountCad * 100);
+    if (unitAmount < 50) {
+      throw new BadRequestException('amount_below_stripe_minimum');
+    }
+
+    const ownerId = String(user._id);
+    const stripe = this.stripe();
+    const meta: Record<string, string> = {
+      kind: AD_CREDIT_CHECKOUT_METADATA_KIND,
+      uid: ownerId,
+      outstandingDueCad: Number(outstanding).toFixed(2),
+    };
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      currency: 'cad',
+      client_reference_id: ownerId,
+      customer_email: user.email || undefined,
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: 'cad',
+            unit_amount: unitAmount,
+            product_data: {
+              name: 'Afrika Meals · Règlement crédit Ads',
+              description: `Règlement du crédit Ads vendeur (solde: ${outstanding.toFixed(
+                2,
+              )} CAD)`,
+            },
+          },
+        },
+      ],
+      success_url: this.adCreditSuccessUrl(),
+      cancel_url: this.adCreditCancelUrl(),
+      metadata: meta,
+      payment_intent_data: {
+        description: 'Afrika Meals · Paiement crédit Ads',
+        metadata: meta,
+      },
+    });
+    if (!session.url) {
+      throw new BadRequestException('stripe_missing_checkout_url');
+    }
+    return { url: session.url, sessionId: session.id, amountCad };
+  }
+
+  async confirmAdCreditCheckout(
+    user: UserModel,
+    sessionId: string,
+  ): Promise<{ ok: true; amountPaidCad: number; sessionId: string }> {
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_only');
+    }
+    const sid = String(sessionId ?? '').trim();
+    if (!sid) {
+      throw new BadRequestException('missing_session_id');
+    }
+    const stripe = this.stripe();
+    const session = await stripe.checkout.sessions.retrieve(sid, {
+      expand: ['payment_intent'],
+    });
+    if (
+      session.metadata?.kind !== AD_CREDIT_CHECKOUT_METADATA_KIND ||
+      String(session.metadata?.uid ?? '') !== String(user._id)
+    ) {
+      throw new ForbiddenException('ad_credit_checkout_user_mismatch');
+    }
+    if (session.payment_status !== 'paid' && session.status !== 'complete') {
+      throw new BadRequestException('ad_credit_checkout_not_paid');
+    }
+    const amountPaidCad = Number(((session.amount_total ?? 0) / 100).toFixed(2));
+    if (!Number.isFinite(amountPaidCad) || amountPaidCad <= 0) {
+      throw new BadRequestException('ad_credit_checkout_invalid_amount');
+    }
+    const paymentIntentId =
+      typeof session.payment_intent === 'string'
+        ? session.payment_intent
+        : session.payment_intent?.id ?? null;
+    await this._adCreditPaymentModel
+      .updateOne(
+        { stripeCheckoutSessionId: sid },
+        {
+          $setOnInsert: {
+            owner: new Types.ObjectId(String(user._id)),
+            amountPaidCad,
+            currency: 'CAD',
+            status: AdCreditPaymentStatusEnum.PAID,
+            stripeCheckoutSessionId: sid,
+            stripePaymentIntentId: paymentIntentId,
+            paidAt: new Date(),
+          },
+        },
+        { upsert: true },
+      )
+      .exec();
+    return { ok: true, amountPaidCad, sessionId: sid };
   }
 
   async uploadBannerImage(
@@ -1099,6 +2089,7 @@ export class AdsService implements OnModuleInit {
     file?: Express.Multer.File,
   ): Promise<{ url: string }> {
     this.assertVendorOrAdmin(user);
+    this.assertVendorStripeConnectReadyForWrites(user);
     if (!file?.buffer?.length) {
       throw new BadRequestException('empty_image');
     }
@@ -1112,6 +2103,7 @@ export class AdsService implements OnModuleInit {
     dto: AdBannerImageJsonDto,
   ): Promise<{ url: string }> {
     this.assertVendorOrAdmin(user);
+    this.assertVendorStripeConnectReadyForWrites(user);
     const raw = dto.imageBase64
       .replace(/\s/g, '')
       .replace(/^data:image\/[^;]+;base64,/i, '');
@@ -1291,6 +2283,23 @@ export class AdsService implements OnModuleInit {
       actionTarget: actTarget,
       productId,
       productTitle,
+      archivedAt:
+        doc.archivedAt instanceof Date
+          ? doc.archivedAt.toISOString()
+          : doc.archivedAt != null
+          ? String(doc.archivedAt)
+          : null,
+      archiveReason:
+        doc.archiveReason != null && String(doc.archiveReason).trim() !== ''
+          ? (String(doc.archiveReason).trim().toUpperCase() as AdArchiveReasonEnum)
+          : null,
+      billingFinalizedAt:
+        doc.billingFinalizedAt instanceof Date
+          ? doc.billingFinalizedAt.toISOString()
+          : doc.billingFinalizedAt != null
+          ? String(doc.billingFinalizedAt)
+          : null,
+      billingFinalAmountCad: Number(doc.billingFinalAmountCad ?? 0),
       createdAt:
         doc.createdAt instanceof Date
           ? doc.createdAt.toISOString()
@@ -1470,6 +2479,7 @@ export class AdsService implements OnModuleInit {
    * Ordre renvoyé : au moins 2/3 de pubs **liées boutique** (`store` défini) quand le stock le permet.
    */
   async listPublic(): Promise<AdModel[]> {
+    await this._autoArchiveExpiredAds();
     const now = Date.now();
     // Ne pas servir un cache calculé avant le filtre Stripe Connect (paiements vendeur).
     if (
@@ -1502,6 +2512,9 @@ export class AdsService implements OnModuleInit {
     );
     const t = new Date();
     const data = docs.filter((d) => {
+      if (d.archivedAt != null && String(d.archivedAt).trim() !== '') {
+        return false;
+      }
       if (
         !this.passesDateWindow(
           d.validFrom as Date | undefined,
@@ -1527,6 +2540,7 @@ export class AdsService implements OnModuleInit {
 
   async listForManagement(user: UserModel): Promise<AdManagementRow[]> {
     this.assertVendorOrAdmin(user);
+    await this._autoArchiveExpiredAds();
     if (user.type === UserTypeEnum.ADMIN) {
       const docs = await this.adModel
         .find()
@@ -1573,6 +2587,8 @@ export class AdsService implements OnModuleInit {
     dto: CreateAdManagementDto,
   ): Promise<AdManagementRow> {
     this.assertVendorOrAdmin(user);
+    this.assertVendorStripeConnectReadyForWrites(user);
+    await this.assertVendorHasNoUnpaidAdCredit(user);
     const storeIdRaw = dto.storeId?.trim();
     const storeOid =
       storeIdRaw && Types.ObjectId.isValid(storeIdRaw)
@@ -1647,10 +2663,14 @@ export class AdsService implements OnModuleInit {
     dto: PatchAdManagementDto,
   ): Promise<AdManagementRow> {
     this.assertVendorOrAdmin(user);
+    this.assertVendorStripeConnectReadyForWrites(user);
     const oid = new Types.ObjectId(id);
     const existing = await this.adModel.findById(oid).exec();
     if (!existing) {
       throw new NotFoundException('ad_not_found');
+    }
+    if (existing.archivedAt) {
+      throw new BadRequestException('ad_archived_locked');
     }
 
     const storeRef = existing.store;
@@ -1773,8 +2793,53 @@ export class AdsService implements OnModuleInit {
     return this.toManagementRow(populated as Record<string, unknown>);
   }
 
+  async endManagement(
+    user: UserModel,
+    id: string,
+  ): Promise<{ ok: true; adId: string; archivedAt: string }> {
+    this.assertVendorOrAdmin(user);
+    this.assertVendorStripeConnectReadyForWrites(user);
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('ad_not_found');
+    }
+    const existing = await this.adModel
+      .findById(id)
+      .select('_id store archivedAt')
+      .lean()
+      .exec();
+    if (!existing) {
+      throw new NotFoundException('ad_not_found');
+    }
+    const storeIdStr = existing.store != null ? String(existing.store) : null;
+    if (storeIdStr) {
+      await this.assertUserCanManageStore(user, storeIdStr);
+    } else if (user.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('global_ad_vendor_forbidden');
+    }
+    if (!existing.archivedAt) {
+      await this._archiveAdById(new Types.ObjectId(String(existing._id)), {
+        forceEndsNow: true,
+        reason: AdArchiveReasonEnum.ENDED,
+      });
+      this.invalidateListCache();
+    }
+    const out = await this.adModel
+      .findById(id)
+      .select('_id archivedAt')
+      .lean()
+      .exec();
+    return {
+      ok: true,
+      adId: String(out?._id ?? id),
+      archivedAt: new Date(
+        String((out as { archivedAt?: Date | string } | null)?.archivedAt ?? new Date()),
+      ).toISOString(),
+    };
+  }
+
   async removeManagement(user: UserModel, id: string): Promise<void> {
     this.assertVendorOrAdmin(user);
+    this.assertVendorStripeConnectReadyForWrites(user);
     const oid = new Types.ObjectId(id);
     const existing = await this.adModel.findById(oid).exec();
     if (!existing) {
@@ -1798,7 +2863,11 @@ export class AdsService implements OnModuleInit {
   private async assertAdTrackableForClient(adId: string): Promise<void> {
     const oid = new Types.ObjectId(adId);
     const doc = await this.adModel.findById(oid).lean().exec();
-    if (!doc || !doc.isActive) {
+    if (
+      !doc ||
+      !doc.isActive ||
+      (doc.archivedAt != null && String(doc.archivedAt).trim() !== '')
+    ) {
       throw new NotFoundException('ad_not_found');
     }
     const t = new Date();
@@ -1817,6 +2886,12 @@ export class AdsService implements OnModuleInit {
     user: UserModel | undefined | null,
     dto: TrackAdEventDto,
   ): Promise<{ ok: true }> {
+    if (
+      dto.eventType !== AdEventTypeEnum.IMPRESSION &&
+      dto.eventType !== AdEventTypeEnum.CLICK
+    ) {
+      throw new BadRequestException('invalid_ad_event_type');
+    }
     await this.assertAdTrackableForClient(dto.adId);
     const oid = new Types.ObjectId(dto.adId);
     const uid =
@@ -1878,8 +2953,10 @@ export class AdsService implements OnModuleInit {
     const [
       impressionsTotal,
       clicksTotal,
+      conversionsTotal,
       impUsers,
       clkUsers,
+      convUsers,
       deviceIds,
       byDay,
       recentDocs,
@@ -1889,6 +2966,9 @@ export class AdsService implements OnModuleInit {
         .exec(),
       this._adEventModel
         .countDocuments({ ad: oid, eventType: AdEventTypeEnum.CLICK })
+        .exec(),
+      this._adEventModel
+        .countDocuments({ ad: oid, eventType: AdEventTypeEnum.CONVERSION })
         .exec(),
       this._adEventModel.distinct('user', {
         ad: oid,
@@ -1900,6 +2980,11 @@ export class AdsService implements OnModuleInit {
         eventType: AdEventTypeEnum.CLICK,
         user: { $exists: true, $ne: null },
       }),
+      this._adEventModel.distinct('user', {
+        ad: oid,
+        eventType: AdEventTypeEnum.CONVERSION,
+        user: { $exists: true, $ne: null },
+      }),
       this._adEventModel.distinct('clientInstallId', {
         ad: oid,
         clientInstallId: { $exists: true, $nin: [null, ''] },
@@ -1909,6 +2994,7 @@ export class AdsService implements OnModuleInit {
           _id: string;
           impressions: number;
           clicks: number;
+          conversions: number;
         }>([
           {
             $match: {
@@ -1937,6 +3023,11 @@ export class AdsService implements OnModuleInit {
               clicks: {
                 $sum: {
                   $cond: [{ $eq: ['$eventType', AdEventTypeEnum.CLICK] }, 1, 0],
+                },
+              },
+              conversions: {
+                $sum: {
+                  $cond: [{ $eq: ['$eventType', AdEventTypeEnum.CONVERSION] }, 1, 0],
                 },
               },
             },
@@ -1976,6 +3067,8 @@ export class AdsService implements OnModuleInit {
       const ca = r.createdAt as Date | string | undefined;
       return {
         eventType: r.eventType as AdEventTypeEnum,
+        conversionSource:
+          r.conversionSource != null ? (String(r.conversionSource) as AdConversionSourceEnum) : null,
         createdAt:
           ca instanceof Date ? ca.toISOString() : String(ca ?? new Date()),
         userId,
@@ -1990,14 +3083,17 @@ export class AdsService implements OnModuleInit {
       date: d._id,
       impressions: d.impressions,
       clicks: d.clicks,
+      conversions: d.conversions,
     }));
 
     return {
       adId,
       impressionsTotal,
       clicksTotal,
+      conversionsTotal,
       uniqueUsersImpressions: impUsers.filter(Boolean).length,
       uniqueUsersClicks: clkUsers.filter(Boolean).length,
+      uniqueUsersConversions: convUsers.filter(Boolean).length,
       uniqueClientDevices: deviceIds.filter(Boolean).length,
       last7Days,
       recentEvents,
@@ -2035,8 +3131,10 @@ export class AdsService implements OnModuleInit {
       impressionsTotal,
       clicksTotal,
       actionClicksTotal,
+      conversionsTotal,
       impUsers,
       clkUsers,
+      convUsers,
       deviceIds,
       byDay,
       byItem,
@@ -2061,6 +3159,12 @@ export class AdsService implements OnModuleInit {
           itemType: 'STORE_ACTION',
         })
         .exec(),
+      this._adCampaignEventModel
+        .countDocuments({
+          campaign: oid,
+          eventType: AdCampaignEventTypeEnum.CONVERSION,
+        })
+        .exec(),
       this._adCampaignEventModel.distinct('user', {
         campaign: oid,
         eventType: AdCampaignEventTypeEnum.IMPRESSION,
@@ -2069,6 +3173,11 @@ export class AdsService implements OnModuleInit {
       this._adCampaignEventModel.distinct('user', {
         campaign: oid,
         eventType: AdCampaignEventTypeEnum.CLICK,
+        user: { $exists: true, $ne: null },
+      }),
+      this._adCampaignEventModel.distinct('user', {
+        campaign: oid,
+        eventType: AdCampaignEventTypeEnum.CONVERSION,
         user: { $exists: true, $ne: null },
       }),
       this._adCampaignEventModel.distinct('clientInstallId', {
@@ -2081,6 +3190,7 @@ export class AdsService implements OnModuleInit {
           impressions: number;
           clicks: number;
           actionClicks: number;
+          conversions: number;
         }>([
           {
             $match: {
@@ -2125,6 +3235,15 @@ export class AdsService implements OnModuleInit {
                   ],
                 },
               },
+              conversions: {
+                $sum: {
+                  $cond: [
+                    { $eq: ['$eventType', AdCampaignEventTypeEnum.CONVERSION] },
+                    1,
+                    0,
+                  ],
+                },
+              },
             },
           },
           { $sort: { _id: 1 } },
@@ -2135,12 +3254,17 @@ export class AdsService implements OnModuleInit {
           _id: { itemType: string; itemId: string };
           impressions: number;
           clicks: number;
+          conversions: number;
         }>([
           {
             $match: {
               campaign: oid,
               eventType: {
-                $in: [AdCampaignEventTypeEnum.IMPRESSION, AdCampaignEventTypeEnum.CLICK],
+                $in: [
+                  AdCampaignEventTypeEnum.IMPRESSION,
+                  AdCampaignEventTypeEnum.CLICK,
+                  AdCampaignEventTypeEnum.CONVERSION,
+                ],
               },
             },
           },
@@ -2164,9 +3288,18 @@ export class AdsService implements OnModuleInit {
                   $cond: [{ $eq: ['$eventType', AdCampaignEventTypeEnum.CLICK] }, 1, 0],
                 },
               },
+              conversions: {
+                $sum: {
+                  $cond: [
+                    { $eq: ['$eventType', AdCampaignEventTypeEnum.CONVERSION] },
+                    1,
+                    0,
+                  ],
+                },
+              },
             },
           },
-          { $sort: { clicks: -1, impressions: -1 } },
+          { $sort: { conversions: -1, clicks: -1, impressions: -1 } },
         ])
         .exec(),
       this._adCampaignEventModel
@@ -2213,6 +3346,7 @@ export class AdsService implements OnModuleInit {
         title: string;
         impressions: number;
         clicks: number;
+        conversions: number;
       }
     >();
     for (const [key, title] of itemTitles.entries()) {
@@ -2224,6 +3358,7 @@ export class AdsService implements OnModuleInit {
         title,
         impressions: 0,
         clicks: 0,
+        conversions: 0,
       });
     }
     for (const row of byItem) {
@@ -2237,9 +3372,11 @@ export class AdsService implements OnModuleInit {
         title: itemTitles.get(key) ?? itemId,
         impressions: 0,
         clicks: 0,
+        conversions: 0,
       };
       current.impressions = Number(row.impressions ?? 0);
       current.clicks = Number(row.clicks ?? 0);
+      current.conversions = Number(row.conversions ?? 0);
       performanceMap.set(key, current);
     }
     const itemPerformance: AdCampaignItemPerformance[] = [
@@ -2251,14 +3388,22 @@ export class AdsService implements OnModuleInit {
         title: row.title,
         impressions: row.impressions,
         clicks: row.clicks,
+        conversions: row.conversions,
         ctrPercent:
           row.impressions > 0
             ? Number(((row.clicks / row.impressions) * 100).toFixed(2))
             : 0,
+        conversionRatePercent:
+          row.clicks > 0
+            ? Number(((row.conversions / row.clicks) * 100).toFixed(2))
+            : 0,
       }))
       .sort(
         (a, b) =>
-          b.clicks - a.clicks || b.impressions - a.impressions || a.title.localeCompare(b.title),
+          b.conversions - a.conversions ||
+          b.clicks - a.clicks ||
+          b.impressions - a.impressions ||
+          a.title.localeCompare(b.title),
       );
 
     const recentEvents: AdCampaignStatsRecentEvent[] = recentDocs.map((row) => {
@@ -2284,6 +3429,10 @@ export class AdsService implements OnModuleInit {
       const ca = r.createdAt as Date | string | undefined;
       return {
         eventType: r.eventType as AdCampaignEventTypeEnum,
+        conversionSource:
+          r.conversionSource != null
+            ? (String(r.conversionSource) as AdCampaignConversionSourceEnum)
+            : null,
         itemType: String(r.itemType ?? ''),
         itemId: String(r.itemId ?? ''),
         createdAt:
@@ -2301,6 +3450,7 @@ export class AdsService implements OnModuleInit {
       impressions: d.impressions,
       clicks: d.clicks,
       actionClicks: d.actionClicks,
+      conversions: d.conversions,
     }));
 
     return {
@@ -2308,8 +3458,10 @@ export class AdsService implements OnModuleInit {
       impressionsTotal,
       clicksTotal,
       actionClicksTotal,
+      conversionsTotal,
       uniqueUsersImpressions: impUsers.filter(Boolean).length,
       uniqueUsersClicks: clkUsers.filter(Boolean).length,
+      uniqueUsersConversions: convUsers.filter(Boolean).length,
       uniqueClientDevices: deviceIds.filter(Boolean).length,
       last7Days,
       itemPerformance,

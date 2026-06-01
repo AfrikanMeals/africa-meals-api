@@ -1,5 +1,6 @@
 import { StripeConnectTransferService } from '@modules/billing/stripe/stripe-connect-transfer.service';
 import { BusinessReportsService } from '@modules/business-reports/business-reports.service';
+import { AdsService } from '@modules/ads/ads.service';
 import { CartService } from '@modules/cart/cart.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { ProductsService } from '@modules/products/products.service';
@@ -98,6 +99,9 @@ export class OrdersService {
 
   @Inject(LoyaltyService)
   private readonly _loyaltyService: LoyaltyService;
+
+  @Inject(AdsService)
+  private readonly _adsService: AdsService;
 
   /** Expose l’adresse de livraison figée au paiement dans `user.addresses`. */
   static enrichOrdersWithDeliveryAddress(
@@ -575,6 +579,7 @@ export class OrdersService {
         return {
           label,
           itemType: item.type!,
+          entityId: String(item.entityId ?? ''),
           pictureUrl: e?.profileImage,
           quantity: item.quantity!,
           price: item.price!,
@@ -1002,6 +1007,34 @@ export class OrdersService {
             }`,
           ),
         );
+
+      const paidItemRefs = (o.items as OrdeLineItem[])
+        .map((item) => ({
+          itemType: String(item.itemType ?? ''),
+          entityId: String(item.entityId ?? '').trim(),
+        }))
+        .filter(
+          (item) =>
+            (item.itemType === CartItemTypeEnum.PRODUCT ||
+              item.itemType === CartItemTypeEnum.DRINK) &&
+            Types.ObjectId.isValid(item.entityId),
+        );
+      if (uid && storeIdForNotif && paidItemRefs.length > 0) {
+        void this._adsService
+          .trackOrderConversions({
+            orderId,
+            userId: uid,
+            storeId: storeIdForNotif,
+            items: paidItemRefs,
+          })
+          .catch((err) =>
+            this.logger.warn(
+              `Ads conversion tracking failed for order=${orderId}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            ),
+          );
+      }
     }
   }
 

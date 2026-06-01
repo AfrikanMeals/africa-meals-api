@@ -16,6 +16,10 @@ import {
   AdPricingSettingsModel,
   AdPricingSettingsSchema,
 } from '@schemas/ad-pricing-settings.schema';
+import {
+  AdCreditPaymentModel,
+  AdCreditPaymentSchema,
+} from '@schemas/ad-credit-payment.schema';
 import { AdModel, AdSchema } from '@schemas/ad.schema';
 import { DrinkModel, DrinkSchema } from '@schemas/drink.schema';
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
@@ -37,6 +41,7 @@ import { AdsService } from './ads.service';
       { name: AdCampaignModel.name, schema: AdCampaignSchema },
       { name: AdCampaignEventModel.name, schema: AdCampaignEventSchema },
       { name: AdPricingSettingsModel.name, schema: AdPricingSettingsSchema },
+      { name: AdCreditPaymentModel.name, schema: AdCreditPaymentSchema },
       { name: StoreModel.name, schema: StoreSchema },
       { name: ProductModel.name, schema: ProductSchema },
       { name: DrinkModel.name, schema: DrinkSchema },

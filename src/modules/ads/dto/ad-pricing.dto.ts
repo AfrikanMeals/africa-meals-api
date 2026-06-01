@@ -59,6 +59,16 @@ export class UpdateAdPricingDto {
   campaignActionCad?: number;
 
   @ApiPropertyOptional({
+    description: 'Coût facturé par conversion (achat attribué à une pub/campagne).',
+    example: 1.2,
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  conversionCad?: number;
+
+  @ApiPropertyOptional({
     description: 'Budget minimum conseillé (affichage admin).',
     example: 25,
     minimum: 0,

@@ -51,6 +51,13 @@ export class SubscriptionPlanModel {
    */
   @Prop({ type: Number, default: 0, min: 0 })
   maxCatalogItems: number;
+
+  /**
+   * Nombre max de plats configurables par jour dans le menu du jour.
+   * 0 = illimité.
+   */
+  @Prop({ type: Number, default: 0, min: 0 })
+  maxDailyMenuItems: number;
 }
 
 export type SubscriptionPlanDocument = HydratedDocument<SubscriptionPlanModel>;

@@ -59,6 +59,13 @@ import { SubscriptionsService } from '@modules/subscriptions/subscriptions.servi
 export class StoreService {
   private readonly _logger = new Logger(StoreService.name);
 
+  private assertVendorStripeConnectReadyForWrites(user: UserModel): void {
+    if (user.type !== UserTypeEnum.VENDOR) return;
+    if (!isStripeConnectOnboardingCompleteUser(user as unknown as Record<string, unknown>)) {
+      throw new ForbiddenException('stripe_connect_required');
+    }
+  }
+
   /**
    * Dossier vendeur : adresse textuelle complète + coordonnées réelles sur la carte
    * (requis pour la recherche par proximité et la validation du dossier).
@@ -227,9 +234,12 @@ export class StoreService {
       .populate('likedBy')
       .exec();
     if (store?.dailyMenuByWeekday?.length) {
+      const dailyMenuLimit =
+        await this._subscriptionsService.resolveDailyMenuItemLimitForStore(id);
       (store as unknown as { dailyMenuByWeekday: unknown }).dailyMenuByWeekday =
         this.normalizeDailyMenuForApi(
           store.dailyMenuByWeekday as Record<string, unknown>[],
+          dailyMenuLimit,
         );
     }
     return store;
@@ -505,7 +515,14 @@ export class StoreService {
     const rawMenu =
       (doc.dailyMenuByWeekday as Array<Record<string, unknown>> | undefined) ??
       [];
-    const dailyMenuByWeekday = this.normalizeDailyMenuForApi(rawMenu);
+    const dailyMenuLimit =
+      await this._subscriptionsService.resolveDailyMenuItemLimitForStore(
+        targetId,
+      );
+    const dailyMenuByWeekday = this.normalizeDailyMenuForApi(
+      rawMenu,
+      dailyMenuLimit,
+    );
 
     return {
       store: {
@@ -537,6 +554,7 @@ export class StoreService {
     user: UserModel,
     slots: DailyMenuSlotDto[],
   ) {
+    this.assertVendorStripeConnectReadyForWrites(user);
     const store = await this._storeModel
       .findOne({ _id: storeId, owner: user._id })
       .exec();
@@ -548,6 +566,8 @@ export class StoreService {
       number,
       { productId: string; stockUnlimited: boolean; stockRemaining: number }[]
     >();
+    const dailyMenuLimit =
+      await this._subscriptionsService.resolveDailyMenuItemLimitForStore(storeId);
     for (let d = 0; d <= 6; d++) {
       merged.set(d, []);
     }
@@ -560,6 +580,9 @@ export class StoreService {
       >();
       for (const e of entries) {
         byPid.set(e.productId, e);
+      }
+      if (dailyMenuLimit != null && byPid.size > dailyMenuLimit) {
+        throw new ForbiddenException('daily_menu_limit_reached_for_plan');
       }
       merged.set(d, [...byPid.values()]);
     }
@@ -610,6 +633,7 @@ export class StoreService {
   /** Menu du jour normalisé pour l’API (app mobile + dashboard). */
   private normalizeDailyMenuForApi(
     rows: Array<Record<string, unknown>> | undefined | null,
+    maxItemsPerDay?: number | null,
   ): Array<{
     dayOfWeek: number;
     items: Array<{
@@ -663,7 +687,11 @@ export class StoreService {
           }
         }
       }
-      return { dayOfWeek, items };
+      const cappedItems =
+        maxItemsPerDay != null && maxItemsPerDay > 0
+          ? items.slice(0, maxItemsPerDay)
+          : items;
+      return { dayOfWeek, items: cappedItems };
     });
   }
 
@@ -702,8 +730,11 @@ export class StoreService {
       .select('dailyMenuByWeekday')
       .lean()
       .exec();
+    const dailyMenuLimit =
+      await this._subscriptionsService.resolveDailyMenuItemLimitForStore(storeId);
     const rows = this.normalizeDailyMenuForApi(
       (doc?.dailyMenuByWeekday as Record<string, unknown>[]) ?? [],
+      dailyMenuLimit,
     );
     const entry = rows
       .find((r) => r.dayOfWeek === dayOfWeek)
@@ -823,8 +854,11 @@ export class StoreService {
       .select('dailyMenuByWeekday')
       .lean()
       .exec();
+    const dailyMenuLimit =
+      await this._subscriptionsService.resolveDailyMenuItemLimitForStore(storeId);
     const rows = this.normalizeDailyMenuForApi(
       (doc?.dailyMenuByWeekday as Record<string, unknown>[]) ?? [],
+      dailyMenuLimit,
     );
     const slot = this.todayDailyMenuSlot(rows);
     if (!slot) {
@@ -858,8 +892,16 @@ export class StoreService {
     },
   ): Promise<void> {
     const raw = (store as { dailyMenuByWeekday?: unknown }).dailyMenuByWeekday;
+    const storeId = this.stringifyIdLike((store as { _id?: unknown })._id);
+    const dailyMenuLimit =
+      Types.ObjectId.isValid(storeId)
+        ? await this._subscriptionsService.resolveDailyMenuItemLimitForStore(
+            storeId,
+          )
+        : null;
     const rows = this.normalizeDailyMenuForApi(
       Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [],
+      dailyMenuLimit,
     );
     const slot = this.todayDailyMenuSlot(rows);
     if (!slot) {
@@ -1213,8 +1255,13 @@ export class StoreService {
         .select('dailyMenuByWeekday')
         .lean()
         .exec();
+      const dailyMenuLimit =
+        await this._subscriptionsService.resolveDailyMenuItemLimitForStore(
+          storeId,
+        );
       const rows = this.normalizeDailyMenuForApi(
         (doc?.dailyMenuByWeekday as Record<string, unknown>[]) ?? [],
+        dailyMenuLimit,
       );
       const dayOfWeek = new Date().getDay();
       const slot = rows.find((r) => r.dayOfWeek === dayOfWeek);
@@ -1646,10 +1693,8 @@ export class StoreService {
       throw new NotFoundException('store_not_found');
     }
 
-    if (store.owner._id.toString() === user.id.toString()) {
-      throw new ForbiddenException('cannot_add_item_to_your_store_cart');
-    }
-
+    // Règle produit: en mode client, tous les rôles peuvent commander
+    // (CUSTOMER / VENDOR / ADMIN / DELIVERY), y compris le propriétaire.
     await this.assertDailyMenuProductAddAllowed(id, user, args);
 
     return await this._cartService.addItemToCart(args, user, store);

@@ -12,6 +12,7 @@ export type SubscriptionPlanSeed = {
   maxStores?: number;
   mobileAccess?: boolean;
   maxCatalogItems?: number;
+  maxDailyMenuItems?: number;
 };
 
 export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
@@ -36,6 +37,7 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     maxStores: 1,
     mobileAccess: false,
     maxCatalogItems: 10,
+    maxDailyMenuItems: 0,
   },
   {
     name: 'PRO',
@@ -58,5 +60,6 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     maxStores: 0,
     mobileAccess: true,
     maxCatalogItems: 0,
+    maxDailyMenuItems: 0,
   },
 ];

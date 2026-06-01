@@ -6,6 +6,11 @@ import { UserModel } from './user.schema';
 export enum AdCampaignEventTypeEnum {
   IMPRESSION = 'IMPRESSION',
   CLICK = 'CLICK',
+  CONVERSION = 'CONVERSION',
+}
+
+export enum AdCampaignConversionSourceEnum {
+  CAMPAIGN_ITEM = 'CAMPAIGN_ITEM',
 }
 
 @Schema({
@@ -40,6 +45,18 @@ export class AdCampaignEventModel {
 
   @Prop({ required: false, maxlength: 128 })
   clientInstallId?: string;
+
+  /** Commande associée pour les conversions attribuées. */
+  @Prop({ required: false, maxlength: 64, index: true })
+  orderId?: string;
+
+  /** Source d'attribution de conversion (audit marketing). */
+  @Prop({
+    required: false,
+    enum: AdCampaignConversionSourceEnum,
+    maxlength: 32,
+  })
+  conversionSource?: AdCampaignConversionSourceEnum;
 }
 
 export const AdCampaignEventSchema =

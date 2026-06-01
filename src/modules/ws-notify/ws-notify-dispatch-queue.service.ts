@@ -38,6 +38,11 @@ function toBool(raw: string | undefined): boolean {
   return v === '1' || v === 'true' || v === 'yes' || v === 'on';
 }
 
+function isMqttAuthError(message: string): boolean {
+  const m = message.toLowerCase();
+  return m.includes('not authorized') || m.includes('bad user name or password');
+}
+
 @Injectable()
 export class WsNotifyDispatchQueueService
   implements OnModuleInit, OnModuleDestroy
@@ -321,6 +326,13 @@ export class WsNotifyDispatchQueueService
       this.mqttState = 'error';
       this.mqttLastError = msg;
       this.logger.warn(`MQTT error: ${msg}`);
+      if (isMqttAuthError(msg)) {
+        this.logger.warn(
+          'MQTT auth rejected; stopping reconnect loop until service restart or credential change.',
+        );
+        this.mqttConnected = false;
+        client.end(true);
+      }
     });
     client.on('close', () => {
       this.mqttConnected = false;

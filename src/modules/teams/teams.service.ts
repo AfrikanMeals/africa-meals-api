@@ -170,7 +170,7 @@ export class TeamsService {
         ? await this.subscriptionsService.resolvePlanDowngradeImpactForOwner(
             user._id as Types.ObjectId,
           )
-        : { hiddenStores: 0, hiddenCatalogItems: 0 };
+        : { hiddenStores: 0, hiddenCatalogItems: 0, hiddenDailyMenuItems: 0 };
     return {
       storeAccess,
       adminPermissions,

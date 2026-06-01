@@ -72,6 +72,11 @@ export class CreateSubscriptionPlanDto {
   @IsInt()
   @Min(0)
   maxCatalogItems?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxDailyMenuItems?: number;
 }
 
 export class UpdateSubscriptionPlanDto {
@@ -138,6 +143,11 @@ export class UpdateSubscriptionPlanDto {
   @IsInt()
   @Min(0)
   maxCatalogItems?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxDailyMenuItems?: number;
 }
 
 export class SubscribeVendorDto {

@@ -11,6 +11,11 @@ export enum AdCampaignItemTypeEnum {
   DRINK = 'DRINK',
 }
 
+export enum AdCampaignArchiveReasonEnum {
+  ENDED = 'ENDED',
+  EXPIRED = 'EXPIRED',
+}
+
 @Schema({ _id: false })
 export class AdCampaignItemModel {
   @Prop({ required: true, enum: AdCampaignItemTypeEnum })
@@ -100,6 +105,28 @@ export class AdCampaignModel extends BaseSchema {
 
   @Prop({ required: false, name: 'archived_at' })
   archivedAt?: Date;
+
+  @Prop({
+    required: false,
+    enum: AdCampaignArchiveReasonEnum,
+    name: 'archive_reason',
+  })
+  archiveReason?: AdCampaignArchiveReasonEnum;
+
+  /** Facturation figée au moment de la clôture (fin manuelle ou expiration). */
+  @Prop({ required: false, name: 'billing_finalized_at' })
+  billingFinalizedAt?: Date;
+
+  @Prop({ required: false, name: 'billing_final_amount_cad', default: 0 })
+  billingFinalAmountCad?: number;
+
+  @Prop({
+    required: false,
+    type: MongooseSchema.Types.Mixed,
+    default: {},
+    name: 'billing_snapshot',
+  })
+  billingSnapshot?: Record<string, unknown>;
 }
 
 export const AdCampaignSchema = SchemaFactory.createForClass(AdCampaignModel);

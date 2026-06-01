@@ -1,6 +1,7 @@
 import { CartModule } from '@modules/cart/cart.module';
 import { LoyaltyModule } from '@modules/loyalty/loyalty.module';
 import { ProductsModule } from '@modules/products/products.module';
+import { AdsModule } from '@modules/ads/ads.module';
 import { StripeConnectTransferModule } from '@modules/billing/stripe/stripe-connect-transfer.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -50,6 +51,7 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
     WsNotifyModule,
     BusinessReportsModule,
     CartModule,
+    AdsModule,
     LoyaltyModule,
     ProductsModule,
     StripeConnectTransferModule,

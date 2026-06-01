@@ -6,6 +6,13 @@ import { UserModel } from './user.schema';
 export enum AdEventTypeEnum {
   IMPRESSION = 'IMPRESSION',
   CLICK = 'CLICK',
+  CONVERSION = 'CONVERSION',
+}
+
+export enum AdConversionSourceEnum {
+  BANNER_PRODUCT = 'BANNER_PRODUCT',
+  BANNER_STORE = 'BANNER_STORE',
+  BANNER_GENERIC = 'BANNER_GENERIC',
 }
 
 @Schema({
@@ -34,6 +41,14 @@ export class AdEventModel {
   /** Identifiant stable côté app (ex. UUID stocké) pour regrouper les invités. */
   @Prop({ required: false, maxlength: 128 })
   clientInstallId?: string;
+
+  /** Commande associée pour les conversions attribuées. */
+  @Prop({ required: false, maxlength: 64, index: true })
+  orderId?: string;
+
+  /** Source d'attribution de conversion (audit marketing). */
+  @Prop({ required: false, enum: AdConversionSourceEnum, maxlength: 32 })
+  conversionSource?: AdConversionSourceEnum;
 }
 
 export const AdEventSchema = SchemaFactory.createForClass(AdEventModel);

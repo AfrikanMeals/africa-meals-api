@@ -63,6 +63,7 @@ function mapPlan(doc: Record<string, unknown>) {
     maxStores: Math.max(0, Number(doc.maxStores ?? 0)),
     mobileAccess: doc.mobileAccess === true,
     maxCatalogItems: Math.max(0, Number(doc.maxCatalogItems ?? 0)),
+    maxDailyMenuItems: Math.max(0, Number(doc.maxDailyMenuItems ?? 0)),
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -259,6 +260,7 @@ export class SubscriptionsService implements OnModuleInit {
         maxStores: Math.max(0, Number(seed.maxStores ?? 0)),
         mobileAccess: seed.mobileAccess === true,
         maxCatalogItems: Math.max(0, Number(seed.maxCatalogItems ?? 0)),
+        maxDailyMenuItems: Math.max(0, Number(seed.maxDailyMenuItems ?? 0)),
       });
       this.logger.log(`Seed abonnement créé: ${seed.name}`);
     }
@@ -470,6 +472,33 @@ export class SubscriptionsService implements OnModuleInit {
     return this.catalogLimitFromPlanDoc(plan as Record<string, unknown>);
   }
 
+  private dailyMenuLimitFromPlanDoc(
+    plan: Record<string, unknown> | null,
+  ): number | null {
+    if (!plan) return null;
+    const configured = Math.max(0, Number(plan.maxDailyMenuItems ?? 0));
+    return configured > 0 ? configured : null;
+  }
+
+  async resolveDailyMenuItemLimitForStore(
+    storeId: string | Types.ObjectId,
+  ): Promise<number | null> {
+    const preferred = await this.findPreferredStoreSubscription(storeId);
+    if (!preferred) {
+      const freePlan = await this.findDefaultFreePlan();
+      return this.dailyMenuLimitFromPlanDoc(freePlan);
+    }
+    const planId = String(preferred.plan ?? '');
+    if (!Types.ObjectId.isValid(planId)) {
+      return null;
+    }
+    const plan = await this.planModel.findById(planId).lean().exec();
+    if (!plan) {
+      return null;
+    }
+    return this.dailyMenuLimitFromPlanDoc(plan as Record<string, unknown>);
+  }
+
   async resolveAccessibleCatalogIdsForStore(
     storeId: string | Types.ObjectId,
   ): Promise<{
@@ -677,7 +706,11 @@ export class SubscriptionsService implements OnModuleInit {
 
   async resolvePlanDowngradeImpactForOwner(
     ownerId: string | Types.ObjectId,
-  ): Promise<{ hiddenStores: number; hiddenCatalogItems: number }> {
+  ): Promise<{
+    hiddenStores: number;
+    hiddenCatalogItems: number;
+    hiddenDailyMenuItems: number;
+  }> {
     const oid = this.normalizeUserObjectId(ownerId);
     const rows = await this.storeModel
       .find({ owner: oid })
@@ -687,7 +720,7 @@ export class SubscriptionsService implements OnModuleInit {
       .exec();
     const allStoreIds = rows.map((r) => String(r._id));
     if (!allStoreIds.length) {
-      return { hiddenStores: 0, hiddenCatalogItems: 0 };
+      return { hiddenStores: 0, hiddenCatalogItems: 0, hiddenDailyMenuItems: 0 };
     }
 
     const accessibleStoreIds = new Set(
@@ -710,9 +743,36 @@ export class SubscriptionsService implements OnModuleInit {
       }),
     );
 
+    const hiddenDailyMenuCounts = await Promise.all(
+      allStoreIds.map(async (storeId) => {
+        const limit = await this.resolveDailyMenuItemLimitForStore(storeId);
+        if (limit == null || limit <= 0) return 0;
+        const store = await this.storeModel
+          .findById(storeId)
+          .select('dailyMenuByWeekday')
+          .lean()
+          .exec();
+        const rowsRaw = (store as { dailyMenuByWeekday?: unknown } | null)
+          ?.dailyMenuByWeekday;
+        if (!Array.isArray(rowsRaw) || !rowsRaw.length) {
+          return 0;
+        }
+        return rowsRaw.reduce((acc, row) => {
+          const itemCount = Array.isArray((row as { items?: unknown[] }).items)
+            ? (row as { items?: unknown[] }).items!.length
+            : Array.isArray((row as { productIds?: unknown[] }).productIds)
+            ? (row as { productIds?: unknown[] }).productIds!.length
+            : 0;
+          if (itemCount <= limit) return acc;
+          return acc + (itemCount - limit);
+        }, 0);
+      }),
+    );
+
     return {
       hiddenStores,
       hiddenCatalogItems: hiddenCatalogCounts.reduce((acc, n) => acc + n, 0),
+      hiddenDailyMenuItems: hiddenDailyMenuCounts.reduce((acc, n) => acc + n, 0),
     };
   }
 
@@ -766,6 +826,10 @@ export class SubscriptionsService implements OnModuleInit {
         0,
         Math.floor(Number(dto.maxCatalogItems ?? 0)),
       ),
+      maxDailyMenuItems: Math.max(
+        0,
+        Math.floor(Number(dto.maxDailyMenuItems ?? 0)),
+      ),
     });
     return mapPlan(doc.toObject() as Record<string, unknown>);
   }
@@ -801,6 +865,12 @@ export class SubscriptionsService implements OnModuleInit {
       patch.maxCatalogItems = Math.max(
         0,
         Math.floor(Number(dto.maxCatalogItems)),
+      );
+    }
+    if (dto.maxDailyMenuItems != null) {
+      patch.maxDailyMenuItems = Math.max(
+        0,
+        Math.floor(Number(dto.maxDailyMenuItems)),
       );
     }
 

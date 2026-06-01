@@ -14,6 +14,11 @@ export enum StoreAdActionTypeEnum {
   WEBSITE = 'WEBSITE',
 }
 
+export enum AdArchiveReasonEnum {
+  ENDED = 'ENDED',
+  EXPIRED = 'EXPIRED',
+}
+
 @Schema({
   timestamps: true,
   collection: 'ads',
@@ -74,6 +79,28 @@ export class AdModel extends BaseSchema {
     required: false,
   })
   product?: MongooseSchema.Types.ObjectId;
+
+  /** Date d’archivage (Terminer/Expirée). Null/absent = bannière active dans le cycle de vie. */
+  @Prop({ required: false, default: null })
+  archivedAt?: Date | null;
+
+  @Prop({
+    required: false,
+    enum: AdArchiveReasonEnum,
+    default: null,
+  })
+  archiveReason?: AdArchiveReasonEnum | null;
+
+  /** Date de finalisation de la facture de la bannière. */
+  @Prop({ required: false, default: null })
+  billingFinalizedAt?: Date | null;
+
+  /** Montant final figé au moment de la fin (CAD). */
+  @Prop({ required: false, default: 0 })
+  billingFinalAmountCad?: number;
+
+  @Prop({ required: false, type: MongooseSchema.Types.Mixed, default: null })
+  billingSnapshot?: Record<string, unknown> | null;
 }
 
 export const AdSchema = SchemaFactory.createForClass(AdModel);
