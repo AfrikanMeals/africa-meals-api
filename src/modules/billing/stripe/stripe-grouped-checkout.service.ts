@@ -121,15 +121,20 @@ function cartLineCurrencyCode(line: Record<string, unknown>): string | null {
   return null;
 }
 
+function explicitCurrenciesForCartGroup(lines: Record<string, unknown>[]): Set<string> {
+  const out = new Set<string>();
+  for (const line of lines) {
+    const cur = cartLineCurrencyCode(line);
+    if (cur) out.add(cur);
+  }
+  return out;
+}
+
 function currencyForCartGroup(
   lines: Record<string, unknown>[],
   storeCurrency: unknown,
 ): string {
-  const fromLines = new Set<string>();
-  for (const line of lines) {
-    const cur = cartLineCurrencyCode(line);
-    if (cur) fromLines.add(cur);
-  }
+  const fromLines = explicitCurrenciesForCartGroup(lines);
   if (fromLines.size > 1) return 'multi';
   if (fromLines.size === 1) return [...fromLines][0];
   return normalizeStripeCurrencyCode(storeCurrency);
@@ -463,33 +468,40 @@ export class StripeGroupedCheckoutService {
       throw new BadRequestException('cart_is_empty');
     }
 
-    const currencies = new Set<string>();
-    for (const g of groups) {
-      const rawItems = Array.isArray(g.items) ? g.items : [];
-      const cartLines = rawItems.filter(
-        (x): x is Record<string, unknown> =>
-          x != null && typeof x === 'object' && !Array.isArray(x),
-      );
-      const cur = currencyForCartGroup(cartLines, g.store?.currency);
-      if (cur === 'multi') {
-        throw new BadRequestException('multi_currency_not_supported');
-      }
-      currencies.add(cur);
-    }
-    if (currencies.size !== 1) {
-      throw new BadRequestException('multi_currency_not_supported');
-    }
-    const currency = [...currencies][0];
+    // Si le client envoie une devise explicite (ex. "CAD" résolu depuis l'affichage
+    // panier), on la prend comme source de vérité. C'est le comportement attendu :
+    // l'utilisateur voit C$7.00 → Stripe doit débiter en CAD, quelle que soit la
+    // devise stockée sur la boutique en base.
     const requestedCurrency =
       typeof dto.currency === 'string' && dto.currency.trim()
-        ? dto.currency.trim().toLowerCase()
+        ? normalizeStripeCurrencyCode(dto.currency)
         : undefined;
-    if (requestedCurrency != null && requestedCurrency !== currency) {
-      throw new BadRequestException({
-        message: 'payment_currency_mismatch',
-        expectedCurrency: currency.toUpperCase(),
-        requestedCurrency: requestedCurrency.toUpperCase(),
-      });
+
+    let currency: string;
+
+    if (requestedCurrency) {
+      // Devise fournie par le client → on l'utilise directement sans valider
+      // contre store.currency (qui peut être XAF même si les produits sont en CAD).
+      currency = requestedCurrency;
+    } else {
+      // Fallback : résolution automatique depuis les lignes panier puis store.
+      const currencies = new Set<string>();
+      for (const g of groups) {
+        const rawItems = Array.isArray(g.items) ? g.items : [];
+        const cartLines = rawItems.filter(
+          (x): x is Record<string, unknown> =>
+            x != null && typeof x === 'object' && !Array.isArray(x),
+        );
+        const cur = currencyForCartGroup(cartLines, g.store?.currency);
+        if (cur === 'multi') {
+          throw new BadRequestException('multi_currency_not_supported');
+        }
+        currencies.add(cur);
+      }
+      if (currencies.size !== 1) {
+        throw new BadRequestException('multi_currency_not_supported');
+      }
+      currency = [...currencies][0];
     }
 
     const fulfillment = dto.fulfillmentByStoreId ?? {};
@@ -1235,6 +1247,9 @@ export class StripeGroupedCheckoutService {
               shipCents > 0 && checkoutAddressId
                 ? checkoutAddressId
                 : undefined,
+            currency: currency
+              ? currency.trim().toUpperCase()
+              : undefined,
           },
         );
         const paidOk = await this.ordersService.isOrderPaidForStripePayment(

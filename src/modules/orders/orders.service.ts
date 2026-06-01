@@ -23,6 +23,7 @@ import {
 } from '@schemas/order.schema';
 import { DeliveryAgentApplicationModel } from '@schemas/delivery-agent-application.schema';
 import { StoreModel } from '@schemas/store.schema';
+import { StripeProcessedCheckoutModel } from '@schemas/stripe-processed-checkout.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { haversineDistance } from 'src/utils/helpers';
@@ -66,6 +67,9 @@ export class OrdersService {
 
   @InjectModel(StoreModel.name)
   private readonly _storeModel: Model<StoreModel>;
+
+  @InjectModel(StripeProcessedCheckoutModel.name)
+  private readonly _stripeProcessedCheckoutModel: Model<StripeProcessedCheckoutModel>;
 
   @InjectModel(DeliveryAgentApplicationModel.name)
   private readonly _deliveryAgentApplications: Model<DeliveryAgentApplicationModel>;
@@ -143,6 +147,55 @@ export class OrdersService {
         addresses: [addrDoc],
       },
     };
+  }
+
+  /** Complète `order.currency` depuis `stripe_processed_checkouts` si absent. */
+  private async enrichOrdersWithStripeCurrency(
+    rows: Record<string, unknown>[],
+  ): Promise<Record<string, unknown>[]> {
+    if (!rows.length) return rows;
+
+    const missingByPaymentId = new Map<string, number[]>();
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rawCur = row['currency'];
+      if (typeof rawCur === 'string' && rawCur.trim().length > 0) continue;
+      const rawId =
+        row['stripeParentPaymentId'] ?? row['stripe_parent_payment_id'];
+      const paymentId = typeof rawId === 'string' ? rawId.trim() : '';
+      if (!paymentId) continue;
+      const idx = missingByPaymentId.get(paymentId) ?? [];
+      idx.push(i);
+      missingByPaymentId.set(paymentId, idx);
+    }
+    if (!missingByPaymentId.size) return rows;
+
+    const docs = await this._stripeProcessedCheckoutModel
+      .find({ sessionId: { $in: [...missingByPaymentId.keys()] } })
+      .select('sessionId currency')
+      .lean()
+      .exec();
+
+    const currencyByPaymentId = new Map<string, string>();
+    for (const d of docs) {
+      const sid = String(d.sessionId ?? '').trim();
+      const cur = String(d.currency ?? '')
+        .trim()
+        .toUpperCase();
+      if (!sid || !cur) continue;
+      currencyByPaymentId.set(sid, cur);
+    }
+    if (!currencyByPaymentId.size) return rows;
+
+    const out = [...rows];
+    for (const [paymentId, indexes] of missingByPaymentId) {
+      const cur = currencyByPaymentId.get(paymentId);
+      if (!cur) continue;
+      for (const i of indexes) {
+        out[i] = { ...out[i], currency: cur };
+      }
+    }
+    return out;
   }
 
   /** Client + adresses de livraison (refs `addresses` peuplées). */
@@ -312,6 +365,7 @@ export class OrdersService {
     let enriched = OrdersService.enrichOrdersWithDeliveryAddress(
       data as unknown as Record<string, unknown>[],
     );
+    enriched = await this.enrichOrdersWithStripeCurrency(enriched);
     enriched = await this.attachClientOrderFlags(
       enriched,
       user,
@@ -543,7 +597,8 @@ export class OrdersService {
       row = this.attachDashboardOrderRefundFlags([plain])[0];
     }
     const [enriched] = await this.attachStatusEventsToOrders([row]);
-    const out = enriched;
+    const [withCurrency] = await this.enrichOrdersWithStripeCurrency([enriched]);
+    const out = withCurrency;
     if (
       asCustomerScope ||
       user.type === UserTypeEnum.USER ||
@@ -786,6 +841,7 @@ export class OrdersService {
       chargedGoodsCents?: number;
       chargedShipCents?: number;
       deliveryAddressId?: string;
+      currency?: string;
     },
   ): Promise<void> {
     const ship = Math.max(0, Number(shippingPrice) || 0);
@@ -841,6 +897,9 @@ export class OrdersService {
     }
     if (opts?.couponCode?.trim()) {
       $set['couponCode'] = opts.couponCode.trim().toUpperCase();
+    }
+    if (opts?.currency?.trim()) {
+      $set['currency'] = opts.currency.trim().toUpperCase();
     }
     if (gC != null) {
       $set['stripeChargedGoodsCents'] = gC;

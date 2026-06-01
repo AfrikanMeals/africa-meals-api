@@ -23,6 +23,7 @@ import {
   OrderStatusEnum,
 } from '@schemas/order.schema';
 import { RefundProcessingSettingsModel } from '@schemas/refund-processing-settings.schema';
+import { StripeProcessedCheckoutModel } from '@schemas/stripe-processed-checkout.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
@@ -49,6 +50,7 @@ export type RefundQueueItem = {
   customerRefundCents?: number;
   totalPrice: number;
   shippingPrice: number;
+  currency: string;
   stripeParentPaymentId?: string;
   orderStatus: string;
   customer: { id: string; fullName: string; email: string };
@@ -164,6 +166,8 @@ export class RefundProcessingService {
   constructor(
     @InjectModel(OrderModel.name)
     private readonly orderModel: Model<OrderModel>,
+    @InjectModel(StripeProcessedCheckoutModel.name)
+    private readonly stripeProcessedCheckoutModel: Model<StripeProcessedCheckoutModel>,
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
     @InjectModel(RefundProcessingSettingsModel.name)
@@ -181,6 +185,55 @@ export class RefundProcessingService {
     private readonly stripeFees: StripeChargeFeeService,
     private readonly stripeTransfers: StripeConnectTransferService,
   ) {}
+
+  private normalizeCurrency(raw: unknown): string | undefined {
+    if (typeof raw !== 'string') return undefined;
+    const cur = raw.trim().toUpperCase();
+    return cur.length > 0 ? cur : undefined;
+  }
+
+  private formatAmountMajor(amount: number, currency: string): string {
+    const value = Number.isFinite(amount) ? amount : 0;
+    const cur = this.normalizeCurrency(currency) ?? 'CAD';
+    try {
+      return new Intl.NumberFormat('fr-FR', {
+        style: 'currency',
+        currency: cur,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(value);
+    } catch {
+      return `${value.toFixed(2)} ${cur}`;
+    }
+  }
+
+  private formatAmountCents(amountCents: number, currency: string): string {
+    const cents = Number.isFinite(amountCents) ? amountCents : 0;
+    return this.formatAmountMajor(cents / 100, currency);
+  }
+
+  private async resolveOrderCurrency(
+    order: Record<string, unknown> | OrderModel,
+  ): Promise<string> {
+    const raw = order as Record<string, unknown>;
+    const orderCur = this.normalizeCurrency(raw['currency']);
+    if (orderCur) return orderCur;
+
+    const parentPaymentId = stripeParentIdFromOrder(raw);
+    if (parentPaymentId) {
+      const stripePayment = await this.stripeProcessedCheckoutModel
+        .findOne({ sessionId: parentPaymentId })
+        .select('currency')
+        .lean()
+        .exec();
+      const stripeCur = this.normalizeCurrency(stripePayment?.currency);
+      if (stripeCur) return stripeCur;
+    }
+
+    const storeDoc = raw['store'] as { currency?: string } | undefined;
+    const storeCur = this.normalizeCurrency(storeDoc?.currency);
+    return storeCur ?? 'CAD';
+  }
 
   private async settingsDoc(): Promise<RefundProcessingSettingsModel> {
     let doc = await this.settingsModel.findOne({ key: SETTINGS_KEY }).exec();
@@ -296,12 +349,38 @@ export class RefundProcessingService {
       .skip(skip)
       .limit(take)
       .populate('user', 'fullName email')
-      .populate('store', 'name')
+      .populate('store', 'name currency')
       .select(
-        'status totalPrice shippingPrice stripeParentPaymentId stripeChargedGoodsCents stripeChargedShipCents refundRequestLog cancelReasonSource user store createdAt',
+        'status totalPrice shippingPrice currency stripeParentPaymentId stripeChargedGoodsCents stripeChargedShipCents refundRequestLog cancelReasonSource user store createdAt',
       )
       .lean()
       .exec();
+
+    const missingCurrencyByPaymentId = new Map<string, true>();
+    for (const order of orders) {
+      const raw = order as Record<string, unknown>;
+      const rawCur = raw['currency'];
+      if (typeof rawCur === 'string' && rawCur.trim().length > 0) continue;
+      const paymentId = stripeParentIdFromOrder(raw);
+      if (!paymentId) continue;
+      missingCurrencyByPaymentId.set(paymentId, true);
+    }
+    const stripeCurrencyByPaymentId = new Map<string, string>();
+    if (missingCurrencyByPaymentId.size > 0) {
+      const docs = await this.stripeProcessedCheckoutModel
+        .find({ sessionId: { $in: [...missingCurrencyByPaymentId.keys()] } })
+        .select('sessionId currency')
+        .lean()
+        .exec();
+      for (const d of docs) {
+        const sid = String(d.sessionId ?? '').trim();
+        const cur = String(d.currency ?? '')
+          .trim()
+          .toUpperCase();
+        if (!sid || !cur) continue;
+        stripeCurrencyByPaymentId.set(sid, cur);
+      }
+    }
 
     const isAdmin = user.type === UserTypeEnum.ADMIN;
     const items: RefundQueueItem[] = [];
@@ -318,8 +397,22 @@ export class RefundProcessingService {
         | { _id?: Types.ObjectId; fullName?: string; email?: string }
         | undefined;
       const storeDoc = o.store as unknown as
-        | { _id?: Types.ObjectId; name?: string }
+        | { _id?: Types.ObjectId; name?: string; currency?: string }
         | undefined;
+      const orderCurrencyRaw = raw['currency'];
+      const orderCurrency =
+        typeof orderCurrencyRaw === 'string' && orderCurrencyRaw.trim()
+          ? orderCurrencyRaw.trim().toUpperCase()
+          : undefined;
+      const storeCurrencyRaw = storeDoc?.currency;
+      const storeCurrency =
+        typeof storeCurrencyRaw === 'string' && storeCurrencyRaw.trim()
+          ? storeCurrencyRaw.trim().toUpperCase()
+          : undefined;
+      const stripePaymentId = stripeParentIdFromOrder(raw);
+      const stripePaymentCurrency = stripePaymentId
+        ? stripeCurrencyByPaymentId.get(stripePaymentId)
+        : undefined;
 
       const grossCents = this.refundAmountCents(o as OrderModel);
       const cancelSource = cancelReasonSourceFromOrder(raw);
@@ -364,6 +457,7 @@ export class RefundProcessingService {
         totalPrice: typeof o.totalPrice === 'number' ? o.totalPrice : 0,
         shippingPrice:
           typeof o.shippingPrice === 'number' ? o.shippingPrice : 0,
+        currency: orderCurrency || stripePaymentCurrency || storeCurrency || 'CAD',
         stripeParentPaymentId: stripeParentIdFromOrder(raw),
         orderStatus: String(o.status ?? ''),
         customer: {
@@ -653,13 +747,15 @@ export class RefundProcessingService {
     await order.save();
 
     const customer = this.customerFromOrder(order);
+    const currency = await this.resolveOrderCurrency(order);
     await this.notifyRefundUpdate({
       customer,
       orderId,
       storeName: this.storeNameFromOrder(order),
       storeId: this.storeIdFromOrder(order) ?? undefined,
       kind: 'paused',
-      amountCad: order.totalPrice ?? 0,
+      amount: order.totalPrice ?? 0,
+      currency,
     });
 
     return {
@@ -685,13 +781,15 @@ export class RefundProcessingService {
     await order.save();
 
     const customer = this.customerFromOrder(order);
+    const currency = await this.resolveOrderCurrency(order);
     await this.notifyRefundUpdate({
       customer,
       orderId,
       storeName: this.storeNameFromOrder(order),
       storeId: this.storeIdFromOrder(order) ?? undefined,
       kind: 'resumed',
-      amountCad: order.totalPrice ?? 0,
+      amount: order.totalPrice ?? 0,
+      currency,
     });
 
     return {
@@ -726,13 +824,15 @@ export class RefundProcessingService {
     await order.save();
 
     const customer = this.customerFromOrder(order);
+    const currency = await this.resolveOrderCurrency(order);
     await this.notifyRefundUpdate({
       customer,
       orderId,
       storeName: this.storeNameFromOrder(order),
       storeId: this.storeIdFromOrder(order) ?? undefined,
       kind: 'rejected',
-      amountCad: order.totalPrice ?? 0,
+      amount: order.totalPrice ?? 0,
+      currency,
       note: note?.trim(),
     });
 
@@ -809,24 +909,28 @@ export class RefundProcessingService {
     if (split.customerRefundCents < 1) {
       throw new BadRequestException('refund_amount_invalid');
     }
+    const refundCurrency = await this.resolveOrderCurrency(order);
 
     const feeNote =
       split.platformFeeCents > 0
-        ? ` (frais plateforme ${(split.platformFeeCents / 100).toFixed(
-            2,
-          )} $ CA)`
+        ? ` (frais plateforme ${this.formatAmountCents(
+            split.platformFeeCents,
+            refundCurrency,
+          )})`
         : '';
     const stripeNote =
       split.stripeProcessingFeeOnCustomerCents > 0
-        ? ` · frais Stripe ${(
-            split.stripeProcessingFeeOnCustomerCents / 100
-          ).toFixed(2)} $ CA`
+        ? ` · frais Stripe ${this.formatAmountCents(
+            split.stripeProcessingFeeOnCustomerCents,
+            refundCurrency,
+          )}`
         : '';
     const vendorPenaltyNote =
       split.vendorPenaltyCents > 0
-        ? ` · pénalité restaurant ${(split.vendorPenaltyCents / 100).toFixed(
-            2,
-          )} $ CA`
+        ? ` · pénalité restaurant ${this.formatAmountCents(
+            split.vendorPenaltyCents,
+            refundCurrency,
+          )}`
         : '';
 
     this.patchLatestEntry(order, {
@@ -847,7 +951,7 @@ export class RefundProcessingService {
     const customer = this.customerFromOrder(order);
     const storeName = this.storeNameFromOrder(order);
     const storeId = this.storeIdFromOrder(order) ?? undefined;
-    const netCad = split.customerRefundCents / 100;
+    const netAmount = split.customerRefundCents / 100;
 
     await this.notifyRefundUpdate({
       customer,
@@ -855,7 +959,8 @@ export class RefundProcessingService {
       storeName,
       storeId,
       kind: 'processing',
-      amountCad: netCad,
+      amount: netAmount,
+      currency: refundCurrency,
     });
 
     try {
@@ -894,27 +999,30 @@ export class RefundProcessingService {
 
     let completedNote =
       split.platformFeeCents > 0
-        ? `Remboursement de ${netCad.toFixed(
-            2,
-          )} $ CA effectué (frais plateforme ${(
-            split.platformFeeCents / 100
-          ).toFixed(2)} $ CA retenus).`
+        ? `Remboursement de ${this.formatAmountMajor(
+            netAmount,
+            refundCurrency,
+          )} effectué (frais plateforme ${this.formatAmountCents(
+            split.platformFeeCents,
+            refundCurrency,
+          )} retenus).`
         : 'Remboursement effectué sur votre moyen de paiement.';
     if (split.stripeProcessingFeeOnCustomerCents > 0) {
-      completedNote += ` Frais Stripe : ${(
-        split.stripeProcessingFeeOnCustomerCents / 100
-      ).toFixed(2)} $ CA.`;
+      completedNote += ` Frais Stripe : ${this.formatAmountCents(
+        split.stripeProcessingFeeOnCustomerCents,
+        refundCurrency,
+      )}.`;
     }
     if (split.isVendorCancellationRefund) {
-      completedNote = `Remboursement intégral de ${netCad.toFixed(
-        2,
-      )} $ CA effectué (annulation par le restaurant, sans frais plateforme pour le client).`;
+      completedNote = `Remboursement intégral de ${this.formatAmountMajor(
+        netAmount,
+        refundCurrency,
+      )} effectué (annulation par le restaurant, sans frais plateforme pour le client).`;
       if (split.vendorPenaltyCents > 0) {
-        completedNote += ` Pénalité restaurant : ${(
-          split.vendorPenaltyCents / 100
-        ).toFixed(
-          2,
-        )} $ CA (frais plateforme + Stripe, reprise du virement Connect).`;
+        completedNote += ` Pénalité restaurant : ${this.formatAmountCents(
+          split.vendorPenaltyCents,
+          refundCurrency,
+        )} (frais plateforme + Stripe, reprise du virement Connect).`;
       }
     }
 
@@ -941,7 +1049,8 @@ export class RefundProcessingService {
       storeName,
       storeId,
       kind: 'completed',
-      amountCad: netCad,
+      amount: netAmount,
+      currency: refundCurrency,
       stripeRefundId,
     });
 
@@ -1022,7 +1131,8 @@ export class RefundProcessingService {
     storeName: string;
     storeId?: string;
     kind: 'processing' | 'completed' | 'rejected' | 'paused' | 'resumed';
-    amountCad: number;
+    amount: number;
+    currency: string;
     note?: string;
     stripeRefundId?: string;
   }): Promise<void> {
@@ -1037,9 +1147,10 @@ export class RefundProcessingService {
       processing: `${args.storeName} : votre remboursement est en cours de traitement.`,
       completed: `${
         args.storeName
-      } : votre remboursement a été effectué (${args.amountCad.toFixed(
-        2,
-      )} $ CA).`,
+      } : votre remboursement a été effectué (${this.formatAmountMajor(
+        args.amount,
+        args.currency,
+      )}).`,
       rejected: `${args.storeName} : votre demande de remboursement a été refusée.`,
       paused: `${args.storeName} : le traitement de votre remboursement est temporairement en pause.`,
       resumed: `${args.storeName} : le traitement de votre remboursement reprend.`,

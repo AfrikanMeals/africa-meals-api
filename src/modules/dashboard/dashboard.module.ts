@@ -21,6 +21,10 @@ import {
 } from '@schemas/delivery-driver.schema';
 import { AddressModel, AddressSchema } from '@schemas/address.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
+import {
+  StripeProcessedCheckoutModel,
+  StripeProcessedCheckoutSchema,
+} from '@schemas/stripe-processed-checkout.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import {
   VendorFeedbackModel,
@@ -54,6 +58,10 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
         schema: DeliveryAgentApplicationSchema,
       },
       { name: StoreModel.name, schema: StoreSchema },
+      {
+        name: StripeProcessedCheckoutModel.name,
+        schema: StripeProcessedCheckoutSchema,
+      },
       { name: AddressModel.name, schema: AddressSchema },
       { name: VendorFeedbackModel.name, schema: VendorFeedbackSchema },
     ]),

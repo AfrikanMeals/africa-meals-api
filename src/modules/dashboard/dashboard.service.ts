@@ -23,6 +23,7 @@ import { AddressModel } from '@schemas/address.schema';
 import { StockItemModel, StockStatutEnum } from '@schemas/stock-item.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { StoreRatingModel } from '@schemas/store_rating.schema';
+import { StripeProcessedCheckoutModel } from '@schemas/stripe-processed-checkout.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { VendorFeedbackModel } from '@schemas/vendor-feedback.schema';
 import { Model, Types } from 'mongoose';
@@ -142,6 +143,36 @@ function orderDisplayRef(orderId: unknown): string {
   return `#AE-${tail}`;
 }
 
+function normalizeCurrencyCode(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const c = raw.trim().toUpperCase();
+  return c.length > 0 ? c : undefined;
+}
+
+function pushCurrencyAmount(
+  map: Map<string, number>,
+  currency: string,
+  amount: number,
+): void {
+  const value = Number.isFinite(amount) ? amount : 0;
+  if (!currency) return;
+  map.set(currency, (map.get(currency) ?? 0) + value);
+}
+
+function breakdownFromCurrencyMap(
+  map: Map<string, number>,
+): Array<{ currency: string; amount: number }> {
+  return [...map.entries()]
+    .map(([currency, amount]) => ({ currency, amount }))
+    .sort((a, b) => a.currency.localeCompare(b.currency));
+}
+
+function singleCurrencyFromBreakdown(
+  rows: Array<{ currency: string; amount: number }>,
+): string | undefined {
+  return rows.length === 1 ? rows[0]?.currency : undefined;
+}
+
 export type DelayedDeliveryAlert = {
   orderId: string;
   displayRef: string;
@@ -169,6 +200,9 @@ export type DashboardRevenueSummary = {
   revenueComparablePriorMonth: number;
   trendPercent: number | null;
   monthlyTarget: number;
+  currency?: string;
+  revenueByCurrency?: Array<{ currency: string; amount: number }>;
+  comparableRevenueByCurrency?: Array<{ currency: string; amount: number }>;
 };
 
 export type AdminDashboardKpis = {
@@ -325,6 +359,9 @@ export type FinanceWeeklyUserPerformanceRow = {
   shippingTotal: number;
   priorTotalSpent: number;
   trendPercent: number | null;
+  currency?: string;
+  totalSpentByCurrency?: Array<{ currency: string; amount: number }>;
+  priorTotalSpentByCurrency?: Array<{ currency: string; amount: number }>;
 };
 
 export type FinanceWeeklyPerformanceSummary = {
@@ -336,6 +373,9 @@ export type FinanceWeeklyPerformanceSummary = {
   ordersTrendPercent: number | null;
   activeClientsThisWeek: number;
   activeVendorsThisWeek: number;
+  currency?: string;
+  revenueByCurrency?: Array<{ currency: string; amount: number }>;
+  priorRevenueByCurrency?: Array<{ currency: string; amount: number }>;
 };
 
 export type FinanceWeeklyUserPerformancePayload = {
@@ -356,12 +396,14 @@ export type FinancePeriodReportSummary = {
   shippingTotal: number;
   priorPeriodRevenue: number;
   trendPercent: number | null;
+  currency?: string;
 };
 
 export type FinancePeriodDailyPoint = {
   date: string;
   revenue: number;
   orderCount: number;
+  currency?: string;
 };
 
 export type FinancePeriodReportOrderRow = {
@@ -375,6 +417,7 @@ export type FinancePeriodReportOrderRow = {
   status: string;
   storeName: string | null;
   stripeProcessingFeeCents: number;
+  currency: string;
 };
 
 export type FinancePeriodReportPayload = {
@@ -461,6 +504,8 @@ export class DashboardService {
     private readonly deliveryAgentApplicationModel: Model<DeliveryAgentApplicationModel>,
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
+    @InjectModel(StripeProcessedCheckoutModel.name)
+    private readonly stripeProcessedCheckoutModel: Model<StripeProcessedCheckoutModel>,
     @InjectModel(VendorFeedbackModel.name)
     private readonly vendorFeedbackModel: Model<VendorFeedbackModel>,
     private readonly notificationsService: NotificationsService,
@@ -1557,19 +1602,24 @@ export class DashboardService {
       .startOf('day')
       .toDate();
 
-    const [mtd, cmp] = await Promise.all([
-      this.sumRevenueInRange(monthStart, monthEndExclusive, storeIds),
-      this.sumRevenueInRange(
+    const [mtdBreakdown, cmpBreakdown] = await Promise.all([
+      this.revenueBreakdownInRange(monthStart, monthEndExclusive, storeIds),
+      this.revenueBreakdownInRange(
         prevMonthStart,
         prevComparableEndExclusive,
         storeIds,
       ),
     ]);
+    const mtd = mtdBreakdown.total;
+    const cmp = cmpBreakdown.total;
 
     return {
       revenueMonthToDate: mtd,
       revenueComparablePriorMonth: cmp,
       trendPercent: trendPercent(mtd, cmp),
+      currency: mtdBreakdown.currency,
+      revenueByCurrency: mtdBreakdown.byCurrency,
+      comparableRevenueByCurrency: cmpBreakdown.byCurrency,
       monthlyTarget:
         user.type === UserTypeEnum.ADMIN
           ? DASHBOARD_CA_MONTHLY_TARGET_ADMIN
@@ -2095,6 +2145,98 @@ export class DashboardService {
       .exec();
     const v = agg[0]?.total;
     return typeof v === 'number' && !Number.isNaN(v) ? v : 0;
+  }
+
+  private async stripeCurrencyBySessionIds(
+    sessionIds: string[],
+  ): Promise<Map<string, string>> {
+    const unique = [...new Set(sessionIds.map((s) => s.trim()).filter(Boolean))];
+    if (!unique.length) return new Map();
+    const docs = await this.stripeProcessedCheckoutModel
+      .find({ sessionId: { $in: unique } })
+      .select('sessionId currency')
+      .lean()
+      .exec();
+    const out = new Map<string, string>();
+    for (const d of docs) {
+      const sid = String(d.sessionId ?? '').trim();
+      const cur = normalizeCurrencyCode(d.currency);
+      if (!sid || !cur) continue;
+      out.set(sid, cur);
+    }
+    return out;
+  }
+
+  private resolveDashboardOrderCurrency(
+    order: {
+      currency?: unknown;
+      stripeParentPaymentId?: unknown;
+      store?: { currency?: unknown } | unknown;
+    },
+    stripeCurrencyBySessionId: Map<string, string>,
+  ): string {
+    const orderCur = normalizeCurrencyCode(order.currency);
+    if (orderCur) return orderCur;
+    const paymentId = String(order.stripeParentPaymentId ?? '').trim();
+    if (paymentId) {
+      const stripeCur = stripeCurrencyBySessionId.get(paymentId);
+      if (stripeCur) return stripeCur;
+    }
+    const storeCur = normalizeCurrencyCode(
+      (order.store as { currency?: unknown } | undefined)?.currency,
+    );
+    return storeCur ?? 'CAD';
+  }
+
+  private async revenueBreakdownInRange(
+    start: Date,
+    end: Date,
+    storeIds: Types.ObjectId[] | null,
+  ): Promise<{
+    total: number;
+    byCurrency: Array<{ currency: string; amount: number }>;
+    currency?: string;
+  }> {
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: end },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+    const orders = await this.orderModel
+      .find(match)
+      .populate<{ store?: { currency?: string } }>('store', 'currency')
+      .select('totalPrice currency stripeParentPaymentId store')
+      .lean()
+      .exec();
+    const stripeCurrencyBySessionId = await this.stripeCurrencyBySessionIds(
+      orders.map((o) => String(o.stripeParentPaymentId ?? '')),
+    );
+    const byCurrencyMap = new Map<string, number>();
+    for (const o of orders) {
+      const currency = this.resolveDashboardOrderCurrency(
+        {
+          currency: o.currency,
+          stripeParentPaymentId: o.stripeParentPaymentId,
+          store: o.store,
+        },
+        stripeCurrencyBySessionId,
+      );
+      const amount = Number(o.totalPrice);
+      pushCurrencyAmount(
+        byCurrencyMap,
+        currency,
+        Number.isFinite(amount) ? amount : 0,
+      );
+    }
+    const byCurrency = breakdownFromCurrencyMap(byCurrencyMap);
+    const total = byCurrency.reduce((acc, row) => acc + row.amount, 0);
+    return {
+      total,
+      byCurrency,
+      currency: singleCurrencyFromBreakdown(byCurrency),
+    };
   }
 
   private async sumRevenueFcfa(start: Date, end: Date): Promise<number> {
@@ -3149,10 +3291,8 @@ export class DashboardService {
       clientsPrior,
       vendorsThisRaw,
       vendorsPriorRaw,
-      revenueThisWeek,
-      revenuePriorWeek,
-      ordersThisWeek,
-      ordersPriorWeek,
+      weeklyThis,
+      weeklyPrior,
     ] = await Promise.all([
       this.aggregateWeeklyClientTotals(weekStart, weekEnd, storeIds, limit),
       this.aggregateWeeklyClientTotals(
@@ -3173,10 +3313,8 @@ export class DashboardService {
         storeIds,
         500,
       ),
-      this.sumRevenueInRange(weekStart, weekEnd, storeIds),
-      this.sumRevenueInRange(priorWeekStart, priorWeekEnd, storeIds),
-      this.countOrdersInRange(weekStart, weekEnd, storeIds),
-      this.countOrdersInRange(priorWeekStart, priorWeekEnd, storeIds),
+      this.weeklyCurrencyBreakdown(weekStart, weekEnd, storeIds),
+      this.weeklyCurrencyBreakdown(priorWeekStart, priorWeekEnd, storeIds),
     ]);
 
     const filterVendorRows = (
@@ -3201,14 +3339,48 @@ export class DashboardService {
       vendorsPrior.map((r) => [r.userId, r.totalSpent]),
     );
 
-    const clients = await this.hydrateWeeklyPerformanceRows(
+    const clientsBase = await this.hydrateWeeklyPerformanceRows(
       clientsThis,
       priorClientMap,
     );
-    const vendors = await this.hydrateWeeklyPerformanceRows(
+    const vendorsBase = await this.hydrateWeeklyPerformanceRows(
       vendorsThis,
       priorVendorMap,
     );
+    const toBreakdownRows = (map: Map<string, number> | undefined) =>
+      map ? breakdownFromCurrencyMap(map) : [];
+    const clients = clientsBase.map((row) => {
+      const totalSpentByCurrency = toBreakdownRows(
+        weeklyThis.clientByUser.get(row.userId),
+      );
+      const priorTotalSpentByCurrency = toBreakdownRows(
+        weeklyPrior.clientByUser.get(row.userId),
+      );
+      return {
+        ...row,
+        currency: singleCurrencyFromBreakdown(totalSpentByCurrency),
+        totalSpentByCurrency,
+        priorTotalSpentByCurrency,
+      };
+    });
+    const vendors = vendorsBase.map((row) => {
+      const totalSpentByCurrency = toBreakdownRows(
+        weeklyThis.vendorByUser.get(row.userId),
+      );
+      const priorTotalSpentByCurrency = toBreakdownRows(
+        weeklyPrior.vendorByUser.get(row.userId),
+      );
+      return {
+        ...row,
+        currency: singleCurrencyFromBreakdown(totalSpentByCurrency),
+        totalSpentByCurrency,
+        priorTotalSpentByCurrency,
+      };
+    });
+    const revenueThisWeek = weeklyThis.total;
+    const revenuePriorWeek = weeklyPrior.total;
+    const ordersThisWeek = weeklyThis.orderCount;
+    const ordersPriorWeek = weeklyPrior.orderCount;
 
     return {
       timezone: z,
@@ -3228,6 +3400,9 @@ export class DashboardService {
           user.type === UserTypeEnum.ADMIN
             ? vendorsThis.length
             : vendors.length,
+        currency: weeklyThis.currency,
+        revenueByCurrency: weeklyThis.revenueByCurrency,
+        priorRevenueByCurrency: weeklyPrior.revenueByCurrency,
       },
       clients,
       vendors,
@@ -3321,20 +3496,59 @@ export class DashboardService {
           'user',
           'fullName email',
         )
-        .populate<{ store?: { name?: string } }>('store', 'name')
+        .populate<{ store?: { name?: string; currency?: string } }>(
+          'store',
+          'name currency',
+        )
         .select(
-          '_id createdAt totalPrice shippingPrice status user store stripeProcessingFeeCents',
+          '_id createdAt totalPrice shippingPrice currency stripeParentPaymentId status user store stripeProcessingFeeCents',
         )
         .lean()
         .exec(),
     ]);
+
+    const missingCurrencyByPaymentId = new Map<string, true>();
+    for (const o of orderDocs) {
+      const orderCurrency = normalizeCurrencyCode((o as { currency?: unknown }).currency);
+      if (orderCurrency) continue;
+      const paymentId = String(
+        (o as { stripeParentPaymentId?: unknown }).stripeParentPaymentId ?? '',
+      ).trim();
+      if (!paymentId) continue;
+      missingCurrencyByPaymentId.set(paymentId, true);
+    }
+
+    const stripeCurrencyByPaymentId = new Map<string, string>();
+    if (missingCurrencyByPaymentId.size > 0) {
+      const stripeDocs = await this.stripeProcessedCheckoutModel
+        .find({ sessionId: { $in: [...missingCurrencyByPaymentId.keys()] } })
+        .select('sessionId currency')
+        .lean()
+        .exec();
+      for (const d of stripeDocs) {
+        const sid = String(d.sessionId ?? '').trim();
+        const cur = normalizeCurrencyCode(d.currency);
+        if (!sid || !cur) continue;
+        stripeCurrencyByPaymentId.set(sid, cur);
+      }
+    }
 
     const orders: FinancePeriodReportOrderRow[] = orderDocs.map((o) => {
       const id = String(o._id);
       const userDoc = o.user as
         | { fullName?: string; email?: string }
         | undefined;
-      const storeDoc = o.store as { name?: string } | undefined;
+      const storeDoc = o.store as { name?: string; currency?: string } | undefined;
+      const parentPaymentId = String(
+        (o as { stripeParentPaymentId?: unknown }).stripeParentPaymentId ?? '',
+      ).trim();
+      const currency =
+        normalizeCurrencyCode((o as { currency?: unknown }).currency) ||
+        (parentPaymentId
+          ? stripeCurrencyByPaymentId.get(parentPaymentId)
+          : undefined) ||
+        normalizeCurrencyCode(storeDoc?.currency) ||
+        'CAD';
       return {
         id,
         orderNumber: `#AE-${id.slice(-6).toUpperCase()}`,
@@ -3358,8 +3572,17 @@ export class DashboardService {
           Number.isFinite(o.stripeProcessingFeeCents)
             ? Math.max(0, Math.round(o.stripeProcessingFeeCents))
             : 0,
+        currency,
       };
     });
+
+    const reportCurrencySet = new Set(
+      orders.map((o) => normalizeCurrencyCode(o.currency)).filter(Boolean),
+    );
+    const reportCurrency =
+      reportCurrencySet.size === 1
+        ? [...reportCurrencySet][0]
+        : undefined;
 
     return {
       timezone: z,
@@ -3377,6 +3600,7 @@ export class DashboardService {
         shippingTotal,
         priorPeriodRevenue,
         trendPercent: trendPercent(totalRevenue, priorPeriodRevenue),
+        currency: reportCurrency,
       },
       daily: dailyAgg,
       orders,
@@ -3497,6 +3721,85 @@ export class DashboardService {
       match.store = { $in: storeIds };
     }
     return this.orderModel.countDocuments(match).exec();
+  }
+
+  private async weeklyCurrencyBreakdown(
+    start: Date,
+    end: Date,
+    storeIds: Types.ObjectId[] | null,
+  ): Promise<{
+    total: number;
+    orderCount: number;
+    revenueByCurrency: Array<{ currency: string; amount: number }>;
+    currency?: string;
+    clientByUser: Map<string, Map<string, number>>;
+    vendorByUser: Map<string, Map<string, number>>;
+  }> {
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: end },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+    const docs = await this.orderModel
+      .find(match)
+      .populate<{ store?: { owner?: Types.ObjectId; currency?: string } }>(
+        'store',
+        'owner currency',
+      )
+      .select('user store totalPrice currency stripeParentPaymentId')
+      .lean()
+      .exec();
+
+    const stripeCurrencyBySessionId = await this.stripeCurrencyBySessionIds(
+      docs.map((d) => String(d.stripeParentPaymentId ?? '')),
+    );
+
+    const revenueByCurrencyMap = new Map<string, number>();
+    const clientByUser = new Map<string, Map<string, number>>();
+    const vendorByUser = new Map<string, Map<string, number>>();
+
+    for (const d of docs) {
+      const currency = this.resolveDashboardOrderCurrency(
+        {
+          currency: d.currency,
+          stripeParentPaymentId: d.stripeParentPaymentId,
+          store: d.store,
+        },
+        stripeCurrencyBySessionId,
+      );
+      const amountRaw = Number(d.totalPrice);
+      const amount = Number.isFinite(amountRaw) ? amountRaw : 0;
+      pushCurrencyAmount(revenueByCurrencyMap, currency, amount);
+
+      const userId = String(d.user ?? '').trim();
+      if (userId) {
+        const byCur = clientByUser.get(userId) ?? new Map<string, number>();
+        pushCurrencyAmount(byCur, currency, amount);
+        clientByUser.set(userId, byCur);
+      }
+
+      const ownerId = String(
+        (d.store as { owner?: unknown } | undefined)?.owner ?? '',
+      ).trim();
+      if (ownerId) {
+        const byCur = vendorByUser.get(ownerId) ?? new Map<string, number>();
+        pushCurrencyAmount(byCur, currency, amount);
+        vendorByUser.set(ownerId, byCur);
+      }
+    }
+
+    const revenueByCurrency = breakdownFromCurrencyMap(revenueByCurrencyMap);
+    const total = revenueByCurrency.reduce((acc, row) => acc + row.amount, 0);
+    return {
+      total,
+      orderCount: docs.length,
+      revenueByCurrency,
+      currency: singleCurrencyFromBreakdown(revenueByCurrency),
+      clientByUser,
+      vendorByUser,
+    };
   }
 
   private async aggregateWeeklyClientTotals(

@@ -25,6 +25,10 @@ import {
   DeliveryAgentApplicationSchema,
 } from '@schemas/delivery-agent-application.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
+import {
+  StripeProcessedCheckoutModel,
+  StripeProcessedCheckoutSchema,
+} from '@schemas/stripe-processed-checkout.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import { OrdersDemoSeedService } from './orders-demo-seed.service';
 import { ProductRatingsDemoSeedService } from './product-ratings-demo-seed.service';
@@ -64,6 +68,10 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
       { name: ProductModel.name, schema: ProductSchema },
       { name: ProductRatingModel.name, schema: ProductRatingSchema },
       { name: StoreModel.name, schema: StoreSchema },
+      {
+        name: StripeProcessedCheckoutModel.name,
+        schema: StripeProcessedCheckoutSchema,
+      },
       {
         name: DeliveryAgentApplicationModel.name,
         schema: DeliveryAgentApplicationSchema,

@@ -10,6 +10,10 @@ import {
   RefundProcessingSettingsModel,
   RefundProcessingSettingsSchema,
 } from '@schemas/refund-processing-settings.schema';
+import {
+  StripeProcessedCheckoutModel,
+  StripeProcessedCheckoutSchema,
+} from '@schemas/stripe-processed-checkout.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import { RefundProcessingCron } from './refund-processing.cron';
@@ -28,6 +32,10 @@ import { StripeRefundService } from './stripe-refund.service';
       { name: OrderModel.name, schema: OrderSchema },
       { name: StoreModel.name, schema: StoreSchema },
       { name: UserModel.name, schema: UserSchema },
+      {
+        name: StripeProcessedCheckoutModel.name,
+        schema: StripeProcessedCheckoutSchema,
+      },
       {
         name: RefundProcessingSettingsModel.name,
         schema: RefundProcessingSettingsSchema,

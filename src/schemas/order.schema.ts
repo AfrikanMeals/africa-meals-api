@@ -218,6 +218,10 @@ export class OrderModel extends BaseSchema {
   })
   items: OrdeLineItem[];
 
+  /** Devise du paiement (ex. `CAD`, `XAF`). Snapshot au moment du paiement Stripe. */
+  @Prop({ required: false, name: 'currency', trim: true, uppercase: true })
+  currency?: string;
+
   /** `cs_…` ou `pi_…` du paiement Stripe groupé ayant déclenché la commande. */
   @Prop({ required: false, name: 'stripe_parent_payment_id' })
   stripeParentPaymentId?: string;
