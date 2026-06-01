@@ -320,6 +320,75 @@ export class ProductsService {
     return raw.map((v) => String(v ?? '').trim()).filter((v) => v.length > 0);
   }
 
+  private normalizeComplements(raw: unknown): Array<{
+    title: string;
+    firstOptionFree: boolean;
+    options: Array<{ label: string; priceDelta: number; isDefault: boolean }>;
+  }> {
+    if (!Array.isArray(raw)) return [];
+    const groups: Array<{
+      title: string;
+      firstOptionFree: boolean;
+      options: Array<{ label: string; priceDelta: number; isDefault: boolean }>;
+    }> = [];
+    for (const g of raw) {
+      const row = (g ?? {}) as Record<string, unknown>;
+      const title = String(row.title ?? '').trim();
+      if (!title) continue;
+      const firstOptionFree = Boolean(row.firstOptionFree);
+      const rawOptions = Array.isArray(row.options) ? row.options : [];
+      const options = rawOptions
+        .map((o) => {
+          const opt = (o ?? {}) as Record<string, unknown>;
+          const label = String(opt.label ?? '').trim();
+          if (!label) return null;
+          const numeric = Number(opt.priceDelta ?? 0);
+          const priceDelta =
+            Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+          return {
+            label,
+            priceDelta,
+            isDefault: Boolean(opt.isDefault),
+          };
+        })
+        .filter(
+          (
+            o,
+          ): o is { label: string; priceDelta: number; isDefault: boolean } =>
+            Boolean(o),
+        );
+      if (!options.length) continue;
+      let defaultIndex = options.findIndex((o) => o.isDefault);
+      if (defaultIndex < 0) defaultIndex = 0;
+      const normalizedOptions = options.map((o, index) => ({
+        ...o,
+        isDefault: index === defaultIndex,
+      }));
+      groups.push({
+        title,
+        firstOptionFree,
+        options: normalizedOptions,
+      });
+    }
+    return groups;
+  }
+
+  private normalizeSupplements(
+    raw: unknown,
+  ): Array<{ name: string; price: number }> {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((s) => {
+        const row = (s ?? {}) as Record<string, unknown>;
+        const name = String(row.name ?? '').trim();
+        if (!name) return null;
+        const numeric = Number(row.price ?? 0);
+        const price = Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+        return { name, price };
+      })
+      .filter((s): s is { name: string; price: number } => Boolean(s));
+  }
+
   private mapVendorProductRow(
     p: Record<string, unknown>,
     forcedCurrency?: string,
@@ -404,6 +473,8 @@ export class ProductsService {
       bio: String(p.bio ?? ''),
       about: String(p.about ?? ''),
       fieldsets: this.normalizeFieldsets(p.fieldsets),
+      complements: this.normalizeComplements(p.complements),
+      supplements: this.normalizeSupplements(p.supplements),
       originCountry: String(p.originCountry ?? p.origin_country ?? ''),
       price: Number(p.price ?? 0),
       discountPrice: Number(p.discountPrice ?? p.discount_price ?? 0),
@@ -529,6 +600,8 @@ export class ProductsService {
       bio: String(p.bio ?? ''),
       about: String(p.about ?? ''),
       fieldsets: this.normalizeFieldsets(p.fieldsets),
+      complements: this.normalizeComplements(p.complements),
+      supplements: this.normalizeSupplements(p.supplements),
       price: Number(p.price ?? 0),
       discountPrice: Number(p.discountPrice ?? p.discount_price ?? 0),
       currency: String(forcedCurrency || p.currency || 'CAD'),
@@ -731,6 +804,8 @@ export class ProductsService {
         bio: args.bio,
         about: args.about,
         fieldsets: this.normalizeFieldsets(args.fieldsets),
+        complements: this.normalizeComplements(args.complements),
+        supplements: this.normalizeSupplements(args.supplements),
         originCountry,
         price: Number(args.price),
         discountPrice:
@@ -801,6 +876,12 @@ export class ProductsService {
     }
     if (args.fieldsets !== undefined) {
       doc.set('fieldsets', this.normalizeFieldsets(args.fieldsets));
+    }
+    if (args.complements !== undefined) {
+      doc.set('complements', this.normalizeComplements(args.complements));
+    }
+    if (args.supplements !== undefined) {
+      doc.set('supplements', this.normalizeSupplements(args.supplements));
     }
     if (args.originCountry != null) {
       doc.originCountry = args.originCountry.trim();

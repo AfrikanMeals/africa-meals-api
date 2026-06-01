@@ -41,6 +41,41 @@ export const ProductExtraSchema =
 
 export type ProductExtraModelDocument = ProductExtraModel & Document;
 
+export class ProductComplementOptionModel {
+  @Prop({ required: true, name: 'label' })
+  label: string;
+
+  @Prop({ required: false, name: 'price_delta', default: 0 })
+  priceDelta: number;
+
+  @Prop({ required: false, name: 'is_default', default: false })
+  isDefault: boolean;
+}
+
+export class ProductComplementGroupModel {
+  @Prop({ required: true, name: 'title' })
+  title: string;
+
+  @Prop({ required: false, name: 'first_option_free', default: false })
+  firstOptionFree: boolean;
+
+  @Prop({
+    required: true,
+    name: 'options',
+    type: [ProductComplementOptionModel],
+    default: [],
+  })
+  options: ProductComplementOptionModel[];
+}
+
+export class ProductSupplementModel {
+  @Prop({ required: true, name: 'name' })
+  name: string;
+
+  @Prop({ required: false, name: 'price', default: 0 })
+  price: number;
+}
+
 @Schema({
   timestamps: true,
   collection: 'products',
@@ -148,6 +183,20 @@ export class ProductModel extends BaseSchema {
     type: [ProductExtraModel],
   })
   extras: ProductExtraModel[];
+
+  @Prop({
+    default: [],
+    name: 'complements',
+    type: [ProductComplementGroupModel],
+  })
+  complements: ProductComplementGroupModel[];
+
+  @Prop({
+    default: [],
+    name: 'supplements',
+    type: [ProductSupplementModel],
+  })
+  supplements: ProductSupplementModel[];
 }
 
 export const ProductSchema = SchemaFactory.createForClass(ProductModel);

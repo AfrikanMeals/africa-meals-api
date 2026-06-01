@@ -800,6 +800,8 @@ export class StoreController {
       bio: body.bio,
       about: body.about,
       fieldsets: body.fieldsets,
+      complements: body.complements,
+      supplements: body.supplements,
       originCountry: body.originCountry,
       price: body.price,
       discountPrice: body.discountPrice,

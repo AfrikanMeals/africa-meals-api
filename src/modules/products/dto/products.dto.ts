@@ -14,6 +14,66 @@ import {
   Min,
 } from 'class-validator';
 
+export class ProductComplementOptionDto {
+  @ApiProperty({ example: 'Moyen' })
+  @IsNotEmpty()
+  @Trim()
+  label: string;
+
+  @ApiPropertyOptional({ example: 0, type: Number })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return value;
+    const n = Number(value);
+    return Number.isNaN(n) ? value : n;
+  })
+  @IsNumber()
+  @Min(0)
+  priceDelta?: number;
+
+  @ApiPropertyOptional({ example: false, type: Boolean })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  isDefault?: boolean;
+}
+
+export class ProductComplementGroupDto {
+  @ApiProperty({ example: 'Taille' })
+  @IsNotEmpty()
+  @Trim()
+  title: string;
+
+  @ApiPropertyOptional({ example: false, type: Boolean })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  firstOptionFree?: boolean;
+
+  @ApiPropertyOptional({ type: [ProductComplementOptionDto] })
+  @IsOptional()
+  @IsArray()
+  options?: ProductComplementOptionDto[];
+}
+
+export class ProductSupplementDto {
+  @ApiProperty({ example: 'Sauce piment' })
+  @IsNotEmpty()
+  @Trim()
+  name: string;
+
+  @ApiPropertyOptional({ example: 0, type: Number })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return value;
+    const n = Number(value);
+    return Number.isNaN(n) ? value : n;
+  })
+  @IsNumber()
+  @Min(0)
+  price?: number;
+}
+
 export class CreateProductDto {
   @ApiProperty({ example: 'Poulet braisé' })
   @IsNotEmpty()
@@ -70,6 +130,22 @@ export class CreateProductDto {
   @IsArray()
   @IsString({ each: true })
   fieldsets?: string[];
+
+  @ApiPropertyOptional({
+    type: [ProductComplementGroupDto],
+    description: 'Groupes de compléments (options + prix + option par défaut).',
+  })
+  @IsOptional()
+  @IsArray()
+  complements?: ProductComplementGroupDto[];
+
+  @ApiPropertyOptional({
+    type: [ProductSupplementDto],
+    description: 'Suppléments simples (nom + prix).',
+  })
+  @IsOptional()
+  @IsArray()
+  supplements?: ProductSupplementDto[];
 }
 
 export class PatchProductDto {
@@ -132,6 +208,22 @@ export class PatchProductDto {
   @IsArray()
   @IsString({ each: true })
   fieldsets?: string[];
+
+  @ApiPropertyOptional({
+    type: [ProductComplementGroupDto],
+    description: 'Groupes de compléments (options + prix + option par défaut).',
+  })
+  @IsOptional()
+  @IsArray()
+  complements?: ProductComplementGroupDto[];
+
+  @ApiPropertyOptional({
+    type: [ProductSupplementDto],
+    description: 'Suppléments simples (nom + prix).',
+  })
+  @IsOptional()
+  @IsArray()
+  supplements?: ProductSupplementDto[];
 
   @ApiPropertyOptional({
     description:
@@ -223,7 +315,13 @@ export class CreateProductExtraDto {
 
   @ApiProperty({ example: 1.5, type: Number })
   @IsNotEmpty()
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return value;
+    const n = Number(value);
+    return Number.isNaN(n) ? value : n;
+  })
   @IsNumber()
+  @Min(0)
   price: number;
 
   @ApiPropertyOptional({ type: 'string', format: 'binary' })
