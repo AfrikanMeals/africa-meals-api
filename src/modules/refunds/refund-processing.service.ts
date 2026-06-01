@@ -457,7 +457,8 @@ export class RefundProcessingService {
         totalPrice: typeof o.totalPrice === 'number' ? o.totalPrice : 0,
         shippingPrice:
           typeof o.shippingPrice === 'number' ? o.shippingPrice : 0,
-        currency: orderCurrency || stripePaymentCurrency || storeCurrency || 'CAD',
+        currency:
+          orderCurrency || stripePaymentCurrency || storeCurrency || 'CAD',
         stripeParentPaymentId: stripeParentIdFromOrder(raw),
         orderStatus: String(o.status ?? ''),
         customer: {

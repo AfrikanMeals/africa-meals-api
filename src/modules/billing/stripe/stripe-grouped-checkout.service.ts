@@ -111,7 +111,8 @@ function normalizeStripeCurrencyCode(raw: unknown): string {
 }
 
 function cartLineCurrencyCode(line: Record<string, unknown>): string | null {
-  const direct = line['currency'] ?? line['currencyCode'] ?? line['currency_code'];
+  const direct =
+    line['currency'] ?? line['currencyCode'] ?? line['currency_code'];
   if (typeof direct === 'string' && direct.trim()) {
     return normalizeStripeCurrencyCode(direct);
   }
@@ -127,7 +128,9 @@ function cartLineCurrencyCode(line: Record<string, unknown>): string | null {
   return null;
 }
 
-function explicitCurrenciesForCartGroup(lines: Record<string, unknown>[]): Set<string> {
+function explicitCurrenciesForCartGroup(
+  lines: Record<string, unknown>[],
+): Set<string> {
   const out = new Set<string>();
   for (const line of lines) {
     const cur = cartLineCurrencyCode(line);
@@ -436,17 +439,15 @@ export class StripeGroupedCheckoutService {
     private readonly subscriptionStripeCheckout: SubscriptionsStripeCheckoutService,
   ) {}
 
-  private async settleAdCreditFromCheckoutSession(
-    session: {
-      id: string;
-      metadata?: Record<string, string | null | undefined> | null;
-      amount_total?: number | null;
-      currency?: string | null;
-      payment_status?: string | null;
-      status?: string | null;
-      payment_intent?: string | { id?: string | null } | null;
-    },
-  ): Promise<boolean> {
+  private async settleAdCreditFromCheckoutSession(session: {
+    id: string;
+    metadata?: Record<string, string | null | undefined> | null;
+    amount_total?: number | null;
+    currency?: string | null;
+    payment_status?: string | null;
+    status?: string | null;
+    payment_intent?: string | { id?: string | null } | null;
+  }): Promise<boolean> {
     if (session.metadata?.kind !== AD_CREDIT_CHECKOUT_METADATA_KIND) {
       return false;
     }
@@ -461,7 +462,9 @@ export class StripeGroupedCheckoutService {
       );
       return true;
     }
-    const amountPaidCad = Number(((session.amount_total ?? 0) / 100).toFixed(2));
+    const amountPaidCad = Number(
+      ((session.amount_total ?? 0) / 100).toFixed(2),
+    );
     if (!Number.isFinite(amountPaidCad) || amountPaidCad <= 0) {
       this.logger.warn(
         `Stripe webhook: ad-credit invalid amount for session ${session.id}`,
@@ -472,7 +475,10 @@ export class StripeGroupedCheckoutService {
       typeof session.payment_intent === 'string'
         ? session.payment_intent
         : session.payment_intent?.id ?? null;
-    const currency = String(session.currency ?? 'cad').trim().toUpperCase() || 'CAD';
+    const currency =
+      String(session.currency ?? 'cad')
+        .trim()
+        .toUpperCase() || 'CAD';
 
     await this.adCreditPaymentModel
       .updateOne(
@@ -1314,9 +1320,7 @@ export class StripeGroupedCheckoutService {
               shipCents > 0 && checkoutAddressId
                 ? checkoutAddressId
                 : undefined,
-            currency: currency
-              ? currency.trim().toUpperCase()
-              : undefined,
+            currency: currency ? currency.trim().toUpperCase() : undefined,
           },
         );
         const paidOk = await this.ordersService.isOrderPaidForStripePayment(

@@ -237,7 +237,10 @@ export class StoreController {
   /** Suppression d’une boutique non approuvée (PENDING / REVISION) — administrateurs uniquement. */
   @Delete('admin/vendors/:storeId')
   @UseGuards(JwtGuard)
-  async deleteVendorStore(@Param('storeId') storeId: string, @Req() req: Request) {
+  async deleteVendorStore(
+    @Param('storeId') storeId: string,
+    @Req() req: Request,
+  ) {
     return this._storeService.deleteVendorStoreForAdmin(
       storeId,
       req.user as UserModel,
@@ -796,6 +799,7 @@ export class StoreController {
       title: body.title,
       bio: body.bio,
       about: body.about,
+      fieldsets: body.fieldsets,
       originCountry: body.originCountry,
       price: body.price,
       discountPrice: body.discountPrice,

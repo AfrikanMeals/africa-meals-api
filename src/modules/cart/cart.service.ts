@@ -197,7 +197,9 @@ export class CartService {
         ...item.toJSON(),
         entity: drinkEntityForCartApi({
           ...drink,
-          currency: String((item.store as { currency?: unknown })?.currency ?? 'CAD'),
+          currency: String(
+            (item.store as { currency?: unknown })?.currency ?? 'CAD',
+          ),
         }),
         drinkMaxOrderQuantity: maxOrder,
       } as unknown as Partial<CartItemModel>;

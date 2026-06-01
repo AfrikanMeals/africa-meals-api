@@ -17,7 +17,11 @@ export class AdCreditPaymentModel extends BaseSchema {
   @Prop({ required: true, default: 'CAD' })
   currency: string;
 
-  @Prop({ required: true, enum: AdCreditPaymentStatusEnum, default: AdCreditPaymentStatusEnum.PAID })
+  @Prop({
+    required: true,
+    enum: AdCreditPaymentStatusEnum,
+    default: AdCreditPaymentStatusEnum.PAID,
+  })
   status: AdCreditPaymentStatusEnum;
 
   @Prop({ required: true, unique: true, index: true })

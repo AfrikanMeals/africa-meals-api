@@ -597,7 +597,9 @@ export class OrdersService {
       row = this.attachDashboardOrderRefundFlags([plain])[0];
     }
     const [enriched] = await this.attachStatusEventsToOrders([row]);
-    const [withCurrency] = await this.enrichOrdersWithStripeCurrency([enriched]);
+    const [withCurrency] = await this.enrichOrdersWithStripeCurrency([
+      enriched,
+    ]);
     const out = withCurrency;
     if (
       asCustomerScope ||

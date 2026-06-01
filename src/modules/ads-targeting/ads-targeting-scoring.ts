@@ -12,7 +12,9 @@ function clamp01(v: number): number {
   return v;
 }
 
-export function computeAdsTargetingScore(input: AdsTargetingScoreInput): number {
+export function computeAdsTargetingScore(
+  input: AdsTargetingScoreInput,
+): number {
   const interestMatch = clamp01(input.interestMatch);
   const recencyBoost = clamp01(input.recencyBoost);
   const engagementScore = clamp01(input.engagementScore);

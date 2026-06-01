@@ -1,9 +1,18 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { InfraRuntimeSettingsModel } from '@schemas/infra-runtime-settings.schema';
 import { JobsOptions, Queue, Worker } from 'bullmq';
-import { connect as mqttConnect, type IClientOptions, type MqttClient } from 'mqtt';
+import {
+  connect as mqttConnect,
+  type IClientOptions,
+  type MqttClient,
+} from 'mqtt';
 import { Model } from 'mongoose';
 
 type WsNotifyQueueJob = {
@@ -40,7 +49,9 @@ function toBool(raw: string | undefined): boolean {
 
 function isMqttAuthError(message: string): boolean {
   const m = message.toLowerCase();
-  return m.includes('not authorized') || m.includes('bad user name or password');
+  return (
+    m.includes('not authorized') || m.includes('bad user name or password')
+  );
 }
 
 @Injectable()
@@ -139,14 +150,23 @@ export class WsNotifyDispatchQueueService
     const normalizedPayload = { ...payload };
     const infraSettings = await this.readInfraSettings();
     if (infraSettings.mqBrokerEnabled) {
-      const mqttPublished = await this.publishViaMqtt(suffix, normalizedPayload);
+      const mqttPublished = await this.publishViaMqtt(
+        suffix,
+        normalizedPayload,
+      );
       if (mqttPublished) return;
     }
-    if (!infraSettings.redisManagerEnabled || !this.queueEnabled || !this.queue) {
-      await this.postInternal(suffix, normalizedPayload).catch((error: unknown) => {
-        const msg = error instanceof Error ? error.message : String(error);
-        this.logger.warn(`ws notify direct failed (${suffix}): ${msg}`);
-      });
+    if (
+      !infraSettings.redisManagerEnabled ||
+      !this.queueEnabled ||
+      !this.queue
+    ) {
+      await this.postInternal(suffix, normalizedPayload).catch(
+        (error: unknown) => {
+          const msg = error instanceof Error ? error.message : String(error);
+          this.logger.warn(`ws notify direct failed (${suffix}): ${msg}`);
+        },
+      );
       return;
     }
 
@@ -184,7 +204,9 @@ export class WsNotifyDispatchQueueService
       .catch((error: unknown) => {
         const msg = error instanceof Error ? error.message : String(error);
         this.logger.warn(`ws notify enqueue failed (${suffix}): ${msg}`);
-        return this.postInternal(suffix, normalizedPayload).catch(() => undefined);
+        return this.postInternal(suffix, normalizedPayload).catch(
+          () => undefined,
+        );
       });
   }
 
@@ -224,15 +246,13 @@ export class WsNotifyDispatchQueueService
     return this.infraSettingsCache;
   }
 
-  private redisConnectionConfig():
-    | {
-        host: string;
-        port: number;
-        username?: string;
-        password?: string;
-        tls?: Record<string, unknown>;
-      }
-    | null {
+  private redisConnectionConfig(): {
+    host: string;
+    port: number;
+    username?: string;
+    password?: string;
+    tls?: Record<string, unknown>;
+  } | null {
     const redisUrl = this.config.get<string>('REDIS_URL')?.trim();
     if (redisUrl) {
       try {
@@ -313,7 +333,7 @@ export class WsNotifyDispatchQueueService
     const client = mqttConnect(cfg.url, cfg.options);
     client.on('connect', () => {
       this.mqttConnected = true;
-       this.mqttState = 'connected';
+      this.mqttState = 'connected';
       this.mqttLastError = null;
       this.logger.log(`MQTT connected: ${cfg.url}`);
     });
@@ -343,12 +363,10 @@ export class WsNotifyDispatchQueueService
     this.mqttClient = client;
   }
 
-  private mqttConfig():
-    | {
-        url: string;
-        options: IClientOptions;
-      }
-    | null {
+  private mqttConfig(): {
+    url: string;
+    options: IClientOptions;
+  } | null {
     const direct = this.config.get<string>('MQTT_BROKER_URL')?.trim();
     const host = this.config.get<string>('MQTT_BROKER_HOST')?.trim();
     if (!direct && !host) return null;
@@ -356,7 +374,8 @@ export class WsNotifyDispatchQueueService
       this.config.get<string>('MQTT_BROKER_PORT'),
       8883,
     );
-    const protocol = this.config.get<string>('MQTT_BROKER_PROTOCOL')?.trim() || 'mqtts';
+    const protocol =
+      this.config.get<string>('MQTT_BROKER_PROTOCOL')?.trim() || 'mqtts';
     const url = direct || `${protocol}://${host}:${port}`;
     return {
       url,
@@ -398,13 +417,18 @@ export class WsNotifyDispatchQueueService
     const body = JSON.stringify(payload);
     try {
       await new Promise<void>((resolve, reject) => {
-        this.mqttClient!.publish(topic, body, { qos, retain: false }, (error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
-        });
+        this.mqttClient!.publish(
+          topic,
+          body,
+          { qos, retain: false },
+          (error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          },
+        );
       });
       this.mqttLastPublishedTopic = topic;
       this.mqttLastPublishedAtMs = Date.now();

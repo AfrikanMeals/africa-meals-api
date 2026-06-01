@@ -16,7 +16,12 @@ export class AdsTargetingAuditLogModel extends BaseSchema {
   @Prop({ required: false, trim: true, name: 'target_user_key', index: true })
   targetUserKey?: string;
 
-  @Prop({ required: false, trim: true, name: 'target_campaign_id', index: true })
+  @Prop({
+    required: false,
+    trim: true,
+    name: 'target_campaign_id',
+    index: true,
+  })
   targetCampaignId?: string;
 
   @Prop({ required: false, type: Object, default: {} })

@@ -85,7 +85,12 @@ export class AdCampaignModel extends BaseSchema {
   @Prop({ required: false, name: 'action_target', trim: true })
   actionTarget?: string;
 
-  @Prop({ required: true, trim: true, default: 'Découvrir', name: 'action_text' })
+  @Prop({
+    required: true,
+    trim: true,
+    default: 'Découvrir',
+    name: 'action_text',
+  })
   actionText: string;
 
   @Prop({

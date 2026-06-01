@@ -62,7 +62,9 @@ export class WsOrderNotifyService {
       this.queue.dispatch(pathSuffix, { userId: uid, ...payload });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      this.logger.warn(`ws order notify enqueue (${pathSuffix}) failed: ${msg}`);
+      this.logger.warn(
+        `ws order notify enqueue (${pathSuffix}) failed: ${msg}`,
+      );
     }
   }
 
@@ -77,7 +79,9 @@ export class WsOrderNotifyService {
       this.queue.dispatch(pathSuffix, payload);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      this.logger.warn(`ws order notify enqueue (${pathSuffix}) failed: ${msg}`);
+      this.logger.warn(
+        `ws order notify enqueue (${pathSuffix}) failed: ${msg}`,
+      );
     }
   }
 }

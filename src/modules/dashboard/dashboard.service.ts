@@ -2150,7 +2150,9 @@ export class DashboardService {
   private async stripeCurrencyBySessionIds(
     sessionIds: string[],
   ): Promise<Map<string, string>> {
-    const unique = [...new Set(sessionIds.map((s) => s.trim()).filter(Boolean))];
+    const unique = [
+      ...new Set(sessionIds.map((s) => s.trim()).filter(Boolean)),
+    ];
     if (!unique.length) return new Map();
     const docs = await this.stripeProcessedCheckoutModel
       .find({ sessionId: { $in: unique } })
@@ -3509,7 +3511,9 @@ export class DashboardService {
 
     const missingCurrencyByPaymentId = new Map<string, true>();
     for (const o of orderDocs) {
-      const orderCurrency = normalizeCurrencyCode((o as { currency?: unknown }).currency);
+      const orderCurrency = normalizeCurrencyCode(
+        (o as { currency?: unknown }).currency,
+      );
       if (orderCurrency) continue;
       const paymentId = String(
         (o as { stripeParentPaymentId?: unknown }).stripeParentPaymentId ?? '',
@@ -3538,7 +3542,9 @@ export class DashboardService {
       const userDoc = o.user as
         | { fullName?: string; email?: string }
         | undefined;
-      const storeDoc = o.store as { name?: string; currency?: string } | undefined;
+      const storeDoc = o.store as
+        | { name?: string; currency?: string }
+        | undefined;
       const parentPaymentId = String(
         (o as { stripeParentPaymentId?: unknown }).stripeParentPaymentId ?? '',
       ).trim();
@@ -3580,9 +3586,7 @@ export class DashboardService {
       orders.map((o) => normalizeCurrencyCode(o.currency)).filter(Boolean),
     );
     const reportCurrency =
-      reportCurrencySet.size === 1
-        ? [...reportCurrencySet][0]
-        : undefined;
+      reportCurrencySet.size === 1 ? [...reportCurrencySet][0] : undefined;
 
     return {
       timezone: z,

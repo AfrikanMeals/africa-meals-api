@@ -7,7 +7,13 @@ import { BaseSchema } from './base.schema';
   toJSON: { getters: true, virtuals: true },
 })
 export class AdsTargetingProfileModel extends BaseSchema {
-  @Prop({ required: true, unique: true, name: 'user_key', index: true, trim: true })
+  @Prop({
+    required: true,
+    unique: true,
+    name: 'user_key',
+    index: true,
+    trim: true,
+  })
   userKey: string;
 
   @Prop({ type: [String], default: [], name: 'top_categories' })

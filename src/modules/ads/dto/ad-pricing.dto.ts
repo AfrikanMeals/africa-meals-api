@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import {
+  IsNumber,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class UpdateAdPricingDto {
   @ApiPropertyOptional({ example: 'CAD' })
@@ -59,7 +65,8 @@ export class UpdateAdPricingDto {
   campaignActionCad?: number;
 
   @ApiPropertyOptional({
-    description: 'Coût facturé par conversion (achat attribué à une pub/campagne).',
+    description:
+      'Coût facturé par conversion (achat attribué à une pub/campagne).',
     example: 1.2,
     minimum: 0,
   })

@@ -240,7 +240,12 @@ export type AdCreditSummaryPayload = {
   stores: Array<{
     storeId: string;
     storeName: string;
-    banners: { impressions: number; clicks: number; conversions: number; due: number };
+    banners: {
+      impressions: number;
+      clicks: number;
+      conversions: number;
+      due: number;
+    };
     campaigns: {
       impressions: number;
       clicks: number;
@@ -359,7 +364,11 @@ export class AdsService implements OnModuleInit {
 
   private assertVendorStripeConnectReadyForWrites(user: UserModel): void {
     if (user.type !== UserTypeEnum.VENDOR) return;
-    if (!isStripeConnectOnboardingCompleteUser(user as unknown as Record<string, unknown>)) {
+    if (
+      !isStripeConnectOnboardingCompleteUser(
+        user as unknown as Record<string, unknown>,
+      )
+    ) {
       throw new ForbiddenException('stripe_connect_required');
     }
   }
@@ -368,7 +377,9 @@ export class AdsService implements OnModuleInit {
    * Bloque la création de nouvelles Ads tant que le crédit Ads finalisé
    * (bannières/campagnes terminées ou expirées) n'est pas soldé.
    */
-  private async assertVendorHasNoUnpaidAdCredit(user: UserModel): Promise<void> {
+  private async assertVendorHasNoUnpaidAdCredit(
+    user: UserModel,
+  ): Promise<void> {
     if (user.type !== UserTypeEnum.VENDOR) return;
     const credit = await this.getMyAdCredit(user);
     if (Number(credit.totalDue ?? 0) > 0) {
@@ -417,7 +428,9 @@ export class AdsService implements OnModuleInit {
     return `${adminBase.replace(/\/$/, '')}/?ad_credit_payment=cancel`;
   }
 
-  private async _adCreditPaidTotalCad(ownerId: Types.ObjectId): Promise<number> {
+  private async _adCreditPaidTotalCad(
+    ownerId: Types.ObjectId,
+  ): Promise<number> {
     const rows = await this._adCreditPaymentModel
       .aggregate<{ _id: null; total: number }>([
         {
@@ -437,7 +450,9 @@ export class AdsService implements OnModuleInit {
     return Number(rows[0]?.total ?? 0);
   }
 
-  private async _backfillRecentAdCreditPayments(ownerId: Types.ObjectId): Promise<void> {
+  private async _backfillRecentAdCreditPayments(
+    ownerId: Types.ObjectId,
+  ): Promise<void> {
     let stripe: StripeClient;
     try {
       stripe = this.stripe();
@@ -471,13 +486,18 @@ export class AdsService implements OnModuleInit {
       const kind = String(session.metadata?.kind ?? '').trim();
       const uid = String(session.metadata?.uid ?? '').trim();
       if (kind !== AD_CREDIT_CHECKOUT_METADATA_KIND || uid !== owner) continue;
-      const amountPaidCad = Number(((session.amount_total ?? 0) / 100).toFixed(2));
+      const amountPaidCad = Number(
+        ((session.amount_total ?? 0) / 100).toFixed(2),
+      );
       if (!Number.isFinite(amountPaidCad) || amountPaidCad <= 0) continue;
       const paymentIntentId =
         typeof session.payment_intent === 'string'
           ? session.payment_intent
           : session.payment_intent?.id ?? null;
-      const currency = String(session.currency ?? 'cad').trim().toUpperCase() || 'CAD';
+      const currency =
+        String(session.currency ?? 'cad')
+          .trim()
+          .toUpperCase() || 'CAD';
       await this._adCreditPaymentModel
         .updateOne(
           { stripeCheckoutSessionId: session.id },
@@ -563,7 +583,11 @@ export class AdsService implements OnModuleInit {
     if (user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('vendor_or_admin_only');
     }
-    await this._storeAccess.assertStoreAccess(user, storeId, 'campaigns.manage');
+    await this._storeAccess.assertStoreAccess(
+      user,
+      storeId,
+      'campaigns.manage',
+    );
   }
 
   private async resolveManageableCampaignStoreIds(
@@ -583,8 +607,7 @@ export class AdsService implements OnModuleInit {
   }
 
   private _toPricingPayload(
-    doc: AdPricingSettingsModel &
-      Partial<{ updatedAt: Date | string | null }>,
+    doc: AdPricingSettingsModel & Partial<{ updatedAt: Date | string | null }>,
   ): AdPricingPayload {
     const currency = String(doc.currency ?? ADS_PRICING_DEFAULTS.currency)
       .trim()
@@ -660,7 +683,9 @@ export class AdsService implements OnModuleInit {
     const campaignActionCad = Number(
       dto.campaignActionCad ?? current.campaignActionCad ?? 0,
     );
-    const conversionCad = Number(dto.conversionCad ?? current.conversionCad ?? 0);
+    const conversionCad = Number(
+      dto.conversionCad ?? current.conversionCad ?? 0,
+    );
     const minimumBudgetCad = Number(
       dto.minimumBudgetCad ?? current.minimumBudgetCad ?? 0,
     );
@@ -823,7 +848,9 @@ export class AdsService implements OnModuleInit {
           : null,
       archiveReason:
         doc.archiveReason != null && String(doc.archiveReason).trim() !== ''
-          ? (String(doc.archiveReason).trim().toUpperCase() as AdCampaignArchiveReasonEnum)
+          ? (String(doc.archiveReason)
+              .trim()
+              .toUpperCase() as AdCampaignArchiveReasonEnum)
           : null,
       billingFinalizedAt:
         doc.billingFinalizedAt instanceof Date
@@ -861,7 +888,9 @@ export class AdsService implements OnModuleInit {
       this._adCampaignEventModel.countDocuments({
         campaign: campaignId,
         eventType: AdCampaignEventTypeEnum.CLICK,
-        itemType: { $in: [AdCampaignItemTypeEnum.PRODUCT, AdCampaignItemTypeEnum.DRINK] },
+        itemType: {
+          $in: [AdCampaignItemTypeEnum.PRODUCT, AdCampaignItemTypeEnum.DRINK],
+        },
       }),
       this._adCampaignEventModel.countDocuments({
         campaign: campaignId,
@@ -878,7 +907,12 @@ export class AdsService implements OnModuleInit {
 
   private _campaignBillingAmount(
     pricing: AdPricingPayload,
-    metrics: { impressions: number; clicks: number; actionClicks: number; conversions: number },
+    metrics: {
+      impressions: number;
+      clicks: number;
+      actionClicks: number;
+      conversions: number;
+    },
   ): number {
     return (
       (metrics.impressions / 1000) * pricing.campaignCpmCad +
@@ -1070,7 +1104,9 @@ export class AdsService implements OnModuleInit {
   ): Promise<AdCampaignManagementRow[]> {
     this.assertVendorOrAdmin(user);
     await this._autoArchiveExpiredCampaigns();
-    const manageableStoreIds = await this.resolveManageableCampaignStoreIds(user);
+    const manageableStoreIds = await this.resolveManageableCampaignStoreIds(
+      user,
+    );
     const query: Record<string, unknown> = {
       $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
     };
@@ -1088,7 +1124,9 @@ export class AdsService implements OnModuleInit {
       .sort({ createdAt: -1 })
       .lean()
       .exec();
-    return (docs as Record<string, unknown>[]).map((d) => this._toCampaignRow(d));
+    return (docs as Record<string, unknown>[]).map((d) =>
+      this._toCampaignRow(d),
+    );
   }
 
   async listArchivedCampaignsForManagement(
@@ -1096,7 +1134,9 @@ export class AdsService implements OnModuleInit {
   ): Promise<AdCampaignManagementRow[]> {
     this.assertVendorOrAdmin(user);
     await this._autoArchiveExpiredCampaigns();
-    const manageableStoreIds = await this.resolveManageableCampaignStoreIds(user);
+    const manageableStoreIds = await this.resolveManageableCampaignStoreIds(
+      user,
+    );
     const query: Record<string, unknown> = {
       archivedAt: { $exists: true, $ne: null },
     };
@@ -1114,7 +1154,9 @@ export class AdsService implements OnModuleInit {
       .sort({ archivedAt: -1, createdAt: -1 })
       .lean()
       .exec();
-    return (docs as Record<string, unknown>[]).map((d) => this._toCampaignRow(d));
+    return (docs as Record<string, unknown>[]).map((d) =>
+      this._toCampaignRow(d),
+    );
   }
 
   async createCampaign(
@@ -1145,7 +1187,8 @@ export class AdsService implements OnModuleInit {
     if (actionType === StoreAdActionTypeEnum.PRODUCT) {
       throw new BadRequestException('invalid_campaign_action_type');
     }
-    const actionText = String(dto.actionText ?? 'Découvrir').trim() || 'Découvrir';
+    const actionText =
+      String(dto.actionText ?? 'Découvrir').trim() || 'Découvrir';
     const actionTarget = isAdLinkActionType(actionType)
       ? this.assertActionTargetValue(actionType, dto.actionTarget)
       : undefined;
@@ -1225,7 +1268,8 @@ export class AdsService implements OnModuleInit {
           : dto.actionTarget.trim();
     }
     const effectiveActionType =
-      (existing.actionType as StoreAdActionTypeEnum) ?? StoreAdActionTypeEnum.SHOP;
+      (existing.actionType as StoreAdActionTypeEnum) ??
+      StoreAdActionTypeEnum.SHOP;
     if (isAdLinkActionType(effectiveActionType)) {
       existing.actionTarget = this.assertActionTargetValue(
         effectiveActionType,
@@ -1297,7 +1341,10 @@ export class AdsService implements OnModuleInit {
       ok: true,
       campaignId: String(out?._id ?? id),
       archivedAt: new Date(
-        String((out as { archivedAt?: Date | string } | null)?.archivedAt ?? new Date()),
+        String(
+          (out as { archivedAt?: Date | string } | null)?.archivedAt ??
+            new Date(),
+        ),
       ).toISOString(),
     };
   }
@@ -1388,7 +1435,9 @@ export class AdsService implements OnModuleInit {
       throw new NotFoundException('campaign_not_found');
     }
 
-    const itemType = String(dto.itemType ?? '').trim().toUpperCase();
+    const itemType = String(dto.itemType ?? '')
+      .trim()
+      .toUpperCase();
     if (
       itemType !== AdCampaignItemTypeEnum.PRODUCT &&
       itemType !== AdCampaignItemTypeEnum.DRINK &&
@@ -1401,7 +1450,9 @@ export class AdsService implements OnModuleInit {
       throw new BadRequestException('invalid_campaign_item_id');
     }
     if (itemType === 'STORE_ACTION') {
-      const campaignStoreId = String((campaign as { store?: unknown }).store ?? '');
+      const campaignStoreId = String(
+        (campaign as { store?: unknown }).store ?? '',
+      );
       if (!campaignStoreId || campaignStoreId !== itemId) {
         throw new BadRequestException('campaign_item_not_found');
       }
@@ -1442,7 +1493,11 @@ export class AdsService implements OnModuleInit {
     userId: string;
     storeId: string;
     items: Array<{ itemType: string; entityId: string }>;
-  }): Promise<{ ok: true; bannerConversions: number; campaignConversions: number }> {
+  }): Promise<{
+    ok: true;
+    bannerConversions: number;
+    campaignConversions: number;
+  }> {
     const orderId = String(args.orderId ?? '').trim();
     const userId = String(args.userId ?? '').trim();
     const storeId = String(args.storeId ?? '').trim();
@@ -1456,7 +1511,9 @@ export class AdsService implements OnModuleInit {
 
     const purchased = args.items
       .map((it) => ({
-        itemType: String(it.itemType ?? '').trim().toUpperCase(),
+        itemType: String(it.itemType ?? '')
+          .trim()
+          .toUpperCase(),
         itemId: String(it.entityId ?? '').trim(),
       }))
       .filter(
@@ -1531,7 +1588,9 @@ export class AdsService implements OnModuleInit {
       const existingCampaignKeys = new Set(
         existingCampaignConversions.map(
           (row) =>
-            `${String(row.campaign ?? '')}:${String(row.itemType ?? '').toUpperCase()}:${String(row.itemId ?? '')}`,
+            `${String(row.campaign ?? '')}:${String(
+              row.itemType ?? '',
+            ).toUpperCase()}:${String(row.itemId ?? '')}`,
         ),
       );
 
@@ -1543,16 +1602,24 @@ export class AdsService implements OnModuleInit {
       const seenOrderItemKeys = new Set<string>();
       for (const click of campaignClicks as Array<Record<string, unknown>>) {
         const campaignId = String(click.campaign ?? '').trim();
-        const itemType = String(click.itemType ?? '').trim().toUpperCase();
+        const itemType = String(click.itemType ?? '')
+          .trim()
+          .toUpperCase();
         const itemId = String(click.itemId ?? '').trim();
-        if (!Types.ObjectId.isValid(campaignId) || !Types.ObjectId.isValid(itemId)) {
+        if (
+          !Types.ObjectId.isValid(campaignId) ||
+          !Types.ObjectId.isValid(itemId)
+        ) {
           continue;
         }
         if (campaignStoreById.get(campaignId) !== storeOid.toHexString()) {
           continue;
         }
         const orderItemKey = `${itemType}:${itemId}`;
-        if (!purchasedByKey.has(orderItemKey) || seenOrderItemKeys.has(orderItemKey)) {
+        if (
+          !purchasedByKey.has(orderItemKey) ||
+          seenOrderItemKeys.has(orderItemKey)
+        ) {
           continue;
         }
         const dedupeKey = `${campaignId}:${itemType}:${itemId}`;
@@ -1625,16 +1692,21 @@ export class AdsService implements OnModuleInit {
         const adProductId = String(ad.product ?? '').trim();
         const adStoreId = String(ad.store ?? '').trim();
         const eligible =
-          (Types.ObjectId.isValid(adProductId) && purchasedProducts.has(adProductId)) ||
-          (Types.ObjectId.isValid(adStoreId) && adStoreId === storeOid.toHexString()) ||
-          (!Types.ObjectId.isValid(adProductId) && !Types.ObjectId.isValid(adStoreId));
+          (Types.ObjectId.isValid(adProductId) &&
+            purchasedProducts.has(adProductId)) ||
+          (Types.ObjectId.isValid(adStoreId) &&
+            adStoreId === storeOid.toHexString()) ||
+          (!Types.ObjectId.isValid(adProductId) &&
+            !Types.ObjectId.isValid(adStoreId));
         if (!eligible) continue;
-        const conversionSource = Types.ObjectId.isValid(adProductId) &&
+        const conversionSource =
+          Types.ObjectId.isValid(adProductId) &&
           purchasedProducts.has(adProductId)
-          ? AdConversionSourceEnum.BANNER_PRODUCT
-          : Types.ObjectId.isValid(adStoreId) && adStoreId === storeOid.toHexString()
-          ? AdConversionSourceEnum.BANNER_STORE
-          : AdConversionSourceEnum.BANNER_GENERIC;
+            ? AdConversionSourceEnum.BANNER_PRODUCT
+            : Types.ObjectId.isValid(adStoreId) &&
+              adStoreId === storeOid.toHexString()
+            ? AdConversionSourceEnum.BANNER_STORE
+            : AdConversionSourceEnum.BANNER_GENERIC;
         const exists = await this._adEventModel
           .exists({
             ad: new Types.ObjectId(adId),
@@ -1669,7 +1741,10 @@ export class AdsService implements OnModuleInit {
     const access = await this._storeAccess.resolveStoreAccess(user);
     const storeMeta = access
       .filter((a) => Types.ObjectId.isValid(a.storeId))
-      .map((a) => ({ storeId: a.storeId, storeName: a.storeName || a.storeId }));
+      .map((a) => ({
+        storeId: a.storeId,
+        storeName: a.storeName || a.storeId,
+      }));
     const storeIds = storeMeta.map((a) => new Types.ObjectId(a.storeId));
 
     if (!storeIds.length) {
@@ -1701,7 +1776,12 @@ export class AdsService implements OnModuleInit {
       string,
       {
         storeName: string;
-        banners: { impressions: number; clicks: number; conversions: number; due: number };
+        banners: {
+          impressions: number;
+          clicks: number;
+          conversions: number;
+          due: number;
+        };
         campaigns: {
           impressions: number;
           clicks: number;
@@ -1715,7 +1795,13 @@ export class AdsService implements OnModuleInit {
       perStore.set(s.storeId, {
         storeName: s.storeName,
         banners: { impressions: 0, clicks: 0, conversions: 0, due: 0 },
-        campaigns: { impressions: 0, clicks: 0, actionClicks: 0, conversions: 0, due: 0 },
+        campaigns: {
+          impressions: 0,
+          clicks: 0,
+          actionClicks: 0,
+          conversions: 0,
+          due: 0,
+        },
       });
     }
 
@@ -1739,46 +1825,48 @@ export class AdsService implements OnModuleInit {
       .filter((id) => Types.ObjectId.isValid(id))
       .map((id) => new Types.ObjectId(id));
 
-    const [bannerImpressions, bannerClicks, bannerConversions, bannerAgg] = adObjectIds.length
-      ? await Promise.all([
-          this._adEventModel.countDocuments({
-            ad: { $in: adObjectIds },
-            eventType: AdEventTypeEnum.IMPRESSION,
-          }),
-          this._adEventModel.countDocuments({
-            ad: { $in: adObjectIds },
-            eventType: AdEventTypeEnum.CLICK,
-          }),
-          this._adEventModel.countDocuments({
-            ad: { $in: adObjectIds },
-            eventType: AdEventTypeEnum.CONVERSION,
-          }),
-          this._adEventModel
-            .aggregate<
-              { _id: { ad: Types.ObjectId; eventType: AdEventTypeEnum }; count: number }
-            >([
-              {
-                $match: {
-                  ad: { $in: adObjectIds },
-                  eventType: {
-                    $in: [
-                      AdEventTypeEnum.IMPRESSION,
-                      AdEventTypeEnum.CLICK,
-                      AdEventTypeEnum.CONVERSION,
-                    ],
+    const [bannerImpressions, bannerClicks, bannerConversions, bannerAgg] =
+      adObjectIds.length
+        ? await Promise.all([
+            this._adEventModel.countDocuments({
+              ad: { $in: adObjectIds },
+              eventType: AdEventTypeEnum.IMPRESSION,
+            }),
+            this._adEventModel.countDocuments({
+              ad: { $in: adObjectIds },
+              eventType: AdEventTypeEnum.CLICK,
+            }),
+            this._adEventModel.countDocuments({
+              ad: { $in: adObjectIds },
+              eventType: AdEventTypeEnum.CONVERSION,
+            }),
+            this._adEventModel
+              .aggregate<{
+                _id: { ad: Types.ObjectId; eventType: AdEventTypeEnum };
+                count: number;
+              }>([
+                {
+                  $match: {
+                    ad: { $in: adObjectIds },
+                    eventType: {
+                      $in: [
+                        AdEventTypeEnum.IMPRESSION,
+                        AdEventTypeEnum.CLICK,
+                        AdEventTypeEnum.CONVERSION,
+                      ],
+                    },
                   },
                 },
-              },
-              {
-                $group: {
-                  _id: { ad: '$ad', eventType: '$eventType' },
-                  count: { $sum: 1 },
+                {
+                  $group: {
+                    _id: { ad: '$ad', eventType: '$eventType' },
+                    count: { $sum: 1 },
+                  },
                 },
-              },
-            ])
-            .exec(),
-        ])
-      : [0, 0, 0, []];
+              ])
+              .exec(),
+          ])
+        : [0, 0, 0, []];
     for (const row of bannerAgg) {
       const adId = String(row._id.ad ?? '');
       const storeId = adStoreById.get(adId);
@@ -1829,7 +1917,10 @@ export class AdsService implements OnModuleInit {
       const archivedAt = doc.archivedAt;
       const isArchived = archivedAt != null && String(archivedAt).trim() !== '';
       const due = isArchived
-        ? Number(doc.billingFinalAmountCad ?? this._adBillingAmount(pricing, metrics))
+        ? Number(
+            doc.billingFinalAmountCad ??
+              this._adBillingAmount(pricing, metrics),
+          )
         : 0;
       bannerDueByStore.set(storeId, (bannerDueByStore.get(storeId) ?? 0) + due);
     }
@@ -1860,8 +1951,7 @@ export class AdsService implements OnModuleInit {
       campaignActionClicks,
       campaignConversions,
       campaignAgg,
-    ] =
-      campaignObjectIds.length
+    ] = campaignObjectIds.length
       ? await Promise.all([
           this._adCampaignEventModel.countDocuments({
             campaign: { $in: campaignObjectIds },
@@ -1870,7 +1960,12 @@ export class AdsService implements OnModuleInit {
           this._adCampaignEventModel.countDocuments({
             campaign: { $in: campaignObjectIds },
             eventType: AdCampaignEventTypeEnum.CLICK,
-            itemType: { $in: [AdCampaignItemTypeEnum.PRODUCT, AdCampaignItemTypeEnum.DRINK] },
+            itemType: {
+              $in: [
+                AdCampaignItemTypeEnum.PRODUCT,
+                AdCampaignItemTypeEnum.DRINK,
+              ],
+            },
           }),
           this._adCampaignEventModel.countDocuments({
             campaign: { $in: campaignObjectIds },
@@ -1882,16 +1977,14 @@ export class AdsService implements OnModuleInit {
             eventType: AdCampaignEventTypeEnum.CONVERSION,
           }),
           this._adCampaignEventModel
-            .aggregate<
-              {
-                _id: {
-                  campaign: Types.ObjectId;
-                  eventType: AdCampaignEventTypeEnum;
-                  itemType: string;
-                };
-                count: number;
-              }
-            >([
+            .aggregate<{
+              _id: {
+                campaign: Types.ObjectId;
+                eventType: AdCampaignEventTypeEnum;
+                itemType: string;
+              };
+              count: number;
+            }>([
               {
                 $match: {
                   campaign: { $in: campaignObjectIds },
@@ -1937,10 +2030,18 @@ export class AdsService implements OnModuleInit {
       }
     }
 
-    const bannersDue = [...bannerDueByStore.values()].reduce((acc, v) => acc + v, 0);
+    const bannersDue = [...bannerDueByStore.values()].reduce(
+      (acc, v) => acc + v,
+      0,
+    );
     const campaignMetricsById = new Map<
       string,
-      { impressions: number; clicks: number; actionClicks: number; conversions: number }
+      {
+        impressions: number;
+        clicks: number;
+        actionClicks: number;
+        conversions: number;
+      }
     >();
     for (const row of campaignAgg) {
       const campaignId = String(row._id.campaign ?? '');
@@ -1966,7 +2067,10 @@ export class AdsService implements OnModuleInit {
     for (const doc of campaignDocs as Array<Record<string, unknown>>) {
       const campaignId = String(doc._id ?? '');
       const storeId = String(doc.store ?? '');
-      if (!Types.ObjectId.isValid(campaignId) || !Types.ObjectId.isValid(storeId)) {
+      if (
+        !Types.ObjectId.isValid(campaignId) ||
+        !Types.ObjectId.isValid(storeId)
+      ) {
         continue;
       }
       const metrics = campaignMetricsById.get(campaignId) ?? {
@@ -1983,7 +2087,10 @@ export class AdsService implements OnModuleInit {
               this._campaignBillingAmount(pricing, metrics),
           )
         : 0;
-      campaignDueByStore.set(storeId, (campaignDueByStore.get(storeId) ?? 0) + due);
+      campaignDueByStore.set(
+        storeId,
+        (campaignDueByStore.get(storeId) ?? 0) + due,
+      );
     }
     const campaignsDue = [...campaignDueByStore.values()].reduce(
       (acc, v) => acc + v,
@@ -1994,15 +2101,15 @@ export class AdsService implements OnModuleInit {
     const stores = [...perStore.entries()].map(([storeId, row]) => {
       const bannerDue =
         bannerDueByStore.get(storeId) ??
-        ((row.banners.impressions / 1000) * pricing.cpmCad +
+        (row.banners.impressions / 1000) * pricing.cpmCad +
           row.banners.clicks * pricing.cpcCad +
-          row.banners.conversions * pricing.conversionCad);
+          row.banners.conversions * pricing.conversionCad;
       const campaignDue =
         campaignDueByStore.get(storeId) ??
-        ((row.campaigns.impressions / 1000) * pricing.campaignCpmCad +
+        (row.campaigns.impressions / 1000) * pricing.campaignCpmCad +
           row.campaigns.clicks * pricing.campaignCpcCad +
           row.campaigns.actionClicks * pricing.campaignActionCad +
-          row.campaigns.conversions * pricing.conversionCad);
+          row.campaigns.conversions * pricing.conversionCad;
       return {
         storeId,
         storeName: row.storeName,
@@ -2095,8 +2202,9 @@ export class AdsService implements OnModuleInit {
       id: String(doc._id ?? ''),
       amountPaidCad: Number(doc.amountPaidCad ?? 0),
       currency: String(doc.currency ?? 'CAD').toUpperCase(),
-      status:
-        (String(doc.status ?? AdCreditPaymentStatusEnum.PAID).toUpperCase() as AdCreditPaymentStatusEnum),
+      status: String(
+        doc.status ?? AdCreditPaymentStatusEnum.PAID,
+      ).toUpperCase() as AdCreditPaymentStatusEnum,
       stripeCheckoutSessionId: String(doc.stripeCheckoutSessionId ?? ''),
       stripePaymentIntentId:
         doc.stripePaymentIntentId != null
@@ -2214,7 +2322,9 @@ export class AdsService implements OnModuleInit {
     if (session.payment_status !== 'paid' && session.status !== 'complete') {
       throw new BadRequestException('ad_credit_checkout_not_paid');
     }
-    const amountPaidCad = Number(((session.amount_total ?? 0) / 100).toFixed(2));
+    const amountPaidCad = Number(
+      ((session.amount_total ?? 0) / 100).toFixed(2),
+    );
     if (!Number.isFinite(amountPaidCad) || amountPaidCad <= 0) {
       throw new BadRequestException('ad_credit_checkout_invalid_amount');
     }
@@ -2449,7 +2559,9 @@ export class AdsService implements OnModuleInit {
           : null,
       archiveReason:
         doc.archiveReason != null && String(doc.archiveReason).trim() !== ''
-          ? (String(doc.archiveReason).trim().toUpperCase() as AdArchiveReasonEnum)
+          ? (String(doc.archiveReason)
+              .trim()
+              .toUpperCase() as AdArchiveReasonEnum)
           : null,
       billingFinalizedAt:
         doc.billingFinalizedAt instanceof Date
@@ -2990,7 +3102,10 @@ export class AdsService implements OnModuleInit {
       ok: true,
       adId: String(out?._id ?? id),
       archivedAt: new Date(
-        String((out as { archivedAt?: Date | string } | null)?.archivedAt ?? new Date()),
+        String(
+          (out as { archivedAt?: Date | string } | null)?.archivedAt ??
+            new Date(),
+        ),
       ).toISOString(),
     };
   }
@@ -3185,7 +3300,11 @@ export class AdsService implements OnModuleInit {
               },
               conversions: {
                 $sum: {
-                  $cond: [{ $eq: ['$eventType', AdEventTypeEnum.CONVERSION] }, 1, 0],
+                  $cond: [
+                    { $eq: ['$eventType', AdEventTypeEnum.CONVERSION] },
+                    1,
+                    0,
+                  ],
                 },
               },
             },
@@ -3226,7 +3345,9 @@ export class AdsService implements OnModuleInit {
       return {
         eventType: r.eventType as AdEventTypeEnum,
         conversionSource:
-          r.conversionSource != null ? (String(r.conversionSource) as AdConversionSourceEnum) : null,
+          r.conversionSource != null
+            ? (String(r.conversionSource) as AdConversionSourceEnum)
+            : null,
         createdAt:
           ca instanceof Date ? ca.toISOString() : String(ca ?? new Date()),
         userId,
@@ -3376,7 +3497,11 @@ export class AdsService implements OnModuleInit {
               },
               clicks: {
                 $sum: {
-                  $cond: [{ $eq: ['$eventType', AdCampaignEventTypeEnum.CLICK] }, 1, 0],
+                  $cond: [
+                    { $eq: ['$eventType', AdCampaignEventTypeEnum.CLICK] },
+                    1,
+                    0,
+                  ],
                 },
               },
               actionClicks: {
@@ -3443,7 +3568,11 @@ export class AdsService implements OnModuleInit {
               },
               clicks: {
                 $sum: {
-                  $cond: [{ $eq: ['$eventType', AdCampaignEventTypeEnum.CLICK] }, 1, 0],
+                  $cond: [
+                    { $eq: ['$eventType', AdCampaignEventTypeEnum.CLICK] },
+                    1,
+                    0,
+                  ],
                 },
               },
               conversions: {
@@ -3480,7 +3609,9 @@ export class AdsService implements OnModuleInit {
       ? (campaign.items as Record<string, unknown>[])
       : [];
     for (const item of campaignItems) {
-      const itemType = String(item.itemType ?? '').trim().toUpperCase();
+      const itemType = String(item.itemType ?? '')
+        .trim()
+        .toUpperCase();
       if (itemType === AdCampaignItemTypeEnum.PRODUCT) {
         const p = item.product as Record<string, unknown> | undefined | null;
         const itemId = p?._id ? String(p._id) : '';
@@ -3520,7 +3651,9 @@ export class AdsService implements OnModuleInit {
       });
     }
     for (const row of byItem) {
-      const itemType = String(row._id.itemType ?? '').trim().toUpperCase();
+      const itemType = String(row._id.itemType ?? '')
+        .trim()
+        .toUpperCase();
       const itemId = String(row._id.itemId ?? '').trim();
       if (!itemType || !itemId) continue;
       const key = `${itemType}:${itemId}`;

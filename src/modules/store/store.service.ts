@@ -61,7 +61,11 @@ export class StoreService {
 
   private assertVendorStripeConnectReadyForWrites(user: UserModel): void {
     if (user.type !== UserTypeEnum.VENDOR) return;
-    if (!isStripeConnectOnboardingCompleteUser(user as unknown as Record<string, unknown>)) {
+    if (
+      !isStripeConnectOnboardingCompleteUser(
+        user as unknown as Record<string, unknown>,
+      )
+    ) {
       throw new ForbiddenException('stripe_connect_required');
     }
   }
@@ -570,7 +574,9 @@ export class StoreService {
       { productId: string; stockUnlimited: boolean; stockRemaining: number }[]
     >();
     const dailyMenuLimit =
-      await this._subscriptionsService.resolveDailyMenuItemLimitForStore(storeId);
+      await this._subscriptionsService.resolveDailyMenuItemLimitForStore(
+        storeId,
+      );
     for (let d = 0; d <= 6; d++) {
       merged.set(d, []);
     }
@@ -734,7 +740,9 @@ export class StoreService {
       .lean()
       .exec();
     const dailyMenuLimit =
-      await this._subscriptionsService.resolveDailyMenuItemLimitForStore(storeId);
+      await this._subscriptionsService.resolveDailyMenuItemLimitForStore(
+        storeId,
+      );
     const rows = this.normalizeDailyMenuForApi(
       (doc?.dailyMenuByWeekday as Record<string, unknown>[]) ?? [],
       dailyMenuLimit,
@@ -858,7 +866,9 @@ export class StoreService {
       .lean()
       .exec();
     const dailyMenuLimit =
-      await this._subscriptionsService.resolveDailyMenuItemLimitForStore(storeId);
+      await this._subscriptionsService.resolveDailyMenuItemLimitForStore(
+        storeId,
+      );
     const rows = this.normalizeDailyMenuForApi(
       (doc?.dailyMenuByWeekday as Record<string, unknown>[]) ?? [],
       dailyMenuLimit,
@@ -896,12 +906,11 @@ export class StoreService {
   ): Promise<void> {
     const raw = (store as { dailyMenuByWeekday?: unknown }).dailyMenuByWeekday;
     const storeId = this.stringifyIdLike((store as { _id?: unknown })._id);
-    const dailyMenuLimit =
-      Types.ObjectId.isValid(storeId)
-        ? await this._subscriptionsService.resolveDailyMenuItemLimitForStore(
-            storeId,
-          )
-        : null;
+    const dailyMenuLimit = Types.ObjectId.isValid(storeId)
+      ? await this._subscriptionsService.resolveDailyMenuItemLimitForStore(
+          storeId,
+        )
+      : null;
     const rows = this.normalizeDailyMenuForApi(
       Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [],
       dailyMenuLimit,

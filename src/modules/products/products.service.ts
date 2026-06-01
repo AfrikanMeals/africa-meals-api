@@ -315,6 +315,11 @@ export class ProductsService {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
+  private normalizeFieldsets(raw: unknown): string[] {
+    if (!Array.isArray(raw)) return [];
+    return raw.map((v) => String(v ?? '').trim()).filter((v) => v.length > 0);
+  }
+
   private mapVendorProductRow(
     p: Record<string, unknown>,
     forcedCurrency?: string,
@@ -398,6 +403,7 @@ export class ProductsService {
       title: String(p.title ?? ''),
       bio: String(p.bio ?? ''),
       about: String(p.about ?? ''),
+      fieldsets: this.normalizeFieldsets(p.fieldsets),
       originCountry: String(p.originCountry ?? p.origin_country ?? ''),
       price: Number(p.price ?? 0),
       discountPrice: Number(p.discountPrice ?? p.discount_price ?? 0),
@@ -522,6 +528,7 @@ export class ProductsService {
       title: String(p.title ?? ''),
       bio: String(p.bio ?? ''),
       about: String(p.about ?? ''),
+      fieldsets: this.normalizeFieldsets(p.fieldsets),
       price: Number(p.price ?? 0),
       discountPrice: Number(p.discountPrice ?? p.discount_price ?? 0),
       currency: String(forcedCurrency || p.currency || 'CAD'),
@@ -723,6 +730,7 @@ export class ProductsService {
         title: args.title,
         bio: args.bio,
         about: args.about,
+        fieldsets: this.normalizeFieldsets(args.fieldsets),
         originCountry,
         price: Number(args.price),
         discountPrice:
@@ -790,6 +798,9 @@ export class ProductsService {
     }
     if (args.about !== undefined) {
       doc.about = args.about?.trim() ?? '';
+    }
+    if (args.fieldsets !== undefined) {
+      doc.set('fieldsets', this.normalizeFieldsets(args.fieldsets));
     }
     if (args.originCountry != null) {
       doc.originCountry = args.originCountry.trim();

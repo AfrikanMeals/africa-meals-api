@@ -481,14 +481,15 @@ export class DbMaintenanceService {
   private async fetchWsMqttStatus(): Promise<
     MqttRuntimeStatus & { source: 'ws-internal' | 'unknown' }
   > {
-    const fallback: MqttRuntimeStatus & { source: 'ws-internal' | 'unknown' } = {
-      enabled: false,
-      state: 'error',
-      lastError: 'ws_status_unreachable',
-      lastTopicSeen: null,
-      lastMessageAt: null,
-      source: 'unknown',
-    };
+    const fallback: MqttRuntimeStatus & { source: 'ws-internal' | 'unknown' } =
+      {
+        enabled: false,
+        state: 'error',
+        lastError: 'ws_status_unreachable',
+        lastTopicSeen: null,
+        lastMessageAt: null,
+        source: 'unknown',
+      };
     const raw = this.config.get<string>('AFRICA_MEALS_WS_INTERNAL_URL')?.trim();
     const secret =
       this.config.get<string>('INTERNAL_NOTIFY_SECRET')?.trim() ||

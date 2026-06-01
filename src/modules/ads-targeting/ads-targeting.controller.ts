@@ -37,10 +37,7 @@ export class AdsTargetingController {
   @ApiOperation({
     summary: 'Ingestion batch événements ads targeting (non bloquante)',
   })
-  ingest(
-    @Req() req: Request,
-    @Body() body: AdsTargetingIngestDto,
-  ) {
+  ingest(@Req() req: Request, @Body() body: AdsTargetingIngestDto) {
     return this.svc.ingest((req.user as UserModel | undefined) ?? null, body);
   }
 
@@ -120,7 +117,9 @@ export class AdsTargetingController {
   @Delete('users/:id/data')
   @UseGuards(JwtGuard)
   @ApiBearerAuth('bearer')
-  @ApiOperation({ summary: 'GDPR: suppression des données ads targeting utilisateur' })
+  @ApiOperation({
+    summary: 'GDPR: suppression des données ads targeting utilisateur',
+  })
   eraseUserData(@Req() req: Request, @Param('id') id: string) {
     return this.svc.eraseUserData(req.user as UserModel, id);
   }

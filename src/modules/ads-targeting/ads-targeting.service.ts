@@ -1,14 +1,21 @@
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Inject, Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { AdsService } from '@modules/ads/ads.service';
-import { CreateAdCampaignDto, PatchAdCampaignDto } from '@modules/ads/dto/ad-campaign.dto';
+import {
+  CreateAdCampaignDto,
+  PatchAdCampaignDto,
+} from '@modules/ads/dto/ad-campaign.dto';
 import { WsAdsTargetingNotifyService } from '@modules/ws-notify/ws-ads-targeting-notify.service';
 import { AdCampaignModel } from '@schemas/ad-campaign.schema';
-import {
-  AdsTargetingAuditLogModel,
-} from '@schemas/ads-targeting-audit-log.schema';
+import { AdsTargetingAuditLogModel } from '@schemas/ads-targeting-audit-log.schema';
 import {
   AdsTargetingEventModel,
   AdsTargetingEventTypeEnum,
@@ -66,7 +73,10 @@ export class AdsTargetingService {
     return Math.max(7, Math.min(365, Math.round(raw)));
   }
 
-  private normalizeUserKey(event: AdsTargetingEventDto, user?: UserModel | null): string {
+  private normalizeUserKey(
+    event: AdsTargetingEventDto,
+    user?: UserModel | null,
+  ): string {
     const byEvent = String(event.userId ?? '').trim();
     if (byEvent) return byEvent;
     if (user?._id) return String(user._id);
@@ -83,14 +93,20 @@ export class AdsTargetingService {
     await this.auditLogModel.create(input).catch(() => undefined);
   }
 
-  private ensureCanReadUserProfile(requester: UserModel | null | undefined, userKey: string): void {
+  private ensureCanReadUserProfile(
+    requester: UserModel | null | undefined,
+    userKey: string,
+  ): void {
     if (!requester) throw new ForbiddenException('unauthorized');
     if (requester.type === UserTypeEnum.ADMIN) return;
     if (String(requester._id) === userKey) return;
     throw new ForbiddenException('permission_denied');
   }
 
-  private ensureCanEraseUserData(requester: UserModel | null | undefined, userKey: string): void {
+  private ensureCanEraseUserData(
+    requester: UserModel | null | undefined,
+    userKey: string,
+  ): void {
     if (!requester) throw new ForbiddenException('unauthorized');
     if (requester.type === UserTypeEnum.ADMIN) return;
     if (String(requester._id) === userKey) return;
@@ -160,7 +176,10 @@ export class AdsTargetingService {
       if (idleDays >= 14) return 'churned_risk';
     }
     if (engagementRate >= 0.45 && purchases30d > 0) return 'high_intent_buyer';
-    if (discountedClicks > 0 && discountedClicks >= Math.ceil(clicksCount * 0.6)) {
+    if (
+      discountedClicks > 0 &&
+      discountedClicks >= Math.ceil(clicksCount * 0.6)
+    ) {
       return 'deal_seeker';
     }
     if (viewsCount >= 15 && clicksCount <= 3) return 'window_shopper';
@@ -219,7 +238,9 @@ export class AdsTargetingService {
 
     for (const row of events) {
       const eventType = row.eventType as AdsTargetingEventTypeEnum;
-      const category = String(row.category ?? '').trim().toLowerCase();
+      const category = String(row.category ?? '')
+        .trim()
+        .toLowerCase();
       const timestamp = new Date(row.timestamp as unknown as string | Date);
       if (!lastActive || timestamp.getTime() > lastActive.getTime()) {
         lastActive = timestamp;
@@ -230,7 +251,8 @@ export class AdsTargetingService {
       if (row.country) country = String(row.country).trim().toUpperCase();
       if (row.metadata && typeof row.metadata === 'object') {
         const lang = (row.metadata as Record<string, unknown>).language;
-        if (typeof lang === 'string' && lang.trim()) language = lang.trim().toLowerCase();
+        if (typeof lang === 'string' && lang.trim())
+          language = lang.trim().toLowerCase();
       }
       if (
         eventType === AdsTargetingEventTypeEnum.ITEM_VIEW ||
@@ -249,12 +271,17 @@ export class AdsTargetingService {
       if (eventType === AdsTargetingEventTypeEnum.PURCHASE) {
         purchasesCount += 1;
       }
-      const discounted = (row.metadata as Record<string, unknown> | undefined)?.discounted;
-      if (discounted === true && eventType === AdsTargetingEventTypeEnum.ITEM_CLICK) {
+      const discounted = (row.metadata as Record<string, unknown> | undefined)
+        ?.discounted;
+      if (
+        discounted === true &&
+        eventType === AdsTargetingEventTypeEnum.ITEM_CLICK
+      ) {
         discountedClicks += 1;
       }
       if (category) {
-        const next = (scores.get(category) ?? 0) + this.weightForEventType(eventType);
+        const next =
+          (scores.get(category) ?? 0) + this.weightForEventType(eventType);
         scores.set(category, Number(next.toFixed(4)));
       }
     }
@@ -270,16 +297,10 @@ export class AdsTargetingService {
     }
 
     const engagementRate = Number(
-      (
-        clicksCount /
-        Math.max(1, clicksCount + viewsCount)
-      ).toFixed(4),
+      (clicksCount / Math.max(1, clicksCount + viewsCount)).toFixed(4),
     );
     const conversionProbability = Number(
-      (
-        purchasesCount /
-        Math.max(1, viewsCount + clicksCount)
-      ).toFixed(4),
+      (purchasesCount / Math.max(1, viewsCount + clicksCount)).toFixed(4),
     );
     const firstSeen = new Date(events[0].timestamp as unknown as string | Date);
     const segment = this.segmentFromProfile({
@@ -321,7 +342,9 @@ export class AdsTargetingService {
       while (this.queue.length > 0) {
         const chunk = this.queue.splice(0, 250);
         const docs = chunk.map((event) => ({
-          userKey: String(event.userId ?? '').trim() || `device:${event.deviceId.trim()}`,
+          userKey:
+            String(event.userId ?? '').trim() ||
+            `device:${event.deviceId.trim()}`,
           deviceId: event.deviceId.trim(),
           sessionId: event.sessionId.trim(),
           appVersion: event.appVersion.trim(),
@@ -337,12 +360,18 @@ export class AdsTargetingService {
           timestamp: new Date(event.timestamp),
         }));
         await this.eventModel.insertMany(docs, { ordered: false });
-        const uniqueUserKeys = [...new Set(docs.map((d) => d.userKey).filter(Boolean))];
-        await Promise.all(uniqueUserKeys.map((userKey) => this.rebuildProfile(userKey)));
+        const uniqueUserKeys = [
+          ...new Set(docs.map((d) => d.userKey).filter(Boolean)),
+        ];
+        await Promise.all(
+          uniqueUserKeys.map((userKey) => this.rebuildProfile(userKey)),
+        );
       }
     } catch (e) {
       this.logger.warn(
-        `ads targeting queue processing failed: ${e instanceof Error ? e.message : String(e)}`,
+        `ads targeting queue processing failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       );
     } finally {
       this.queueProcessing = false;
@@ -384,7 +413,10 @@ export class AdsTargetingService {
   ): Promise<Record<string, unknown>> {
     const key = userKey.trim();
     this.ensureCanReadUserProfile(requester, key);
-    let profile = await this.profileModel.findOne({ userKey: key }).lean().exec();
+    let profile = await this.profileModel
+      .findOne({ userKey: key })
+      .lean()
+      .exec();
     const stale =
       !profile ||
       !profile.lastComputedAt ||
@@ -404,38 +436,55 @@ export class AdsTargetingService {
       top_categories: profile.topCategories ?? [],
       interest_scores: profile.interestScores ?? {},
       engagement_rate: Number(profile.engagementRate ?? 0),
-      last_active: profile.lastActive ? new Date(profile.lastActive).toISOString() : null,
+      last_active: profile.lastActive
+        ? new Date(profile.lastActive).toISOString()
+        : null,
       segment: profile.segment ?? 'new_user',
       conversion_probability: Number(profile.conversionProbability ?? 0),
     };
   }
 
-  private async readDailyCap(userKey: string, campaignId: string): Promise<number> {
+  private async readDailyCap(
+    userKey: string,
+    campaignId: string,
+  ): Promise<number> {
     const dateKey = new Date().toISOString().slice(0, 10);
     const key = `freq:${userKey}:${campaignId}:${dateKey}`;
     const v = await this.cache.get<number>(key);
     return Number(v ?? 0);
   }
 
-  private async increaseDailyCap(userKey: string, campaignId: string): Promise<void> {
+  private async increaseDailyCap(
+    userKey: string,
+    campaignId: string,
+  ): Promise<void> {
     const now = new Date();
     const dateKey = now.toISOString().slice(0, 10);
     const key = `freq:${userKey}:${campaignId}:${dateKey}`;
     const current = await this.readDailyCap(userKey, campaignId);
     const end = new Date(now);
     end.setUTCHours(23, 59, 59, 999);
-    const ttl = Math.max(60, Math.floor((end.getTime() - now.getTime()) / 1000));
+    const ttl = Math.max(
+      60,
+      Math.floor((end.getTime() - now.getTime()) / 1000),
+    );
     await this.cache.set(key, current + 1, ttl * 1000);
   }
 
-  private async canShowInterstitial(userKey: string, sessionId: string): Promise<boolean> {
+  private async canShowInterstitial(
+    userKey: string,
+    sessionId: string,
+  ): Promise<boolean> {
     if (!sessionId.trim()) return true;
     const key = `freq:interstitial:${userKey}:${sessionId}`;
     const used = await this.cache.get<number>(key);
     return Number(used ?? 0) < 1;
   }
 
-  private async markInterstitialShown(userKey: string, sessionId: string): Promise<void> {
+  private async markInterstitialShown(
+    userKey: string,
+    sessionId: string,
+  ): Promise<void> {
     if (!sessionId.trim()) return;
     const key = `freq:interstitial:${userKey}:${sessionId}`;
     await this.cache.set(key, 1, 24 * 3600 * 1000);
@@ -446,7 +495,10 @@ export class AdsTargetingService {
     rules: Record<string, unknown>,
     topCategories: string[],
   ): { value: number; reason: string } {
-    const minInterest = (rules.min_interest_score ?? {}) as Record<string, unknown>;
+    const minInterest = (rules.min_interest_score ?? {}) as Record<
+      string,
+      unknown
+    >;
     const categoriesRuleRaw =
       (rules.target_categories as unknown[]) ??
       (rules.categories as unknown[]) ??
@@ -471,8 +523,11 @@ export class AdsTargetingService {
       };
     }
     if (categoriesRule.length > 0) {
-      const overlap = categoriesRule.filter((category) => topCategories.includes(category));
-      const value = overlap.length > 0 ? overlap.length / categoriesRule.length : 0;
+      const overlap = categoriesRule.filter((category) =>
+        topCategories.includes(category),
+      );
+      const value =
+        overlap.length > 0 ? overlap.length / categoriesRule.length : 0;
       return {
         value: Number(value.toFixed(4)),
         reason: overlap.length > 0 ? `interest:${overlap[0]}` : 'interest:none',
@@ -488,7 +543,9 @@ export class AdsTargetingService {
       .select('sessionId')
       .lean()
       .exec();
-    return String((row as { sessionId?: string } | null)?.sessionId ?? '').trim();
+    return String(
+      (row as { sessionId?: string } | null)?.sessionId ?? '',
+    ).trim();
   }
 
   async recommend(
@@ -504,7 +561,9 @@ export class AdsTargetingService {
     if (!profile) return { ads: [] };
 
     const now = new Date();
-    const placement = String(query.placement ?? 'home_feed').trim().toLowerCase();
+    const placement = String(query.placement ?? 'home_feed')
+      .trim()
+      .toLowerCase();
     const limit = Math.max(1, Math.min(10, Number(query.limit ?? 3)));
     const campaigns = await this.campaignModel
       .find({
@@ -518,12 +577,16 @@ export class AdsTargetingService {
       .lean()
       .exec();
 
-    const out: Array<RecommendResult & { campaignId: string; score: number }> = [];
+    const out: Array<RecommendResult & { campaignId: string; score: number }> =
+      [];
     const lastActive = profile.lastActive ? new Date(profile.lastActive) : null;
     const daysSinceActive = lastActive
       ? Math.max(0, (Date.now() - lastActive.getTime()) / 86_400_000)
       : 30;
-    const recencyBoost = Math.max(0, Number((1 - daysSinceActive / 14).toFixed(4)));
+    const recencyBoost = Math.max(
+      0,
+      Number((1 - daysSinceActive / 14).toFixed(4)),
+    );
     const engagementScore = Number(profile.engagementRate ?? 0);
     const conversionProbability = Number(profile.conversionProbability ?? 0);
     const interestScores = (profile.interestScores ?? {}) as InterestScores;
@@ -537,14 +600,19 @@ export class AdsTargetingService {
       const segments = Array.isArray(rules.segments)
         ? rules.segments.map((x) => String(x))
         : [];
-      if (segments.length > 0 && !segments.includes(String(profile.segment ?? ''))) {
+      if (
+        segments.length > 0 &&
+        !segments.includes(String(profile.segment ?? ''))
+      ) {
         continue;
       }
       const countries = Array.isArray(rules.countries)
         ? rules.countries.map((x) => String(x).trim().toUpperCase())
         : [];
       if (countries.length > 0) {
-        const profileCountry = String(profile.country ?? '').trim().toUpperCase();
+        const profileCountry = String(profile.country ?? '')
+          .trim()
+          .toUpperCase();
         if (!profileCountry || !countries.includes(profileCountry)) continue;
       }
       if (rules.exclude_converted === true) {
@@ -560,13 +628,18 @@ export class AdsTargetingService {
       const formats = Array.isArray(rules.formats)
         ? rules.formats.map((x) => String(x).toLowerCase())
         : [];
-      const isInterstitial = formats.includes('interstitial') || placement.includes('interstitial');
+      const isInterstitial =
+        formats.includes('interstitial') || placement.includes('interstitial');
       if (isInterstitial) {
         const canShow = await this.canShowInterstitial(userKey, latestSession);
         if (!canShow) continue;
       }
 
-      const interest = this.interestMatchFromRules(interestScores, rules, topCategories);
+      const interest = this.interestMatchFromRules(
+        interestScores,
+        rules,
+        topCategories,
+      );
       const score = computeAdsTargetingScore({
         interestMatch: interest.value,
         recencyBoost,
@@ -575,12 +648,16 @@ export class AdsTargetingService {
       });
       if (score <= 0) continue;
 
-      const items = Array.isArray(campaign.items) ? (campaign.items as Record<string, unknown>[]) : [];
+      const items = Array.isArray(campaign.items)
+        ? (campaign.items as Record<string, unknown>[])
+        : [];
       const first = items[0];
       let creativeUrl = '';
       let adId = `camp:${campaignId}`;
       if (first) {
-        const itemType = String(first.itemType ?? '').trim().toUpperCase();
+        const itemType = String(first.itemType ?? '')
+          .trim()
+          .toUpperCase();
         if (itemType === 'PRODUCT') {
           const p = first.product as Record<string, unknown> | undefined;
           const pid = p?._id ? String(p._id) : '';
@@ -651,7 +728,9 @@ export class AdsTargetingService {
     return this.getCampaignByIdForManage(created.id);
   }
 
-  private async getCampaignByIdForManage(id: string): Promise<Record<string, unknown>> {
+  private async getCampaignByIdForManage(
+    id: string,
+  ): Promise<Record<string, unknown>> {
     const row = await this.campaignModel
       .findById(id)
       .populate('store', 'name profileImage')
@@ -661,7 +740,9 @@ export class AdsTargetingService {
       .exec();
     if (!row) throw new NotFoundException('campaign_not_found');
     const store = (row.store ?? {}) as Record<string, unknown>;
-    const items = Array.isArray(row.items) ? (row.items as Record<string, unknown>[]) : [];
+    const items = Array.isArray(row.items)
+      ? (row.items as Record<string, unknown>[])
+      : [];
     return {
       id: String(row._id),
       storeId: String(store._id ?? ''),
@@ -670,14 +751,18 @@ export class AdsTargetingService {
       title: String(row.title ?? ''),
       subtitle: String(row.subtitle ?? ''),
       description: String(row.description ?? ''),
-      startsAt: row.startsAt ? new Date(row.startsAt as Date).toISOString() : null,
+      startsAt: row.startsAt
+        ? new Date(row.startsAt as Date).toISOString()
+        : null,
       endsAt: row.endsAt ? new Date(row.endsAt as Date).toISOString() : null,
       isActive: Boolean(row.isActive),
       actionType: String(row.actionType ?? 'SHOP'),
       actionText: String(row.actionText ?? 'Découvrir'),
       actionTarget: row.actionTarget ? String(row.actionTarget) : null,
       targetingRules: (row.targetingRules ?? {}) as Record<string, unknown>,
-      archivedAt: row.archivedAt ? new Date(row.archivedAt as Date).toISOString() : null,
+      archivedAt: row.archivedAt
+        ? new Date(row.archivedAt as Date).toISOString()
+        : null,
       items: items.map((item) => {
         const itemType = String(item.itemType ?? '').toUpperCase();
         if (itemType === 'PRODUCT') {
@@ -687,7 +772,9 @@ export class AdsTargetingService {
             productId: product._id ? String(product._id) : null,
             drinkId: null,
             title: String(product.title ?? '(produit supprimé)'),
-            imageUrl: product.profileImage ? String(product.profileImage) : null,
+            imageUrl: product.profileImage
+              ? String(product.profileImage)
+              : null,
             priceCad: Number(product.price ?? 0),
           };
         }
@@ -704,7 +791,9 @@ export class AdsTargetingService {
     };
   }
 
-  async listCampaigns(requester: UserModel): Promise<Record<string, unknown>[]> {
+  async listCampaigns(
+    requester: UserModel,
+  ): Promise<Record<string, unknown>[]> {
     const rows = await this.adsService.listCampaignsForManagement(requester);
     const byId = new Map(rows.map((row) => [row.id, row]));
     const targetingRows = await this.campaignModel
@@ -713,7 +802,10 @@ export class AdsTargetingService {
       .lean()
       .exec();
     const metaById = new Map(
-      targetingRows.map((row) => [String(row._id), row as Record<string, unknown>]),
+      targetingRows.map((row) => [
+        String(row._id),
+        row as Record<string, unknown>,
+      ]),
     );
     return rows.map((row) => {
       const meta = metaById.get(row.id);
@@ -739,7 +831,11 @@ export class AdsTargetingService {
     if (hasPatchPayload) {
       await this.adsService.patchCampaign(requester, id, patchPayload);
     } else {
-      const existing = await this.campaignModel.findById(id).select('_id').lean().exec();
+      const existing = await this.campaignModel
+        .findById(id)
+        .select('_id')
+        .lean()
+        .exec();
       if (!existing) throw new NotFoundException('campaign_not_found');
     }
     if (dto.targetingRules !== undefined) {
@@ -762,7 +858,10 @@ export class AdsTargetingService {
     return this.getCampaignByIdForManage(id);
   }
 
-  async archiveCampaign(requester: UserModel, id: string): Promise<{ ok: true }> {
+  async archiveCampaign(
+    requester: UserModel,
+    id: string,
+  ): Promise<{ ok: true }> {
     await this.adsService.patchCampaign(requester, id, { isActive: false });
     await this.campaignModel
       .updateOne({ _id: id }, { $set: { archivedAt: new Date() } })
@@ -808,7 +907,9 @@ export class AdsTargetingService {
     return { ok: true, deletedEvents: del.deletedCount ?? 0 };
   }
 
-  async dashboardOverview(requester: UserModel): Promise<Record<string, unknown>> {
+  async dashboardOverview(
+    requester: UserModel,
+  ): Promise<Record<string, unknown>> {
     this.ensureAdmin(requester);
     const start = new Date();
     start.setUTCHours(0, 0, 0, 0);
@@ -836,7 +937,8 @@ export class AdsTargetingService {
           ])
           .exec(),
       ]);
-    const ctr = impressionsToday > 0 ? (clicksToday / impressionsToday) * 100 : 0;
+    const ctr =
+      impressionsToday > 0 ? (clicksToday / impressionsToday) * 100 : 0;
     await this.logAccess({
       action: 'dashboard_overview_read',
       actorKey: this.actorKey(requester),
@@ -863,7 +965,9 @@ export class AdsTargetingService {
       this.auditLogModel.deleteMany({ createdAt: { $lt: cutoff } }).exec(),
     ]);
     this.logger.log(
-      `ads targeting retention purge done: events=${eventsRes.deletedCount ?? 0}, logs=${logsRes.deletedCount ?? 0}, days=${retention}`,
+      `ads targeting retention purge done: events=${
+        eventsRes.deletedCount ?? 0
+      }, logs=${logsRes.deletedCount ?? 0}, days=${retention}`,
     );
   }
 }

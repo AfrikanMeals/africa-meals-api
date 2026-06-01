@@ -720,7 +720,11 @@ export class SubscriptionsService implements OnModuleInit {
       .exec();
     const allStoreIds = rows.map((r) => String(r._id));
     if (!allStoreIds.length) {
-      return { hiddenStores: 0, hiddenCatalogItems: 0, hiddenDailyMenuItems: 0 };
+      return {
+        hiddenStores: 0,
+        hiddenCatalogItems: 0,
+        hiddenDailyMenuItems: 0,
+      };
     }
 
     const accessibleStoreIds = new Set(
@@ -772,7 +776,10 @@ export class SubscriptionsService implements OnModuleInit {
     return {
       hiddenStores,
       hiddenCatalogItems: hiddenCatalogCounts.reduce((acc, n) => acc + n, 0),
-      hiddenDailyMenuItems: hiddenDailyMenuCounts.reduce((acc, n) => acc + n, 0),
+      hiddenDailyMenuItems: hiddenDailyMenuCounts.reduce(
+        (acc, n) => acc + n,
+        0,
+      ),
     };
   }
 

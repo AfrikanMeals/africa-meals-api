@@ -24,8 +24,14 @@ import { AdsTargetingService } from './ads-targeting.service';
     WsNotifyModule,
     MongooseModule.forFeature([
       { name: AdsTargetingEventModel.name, schema: AdsTargetingEventSchema },
-      { name: AdsTargetingProfileModel.name, schema: AdsTargetingProfileSchema },
-      { name: AdsTargetingAuditLogModel.name, schema: AdsTargetingAuditLogSchema },
+      {
+        name: AdsTargetingProfileModel.name,
+        schema: AdsTargetingProfileSchema,
+      },
+      {
+        name: AdsTargetingAuditLogModel.name,
+        schema: AdsTargetingAuditLogSchema,
+      },
       { name: AdCampaignModel.name, schema: AdCampaignSchema },
     ]),
   ],

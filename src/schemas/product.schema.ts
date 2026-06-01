@@ -59,6 +59,9 @@ export class ProductModel extends BaseSchema {
   @Prop({ required: false, name: 'about' }) // Should we use AI to generate this based on the title?
   about?: string;
 
+  @Prop({ type: [String], default: [], name: 'fieldsets' })
+  fieldsets: string[];
+
   @Prop({ required: false, name: 'origin_country' })
   originCountry?: string;
 

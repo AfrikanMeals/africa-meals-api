@@ -1,4 +1,7 @@
-import { CreateAdCampaignDto, PatchAdCampaignDto } from '@modules/ads/dto/ad-campaign.dto';
+import {
+  CreateAdCampaignDto,
+  PatchAdCampaignDto,
+} from '@modules/ads/dto/ad-campaign.dto';
 import { AdsTargetingEventTypeEnum } from '@schemas/ads-targeting-event.schema';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
@@ -106,7 +109,8 @@ export class AdsTargetingIngestDto {
   events: AdsTargetingEventDto[];
 
   @ApiPropertyOptional({
-    description: 'Consentement tracking. Si false, les événements ne sont pas ingérés.',
+    description:
+      'Consentement tracking. Si false, les événements ne sont pas ingérés.',
   })
   @IsOptional()
   @IsBoolean()

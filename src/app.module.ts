@@ -99,17 +99,19 @@ async function readRedisManagerEnabledAtBootstrap(
     });
     await client.connect();
     const dbName =
-      mongoDbNameFromUri(uri) || config.get<string>('DB_DATABASE')?.trim() || '';
+      mongoDbNameFromUri(uri) ||
+      config.get<string>('DB_DATABASE')?.trim() ||
+      '';
     const db = dbName ? client.db(dbName) : client.db();
-    const doc = (await db.collection('infra_runtime_settings').findOne(
-      { key: 'default' },
-      { projection: { redis_manager_enabled: 1, redisManagerEnabled: 1 } },
-    )) as
-      | {
-          redis_manager_enabled?: unknown;
-          redisManagerEnabled?: unknown;
-        }
-      | null;
+    const doc = (await db
+      .collection('infra_runtime_settings')
+      .findOne(
+        { key: 'default' },
+        { projection: { redis_manager_enabled: 1, redisManagerEnabled: 1 } },
+      )) as {
+      redis_manager_enabled?: unknown;
+      redisManagerEnabled?: unknown;
+    } | null;
     const enabled = doc
       ? doc.redis_manager_enabled !== false && doc.redisManagerEnabled !== false
       : true;
@@ -138,7 +140,9 @@ function buildRedisUrl(config: ConfigService): string | null {
   const username = config.get<string>('REDIS_USERNAME')?.trim() ?? '';
   const password = config.get<string>('REDIS_PASSWORD')?.trim() ?? '';
   const auth = password
-    ? `${encodeURIComponent(username || 'default')}:${encodeURIComponent(password)}@`
+    ? `${encodeURIComponent(username || 'default')}:${encodeURIComponent(
+        password,
+      )}@`
     : '';
   return `redis://${auth}${host}:${port}`;
 }
@@ -163,9 +167,13 @@ function redactRedisUrl(url: string): string {
           config.get<string>('FAVORITES_CACHE_TTL_MS'),
           25_000,
         );
-        const max = parsePositiveInt(config.get<string>('CACHE_MAX_ITEMS'), 500);
-        const redisManagerEnabled =
-          await readRedisManagerEnabledAtBootstrap(config);
+        const max = parsePositiveInt(
+          config.get<string>('CACHE_MAX_ITEMS'),
+          500,
+        );
+        const redisManagerEnabled = await readRedisManagerEnabledAtBootstrap(
+          config,
+        );
         if (!redisManagerEnabled) {
           Logger.log(
             'Cache store: memory (redis disabled by runtime toggle at bootstrap)',

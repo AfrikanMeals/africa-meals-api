@@ -61,6 +61,15 @@ export class CreateProductDto {
   @IsNotEmpty()
   @Trim()
   category: string;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Liste d’ingrédients (chaînes).',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  fieldsets?: string[];
 }
 
 export class PatchProductDto {
@@ -114,6 +123,15 @@ export class PatchProductDto {
   @IsNotEmpty()
   @Trim()
   category?: string;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Liste d’ingrédients (chaînes).',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  fieldsets?: string[];
 
   @ApiPropertyOptional({
     description:

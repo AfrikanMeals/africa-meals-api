@@ -4,10 +4,7 @@ import { TeamsModule } from '@modules/teams/teams.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AdEventModel, AdEventSchema } from '@schemas/ad-event.schema';
-import {
-  AdCampaignModel,
-  AdCampaignSchema,
-} from '@schemas/ad-campaign.schema';
+import { AdCampaignModel, AdCampaignSchema } from '@schemas/ad-campaign.schema';
 import {
   AdCampaignEventModel,
   AdCampaignEventSchema,
