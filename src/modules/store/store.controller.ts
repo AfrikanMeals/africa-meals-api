@@ -234,6 +234,16 @@ export class StoreController {
     );
   }
 
+  /** Suppression d’une boutique non approuvée (PENDING / REVISION) — administrateurs uniquement. */
+  @Delete('admin/vendors/:storeId')
+  @UseGuards(JwtGuard)
+  async deleteVendorStore(@Param('storeId') storeId: string, @Req() req: Request) {
+    return this._storeService.deleteVendorStoreForAdmin(
+      storeId,
+      req.user as UserModel,
+    );
+  }
+
   /** Invitation par e-mail (lien d’inscription restaurant) — administrateurs uniquement. */
   @Post('admin/vendors/invitation-email')
   @UseGuards(JwtGuard)

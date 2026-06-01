@@ -25,6 +25,7 @@ import {
   ProductRatingModel,
   ProductRatingSchema,
 } from '@schemas/product_rating.schema';
+import { AddressModel, AddressSchema } from '@schemas/address.schema';
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
@@ -63,6 +64,7 @@ import { StoreService } from './store.service';
       { name: ProductModel.name, schema: ProductSchema },
       { name: ProductRatingModel.name, schema: ProductRatingSchema },
       { name: OrderModel.name, schema: OrderSchema },
+      { name: AddressModel.name, schema: AddressSchema },
     ]),
   ],
   exports: [StoreService, MongooseModule],

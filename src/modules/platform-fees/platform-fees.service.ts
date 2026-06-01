@@ -431,10 +431,6 @@ export class PlatformFeesService {
     const current = await this._ensureDoc();
     const $set: Record<string, unknown> = {};
 
-    if (dto.currency != null) {
-      $set.currency = String(dto.currency).trim().toUpperCase() || 'CAD';
-    }
-
     const refundFeeMode = normalizeMode(
       dto.refundFeeMode,
       inferMode(

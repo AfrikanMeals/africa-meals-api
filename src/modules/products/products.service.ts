@@ -312,7 +312,10 @@ export class ProductsService {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
-  private mapVendorProductRow(p: Record<string, unknown>) {
+  private mapVendorProductRow(
+    p: Record<string, unknown>,
+    forcedCurrency?: string,
+  ) {
     const cat = p.category as Record<string, unknown> | undefined;
     const catId =
       cat?._id != null
@@ -395,7 +398,7 @@ export class ProductsService {
       originCountry: String(p.originCountry ?? p.origin_country ?? ''),
       price: Number(p.price ?? 0),
       discountPrice: Number(p.discountPrice ?? p.discount_price ?? 0),
-      currency: String(p.currency ?? 'CAD'),
+      currency: String(forcedCurrency || p.currency || 'CAD'),
       status: String(p.status ?? ProductStatusEnum.PENDING),
       categoryId: catId,
       categoryTitle: catTitle,
@@ -437,7 +440,15 @@ export class ProductsService {
     if (!row) {
       throw new NotFoundException('product_not_found');
     }
-    const mapped = this.mapVendorProductRow(row as Record<string, unknown>);
+    const store = await this._storeModel
+      .findById(storeId)
+      .select('currency')
+      .lean()
+      .exec();
+    const mapped = this.mapVendorProductRow(
+      row as Record<string, unknown>,
+      String(store?.currency ?? 'CAD'),
+    );
     const main =
       typeof mapped.profileImage === 'string' &&
       (mapped.profileImage.startsWith('http://') ||
@@ -466,13 +477,22 @@ export class ProductsService {
       .lean()
       .exec();
 
+    const store = await this._storeModel
+      .findById(storeId)
+      .select('currency')
+      .lean()
+      .exec();
+    const storeCurrency = String(store?.currency ?? 'CAD');
     return rows.map((p) =>
-      this.mapVendorProductRow(p as Record<string, unknown>),
+      this.mapVendorProductRow(p as Record<string, unknown>, storeCurrency),
     );
   }
 
   /** Ligne liste catalogue mobile (sans base64 ni galerie). */
-  private mapVendorCatalogListRow(p: Record<string, unknown>) {
+  private mapVendorCatalogListRow(
+    p: Record<string, unknown>,
+    forcedCurrency?: string,
+  ) {
     const cat = p.category as Record<string, unknown> | undefined;
     const catTitle =
       typeof p.categoryTitle === 'string'
@@ -501,7 +521,7 @@ export class ProductsService {
       about: String(p.about ?? ''),
       price: Number(p.price ?? 0),
       discountPrice: Number(p.discountPrice ?? p.discount_price ?? 0),
-      currency: String(p.currency ?? 'CAD'),
+      currency: String(forcedCurrency || p.currency || 'CAD'),
       status: String(p.status ?? ProductStatusEnum.PENDING),
       categoryId: catId,
       categoryTitle: catTitle,
@@ -642,9 +662,15 @@ export class ProductsService {
       | undefined;
     const total = bucket?.total?.[0]?.n ?? 0;
     const rows = bucket?.rows ?? [];
+    const store = await this._storeModel
+      .findById(storeId)
+      .select('currency')
+      .lean()
+      .exec();
+    const storeCurrency = String(store?.currency ?? 'CAD');
 
     return {
-      items: rows.map((p) => this.mapVendorCatalogListRow(p)),
+      items: rows.map((p) => this.mapVendorCatalogListRow(p, storeCurrency)),
       total,
       page,
       limit: take,
@@ -700,7 +726,8 @@ export class ProductsService {
           args.discountPrice != null ? Number(args.discountPrice) : 0,
         category: category._id,
         store: store._id,
-        currency: (args.currency?.trim() || store.currency) as string,
+        // Devise harmonisée: toujours la devise de la boutique.
+        currency: (store.currency || 'CAD') as string,
         status: args.status ?? ProductStatusEnum.ACTIVE,
         ...(profileImage && { profileImage }),
         ...(galleryItems.length > 0 && { galleryImages: galleryItems }),
@@ -770,9 +797,8 @@ export class ProductsService {
     if (args.discountPrice !== undefined) {
       doc.discountPrice = Number(args.discountPrice);
     }
-    if (args.currency != null) {
-      doc.currency = args.currency.trim();
-    }
+    // Ignore toute devise envoyée par le client vendeur et garde la devise boutique.
+    doc.currency = (store.currency || 'CAD') as string;
     if (args.status !== undefined) {
       doc.status = args.status;
     }

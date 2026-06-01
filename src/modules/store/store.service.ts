@@ -115,6 +115,9 @@ export class StoreService {
   @InjectModel(UserModel.name)
   private readonly _userModel: Model<UserModel>;
 
+  @InjectModel(AddressModel.name)
+  private readonly _addressModel: Model<AddressModel>;
+
   @InjectModel(ProductModel.name)
   private readonly _productModel: Model<ProductModel>;
 
@@ -1984,6 +1987,53 @@ export class StoreService {
       store: this._mapStoreToAdminVendorRow(lean as Record<string, unknown>),
       emailNotification,
     };
+  }
+
+  /** Supprime une boutique non approuvée (PENDING / REVISION) — admin uniquement. */
+  async deleteVendorStoreForAdmin(storeId: string, admin: UserModel) {
+    if (admin.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('admin_only');
+    }
+    const doc = await this._storeModel
+      .findById(storeId)
+      .select('_id status owner address profileImage')
+      .exec();
+    if (!doc) {
+      throw new NotFoundException('store_not_found');
+    }
+    if (
+      ![StoreStatusEnum.PENDING, StoreStatusEnum.REVISION].includes(doc.status)
+    ) {
+      throw new ForbiddenException('store_delete_only_non_approved');
+    }
+
+    const ownerId =
+      doc.owner != null &&
+      typeof (doc.owner as { toString?: () => string }).toString === 'function'
+        ? (doc.owner as { toString: () => string }).toString()
+        : '';
+    const addressId =
+      doc.address != null &&
+      typeof (doc.address as { toString?: () => string }).toString ===
+        'function'
+        ? (doc.address as { toString: () => string }).toString()
+        : '';
+    const imageUrl =
+      typeof doc.profileImage === 'string' ? doc.profileImage : '';
+
+    await this._storeModel.deleteOne({ _id: doc._id }).exec();
+    if (ownerId) {
+      await this._userModel
+        .updateOne({ _id: ownerId }, { $pull: { stores: doc._id } })
+        .exec();
+    }
+    if (addressId) {
+      await this._addressModel.deleteOne({ _id: addressId }).exec();
+    }
+    if (imageUrl.startsWith('http')) {
+      await this._mediasService.delete(imageUrl).catch(() => undefined);
+    }
+    return { ok: true, storeId: String(doc._id) };
   }
 
   private async _sendVendorStoreStatusUpdatedEmail(
