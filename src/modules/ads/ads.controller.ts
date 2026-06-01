@@ -156,6 +156,13 @@ export class AdsController {
     return this.adsService.createAdCreditCheckoutSession(req.user as UserModel);
   }
 
+  @Get('my-credit/checkout-health')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  async adCreditCheckoutHealth(@Req() req: Request) {
+    return this.adsService.getAdCreditCheckoutHealth(req.user as UserModel);
+  }
+
   @Post('my-credit/confirm-checkout')
   @UseGuards(JwtGuard)
   @ApiBearerAuth('bearer')

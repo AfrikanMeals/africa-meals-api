@@ -40,4 +40,12 @@ export class GroupedStripeCheckoutDto {
   @ValidateNested({ each: true })
   @Type(() => GroupedStripeCouponLineDto)
   coupons?: GroupedStripeCouponLineDto[];
+
+  @ApiPropertyOptional({
+    description:
+      'Devise de paiement attendue côté client (ex. CAD). Doit correspondre à la devise résolue du panier.',
+  })
+  @IsOptional()
+  @IsString()
+  currency?: string;
 }

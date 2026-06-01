@@ -480,6 +480,17 @@ export class StripeGroupedCheckoutService {
       throw new BadRequestException('multi_currency_not_supported');
     }
     const currency = [...currencies][0];
+    const requestedCurrency =
+      typeof dto.currency === 'string' && dto.currency.trim()
+        ? dto.currency.trim().toLowerCase()
+        : undefined;
+    if (requestedCurrency != null && requestedCurrency !== currency) {
+      throw new BadRequestException({
+        message: 'payment_currency_mismatch',
+        expectedCurrency: currency.toUpperCase(),
+        requestedCurrency: requestedCurrency.toUpperCase(),
+      });
+    }
 
     const fulfillment = dto.fulfillmentByStoreId ?? {};
     const needsAddress = groups.some((g) => {

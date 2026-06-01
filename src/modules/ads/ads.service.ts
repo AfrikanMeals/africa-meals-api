@@ -2032,6 +2032,23 @@ export class AdsService implements OnModuleInit {
     return { url: session.url, sessionId: session.id, amountCad };
   }
 
+  async getAdCreditCheckoutHealth(
+    user: UserModel,
+  ): Promise<{ available: boolean; reason?: string }> {
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_only');
+    }
+    try {
+      this.stripe();
+    } catch (e) {
+      if (e instanceof BadRequestException) {
+        return { available: false, reason: 'stripe_not_configured' };
+      }
+      throw e;
+    }
+    return { available: true };
+  }
+
   async confirmAdCreditCheckout(
     user: UserModel,
     sessionId: string,
