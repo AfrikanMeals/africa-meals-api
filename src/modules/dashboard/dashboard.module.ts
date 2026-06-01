@@ -20,6 +20,10 @@ import {
   DeliveryDriverSchema,
 } from '@schemas/delivery-driver.schema';
 import { AddressModel, AddressSchema } from '@schemas/address.schema';
+import {
+  AdCreditPaymentModel,
+  AdCreditPaymentSchema,
+} from '@schemas/ad-credit-payment.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import {
   StripeProcessedCheckoutModel,
@@ -63,6 +67,7 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
         schema: StripeProcessedCheckoutSchema,
       },
       { name: AddressModel.name, schema: AddressSchema },
+      { name: AdCreditPaymentModel.name, schema: AdCreditPaymentSchema },
       { name: VendorFeedbackModel.name, schema: VendorFeedbackSchema },
     ]),
   ],

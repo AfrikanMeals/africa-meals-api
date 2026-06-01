@@ -20,6 +20,10 @@ import {
   DeliveryAgentApplicationStatus,
 } from '@schemas/delivery-agent-application.schema';
 import { AddressModel } from '@schemas/address.schema';
+import {
+  AdCreditPaymentModel,
+  AdCreditPaymentStatusEnum,
+} from '@schemas/ad-credit-payment.schema';
 import { StockItemModel, StockStatutEnum } from '@schemas/stock-item.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { StoreRatingModel } from '@schemas/store_rating.schema';
@@ -397,6 +401,15 @@ export type FinancePeriodReportSummary = {
   priorPeriodRevenue: number;
   trendPercent: number | null;
   currency?: string;
+  adCredit?: {
+    paidTotal: number;
+    priorPaidTotal: number;
+    trendPercent: number | null;
+    paymentCount: number;
+    currency?: string;
+    paidByCurrency: Array<{ currency: string; amount: number }>;
+    priorPaidByCurrency: Array<{ currency: string; amount: number }>;
+  };
 };
 
 export type FinancePeriodDailyPoint = {
@@ -500,6 +513,8 @@ export class DashboardService {
     private readonly userModel: Model<UserModel>,
     @InjectModel(AddressModel.name)
     private readonly addressModel: Model<AddressModel>,
+    @InjectModel(AdCreditPaymentModel.name)
+    private readonly adCreditPaymentModel: Model<AdCreditPaymentModel>,
     @InjectModel(DeliveryAgentApplicationModel.name)
     private readonly deliveryAgentApplicationModel: Model<DeliveryAgentApplicationModel>,
     @InjectModel(StoreModel.name)
@@ -3444,6 +3459,15 @@ export class DashboardService {
     const priorStart = fromDay.subtract(spanDays, 'day').toDate();
     const priorFromLabel = dayjs(priorStart).tz(z).format('YYYY-MM-DD');
     const priorToLabel = fromDay.subtract(1, 'day').format('YYYY-MM-DD');
+    const adCreditOwnerId =
+      user.type === UserTypeEnum.VENDOR
+        ? new Types.ObjectId(String(user._id))
+        : null;
+
+    const [adCreditCurrent, adCreditPrior] = await Promise.all([
+      this.aggregateAdCreditInRange(start, endExclusive, adCreditOwnerId),
+      this.aggregateAdCreditInRange(priorStart, priorEndExclusive, adCreditOwnerId),
+    ]);
 
     let storeIds: Types.ObjectId[] | null = null;
     if (user.type === UserTypeEnum.VENDOR) {
@@ -3462,6 +3486,15 @@ export class DashboardService {
             shippingTotal: 0,
             priorPeriodRevenue: 0,
             trendPercent: null,
+            adCredit: {
+              paidTotal: adCreditCurrent.total,
+              priorPaidTotal: adCreditPrior.total,
+              trendPercent: trendPercent(adCreditCurrent.total, adCreditPrior.total),
+              paymentCount: adCreditCurrent.paymentCount,
+              currency: adCreditCurrent.currency,
+              paidByCurrency: adCreditCurrent.byCurrency,
+              priorPaidByCurrency: adCreditPrior.byCurrency,
+            },
           },
           daily: [],
           orders: [],
@@ -3605,9 +3638,81 @@ export class DashboardService {
         priorPeriodRevenue,
         trendPercent: trendPercent(totalRevenue, priorPeriodRevenue),
         currency: reportCurrency,
+        adCredit: {
+          paidTotal: adCreditCurrent.total,
+          priorPaidTotal: adCreditPrior.total,
+          trendPercent: trendPercent(adCreditCurrent.total, adCreditPrior.total),
+          paymentCount: adCreditCurrent.paymentCount,
+          currency: adCreditCurrent.currency,
+          paidByCurrency: adCreditCurrent.byCurrency,
+          priorPaidByCurrency: adCreditPrior.byCurrency,
+        },
       },
       daily: dailyAgg,
       orders,
+    };
+  }
+
+  private async aggregateAdCreditInRange(
+    start: Date,
+    end: Date,
+    ownerId: Types.ObjectId | null,
+  ): Promise<{
+    total: number;
+    paymentCount: number;
+    currency?: string;
+    byCurrency: Array<{ currency: string; amount: number }>;
+  }> {
+    const match: Record<string, unknown> = {
+      status: AdCreditPaymentStatusEnum.PAID,
+      paidAt: { $gte: start, $lt: end },
+    };
+    if (ownerId) {
+      match.owner = ownerId;
+    }
+    const rows = await this.adCreditPaymentModel
+      .aggregate<{
+        _id: string;
+        total: number;
+        paymentCount: number;
+      }>([
+        { $match: match },
+        {
+          $group: {
+            _id: {
+              $toUpper: {
+                $ifNull: ['$currency', 'CAD'],
+              },
+            },
+            total: { $sum: { $ifNull: ['$amountPaidCad', 0] } },
+            paymentCount: { $sum: 1 },
+          },
+        },
+      ])
+      .exec();
+    if (!rows.length) {
+      return { total: 0, paymentCount: 0, byCurrency: [] };
+    }
+    const byCurrency = rows
+      .map((row) => ({
+        currency: normalizeCurrencyCode(row._id) || 'CAD',
+        amount: Number(row.total ?? 0),
+        paymentCount: Number(row.paymentCount ?? 0),
+      }))
+      .sort((a, b) => a.currency.localeCompare(b.currency));
+    const total = byCurrency.reduce(
+      (sum, row) => sum + (Number.isFinite(row.amount) ? row.amount : 0),
+      0,
+    );
+    const paymentCount = byCurrency.reduce(
+      (sum, row) => sum + (Number.isFinite(row.paymentCount) ? row.paymentCount : 0),
+      0,
+    );
+    return {
+      total,
+      paymentCount,
+      currency: byCurrency.length === 1 ? byCurrency[0].currency : undefined,
+      byCurrency: byCurrency.map(({ currency, amount }) => ({ currency, amount })),
     };
   }
 
