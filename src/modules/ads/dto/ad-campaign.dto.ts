@@ -3,6 +3,7 @@ import { StoreAdActionTypeEnum } from '@schemas/ad.schema';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -100,6 +101,7 @@ export class CreateAdCampaignDto {
   @ApiProperty({ type: [CampaignItemDto] })
   @IsArray()
   @ArrayMinSize(1)
+  @ArrayMaxSize(8)
   @ValidateNested({ each: true })
   @Type(() => CampaignItemDto)
   items: CampaignItemDto[];
@@ -169,6 +171,7 @@ export class PatchAdCampaignDto {
   @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
+  @ArrayMaxSize(8)
   @ValidateNested({ each: true })
   @Type(() => CampaignItemDto)
   items?: CampaignItemDto[];

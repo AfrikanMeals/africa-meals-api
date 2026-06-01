@@ -286,6 +286,7 @@ const ADS_PRICING_KEY = 'default';
 const AD_CONVERSION_ATTRIBUTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const AD_CREDIT_CHECKOUT_METADATA_KIND = 'ad_credit_payment';
 const AD_CREDIT_STRIPE_MIN_CAD = 0.5;
+const AD_CAMPAIGN_MAX_ITEMS = 8;
 const ADS_PRICING_DEFAULTS: Omit<AdPricingPayload, 'updatedAt'> = {
   currency: 'CAD',
   cpmCad: 0,
@@ -748,6 +749,9 @@ export class AdsService implements OnModuleInit {
     const normalized = this._normalizeCampaignItems(items);
     if (!normalized.length) {
       throw new BadRequestException('campaign_items_required');
+    }
+    if (normalized.length > AD_CAMPAIGN_MAX_ITEMS) {
+      throw new BadRequestException('campaign_items_max_exceeded');
     }
     const productIds = normalized
       .filter((i) => i.itemType === AdCampaignItemTypeEnum.PRODUCT)
