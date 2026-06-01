@@ -156,6 +156,30 @@ export class AdsController {
     return this.adsService.createAdCreditCheckoutSession(req.user as UserModel);
   }
 
+  /** Compat legacy: certains clients appellent encore GET /checkout-session. */
+  @Get('my-credit/checkout-session')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  async createAdCreditCheckoutSessionGet(@Req() req: Request) {
+    return this.adsService.createAdCreditCheckoutSession(req.user as UserModel);
+  }
+
+  /** Compat legacy: alias historique /checkout. */
+  @Post('my-credit/checkout')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  async createAdCreditCheckoutAlias(@Req() req: Request) {
+    return this.adsService.createAdCreditCheckoutSession(req.user as UserModel);
+  }
+
+  /** Compat legacy: alias historique /checkout en GET. */
+  @Get('my-credit/checkout')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  async createAdCreditCheckoutAliasGet(@Req() req: Request) {
+    return this.adsService.createAdCreditCheckoutSession(req.user as UserModel);
+  }
+
   @Get('my-credit/checkout-health')
   @UseGuards(JwtGuard)
   @ApiBearerAuth('bearer')
