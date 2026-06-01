@@ -253,6 +253,18 @@ export type AdCreditSummaryPayload = {
   totalDue: number;
 };
 
+export type AdCreditPaymentHistoryRow = {
+  id: string;
+  amountPaidCad: number;
+  currency: string;
+  status: AdCreditPaymentStatusEnum;
+  stripeCheckoutSessionId: string;
+  stripePaymentIntentId: string | null;
+  paidAt: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
 export type AdPricingPayload = {
   currency: string;
   cpmCad: number;
@@ -2039,6 +2051,66 @@ export class AdsService implements OnModuleInit {
       stores: applied.stores,
       totalDue: applied.outstandingDue,
     };
+  }
+
+  async listMyAdCreditPayments(
+    user: UserModel,
+    opts?: { limit?: number },
+  ): Promise<{ items: AdCreditPaymentHistoryRow[] }> {
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_only');
+    }
+    const requested = Number(opts?.limit ?? 50);
+    const limit = Number.isFinite(requested)
+      ? Math.min(200, Math.max(1, Math.floor(requested)))
+      : 50;
+    const ownerId = new Types.ObjectId(String(user._id));
+    const docs = await this._adCreditPaymentModel
+      .find({
+        owner: ownerId,
+        status: AdCreditPaymentStatusEnum.PAID,
+      })
+      .sort({ paidAt: -1, createdAt: -1 })
+      .limit(limit)
+      .select(
+        '_id amountPaidCad currency status stripeCheckoutSessionId stripePaymentIntentId paidAt createdAt updatedAt',
+      )
+      .lean()
+      .exec();
+
+    const toIsoOrNull = (value: unknown): string | null => {
+      if (value == null) return null;
+      if (
+        typeof value !== 'string' &&
+        typeof value !== 'number' &&
+        !(value instanceof Date)
+      ) {
+        return null;
+      }
+      const d = new Date(value);
+      return Number.isNaN(d.getTime()) ? null : d.toISOString();
+    };
+
+    const items = (docs as Array<Record<string, unknown>>).map((doc) => ({
+      id: String(doc._id ?? ''),
+      amountPaidCad: Number(doc.amountPaidCad ?? 0),
+      currency: String(doc.currency ?? 'CAD').toUpperCase(),
+      status:
+        (String(doc.status ?? AdCreditPaymentStatusEnum.PAID).toUpperCase() as AdCreditPaymentStatusEnum),
+      stripeCheckoutSessionId: String(doc.stripeCheckoutSessionId ?? ''),
+      stripePaymentIntentId:
+        doc.stripePaymentIntentId != null
+          ? String(doc.stripePaymentIntentId)
+          : null,
+      paidAt:
+        toIsoOrNull(doc.paidAt) ??
+        toIsoOrNull(doc.createdAt) ??
+        new Date().toISOString(),
+      createdAt: toIsoOrNull(doc.createdAt),
+      updatedAt: toIsoOrNull(doc.updatedAt),
+    }));
+
+    return { items };
   }
 
   async createAdCreditCheckoutSession(

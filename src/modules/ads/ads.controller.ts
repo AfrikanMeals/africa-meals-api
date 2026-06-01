@@ -22,6 +22,7 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   Req,
   UploadedFile,
   UseGuards,
@@ -147,6 +148,25 @@ export class AdsController {
   })
   async myCredit(@Req() req: Request) {
     return this.adsService.getMyAdCredit(req.user as UserModel);
+  }
+
+  @Get('my-credit/payments')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    summary: 'Historique des paiements de crédit Ads du vendeur.',
+  })
+  async myCreditPayments(
+    @Req() req: Request,
+    @Query('limit') limitRaw?: string,
+  ) {
+    const parsed =
+      limitRaw != null && limitRaw.trim() !== ''
+        ? Number.parseInt(limitRaw, 10)
+        : undefined;
+    return this.adsService.listMyAdCreditPayments(req.user as UserModel, {
+      limit: Number.isFinite(parsed) ? parsed : undefined,
+    });
   }
 
   @Post('my-credit/checkout-session')
