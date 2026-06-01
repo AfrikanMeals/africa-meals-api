@@ -437,7 +437,12 @@ export class LoyaltyService {
       return this._emptyDashboard(config, canEdit);
     }
 
-    const userIds = await this._distinctBuyerIds(storeFilter);
+    const buyerUserIds = await this._distinctBuyerIds(storeFilter);
+    const eligibleUserIds =
+      caller.type === UserTypeEnum.ADMIN
+        ? await this._distinctEligibleUserIds()
+        : [];
+    const userIds = this._mergeDistinctObjectIds(buyerUserIds, eligibleUserIds);
     if (!userIds.length) {
       return this._emptyDashboard(config, canEdit);
     }
@@ -454,9 +459,12 @@ export class LoyaltyService {
     const eligibleUsers = users.filter((u) =>
       Boolean((u as { rewardProgramEligible?: boolean }).rewardProgramEligible),
     );
-    const pendingEnrollment = users.filter(
-      (u) => !(u as { rewardProgramEligible?: boolean }).rewardProgramEligible,
-    ).length;
+    const buyerIdSet = new Set(buyerUserIds.map((id) => id.toHexString()));
+    const pendingEnrollment = users.filter((u) => {
+      const id = String(u._id);
+      if (!buyerIdSet.has(id)) return false;
+      return !(u as { rewardProgramEligible?: boolean }).rewardProgramEligible;
+    }).length;
 
     const members: LoyaltyMemberRow[] = eligibleUsers.map((u) => {
       const id = String(u._id);
@@ -593,6 +601,38 @@ export class LoyaltyService {
       if (!Types.ObjectId.isValid(hex) || seen.has(hex)) continue;
       seen.add(hex);
       out.push(new Types.ObjectId(hex));
+    }
+    return out;
+  }
+
+  private async _distinctEligibleUserIds(): Promise<Types.ObjectId[]> {
+    const rows = await this._userModel
+      .find({
+        type: UserTypeEnum.USER,
+        rewardProgramEligible: true,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    return this._mergeDistinctObjectIds(
+      rows.map((row) => row._id as Types.ObjectId),
+    );
+  }
+
+  private _mergeDistinctObjectIds(
+    ...groups: Array<Array<Types.ObjectId | string | null | undefined>>
+  ): Types.ObjectId[] {
+    const out: Types.ObjectId[] = [];
+    const seen = new Set<string>();
+    for (const group of groups) {
+      for (const raw of group ?? []) {
+        if (!raw) continue;
+        const hex =
+          raw instanceof Types.ObjectId ? raw.toHexString() : String(raw).trim();
+        if (!Types.ObjectId.isValid(hex) || seen.has(hex)) continue;
+        seen.add(hex);
+        out.push(new Types.ObjectId(hex));
+      }
     }
     return out;
   }
