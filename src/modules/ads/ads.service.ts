@@ -425,6 +425,67 @@ export class AdsService implements OnModuleInit {
     return Number(rows[0]?.total ?? 0);
   }
 
+  private async _backfillRecentAdCreditPayments(ownerId: Types.ObjectId): Promise<void> {
+    let stripe: StripeClient;
+    try {
+      stripe = this.stripe();
+    } catch {
+      return;
+    }
+    const owner = ownerId.toHexString();
+    let sessionsData: Array<{
+      id: string;
+      metadata?: Record<string, string | null | undefined> | null;
+      amount_total?: number | null;
+      currency?: string | null;
+      payment_status?: string | null;
+      payment_intent?: string | { id?: string | null } | null;
+    }> = [];
+    try {
+      const sessions = await stripe.checkout.sessions.list({ limit: 25 });
+      sessionsData = sessions.data.map((session) => ({
+        id: session.id,
+        metadata: session.metadata ?? null,
+        amount_total: session.amount_total ?? null,
+        currency: session.currency ?? null,
+        payment_status: session.payment_status ?? null,
+        payment_intent: session.payment_intent ?? null,
+      }));
+    } catch {
+      return;
+    }
+    for (const session of sessionsData) {
+      if (session.payment_status !== 'paid') continue;
+      const kind = String(session.metadata?.kind ?? '').trim();
+      const uid = String(session.metadata?.uid ?? '').trim();
+      if (kind !== AD_CREDIT_CHECKOUT_METADATA_KIND || uid !== owner) continue;
+      const amountPaidCad = Number(((session.amount_total ?? 0) / 100).toFixed(2));
+      if (!Number.isFinite(amountPaidCad) || amountPaidCad <= 0) continue;
+      const paymentIntentId =
+        typeof session.payment_intent === 'string'
+          ? session.payment_intent
+          : session.payment_intent?.id ?? null;
+      const currency = String(session.currency ?? 'cad').trim().toUpperCase() || 'CAD';
+      await this._adCreditPaymentModel
+        .updateOne(
+          { stripeCheckoutSessionId: session.id },
+          {
+            $setOnInsert: {
+              owner: ownerId,
+              amountPaidCad,
+              currency,
+              status: AdCreditPaymentStatusEnum.PAID,
+              stripeCheckoutSessionId: session.id,
+              stripePaymentIntentId: paymentIntentId,
+              paidAt: new Date(),
+            },
+          },
+          { upsert: true },
+        )
+        .exec();
+    }
+  }
+
   private applyPaidAmountToStoreBreakdown(
     stores: AdCreditSummaryPayload['stores'],
     paidAmountCad: number,
@@ -1601,7 +1662,11 @@ export class AdsService implements OnModuleInit {
 
     if (!storeIds.length) {
       const ownerId = new Types.ObjectId(String(user._id));
-      const paidTotal = await this._adCreditPaidTotalCad(ownerId);
+      let paidTotal = await this._adCreditPaidTotalCad(ownerId);
+      if (paidTotal <= 0) {
+        await this._backfillRecentAdCreditPayments(ownerId);
+        paidTotal = await this._adCreditPaidTotalCad(ownerId);
+      }
       return {
         currency: pricing.currency,
         grossDue: 0,
@@ -1947,7 +2012,11 @@ export class AdsService implements OnModuleInit {
     });
 
     const ownerId = new Types.ObjectId(String(user._id));
-    const paidTotal = await this._adCreditPaidTotalCad(ownerId);
+    let paidTotal = await this._adCreditPaidTotalCad(ownerId);
+    if (paidTotal <= 0) {
+      await this._backfillRecentAdCreditPayments(ownerId);
+      paidTotal = await this._adCreditPaidTotalCad(ownerId);
+    }
     const applied = this.applyPaidAmountToStoreBreakdown(stores, paidTotal);
     return {
       currency: pricing.currency,

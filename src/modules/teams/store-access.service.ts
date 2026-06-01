@@ -198,6 +198,8 @@ export class StoreAccessService {
       const storeId = String(m.store);
       if (entries.some((e) => e.storeId === storeId)) continue;
       const store = storeById.get(storeId);
+      // Ignore les memberships orphelins: boutique supprimée/inexistante.
+      if (!store) continue;
       const storeOwnerId = String((store as { owner?: unknown })?.owner ?? '');
       const allowedForOwner = allowedStoreIdsByOwner.get(storeOwnerId);
       if (allowedForOwner && !allowedForOwner.has(storeId)) {

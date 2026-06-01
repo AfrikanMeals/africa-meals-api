@@ -18,6 +18,10 @@ import {
   StripeProcessedCheckoutModel,
   StripeProcessedCheckoutSchema,
 } from '@schemas/stripe-processed-checkout.schema';
+import {
+  AdCreditPaymentModel,
+  AdCreditPaymentSchema,
+} from '@schemas/ad-credit-payment.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { BillingController } from './billing.controller';
 import { BillingService } from './billing.service';
@@ -52,6 +56,10 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
       {
         name: StripeProcessedCheckoutModel.name,
         schema: StripeProcessedCheckoutSchema,
+      },
+      {
+        name: AdCreditPaymentModel.name,
+        schema: AdCreditPaymentSchema,
       },
       { name: StoreModel.name, schema: StoreSchema },
       { name: UserModel.name, schema: UserSchema },

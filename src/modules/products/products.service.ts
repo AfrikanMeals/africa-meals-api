@@ -33,6 +33,9 @@ export class ProductsService {
   @InjectModel(ProductModel.name)
   private readonly _productModel: Model<ProductModel>;
 
+  @InjectModel(StoreModel.name)
+  private readonly _storeModel: Model<StoreModel>;
+
   @InjectModel(ProductCategoryModel.name)
   private readonly _productCategoryModel: Model<ProductCategoryModel>;
 

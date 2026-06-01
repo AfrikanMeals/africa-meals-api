@@ -1,6 +1,10 @@
 import { SubscriptionsStripeCheckoutService } from '@modules/subscriptions/subscriptions-stripe-checkout.service';
 import { CartService } from '@modules/cart/cart.service';
 import { CouponsService } from '@modules/coupons/coupons.service';
+import {
+  AdCreditPaymentModel,
+  AdCreditPaymentStatusEnum,
+} from '@schemas/ad-credit-payment.schema';
 import { StripeConnectService } from './stripe-connect.service';
 import { StripeConnectTransferService } from './stripe-connect-transfer.service';
 import { OrdersService } from '@modules/orders/orders.service';
@@ -36,6 +40,8 @@ type StripeFulfillResult = {
   orderIds: string[];
   errors: Array<{ storeId: string; error: string }>;
 };
+
+const AD_CREDIT_CHECKOUT_METADATA_KIND = 'ad_credit_payment';
 
 type CartGroup = {
   store: {
@@ -424,9 +430,70 @@ export class StripeGroupedCheckoutService {
     private readonly processedModel: Model<StripeProcessedCheckoutModel>,
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
+    @InjectModel(AdCreditPaymentModel.name)
+    private readonly adCreditPaymentModel: Model<AdCreditPaymentModel>,
     @Inject(SubscriptionsStripeCheckoutService)
     private readonly subscriptionStripeCheckout: SubscriptionsStripeCheckoutService,
   ) {}
+
+  private async settleAdCreditFromCheckoutSession(
+    session: {
+      id: string;
+      metadata?: Record<string, string | null | undefined> | null;
+      amount_total?: number | null;
+      currency?: string | null;
+      payment_status?: string | null;
+      status?: string | null;
+      payment_intent?: string | { id?: string | null } | null;
+    },
+  ): Promise<boolean> {
+    if (session.metadata?.kind !== AD_CREDIT_CHECKOUT_METADATA_KIND) {
+      return false;
+    }
+    const isPaid =
+      session.payment_status === 'paid' || session.status === 'complete';
+    if (!isPaid) return true;
+
+    const ownerId = String(session.metadata?.uid ?? '').trim();
+    if (!Types.ObjectId.isValid(ownerId)) {
+      this.logger.warn(
+        `Stripe webhook: ad-credit invalid uid for session ${session.id}`,
+      );
+      return true;
+    }
+    const amountPaidCad = Number(((session.amount_total ?? 0) / 100).toFixed(2));
+    if (!Number.isFinite(amountPaidCad) || amountPaidCad <= 0) {
+      this.logger.warn(
+        `Stripe webhook: ad-credit invalid amount for session ${session.id}`,
+      );
+      return true;
+    }
+    const paymentIntentId =
+      typeof session.payment_intent === 'string'
+        ? session.payment_intent
+        : session.payment_intent?.id ?? null;
+    const currency = String(session.currency ?? 'cad').trim().toUpperCase() || 'CAD';
+
+    await this.adCreditPaymentModel
+      .updateOne(
+        { stripeCheckoutSessionId: session.id },
+        {
+          $setOnInsert: {
+            owner: new Types.ObjectId(ownerId),
+            amountPaidCad,
+            currency,
+            status: AdCreditPaymentStatusEnum.PAID,
+            stripeCheckoutSessionId: session.id,
+            stripePaymentIntentId: paymentIntentId,
+            paidAt: new Date(),
+          },
+        },
+        { upsert: true },
+      )
+      .exec();
+
+    return true;
+  }
 
   private stripe() {
     const key = this.config.get<string>('STRIPE_SECRET_KEY')?.trim();
@@ -1600,11 +1667,18 @@ export class StripeGroupedCheckoutService {
         currency?: string | null;
         payment_status?: string | null;
         status?: string | null;
+        payment_intent?: string | { id?: string | null } | null;
       };
       if (session.metadata?.kind === 'vendor_subscription') {
         await this.subscriptionStripeCheckout.fulfillFromCheckoutSessionObject(
           session,
         );
+        return { received: true };
+      }
+      const adCreditSettled = await this.settleAdCreditFromCheckoutSession(
+        session,
+      );
+      if (adCreditSettled) {
         return { received: true };
       }
       const uid = session.metadata?.uid;

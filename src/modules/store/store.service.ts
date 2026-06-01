@@ -1989,7 +1989,7 @@ export class StoreService {
     };
   }
 
-  /** Supprime une boutique non approuvée (PENDING / REVISION) — admin uniquement. */
+  /** Supprime une boutique non active (PENDING / REVISION / INACTIVE) — admin uniquement. */
   async deleteVendorStoreForAdmin(storeId: string, admin: UserModel) {
     if (admin.type !== UserTypeEnum.ADMIN) {
       throw new ForbiddenException('admin_only');
@@ -2002,7 +2002,11 @@ export class StoreService {
       throw new NotFoundException('store_not_found');
     }
     if (
-      ![StoreStatusEnum.PENDING, StoreStatusEnum.REVISION].includes(doc.status)
+      ![
+        StoreStatusEnum.PENDING,
+        StoreStatusEnum.REVISION,
+        StoreStatusEnum.INACTIVE,
+      ].includes(doc.status)
     ) {
       throw new ForbiddenException('store_delete_only_non_approved');
     }
