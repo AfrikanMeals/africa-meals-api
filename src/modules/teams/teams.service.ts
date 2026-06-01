@@ -274,8 +274,14 @@ export class TeamsService {
   }
 
   private async assertTeamFeatureAvailableForStore(
+    user: UserModel,
     storeId: string,
   ): Promise<void> {
+    // Les admins plateforme peuvent gérer l'équipe d'une boutique
+    // indépendamment de la formule de la boutique.
+    if (user.type === UserTypeEnum.ADMIN) {
+      return;
+    }
     const isFree = await this.subscriptionsService.isStoreOnFreePlan(storeId);
     if (isFree) {
       throw new ForbiddenException('team_feature_not_available_on_free_plan');
@@ -284,7 +290,7 @@ export class TeamsService {
 
   async listStoreRoles(user: UserModel, storeId: string) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.view');
-    await this.assertTeamFeatureAvailableForStore(storeId);
+    await this.assertTeamFeatureAvailableForStore(user, storeId);
     const store = await this.storeModel.findById(storeId).lean().exec();
     if (!store) throw new NotFoundException('store_not_found');
     await this.bootstrapStoreTeam(
@@ -312,7 +318,7 @@ export class TeamsService {
     dto: CreateStoreRoleDto,
   ) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.manage');
-    await this.assertTeamFeatureAvailableForStore(storeId);
+    await this.assertTeamFeatureAvailableForStore(user, storeId);
     const perms = dto.permissions.filter(isStorePermission);
     if (!perms.length) {
       throw new BadRequestException('invalid_permissions');
@@ -335,7 +341,7 @@ export class TeamsService {
     dto: UpdateStoreRoleDto,
   ) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.manage');
-    await this.assertTeamFeatureAvailableForStore(storeId);
+    await this.assertTeamFeatureAvailableForStore(user, storeId);
     const role = await this.storeRoleModel
       .findOne({ _id: roleId, store: storeId })
       .exec();
@@ -359,7 +365,7 @@ export class TeamsService {
 
   async deleteStoreRole(user: UserModel, storeId: string, roleId: string) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.manage');
-    await this.assertTeamFeatureAvailableForStore(storeId);
+    await this.assertTeamFeatureAvailableForStore(user, storeId);
     const role = await this.storeRoleModel
       .findOne({ _id: roleId, store: storeId })
       .exec();
@@ -381,7 +387,7 @@ export class TeamsService {
 
   async listStoreMembers(user: UserModel, storeId: string) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.view');
-    await this.assertTeamFeatureAvailableForStore(storeId);
+    await this.assertTeamFeatureAvailableForStore(user, storeId);
     const store = await this.storeModel.findById(storeId).lean().exec();
     if (!store) throw new NotFoundException('store_not_found');
     await this.bootstrapStoreTeam(
@@ -466,7 +472,7 @@ export class TeamsService {
     dto: AddStoreMemberDto,
   ) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.manage');
-    await this.assertTeamFeatureAvailableForStore(storeId);
+    await this.assertTeamFeatureAvailableForStore(user, storeId);
     const email = dto.email.trim().toLowerCase();
     const target = await this.userModel.findOne({ email }).exec();
     if (!target) {
@@ -519,7 +525,7 @@ export class TeamsService {
     dto: UpdateStoreMemberDto,
   ) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.manage');
-    await this.assertTeamFeatureAvailableForStore(storeId);
+    await this.assertTeamFeatureAvailableForStore(user, storeId);
     const roleObjectIds = await this.resolveStoreRoleObjectIds(storeId, dto);
     const roleDocs = await this.storeRoleModel
       .find({ _id: { $in: roleObjectIds } })
@@ -544,7 +550,7 @@ export class TeamsService {
 
   async removeStoreMember(user: UserModel, storeId: string, memberId: string) {
     await this.storeAccess.assertStorePermission(user, storeId, 'team.manage');
-    await this.assertTeamFeatureAvailableForStore(storeId);
+    await this.assertTeamFeatureAvailableForStore(user, storeId);
     const member = await this.storeMemberModel
       .findOne({ _id: memberId, store: storeId })
       .exec();

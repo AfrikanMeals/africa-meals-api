@@ -37,6 +37,7 @@ import { ProductModel } from '@schemas/product.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
+import { VendorSubscriptionModel } from '@schemas/vendor-subscription.schema';
 import { Model, Types } from 'mongoose';
 import {
   CreateStoreDto,
@@ -130,6 +131,9 @@ export class StoreService {
 
   @InjectModel(OrderModel.name)
   private readonly _orderModel: Model<OrderModel>;
+
+  @InjectModel(VendorSubscriptionModel.name)
+  private readonly _vendorSubscriptionModel: Model<VendorSubscriptionModel>;
 
   @Inject(AddressesService)
   private readonly _addressesService: AddressesService;
@@ -1819,7 +1823,11 @@ export class StoreService {
     }
     const rows = await this._storeModel
       .find({})
-      .populate({ path: 'owner', select: 'fullName email' })
+      .populate({
+        path: 'owner',
+        select:
+          'fullName email stripeConnectAccountId stripeConnectChargesEnabled stripeConnectPayoutsEnabled stripeConnectDetailsSubmitted stripeConnectDisabledReason stripeConnectRequirementsDue stripeConnectRequirementsPastDue',
+      })
       .populate({
         path: 'address',
         select: 'address city country countryCode zipCode location',
@@ -1827,13 +1835,22 @@ export class StoreService {
       .sort({ updatedAt: -1 })
       .lean()
       .exec();
+    const storeIds = (rows as Record<string, unknown>[]).map((s) =>
+      String(s._id),
+    );
+    const planByStore = await this._resolveSubscriptionPlanByStoreIds(storeIds);
 
     return (rows as Record<string, unknown>[]).map((s) =>
-      this._mapStoreToAdminVendorRow(s),
+      this._mapStoreToAdminVendorRow(s, {
+        subscriptionPlan: planByStore.get(String(s._id)),
+      }),
     );
   }
 
-  private _mapStoreToAdminVendorRow(s: Record<string, unknown>) {
+  private _mapStoreToAdminVendorRow(
+    s: Record<string, unknown>,
+    options?: { subscriptionPlan?: string },
+  ) {
     const owner = s.owner as Record<string, unknown> | undefined;
     const fullName = owner
       ? String(owner.fullName ?? owner.full_name ?? '').trim()
@@ -1876,6 +1893,7 @@ export class StoreService {
         return new Date(raw).toISOString();
       return undefined;
     };
+    const stripeOnboardingStatus = this._resolveStripeOnboardingStatus(owner);
 
     return {
       id: String(s._id),
@@ -1890,9 +1908,108 @@ export class StoreService {
       adresse,
       latitude,
       longitude,
+      stripeOnboardingStatus,
+      subscriptionPlan:
+        String(options?.subscriptionPlan ?? '').trim() || 'FREE',
       createdAt: toIso(createdRaw),
       updatedAt: toIso(updatedRaw),
     };
+  }
+
+  private async _resolveSubscriptionPlanByStoreIds(
+    storeIds: string[],
+  ): Promise<Map<string, string>> {
+    const validOids = storeIds
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    if (!validOids.length) return new Map();
+
+    const rows = await this._vendorSubscriptionModel
+      .find({
+        store: { $in: validOids },
+        status: 'ACTIVE',
+      })
+      .select('store planName endsAt createdAt')
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    const nowMs = Date.now();
+    const byStore = new Map<
+      string,
+      { planName: string; endsAtMs: number; createdAtMs: number }
+    >();
+
+    const toMs = (raw: unknown): number => {
+      const t =
+        raw instanceof Date
+          ? raw.getTime()
+          : new Date(String(raw ?? '')).getTime();
+      return Number.isFinite(t) ? t : Number.MIN_SAFE_INTEGER;
+    };
+
+    for (const row of rows as Record<string, unknown>[]) {
+      const storeId = String(row.store ?? '');
+      if (!storeId) continue;
+      const planName = String(row.planName ?? '').trim();
+      if (!planName) continue;
+      const endsAtMs = toMs(row.endsAt);
+      const createdAtMs = toMs(row.createdAt);
+      const existing = byStore.get(storeId);
+      if (!existing) {
+        byStore.set(storeId, { planName, endsAtMs, createdAtMs });
+        continue;
+      }
+      const existingValid = existing.endsAtMs > nowMs;
+      const currentValid = endsAtMs > nowMs;
+      if (currentValid && !existingValid) {
+        byStore.set(storeId, { planName, endsAtMs, createdAtMs });
+        continue;
+      }
+      if (
+        currentValid === existingValid &&
+        createdAtMs > existing.createdAtMs
+      ) {
+        byStore.set(storeId, { planName, endsAtMs, createdAtMs });
+      }
+    }
+
+    const out = new Map<string, string>();
+    for (const [storeId, value] of byStore.entries()) {
+      out.set(storeId, value.planName);
+    }
+    return out;
+  }
+
+  private _resolveStripeOnboardingStatus(
+    owner?: Record<string, unknown>,
+  ): 'COMPLETE' | 'ACTION_REQUIRED' | 'IN_PROGRESS' | 'NOT_STARTED' {
+    const accountId = String(owner?.stripeConnectAccountId ?? '').trim();
+    if (!accountId) return 'NOT_STARTED';
+
+    const chargesEnabled = Boolean(owner?.stripeConnectChargesEnabled);
+    const payoutsEnabled = Boolean(owner?.stripeConnectPayoutsEnabled);
+    const detailsSubmitted = Boolean(owner?.stripeConnectDetailsSubmitted);
+    const disabledReason = String(
+      owner?.stripeConnectDisabledReason ?? '',
+    ).trim();
+    const currentlyDue = Array.isArray(owner?.stripeConnectRequirementsDue)
+      ? owner?.stripeConnectRequirementsDue
+      : [];
+    const pastDue = Array.isArray(owner?.stripeConnectRequirementsPastDue)
+      ? owner?.stripeConnectRequirementsPastDue
+      : [];
+
+    if (disabledReason || pastDue.length > 0) return 'ACTION_REQUIRED';
+    if (
+      chargesEnabled &&
+      payoutsEnabled &&
+      detailsSubmitted &&
+      currentlyDue.length === 0
+    ) {
+      return 'COMPLETE';
+    }
+    return 'IN_PROGRESS';
   }
 
   /** Approuver (ACTIVE) ou suspendre (INACTIVE) une boutique. */
@@ -1985,15 +2102,24 @@ export class StoreService {
 
     const lean = await this._storeModel
       .findById(storeId)
-      .populate({ path: 'owner', select: 'fullName email' })
+      .populate({
+        path: 'owner',
+        select:
+          'fullName email stripeConnectAccountId stripeConnectChargesEnabled stripeConnectPayoutsEnabled stripeConnectDetailsSubmitted stripeConnectDisabledReason stripeConnectRequirementsDue stripeConnectRequirementsPastDue',
+      })
       .populate({
         path: 'address',
         select: 'address city country countryCode zipCode',
       })
       .lean()
       .exec();
+    const planByStore = await this._resolveSubscriptionPlanByStoreIds([
+      storeId,
+    ]);
     return {
-      store: this._mapStoreToAdminVendorRow(lean as Record<string, unknown>),
+      store: this._mapStoreToAdminVendorRow(lean as Record<string, unknown>, {
+        subscriptionPlan: planByStore.get(storeId),
+      }),
       emailNotification,
     };
   }

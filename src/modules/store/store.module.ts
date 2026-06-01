@@ -30,6 +30,10 @@ import { ProductModel, ProductSchema } from '@schemas/product.schema';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
+import {
+  VendorSubscriptionModel,
+  VendorSubscriptionSchema,
+} from '@schemas/vendor-subscription.schema';
 import { DailyMenuReminderCron } from './daily-menu-reminder.cron';
 import { DailyMenuReminderService } from './daily-menu-reminder.service';
 import { StoreController } from './store.controller';
@@ -65,6 +69,10 @@ import { StoreService } from './store.service';
       { name: ProductRatingModel.name, schema: ProductRatingSchema },
       { name: OrderModel.name, schema: OrderSchema },
       { name: AddressModel.name, schema: AddressSchema },
+      {
+        name: VendorSubscriptionModel.name,
+        schema: VendorSubscriptionSchema,
+      },
     ]),
   ],
   exports: [StoreService, MongooseModule],
