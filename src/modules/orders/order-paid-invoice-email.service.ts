@@ -120,8 +120,6 @@ export class OrderPaidInvoiceEmailService {
 
     const pdf = await this.invoicePdf.buildPdf(snapshot);
     const ref = orderInvoiceRef(oid);
-    const appName =
-      this.config.get<string>('APP_NAME')?.trim() || 'Wise Eat';
     const esc = this.emailTemplate.escapeHtml.bind(this.emailTemplate);
     const storeEsc = esc(storeName);
     const refEsc = esc(ref);
@@ -169,7 +167,7 @@ export class OrderPaidInvoiceEmailService {
     await this.mailer.sendSimple({
       to: email,
       toName: snapshot.clientName,
-      subject: `${appName} — Facture commande #${ref}`,
+      subject: `${storeName} — Facture commande #${ref}`,
       html,
       text,
       logContext: 'order-paid-invoice',

@@ -69,11 +69,13 @@ export class OrderInvoicePdfService {
             textX = logoX;
           }
         }
+        const headerTitle =
+          snapshot.storeName?.trim() || 'Facture';
         doc
           .fillColor(colors.textOnDark)
           .font('Helvetica-Bold')
           .fontSize(16)
-          .text(brand.appName, textX, 18, {
+          .text(headerTitle, textX, 18, {
             width: pageW - textX - margin,
           });
         doc
@@ -257,22 +259,18 @@ export class OrderInvoicePdfService {
       });
       y += 40;
 
+      const footerParts = ['Document généré automatiquement.'];
+      if (brand.websiteUrl?.trim()) {
+        footerParts.push(brand.websiteUrl.trim());
+      }
       doc
         .fillColor(colors.textMuted)
         .font('Helvetica')
         .fontSize(8)
-        .text(
-          `Document généré automatiquement — ${brand.appName}.` +
-            (brand.websiteUrl ? ` ${brand.websiteUrl}` : ''),
-          col1,
-          y,
-          { width: tableW, align: 'left' },
-        );
-      if (brand.supportEmail) {
-        doc.text(`Support : ${brand.supportEmail}`, col1, doc.y, {
+        .text(footerParts.join(' '), col1, y, {
           width: tableW,
+          align: 'left',
         });
-      }
 
       doc.end();
     });
