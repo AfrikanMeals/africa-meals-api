@@ -1,3 +1,4 @@
+import { CronMonitorService } from '@modules/cron-monitor/cron-monitor.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { SubscriptionsService } from './subscriptions.service';
@@ -14,21 +15,24 @@ import { SubscriptionsService } from './subscriptions.service';
 export class SubscriptionLifecycleCron {
   private readonly logger = new Logger(SubscriptionLifecycleCron.name);
 
-  constructor(private readonly subscriptions: SubscriptionsService) {}
+  constructor(
+    private readonly subscriptions: SubscriptionsService,
+    private readonly cronMonitor: CronMonitorService,
+  ) {}
 
   @Cron(process.env.SUBSCRIPTION_LIFECYCLE_CRON ?? '*/30 * * * *')
   async runScheduled(): Promise<void> {
-    if (process.env.DISABLE_SUBSCRIPTION_LIFECYCLE_CRON === 'true') {
-      return;
-    }
-    try {
-      await this.subscriptions.reconcileSubscriptionLifecycle();
-    } catch (e) {
-      this.logger.error(
-        `Subscription lifecycle cron failed: ${
-          e instanceof Error ? e.stack ?? e.message : String(e)
-        }`,
-      );
-    }
+    await this.cronMonitor.execute('subscription_lifecycle', async () => {
+      try {
+        await this.subscriptions.reconcileSubscriptionLifecycle();
+      } catch (e) {
+        this.logger.error(
+          `Subscription lifecycle cron failed: ${
+            e instanceof Error ? e.stack ?? e.message : String(e)
+          }`,
+        );
+        throw e;
+      }
+    });
   }
 }

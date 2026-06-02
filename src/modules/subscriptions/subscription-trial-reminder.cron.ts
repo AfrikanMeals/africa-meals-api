@@ -1,3 +1,4 @@
+import { CronMonitorService } from '@modules/cron-monitor/cron-monitor.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { SubscriptionTrialReminderService } from './subscription-trial-reminder.service';
@@ -12,21 +13,24 @@ import { SubscriptionTrialReminderService } from './subscription-trial-reminder.
 export class SubscriptionTrialReminderCron {
   private readonly logger = new Logger(SubscriptionTrialReminderCron.name);
 
-  constructor(private readonly reminders: SubscriptionTrialReminderService) {}
+  constructor(
+    private readonly reminders: SubscriptionTrialReminderService,
+    private readonly cronMonitor: CronMonitorService,
+  ) {}
 
   @Cron(process.env.SUBSCRIPTION_TRIAL_REMINDER_CRON ?? '0 8 * * *')
   async runScheduled(): Promise<void> {
-    if (process.env.DISABLE_SUBSCRIPTION_TRIAL_REMINDER_CRON === 'true') {
-      return;
-    }
-    try {
-      await this.reminders.runPass();
-    } catch (e) {
-      this.logger.error(
-        `Subscription trial reminder cron failed: ${
-          e instanceof Error ? e.stack ?? e.message : String(e)
-        }`,
-      );
-    }
+    await this.cronMonitor.execute('subscription_trial_reminder', async () => {
+      try {
+        await this.reminders.runPass();
+      } catch (e) {
+        this.logger.error(
+          `Subscription trial reminder cron failed: ${
+            e instanceof Error ? e.stack ?? e.message : String(e)
+          }`,
+        );
+        throw e;
+      }
+    });
   }
 }

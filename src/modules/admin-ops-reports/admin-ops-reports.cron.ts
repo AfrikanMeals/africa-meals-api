@@ -1,3 +1,4 @@
+import { CronMonitorService } from '@modules/cron-monitor/cron-monitor.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { AdminOpsReportsService } from './admin-ops-reports.service';
@@ -12,18 +13,20 @@ import { AdminOpsReportsService } from './admin-ops-reports.service';
 export class AdminOpsReportsCron {
   private readonly logger = new Logger(AdminOpsReportsCron.name);
 
-  constructor(private readonly reports: AdminOpsReportsService) {}
+  constructor(
+    private readonly reports: AdminOpsReportsService,
+    private readonly cronMonitor: CronMonitorService,
+  ) {}
 
   @Cron(process.env.ADMIN_OPS_REPORT_CRON ?? '15 * * * *')
   async runScheduled(): Promise<void> {
-    if (process.env.DISABLE_ADMIN_OPS_REPORT_CRON === 'true') {
-      return;
-    }
-    const res = await this.reports.runScheduledPass();
-    if (res.sent) {
-      this.logger.log(
-        `Scheduled vendor ops report (${res.periodKey}): sent=${res.sent} skipped=${res.skipped} failed=${res.failed}`,
-      );
-    }
+    await this.cronMonitor.execute('admin_ops_report', async () => {
+      const res = await this.reports.runScheduledPass();
+      if (res.sent) {
+        this.logger.log(
+          `Scheduled vendor ops report (${res.periodKey}): sent=${res.sent} skipped=${res.skipped} failed=${res.failed}`,
+        );
+      }
+    });
   }
 }

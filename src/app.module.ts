@@ -35,6 +35,7 @@ import { PenaltiesModule } from './modules/penalties/penalties.module';
 import { PlatformShippingSettingsModule } from './modules/platform-shipping-settings/platform-shipping-settings.module';
 import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
 import { AppPoliciesModule } from './modules/app-policies/app-policies.module';
+import { CronMonitorModule } from './modules/cron-monitor/cron-monitor.module';
 import { DbMaintenanceModule } from './modules/db-maintenance/db-maintenance.module';
 import { AdminOpsReportsModule } from './modules/admin-ops-reports/admin-ops-reports.module';
 import { RequestStatsModule } from './modules/request-stats/request-stats.module';
@@ -216,6 +217,7 @@ function redactRedisUrl(url: string): string {
       },
     }),
     ScheduleModule.forRoot(),
+    CronMonitorModule,
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

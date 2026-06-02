@@ -1,3 +1,4 @@
+import { CronMonitorService } from '@modules/cron-monitor/cron-monitor.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { RecommendationTrainingService } from './recommendation-training.service';
@@ -12,21 +13,24 @@ import { RecommendationTrainingService } from './recommendation-training.service
 export class RecommendationTrainingCron {
   private readonly _logger = new Logger(RecommendationTrainingCron.name);
 
-  constructor(private readonly _training: RecommendationTrainingService) {}
+  constructor(
+    private readonly _training: RecommendationTrainingService,
+    private readonly cronMonitor: CronMonitorService,
+  ) {}
 
   @Cron(process.env.RECOMMENDATION_TRAINING_CRON ?? '15 3 * * *')
   async runScheduledTraining(): Promise<void> {
-    if (process.env.DISABLE_RECOMMENDATION_TRAINING_CRON === 'true') {
-      return;
-    }
-    try {
-      await this._training.runTrainingPass();
-    } catch (e) {
-      this._logger.error(
-        `recommendation training failed: ${
-          (e as Error).stack ?? (e as Error).message
-        }`,
-      );
-    }
+    await this.cronMonitor.execute('recommendation_training', async () => {
+      try {
+        await this._training.runTrainingPass();
+      } catch (e) {
+        this._logger.error(
+          `recommendation training failed: ${
+            (e as Error).stack ?? (e as Error).message
+          }`,
+        );
+        throw e;
+      }
+    });
   }
 }

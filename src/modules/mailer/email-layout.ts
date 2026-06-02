@@ -15,6 +15,15 @@ export const EMAIL_LAYOUT_ID = 'am-email-layout';
 const LAYOUT_MARKER = `id="${EMAIL_LAYOUT_ID}"`;
 const SKIP_MARKER = '<!-- email-layout:skip -->';
 
+/** Stack Plus Jakarta Sans (web font dans <head>) + fallbacks clients mail. */
+export const EMAIL_FONT_FAMILY =
+  "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
+
+const EMAIL_GOOGLE_FONTS_LINK =
+  'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap';
+
+const EMAIL_LOGO_WIDTH_PX = 88;
+
 export function shouldWrapEmailHtml(html: string): boolean {
   const trimmed = html.trim();
   if (!trimmed) return false;
@@ -36,15 +45,15 @@ export function emailHeading(text: string, level: 1 | 2 | 3 = 2): string {
     2: '0 0 16px',
     3: '0 0 12px',
   };
-  return `<h${level} style="margin:${margins[level]};font-size:${sizes[level]};font-weight:700;color:${EMAIL_BRAND_DEFAULTS.primary};line-height:1.3;">${safe}</h${level}>`;
+  return `<h${level} style="margin:${margins[level]};font-size:${sizes[level]};font-weight:700;font-family:${EMAIL_FONT_FAMILY};color:${EMAIL_BRAND_DEFAULTS.primary};line-height:1.3;">${safe}</h${level}>`;
 }
 
 export function emailParagraph(htmlOrText: string): string {
-  return `<p style="margin:0 0 14px;font-size:16px;line-height:1.65;color:${EMAIL_BRAND_DEFAULTS.text};">${htmlOrText}</p>`;
+  return `<p style="margin:0 0 14px;font-size:16px;line-height:1.65;font-family:${EMAIL_FONT_FAMILY};color:${EMAIL_BRAND_DEFAULTS.text};">${htmlOrText}</p>`;
 }
 
 export function emailMutedParagraph(htmlOrText: string): string {
-  return `<p style="margin:0 0 14px;font-size:14px;line-height:1.55;color:${EMAIL_BRAND_DEFAULTS.textMuted};">${htmlOrText}</p>`;
+  return `<p style="margin:0 0 14px;font-size:14px;line-height:1.55;font-family:${EMAIL_FONT_FAMILY};color:${EMAIL_BRAND_DEFAULTS.textMuted};">${htmlOrText}</p>`;
 }
 
 export function emailDivider(): string {
@@ -110,14 +119,22 @@ function buildEmailHeader(brand: EmailBrand): string {
   const { colors, appName, logoUrl } = brand;
   const safeName = escapeEmailHtml(appName);
   const logoBlock = logoUrl
-    ? `<img src="${logoUrl.replace(/"/g, '&quot;')}" alt="${safeName}" width="140" height="auto" style="display:block;margin:0 auto 14px;max-width:140px;height:auto;border:0;" />`
-    : `<div style="display:inline-block;width:56px;height:56px;line-height:56px;border-radius:14px;background:rgba(255,255,255,0.15);font-size:28px;font-weight:800;color:${colors.textOnDark};margin-bottom:14px;">${safeName.charAt(0).toUpperCase()}</div>`;
+    ? `
+<table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto 14px;">
+  <tr>
+    <td align="center" style="padding:6px;background:#ffffff;border-radius:14px;">
+      <img src="${logoUrl.replace(/"/g, '&quot;')}" alt="${safeName}" width="${EMAIL_LOGO_WIDTH_PX}" height="auto"
+        style="display:block;margin:0 auto;width:${EMAIL_LOGO_WIDTH_PX}px;max-width:${EMAIL_LOGO_WIDTH_PX}px;height:auto;border:0;border-radius:10px;" />
+    </td>
+  </tr>
+</table>`.trim()
+    : `<div style="display:inline-block;width:48px;height:48px;line-height:48px;border-radius:12px;background:rgba(255,255,255,0.15);font-size:24px;font-weight:800;font-family:${EMAIL_FONT_FAMILY};color:${colors.textOnDark};margin-bottom:14px;">${safeName.charAt(0).toUpperCase()}</div>`;
 
   return `
 <tr>
-  <td align="center" style="padding:32px 24px 28px;background:linear-gradient(135deg,${colors.primary} 0%,${colors.accent} 100%);">
+  <td align="center" style="padding:28px 24px 24px;background:linear-gradient(135deg,${colors.primary} 0%,${colors.accent} 100%);font-family:${EMAIL_FONT_FAMILY};">
     ${logoBlock}
-    <p style="margin:0;font-size:22px;font-weight:700;color:${colors.textOnDark};letter-spacing:-0.02em;">${safeName}</p>
+    <p style="margin:0;font-size:20px;font-weight:700;font-family:${EMAIL_FONT_FAMILY};color:${colors.textOnDark};letter-spacing:-0.02em;">${safeName}</p>
   </td>
 </tr>`.trim();
 }
@@ -127,19 +144,20 @@ function buildEmailFooter(brand: EmailBrand): string {
   const year = new Date().getFullYear();
   const safeName = escapeEmailHtml(appName);
   const safeSupport = escapeEmailHtml(supportEmail);
+  const footerMuted = colors.textOnDark;
   return `
 <tr>
-  <td style="padding:28px 24px 32px;background:${colors.primary};text-align:center;">
-    <p style="margin:0 0 10px;font-size:15px;font-weight:600;color:${colors.textOnDark};">${safeName}</p>
-    <p style="margin:0 0 14px;font-size:13px;line-height:1.5;color:rgba(253,248,240,0.85);">
+  <td style="padding:28px 24px 32px;background:${colors.primary};text-align:center;font-family:${EMAIL_FONT_FAMILY};">
+    <p style="margin:0 0 10px;font-size:15px;font-weight:600;font-family:${EMAIL_FONT_FAMILY};color:${footerMuted};">${safeName}</p>
+    <p style="margin:0 0 14px;font-size:13px;line-height:1.55;font-family:${EMAIL_FONT_FAMILY};color:${footerMuted};">
       Une question ? Écrivez-nous à
       <a href="mailto:${safeSupport}" style="color:${colors.accentLight};text-decoration:none;font-weight:600;">${safeSupport}</a>
     </p>
-    ${websiteUrl ? `<p style="margin:0 0 14px;font-size:13px;"><a href="${websiteUrl.replace(/"/g, '&quot;')}" style="color:${colors.accentLight};text-decoration:none;">Visiter le site</a></p>` : ''}
-    <p style="margin:0;font-size:11px;color:rgba(253,248,240,0.55);">
+    ${websiteUrl ? `<p style="margin:0 0 16px;font-size:13px;font-family:${EMAIL_FONT_FAMILY};"><a href="${websiteUrl.replace(/"/g, '&quot;')}" style="color:${colors.accentLight};text-decoration:none;font-weight:600;">Visiter le site</a></p>` : ''}
+    <p style="margin:0;font-size:12px;line-height:1.5;font-family:${EMAIL_FONT_FAMILY};color:${footerMuted};">
       © ${year} ${safeName}. Tous droits réservés.
     </p>
-    <p style="margin:12px 0 0;font-size:11px;color:rgba(253,248,240,0.45);">
+    <p style="margin:10px 0 0;font-size:12px;line-height:1.5;font-family:${EMAIL_FONT_FAMILY};color:${footerMuted};">
       Vous recevez ce message car il concerne votre compte ou une action sur la plateforme.
     </p>
   </td>
@@ -184,7 +202,7 @@ export function wrapEmailHtml(
         <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:${colors.card};border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(57,40,0,0.08);">
           ${buildEmailHeader(brand)}
           <tr>
-            <td style="padding:32px 28px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+            <td style="padding:32px 28px 28px;font-family:${EMAIL_FONT_FAMILY};">
               ${bodyHtml.trim()}
             </td>
           </tr>

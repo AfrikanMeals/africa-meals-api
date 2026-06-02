@@ -6,9 +6,10 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { AdsService } from '@modules/ads/ads.service';
+import { CronMonitorService } from '@modules/cron-monitor/cron-monitor.service';
 import {
   CreateAdCampaignDto,
   PatchAdCampaignDto,
@@ -72,6 +73,7 @@ export class AdsTargetingService {
     @Inject(AdsService) private readonly adsService: AdsService,
     @Inject(WsAdsTargetingNotifyService)
     private readonly wsAdsTargetingNotify: WsAdsTargetingNotifyService,
+    private readonly cronMonitor: CronMonitorService,
   ) {}
 
   private actorKey(user: UserModel | undefined | null): string {
@@ -1094,18 +1096,20 @@ export class AdsTargetingService {
     };
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_2AM)
+  @Cron(process.env.ADS_TARGETING_RETENTION_CRON ?? '0 2 * * *')
   async purgeOldData(): Promise<void> {
-    const retention = this.retentionDays();
-    const cutoff = new Date(Date.now() - retention * 86_400_000);
-    const [eventsRes, logsRes] = await Promise.all([
-      this.eventModel.deleteMany({ timestamp: { $lt: cutoff } }).exec(),
-      this.auditLogModel.deleteMany({ createdAt: { $lt: cutoff } }).exec(),
-    ]);
-    this.logger.log(
-      `ads targeting retention purge done: events=${
-        eventsRes.deletedCount ?? 0
-      }, logs=${logsRes.deletedCount ?? 0}, days=${retention}`,
-    );
+    await this.cronMonitor.execute('ads_targeting_retention', async () => {
+      const retention = this.retentionDays();
+      const cutoff = new Date(Date.now() - retention * 86_400_000);
+      const [eventsRes, logsRes] = await Promise.all([
+        this.eventModel.deleteMany({ timestamp: { $lt: cutoff } }).exec(),
+        this.auditLogModel.deleteMany({ createdAt: { $lt: cutoff } }).exec(),
+      ]);
+      this.logger.log(
+        `ads targeting retention purge done: events=${
+          eventsRes.deletedCount ?? 0
+        }, logs=${logsRes.deletedCount ?? 0}, days=${retention}`,
+      );
+    });
   }
 }

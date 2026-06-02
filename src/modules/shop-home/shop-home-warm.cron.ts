@@ -1,3 +1,4 @@
+import { CronMonitorService } from '@modules/cron-monitor/cron-monitor.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { ShopHomeService } from './shop-home.service';
@@ -10,16 +11,18 @@ import { ShopHomeService } from './shop-home.service';
 export class ShopHomeWarmCron {
   private readonly _logger = new Logger(ShopHomeWarmCron.name);
 
-  constructor(private readonly _shopHome: ShopHomeService) {}
+  constructor(
+    private readonly _shopHome: ShopHomeService,
+    private readonly cronMonitor: CronMonitorService,
+  ) {}
 
   @Cron(process.env.SHOP_HOME_WARM_CRON ?? '*/8 * * * *')
   async warmShopHome(): Promise<void> {
-    if (process.env.DISABLE_SHOP_HOME_WARM_CRON === 'true') {
-      return;
-    }
-    await this._shopHome.warmAnonymousCache(
-      Number(process.env.SHOP_HOME_WARM_PRODUCTS_TAKE) || 48,
-    );
-    this._logger.debug('shop home warm cache ok');
+    await this.cronMonitor.execute('shop_home_warm', async () => {
+      await this._shopHome.warmAnonymousCache(
+        Number(process.env.SHOP_HOME_WARM_PRODUCTS_TAKE) || 48,
+      );
+      this._logger.debug('shop home warm cache ok');
+    });
   }
 }
