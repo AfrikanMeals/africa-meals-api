@@ -47,9 +47,9 @@ export class AdNotificationEventModel {
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: StoreModel.name,
-    required: true,
+    required: false,
   })
-  store: MongooseSchema.Types.ObjectId;
+  store?: MongooseSchema.Types.ObjectId;
 
   @Prop({
     type: MongooseSchema.Types.ObjectId,

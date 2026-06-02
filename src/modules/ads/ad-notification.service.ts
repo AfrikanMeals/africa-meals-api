@@ -153,6 +153,30 @@ export class AdNotificationService {
     );
   }
 
+  /** Ref Mongo (`ObjectId`, string ou document lean `{ _id }`). */
+  private objectIdFromDocRef(raw: unknown): Types.ObjectId | null {
+    if (raw == null) return null;
+    if (raw instanceof Types.ObjectId) return raw;
+    if (typeof raw === 'string') {
+      const s = raw.trim();
+      return Types.ObjectId.isValid(s) ? new Types.ObjectId(s) : null;
+    }
+    if (typeof raw === 'object' && !Array.isArray(raw)) {
+      const o = raw as Record<string, unknown>;
+      const inner = o._id ?? o.id;
+      return this.objectIdFromDocRef(inner);
+    }
+    return null;
+  }
+
+  private platformDisplayName(): string {
+    return this.config.get<string>('APP_NAME')?.trim() || 'Wise Eat';
+  }
+
+  private storeIdForLinks(storeId: Types.ObjectId | null | undefined): string {
+    return storeId?.toString() ?? '';
+  }
+
   private async loadAvailableChannels(): Promise<AdNotificationChannelAvailability> {
     const now = Date.now();
     if (
@@ -300,7 +324,7 @@ export class AdNotificationService {
 
   private async resolveTargetedCampaignItemForRecipient(args: {
     userId: string;
-    storeId: Types.ObjectId;
+    storeId: Types.ObjectId | null;
     campaignId?: Types.ObjectId;
     campaignItems: AdNotificationItemPayload[];
   }): Promise<AdNotificationItemPayload | null> {
@@ -314,7 +338,12 @@ export class AdNotificationService {
       args.campaignId
         ? this.loadCampaignTargetingRules(args.campaignId)
         : Promise.resolve({} as Record<string, unknown>),
-      this.loadUserStorePurchaseEntityIds(args.userId, args.storeId),
+      args.storeId
+        ? this.loadUserStorePurchaseEntityIds(args.userId, args.storeId)
+        : Promise.resolve({
+            productIds: new Set<string>(),
+            drinkIds: new Set<string>(),
+          }),
     ]);
     return pickTargetedCampaignItem({
       items: args.campaignItems,
@@ -561,7 +590,13 @@ export class AdNotificationService {
       return;
     }
 
-    const storeId = new Types.ObjectId(String(row.store));
+    const storeId = this.objectIdFromDocRef(row.store);
+    if (!storeId) {
+      this.logger.warn(
+        `ad notification ${job.kind} ${job.entityId}: entité sans boutique — dispatch ignoré`,
+      );
+      return;
+    }
     const entityId =
       job.kind === 'banner' ? String(row._id) : String(row._id);
     const cap =
@@ -774,7 +809,7 @@ export class AdNotificationService {
     entityId: string;
     adId?: Types.ObjectId;
     campaignId?: Types.ObjectId;
-    storeId: Types.ObjectId;
+    storeId: Types.ObjectId | null;
     storeName: string;
     title: string;
     body: string;
@@ -799,7 +834,7 @@ export class AdNotificationService {
     const linkBase = {
       entityType: args.entityType,
       entityId: args.entityId,
-      storeId: args.storeId.toString(),
+      storeId: this.storeIdForLinks(args.storeId),
       webBaseUrl: this.webBaseUrl(),
       appScheme: this.appScheme(),
     };
@@ -823,7 +858,7 @@ export class AdNotificationService {
     entityId: string;
     adId?: Types.ObjectId;
     campaignId?: Types.ObjectId;
-    storeId: Types.ObjectId;
+    storeId: Types.ObjectId | null;
     storeName: string;
     title: string;
     body: string;
@@ -891,7 +926,7 @@ export class AdNotificationService {
     entityType: AdNotificationEntityTypeEnum;
     adId?: Types.ObjectId;
     campaignId?: Types.ObjectId;
-    storeId: Types.ObjectId;
+    storeId: Types.ObjectId | null;
     userId: string;
     channel: AdNotificationChannelEnum;
     targetLink?: AdNotificationTargetLinkParams;
@@ -927,7 +962,7 @@ export class AdNotificationService {
       entityType: AdNotificationEntityTypeEnum;
       adId?: Types.ObjectId;
       campaignId?: Types.ObjectId;
-      storeId: Types.ObjectId;
+      storeId: Types.ObjectId | null;
       userId: string;
       channel: AdNotificationChannelEnum;
       targetLink?: AdNotificationTargetLinkParams;
@@ -941,7 +976,7 @@ export class AdNotificationService {
         entityType: r.entityType,
         ad: r.adId,
         campaign: r.campaignId,
-        store: r.storeId,
+        ...(r.storeId ? { store: r.storeId } : {}),
         user: new Types.ObjectId(r.userId),
         channel: r.channel,
         deliveredAt: now,
@@ -1055,7 +1090,7 @@ export class AdNotificationService {
     entityId: string;
     adId?: Types.ObjectId;
     campaignId?: Types.ObjectId;
-    storeId: Types.ObjectId;
+    storeId: Types.ObjectId | null;
     storeName: string;
     title: string;
     body: string;
@@ -1080,7 +1115,7 @@ export class AdNotificationService {
           deliveryId: deliveryIdInApp,
           entityType: args.entityType,
           entityId: args.entityId,
-          storeId: args.storeId.toString(),
+          storeId: this.storeIdForLinks(args.storeId),
           storeName: args.storeName,
           title: args.title,
           body: args.body,
@@ -1113,7 +1148,7 @@ export class AdNotificationService {
           deliveryId: deliveryIdPush,
           entityType: args.entityType,
           entityId: args.entityId,
-          storeId: args.storeId.toString(),
+          storeId: this.storeIdForLinks(args.storeId),
           storeName: args.storeName,
           title: args.title,
           body: pushBody,
@@ -1147,7 +1182,7 @@ export class AdNotificationService {
           deliveryId: deliveryIdInApp,
           entityType: args.entityType,
           entityId: args.entityId,
-          storeId: args.storeId.toString(),
+          storeId: this.storeIdForLinks(args.storeId),
           storeName: args.storeName,
           title: args.title,
           body: args.body,
@@ -1181,7 +1216,7 @@ export class AdNotificationService {
       entityType: AdNotificationEntityTypeEnum;
       adId?: Types.ObjectId;
       campaignId?: Types.ObjectId;
-      storeId: Types.ObjectId;
+      storeId: Types.ObjectId | null;
       userId: string;
       channel: AdNotificationChannelEnum;
       targetLink: AdNotificationTargetLinkParams;
@@ -1218,7 +1253,7 @@ export class AdNotificationService {
     entityId: string;
     adId?: Types.ObjectId;
     campaignId?: Types.ObjectId;
-    storeId: Types.ObjectId;
+    storeId: Types.ObjectId | null;
     storeName: string;
     title: string;
     body: string;
@@ -1233,7 +1268,7 @@ export class AdNotificationService {
       deliveryId: args.deliveryId,
       entityType: args.entityType,
       entityId: args.entityId,
-      storeId: args.storeId.toString(),
+      storeId: this.storeIdForLinks(args.storeId),
       ...args.targetLink,
     });
     const html = buildAdNotificationEmailBodyHtml({
@@ -1282,7 +1317,7 @@ export class AdNotificationService {
     entityId: string;
     adId?: Types.ObjectId;
     campaignId?: Types.ObjectId;
-    storeId: Types.ObjectId;
+    storeId: Types.ObjectId | null;
     storeName: string;
     title: string;
     body: string;
@@ -1296,7 +1331,7 @@ export class AdNotificationService {
       deliveryId: args.deliveryId,
       entityType: args.entityType,
       entityId: args.entityId,
-      storeId: args.storeId.toString(),
+      storeId: this.storeIdForLinks(args.storeId),
       ...args.targetLink,
     });
     const waBody = args.targetItem
@@ -1332,7 +1367,7 @@ export class AdNotificationService {
     entityId: string;
     adId?: Types.ObjectId;
     campaignId?: Types.ObjectId;
-    storeId: Types.ObjectId;
+    storeId: Types.ObjectId | null;
     storeName: string;
     title: string;
     body: string;
@@ -1346,7 +1381,7 @@ export class AdNotificationService {
       deliveryId: args.deliveryId,
       entityType: args.entityType,
       entityId: args.entityId,
-      storeId: args.storeId.toString(),
+      storeId: this.storeIdForLinks(args.storeId),
       ...args.targetLink,
     });
     const itemLine = args.targetItem ? `\n${args.targetItem.title}` : '';
@@ -1749,15 +1784,19 @@ export class AdNotificationService {
         String((s as { name?: string }).name ?? 'Boutique'),
       ]),
     );
+    const platformName = this.platformDisplayName();
     const mapEntity = (doc: Record<string, unknown>) => {
       const addon = notificationAddonFromDoc(
         doc.notificationAddon as Record<string, unknown>,
       );
-      const storeId = String(doc.store ?? '');
+      const storeOid = this.objectIdFromDocRef(doc.store);
+      const storeId = storeOid?.toString() ?? '';
       return {
         id: String(doc._id ?? ''),
         storeId,
-        storeName: storeNames.get(storeId) ?? 'Boutique',
+        storeName: storeOid
+          ? (storeNames.get(storeId) ?? 'Boutique')
+          : `Globale (${platformName})`,
         title: String(doc.title ?? 'Offre'),
         notificationAddonEnabled: addon.enabled,
         channels: addon.channels,
@@ -1867,7 +1906,7 @@ export class AdNotificationService {
       fullName: recipient.fullName,
       entityType: payload.entityType,
       entityId: payload.entityId,
-      storeId: payload.storeId.toString(),
+      storeId: payload.storeId?.toString() ?? '',
       storeName: payload.storeName,
       title: payload.title,
       body: payload.body,
@@ -1896,7 +1935,7 @@ export class AdNotificationService {
     entityId: string;
     adId?: Types.ObjectId;
     campaignId?: Types.ObjectId;
-    storeId: Types.ObjectId;
+    storeId: Types.ObjectId | null;
     storeName: string;
     title: string;
     body: string;
@@ -1944,18 +1983,24 @@ export class AdNotificationService {
       if (!doc) {
         throw new NotFoundException('banner_not_found');
       }
-      const store = await this.storeModel
-        .findById(doc.store)
-        .select('name')
-        .lean()
-        .exec();
-      const storeName = String((store as { name?: string })?.name ?? 'Boutique');
+      const storeOid = this.objectIdFromDocRef(doc.store);
+      const storeName = storeOid
+        ? String(
+            (
+              await this.storeModel
+                .findById(storeOid)
+                .select('name')
+                .lean()
+                .exec()
+            )?.name ?? 'Boutique',
+          )
+        : this.platformDisplayName();
       const subtitle = String(doc.subtitle ?? '').trim();
       return {
         entityType: AdNotificationEntityTypeEnum.BANNER,
         entityId: String(doc._id),
         adId: doc._id as Types.ObjectId,
-        storeId: new Types.ObjectId(String(doc.store)),
+        storeId: storeOid,
         storeName,
         title: (dto.title?.trim() || String(doc.title ?? 'Offre')).slice(0, 120),
         body: (
@@ -1979,8 +2024,12 @@ export class AdNotificationService {
       if (!doc) {
         throw new NotFoundException('campaign_not_found');
       }
+      const storeOid = this.objectIdFromDocRef(doc.store);
+      if (!storeOid) {
+        throw new BadRequestException('campaign_store_missing');
+      }
       const store = await this.storeModel
-        .findById(doc.store)
+        .findById(storeOid)
         .select('name')
         .lean()
         .exec();
@@ -1990,7 +2039,7 @@ export class AdNotificationService {
         entityType: AdNotificationEntityTypeEnum.CAMPAIGN,
         entityId: String(doc._id),
         campaignId: doc._id as Types.ObjectId,
-        storeId: new Types.ObjectId(String(doc.store)),
+        storeId: storeOid,
         storeName,
         title: (dto.title?.trim() || String(doc.title ?? 'Campagne')).slice(
           0,
