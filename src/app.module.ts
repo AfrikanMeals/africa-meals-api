@@ -36,6 +36,7 @@ import { PlatformShippingSettingsModule } from './modules/platform-shipping-sett
 import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
 import { AppPoliciesModule } from './modules/app-policies/app-policies.module';
 import { DbMaintenanceModule } from './modules/db-maintenance/db-maintenance.module';
+import { AdminOpsReportsModule } from './modules/admin-ops-reports/admin-ops-reports.module';
 import { RequestStatsModule } from './modules/request-stats/request-stats.module';
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
 import { MobileAppSettingsModule } from './modules/mobile-app-settings/mobile-app-settings.module';
@@ -264,6 +265,7 @@ function redactRedisUrl(url: string): string {
     PenaltiesModule,
     AppPoliciesModule,
     DbMaintenanceModule,
+    AdminOpsReportsModule,
     RequestStatsModule,
     FieldSelectionModule,
     MobileAppSettingsModule,

@@ -10,6 +10,12 @@ import * as nodemailer from 'nodemailer';
 import { SendMailDto } from './dto/mailer.dto';
 import { EmailTemplateService } from './email-template.service';
 
+export type MailAttachment = {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
+};
+
 export type SendSimpleMailDto = {
   to: string;
   toName?: string;
@@ -18,6 +24,7 @@ export type SendSimpleMailDto = {
   text?: string;
   replyTo?: string;
   replyToName?: string;
+  attachments?: MailAttachment[];
 };
 
 /** Profil SMTP dédié (ex. notifications publicitaires `AD_SMTP_*`). */
@@ -127,6 +134,13 @@ export class MailerService {
       subject: args.subject,
       html: args.html,
       text: args.text?.trim() || undefined,
+      attachments: (args.attachments ?? []).map((a) => ({
+        filename: a.filename,
+        content: a.content,
+        contentType:
+          a.contentType ??
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      })),
     });
   }
 

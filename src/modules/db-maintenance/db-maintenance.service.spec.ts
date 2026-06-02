@@ -25,7 +25,11 @@ describe('DbMaintenanceService integrity tests', () => {
   let productModel: { countDocuments: jest.Mock; find?: jest.Mock };
   let drinkModel: { countDocuments: jest.Mock };
   let adModel: { find: jest.Mock };
+  let adCampaignModel: { find: jest.Mock };
+  let adNotificationPricingModel: { findOne: jest.Mock };
+  let adNotificationEventModel: { aggregate: jest.Mock };
   let couponModel: { find: jest.Mock };
+  let infraRuntimeSettingsModel: { findOneAndUpdate: jest.Mock };
 
   beforeEach(() => {
     storeAccess = {
@@ -40,7 +44,36 @@ describe('DbMaintenanceService integrity tests', () => {
     productModel = { countDocuments: jest.fn() };
     drinkModel = { countDocuments: jest.fn() };
     adModel = { find: jest.fn() };
+    adCampaignModel = { find: jest.fn() };
+    adNotificationPricingModel = {
+      findOne: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue({
+          availableChannels: {
+            email: true,
+            push: true,
+            inApp: true,
+            sms: true,
+            whatsapp: true,
+          },
+        }),
+      }),
+    };
+    adNotificationEventModel = {
+      aggregate: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue([{ n: 0 }]),
+      }),
+    };
     couponModel = { find: jest.fn() };
+    infraRuntimeSettingsModel = {
+      findOneAndUpdate: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          redisManagerEnabled: true,
+          mqBrokerEnabled: true,
+        }),
+      }),
+    };
 
     service = new DbMaintenanceService(
       { db: null } as any,
@@ -53,8 +86,13 @@ describe('DbMaintenanceService integrity tests', () => {
       productModel as any,
       drinkModel as any,
       adModel as any,
+      adCampaignModel as any,
+      adNotificationPricingModel as any,
+      adNotificationEventModel as any,
       couponModel as any,
-      { options: {} } as any,
+      infraRuntimeSettingsModel as any,
+      { options: { projectId: 'test-project' } } as any,
+      { getMqttStatus: jest.fn() } as any,
     );
   });
 
@@ -195,15 +233,17 @@ describe('DbMaintenanceService integrity tests', () => {
           actionTarget: '',
           store: adStore,
           product: '',
+          notificationAddon: { enabled: true, channels: { email: true } },
         },
       ]),
     );
+    adCampaignModel.find.mockReturnValue(queryResult([]));
     storeModel.find.mockReturnValue(queryResult([]));
     productModel.find = jest.fn().mockReturnValue(queryResult([]));
 
     const out = await service.runIntegrityTest(adminUser, 'ads-integrity-test');
-    expect(out.result.totalRuns).toBe(1);
-    expect(out.result.successRuns).toBe(0);
+    expect(out.result.totalRuns).toBe(3);
+    expect(out.result.successRuns).toBe(2);
     expect(out.result.failureReasonCounts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ reason: 'missing_ad_title' }),
@@ -211,6 +251,13 @@ describe('DbMaintenanceService integrity tests', () => {
         expect.objectContaining({ reason: 'ad_store_not_found' }),
       ]),
     );
+  });
+
+  it('expose le contrôle santé des canaux notifications Ads', async () => {
+    const out = await service.listSystemHealthChecks(adminUser);
+    expect(
+      out.checks.some((c) => c.key === 'ad-notification-channels-status'),
+    ).toBe(true);
   });
 
   it('détecte les anomalies coupons (format, quota, période)', async () => {

@@ -12,7 +12,25 @@ import {
   WsNotifyDispatchQueueService,
 } from '@modules/ws-notify/ws-notify-dispatch-queue.service';
 import { InjectConnection } from '@nestjs/mongoose';
+import {
+  AdCampaignItemTypeEnum,
+  AdCampaignModel,
+} from '@schemas/ad-campaign.schema';
+import { AdNotificationEventModel } from '@schemas/ad-notification-event.schema';
+import { AdNotificationPricingSettingsModel } from '@schemas/ad-notification-pricing-settings.schema';
 import { AdModel, StoreAdActionTypeEnum } from '@schemas/ad.schema';
+import {
+  parseAvailableChannelsFromDoc,
+  type AdNotificationChannelAvailability,
+} from '@modules/ads/ad-notification-channel-availability.util';
+import {
+  audienceTotalFromDoc,
+  notificationAddonFromDoc,
+} from '@modules/ads/ad-notification.util';
+import {
+  channelHealthSummary,
+  evaluateAdNotificationChannelHealth,
+} from '@modules/db-maintenance/ad-notification-channel-health.util';
 import { DrinkModel } from '@schemas/drink.schema';
 import { InfraRuntimeSettingsModel } from '@schemas/infra-runtime-settings.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
@@ -160,7 +178,7 @@ export class DbMaintenanceService {
       key: 'ads-integrity-test',
       label: 'Ads Integrity Test',
       description:
-        'Vérifie la cohérence des annonces publicitaires (dates, cible, références boutique/produit).',
+        'Vérifie bannières et campagnes (dates, cibles, add-on notifications, canaux vs disponibilité admin, événements orphelins).',
     },
     {
       key: 'coupon-codes-integrity-test',
@@ -212,6 +230,12 @@ export class DbMaintenanceService {
       description:
         'Vérifie Firebase Admin (Auth, Messaging, Storage) avec les credentials actifs.',
     },
+    {
+      key: 'ad-notification-channels-status',
+      label: 'Ad notification channels status',
+      description:
+        'Vérifie la disponibilité admin des canaux notifications Ads et la configuration runtime (SMTP, FCM, Twilio, Meta, Redis, cron).',
+    },
   ];
 
   constructor(
@@ -231,6 +255,12 @@ export class DbMaintenanceService {
     private readonly drinkModel: Model<DrinkModel>,
     @InjectModel(AdModel.name)
     private readonly adModel: Model<AdModel>,
+    @InjectModel(AdCampaignModel.name)
+    private readonly adCampaignModel: Model<AdCampaignModel>,
+    @InjectModel(AdNotificationPricingSettingsModel.name)
+    private readonly adNotificationPricingModel: Model<AdNotificationPricingSettingsModel>,
+    @InjectModel(AdNotificationEventModel.name)
+    private readonly adNotificationEventModel: Model<AdNotificationEventModel>,
     @InjectModel(StoreCouponModel.name)
     private readonly couponModel: Model<StoreCouponModel>,
     @InjectModel(InfraRuntimeSettingsModel.name)
@@ -378,36 +408,54 @@ export class DbMaintenanceService {
     return { checks: this.systemHealthChecks };
   }
 
-  async runSystemHealthCheck(
-    user: UserModel,
+  async runAllSystemHealthChecksInternal(): Promise<SystemHealthCheckResult[]> {
+    const results: SystemHealthCheckResult[] = [];
+    for (const def of this.systemHealthChecks) {
+      results.push(await this.runSystemHealthCheckInternal(def.key));
+    }
+    return results;
+  }
+
+  private async runSystemHealthCheckInternal(
     key: string,
-  ): Promise<{ result: SystemHealthCheckResult }> {
-    await this.assertAdminSettingsPermission(user);
+  ): Promise<SystemHealthCheckResult> {
     const normalized = String(key || '')
       .trim()
       .toLowerCase();
     switch (normalized) {
       case 'mongodb-status':
-        return { result: await this.runMongoHealthCheck() };
+        return this.runMongoHealthCheck();
       case 'websocket-service-status':
-        return { result: await this.runWebsocketHealthCheck() };
+        return this.runWebsocketHealthCheck();
       case 'api-function-status':
-        return { result: await this.runApiFunctionHealthCheck() };
+        return this.runApiFunctionHealthCheck();
       case 'stripe-payment-status':
-        return { result: await this.runStripeHealthCheck() };
+        return this.runStripeHealthCheck();
       case 'stripe-webhook-last-activity':
-        return { result: await this.runStripeWebhookLastActivityHealthCheck() };
+        return this.runStripeWebhookLastActivityHealthCheck();
       case 'map-engine-status':
-        return { result: await this.runMapEngineHealthCheck() };
+        return this.runMapEngineHealthCheck();
       case 'mail-health-status':
-        return { result: await this.runMailHealthCheck() };
+        return this.runMailHealthCheck();
       case 'firebase-services-status':
-        return { result: await this.runFirebaseServicesHealthCheck() };
+        return this.runFirebaseServicesHealthCheck();
+      case 'ad-notification-channels-status':
+        return this.runAdNotificationChannelsHealthCheck();
       default:
         throw new BadRequestException(
           `unknown_system_health_check:${normalized}`,
         );
     }
+  }
+
+  async runSystemHealthCheck(
+    user: UserModel,
+    key: string,
+  ): Promise<{ result: SystemHealthCheckResult }> {
+    await this.assertAdminSettingsPermission(user);
+    return {
+      result: await this.runSystemHealthCheckInternal(key),
+    };
   }
 
   async getInfraRuntimeSettings(
@@ -1327,6 +1375,82 @@ export class DbMaintenanceService {
     });
   }
 
+  private async loadNotificationChannelAvailability(): Promise<AdNotificationChannelAvailability> {
+    const doc = await this.adNotificationPricingModel
+      .findOne({ key: 'default' })
+      .select('availableChannels')
+      .lean()
+      .exec();
+    return parseAvailableChannelsFromDoc(
+      doc as Record<string, unknown> | null | undefined,
+    );
+  }
+
+  private collectNotificationAddonIssues(
+    addonRaw: unknown,
+    availability: AdNotificationChannelAvailability,
+  ): string[] {
+    const addon = notificationAddonFromDoc(
+      addonRaw as Record<string, unknown> | null | undefined,
+    );
+    if (!addon.enabled) return [];
+    const issues: string[] = [];
+    const ch = addon.channels;
+    if (!Object.values(ch).some(Boolean)) {
+      issues.push('notification_enabled_without_channel');
+    }
+    if (ch.email && !availability.email) {
+      issues.push('notification_channel_email_unavailable');
+    }
+    if (ch.push && !availability.push) {
+      issues.push('notification_channel_push_unavailable');
+    }
+    if (ch.inApp && !availability.inApp) {
+      issues.push('notification_channel_inapp_unavailable');
+    }
+    if (ch.sms && !availability.sms) {
+      issues.push('notification_channel_sms_unavailable');
+    }
+    if (ch.whatsapp && !availability.whatsapp) {
+      issues.push('notification_channel_whatsapp_unavailable');
+    }
+    return issues;
+  }
+
+  private collectAudienceTotalIssues(doc: Record<string, unknown>): string[] {
+    const raw = doc.audienceTotal ?? doc.audience_total;
+    if (raw == null || raw === '') return [];
+    const normalized = audienceTotalFromDoc(doc);
+    if (normalized == null) return ['invalid_audience_total'];
+    return [];
+  }
+
+  private async isFirebaseMessagingReady(): Promise<boolean> {
+    if (!String(this.firebaseApp?.options?.projectId ?? '').trim()) {
+      return false;
+    }
+    try {
+      getMessaging(this.firebaseApp);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async isWsHealthReachable(): Promise<boolean> {
+    const base =
+      String(
+        this.config.get<string>('AFRICA_MEALS_WS_INTERNAL_URL') ?? '',
+      ).trim() || 'http://localhost:8000';
+    const url = `${base.replace(/\/$/, '')}/api/health`;
+    try {
+      const res = await this.fetchWithTimeout(url, 4000);
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   private async runAdsIntegrityTest(): Promise<IntegrityTestRunResult> {
     const startedAt = Date.now();
     const checkedAtIso = new Date().toISOString();
@@ -1334,6 +1458,7 @@ export class DbMaintenanceService {
     const label = 'Ads Integrity Test';
     const scanLimit = this.getIntegrityScanLimit();
     const nowMs = Date.now();
+    const channelAvailability = await this.loadNotificationChannelAvailability();
 
     const ads = await this.adModel
       .find({})
@@ -1351,11 +1476,36 @@ export class DbMaintenanceService {
         'actionTarget',
         'store',
         'product',
+        'notificationAddon',
+        'audienceTotal',
       ])
       .lean()
       .exec();
 
-    if (!ads.length) {
+    const campaigns = await this.adCampaignModel
+      .find({ archivedAt: { $exists: false } })
+      .sort({ createdAt: -1 })
+      .limit(scanLimit)
+      .select([
+        '_id',
+        'title',
+        'subtitle',
+        'description',
+        'isActive',
+        'startsAt',
+        'endsAt',
+        'actionType',
+        'actionTarget',
+        'actionText',
+        'store',
+        'items',
+        'notificationAddon',
+        'audienceTotal',
+      ])
+      .lean()
+      .exec();
+
+    if (!ads.length && !campaigns.length) {
       return this.decorateIntegrityResult({
         key,
         label,
@@ -1364,7 +1514,7 @@ export class DbMaintenanceService {
         totalRuns: 0,
         score: 100,
         confidence: 100,
-        summary: 'Aucune annonce à auditer.',
+        summary: 'Aucune bannière ni campagne à auditer.',
         checkedAt: checkedAtIso,
         sampleFailures: [],
       });
@@ -1516,6 +1666,14 @@ export class DbMaintenanceService {
         }
       }
 
+      issues.push(
+        ...this.collectNotificationAddonIssues(
+          ad.notificationAddon,
+          channelAvailability,
+        ),
+      );
+      issues.push(...this.collectAudienceTotalIssues(ad));
+
       if (!issues.length) {
         successRuns += 1;
       } else if (sampleFailures.length < 25) {
@@ -1526,15 +1684,224 @@ export class DbMaintenanceService {
       }
     }
 
-    const totalRuns = ads.length;
-    const score = Number(((successRuns / totalRuns) * 100).toFixed(2));
+    const campaignStoreIds = [
+      ...new Set(
+        (campaigns as Array<Record<string, unknown>>)
+          .map((c) => String(c.store ?? '').trim())
+          .filter(Boolean),
+      ),
+    ];
+    const campaignProductIds = new Set<string>();
+    const campaignDrinkIds = new Set<string>();
+    for (const c of campaigns as Array<Record<string, unknown>>) {
+      const items = Array.isArray(c.items) ? c.items : [];
+      for (const item of items as Array<Record<string, unknown>>) {
+        const itemType = String(item.itemType ?? '')
+          .trim()
+          .toUpperCase();
+        const p = String(item.product ?? '').trim();
+        const d = String(item.drink ?? '').trim();
+        if (itemType === AdCampaignItemTypeEnum.PRODUCT && p) {
+          campaignProductIds.add(p);
+        }
+        if (itemType === AdCampaignItemTypeEnum.DRINK && d) {
+          campaignDrinkIds.add(d);
+        }
+      }
+    }
+
+    const [campaignStores, campaignProducts, campaignDrinks] = await Promise.all([
+      campaignStoreIds.length
+        ? this.storeModel
+            .find({ _id: { $in: campaignStoreIds } })
+            .select('_id')
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+      campaignProductIds.size
+        ? this.productModel
+            .find({ _id: { $in: [...campaignProductIds] } })
+            .select('_id store')
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+      campaignDrinkIds.size
+        ? this.drinkModel
+            .find({ _id: { $in: [...campaignDrinkIds] } })
+            .select('_id store')
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+    ]);
+    const knownCampaignStores = new Set(
+      (campaignStores as Array<Record<string, unknown>>).map((s) =>
+        String(s._id ?? '').trim(),
+      ),
+    );
+    const campaignProductStoreById = new Map(
+      (campaignProducts as Array<Record<string, unknown>>).map((p) => [
+        String(p._id ?? '').trim(),
+        String(p.store ?? '').trim(),
+      ]),
+    );
+    const knownCampaignDrinks = new Set(
+      (campaignDrinks as Array<Record<string, unknown>>).map((d) =>
+        String(d._id ?? '').trim(),
+      ),
+    );
+
+    for (const campaign of campaigns as Array<Record<string, unknown>>) {
+      const campaignId = String(campaign._id ?? '').trim();
+      const issues: string[] = [];
+      const title = String(campaign.title ?? '').trim();
+      const storeId = String(campaign.store ?? '').trim();
+      const isActive = campaign.isActive === true;
+      const startsAt = campaign.startsAt
+        ? new Date(String(campaign.startsAt))
+        : null;
+      const endsAt = campaign.endsAt ? new Date(String(campaign.endsAt)) : null;
+      const items = Array.isArray(campaign.items) ? campaign.items : [];
+
+      if (!title) issues.push('missing_campaign_title');
+      if (!storeId || !knownCampaignStores.has(storeId)) {
+        issues.push('campaign_store_not_found');
+      }
+      if (!startsAt || Number.isNaN(startsAt.getTime())) {
+        issues.push('invalid_campaign_starts_at');
+      }
+      if (!endsAt || Number.isNaN(endsAt.getTime())) {
+        issues.push('invalid_campaign_ends_at');
+      }
+      if (
+        startsAt &&
+        endsAt &&
+        !Number.isNaN(startsAt.getTime()) &&
+        !Number.isNaN(endsAt.getTime()) &&
+        endsAt.getTime() <= startsAt.getTime()
+      ) {
+        issues.push('invalid_campaign_date_range');
+      }
+      if (isActive && items.length === 0) {
+        issues.push('active_campaign_without_items');
+      }
+      if (isActive && startsAt && endsAt) {
+        if (startsAt.getTime() > nowMs) {
+          issues.push('active_campaign_not_started');
+        }
+        if (endsAt.getTime() < nowMs) {
+          issues.push('active_campaign_expired');
+        }
+      }
+
+      for (const item of items as Array<Record<string, unknown>>) {
+        const itemType = String(item.itemType ?? '')
+          .trim()
+          .toUpperCase();
+        const productId = String(item.product ?? '').trim();
+        const drinkId = String(item.drink ?? '').trim();
+        if (itemType === AdCampaignItemTypeEnum.PRODUCT) {
+          if (!productId) {
+            issues.push('campaign_item_missing_product');
+          } else if (!campaignProductStoreById.has(productId)) {
+            issues.push('campaign_item_product_not_found');
+          } else if (
+            storeId &&
+            campaignProductStoreById.get(productId) !== storeId
+          ) {
+            issues.push('campaign_item_product_store_mismatch');
+          }
+        } else if (itemType === AdCampaignItemTypeEnum.DRINK) {
+          if (!drinkId) {
+            issues.push('campaign_item_missing_drink');
+          } else if (!knownCampaignDrinks.has(drinkId)) {
+            issues.push('campaign_item_drink_not_found');
+          }
+        } else {
+          issues.push('invalid_campaign_item_type');
+        }
+      }
+
+      issues.push(
+        ...this.collectNotificationAddonIssues(
+          campaign.notificationAddon,
+          channelAvailability,
+        ),
+      );
+      issues.push(...this.collectAudienceTotalIssues(campaign));
+
+      if (!issues.length) {
+        successRuns += 1;
+      } else if (sampleFailures.length < 25) {
+        sampleFailures.push({
+          orderId: `campaign:${campaignId || 'unknown'}`,
+          issues,
+        });
+      }
+    }
+
+    const [orphanAdEvents, orphanCampaignEvents] = await Promise.all([
+      this.adNotificationEventModel
+        .aggregate<{ n: number }>([
+          { $match: { ad: { $exists: true, $ne: null } } },
+          {
+            $lookup: {
+              from: 'ads',
+              localField: 'ad',
+              foreignField: '_id',
+              as: 'ref',
+            },
+          },
+          { $match: { ref: { $size: 0 } } },
+          { $count: 'n' },
+        ])
+        .exec(),
+      this.adNotificationEventModel
+        .aggregate<{ n: number }>([
+          { $match: { campaign: { $exists: true, $ne: null } } },
+          {
+            $lookup: {
+              from: 'ad_campaigns',
+              localField: 'campaign',
+              foreignField: '_id',
+              as: 'ref',
+            },
+          },
+          { $match: { ref: { $size: 0 } } },
+          { $count: 'n' },
+        ])
+        .exec(),
+    ]);
+    const orphanAdCount = Number(orphanAdEvents[0]?.n ?? 0);
+    const orphanCampaignCount = Number(orphanCampaignEvents[0]?.n ?? 0);
+    if (orphanAdCount === 0) successRuns += 1;
+    else if (sampleFailures.length < 25) {
+      sampleFailures.push({
+        orderId: 'notification-events:ads',
+        issues: [`orphan_ad_notification_events:${orphanAdCount}`],
+      });
+    }
+    if (orphanCampaignCount === 0) successRuns += 1;
+    else if (sampleFailures.length < 25) {
+      sampleFailures.push({
+        orderId: 'notification-events:campaigns',
+        issues: [`orphan_campaign_notification_events:${orphanCampaignCount}`],
+      });
+    }
+
+    const bannerRuns = ads.length;
+    const campaignRuns = campaigns.length;
+    const totalRuns = bannerRuns + campaignRuns + 2;
+    const score =
+      totalRuns > 0
+        ? Number(((successRuns / totalRuns) * 100).toFixed(2))
+        : 100;
     const confidence = Number(
       Math.min(99, 65 + Math.min(totalRuns, 3000) / 60).toFixed(2),
     );
     const summary =
-      totalRuns === scanLimit
-        ? `${successRuns}/${totalRuns} annonces valides (scan limité à ${scanLimit}).`
-        : `${successRuns}/${totalRuns} annonces valides.`;
+      bannerRuns === scanLimit || campaignRuns === scanLimit
+        ? `${successRuns}/${totalRuns} entités valides (scan limité: ${bannerRuns} bannières, ${campaignRuns} campagnes).`
+        : `${successRuns}/${totalRuns} entités valides (${bannerRuns} bannières, ${campaignRuns} campagnes, contrôle événements notifications).`;
 
     return this.decorateIntegrityResult({
       key,
@@ -2291,6 +2658,46 @@ export class DbMaintenanceService {
     const details = checks
       .map((c) => `${c.id}:${c.ok ? 'ok' : 'ko'} (${c.details})`)
       .join(' | ');
+
+    return this.normalizeHealthResult({
+      key,
+      label,
+      startedAtMs,
+      status,
+      details,
+    });
+  }
+
+  private async runAdNotificationChannelsHealthCheck(): Promise<SystemHealthCheckResult> {
+    const startedAtMs = Date.now();
+    const key = 'ad-notification-channels-status';
+    const label = 'Ad notification channels status';
+
+    const [pricingDoc, infra, firebaseMessagingOk, wsReachable] =
+      await Promise.all([
+        this.adNotificationPricingModel
+          .findOne({ key: 'default' })
+          .select('availableChannels')
+          .lean()
+          .exec(),
+        this.ensureInfraRuntimeSettings(),
+        this.isFirebaseMessagingReady(),
+        this.isWsHealthReachable(),
+      ]);
+
+    const availability = parseAvailableChannelsFromDoc(
+      pricingDoc as Record<string, unknown> | null | undefined,
+    );
+    const env = process.env;
+    const evaluation = evaluateAdNotificationChannelHealth({
+      availability,
+      env,
+      firebaseMessagingOk,
+      wsReachable,
+      pricingDocFound: pricingDoc != null,
+      mqBrokerEnabled: infra.mqBrokerEnabled === true,
+    });
+    const { status, details } = channelHealthSummary(evaluation);
 
     return this.normalizeHealthResult({
       key,

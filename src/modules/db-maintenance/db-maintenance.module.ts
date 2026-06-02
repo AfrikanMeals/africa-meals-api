@@ -1,6 +1,15 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AdModel, AdSchema } from '@schemas/ad.schema';
+import { AdCampaignModel, AdCampaignSchema } from '@schemas/ad-campaign.schema';
+import {
+  AdNotificationEventModel,
+  AdNotificationEventSchema,
+} from '@schemas/ad-notification-event.schema';
+import {
+  AdNotificationPricingSettingsModel,
+  AdNotificationPricingSettingsSchema,
+} from '@schemas/ad-notification-pricing-settings.schema';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import {
   InfraRuntimeSettingsModel,
@@ -40,6 +49,15 @@ import { DbMaintenanceService } from './db-maintenance.service';
       { name: ProductModel.name, schema: ProductSchema },
       { name: DrinkModel.name, schema: DrinkSchema },
       { name: AdModel.name, schema: AdSchema },
+      { name: AdCampaignModel.name, schema: AdCampaignSchema },
+      {
+        name: AdNotificationPricingSettingsModel.name,
+        schema: AdNotificationPricingSettingsSchema,
+      },
+      {
+        name: AdNotificationEventModel.name,
+        schema: AdNotificationEventSchema,
+      },
       { name: StoreCouponModel.name, schema: StoreCouponSchema },
       {
         name: InfraRuntimeSettingsModel.name,
@@ -49,5 +67,6 @@ import { DbMaintenanceService } from './db-maintenance.service';
   ],
   controllers: [DbMaintenanceAdminController],
   providers: [DbMaintenanceService],
+  exports: [DbMaintenanceService],
 })
 export class DbMaintenanceModule {}

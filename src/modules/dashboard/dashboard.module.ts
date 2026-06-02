@@ -88,5 +88,6 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
     DeliveryDriversSeedService,
     DeliveryDriversCityMigrationService,
   ],
+  exports: [DashboardService],
 })
 export class DashboardModule {}
