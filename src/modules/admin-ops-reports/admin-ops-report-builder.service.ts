@@ -1,20 +1,21 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { DashboardService } from '@modules/dashboard/dashboard.service';
-import { DbMaintenanceService } from '@modules/db-maintenance/db-maintenance.service';
 import type { OpsReportPeriodBounds } from '@modules/admin-ops-reports/admin-ops-report-period.util';
+import type { VendorOpsReportRecipient } from '@modules/admin-ops-reports/vendor-ops-report-recipients.util';
 import {
   buildOpsReportWorkbook,
   type OpsReportSheet,
 } from '@modules/admin-ops-reports/admin-ops-report-excel.util';
+import { AdModel } from '@schemas/ad.schema';
 import {
   AdCampaignEventModel,
   AdCampaignEventTypeEnum,
 } from '@schemas/ad-campaign-event.schema';
+import { AdCampaignModel } from '@schemas/ad-campaign.schema';
 import { AdEventModel, AdEventTypeEnum } from '@schemas/ad-event.schema';
 import { AdNotificationEventModel } from '@schemas/ad-notification-event.schema';
-import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
-import { UserModel, UserTypeEnum } from '@schemas/user.schema';
+import { UserModel } from '@schemas/user.schema';
 import dayjs from 'dayjs';
 import timezone from 'dayjs/plugin/timezone';
 import utc from 'dayjs/plugin/utc';
@@ -23,7 +24,7 @@ import { Model, Types } from 'mongoose';
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
-export type AdminOpsReportBuildResult = {
+export type VendorOpsReportBuildResult = {
   bounds: OpsReportPeriodBounds;
   sheets: OpsReportSheet[];
   workbook: Buffer;
@@ -35,57 +36,62 @@ export type AdminOpsReportBuildResult = {
 export class AdminOpsReportBuilderService {
   constructor(
     private readonly dashboard: DashboardService,
-    private readonly dbMaintenance: DbMaintenanceService,
     @InjectModel(UserModel.name)
     private readonly userModel: Model<UserModel>,
+    @InjectModel(AdModel.name)
+    private readonly adModel: Model<AdModel>,
+    @InjectModel(AdCampaignModel.name)
+    private readonly adCampaignModel: Model<AdCampaignModel>,
     @InjectModel(AdEventModel.name)
     private readonly adEventModel: Model<AdEventModel>,
     @InjectModel(AdCampaignEventModel.name)
     private readonly adCampaignEventModel: Model<AdCampaignEventModel>,
     @InjectModel(AdNotificationEventModel.name)
     private readonly adNotificationEventModel: Model<AdNotificationEventModel>,
-    @InjectModel(OrderModel.name)
-    private readonly orderModel: Model<OrderModel>,
   ) {}
 
-  async build(bounds: OpsReportPeriodBounds): Promise<AdminOpsReportBuildResult> {
+  async buildForVendor(
+    recipient: VendorOpsReportRecipient,
+    bounds: OpsReportPeriodBounds,
+  ): Promise<VendorOpsReportBuildResult> {
     const z = bounds.timezone;
     const start = dayjs.tz(bounds.from, z).startOf('day').toDate();
     const endExclusive = dayjs.tz(bounds.to, z).add(1, 'day').startOf('day').toDate();
+    const storeIds = recipient.storeIds;
 
-    const adminUser = await this.userModel
-      .findOne({ type: UserTypeEnum.ADMIN })
-      .sort({ createdAt: 1 })
-      .exec();
-    if (!adminUser) {
-      throw new Error('no_admin_user_for_ops_report');
+    const vendorUser = await this.userModel.findById(recipient.ownerId).exec();
+    if (!vendorUser) {
+      throw new Error('vendor_owner_not_found');
     }
+
+    const [adIds, campaignIds] = await Promise.all([
+      this.adModel.distinct('_id', { store: { $in: storeIds } }).exec(),
+      this.adCampaignModel.distinct('_id', { store: { $in: storeIds } }).exec(),
+    ]);
 
     const [
       finance,
       bannerAgg,
       campaignAgg,
       notificationAgg,
-      stuckCreated,
-      healthChecks,
     ] = await Promise.all([
       this.dashboard.getFinancePeriodReport(
-        adminUser,
+        vendorUser,
         bounds.from,
         bounds.to,
       ),
-      this.aggregateAdEvents(start, endExclusive),
-      this.aggregateCampaignEvents(start, endExclusive),
-      this.aggregateNotificationEvents(start, endExclusive),
-      this.orderModel.countDocuments({
-        status: OrderStatusEnum.CREATED,
-        createdAt: { $lt: new Date(Date.now() - 2 * 60 * 60 * 1000) },
-      }),
-      this.dbMaintenance.runAllSystemHealthChecksInternal(),
+      this.aggregateAdEvents(start, endExclusive, adIds as Types.ObjectId[]),
+      this.aggregateCampaignEvents(
+        start,
+        endExclusive,
+        campaignIds as Types.ObjectId[],
+      ),
+      this.aggregateNotificationEvents(start, endExclusive, storeIds),
     ]);
 
     const s = finance.summary;
     const periodLabel = bounds.labelFr;
+    const storesLabel = recipient.storeNames.join(', ');
 
     const resumeSheet: OpsReportSheet = {
       name: 'Résumé',
@@ -95,13 +101,15 @@ export class AdminOpsReportBuilderService {
         ['Du', bounds.from],
         ['Au', bounds.to],
         ['Fuseau', z],
+        ['Propriétaire', recipient.fullName],
+        ['Boutique(s)', storesLabel],
         ['Commandes (payées)', s.orderCount],
         ['CA total', s.totalRevenue],
         ['Panier moyen', s.avgOrderValue],
         ['Livraison', s.shippingTotal],
         ['Tendance CA %', s.trendPercent ?? '—'],
-        ['Ad Credit payé', s.adCredit?.paidTotal ?? 0],
-        ['Paiements Ad Credit', s.adCredit?.paymentCount ?? 0],
+        ['Crédit pub payé', s.adCredit?.paidTotal ?? 0],
+        ['Paiements crédit pub', s.adCredit?.paymentCount ?? 0],
         ['Impressions bannières', bannerAgg.impressions],
         ['Clics bannières', bannerAgg.clicks],
         ['Conversions bannières', bannerAgg.conversions],
@@ -111,7 +119,6 @@ export class AdminOpsReportBuilderService {
         ['Livraisons notifications', notificationAgg.deliveries],
         ['Interactions notifications', notificationAgg.interactions],
         ['Conversions notifications', notificationAgg.conversions],
-        ['Commandes bloquées (created >2h)', stuckCreated],
       ],
     };
 
@@ -185,17 +192,6 @@ export class AdminOpsReportBuilderService {
       ]),
     };
 
-    const healthSheet: OpsReportSheet = {
-      name: 'Santé système',
-      headers: ['Check', 'Statut', 'Score', 'Détails'],
-      rows: healthChecks.map((h) => [
-        h.label,
-        h.status,
-        h.score,
-        h.details,
-      ]),
-    };
-
     const sheets = [
       resumeSheet,
       ordersSheet,
@@ -203,24 +199,23 @@ export class AdminOpsReportBuilderService {
       bannersSheet,
       campaignsSheet,
       notificationsSheet,
-      healthSheet,
     ];
 
     const workbook = await buildOpsReportWorkbook(sheets);
     const safePeriod = bounds.periodKey.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const filename = `rapport-ops_${safePeriod}.xlsx`;
+    const filename = `rapport-boutique_${safePeriod}.xlsx`;
 
     const htmlSummary = `
-      <h2>Rapport opérations — ${periodLabel}</h2>
+      <h2>Votre rapport d'activité — ${periodLabel}</h2>
+      <p><strong>Bonjour ${recipient.fullName},</strong></p>
       <p><strong>Période :</strong> ${bounds.from} → ${bounds.to} (${z})</p>
+      <p><strong>Boutique(s) :</strong> ${storesLabel}</p>
       <ul>
         <li>Commandes : <strong>${s.orderCount}</strong> — CA <strong>${s.totalRevenue}</strong></li>
-        <li>Bannières : ${bannerAgg.impressions} impr. / ${bannerAgg.clicks} clics / ${bannerAgg.conversions} conv.</li>
-        <li>Campagnes : ${campaignAgg.impressions} impr. / ${campaignAgg.clicks} clics / ${campaignAgg.conversions} conv.</li>
-        <li>Notifications : ${notificationAgg.deliveries} livraisons / ${notificationAgg.interactions} interactions</li>
-        <li>Santé système : ${healthChecks.filter((h) => h.status === 'healthy').length}/${healthChecks.length} checks OK</li>
+        <li>Publicités : ${bannerAgg.impressions + campaignAgg.impressions} impressions, ${bannerAgg.clicks + campaignAgg.clicks} clics</li>
+        <li>Notifications : ${notificationAgg.deliveries} livraisons</li>
       </ul>
-      <p>Le fichier Excel joint contient ${sheets.length} onglets détaillés.</p>
+      <p>Le fichier Excel joint détaille vos commandes, finances et campagnes (${sheets.length} onglets).</p>
     `.trim();
 
     return {
@@ -232,7 +227,24 @@ export class AdminOpsReportBuilderService {
     };
   }
 
-  private async aggregateAdEvents(start: Date, endExclusive: Date) {
+  private async aggregateAdEvents(
+    start: Date,
+    endExclusive: Date,
+    adIds: Types.ObjectId[],
+  ) {
+    if (!adIds.length) {
+      return {
+        impressions: 0,
+        clicks: 0,
+        conversions: 0,
+        byEntity: [] as Array<{
+          entityId: string;
+          impressions: number;
+          clicks: number;
+          conversions: number;
+        }>,
+      };
+    }
     const rows = await this.adEventModel
       .aggregate<{
         _id: Types.ObjectId;
@@ -240,7 +252,12 @@ export class AdminOpsReportBuilderService {
         clicks: number;
         conversions: number;
       }>([
-        { $match: { createdAt: { $gte: start, $lt: endExclusive } } },
+        {
+          $match: {
+            ad: { $in: adIds },
+            createdAt: { $gte: start, $lt: endExclusive },
+          },
+        },
         {
           $group: {
             _id: '$ad',
@@ -270,7 +287,7 @@ export class AdminOpsReportBuilderService {
           },
         },
         { $sort: { conversions: -1, clicks: -1, impressions: -1 } },
-        { $limit: 500 },
+        { $limit: 200 },
       ])
       .exec();
 
@@ -291,7 +308,24 @@ export class AdminOpsReportBuilderService {
     return { impressions, clicks, conversions, byEntity };
   }
 
-  private async aggregateCampaignEvents(start: Date, endExclusive: Date) {
+  private async aggregateCampaignEvents(
+    start: Date,
+    endExclusive: Date,
+    campaignIds: Types.ObjectId[],
+  ) {
+    if (!campaignIds.length) {
+      return {
+        impressions: 0,
+        clicks: 0,
+        conversions: 0,
+        byEntity: [] as Array<{
+          entityId: string;
+          impressions: number;
+          clicks: number;
+          conversions: number;
+        }>,
+      };
+    }
     const rows = await this.adCampaignEventModel
       .aggregate<{
         _id: Types.ObjectId;
@@ -299,7 +333,12 @@ export class AdminOpsReportBuilderService {
         clicks: number;
         conversions: number;
       }>([
-        { $match: { createdAt: { $gte: start, $lt: endExclusive } } },
+        {
+          $match: {
+            campaign: { $in: campaignIds },
+            createdAt: { $gte: start, $lt: endExclusive },
+          },
+        },
         {
           $group: {
             _id: '$campaign',
@@ -333,7 +372,7 @@ export class AdminOpsReportBuilderService {
           },
         },
         { $sort: { conversions: -1, clicks: -1, impressions: -1 } },
-        { $limit: 500 },
+        { $limit: 200 },
       ])
       .exec();
 
@@ -354,7 +393,11 @@ export class AdminOpsReportBuilderService {
     return { impressions, clicks, conversions, byEntity };
   }
 
-  private async aggregateNotificationEvents(start: Date, endExclusive: Date) {
+  private async aggregateNotificationEvents(
+    start: Date,
+    endExclusive: Date,
+    storeIds: Types.ObjectId[],
+  ) {
     const rows = await this.adNotificationEventModel
       .aggregate<{
         _id: string;
@@ -362,7 +405,12 @@ export class AdminOpsReportBuilderService {
         interactions: number;
         conversions: number;
       }>([
-        { $match: { deliveredAt: { $gte: start, $lt: endExclusive } } },
+        {
+          $match: {
+            store: { $in: storeIds },
+            deliveredAt: { $gte: start, $lt: endExclusive },
+          },
+        },
         {
           $group: {
             _id: '$channel',

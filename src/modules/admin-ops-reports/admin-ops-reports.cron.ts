@@ -3,7 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { AdminOpsReportsService } from './admin-ops-reports.service';
 
 /**
- * Envoi automatique du rapport opérations admin (e-mail + Excel).
+ * Envoi automatique du rapport d'activité aux propriétaires vendeurs (e-mail + Excel).
  *
  * `ADMIN_OPS_REPORT_CRON` — défaut chaque heure à :15.
  * `DISABLE_ADMIN_OPS_REPORT_CRON=true` — désactive le job.
@@ -22,7 +22,7 @@ export class AdminOpsReportsCron {
     const res = await this.reports.runScheduledPass();
     if (res.sent) {
       this.logger.log(
-        `Scheduled ops report delivered (${res.periodKey}) to ${res.recipients} recipient(s)`,
+        `Scheduled vendor ops report (${res.periodKey}): sent=${res.sent} skipped=${res.skipped} failed=${res.failed}`,
       );
     }
   }

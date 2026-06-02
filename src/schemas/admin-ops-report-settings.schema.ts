@@ -24,13 +24,6 @@ export class AdminOpsReportSettingsModel {
   period: AdminOpsReportPeriodEnum;
 
   @Prop({
-    type: [String],
-    default: [],
-    name: 'recipient_emails',
-  })
-  recipientEmails: string[];
-
-  @Prop({
     type: String,
     default: 'America/Toronto',
     trim: true,

@@ -14,7 +14,10 @@ export class AdminOpsReportsAdminController {
   constructor(private readonly reports: AdminOpsReportsService) {}
 
   @Get('settings')
-  @ApiOperation({ summary: 'Paramètres rapport ops (admin.settings)' })
+  @ApiOperation({
+    summary:
+      'Paramètres rapport vendeur (fréquence admin, envoi aux propriétaires)',
+  })
   getSettings(@Req() req: Request) {
     return this.reports.getSettings(req.user as UserModel);
   }
@@ -30,7 +33,8 @@ export class AdminOpsReportsAdminController {
 
   @Post('send-now')
   @ApiOperation({
-    summary: 'Envoie immédiatement le rapport (dernière période complète)',
+    summary:
+      'Envoie immédiatement le rapport à tous les propriétaires vendeurs éligibles',
   })
   sendNow(@Req() req: Request) {
     return this.reports.sendReportNow(req.user as UserModel);
