@@ -1104,12 +1104,17 @@ export class AdNotificationService {
         if (inboxNotificationId) {
           fcmData.notificationId = inboxNotificationId;
         }
+        if (args.inApp) {
+          fcmData.inAppPrompt = '1';
+        }
         const res = await this.notifications.sendMulticastNotification({
           recipientUserIds: [args.recipient.userId],
           title: args.title,
           body: pushBody,
           data: fcmData,
           androidChannelId: this.adFcmAndroidChannelId(),
+          /** In-app seul : data-only pour que l’app affiche l’aperçu plein écran au premier plan. */
+          dataOnly: args.inApp && !args.push,
         });
         if (res.deviceCount === 0) {
           this.logger.warn(

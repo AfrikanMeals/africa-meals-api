@@ -423,6 +423,8 @@ export class NotificationsService implements OnModuleInit {
     data: Record<string, string>;
     /** Canal Android (Flutter : même id que [FlutterLocalNotifications] côté app). */
     androidChannelId?: string;
+    /** FCM data-only (sans bannière système) — utile pour déclencher l’UI in-app au premier plan. */
+    dataOnly?: boolean;
   }): Promise<{ sent: number; failures: number; deviceCount: number }> {
     const oids = args.recipientUserIds
       .filter((id) => Types.ObjectId.isValid(id))
@@ -471,23 +473,33 @@ export class NotificationsService implements OnModuleInit {
         }
       : { priority: 'high' as const };
 
-    const messages = tokenRows.map((row) => ({
-      token: row.token,
-      notification: {
-        title: args.title,
-        body: args.body,
-      },
-      data,
-      android: androidCfg,
-      apns: {
-        payload: {
-          aps: {
-            sound: 'default',
-            contentAvailable: true,
+    const messages = tokenRows.map((row) => {
+      const base = {
+        token: row.token,
+        data,
+        android: androidCfg,
+        apns: {
+          payload: {
+            aps: args.dataOnly
+              ? { contentAvailable: true }
+              : {
+                  sound: 'default',
+                  contentAvailable: true,
+                },
           },
         },
-      },
-    }));
+      };
+      if (args.dataOnly) {
+        return base;
+      }
+      return {
+        ...base,
+        notification: {
+          title: args.title,
+          body: args.body,
+        },
+      };
+    });
 
     let sent = 0;
     let failures = 0;
