@@ -84,6 +84,13 @@ export class VendorSubscriptionModel {
   /** Valeurs `trialReminderDays` déjà notifiées pour cet essai. */
   @Prop({ type: [Number], default: [] })
   trialRemindersSent: number[];
+
+  /** Abonnement offert manuellement par un admin (dates personnalisées). */
+  @Prop({ type: Boolean, default: false })
+  isOffer: boolean;
+
+  @Prop({ type: String, trim: true, default: '' })
+  offerNote?: string;
 }
 
 export type VendorSubscriptionDocument =

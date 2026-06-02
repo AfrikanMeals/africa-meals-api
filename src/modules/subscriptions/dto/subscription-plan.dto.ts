@@ -188,3 +188,30 @@ export class SubscribeVendorDto {
   @IsString()
   billingPeriod: 'MONTHLY' | 'YEARLY';
 }
+
+/** Offre manuelle admin : formule + période personnalisée pour une boutique. */
+export class AdminOfferVendorSubscriptionDto {
+  @IsString()
+  @MinLength(1)
+  storeId: string;
+
+  @IsString()
+  @MinLength(1)
+  planId: string;
+
+  @IsString()
+  @MinLength(1)
+  startsAt: string;
+
+  @IsString()
+  @MinLength(1)
+  endsAt: string;
+
+  @IsOptional()
+  @IsString()
+  billingPeriod?: 'MONTHLY' | 'YEARLY';
+
+  @IsOptional()
+  @IsString()
+  offerNote?: string;
+}

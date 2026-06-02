@@ -2,7 +2,7 @@
  * Utilitaires placement / position pour le scoring des recommandations ads.
  *
  * Convention `targetingRules` (campagnes) :
- * - `placements`: string[] — ex. `home_feed`, `home_feed:slot_0`, `campaign_slider`
+ * - `placements`: string[] — ex. `home_feed`, `home_feed:slot_0`, `catalog_feed`, `campaign_slider`
  * - `priority`: number 0–100 — plus bas = priorité éditoriale plus forte
  * - `preferred_slot`: number — index de slot optimal (0 = premier)
  */

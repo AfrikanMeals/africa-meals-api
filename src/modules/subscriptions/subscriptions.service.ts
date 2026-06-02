@@ -105,6 +105,8 @@ function mapVendorSubscription(
         : doc.trialEndsAt
         ? new Date(String(doc.trialEndsAt)).toISOString()
         : null,
+    isOffer: doc.isOffer === true,
+    offerNote: String(doc.offerNote ?? '').trim() || undefined,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
     plan: plan ? mapPlan(plan) : undefined,
@@ -195,8 +197,11 @@ export class SubscriptionsService implements OnModuleInit {
     const nowMs = Date.now();
     const valid = rows.filter((s) => {
       if (String(s.status ?? '') !== 'ACTIVE') return false;
+      const start = new Date(String(s.startsAt ?? '')).getTime();
       const end = new Date(String(s.endsAt ?? '')).getTime();
-      return !Number.isNaN(end) && end > nowMs;
+      if (Number.isNaN(end) || end <= nowMs) return false;
+      if (!Number.isNaN(start) && start > nowMs) return false;
+      return true;
     });
     if (valid.length) {
       valid.sort(
@@ -1331,6 +1336,99 @@ export class SubscriptionsService implements OnModuleInit {
     });
   }
 
+  async offerVendorSubscriptionAdmin(
+    user: UserModel,
+    dto: {
+      storeId: string;
+      planId: string;
+      startsAt: string;
+      endsAt: string;
+      billingPeriod?: 'MONTHLY' | 'YEARLY';
+      offerNote?: string;
+    },
+  ) {
+    this.assertAdmin(user);
+    if (!Types.ObjectId.isValid(dto.storeId)) {
+      throw new NotFoundException('store_not_found');
+    }
+    if (!Types.ObjectId.isValid(dto.planId)) {
+      throw new NotFoundException('plan_not_found');
+    }
+
+    const startsAt = new Date(dto.startsAt);
+    const endsAt = new Date(dto.endsAt);
+    if (
+      Number.isNaN(startsAt.getTime()) ||
+      Number.isNaN(endsAt.getTime()) ||
+      startsAt >= endsAt
+    ) {
+      throw new BadRequestException('invalid_subscription_dates');
+    }
+
+    const store = await this.storeModel
+      .findById(dto.storeId)
+      .select('name owner')
+      .lean()
+      .exec();
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+    const ownerRaw = (store as { owner?: Types.ObjectId }).owner;
+    if (!ownerRaw) {
+      throw new BadRequestException('store_owner_missing');
+    }
+
+    const plan = await this.planModel.findById(dto.planId).lean().exec();
+    if (!plan || plan.active === false) {
+      throw new NotFoundException('plan_not_found');
+    }
+
+    const now = new Date();
+    const status: 'ACTIVE' | 'EXPIRED' =
+      endsAt <= now ? 'EXPIRED' : 'ACTIVE';
+    const period =
+      dto.billingPeriod === 'YEARLY' ? 'YEARLY' : 'MONTHLY';
+    const offerNote = String(dto.offerNote ?? '').trim();
+
+    const created = await this.vendorSubModel.create({
+      store: new Types.ObjectId(dto.storeId),
+      owner: ownerRaw,
+      plan: plan._id,
+      billingPeriod: period,
+      status,
+      startsAt,
+      endsAt,
+      pricePaid: 0,
+      currency:
+        String(plan.currency ?? 'CAD')
+          .trim()
+          .toUpperCase() || 'CAD',
+      planName: String(plan.name ?? ''),
+      isTrial: false,
+      trialEndsAt: undefined,
+      trialRemindersSent: [],
+      isOffer: true,
+      offerNote: offerNote || undefined,
+    });
+
+    if (status === 'ACTIVE' && startsAt <= now && endsAt > now) {
+      await this.vendorSubModel
+        .updateMany(
+          {
+            store: new Types.ObjectId(dto.storeId),
+            status: 'ACTIVE',
+            _id: { $ne: created._id },
+          },
+          { $set: { status: 'EXPIRED', endsAt: now } },
+        )
+        .exec();
+    }
+
+    return mapVendorSubscription(created.toObject() as Record<string, unknown>, {
+      storeName: String((store as { name?: string }).name ?? ''),
+    });
+  }
+
   async deleteVendorSubscriptionAdmin(user: UserModel, subscriptionId: string) {
     this.assertAdmin(user);
     if (!Types.ObjectId.isValid(subscriptionId)) {
@@ -1382,8 +1480,11 @@ export class SubscriptionsService implements OnModuleInit {
     const nowMs = now.getTime();
     const valid = rows.filter((s) => {
       if (String(s.status ?? '') !== 'ACTIVE') return false;
+      const start = new Date(String(s.startsAt ?? '')).getTime();
       const end = new Date(String(s.endsAt ?? '')).getTime();
-      return !Number.isNaN(end) && end > nowMs;
+      if (Number.isNaN(end) || end <= nowMs) return false;
+      if (!Number.isNaN(start) && start > nowMs) return false;
+      return true;
     });
     const pool = valid.length
       ? valid

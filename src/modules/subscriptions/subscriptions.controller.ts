@@ -20,6 +20,7 @@ import { Request } from 'express';
 import { ConfirmSubscriptionCheckoutDto } from './dto/confirm-subscription-checkout.dto';
 import { SyncSubscriptionPaymentDto } from './dto/sync-subscription-payment.dto';
 import {
+  AdminOfferVendorSubscriptionDto,
   CreateSubscriptionPlanDto,
   SubscribeVendorDto,
   UpdateSubscriptionPlanDto,
@@ -88,6 +89,19 @@ export class SubscriptionsController {
   listVendorSubscriptions(@Req() req: Request) {
     return this.subscriptions.listVendorSubscriptionsAdmin(
       req.user as UserModel,
+    );
+  }
+
+  @Post('vendor-subscriptions/offer')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  offerVendorSubscription(
+    @Req() req: Request,
+    @Body() body: AdminOfferVendorSubscriptionDto,
+  ) {
+    return this.subscriptions.offerVendorSubscriptionAdmin(
+      req.user as UserModel,
+      body,
     );
   }
 
