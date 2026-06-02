@@ -1,6 +1,6 @@
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { StoreModel } from '@schemas/store.schema';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
@@ -15,6 +15,56 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+
+export class CartLineComplementOptionDto {
+  @ApiProperty({ example: 'Riz' })
+  @IsNotEmpty()
+  @IsString()
+  label: string;
+
+  @ApiPropertyOptional({ example: 2, type: Number })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return value;
+    const n = Number(value);
+    return Number.isNaN(n) ? value : n;
+  })
+  priceDelta?: number;
+}
+
+export class CartLineComplementGroupDto {
+  @ApiProperty({ example: 'Accompagnement' })
+  @IsNotEmpty()
+  @IsString()
+  groupTitle: string;
+
+  @ApiPropertyOptional({ type: [CartLineComplementOptionDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CartLineComplementOptionDto)
+  options?: CartLineComplementOptionDto[];
+}
+
+export class CartLineSupplementDto {
+  @ApiProperty({ example: 'Piment' })
+  @IsNotEmpty()
+  @IsString()
+  name: string;
+
+  @ApiPropertyOptional({ example: 1, type: Number })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return value;
+    const n = Number(value);
+    return Number.isNaN(n) ? value : n;
+  })
+  price?: number;
+}
 
 export class RemoveItemFromCartDto {
   @ApiProperty({ example: '507f1f77bcf86cd799439011' })
@@ -57,6 +107,26 @@ export class AddItemToCartDto {
   @IsNotEmpty()
   @ValidateIf((o) => o.type === CartItemTypeEnum.PRODUCT_EXTRA)
   productId: string;
+
+  @ApiPropertyOptional({
+    type: [CartLineComplementGroupDto],
+    description: 'Compléments choisis (produit uniquement).',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CartLineComplementGroupDto)
+  selectedComplements?: CartLineComplementGroupDto[];
+
+  @ApiPropertyOptional({
+    type: [CartLineSupplementDto],
+    description: 'Suppléments choisis (produit uniquement).',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CartLineSupplementDto)
+  selectedSupplements?: CartLineSupplementDto[];
 }
 
 export class CartItemApiResponse {

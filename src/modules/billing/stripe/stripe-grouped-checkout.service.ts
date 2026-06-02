@@ -1,5 +1,10 @@
 import { SubscriptionsStripeCheckoutService } from '@modules/subscriptions/subscriptions-stripe-checkout.service';
 import { CartService } from '@modules/cart/cart.service';
+import {
+  customizationSummaryLabel,
+  normalizeSelectedComplements,
+  normalizeSelectedSupplements,
+} from '@modules/cart/cart-customization.util';
 import { CouponsService } from '@modules/coupons/coupons.service';
 import {
   AdCreditPaymentModel,
@@ -86,7 +91,14 @@ function storeMongoId(store: CartGroup['store']): string {
 function stripeLabelForCartLine(line: Record<string, unknown>): string {
   const ent = line['entity'] as Record<string, unknown> | undefined;
   const raw = ent != null ? ent['title'] ?? ent['name'] ?? ent['label'] : null;
-  const t = raw != null ? String(raw).trim() : '';
+  let t = raw != null ? String(raw).trim() : '';
+  const suffix = customizationSummaryLabel(
+    normalizeSelectedComplements(line['selectedComplements']),
+    normalizeSelectedSupplements(line['selectedSupplements']),
+  );
+  if (suffix) {
+    t = t ? `${t} — ${suffix}` : suffix;
+  }
   if (t) return t.slice(0, 120);
   const typ = String(line['type'] ?? '');
   if (typ === 'drink') return 'Boisson';

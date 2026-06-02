@@ -52,6 +52,15 @@ export class ProductComplementGroupDto {
   @IsBoolean()
   firstOptionFree?: boolean;
 
+  @ApiPropertyOptional({
+    example: false,
+    description: 'Si true, plusieurs options peuvent être sélectionnées (cases à cocher).',
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  multiChoice?: boolean;
+
   @ApiPropertyOptional({ type: [ProductComplementOptionDto] })
   @IsOptional()
   @IsArray()

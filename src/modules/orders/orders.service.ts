@@ -633,6 +633,10 @@ export class OrdersService {
           | { title?: string; name?: string; profileImage?: string }
           | undefined;
         const label = (e?.title || e?.name || 'Article').trim() || 'Article';
+        const row = item as CartItemModel & {
+          selectedComplements?: unknown;
+          selectedSupplements?: unknown;
+        };
         return {
           label,
           itemType: item.type!,
@@ -641,6 +645,12 @@ export class OrdersService {
           quantity: item.quantity!,
           price: item.price!,
           categoryTitle: await this.categoryTitleForCartLine(item),
+          selectedComplements: Array.isArray(row.selectedComplements)
+            ? row.selectedComplements
+            : [],
+          selectedSupplements: Array.isArray(row.selectedSupplements)
+            ? row.selectedSupplements
+            : [],
         };
       },
     );

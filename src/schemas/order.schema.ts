@@ -2,6 +2,12 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Schema as MongooseSchema } from 'mongoose';
 import { BaseSchema } from './base.schema';
 import { CartItemTypeEnum } from './cart_item.schema';
+import {
+  LineComplementGroupSnapshot,
+  LineComplementGroupSnapshotSchema,
+  LineSupplementSnapshot,
+  LineSupplementSnapshotSchema,
+} from './order-line-customization.schema';
 import { StoreModel } from './store.schema';
 
 export enum OrderStatusEnum {
@@ -96,6 +102,22 @@ export class OrdeLineItem {
   /** Libellé de la catégorie produit au moment de la commande (ex. menu / plat). */
   @Prop({ required: false, name: 'category_title' })
   categoryTitle?: string;
+
+  /** Compléments choisis (figés à la commande). */
+  @Prop({
+    type: [LineComplementGroupSnapshotSchema],
+    default: [],
+    name: 'selected_complements',
+  })
+  selectedComplements?: LineComplementGroupSnapshot[];
+
+  /** Suppléments choisis (figés à la commande). */
+  @Prop({
+    type: [LineSupplementSnapshotSchema],
+    default: [],
+    name: 'selected_supplements',
+  })
+  selectedSupplements?: LineSupplementSnapshot[];
 }
 
 @Schema({

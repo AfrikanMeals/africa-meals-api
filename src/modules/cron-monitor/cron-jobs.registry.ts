@@ -89,7 +89,7 @@ export const CRON_JOBS_REGISTRY: CronJobDefinition[] = [
     label: 'Promotions produits planifiées',
     description:
       'Applique ou retire automatiquement prix et promos selon les plages définies sur les plats.',
-    defaultSchedule: '*/5 * * * *',
+    defaultSchedule: '0/5 * * * *',
     scheduleEnvKey: 'PRODUCT_DISCOUNT_SCHEDULE_CRON',
     disableEnvKey: 'DISABLE_PRODUCT_DISCOUNT_SCHEDULE_CRON',
   },

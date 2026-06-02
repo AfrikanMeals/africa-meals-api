@@ -6,7 +6,7 @@ import { Cron } from '@nestjs/schedule';
 /**
  * Applique / restaure prix et promos selon les fenêtres `discountSchedules`.
  *
- * `PRODUCT_DISCOUNT_SCHEDULE_CRON` — défaut toutes les 5 min (`*/5 * * * *`).
+ * `PRODUCT_DISCOUNT_SCHEDULE_CRON` — défaut toutes les 5 min (`0/5 * * * *`).
  * `DISABLE_PRODUCT_DISCOUNT_SCHEDULE_CRON=true` — désactive le job.
  */
 @Injectable()
@@ -18,7 +18,7 @@ export class ProductDiscountScheduleCron {
     private readonly cronMonitor: CronMonitorService,
   ) {}
 
-  @Cron(process.env.PRODUCT_DISCOUNT_SCHEDULE_CRON ?? '*/5 * * * *')
+  @Cron(process.env.PRODUCT_DISCOUNT_SCHEDULE_CRON ?? '0/5 * * * *')
   async runScheduled(): Promise<void> {
     await this.cronMonitor.execute('product_discount_schedule', async () => {
       try {

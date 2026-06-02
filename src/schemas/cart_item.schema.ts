@@ -2,6 +2,12 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Schema as MongooseSchema } from 'mongoose';
 import { BaseSchema } from './base.schema';
 import { OfferModel } from './offer.schema';
+import {
+  LineComplementGroupSnapshot,
+  LineComplementGroupSnapshotSchema,
+  LineSupplementSnapshot,
+  LineSupplementSnapshotSchema,
+} from './order-line-customization.schema';
 import { ProductExtraModel, ProductModel } from './product.schema';
 import { StoreModel } from './store.schema';
 
@@ -47,6 +53,24 @@ export class CartItemModel extends BaseSchema {
 
   @Prop({ required: true, name: 'price' })
   price: number;
+
+  /** Empêche de fusionner deux lignes même produit avec personnalisations différentes. */
+  @Prop({ required: false, name: 'customization_key', default: '' })
+  customizationKey?: string;
+
+  @Prop({
+    type: [LineComplementGroupSnapshotSchema],
+    default: [],
+    name: 'selected_complements',
+  })
+  selectedComplements?: LineComplementGroupSnapshot[];
+
+  @Prop({
+    type: [LineSupplementSnapshotSchema],
+    default: [],
+    name: 'selected_supplements',
+  })
+  selectedSupplements?: LineSupplementSnapshot[];
 
   @Prop({
     required: true,

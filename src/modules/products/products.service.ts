@@ -355,12 +355,14 @@ export class ProductsService {
   private normalizeComplements(raw: unknown): Array<{
     title: string;
     firstOptionFree: boolean;
+    multiChoice: boolean;
     options: Array<{ label: string; priceDelta: number; isDefault: boolean }>;
   }> {
     if (!Array.isArray(raw)) return [];
     const groups: Array<{
       title: string;
       firstOptionFree: boolean;
+      multiChoice: boolean;
       options: Array<{ label: string; priceDelta: number; isDefault: boolean }>;
     }> = [];
     for (const g of raw) {
@@ -370,6 +372,7 @@ export class ProductsService {
       const firstOptionFree = Boolean(
         row.firstOptionFree ?? row.first_option_free,
       );
+      const multiChoice = Boolean(row.multiChoice ?? row.multi_choice);
       const rawOptions = Array.isArray(row.options) ? row.options : [];
       const options = rawOptions
         .map((o) => {
@@ -401,6 +404,7 @@ export class ProductsService {
       groups.push({
         title,
         firstOptionFree,
+        multiChoice,
         options: normalizedOptions,
       });
     }

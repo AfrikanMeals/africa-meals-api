@@ -59,6 +59,9 @@ export class ProductComplementGroupModel {
   @Prop({ required: false, name: 'first_option_free', default: false })
   firstOptionFree: boolean;
 
+  @Prop({ required: false, name: 'multi_choice', default: false })
+  multiChoice: boolean;
+
   @Prop({
     required: true,
     name: 'options',

@@ -18,6 +18,11 @@ import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import {
+  customizationKeyFromSelections,
+  normalizeSelectedComplements,
+  normalizeSelectedSupplements,
+} from './cart-customization.util';
+import {
   AddItemToCartDto,
   CartItemApiResponse,
   RemoveItemFromCartDto,
@@ -281,10 +286,35 @@ export class CartService {
     // };
   }
 
+  private resolveProductCustomization(args: AddItemToCartDto) {
+    if (args.type !== CartItemTypeEnum.PRODUCT) {
+      return {
+        selectedComplements: [] as ReturnType<typeof normalizeSelectedComplements>,
+        selectedSupplements: [] as ReturnType<typeof normalizeSelectedSupplements>,
+        customizationKey: '',
+      };
+    }
+    const selectedComplements = normalizeSelectedComplements(
+      args.selectedComplements,
+    );
+    const selectedSupplements = normalizeSelectedSupplements(
+      args.selectedSupplements,
+    );
+    return {
+      selectedComplements,
+      selectedSupplements,
+      customizationKey: customizationKeyFromSelections(
+        selectedComplements,
+        selectedSupplements,
+      ),
+    };
+  }
+
   async itemExistsInCart(
     store: StoreModel,
     args: AddItemToCartDto,
     user: UserModel,
+    customizationKey = '',
   ): Promise<CartItemModel> {
     return await this._cartItemModel
       .findOne({
@@ -292,6 +322,7 @@ export class CartService {
         type: args.type,
         user: new Types.ObjectId(user.id),
         store: new Types.ObjectId(store.id),
+        customizationKey: customizationKey ?? '',
       })
       .exec();
   }
@@ -332,6 +363,7 @@ export class CartService {
   ): Promise<Partial<CartItemModel>> {
     const qtyReq = +(args.quantity ?? 1);
     let priceForLine = args.price;
+    const customization = this.resolveProductCustomization(args);
 
     if (args.type === CartItemTypeEnum.DRINK) {
       const drink = await this._drinksService.findOneInStoreCatalog(
@@ -342,7 +374,12 @@ export class CartService {
         throw new NotFoundException('drink_not_found');
       }
       priceForLine = drink.priceCad;
-      const existing = await this.itemExistsInCart(store, args, user);
+      const existing = await this.itemExistsInCart(
+        store,
+        args,
+        user,
+        customization.customizationKey,
+      );
       const newTotalQty = (existing?.quantity ?? 0) + qtyReq;
       const maxOrder = maxDrinkOrderQuantity(drink.quantite);
       if (newTotalQty > maxOrder) {
@@ -350,12 +387,30 @@ export class CartService {
       }
     }
 
-    let item = await this.itemExistsInCart(store, args, user);
+    let item = await this.itemExistsInCart(
+      store,
+      args,
+      user,
+      customization.customizationKey,
+    );
     if (item) {
       await this.updateQuantity(item, (item.quantity ?? 0) + qtyReq);
       if (args.type === CartItemTypeEnum.DRINK) {
         await this._cartItemModel
           .updateOne({ _id: item.id }, { $set: { price: priceForLine } })
+          .exec();
+      } else if (args.type === CartItemTypeEnum.PRODUCT) {
+        await this._cartItemModel
+          .updateOne(
+            { _id: item.id },
+            {
+              $set: {
+                price: priceForLine,
+                selectedComplements: customization.selectedComplements,
+                selectedSupplements: customization.selectedSupplements,
+              },
+            },
+          )
           .exec();
       }
     } else {
@@ -369,6 +424,9 @@ export class CartService {
         type: args.type,
         quantity: qtyReq,
         price: priceForLine,
+        customizationKey: customization.customizationKey,
+        selectedComplements: customization.selectedComplements,
+        selectedSupplements: customization.selectedSupplements,
       });
     }
 
