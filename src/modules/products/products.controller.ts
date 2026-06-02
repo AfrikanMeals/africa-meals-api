@@ -51,11 +51,7 @@ export class ProductsController {
 
   @Get(':id')
   async getOneById(@Param('id') id: string) {
-    const doc = await this._productsService.findOneById(id);
-    if (!doc) {
-      throw new NotFoundException('product_not_found');
-    }
-    return doc;
+    return this._productsService.getProductDetailForShop(id);
   }
 
   @Post(':id/favorite')

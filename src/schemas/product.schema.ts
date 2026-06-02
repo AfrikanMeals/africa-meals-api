@@ -76,6 +76,24 @@ export class ProductSupplementModel {
   price: number;
 }
 
+/** Fenêtre planifiée : prix catalogue + promo appliqués par le cron entre startAt et endAt. */
+export class ProductDiscountScheduleModel {
+  @Prop({ required: false, name: 'label' })
+  label?: string;
+
+  @Prop({ required: true, name: 'start_at' })
+  startAt: Date;
+
+  @Prop({ required: true, name: 'end_at' })
+  endAt: Date;
+
+  @Prop({ required: true, name: 'price', default: 0 })
+  price: number;
+
+  @Prop({ required: false, name: 'discount_price', default: 0 })
+  discountPrice: number;
+}
+
 @Schema({
   timestamps: true,
   collection: 'products',
@@ -105,6 +123,20 @@ export class ProductModel extends BaseSchema {
 
   @Prop({ required: false, name: 'discount_price', default: 0 })
   discountPrice?: number;
+
+  /** Prix affiché hors fenêtre promotionnelle active (baseline restaurée par le cron). */
+  @Prop({ required: false, name: 'list_price' })
+  listPrice?: number;
+
+  @Prop({ required: false, name: 'list_discount_price', default: 0 })
+  listDiscountPrice?: number;
+
+  @Prop({
+    default: [],
+    name: 'discount_schedules',
+    type: [ProductDiscountScheduleModel],
+  })
+  discountSchedules: ProductDiscountScheduleModel[];
 
   @Prop({ required: true, name: 'currency', default: 'CAD' })
   currency: string;

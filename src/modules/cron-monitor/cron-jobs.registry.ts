@@ -85,6 +85,15 @@ export const CRON_JOBS_REGISTRY: CronJobDefinition[] = [
     disableEnvKey: 'DISABLE_SHOP_HOME_WARM_CRON',
   },
   {
+    key: 'product_discount_schedule',
+    label: 'Promotions produits planifiées',
+    description:
+      'Applique ou retire automatiquement prix et promos selon les plages définies sur les plats.',
+    defaultSchedule: '*/5 * * * *',
+    scheduleEnvKey: 'PRODUCT_DISCOUNT_SCHEDULE_CRON',
+    disableEnvKey: 'DISABLE_PRODUCT_DISCOUNT_SCHEDULE_CRON',
+  },
+  {
     key: 'ads_targeting_retention',
     label: 'Purge ciblage Ads',
     description: 'Purge des événements et logs de ciblage publicitaire obsolètes.',

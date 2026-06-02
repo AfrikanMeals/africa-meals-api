@@ -11,6 +11,8 @@ import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { ProductCategoryController } from './product-category.controller';
 import { ProductCategoryService } from './product-category.service';
 import { ProductsController } from './products.controller';
+import { ProductDiscountScheduleCron } from './product-discount-schedule.cron';
+import { ProductDiscountScheduleService } from './product-discount-schedule.service';
 import { ProductsService } from './products.service';
 
 @Module({
@@ -24,7 +26,12 @@ import { ProductsService } from './products.service';
     ]),
   ],
   controllers: [ProductsController, ProductCategoryController],
-  providers: [ProductsService, ProductCategoryService],
-  exports: [ProductsService, ProductCategoryService],
+  providers: [
+    ProductsService,
+    ProductCategoryService,
+    ProductDiscountScheduleService,
+    ProductDiscountScheduleCron,
+  ],
+  exports: [ProductsService, ProductCategoryService, ProductDiscountScheduleService],
 })
 export class ProductsModule {}

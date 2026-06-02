@@ -27,6 +27,7 @@ import {
   CreateProductExtraDto,
   PatchProductDto,
 } from './dto/products.dto';
+import { ProductDiscountScheduleService } from './product-discount-schedule.service';
 
 @Injectable()
 export class ProductsService {
@@ -47,6 +48,9 @@ export class ProductsService {
 
   @Inject(CACHE_MANAGER)
   private readonly _cacheManager: Cache;
+
+  @Inject(ProductDiscountScheduleService)
+  private readonly _discountSchedules: ProductDiscountScheduleService;
 
   /** Incrémenté à chaque ajout/retrait favori : invalide les clés cache mémoire (TTL + génération). */
   private readonly _favoriteListRevision = new Map<string, number>();
@@ -277,6 +281,34 @@ export class ProductsService {
     return this._productCategoryModel;
   }
 
+  /** Détail plat boutique — compléments / suppléments normalisés pour l’app mobile. */
+  async getProductDetailForShop(id: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('product_not_found');
+    }
+    const doc = await this.findOneById(id);
+    if (!doc) {
+      throw new NotFoundException('product_not_found');
+    }
+    const obj = doc.toObject({ virtuals: true }) as Record<string, unknown>;
+    return {
+      ...obj,
+      id: String(doc._id),
+      complements: this.normalizeComplements(obj.complements),
+      supplements: this.normalizeSupplements(obj.supplements),
+      fieldsets: this.normalizeFieldsets(obj.fieldsets),
+      listPrice: this._discountSchedules.resolveListPrice(
+        obj as unknown as ProductModel,
+      ),
+      listDiscountPrice: this._discountSchedules.resolveListDiscountPrice(
+        obj as unknown as ProductModel,
+      ),
+      discountSchedules: this._discountSchedules.schedulesForResponse(
+        obj.discountSchedules ?? obj.discount_schedules,
+      ),
+    };
+  }
+
   async findOneById(id: string) {
     const doc = await this._productModel
       .findOne({ _id: id })
@@ -335,20 +367,22 @@ export class ProductsService {
       const row = (g ?? {}) as Record<string, unknown>;
       const title = String(row.title ?? '').trim();
       if (!title) continue;
-      const firstOptionFree = Boolean(row.firstOptionFree);
+      const firstOptionFree = Boolean(
+        row.firstOptionFree ?? row.first_option_free,
+      );
       const rawOptions = Array.isArray(row.options) ? row.options : [];
       const options = rawOptions
         .map((o) => {
           const opt = (o ?? {}) as Record<string, unknown>;
           const label = String(opt.label ?? '').trim();
           if (!label) return null;
-          const numeric = Number(opt.priceDelta ?? 0);
+          const numeric = Number(opt.priceDelta ?? opt.price_delta ?? 0);
           const priceDelta =
             Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
           return {
             label,
             priceDelta,
-            isDefault: Boolean(opt.isDefault),
+            isDefault: Boolean(opt.isDefault ?? opt.is_default),
           };
         })
         .filter(
@@ -478,6 +512,19 @@ export class ProductsService {
       originCountry: String(p.originCountry ?? p.origin_country ?? ''),
       price: Number(p.price ?? 0),
       discountPrice: Number(p.discountPrice ?? p.discount_price ?? 0),
+      listPrice: Number(
+        p.listPrice ?? p.list_price ?? p.price ?? 0,
+      ),
+      listDiscountPrice: Number(
+        p.listDiscountPrice ??
+          p.list_discount_price ??
+          p.discountPrice ??
+          p.discount_price ??
+          0,
+      ),
+      discountSchedules: this._discountSchedules.schedulesForResponse(
+        p.discountSchedules ?? p.discount_schedules,
+      ),
       currency: String(forcedCurrency || p.currency || 'CAD'),
       status: String(p.status ?? ProductStatusEnum.PENDING),
       categoryId: catId,
@@ -799,6 +846,15 @@ export class ProductsService {
 
       const originCountry = args.originCountry ?? store.address.country;
 
+      const listPrice = Number(args.listPrice ?? args.price);
+      const listDiscountPrice = Number(
+        args.listDiscountPrice ?? args.discountPrice ?? 0,
+      );
+      const discountSchedules =
+        this._discountSchedules.normalizeSchedulesFromDto(
+          args.discountSchedules,
+        );
+
       const product = await this._productModel.create({
         title: args.title,
         bio: args.bio,
@@ -807,9 +863,11 @@ export class ProductsService {
         complements: this.normalizeComplements(args.complements),
         supplements: this.normalizeSupplements(args.supplements),
         originCountry,
-        price: Number(args.price),
-        discountPrice:
-          args.discountPrice != null ? Number(args.discountPrice) : 0,
+        price: listPrice,
+        discountPrice: listDiscountPrice,
+        listPrice,
+        listDiscountPrice,
+        discountSchedules,
         category: category._id,
         store: store._id,
         // Devise harmonisée: toujours la devise de la boutique.
@@ -818,6 +876,12 @@ export class ProductsService {
         ...(profileImage && { profileImage }),
         ...(galleryItems.length > 0 && { galleryImages: galleryItems }),
       });
+
+      const fresh = await this._productModel.findById(product._id).exec();
+      if (fresh) {
+        this._discountSchedules.applyToDocument(fresh);
+        await fresh.save();
+      }
 
       return this.findOneById(product._id.toString());
     } catch (e) {
@@ -886,11 +950,37 @@ export class ProductsService {
     if (args.originCountry != null) {
       doc.originCountry = args.originCountry.trim();
     }
+    if (args.listPrice !== undefined) {
+      doc.listPrice = Number(args.listPrice);
+    }
+    if (args.listDiscountPrice !== undefined) {
+      doc.listDiscountPrice = Number(args.listDiscountPrice);
+    }
+    if (args.discountSchedules !== undefined) {
+      doc.set(
+        'discountSchedules',
+        this._discountSchedules.normalizeSchedulesFromDto(args.discountSchedules),
+      );
+    }
     if (args.price !== undefined) {
-      doc.price = Number(args.price);
+      const price = Number(args.price);
+      doc.price = price;
+      const active = this._discountSchedules.pickActiveSchedule(
+        this._discountSchedules.normalizeSchedules(doc.discountSchedules),
+      );
+      if (!active) {
+        doc.listPrice = price;
+      }
     }
     if (args.discountPrice !== undefined) {
-      doc.discountPrice = Number(args.discountPrice);
+      const promo = Number(args.discountPrice);
+      doc.discountPrice = promo;
+      const active = this._discountSchedules.pickActiveSchedule(
+        this._discountSchedules.normalizeSchedules(doc.discountSchedules),
+      );
+      if (!active) {
+        doc.listDiscountPrice = promo;
+      }
     }
     // Ignore toute devise envoyée par le client vendeur et garde la devise boutique.
     doc.currency = (store.currency || 'CAD') as string;
@@ -935,6 +1025,7 @@ export class ProductsService {
       doc.set('galleryImages', []);
     }
 
+    this._discountSchedules.applyToDocument(doc);
     await doc.save();
     return this.findOneById(productId);
   }

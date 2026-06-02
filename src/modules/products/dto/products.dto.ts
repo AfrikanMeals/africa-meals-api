@@ -1,17 +1,19 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ProductStatusEnum } from '@schemas/product.schema';
 import { Trim } from 'class-sanitizer';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsDateString,
   IsEnum,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
   Min,
+  ValidateNested,
 } from 'class-validator';
 
 export class ProductComplementOptionDto {
@@ -72,6 +74,44 @@ export class ProductSupplementDto {
   @IsNumber()
   @Min(0)
   price?: number;
+}
+
+export class ProductDiscountScheduleDto {
+  @ApiPropertyOptional({ example: 'Promo week-end' })
+  @IsOptional()
+  @Trim()
+  label?: string;
+
+  @ApiProperty({ example: '2026-06-01T08:00:00.000Z' })
+  @IsNotEmpty()
+  @IsDateString()
+  startAt: string;
+
+  @ApiProperty({ example: '2026-06-30T23:59:00.000Z' })
+  @IsNotEmpty()
+  @IsDateString()
+  endAt: string;
+
+  @ApiProperty({ example: 12.99, type: Number })
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return value;
+    const n = Number(value);
+    return Number.isNaN(n) ? value : n;
+  })
+  @IsNumber()
+  @Min(0)
+  price: number;
+
+  @ApiPropertyOptional({ example: 9.99, type: Number })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return value;
+    const n = Number(value);
+    return Number.isNaN(n) ? value : n;
+  })
+  @IsNumber()
+  @Min(0)
+  discountPrice?: number;
 }
 
 export class CreateProductDto {
@@ -146,6 +186,34 @@ export class CreateProductDto {
   @IsOptional()
   @IsArray()
   supplements?: ProductSupplementDto[];
+
+  @ApiPropertyOptional({
+    example: 12.99,
+    description: 'Prix catalogue hors promotion planifiée.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  listPrice?: number;
+
+  @ApiPropertyOptional({
+    example: 0,
+    description: 'Promo catalogue hors fenêtre planifiée (0 = aucune).',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  listDiscountPrice?: number;
+
+  @ApiPropertyOptional({
+    type: [ProductDiscountScheduleDto],
+    description: 'Promotions planifiées (prix + promo par plage de dates).',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductDiscountScheduleDto)
+  discountSchedules?: ProductDiscountScheduleDto[];
 }
 
 export class PatchProductDto {
@@ -224,6 +292,32 @@ export class PatchProductDto {
   @IsOptional()
   @IsArray()
   supplements?: ProductSupplementDto[];
+
+  @ApiPropertyOptional({
+    description: 'Prix catalogue hors promotion planifiée.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  listPrice?: number;
+
+  @ApiPropertyOptional({
+    description: 'Promo catalogue hors fenêtre planifiée (0 = aucune).',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  listDiscountPrice?: number;
+
+  @ApiPropertyOptional({
+    type: [ProductDiscountScheduleDto],
+    description: 'Promotions planifiées (prix + promo par plage de dates).',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductDiscountScheduleDto)
+  discountSchedules?: ProductDiscountScheduleDto[];
 
   @ApiPropertyOptional({
     description:
