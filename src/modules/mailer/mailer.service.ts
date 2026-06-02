@@ -19,12 +19,16 @@ export type MailAttachment = {
 export type SendSimpleMailDto = {
   to: string;
   toName?: string;
+  /** Copie (e-mails boutique, etc.). */
+  cc?: string[];
   subject: string;
   html: string;
   text?: string;
   replyTo?: string;
   replyToName?: string;
   attachments?: MailAttachment[];
+  /** Préfixe de logs (ex. vendor-ops-report-manual). */
+  logContext?: string;
 };
 
 /** Profil SMTP dédié (ex. notifications publicitaires `AD_SMTP_*`). */
@@ -127,9 +131,13 @@ export class MailerService {
         ? `"${args.replyToName.trim().replace(/"/g, '')}" <${replyToRaw}>`
         : replyToRaw || undefined;
 
+    const cc =
+      args.cc?.map((e) => e.trim()).filter(Boolean) ?? [];
+
     await transporter.sendMail({
       from: `"${profile.fromDisplayName}" <${profile.from}>`,
       to: args.to,
+      cc: cc.length > 0 ? cc : undefined,
       replyTo,
       subject: args.subject,
       html: args.html,
@@ -198,18 +206,39 @@ export class MailerService {
 
   /** E-mail HTML/text sans template (ex. reset password, test). */
   async sendSimple(args: SendSimpleMailDto) {
+    const { logContext, ...mailArgs } = args;
     const prepared: SendSimpleMailDto = {
-      ...args,
-      html: this.prepareHtml(args.html, args.subject),
+      ...mailArgs,
+      html: this.prepareHtml(mailArgs.html, mailArgs.subject),
     };
+    const ccList =
+      prepared.cc?.map((e) => e.trim()).filter(Boolean) ?? [];
+    if (logContext) {
+      const ccPart =
+        ccList.length > 0 ? ` cc=${ccList.join(', ')}` : '';
+      this._logger.log(
+        `[${logContext}] envoi → to=${prepared.to}${ccPart} subject="${prepared.subject}"`,
+      );
+    }
     const smtpProfile = this.readDefaultSmtpProfile();
     if (smtpProfile) {
       try {
         await this.sendSimpleSmtp(prepared, smtpProfile);
+        if (logContext) {
+          const ccPart =
+            ccList.length > 0 ? ` cc=${ccList.join(', ')}` : '';
+          this._logger.log(
+            `[${logContext}] envoyé (SMTP) → to=${prepared.to}${ccPart} from=${smtpProfile.from}`,
+          );
+        }
         return;
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        this._logger.error(`SMTP sendSimple failed: ${msg}`);
+        this._logger.error(
+          logContext
+            ? `[${logContext}] SMTP échec → to=${prepared.to}: ${msg}`
+            : `SMTP sendSimple failed: ${msg}`,
+        );
         throw new BadGatewayException(`email_send_failed — ${msg}`);
       }
     }
@@ -231,7 +260,8 @@ export class MailerService {
 
     const appName = this._configService.get<string>('APP_NAME') ?? 'App';
     const sentFrom = new Sender(senderEmail, appName);
-    const recipients = [new Recipient(args.to, args.toName ?? args.to)];
+    const recipients = [new Recipient(prepared.to, prepared.toName ?? prepared.to)];
+    const ccRecipients = ccList.map((email) => new Recipient(email, email));
     const paramsBuilder = new EmailParams()
       .setFrom(sentFrom)
       .setTo(recipients)
@@ -245,15 +275,30 @@ export class MailerService {
       )
       .setSubject(prepared.subject)
       .setHtml(prepared.html);
+    if (ccRecipients.length > 0) {
+      paramsBuilder.setCc(ccRecipients);
+    }
     if (prepared.text?.trim()) {
       paramsBuilder.setText(prepared.text);
     }
 
     try {
-      return await this._mailer.email.send(paramsBuilder);
+      const res = await this._mailer.email.send(paramsBuilder);
+      if (logContext) {
+        const ccPart =
+          ccList.length > 0 ? ` cc=${ccList.join(', ')}` : '';
+        this._logger.log(
+          `[${logContext}] envoyé (MailerSend) → to=${prepared.to}${ccPart} from=${senderEmail}`,
+        );
+      }
+      return res;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      this._logger.error(`MailerSend sendSimple failed: ${msg}`);
+      this._logger.error(
+        logContext
+          ? `[${logContext}] MailerSend échec → to=${prepared.to}: ${msg}`
+          : `MailerSend sendSimple failed: ${msg}`,
+      );
       throw new BadGatewayException(`email_send_failed — ${msg}`);
     }
   }

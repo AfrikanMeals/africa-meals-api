@@ -15,6 +15,7 @@ import {
   groupStoresIntoVendorRecipients,
   VENDOR_OPS_REPORT_STORE_STATUSES,
   type VendorOpsReportRecipient,
+  type VendorOpsReportStoreLean,
 } from '@modules/admin-ops-reports/vendor-ops-report-recipients.util';
 import {
   AdminOpsReportPeriodEnum,
@@ -44,12 +45,23 @@ export type AdminOpsReportSettingsResponse = {
   };
 };
 
+export type VendorOpsReportRecipientLog = {
+  ownerId: string;
+  email: string;
+  ccEmails: string[];
+  fullName: string;
+  storeCount: number;
+  status: 'sent' | 'skipped' | 'failed';
+  error?: string;
+};
+
 export type VendorOpsReportDispatchResult = {
   periodKey: string;
   sent: number;
   skipped: number;
   failed: number;
   errors: Array<{ ownerId: string; message: string }>;
+  recipientLogs: VendorOpsReportRecipientLog[];
 };
 
 @Injectable()
@@ -77,7 +89,7 @@ export class AdminOpsReportsService {
   private async listEligibleRecipients(): Promise<VendorOpsReportRecipient[]> {
     const stores = await this.storeModel
       .find({ status: { $in: VENDOR_OPS_REPORT_STORE_STATUSES } })
-      .select('_id name owner')
+      .select('_id name owner email')
       .lean()
       .exec();
     const ownerIds = [
@@ -98,7 +110,7 @@ export class AdminOpsReportsService {
       users.map((u) => [String((u as { _id?: unknown })._id), u as Record<string, unknown>]),
     );
     return groupStoresIntoVendorRecipients(
-      stores as Array<{ _id?: Types.ObjectId; name?: string; owner?: Types.ObjectId }>,
+      stores as VendorOpsReportStoreLean[],
       usersById,
     );
   }
@@ -196,7 +208,17 @@ export class AdminOpsReportsService {
     const tz = String(doc.timezone ?? 'America/Toronto').trim() || 'America/Toronto';
     const period = doc.period ?? AdminOpsReportPeriodEnum.WEEKLY;
     const bounds = resolveCompletedOpsReportPeriod(period, tz);
-    const result = await this.dispatchToVendors(bounds, { force: true });
+    const adminEmail = String(user.email ?? '').trim() || '(sans e-mail)';
+    this.logger.log(
+      `[vendor-ops-report-manual] déclenché par admin=${String(user._id)} (${adminEmail}) période=${bounds.periodKey}`,
+    );
+    const result = await this.dispatchToVendors(bounds, {
+      force: true,
+      manual: true,
+    });
+    this.logger.log(
+      `[vendor-ops-report-manual] terminé période=${bounds.periodKey} sent=${result.sent} skipped=${result.skipped} failed=${result.failed} destinataires=${result.recipientLogs.map((r) => `${r.email}[${r.status}]`).join(', ') || '(aucun)'}`,
+    );
     if (result.sent > 0) {
       await this.markGlobalSent(bounds.periodKey);
     }
@@ -220,6 +242,7 @@ export class AdminOpsReportsService {
         skipped: 0,
         failed: 0,
         errors: [],
+        recipientLogs: [],
       };
     }
     try {
@@ -253,15 +276,44 @@ export class AdminOpsReportsService {
             message: e instanceof Error ? e.message : String(e),
           },
         ],
+        recipientLogs: [],
       };
     }
   }
 
+  private logRecipientRoster(
+    bounds: ReturnType<typeof resolveCompletedOpsReportPeriod>,
+    recipients: VendorOpsReportRecipient[],
+    context: string,
+  ): void {
+    if (!recipients.length) {
+      this.logger.warn(
+        `[${context}] période=${bounds.periodKey} — aucun propriétaire éligible`,
+      );
+      return;
+    }
+    for (const r of recipients) {
+      const cc =
+        r.ccEmails.length > 0 ? ` · cc=${r.ccEmails.join(', ')}` : '';
+      this.logger.log(
+        `[${context}] destinataire to=${r.email}${cc} · owner=${r.ownerId} · boutiques=${r.storeNames.length} (${r.storeNames.join(', ')})`,
+      );
+    }
+    this.logger.log(
+      `[${context}] période=${bounds.periodKey} · ${recipients.length} propriétaire(s) éligible(s)`,
+    );
+  }
+
   private async dispatchToVendors(
     bounds: ReturnType<typeof resolveCompletedOpsReportPeriod>,
-    opts: { force: boolean },
+    opts: { force: boolean; manual?: boolean },
   ): Promise<VendorOpsReportDispatchResult> {
+    const logTag = opts.manual
+      ? 'vendor-ops-report-manual'
+      : 'vendor-ops-report';
     const recipients = await this.listEligibleRecipients();
+    this.logRecipientRoster(bounds, recipients, logTag);
+
     if (!recipients.length) {
       throw new BadRequestException('ops_report_no_vendor_recipients');
     }
@@ -275,14 +327,32 @@ export class AdminOpsReportsService {
     let skipped = 0;
     let failed = 0;
     const errors: Array<{ ownerId: string; message: string }> = [];
+    const recipientLogs: VendorOpsReportRecipientLog[] = [];
 
     for (const recipient of recipients) {
       const ownerKey = recipient.ownerId.toString();
+      const baseLog: VendorOpsReportRecipientLog = {
+        ownerId: ownerKey,
+        email: recipient.email,
+        ccEmails: recipient.ccEmails,
+        fullName: recipient.fullName,
+        storeCount: recipient.storeIds.length,
+        status: 'sent',
+      };
+
       if (!opts.force && alreadySent.has(ownerKey)) {
         skipped += 1;
+        recipientLogs.push({ ...baseLog, status: 'skipped' });
+        this.logger.log(
+          `[${logTag}] ignoré (déjà envoyé) → ${recipient.email} owner=${ownerKey}`,
+        );
         continue;
       }
+
       try {
+        this.logger.log(
+          `[${logTag}] préparation rapport → ${recipient.email} owner=${ownerKey}`,
+        );
         const built = await this.builder.buildForVendor(recipient, bounds);
         const subject = `[${appName}] Rapport d'activité — ${bounds.labelFr}`;
         const text = `Votre rapport ${bounds.labelFr} (${bounds.from} → ${bounds.to}). Voir le fichier Excel joint.`;
@@ -290,9 +360,11 @@ export class AdminOpsReportsService {
         await this.mailer.sendSimple({
           to: recipient.email,
           toName: recipient.fullName,
+          cc: recipient.ccEmails,
           subject,
           html: built.htmlSummary,
           text,
+          logContext: logTag,
           attachments: [
             {
               filename: built.filename,
@@ -316,12 +388,21 @@ export class AdminOpsReportsService {
           )
           .exec();
         sent += 1;
+        recipientLogs.push(baseLog);
+        const ccNote =
+          recipient.ccEmails.length > 0
+            ? ` cc=${recipient.ccEmails.join(', ')}`
+            : '';
+        this.logger.log(
+          `[${logTag}] livré → ${recipient.email}${ccNote} fichier=${built.filename}`,
+        );
       } catch (e) {
         failed += 1;
         const message = e instanceof Error ? e.message : String(e);
         errors.push({ ownerId: ownerKey, message });
+        recipientLogs.push({ ...baseLog, status: 'failed', error: message });
         this.logger.warn(
-          `Vendor ops report failed for owner ${ownerKey}: ${message}`,
+          `[${logTag}] échec → ${recipient.email} owner=${ownerKey}: ${message}`,
         );
       }
     }
@@ -332,6 +413,7 @@ export class AdminOpsReportsService {
       skipped,
       failed,
       errors: errors.slice(0, 20),
+      recipientLogs,
     };
   }
 
