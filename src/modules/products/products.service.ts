@@ -370,9 +370,11 @@ export class ProductsService {
       const title = String(row.title ?? '').trim();
       if (!title) continue;
       const firstOptionFree = Boolean(
-        row.firstOptionFree ?? row.first_option_free,
+        row.firstOptionFree ?? row.first_option_free ?? false,
       );
-      const multiChoice = Boolean(row.multiChoice ?? row.multi_choice);
+      const multiChoice = Boolean(
+        row.multiChoice ?? row.multi_choice ?? false,
+      );
       const rawOptions = Array.isArray(row.options) ? row.options : [];
       const options = rawOptions
         .map((o) => {

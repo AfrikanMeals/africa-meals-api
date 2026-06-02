@@ -53,6 +53,7 @@ import { LoyaltyService } from '@modules/loyalty/loyalty.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 import {
+  buildVendorOrderCreatedInboxMessage,
   buildVendorOrderPaidInboxMessage,
   buildVendorOrderPaidPushBody,
 } from './vendor-order-paid-message.util';
@@ -707,36 +708,28 @@ export class OrdersService {
       storeId: String(storeId),
     });
 
-    const sto = await this._storeModel
-      .findById(new Types.ObjectId(String(storeId)))
-      .select('owner name')
-      .lean()
-      .exec();
-    const sname = (sto as { name?: string } | null)?.name?.trim();
-    const vendorIds = (
-      await this._storeAccess.listStorePushRecipientUserIds(String(storeId))
-    ).filter((id) => id !== String(user.id));
-    if (vendorIds.length > 0) {
-      void this._notificationsService
-        .pushVendorOrderNotify({
-          vendorUserIds: vendorIds,
-          title: 'Nouvelle commande',
-          body: `${
-            sname || 'Boutique'
-          } : nouvelle commande (en attente de paiement).`,
-          orderId: created._id.toString(),
-          storeName: sname,
-          reason: 'new_order',
-          status: OrderStatusEnum.CREATED,
-        })
-        .catch((err) =>
-          this.logger.warn(
-            `FCM vendor new order: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          ),
-        );
-    }
+    const sname = storePop?.name?.trim() || 'Boutique';
+    const orderIdStr = created._id.toString();
+    const msgArgs = {
+      orderId: orderIdStr,
+      items: items as OrdeLineItem[],
+      totalPrice: calculatedPrice,
+      storeName: sname,
+    };
+    void this.notifyStoreVendorsForOrder({
+      storeId: String(storeId),
+      customerUserId: String(user.id),
+      inboxMessage: buildVendorOrderCreatedInboxMessage(msgArgs),
+      push: {
+        title: 'Nouvelle commande',
+        body: `${sname} : nouvelle commande (en attente de paiement).`,
+        orderId: orderIdStr,
+        storeName: sname,
+        reason: 'new_order',
+        status: OrderStatusEnum.CREATED,
+      },
+      logTag: 'new_order',
+    });
     return created;
   }
 
@@ -810,8 +803,8 @@ export class OrdersService {
     return null;
   }
 
-  /** Message détaillé dans le fil notifications vendeur + refresh WebSocket inbox. */
-  private async appendStoreVendorPaidMessage(
+  /** Ajoute une entrée `stores.vendor_messages` + refresh inbox WebSocket. */
+  private async appendStoreVendorOrderMessage(
     storeId: string,
     message: string,
     notifyUserIds: string[],
@@ -833,6 +826,73 @@ export class OrdersService {
     for (const id of [...new Set(notifyUserIds)]) {
       this._wsInboxNotify.notifyUserInboxRefresh(id);
     }
+  }
+
+  /**
+   * Notifie la boutique : message inbox toujours enregistré ; push FCM sauf pour le client commandeur.
+   */
+  private async notifyStoreVendorsForOrder(args: {
+    storeId: string;
+    customerUserId?: string | null;
+    inboxMessage: string;
+    push?: {
+      title: string;
+      body: string;
+      orderId: string;
+      storeName?: string;
+      reason: string;
+      status: string;
+    };
+    logTag: string;
+  }): Promise<void> {
+    const sid = args.storeId?.trim();
+    if (!sid || !Types.ObjectId.isValid(sid)) return;
+
+    const allVendorIds =
+      await this._storeAccess.listStorePushRecipientUserIds(sid);
+    const customerId = args.customerUserId?.trim() ?? '';
+    const pushIds =
+      customerId && Types.ObjectId.isValid(customerId)
+        ? allVendorIds.filter((id) => id !== customerId)
+        : allVendorIds;
+
+    if (args.push && pushIds.length > 0) {
+      void this._notificationsService
+        .pushVendorOrderNotify({
+          vendorUserIds: pushIds,
+          title: args.push.title,
+          body: args.push.body,
+          orderId: args.push.orderId,
+          storeName: args.push.storeName,
+          reason: args.push.reason,
+          status: args.push.status,
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `FCM vendor ${args.logTag}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
+    }
+
+    const inboxNotifyIds =
+      allVendorIds.length > 0
+        ? allVendorIds
+        : customerId && Types.ObjectId.isValid(customerId)
+          ? [customerId]
+          : [];
+    void this.appendStoreVendorOrderMessage(
+      sid,
+      args.inboxMessage,
+      inboxNotifyIds,
+    ).catch((err) =>
+      this.logger.warn(
+        `vendor inbox ${args.logTag}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
+    );
   }
 
   /**
@@ -1074,55 +1134,34 @@ export class OrdersService {
               }`,
             ),
           );
-        const storeIdPaid = storeIdForNotif;
-        if (storeIdPaid) {
-          const vendorIds = (
-            await this._storeAccess.listStorePushRecipientUserIds(storeIdPaid)
-          ).filter((id) => id !== uid);
-          if (vendorIds.length > 0) {
-            const paidMsgArgs = {
+        if (storeIdForNotif) {
+          const paidMsgArgs = {
+            orderId,
+            items: o.items as OrdeLineItem[],
+            totalPrice,
+            currency:
+              opts?.currency?.trim() ||
+              (typeof o.currency === 'string' ? o.currency : undefined),
+            pickupCode:
+              typeof $set['pickupCode'] === 'string'
+                ? $set['pickupCode']
+                : undefined,
+            storeName,
+          };
+          void this.notifyStoreVendorsForOrder({
+            storeId: storeIdForNotif,
+            customerUserId: uid,
+            inboxMessage: buildVendorOrderPaidInboxMessage(paidMsgArgs),
+            push: {
+              title: 'Commande payée',
+              body: buildVendorOrderPaidPushBody(paidMsgArgs),
               orderId,
-              items: o.items as OrdeLineItem[],
-              totalPrice,
-              currency:
-                opts?.currency?.trim() ||
-                (typeof o.currency === 'string' ? o.currency : undefined),
-              pickupCode:
-                typeof $set['pickupCode'] === 'string'
-                  ? $set['pickupCode']
-                  : undefined,
               storeName,
-            };
-            const pushBody = buildVendorOrderPaidPushBody(paidMsgArgs);
-            void this._notificationsService
-              .pushVendorOrderNotify({
-                vendorUserIds: vendorIds,
-                title: 'Commande payée',
-                body: pushBody,
-                orderId,
-                storeName,
-                reason: 'order_paid',
-                status: OrderStatusEnum.PAIED,
-              })
-              .catch((err) =>
-                this.logger.warn(
-                  `FCM vendor order paid: ${
-                    err instanceof Error ? err.message : String(err)
-                  }`,
-                ),
-              );
-            void this.appendStoreVendorPaidMessage(
-              storeIdPaid,
-              buildVendorOrderPaidInboxMessage(paidMsgArgs),
-              vendorIds,
-            ).catch((err) =>
-              this.logger.warn(
-                `vendor inbox order paid: ${
-                  err instanceof Error ? err.message : String(err)
-                }`,
-              ),
-            );
-          }
+              reason: 'order_paid',
+              status: OrderStatusEnum.PAIED,
+            },
+            logTag: 'order_paid',
+          });
         }
       }
       void this.notifyPartiesOrderRealtimeByOrderId(

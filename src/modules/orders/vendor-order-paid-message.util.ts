@@ -5,7 +5,7 @@ import {
 } from '@modules/cart/cart-customization.util';
 import type { OrdeLineItem } from '@schemas/order.schema';
 
-export type VendorOrderPaidMessageArgs = {
+export type VendorOrderNotifyMessageArgs = {
   orderId: string;
   items: OrdeLineItem[];
   totalPrice: number;
@@ -13,6 +13,9 @@ export type VendorOrderPaidMessageArgs = {
   pickupCode?: string;
   storeName?: string;
 };
+
+/** @deprecated alias */
+export type VendorOrderPaidMessageArgs = VendorOrderNotifyMessageArgs;
 
 function formatMoney(amount: number, currency?: string): string {
   const cur = (currency ?? '').trim().toUpperCase();
@@ -37,9 +40,28 @@ function formatLineItem(item: OrdeLineItem): string {
   return extras ? `${base} — ${extras}` : base;
 }
 
+/** Message boutique — commande créée, en attente de paiement. */
+export function buildVendorOrderCreatedInboxMessage(
+  args: VendorOrderNotifyMessageArgs,
+): string {
+  const ref = orderRef(args.orderId);
+  const total = formatMoney(args.totalPrice, args.currency);
+  const itemCount = args.items.reduce(
+    (s, i) => s + Math.max(1, Math.round(Number(i.quantity) || 1)),
+    0,
+  );
+  const lines: string[] = [
+    `Nouvelle commande · #${ref} · ${itemCount} article${itemCount > 1 ? 's' : ''} · Total ${total} (en attente de paiement)`,
+  ];
+  for (const item of args.items) {
+    lines.push(`• ${formatLineItem(item)}`);
+  }
+  return lines.join('\n').slice(0, 4000);
+}
+
 /** Message détaillé pour `stores.vendor_messages` (centre de notifications vendeur). */
 export function buildVendorOrderPaidInboxMessage(
-  args: VendorOrderPaidMessageArgs,
+  args: VendorOrderNotifyMessageArgs,
 ): string {
   const ref = orderRef(args.orderId);
   const total = formatMoney(args.totalPrice, args.currency);
@@ -62,7 +84,7 @@ export function buildVendorOrderPaidInboxMessage(
 
 /** Corps court pour la notification push FCM vendeur. */
 export function buildVendorOrderPaidPushBody(
-  args: VendorOrderPaidMessageArgs,
+  args: VendorOrderNotifyMessageArgs,
 ): string {
   const store = (args.storeName ?? '').trim() || 'Boutique';
   const ref = orderRef(args.orderId);

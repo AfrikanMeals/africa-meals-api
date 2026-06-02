@@ -41,6 +41,7 @@ export const ProductExtraSchema =
 
 export type ProductExtraModelDocument = ProductExtraModel & Document;
 
+@Schema({ _id: false })
 export class ProductComplementOptionModel {
   @Prop({ required: true, name: 'label' })
   label: string;
@@ -52,6 +53,11 @@ export class ProductComplementOptionModel {
   isDefault: boolean;
 }
 
+export const ProductComplementOptionSchema = SchemaFactory.createForClass(
+  ProductComplementOptionModel,
+);
+
+@Schema({ _id: false })
 export class ProductComplementGroupModel {
   @Prop({ required: true, name: 'title' })
   title: string;
@@ -65,12 +71,17 @@ export class ProductComplementGroupModel {
   @Prop({
     required: true,
     name: 'options',
-    type: [ProductComplementOptionModel],
+    type: [ProductComplementOptionSchema],
     default: [],
   })
   options: ProductComplementOptionModel[];
 }
 
+export const ProductComplementGroupSchema = SchemaFactory.createForClass(
+  ProductComplementGroupModel,
+);
+
+@Schema({ _id: false })
 export class ProductSupplementModel {
   @Prop({ required: true, name: 'name' })
   name: string;
@@ -78,6 +89,9 @@ export class ProductSupplementModel {
   @Prop({ required: false, name: 'price', default: 0 })
   price: number;
 }
+
+export const ProductSupplementSchema =
+  SchemaFactory.createForClass(ProductSupplementModel);
 
 /** Fenêtre planifiée : prix catalogue + promo appliqués par le cron entre startAt et endAt. */
 export class ProductDiscountScheduleModel {
@@ -222,14 +236,14 @@ export class ProductModel extends BaseSchema {
   @Prop({
     default: [],
     name: 'complements',
-    type: [ProductComplementGroupModel],
+    type: [ProductComplementGroupSchema],
   })
   complements: ProductComplementGroupModel[];
 
   @Prop({
     default: [],
     name: 'supplements',
-    type: [ProductSupplementModel],
+    type: [ProductSupplementSchema],
   })
   supplements: ProductSupplementModel[];
 }

@@ -563,7 +563,11 @@ export class StoreController {
     files: { image?: Express.Multer.File[]; gallery?: Express.Multer.File[] },
     @Param('id') id: string,
     @Param('productId') productId: string,
-    @Body(MultipartToJsonPipe, ValidationPipe) args: PatchProductDto,
+    @Body(
+      MultipartToJsonPipe,
+      new ValidationPipe({ transform: true, whitelist: true }),
+    )
+    args: PatchProductDto,
   ) {
     return this._storeService.updateStoreProduct(
       id,

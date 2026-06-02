@@ -16,6 +16,19 @@ import {
   ValidateNested,
 } from 'class-validator';
 
+function toOptionalBoolean(value: unknown): boolean | undefined {
+  if (value === true || value === 'true' || value === 1 || value === '1') {
+    return true;
+  }
+  if (value === false || value === 'false' || value === 0 || value === '0') {
+    return false;
+  }
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  return Boolean(value);
+}
+
 export class ProductComplementOptionDto {
   @ApiProperty({ example: 'Moyen' })
   @IsNotEmpty()
@@ -35,7 +48,7 @@ export class ProductComplementOptionDto {
 
   @ApiPropertyOptional({ example: false, type: Boolean })
   @IsOptional()
-  @Transform(({ value }) => value === true || value === 'true')
+  @Transform(({ value }) => toOptionalBoolean(value))
   @IsBoolean()
   isDefault?: boolean;
 }
@@ -48,7 +61,7 @@ export class ProductComplementGroupDto {
 
   @ApiPropertyOptional({ example: false, type: Boolean })
   @IsOptional()
-  @Transform(({ value }) => value === true || value === 'true')
+  @Transform(({ value }) => toOptionalBoolean(value))
   @IsBoolean()
   firstOptionFree?: boolean;
 
@@ -57,13 +70,15 @@ export class ProductComplementGroupDto {
     description: 'Si true, plusieurs options peuvent être sélectionnées (cases à cocher).',
   })
   @IsOptional()
-  @Transform(({ value }) => value === true || value === 'true')
+  @Transform(({ value }) => toOptionalBoolean(value))
   @IsBoolean()
   multiChoice?: boolean;
 
   @ApiPropertyOptional({ type: [ProductComplementOptionDto] })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductComplementOptionDto)
   options?: ProductComplementOptionDto[];
 }
 
@@ -186,6 +201,8 @@ export class CreateProductDto {
   })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductComplementGroupDto)
   complements?: ProductComplementGroupDto[];
 
   @ApiPropertyOptional({
@@ -194,6 +211,8 @@ export class CreateProductDto {
   })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductSupplementDto)
   supplements?: ProductSupplementDto[];
 
   @ApiPropertyOptional({
@@ -292,6 +311,8 @@ export class PatchProductDto {
   })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductComplementGroupDto)
   complements?: ProductComplementGroupDto[];
 
   @ApiPropertyOptional({
@@ -300,6 +321,8 @@ export class PatchProductDto {
   })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductSupplementDto)
   supplements?: ProductSupplementDto[];
 
   @ApiPropertyOptional({

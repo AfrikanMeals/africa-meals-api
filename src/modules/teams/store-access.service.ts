@@ -329,8 +329,9 @@ export class StoreAccessService {
       .select('owner')
       .lean()
       .exec();
-    if (sto?.owner) {
-      ids.add(String(sto.owner));
+    const ownerId = this.userIdFromRef(sto?.owner);
+    if (ownerId) {
+      ids.add(ownerId);
     }
     const members = await this.storeMemberModel
       .find({ store: sid, status: 'ACTIVE' })
@@ -338,10 +339,29 @@ export class StoreAccessService {
       .lean()
       .exec();
     for (const m of members) {
-      if (m.user) {
-        ids.add(String(m.user));
+      const memberId = this.userIdFromRef(m.user);
+      if (memberId) {
+        ids.add(memberId);
       }
     }
     return [...ids].filter((id) => Types.ObjectId.isValid(id));
+  }
+
+  /** ObjectId utilisateur depuis une ref lean (ObjectId, string ou document peuplé). */
+  private userIdFromRef(raw: unknown): string | null {
+    if (raw == null) return null;
+    if (raw instanceof Types.ObjectId) {
+      return raw.toHexString();
+    }
+    if (typeof raw === 'object' && '_id' in (raw as object)) {
+      const id = (raw as { _id: unknown })._id;
+      if (id instanceof Types.ObjectId) {
+        return id.toHexString();
+      }
+      const s = String(id ?? '').trim();
+      return Types.ObjectId.isValid(s) ? s : null;
+    }
+    const s = String(raw).trim();
+    return Types.ObjectId.isValid(s) ? s : null;
   }
 }
