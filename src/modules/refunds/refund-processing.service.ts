@@ -14,6 +14,7 @@ import { OrdersService } from '@modules/orders/orders.service';
 import { StripeChargeFeeService } from '@modules/billing/stripe/stripe-charge-fee.service';
 import { effectiveStripeProcessingFeeCents } from '@modules/billing/stripe/stripe-processing-fee.util';
 import { StripeConnectTransferService } from '@modules/billing/stripe/stripe-connect-transfer.service';
+import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-email.service';
 import {
   PlatformFeesService,
   RefundAmountSplit,
@@ -186,6 +187,7 @@ export class RefundProcessingService {
     private readonly platformFeesService: PlatformFeesService,
     private readonly stripeFees: StripeChargeFeeService,
     private readonly stripeTransfers: StripeConnectTransferService,
+    private readonly vendorStatusEmail: VendorStatusEmailService,
   ) {}
 
   private normalizeCurrency(raw: unknown): string | undefined {
@@ -1213,6 +1215,26 @@ export class RefundProcessingService {
       this.logger.warn(
         `refund email: ${e instanceof Error ? e.message : String(e)}`,
       );
+    }
+
+    if (args.storeId?.trim()) {
+      void this.vendorStatusEmail
+        .notifyVendorRefundStatusChange({
+          storeId: args.storeId,
+          orderId: args.orderId,
+          storeName: args.storeName,
+          kind: args.kind,
+          amount: args.amount,
+          currency: args.currency,
+          note: args.note,
+        })
+        .catch((e) =>
+          this.logger.warn(
+            `vendor refund email: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          ),
+        );
     }
   }
 }

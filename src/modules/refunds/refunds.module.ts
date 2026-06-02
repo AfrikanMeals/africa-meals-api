@@ -1,4 +1,5 @@
 import { StripeConnectTransferModule } from '@modules/billing/stripe/stripe-connect-transfer.module';
+import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { OrdersModule } from '@modules/orders/orders.module';
@@ -28,6 +29,7 @@ import { StripeRefundService } from './stripe-refund.service';
     OrdersModule,
     PlatformFeesModule,
     StripeConnectTransferModule,
+    VendorStatusEmailModule,
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       { name: StoreModel.name, schema: StoreSchema },

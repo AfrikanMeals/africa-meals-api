@@ -1808,6 +1808,31 @@ export class StripeGroupedCheckoutService {
       return { received: true };
     }
 
+    if (
+      event.type === 'payout.paid' ||
+      event.type === 'payout.failed' ||
+      event.type === 'payout.canceled' ||
+      (event.type === 'payout.updated' &&
+        (event.data.object as { status?: string }).status === 'in_transit')
+    ) {
+      const connectAccountId = String(
+        (event as { account?: string | null }).account ?? '',
+      ).trim();
+      if (connectAccountId) {
+        await this.stripeConnect.handlePayoutUpdated(
+          connectAccountId,
+          event.data.object as {
+            id: string;
+            amount?: number | null;
+            currency?: string | null;
+            status?: string | null;
+            arrival_date?: number | null;
+          },
+        );
+      }
+      return { received: true };
+    }
+
     return { received: true };
   }
 

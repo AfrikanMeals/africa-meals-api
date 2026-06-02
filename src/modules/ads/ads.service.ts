@@ -33,6 +33,10 @@ import { StoreAccessService } from '@modules/teams/store-access.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import {
+  AdMarketingEntityStatus,
+  VendorStatusEmailService,
+} from '@modules/vendor-emails/vendor-status-email.service';
+import {
   BadRequestException,
   ForbiddenException,
   Inject,
@@ -440,12 +444,39 @@ export class AdsService implements OnModuleInit {
   @Inject(SupportedCountriesService)
   private readonly _supportedCountries: SupportedCountriesService;
 
+  @Inject(VendorStatusEmailService)
+  private readonly _vendorStatusEmail: VendorStatusEmailService;
+
   async onModuleInit() {
     await this.seedIfEmpty();
   }
 
   private invalidateListCache() {
     this._listCache = null;
+  }
+
+  private _queueCampaignStatusEmail(args: {
+    storeId: string;
+    campaignId: string;
+    campaignTitle: string;
+    previousStatus: AdMarketingEntityStatus;
+    newStatus: AdMarketingEntityStatus;
+  }): void {
+    void this._vendorStatusEmail
+      .notifyAdCampaignStatusChange(args)
+      .catch(() => undefined);
+  }
+
+  private _queueBannerStatusEmail(args: {
+    storeId: string;
+    bannerId: string;
+    bannerTitle: string;
+    previousStatus: AdMarketingEntityStatus;
+    newStatus: AdMarketingEntityStatus;
+  }): void {
+    void this._vendorStatusEmail
+      .notifyBannerStatusChange(args)
+      .catch(() => undefined);
   }
 
   /** Enqueue immédiat si add-on notifications actif et pub éligible. */
@@ -1395,6 +1426,21 @@ export class AdsService implements OnModuleInit {
     campaignId: Types.ObjectId,
     opts?: { forceEndsNow?: boolean; reason?: AdCampaignArchiveReasonEnum },
   ): Promise<void> {
+    const existing = await this._adCampaignModel
+      .findById(campaignId)
+      .select('store title isActive startsAt endsAt archivedAt archiveReason')
+      .lean()
+      .exec();
+    if (!existing || this._archivedAtFromLean(existing as Record<string, unknown>)) {
+      return;
+    }
+    const previousStatus = VendorStatusEmailService.resolveCampaignStatus({
+      isActive: Boolean(existing.isActive),
+      startsAt: existing.startsAt,
+      endsAt: existing.endsAt,
+      archivedAt: existing.archivedAt,
+      archiveReason: existing.archiveReason,
+    });
     const now = new Date();
     const update: Record<string, unknown> = {
       isActive: false,
@@ -1414,6 +1460,15 @@ export class AdsService implements OnModuleInit {
       )
       .exec();
     await this._finalizeCampaignBilling(campaignId);
+    const newStatus: AdMarketingEntityStatus =
+      opts?.reason === AdCampaignArchiveReasonEnum.EXPIRED ? 'expired' : 'ended';
+    this._queueCampaignStatusEmail({
+      storeId: String(existing.store),
+      campaignId: String(campaignId),
+      campaignTitle: String(existing.title ?? ''),
+      previousStatus,
+      newStatus,
+    });
   }
 
   private async _autoArchiveExpiredCampaigns(): Promise<void> {
@@ -1531,6 +1586,21 @@ export class AdsService implements OnModuleInit {
     adId: Types.ObjectId,
     opts?: { forceEndsNow?: boolean; reason?: AdArchiveReasonEnum },
   ): Promise<void> {
+    const existing = await this.adModel
+      .findById(adId)
+      .select('store title isActive validFrom validUntil archivedAt archiveReason')
+      .lean()
+      .exec();
+    if (!existing || this._archivedAtFromLean(existing as Record<string, unknown>)) {
+      return;
+    }
+    const previousStatus = VendorStatusEmailService.resolveBannerStatus({
+      isActive: Boolean(existing.isActive),
+      validFrom: existing.validFrom,
+      validUntil: existing.validUntil,
+      archivedAt: existing.archivedAt,
+      archiveReason: existing.archiveReason,
+    });
     const now = new Date();
     const update: Record<string, unknown> = {
       isActive: false,
@@ -1551,6 +1621,18 @@ export class AdsService implements OnModuleInit {
       .exec();
     this.invalidateListCache();
     await this._finalizeAdBilling(adId);
+    const storeId = existing.store != null ? String(existing.store) : '';
+    if (storeId) {
+      const newStatus: AdMarketingEntityStatus =
+        opts?.reason === AdArchiveReasonEnum.EXPIRED ? 'expired' : 'ended';
+      this._queueBannerStatusEmail({
+        storeId,
+        bannerId: String(adId),
+        bannerTitle: String(existing.title ?? ''),
+        previousStatus,
+        newStatus,
+      });
+    }
   }
 
   private async _autoArchiveExpiredAds(): Promise<void> {
@@ -1730,6 +1812,13 @@ export class AdsService implements OnModuleInit {
     }
     const existingStoreId = String(existing.store);
     await this.assertCanManageCampaignStore(user, existingStoreId);
+    const previousCampaignStatus = VendorStatusEmailService.resolveCampaignStatus({
+      isActive: Boolean(existing.isActive),
+      startsAt: existing.startsAt,
+      endsAt: existing.endsAt,
+      archivedAt: existing.archivedAt,
+      archiveReason: existing.archiveReason,
+    });
     if (dto.title != null) existing.title = dto.title.trim();
     if (dto.subtitle != null) existing.subtitle = dto.subtitle.trim();
     if (dto.description != null) existing.description = dto.description.trim();
@@ -1798,6 +1887,20 @@ export class AdsService implements OnModuleInit {
       );
     }
     await existing.save();
+    const newCampaignStatus = VendorStatusEmailService.resolveCampaignStatus({
+      isActive: Boolean(existing.isActive),
+      startsAt: existing.startsAt,
+      endsAt: existing.endsAt,
+      archivedAt: existing.archivedAt,
+      archiveReason: existing.archiveReason,
+    });
+    this._queueCampaignStatusEmail({
+      storeId: existingStoreId,
+      campaignId: String(existing._id),
+      campaignTitle: String(existing.title ?? ''),
+      previousStatus: previousCampaignStatus,
+      newStatus: newCampaignStatus,
+    });
     const row = await this._adCampaignModel
       .findById(existing._id)
       .populate('store', 'name profileImage')
@@ -3612,6 +3715,14 @@ export class AdsService implements OnModuleInit {
       await this.assertActiveBannerLimit(storeIdStr, user);
     }
 
+    const previousBannerStatus = VendorStatusEmailService.resolveBannerStatus({
+      isActive: Boolean(existing.isActive),
+      validFrom: existing.validFrom,
+      validUntil: existing.validUntil,
+      archivedAt: existing.archivedAt,
+      archiveReason: existing.archiveReason,
+    });
+
     if (dto.validFrom != null || dto.validUntil != null) {
       const nf =
         dto.validFrom != null
@@ -3724,6 +3835,23 @@ export class AdsService implements OnModuleInit {
 
     await existing.save();
     this.invalidateListCache();
+
+    if (storeIdStr) {
+      const newBannerStatus = VendorStatusEmailService.resolveBannerStatus({
+        isActive: Boolean(existing.isActive),
+        validFrom: existing.validFrom,
+        validUntil: existing.validUntil,
+        archivedAt: existing.archivedAt,
+        archiveReason: existing.archiveReason,
+      });
+      this._queueBannerStatusEmail({
+        storeId: storeIdStr,
+        bannerId: String(existing._id),
+        bannerTitle: String(existing.title ?? ''),
+        previousStatus: previousBannerStatus,
+        newStatus: newBannerStatus,
+      });
+    }
 
     const populated = await this.adModel
       .findById(oid)

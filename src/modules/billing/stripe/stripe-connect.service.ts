@@ -16,6 +16,7 @@ import {
   parsePhoneNumberFromString,
 } from 'libphonenumber-js';
 import { WsStripeConnectNotifyService } from '@modules/ws-notify/ws-stripe-connect-notify.service';
+import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-email.service';
 import Stripe = require('stripe');
 
 type StripeClient = InstanceType<typeof Stripe>;
@@ -536,6 +537,7 @@ export class StripeConnectService {
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
     private readonly wsStripeConnectNotify: WsStripeConnectNotifyService,
+    private readonly vendorStatusEmail: VendorStatusEmailService,
   ) {}
 
   private stripe(): StripeClient {
@@ -1028,6 +1030,45 @@ export class StripeConnectService {
     this.logger.log(
       `Stripe Connect account.updated synced for user ${uid} (status=${status.status})`,
     );
+  }
+
+  /** Webhook versement Connect (`payout.*`) — e-mail vendeur / livreur. */
+  async handlePayoutUpdated(
+    connectAccountId: string,
+    payout: {
+      id: string;
+      amount?: number | null;
+      currency?: string | null;
+      status?: string | null;
+      arrival_date?: number | null;
+    },
+  ): Promise<void> {
+    const accountId = connectAccountId.trim();
+    if (!accountId || !payout.id?.trim()) return;
+    const user = await this.userModel
+      .findOne({ stripeConnectAccountId: accountId })
+      .select('_id')
+      .lean()
+      .exec();
+    if (!user?._id) return;
+    const status = String(payout.status ?? '').trim().toLowerCase();
+    if (!status || status === 'pending') return;
+    void this.vendorStatusEmail
+      .notifyPayoutStatusChange({
+        userId: String(user._id),
+        payoutId: payout.id.trim(),
+        amount: (payout.amount ?? 0) / 100,
+        currency: String(payout.currency ?? 'cad').toUpperCase(),
+        status,
+        arrivalDate: payout.arrival_date
+          ? new Date(payout.arrival_date * 1000).toISOString()
+          : null,
+      })
+      .catch((e) =>
+        this.logger.warn(
+          `payout status email: ${e instanceof Error ? e.message : String(e)}`,
+        ),
+      );
   }
 
   async getConnectStatus(user: UserModel): Promise<StripeConnectStatus> {
@@ -1561,7 +1602,7 @@ export class StripeConnectService {
           availableCents / 100
         } ${currency}, fee=${payoutFeeCents / 100}, net=${payoutCents / 100}`,
       );
-      return {
+      const row: StripeConnectPayoutRow = {
         id: payout.id,
         amount: (payout.amount ?? payoutCents) / 100,
         currency: String(payout.currency ?? currency).toUpperCase(),
@@ -1573,6 +1614,23 @@ export class StripeConnectService {
         method: payout.method ?? 'standard',
         description: payout.description ?? null,
       };
+      void this.vendorStatusEmail
+        .notifyPayoutStatusChange({
+          userId: uid.toString(),
+          payoutId: row.id,
+          amount: row.amount,
+          currency: row.currency,
+          status: row.status,
+          arrivalDate: row.arrivalDate,
+        })
+        .catch((e) =>
+          this.logger.warn(
+            `payout pending email: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          ),
+        );
+      return row;
     } catch (e) {
       this.logger.error(
         `Stripe payout create failed: ${
