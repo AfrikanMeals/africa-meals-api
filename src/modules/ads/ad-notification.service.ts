@@ -31,8 +31,15 @@ import {
   buildEmptyNotificationBillingMetrics,
   computeNotificationBillingAmountCad,
   type AdNotificationBillingMetrics,
+  type AdNotificationChannelKey,
   type AdNotificationPricingRates,
 } from '@modules/ads/ad-notification-billing.util';
+import type {
+  AdNotificationStatsChannelRow,
+  AdNotificationStatsDayBucket,
+  AdNotificationStatsPayload,
+  AdNotificationStatsRecentRow,
+} from '@modules/ads/ad-notification-stats.types';
 import {
   buildAdNotificationAppDeepLink,
   buildAdNotificationWebOpenUrl,
@@ -1131,4 +1138,169 @@ export class AdNotificationService {
   emptyNotificationMetrics(): AdNotificationBillingMetrics {
     return buildEmptyNotificationBillingMetrics();
   }
+
+  async buildStatsForAd(
+    adId: Types.ObjectId,
+    addonEnabled: boolean,
+  ): Promise<AdNotificationStatsPayload> {
+    return this.buildStatsPayload({ ad: adId }, addonEnabled);
+  }
+
+  async buildStatsForCampaign(
+    campaignId: Types.ObjectId,
+    addonEnabled: boolean,
+  ): Promise<AdNotificationStatsPayload> {
+    return this.buildStatsPayload({ campaign: campaignId }, addonEnabled);
+  }
+
+  private static ratePercent(numerator: number, denominator: number): number {
+    if (denominator <= 0) return 0;
+    return Math.round((numerator / denominator) * 10000) / 100;
+  }
+
+  private async buildStatsPayload(
+    filter: { ad?: Types.ObjectId; campaign?: Types.ObjectId },
+    addonEnabled: boolean,
+  ): Promise<AdNotificationStatsPayload> {
+    const match: Record<string, unknown> = {};
+    if (filter.ad) match.ad = filter.ad;
+    if (filter.campaign) match.campaign = filter.campaign;
+
+    const since = new Date();
+    since.setUTCDate(since.getUTCDate() - 6);
+    since.setUTCHours(0, 0, 0, 0);
+
+    const [metrics, byDay, recentDocs] = await Promise.all([
+      this.aggregateMetrics(filter),
+      this.eventModel
+        .aggregate<{
+          _id: string;
+          deliveries: number;
+          interactions: number;
+          conversions: number;
+        }>([
+          { $match: { ...match, deliveredAt: { $gte: since } } },
+          {
+            $group: {
+              _id: {
+                $dateToString: {
+                  format: '%Y-%m-%d',
+                  date: '$deliveredAt',
+                  timezone: 'UTC',
+                },
+              },
+              deliveries: { $sum: 1 },
+              interactions: {
+                $sum: {
+                  $cond: [{ $ifNull: ['$interactionAt', false] }, 1, 0],
+                },
+              },
+              conversions: {
+                $sum: {
+                  $cond: [{ $ifNull: ['$conversionAt', false] }, 1, 0],
+                },
+              },
+            },
+          },
+          { $sort: { _id: 1 } },
+        ])
+        .exec(),
+      this.eventModel
+        .find(match)
+        .sort({ deliveredAt: -1 })
+        .limit(60)
+        .select('deliveryId channel deliveredAt interactionAt conversionAt')
+        .lean()
+        .exec(),
+    ]);
+
+    const channelKeys: AdNotificationChannelKey[] = [
+      'email',
+      'push',
+      'inApp',
+      'sms',
+      'whatsapp',
+    ];
+    const channels: AdNotificationStatsChannelRow[] = channelKeys.map(
+      (channel) => {
+        const slot = metrics.byChannel[channel];
+        const deliveries = slot?.deliveries ?? 0;
+        const interactions = slot?.interactions ?? 0;
+        const conversions = slot?.conversions ?? 0;
+        return {
+          channel,
+          deliveries,
+          interactions,
+          conversions,
+          interactionRatePercent: AdNotificationService.ratePercent(
+            interactions,
+            deliveries,
+          ),
+          conversionRatePercent: AdNotificationService.ratePercent(
+            conversions,
+            interactions,
+          ),
+        };
+      },
+    );
+
+    const last7Days: AdNotificationStatsDayBucket[] = byDay.map((d) => ({
+      date: d._id,
+      deliveries: d.deliveries,
+      interactions: d.interactions,
+      conversions: d.conversions,
+    }));
+
+    const recentDeliveries: AdNotificationStatsRecentRow[] = recentDocs.map(
+      (row) => {
+        const r = row as Record<string, unknown>;
+        const deliveredAt = r.deliveredAt as Date | string | undefined;
+        const interactionAt = r.interactionAt as Date | string | null | undefined;
+        const conversionAt = r.conversionAt as Date | string | null | undefined;
+        const toIso = (v: Date | string | null | undefined): string | null => {
+          if (v == null) return null;
+          return v instanceof Date ? v.toISOString() : String(v);
+        };
+        return {
+          deliveryId: String(r.deliveryId ?? ''),
+          channel: String(r.channel ?? 'email') as AdNotificationChannelKey,
+          deliveredAt:
+            deliveredAt instanceof Date
+              ? deliveredAt.toISOString()
+              : String(deliveredAt ?? new Date()),
+          interactionAt: toIso(interactionAt),
+          conversionAt: toIso(conversionAt),
+        };
+      },
+    );
+
+    const deliveriesTotal = metrics.totalDeliveries;
+    const interactionsTotal = metrics.totalInteractions;
+    const conversionsTotal = metrics.totalConversions;
+
+    return {
+      addonEnabled,
+      deliveriesTotal,
+      interactionsTotal,
+      conversionsTotal,
+      interactionRatePercent: AdNotificationService.ratePercent(
+        interactionsTotal,
+        deliveriesTotal,
+      ),
+      conversionRatePercent: AdNotificationService.ratePercent(
+        conversionsTotal,
+        interactionsTotal,
+      ),
+      channels,
+      last7Days,
+      recentDeliveries,
+    };
+  }
 }
+
+export type {
+  AdNotificationStatsChannelRow,
+  AdNotificationStatsDayBucket,
+  AdNotificationStatsPayload,
+  AdNotificationStatsRecentRow,
+} from '@modules/ads/ad-notification-stats.types';

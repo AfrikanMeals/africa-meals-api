@@ -20,6 +20,7 @@ import {
   NotificationAddonPayload,
 } from '@modules/ads/ad-notification.util';
 import { AdNotificationService } from '@modules/ads/ad-notification.service';
+import type { AdNotificationStatsPayload } from '@modules/ads/ad-notification-stats.types';
 import { TrackAdEventDto } from '@modules/ads/dto/ad-tracking.dto';
 import { TrackAdCampaignEventDto } from '@modules/ads/dto/ad-campaign-tracking.dto';
 import {
@@ -141,6 +142,7 @@ export type AdStatsPayload = {
   uniqueClientDevices: number;
   last7Days: AdStatsDayBucket[];
   recentEvents: AdStatsRecentEvent[];
+  notifications: AdNotificationStatsPayload;
 };
 
 export type AdCampaignStatsRecentEvent = {
@@ -187,6 +189,7 @@ export type AdCampaignStatsPayload = {
   last7Days: AdCampaignStatsDayBucket[];
   itemPerformance: AdCampaignItemPerformance[];
   recentEvents: AdCampaignStatsRecentEvent[];
+  notifications: AdNotificationStatsPayload;
 };
 
 export type AdCampaignItemRow = {
@@ -3892,6 +3895,15 @@ export class AdsService implements OnModuleInit {
     await this.assertUserCanManageAdById(user, adId);
     const oid = new Types.ObjectId(adId);
 
+    const adDoc = await this.adModel
+      .findById(oid)
+      .select('notificationAddon')
+      .lean()
+      .exec();
+    const notificationAddon = notificationAddonFromDoc(
+      adDoc as Record<string, unknown> | null,
+    );
+
     const since = new Date();
     since.setUTCDate(since.getUTCDate() - 6);
     since.setUTCHours(0, 0, 0, 0);
@@ -3906,6 +3918,7 @@ export class AdsService implements OnModuleInit {
       deviceIds,
       byDay,
       recentDocs,
+      notifications,
     ] = await Promise.all([
       this._adEventModel
         .countDocuments({ ad: oid, eventType: AdEventTypeEnum.IMPRESSION })
@@ -3992,6 +4005,7 @@ export class AdsService implements OnModuleInit {
         .populate('user', 'email fullName')
         .lean()
         .exec(),
+      this._adNotifications.buildStatsForAd(oid, notificationAddon.enabled),
     ]);
 
     const recentEvents: AdStatsRecentEvent[] = recentDocs.map((row) => {
@@ -4049,6 +4063,7 @@ export class AdsService implements OnModuleInit {
       uniqueClientDevices: deviceIds.filter(Boolean).length,
       last7Days,
       recentEvents,
+      notifications,
     };
   }
 
@@ -4068,12 +4083,16 @@ export class AdsService implements OnModuleInit {
       .populate('store', 'name')
       .populate('items.product', 'title')
       .populate('items.drink', 'name')
-      .select('store items')
+      .select('store items notificationAddon')
       .lean()
       .exec();
     if (!campaign) {
       throw new NotFoundException('campaign_not_found');
     }
+
+    const campaignNotificationAddon = notificationAddonFromDoc(
+      campaign as Record<string, unknown>,
+    );
 
     const since = new Date();
     since.setUTCDate(since.getUTCDate() - 6);
@@ -4091,6 +4110,7 @@ export class AdsService implements OnModuleInit {
       byDay,
       byItem,
       recentDocs,
+      notifications,
     ] = await Promise.all([
       this._adCampaignEventModel
         .countDocuments({
@@ -4269,6 +4289,10 @@ export class AdsService implements OnModuleInit {
         .populate('user', 'email fullName')
         .lean()
         .exec(),
+      this._adNotifications.buildStatsForCampaign(
+        oid,
+        campaignNotificationAddon.enabled,
+      ),
     ]);
 
     const itemTitles = new Map<string, string>();
@@ -4430,6 +4454,7 @@ export class AdsService implements OnModuleInit {
       last7Days,
       itemPerformance,
       recentEvents,
+      notifications,
     };
   }
 
