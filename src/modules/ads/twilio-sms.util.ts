@@ -56,6 +56,51 @@ export function phoneToSmsE164(
   return e164.length >= 8 ? e164 : null;
 }
 
+export type TwilioAccountProbeResult = {
+  ok: boolean;
+  friendlyName?: string;
+  accountStatus?: string;
+  error?: string;
+};
+
+/** Vérifie les credentials Twilio sans envoyer de SMS (GET Account). */
+export async function probeTwilioAccountApi(
+  config: TwilioSmsConfig,
+): Promise<TwilioAccountProbeResult> {
+  const url = `https://api.twilio.com/2010-04-01/Accounts/${config.accountSid}.json`;
+  const auth = Buffer.from(
+    `${config.accountSid}:${config.authToken}`,
+  ).toString('base64');
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Authorization: `Basic ${auth}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      friendly_name?: string;
+      status?: string;
+      message?: string;
+    };
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: data.message ?? `Twilio HTTP ${res.status}`,
+      };
+    }
+    return {
+      ok: true,
+      friendlyName: data.friendly_name,
+      accountStatus: data.status,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
 export async function sendTwilioSmsMessage(args: {
   config: TwilioSmsConfig;
   to: string;

@@ -67,6 +67,47 @@ type GraphErrorBody = {
   error?: { message?: string; code?: number; error_subcode?: number };
 };
 
+export type WhatsAppCloudProbeResult = {
+  ok: boolean;
+  displayPhoneNumber?: string;
+  verifiedName?: string;
+  error?: string;
+};
+
+/** Vérifie le token et le phone_number_id Meta sans envoyer de message. */
+export async function probeWhatsAppCloudApi(
+  config: WhatsAppCloudConfig,
+): Promise<WhatsAppCloudProbeResult> {
+  const url = `https://graph.facebook.com/${config.apiVersion}/${config.phoneNumberId}?fields=verified_name,display_phone_number,quality_rating`;
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${config.accessToken}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    const data = (await res.json().catch(() => ({}))) as GraphErrorBody & {
+      verified_name?: string;
+      display_phone_number?: string;
+    };
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: data.error?.message ?? `WhatsApp Graph HTTP ${res.status}`,
+      };
+    }
+    return {
+      ok: true,
+      verifiedName: data.verified_name,
+      displayPhoneNumber: data.display_phone_number,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
 async function postWhatsAppCloudMessage(
   config: WhatsAppCloudConfig,
   payload: Record<string, unknown>,

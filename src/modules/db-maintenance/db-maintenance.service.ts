@@ -31,6 +31,16 @@ import {
   channelHealthSummary,
   evaluateAdNotificationChannelHealth,
 } from '@modules/db-maintenance/ad-notification-channel-health.util';
+import {
+  isAdNotificationSmsEnabled,
+  probeTwilioAccountApi,
+  readTwilioSmsConfig,
+} from '@modules/ads/twilio-sms.util';
+import {
+  isAdNotificationWhatsAppEnabled,
+  probeWhatsAppCloudApi,
+  readWhatsAppCloudConfig,
+} from '@modules/ads/meta-whatsapp.util';
 import { DrinkModel } from '@schemas/drink.schema';
 import { InfraRuntimeSettingsModel } from '@schemas/infra-runtime-settings.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
@@ -235,6 +245,18 @@ export class DbMaintenanceService {
       label: 'Ad notification channels status',
       description:
         'Vérifie la disponibilité admin des canaux notifications Ads et la configuration runtime (SMTP, FCM, Twilio, Meta, Redis, cron).',
+    },
+    {
+      key: 'twilio-api-status',
+      label: 'Twilio API status',
+      description:
+        'Vérifie les credentials Twilio (GET Account) pour SMS notifications Ads.',
+    },
+    {
+      key: 'whatsapp-api-status',
+      label: 'WhatsApp API status',
+      description:
+        'Vérifie l’API WhatsApp Cloud Meta (phone_number_id + token) pour notifications Ads.',
     },
   ];
 
@@ -441,6 +463,10 @@ export class DbMaintenanceService {
         return this.runFirebaseServicesHealthCheck();
       case 'ad-notification-channels-status':
         return this.runAdNotificationChannelsHealthCheck();
+      case 'twilio-api-status':
+        return this.runTwilioApiHealthCheck();
+      case 'whatsapp-api-status':
+        return this.runWhatsAppApiHealthCheck();
       default:
         throw new BadRequestException(
           `unknown_system_health_check:${normalized}`,
@@ -2665,6 +2691,119 @@ export class DbMaintenanceService {
       startedAtMs,
       status,
       details,
+    });
+  }
+
+  private async runTwilioApiHealthCheck(): Promise<SystemHealthCheckResult> {
+    const startedAtMs = Date.now();
+    const key = 'twilio-api-status';
+    const label = 'Twilio API status';
+    const env = process.env;
+    const config = readTwilioSmsConfig(env);
+    const smsEnabled = isAdNotificationSmsEnabled(env);
+
+    if (!config) {
+      const partial =
+        Boolean(env.TWILIO_ACCOUNT_SID?.trim()) ||
+        Boolean(env.TWILIO_AUTH_TOKEN?.trim());
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: 'degraded',
+        details: partial
+          ? 'Twilio incomplet : TWILIO_ACCOUNT_SID + AUTH_TOKEN + (TWILIO_SERVICE_ID ou TWILIO_PHONE_NUMBER).'
+          : 'Twilio non configuré (optionnel si SMS Ads désactivé).',
+      });
+    }
+
+    const probe = await probeTwilioAccountApi(config);
+    if (!probe.ok) {
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: 'down',
+        details: `Twilio API KO: ${probe.error ?? 'unknown'}`,
+      });
+    }
+
+    const sender = config.messagingServiceSid
+      ? `MessagingService ${config.messagingServiceSid}`
+      : config.from
+        ? `From ${config.from}`
+        : 'sender OK';
+    const adsFlag = smsEnabled
+      ? 'AD_NOTIFICATION_SMS_ENABLED=true'
+      : 'AD_NOTIFICATION_SMS_ENABLED≠true (API OK, envoi ads désactivé)';
+
+    return this.normalizeHealthResult({
+      key,
+      label,
+      startedAtMs,
+      status: smsEnabled ? 'healthy' : 'degraded',
+      details: `Twilio API OK (${probe.friendlyName ?? probe.accountStatus ?? 'account'}) · ${sender} · ${adsFlag}`,
+    });
+  }
+
+  private async runWhatsAppApiHealthCheck(): Promise<SystemHealthCheckResult> {
+    const startedAtMs = Date.now();
+    const key = 'whatsapp-api-status';
+    const label = 'WhatsApp API status';
+    const env = process.env;
+    const config = readWhatsAppCloudConfig(env);
+    const waEnabled = isAdNotificationWhatsAppEnabled(env);
+
+    if (!config) {
+      const partial =
+        Boolean(
+          env.WHATSAPP_CLOUD_ACCESS_TOKEN?.trim() ||
+            env.META_WHATSAPP_ACCESS_TOKEN?.trim(),
+        ) ||
+        Boolean(
+          env.WHATSAPP_CLOUD_PHONE_NUMBER_ID?.trim() ||
+            env.META_WHATSAPP_PHONE_NUMBER_ID?.trim(),
+        );
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: 'degraded',
+        details: partial
+          ? 'WhatsApp Cloud incomplet : access token + phone_number_id requis.'
+          : 'WhatsApp Cloud non configuré (optionnel si canal désactivé).',
+      });
+    }
+
+    const probe = await probeWhatsAppCloudApi(config);
+    if (!probe.ok) {
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: 'down',
+        details: `WhatsApp Graph API KO: ${probe.error ?? 'unknown'}`,
+      });
+    }
+
+    const line = [
+      probe.verifiedName,
+      probe.displayPhoneNumber,
+      `phone_number_id=${config.phoneNumberId}`,
+      `api=${config.apiVersion}`,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    const adsFlag = waEnabled
+      ? 'AD_NOTIFICATION_WHATSAPP_ENABLED=true'
+      : 'AD_NOTIFICATION_WHATSAPP_ENABLED≠true (API OK, envoi ads désactivé)';
+
+    return this.normalizeHealthResult({
+      key,
+      label,
+      startedAtMs,
+      status: waEnabled ? 'healthy' : 'degraded',
+      details: `WhatsApp Cloud OK (${line}) · ${adsFlag}`,
     });
   }
 

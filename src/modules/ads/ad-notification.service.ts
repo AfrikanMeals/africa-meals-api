@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   forwardRef,
   Inject,
   Injectable,
@@ -23,6 +24,7 @@ import {
   type AdNotificationChannelAvailability,
 } from '@modules/ads/ad-notification-channel-availability.util';
 import {
+  normalizeNotificationAddonInput,
   notificationAddonFromDoc,
   type NotificationAddonPayload,
 } from '@modules/ads/ad-notification.util';
@@ -46,7 +48,12 @@ import {
 } from '@modules/ads/ad-notification-link.util';
 import { trySendAdSms } from '@modules/ads/twilio-sms.util';
 import { trySendAdWhatsApp } from '@modules/ads/meta-whatsapp.util';
+import {
+  AdNotificationTestSourceEnum,
+  SendAdNotificationTestDto,
+} from '@modules/ads/dto/send-ad-notification-test.dto';
 import { TrackAdNotificationEventDto, TrackAdNotificationEventKindEnum } from '@modules/ads/dto/ad-notification-tracking.dto';
+import { StoreAccessService } from '@modules/teams/store-access.service';
 import { AdModel } from '@schemas/ad.schema';
 import { AdCampaignModel } from '@schemas/ad-campaign.schema';
 import {
@@ -106,7 +113,12 @@ export class AdNotificationService {
     private readonly mailer: MailerService,
     @Inject(forwardRef(() => AdNotificationDispatchQueueService))
     private readonly dispatchQueue: AdNotificationDispatchQueueService,
+    private readonly storeAccess: StoreAccessService,
   ) {}
+
+  private async assertAdminSettings(user: UserModel): Promise<void> {
+    await this.storeAccess.assertAdminPermission(user, 'admin.settings');
+  }
 
   private recipientBatchSize(): number {
     return parsePositiveInt(
@@ -1295,6 +1307,310 @@ export class AdNotificationService {
       last7Days,
       recentDeliveries,
     };
+  }
+
+  /** Contexte admin — canaux actifs + entités pub avec add-on notifications. */
+  async getAdminTestContext(user: UserModel): Promise<{
+    availableChannels: AdNotificationChannelAvailability;
+    banners: Array<{
+      id: string;
+      storeId: string;
+      storeName: string;
+      title: string;
+      channels: NotificationAddonPayload['channels'];
+    }>;
+    campaigns: Array<{
+      id: string;
+      storeId: string;
+      storeName: string;
+      title: string;
+      channels: NotificationAddonPayload['channels'];
+    }>;
+  }> {
+    await this.assertAdminSettings(user);
+    const available = await this.loadAvailableChannels();
+    const [bannerDocs, campaignDocs] = await Promise.all([
+      this.adModel
+        .find({ 'notificationAddon.enabled': true })
+        .select('_id store title notificationAddon')
+        .sort({ updatedAt: -1 })
+        .limit(40)
+        .lean()
+        .exec(),
+      this.campaignModel
+        .find({ 'notificationAddon.enabled': true })
+        .select('_id store title notificationAddon')
+        .sort({ updatedAt: -1 })
+        .limit(40)
+        .lean()
+        .exec(),
+    ]);
+    const storeIds = [
+      ...new Set(
+        [...bannerDocs, ...campaignDocs]
+          .map((d) => String((d as { store?: unknown }).store ?? ''))
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ];
+    const stores = storeIds.length
+      ? await this.storeModel
+          .find({ _id: { $in: storeIds } })
+          .select('name')
+          .lean()
+          .exec()
+      : [];
+    const storeNames = new Map(
+      stores.map((s) => [
+        String((s as { _id?: unknown })._id),
+        String((s as { name?: string }).name ?? 'Boutique'),
+      ]),
+    );
+    const mapEntity = (doc: Record<string, unknown>) => {
+      const addon = notificationAddonFromDoc(
+        doc.notificationAddon as Record<string, unknown>,
+      );
+      const storeId = String(doc.store ?? '');
+      return {
+        id: String(doc._id ?? ''),
+        storeId,
+        storeName: storeNames.get(storeId) ?? 'Boutique',
+        title: String(doc.title ?? 'Offre'),
+        channels: addon.channels,
+      };
+    };
+    return {
+      availableChannels: available,
+      banners: bannerDocs.map((d) =>
+        mapEntity(d as Record<string, unknown>),
+      ),
+      campaigns: campaignDocs.map((d) =>
+        mapEntity(d as Record<string, unknown>),
+      ),
+    };
+  }
+
+  /** Envoi test admin vers un seul utilisateur (sans marquer la pub comme dispatchée). */
+  async sendAdminTest(
+    user: UserModel,
+    dto: SendAdNotificationTestDto,
+  ): Promise<{
+    ok: boolean;
+    userId: string;
+    email: string;
+    phone: string;
+    fullName: string;
+    entityType: AdNotificationEntityTypeEnum;
+    entityId: string;
+    storeId: string;
+    storeName: string;
+    title: string;
+    body: string;
+    channelsRequested: string[];
+    message: string;
+  }> {
+    await this.assertAdminSettings(user);
+    const targetUserId = dto.targetUserId?.trim();
+    const targetEmail = dto.targetEmail?.trim().toLowerCase();
+    if (!targetUserId && !targetEmail) {
+      throw new BadRequestException('target_user_required');
+    }
+    if (targetUserId && targetEmail) {
+      throw new BadRequestException('target_user_ambiguous');
+    }
+
+    const recipientUser = targetUserId
+      ? await this.userModel.findById(targetUserId).exec()
+      : await this.userModel
+          .findOne({ email: targetEmail })
+          .exec();
+    if (!recipientUser) {
+      throw new NotFoundException('user_not_found');
+    }
+
+    const available = await this.loadAvailableChannels();
+    const addon = applyChannelAvailabilityToAddon(
+      normalizeNotificationAddonInput(
+        { enabled: true, channels: dto.channels },
+        available,
+      ),
+      available,
+    );
+    if (!addon.enabled) {
+      throw new BadRequestException('no_notification_channel_selected');
+    }
+
+    const channelsRequested = (
+      Object.entries(addon.channels) as Array<[string, boolean]>
+    )
+      .filter(([, on]) => on)
+      .map(([k]) => k);
+
+    const payload = await this.resolveAdminTestPayload(dto);
+    const recipient = this.userToRecipientRow(recipientUser);
+
+    await this.sendRecipientBatch({
+      entityType: payload.entityType,
+      entityId: payload.entityId,
+      adId: payload.adId,
+      campaignId: payload.campaignId,
+      storeId: payload.storeId,
+      storeName: payload.storeName,
+      title: payload.title,
+      body: payload.body,
+      addon,
+      recipients: [recipient],
+    });
+
+    this.logger.log(
+      `[ad-notification-test] admin=${String(user._id)} → user=${recipient.userId} channels=${channelsRequested.join(',')} entity=${payload.entityType}/${payload.entityId}`,
+    );
+
+    return {
+      ok: true,
+      userId: recipient.userId,
+      email: recipient.email,
+      phone: recipient.phone,
+      fullName: recipient.fullName,
+      entityType: payload.entityType,
+      entityId: payload.entityId,
+      storeId: payload.storeId.toString(),
+      storeName: payload.storeName,
+      title: payload.title,
+      body: payload.body,
+      channelsRequested,
+      message:
+        'Envoi terminé. Vérifiez la boîte mail, l’app (in-app / push) ou les logs API.',
+    };
+  }
+
+  private userToRecipientRow(user: UserModel): RecipientRow {
+    const raw = user as unknown as Record<string, unknown>;
+    return {
+      userId: String(user._id),
+      email: String(raw.email ?? '')
+        .trim()
+        .toLowerCase(),
+      phone: String(raw.phoneNumber ?? raw.phone ?? '').trim(),
+      fullName: String(raw.fullName ?? '').trim() || 'Client',
+    };
+  }
+
+  private async resolveAdminTestPayload(
+    dto: SendAdNotificationTestDto,
+  ): Promise<{
+    entityType: AdNotificationEntityTypeEnum;
+    entityId: string;
+    adId?: Types.ObjectId;
+    campaignId?: Types.ObjectId;
+    storeId: Types.ObjectId;
+    storeName: string;
+    title: string;
+    body: string;
+  }> {
+    if (dto.source === AdNotificationTestSourceEnum.SANDBOX) {
+      const storeIdRaw = dto.storeId?.trim();
+      if (!storeIdRaw || !Types.ObjectId.isValid(storeIdRaw)) {
+        throw new BadRequestException('store_id_required');
+      }
+      const store = await this.storeModel
+        .findById(storeIdRaw)
+        .select('name')
+        .lean()
+        .exec();
+      if (!store) {
+        throw new NotFoundException('store_not_found');
+      }
+      const storeName = String((store as { name?: string }).name ?? 'Boutique');
+      const title =
+        dto.title?.trim() || `[Test] Offre — ${storeName}`;
+      const body =
+        dto.body?.trim() ||
+        'Notification de test envoyée depuis l’admin (Integrity Check).';
+      const entityId = `sandbox-${randomUUID()}`;
+      return {
+        entityType: AdNotificationEntityTypeEnum.BANNER,
+        entityId,
+        storeId: new Types.ObjectId(storeIdRaw),
+        storeName,
+        title: title.slice(0, 120),
+        body: body.slice(0, 500),
+      };
+    }
+
+    if (dto.source === AdNotificationTestSourceEnum.BANNER) {
+      const id = dto.bannerId?.trim();
+      if (!id || !Types.ObjectId.isValid(id)) {
+        throw new BadRequestException('banner_id_required');
+      }
+      const doc = await this.adModel
+        .findById(id)
+        .select('_id store title subtitle notificationAddon')
+        .lean()
+        .exec();
+      if (!doc) {
+        throw new NotFoundException('banner_not_found');
+      }
+      const store = await this.storeModel
+        .findById(doc.store)
+        .select('name')
+        .lean()
+        .exec();
+      const storeName = String((store as { name?: string })?.name ?? 'Boutique');
+      const subtitle = String(doc.subtitle ?? '').trim();
+      return {
+        entityType: AdNotificationEntityTypeEnum.BANNER,
+        entityId: String(doc._id),
+        adId: doc._id as Types.ObjectId,
+        storeId: new Types.ObjectId(String(doc.store)),
+        storeName,
+        title: (dto.title?.trim() || String(doc.title ?? 'Offre')).slice(0, 120),
+        body: (
+          dto.body?.trim() ||
+          subtitle ||
+          `${storeName} a une nouvelle offre pour vous.`
+        ).slice(0, 500),
+      };
+    }
+
+    if (dto.source === AdNotificationTestSourceEnum.CAMPAIGN) {
+      const id = dto.campaignId?.trim();
+      if (!id || !Types.ObjectId.isValid(id)) {
+        throw new BadRequestException('campaign_id_required');
+      }
+      const doc = await this.campaignModel
+        .findById(id)
+        .select('_id store title subtitle notificationAddon')
+        .lean()
+        .exec();
+      if (!doc) {
+        throw new NotFoundException('campaign_not_found');
+      }
+      const store = await this.storeModel
+        .findById(doc.store)
+        .select('name')
+        .lean()
+        .exec();
+      const storeName = String((store as { name?: string })?.name ?? 'Boutique');
+      const subtitle = String(doc.subtitle ?? '').trim();
+      return {
+        entityType: AdNotificationEntityTypeEnum.CAMPAIGN,
+        entityId: String(doc._id),
+        campaignId: doc._id as Types.ObjectId,
+        storeId: new Types.ObjectId(String(doc.store)),
+        storeName,
+        title: (dto.title?.trim() || String(doc.title ?? 'Campagne')).slice(
+          0,
+          120,
+        ),
+        body: (
+          dto.body?.trim() ||
+          subtitle ||
+          `${storeName} : découvrez notre campagne.`
+        ).slice(0, 500),
+      };
+    }
+
+    throw new BadRequestException('invalid_test_source');
   }
 }
 
