@@ -107,6 +107,11 @@ export class WsNotifyDispatchQueueService
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.warn(`ws notify queue job failed id=${id}: ${msg}`);
     });
+    const onRedisError = (err: Error) => {
+      this.logger.warn(`BullMQ Redis error: ${err.message}`);
+    };
+    this.queue.on('error', onRedisError);
+    this.worker.on('error', onRedisError);
     this.queueEnabled = true;
     this.logger.log(`BullMQ queue enabled: ${queueName}`);
   }

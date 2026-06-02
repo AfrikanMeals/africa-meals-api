@@ -93,6 +93,12 @@ export class AdNotificationDispatchQueueService
     };
     this.entityWorker.on('failed', onFailed('entity'));
     this.batchWorker.on('failed', onFailed('batch'));
+    const onRedisError = (err: Error) => {
+      this.logger.warn(`BullMQ Redis error: ${err.message}`);
+    };
+    this.queue.on('error', onRedisError);
+    this.entityWorker.on('error', onRedisError);
+    this.batchWorker.on('error', onRedisError);
 
     this.enabled = true;
     this.logger.log(

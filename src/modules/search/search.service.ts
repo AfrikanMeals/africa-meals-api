@@ -1395,6 +1395,7 @@ export class SearchService {
     page: number,
     take: number,
     user?: UserModel,
+    query?: string,
   ): Promise<{ items: Record<string, unknown>[]; total: number }> {
     if (!Types.ObjectId.isValid(storeId)) {
       return { items: [], total: 0 };
@@ -1407,6 +1408,22 @@ export class SearchService {
     const safeTake = Math.min(120, Math.max(1, Math.floor(take)));
     const safePage = Math.max(1, Math.floor(page));
     const skip = (safePage - 1) * safeTake;
+    const q = query?.trim();
+    const textClause = q
+      ? {
+          $or: [
+            { title: { $regex: this._escapeRegex(q), $options: 'i' } },
+            { bio: { $regex: this._escapeRegex(q), $options: 'i' } },
+            { about: { $regex: this._escapeRegex(q), $options: 'i' } },
+          ],
+        }
+      : {
+          $or: [
+            { title: { $regex: '', $options: 'i' } },
+            { bio: { $regex: '', $options: 'i' } },
+            { about: { $regex: '', $options: 'i' } },
+          ],
+        };
 
     const pipeline: PipelineStage[] = [
       {
@@ -1434,13 +1451,7 @@ export class SearchService {
             { 'store.acceptsOrders': true },
             { 'store._id': storeOid },
             { 'store.status': StoreStatusEnum.ACTIVE },
-            {
-              $or: [
-                { title: { $regex: '', $options: 'i' } },
-                { bio: { $regex: '', $options: 'i' } },
-                { about: { $regex: '', $options: 'i' } },
-              ],
-            },
+            textClause,
           ],
         },
       },

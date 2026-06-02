@@ -30,6 +30,7 @@ export class SearchController {
     @Query('storeId') storeId: string,
     @Query('page') pageRaw?: string,
     @Query('take') takeRaw?: string,
+    @Query('q') q?: string,
   ) {
     const sid = (storeId ?? '').trim();
     const page = Math.max(1, parseInt(pageRaw ?? '1', 10) || 1);
@@ -43,6 +44,7 @@ export class SearchController {
         page,
         take,
         req.user as UserModel,
+        q,
       );
     return {
       products: {

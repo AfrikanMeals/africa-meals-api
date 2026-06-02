@@ -196,6 +196,15 @@ function redactRedisUrl(url: string): string {
             url: redisUrl,
             ttl,
           });
+          const redisClient = (
+            store as { client?: { on?(event: string, cb: (err: Error) => void): void } }
+          ).client;
+          redisClient?.on?.('error', (err: Error) => {
+            Logger.warn(
+              `Redis cache client error: ${err.message}`,
+              'CacheModule',
+            );
+          });
           Logger.log(
             `Cache store: redis (${redactRedisUrl(redisUrl)})`,
             'CacheModule',
