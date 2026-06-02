@@ -9,6 +9,7 @@ import { AdCampaignModel } from '@schemas/ad-campaign.schema';
 import { AdModel } from '@schemas/ad.schema';
 import { OrderModel } from '@schemas/order.schema';
 import { StoreModel } from '@schemas/store.schema';
+import { AdsTargetingProfileModel } from '@schemas/ads-targeting-profile.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Types } from 'mongoose';
 import { MailerService } from '@modules/mailer/mailer.service';
@@ -137,6 +138,16 @@ describe('Ad notification dispatch (integration)', () => {
         },
         { provide: getModelToken(OrderModel.name), useValue: orderModel },
         { provide: getModelToken(UserModel.name), useValue: userModel },
+        {
+          provide: getModelToken(AdsTargetingProfileModel.name),
+          useValue: {
+            findOne: jest.fn().mockReturnValue({
+              select: () => ({
+                lean: () => ({ exec: async () => null }),
+              }),
+            }),
+          },
+        },
         { provide: getModelToken(StoreModel.name), useValue: storeModel },
         {
           provide: getModelToken(AdNotificationPricingSettingsModel.name),

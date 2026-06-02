@@ -1,3 +1,4 @@
+import { categoryKeyFromTitle } from '@modules/ads/ad-notification-item-targeting.util';
 import {
   emailDivider,
   emailMutedParagraph,
@@ -18,6 +19,8 @@ export type AdNotificationItemPayload = {
   title: string;
   imageUrl: string | null;
   priceCad: number;
+  /** Slug catégorie (ciblage intelligent). */
+  categoryKey?: string | null;
 };
 
 export function mapPopulatedCampaignItems(
@@ -35,6 +38,8 @@ export function mapPopulatedCampaignItems(
       const product = (item.product ?? {}) as Record<string, unknown>;
       const productId = product._id ? String(product._id) : null;
       if (!productId) continue;
+      const cat = (product.category ?? {}) as Record<string, unknown>;
+      const categoryTitle = String(cat.title ?? '').trim();
       out.push({
         itemType: 'PRODUCT',
         productId,
@@ -44,6 +49,9 @@ export function mapPopulatedCampaignItems(
           ? String(product.profileImage).trim()
           : null,
         priceCad: Number(product.price ?? 0),
+        categoryKey: categoryTitle
+          ? categoryKeyFromTitle(categoryTitle)
+          : 'general',
       });
     } else if (itemType === CAMPAIGN_ITEM_DRINK) {
       const drink = (item.drink ?? {}) as Record<string, unknown>;
@@ -56,6 +64,7 @@ export function mapPopulatedCampaignItems(
         title: String(drink.name ?? 'Boisson').trim() || 'Boisson',
         imageUrl: drink.imageUrl ? String(drink.imageUrl).trim() : null,
         priceCad: Number(drink.priceCad ?? 0),
+        categoryKey: 'drinks',
       });
     }
     if (out.length >= MAX_AD_NOTIFICATION_ITEMS) break;
@@ -110,6 +119,7 @@ export function campaignItemsToFcmValue(
     n: it.title.slice(0, 80),
     img: it.imageUrl?.slice(0, 512) ?? '',
     p: Math.round(it.priceCad * 100) / 100,
+    c: it.categoryKey?.slice(0, 40) ?? '',
   }));
   return JSON.stringify(compact);
 }

@@ -69,6 +69,24 @@ export class AdNotificationEventModel {
 
   @Prop({ required: false, default: null, name: 'conversion_at' })
   conversionAt?: Date | null;
+
+  /** Article ciblé pour ce destinataire (deep link produit/boisson). */
+  @Prop({ required: false, name: 'target_item_type' })
+  targetItemType?: string | null;
+
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    required: false,
+    name: 'target_product_id',
+  })
+  targetProductId?: MongooseSchema.Types.ObjectId | null;
+
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    required: false,
+    name: 'target_drink_id',
+  })
+  targetDrinkId?: MongooseSchema.Types.ObjectId | null;
 }
 
 export const AdNotificationEventSchema = SchemaFactory.createForClass(

@@ -34,6 +34,10 @@ import { AdModel, AdSchema } from '@schemas/ad.schema';
 import { DrinkModel, DrinkSchema } from '@schemas/drink.schema';
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
+import {
+  AdsTargetingProfileModel,
+  AdsTargetingProfileSchema,
+} from '@schemas/ads-targeting-profile.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import { AdNotificationAdminController } from './ad-notification-admin.controller';
 import { AdNotificationController } from './ad-notification.controller';
@@ -80,6 +84,10 @@ import { AdsService } from './ads.service';
       { name: ProductModel.name, schema: ProductSchema },
       { name: DrinkModel.name, schema: DrinkSchema },
       { name: UserModel.name, schema: UserSchema },
+      {
+        name: AdsTargetingProfileModel.name,
+        schema: AdsTargetingProfileSchema,
+      },
     ]),
   ],
   exports: [AdsService],

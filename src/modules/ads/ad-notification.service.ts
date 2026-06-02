@@ -43,6 +43,11 @@ import type {
   AdNotificationStatsRecentRow,
 } from '@modules/ads/ad-notification-stats.types';
 import {
+  pickTargetedCampaignItem,
+  targetItemToLinkParams,
+  type AdNotificationTargetLinkParams,
+} from '@modules/ads/ad-notification-item-targeting.util';
+import {
   AD_NOTIFICATION_ITEMS_FCM_KEY,
   buildAdNotificationEmailBodyHtml,
   buildAdNotificationEmailText,
@@ -51,6 +56,7 @@ import {
   mapPopulatedCampaignItems,
   type AdNotificationItemPayload,
 } from '@modules/ads/ad-notification-items.util';
+import { AdsTargetingProfileModel } from '@schemas/ads-targeting-profile.schema';
 import {
   buildAdNotificationAppDeepLink,
   buildAdNotificationWebOpenUrl,
@@ -115,6 +121,8 @@ export class AdNotificationService {
     private readonly eventModel: Model<AdNotificationEventModel>,
     @InjectModel(OrderModel.name) private readonly orderModel: Model<OrderModel>,
     @InjectModel(UserModel.name) private readonly userModel: Model<UserModel>,
+    @InjectModel(AdsTargetingProfileModel.name)
+    private readonly targetingProfileModel: Model<AdsTargetingProfileModel>,
     @InjectModel(StoreModel.name) private readonly storeModel: Model<StoreModel>,
     @InjectModel(AdNotificationPricingSettingsModel.name)
     private readonly notificationPricingModel: Model<AdNotificationPricingSettingsModel>,
@@ -196,12 +204,14 @@ export class AdNotificationService {
   }
 
   /** Lien de clic tracké (e-mail / SMS) — préfère l’API publique si configurée. */
-  private trackedClickUrl(params: {
-    deliveryId: string;
-    entityType: AdNotificationEntityTypeEnum;
-    entityId: string;
-    storeId: string;
-  }): string {
+  private trackedClickUrl(
+    params: {
+      deliveryId: string;
+      entityType: AdNotificationEntityTypeEnum;
+      entityId: string;
+      storeId: string;
+    } & AdNotificationTargetLinkParams,
+  ): string {
     const apiBase = this.config.get<string>('API_PUBLIC_BASE_URL')?.trim();
     if (apiBase) {
       return `${apiBase.replace(/\/+$/, '')}/ads/notifications/click/${encodeURIComponent(params.deliveryId)}`;
@@ -213,6 +223,108 @@ export class AdNotificationService {
       storeId: params.storeId,
       webBaseUrl: this.webBaseUrl(),
       appScheme: this.appScheme(),
+      itemType: params.itemType,
+      productId: params.productId,
+      drinkId: params.drinkId,
+    });
+  }
+
+  private targetLinkFromEvent(
+    doc: AdNotificationEventModel,
+  ): AdNotificationTargetLinkParams {
+    if (doc.targetProductId) {
+      return {
+        itemType: 'PRODUCT',
+        productId: String(doc.targetProductId),
+      };
+    }
+    if (doc.targetDrinkId) {
+      return {
+        itemType: 'DRINK',
+        drinkId: String(doc.targetDrinkId),
+      };
+    }
+    return {};
+  }
+
+  private async loadCampaignTargetingRules(
+    campaignId: Types.ObjectId,
+  ): Promise<Record<string, unknown>> {
+    const doc = await this.campaignModel
+      .findById(campaignId)
+      .select('targetingRules')
+      .lean()
+      .exec();
+    return ((doc as { targetingRules?: unknown } | null)?.targetingRules ??
+      {}) as Record<string, unknown>;
+  }
+
+  private async loadUserStorePurchaseEntityIds(
+    userId: string,
+    storeId: Types.ObjectId,
+  ): Promise<{ productIds: Set<string>; drinkIds: Set<string> }> {
+    const since = new Date(
+      Date.now() - AUDIENCE_LOOKBACK_DAYS * 86_400_000,
+    );
+    const orders = await this.orderModel
+      .find({
+        user: new Types.ObjectId(userId),
+        store: storeId,
+        status: { $in: AUDIENCE_ORDER_STATUSES },
+        createdAt: { $gte: since },
+      })
+      .select('items')
+      .limit(40)
+      .lean()
+      .exec();
+    const productIds = new Set<string>();
+    const drinkIds = new Set<string>();
+    for (const order of orders) {
+      const items = Array.isArray(
+        (order as { items?: unknown }).items,
+      )
+        ? ((order as { items: unknown[] }).items as Record<string, unknown>[])
+        : [];
+      for (const line of items) {
+        const entityId = String(line.entityId ?? '').trim();
+        if (!entityId) continue;
+        const typ = String(line.itemType ?? '').toLowerCase();
+        if (typ.includes('drink')) drinkIds.add(entityId);
+        else productIds.add(entityId);
+      }
+    }
+    return { productIds, drinkIds };
+  }
+
+  private async resolveTargetedCampaignItemForRecipient(args: {
+    userId: string;
+    storeId: Types.ObjectId;
+    campaignId?: Types.ObjectId;
+    campaignItems: AdNotificationItemPayload[];
+  }): Promise<AdNotificationItemPayload | null> {
+    if (!args.campaignItems.length) return null;
+    const [profile, targetingRules, purchases] = await Promise.all([
+      this.targetingProfileModel
+        .findOne({ userKey: args.userId })
+        .select('interestScores topCategories conversionProbability')
+        .lean()
+        .exec(),
+      args.campaignId
+        ? this.loadCampaignTargetingRules(args.campaignId)
+        : Promise.resolve({} as Record<string, unknown>),
+      this.loadUserStorePurchaseEntityIds(args.userId, args.storeId),
+    ]);
+    return pickTargetedCampaignItem({
+      items: args.campaignItems,
+      userId: args.userId,
+      profile: profile as {
+        interestScores?: Record<string, number>;
+        topCategories?: string[];
+        conversionProbability?: number;
+      } | null,
+      targetingRules,
+      purchasedProductIds: purchases.productIds,
+      purchasedDrinkIds: purchases.drinkIds,
     });
   }
 
@@ -591,7 +703,11 @@ export class AdNotificationService {
       const doc = await this.campaignModel
         .findById(entityId)
         .select('items')
-        .populate('items.product', 'title profileImage price')
+        .populate({
+          path: 'items.product',
+          select: 'title profileImage price',
+          populate: { path: 'category', select: 'title' },
+        })
         .populate('items.drink', 'name imageUrl priceCad')
         .lean()
         .exec();
@@ -716,22 +832,39 @@ export class AdNotificationService {
   }): Promise<void> {
     const { addon, recipient, linkBase } = args;
 
+    const targetItem = await this.resolveTargetedCampaignItemForRecipient({
+      userId: recipient.userId,
+      storeId: args.storeId,
+      campaignId: args.campaignId,
+      campaignItems: args.campaignItems,
+    });
+    const targetLink = targetItemToLinkParams(targetItem);
+    const channelArgs = { ...args, targetItem, targetLink };
+
     const tasks: Promise<void>[] = [];
 
     if (addon.channels.email && recipient.email) {
       tasks.push(
-        this.sendEmailChannel({ ...args, linkBase, deliveryId: randomUUID() }),
+        this.sendEmailChannel({
+          ...channelArgs,
+          linkBase,
+          deliveryId: randomUUID(),
+        }),
       );
     }
     if (addon.channels.sms && recipient.phone) {
       tasks.push(
-        this.sendSmsChannel({ ...args, linkBase, deliveryId: randomUUID() }),
+        this.sendSmsChannel({
+          ...channelArgs,
+          linkBase,
+          deliveryId: randomUUID(),
+        }),
       );
     }
     if (addon.channels.inApp || addon.channels.push) {
       tasks.push(
         this.sendFcmMobileChannels({
-          ...args,
+          ...channelArgs,
           linkBase,
           inApp: addon.channels.inApp,
           push: addon.channels.push,
@@ -740,7 +873,11 @@ export class AdNotificationService {
     }
     if (addon.channels.whatsapp && recipient.phone) {
       tasks.push(
-        this.sendWhatsappChannel({ ...args, linkBase, deliveryId: randomUUID() }),
+        this.sendWhatsappChannel({
+          ...channelArgs,
+          linkBase,
+          deliveryId: randomUUID(),
+        }),
       );
     }
 
@@ -755,8 +892,31 @@ export class AdNotificationService {
     storeId: Types.ObjectId;
     userId: string;
     channel: AdNotificationChannelEnum;
+    targetLink?: AdNotificationTargetLinkParams;
   }): Promise<void> {
     await this.recordDeliveriesBulk([args]);
+  }
+
+  private targetFieldsForDelivery(targetLink: AdNotificationTargetLinkParams): {
+    targetItemType?: string | null;
+    targetProductId?: Types.ObjectId | null;
+    targetDrinkId?: Types.ObjectId | null;
+  } {
+    if (targetLink.productId && Types.ObjectId.isValid(targetLink.productId)) {
+      return {
+        targetItemType: 'PRODUCT',
+        targetProductId: new Types.ObjectId(targetLink.productId),
+        targetDrinkId: null,
+      };
+    }
+    if (targetLink.drinkId && Types.ObjectId.isValid(targetLink.drinkId)) {
+      return {
+        targetItemType: 'DRINK',
+        targetProductId: null,
+        targetDrinkId: new Types.ObjectId(targetLink.drinkId),
+      };
+    }
+    return {};
   }
 
   private async recordDeliveriesBulk(
@@ -768,6 +928,7 @@ export class AdNotificationService {
       storeId: Types.ObjectId;
       userId: string;
       channel: AdNotificationChannelEnum;
+      targetLink?: AdNotificationTargetLinkParams;
     }>,
   ): Promise<void> {
     if (!rows.length) return;
@@ -782,6 +943,7 @@ export class AdNotificationService {
         user: new Types.ObjectId(r.userId),
         channel: r.channel,
         deliveredAt: now,
+        ...this.targetFieldsForDelivery(r.targetLink ?? {}),
       })),
       { ordered: false },
     );
@@ -804,11 +966,14 @@ export class AdNotificationService {
     title: string;
     body: string;
     campaignItems?: AdNotificationItemPayload[];
+    targetLink?: AdNotificationTargetLinkParams;
     linkBase: Omit<Parameters<typeof buildAdNotificationAppDeepLink>[0], 'deliveryId'>;
   }): Record<string, string> {
+    const targetLink = args.targetLink ?? {};
     const deepLink = buildAdNotificationAppDeepLink({
       ...args.linkBase,
       deliveryId: args.deliveryId,
+      ...targetLink,
     });
     const data: Record<string, string> = {
       ...this.pushDataPayload({
@@ -819,6 +984,7 @@ export class AdNotificationService {
         storeName: args.storeName,
         title: args.title,
         body: args.body,
+        targetLink,
       }),
       deepLink,
     };
@@ -837,8 +1003,9 @@ export class AdNotificationService {
     storeName: string;
     title: string;
     body: string;
+    targetLink?: AdNotificationTargetLinkParams;
   }): Record<string, string> {
-    return {
+    const payload: Record<string, string> = {
       type: 'ad_promo',
       audience: 'customer',
       deliveryId: args.deliveryId,
@@ -852,6 +1019,11 @@ export class AdNotificationService {
       title: args.title,
       body: args.body,
     };
+    const t = args.targetLink ?? {};
+    if (t.itemType) payload.targetItemType = t.itemType;
+    if (t.productId) payload.targetProductId = t.productId;
+    if (t.drinkId) payload.targetDrinkId = t.drinkId;
+    return payload;
   }
 
   /**
@@ -869,9 +1041,14 @@ export class AdNotificationService {
     recipient: RecipientRow;
     linkBase: Omit<Parameters<typeof buildAdNotificationAppDeepLink>[0], 'deliveryId'>;
     campaignItems: AdNotificationItemPayload[];
+    targetItem: AdNotificationItemPayload | null;
+    targetLink: AdNotificationTargetLinkParams;
     inApp: boolean;
     push: boolean;
   }): Promise<void> {
+    const pushBody = args.targetItem
+      ? `${args.body} — ${args.targetItem.title}`.trim().slice(0, 500)
+      : args.body;
     const deliveryIdInApp = args.inApp ? randomUUID() : '';
     const deliveryIdPush = args.push ? randomUUID() : '';
     const fcmDeliveryId = args.push ? deliveryIdPush : deliveryIdInApp;
@@ -888,6 +1065,7 @@ export class AdNotificationService {
           title: args.title,
           body: args.body,
           campaignItems: args.campaignItems,
+          targetLink: args.targetLink,
           linkBase: args.linkBase,
         });
         const created = await this.notifications.createUserScopedNotification({
@@ -915,8 +1093,9 @@ export class AdNotificationService {
           storeId: args.storeId.toString(),
           storeName: args.storeName,
           title: args.title,
-          body: args.body,
+          body: pushBody,
           campaignItems: args.campaignItems,
+          targetLink: args.targetLink,
           linkBase: args.linkBase,
         });
         if (inboxNotificationId) {
@@ -925,7 +1104,7 @@ export class AdNotificationService {
         const res = await this.notifications.sendMulticastNotification({
           recipientUserIds: [args.recipient.userId],
           title: args.title,
-          body: args.body,
+          body: pushBody,
           data: fcmData,
           androidChannelId: this.adFcmAndroidChannelId(),
         });
@@ -949,6 +1128,7 @@ export class AdNotificationService {
       storeId: Types.ObjectId;
       userId: string;
       channel: AdNotificationChannelEnum;
+      targetLink: AdNotificationTargetLinkParams;
     }> = [];
     if (args.inApp && deliveryIdInApp) {
       deliveryRows.push({
@@ -959,6 +1139,7 @@ export class AdNotificationService {
         storeId: args.storeId,
         userId: args.recipient.userId,
         channel: AdNotificationChannelEnum.IN_APP,
+        targetLink: args.targetLink,
       });
     }
     if (args.push && deliveryIdPush) {
@@ -970,6 +1151,7 @@ export class AdNotificationService {
         storeId: args.storeId,
         userId: args.recipient.userId,
         channel: AdNotificationChannelEnum.PUSH,
+        targetLink: args.targetLink,
       });
     }
     await this.recordDeliveriesBulk(deliveryRows);
@@ -987,6 +1169,8 @@ export class AdNotificationService {
     recipient: RecipientRow;
     linkBase: Omit<Parameters<typeof buildAdNotificationWebOpenUrl>[0], 'deliveryId'>;
     campaignItems: AdNotificationItemPayload[];
+    targetItem: AdNotificationItemPayload | null;
+    targetLink: AdNotificationTargetLinkParams;
     deliveryId: string;
   }): Promise<void> {
     const webUrl = this.trackedClickUrl({
@@ -994,6 +1178,7 @@ export class AdNotificationService {
       entityType: args.entityType,
       entityId: args.entityId,
       storeId: args.storeId.toString(),
+      ...args.targetLink,
     });
     const html = buildAdNotificationEmailBodyHtml({
       recipientName: args.recipient.fullName,
@@ -1027,6 +1212,7 @@ export class AdNotificationService {
         storeId: args.storeId,
         userId: args.recipient.userId,
         channel: AdNotificationChannelEnum.EMAIL,
+        targetLink: args.targetLink,
       });
     } catch (e) {
       this.logger.warn(
@@ -1046,6 +1232,8 @@ export class AdNotificationService {
     body: string;
     recipient: RecipientRow;
     linkBase: Omit<Parameters<typeof buildAdNotificationWebOpenUrl>[0], 'deliveryId'>;
+    targetItem: AdNotificationItemPayload | null;
+    targetLink: AdNotificationTargetLinkParams;
     deliveryId: string;
   }): Promise<void> {
     const webUrl = this.trackedClickUrl({
@@ -1053,13 +1241,17 @@ export class AdNotificationService {
       entityType: args.entityType,
       entityId: args.entityId,
       storeId: args.storeId.toString(),
+      ...args.targetLink,
     });
+    const waBody = args.targetItem
+      ? `${args.body} — ${args.targetItem.title}`
+      : args.body;
     const sent = await trySendAdWhatsApp({
       env: process.env,
       toPhone: args.recipient.phone,
       storeName: args.storeName,
       title: args.title,
-      body: args.body,
+      body: waBody,
       webUrl,
     });
     if (!sent) {
@@ -1075,6 +1267,7 @@ export class AdNotificationService {
       storeId: args.storeId,
       userId: args.recipient.userId,
       channel: AdNotificationChannelEnum.WHATSAPP,
+      targetLink: args.targetLink,
     });
   }
 
@@ -1089,6 +1282,8 @@ export class AdNotificationService {
     body: string;
     recipient: RecipientRow;
     linkBase: Omit<Parameters<typeof buildAdNotificationWebOpenUrl>[0], 'deliveryId'>;
+    targetItem: AdNotificationItemPayload | null;
+    targetLink: AdNotificationTargetLinkParams;
     deliveryId: string;
   }): Promise<void> {
     const webUrl = this.trackedClickUrl({
@@ -1096,9 +1291,14 @@ export class AdNotificationService {
       entityType: args.entityType,
       entityId: args.entityId,
       storeId: args.storeId.toString(),
+      ...args.targetLink,
     });
+    const itemLine = args.targetItem ? `\n${args.targetItem.title}` : '';
     const message =
-      `${args.storeName} — ${args.title}\n${args.body}\n${webUrl}`.slice(0, 1600);
+      `${args.storeName} — ${args.title}\n${args.body}${itemLine}\n${webUrl}`.slice(
+        0,
+        1600,
+      );
     const sent = await trySendAdSms({
       env: process.env,
       toPhone: args.recipient.phone,
@@ -1117,6 +1317,7 @@ export class AdNotificationService {
       storeId: args.storeId,
       userId: args.recipient.userId,
       channel: AdNotificationChannelEnum.SMS,
+      targetLink: args.targetLink,
     });
   }
 
@@ -1158,6 +1359,7 @@ export class AdNotificationService {
     const entityId = String(doc.ad ?? doc.campaign ?? '');
     const entityType = doc.entityType;
     const storeId = String(doc.store);
+    const targetLink = this.targetLinkFromEvent(doc);
     const deepLink = buildAdNotificationAppDeepLink({
       deliveryId: doc.deliveryId,
       entityType,
@@ -1165,6 +1367,7 @@ export class AdNotificationService {
       storeId,
       webBaseUrl: this.webBaseUrl(),
       appScheme: this.appScheme(),
+      ...targetLink,
     });
     const webFallback = buildAdNotificationWebOpenUrl({
       deliveryId: doc.deliveryId,
@@ -1173,6 +1376,7 @@ export class AdNotificationService {
       storeId,
       webBaseUrl: this.webBaseUrl(),
       appScheme: this.appScheme(),
+      ...targetLink,
     });
     return { deepLink, webFallback };
   }
