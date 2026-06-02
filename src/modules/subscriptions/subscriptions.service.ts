@@ -1373,10 +1373,20 @@ export class SubscriptionsService implements OnModuleInit {
     if (!store) {
       throw new NotFoundException('store_not_found');
     }
-    const ownerRaw = (store as { owner?: Types.ObjectId }).owner;
-    if (!ownerRaw) {
+    const ownerRaw = (store as { owner?: unknown }).owner;
+    const ownerIdStr =
+      ownerRaw instanceof Types.ObjectId
+        ? ownerRaw.toHexString()
+        : ownerRaw &&
+            typeof ownerRaw === 'object' &&
+            ownerRaw !== null &&
+            '_id' in ownerRaw
+          ? String((ownerRaw as { _id: unknown })._id ?? '').trim()
+          : String(ownerRaw ?? '').trim();
+    if (!Types.ObjectId.isValid(ownerIdStr)) {
       throw new BadRequestException('store_owner_missing');
     }
+    const ownerId = new Types.ObjectId(ownerIdStr);
 
     const plan = await this.planModel.findById(dto.planId).lean().exec();
     if (!plan || plan.active === false) {
@@ -1392,7 +1402,7 @@ export class SubscriptionsService implements OnModuleInit {
 
     const created = await this.vendorSubModel.create({
       store: new Types.ObjectId(dto.storeId),
-      owner: ownerRaw,
+      owner: ownerId,
       plan: plan._id,
       billingPeriod: period,
       status,
