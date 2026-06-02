@@ -1604,7 +1604,40 @@ export class AdNotificationService {
     };
   }
 
-  /** Contexte admin — canaux actifs + entités pub avec add-on notifications. */
+  /** Filtre bannières « actives » (admin test — sans exiger l’add-on notif.). */
+  private activeBannerFilterForAdminTest(now: Date): Record<string, unknown> {
+    return {
+      isActive: true,
+      $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
+      $and: [
+        {
+          $or: [
+            { validFrom: { $exists: false } },
+            { validFrom: null },
+            { validFrom: { $lte: now } },
+          ],
+        },
+        {
+          $or: [
+            { validUntil: { $exists: false } },
+            { validUntil: null },
+            { validUntil: { $gte: now } },
+          ],
+        },
+      ],
+    };
+  }
+
+  private activeCampaignFilterForAdminTest(now: Date): Record<string, unknown> {
+    return {
+      isActive: true,
+      startsAt: { $lte: now },
+      endsAt: { $gte: now },
+      $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
+    };
+  }
+
+  /** Contexte admin — canaux actifs + bannières/campagnes actives (test envoi manuel). */
   async getAdminTestContext(user: UserModel): Promise<{
     availableChannels: AdNotificationChannelAvailability;
     banners: Array<{
@@ -1612,6 +1645,7 @@ export class AdNotificationService {
       storeId: string;
       storeName: string;
       title: string;
+      notificationAddonEnabled: boolean;
       channels: NotificationAddonPayload['channels'];
     }>;
     campaigns: Array<{
@@ -1619,24 +1653,26 @@ export class AdNotificationService {
       storeId: string;
       storeName: string;
       title: string;
+      notificationAddonEnabled: boolean;
       channels: NotificationAddonPayload['channels'];
     }>;
   }> {
     await this.assertAdminSettings(user);
     const available = await this.loadAvailableChannels();
+    const now = new Date();
     const [bannerDocs, campaignDocs] = await Promise.all([
       this.adModel
-        .find({ 'notificationAddon.enabled': true })
+        .find(this.activeBannerFilterForAdminTest(now))
         .select('_id store title notificationAddon')
         .sort({ updatedAt: -1 })
-        .limit(40)
+        .limit(80)
         .lean()
         .exec(),
       this.campaignModel
-        .find({ 'notificationAddon.enabled': true })
+        .find(this.activeCampaignFilterForAdminTest(now))
         .select('_id store title notificationAddon')
         .sort({ updatedAt: -1 })
-        .limit(40)
+        .limit(80)
         .lean()
         .exec(),
     ]);
@@ -1670,6 +1706,7 @@ export class AdNotificationService {
         storeId,
         storeName: storeNames.get(storeId) ?? 'Boutique',
         title: String(doc.title ?? 'Offre'),
+        notificationAddonEnabled: addon.enabled,
         channels: addon.channels,
       };
     };

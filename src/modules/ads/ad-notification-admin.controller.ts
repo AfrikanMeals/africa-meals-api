@@ -25,7 +25,7 @@ export class AdNotificationAdminController {
   @Get('context')
   @ApiOperation({
     summary:
-      'Canaux actifs + bannières/campagnes avec add-on (admin.settings)',
+      'Canaux actifs + bannières/campagnes actives (test manuel admin)',
   })
   getContext(@Req() req: Request) {
     return this.adNotifications.getAdminTestContext(req.user as UserModel);
