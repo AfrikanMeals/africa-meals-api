@@ -1,4 +1,6 @@
 import {
+  forwardRef,
+  Inject,
   Injectable,
   Logger,
   OnModuleDestroy,
@@ -9,6 +11,7 @@ import {
   parsePositiveInt,
   readBullmqRedisConnection,
 } from '@common/bullmq-redis.connection';
+import { randomUUID } from 'crypto';
 import { JobsOptions, Queue, Worker } from 'bullmq';
 import { AdNotificationService } from './ad-notification.service';
 import type {
@@ -32,6 +35,7 @@ export class AdNotificationDispatchQueueService
 
   constructor(
     private readonly config: ConfigService,
+    @Inject(forwardRef(() => AdNotificationService))
     private readonly adNotifications: AdNotificationService,
   ) {}
 
@@ -117,8 +121,8 @@ export class AdNotificationDispatchQueueService
 
   /** Cron léger : enqueue uniquement les entités en attente. */
   async enqueuePendingDispatches(): Promise<{
-    bannersEnqueued: number;
-    campaignsEnqueued: number;
+    bannersDispatched: number;
+    campaignsDispatched: number;
   }> {
     if (!this.queue) {
       return this.adNotifications.runDispatchPassSync();
@@ -127,6 +131,18 @@ export class AdNotificationDispatchQueueService
       entityJobName: JOB_ENTITY,
       batchJobName: JOB_RECIPIENT_BATCH,
       jobOpts: this.defaultJobOpts(),
+    });
+  }
+
+  /** Enqueue (ou exécution sync) d’une bannière / campagne éligible. */
+  async enqueueEntityDispatch(job: AdNotifyEntityJob): Promise<void> {
+    if (!this.queue) {
+      await this.adNotifications.processEntityDispatchJob(job);
+      return;
+    }
+    await this.queue.add(JOB_ENTITY, job, {
+      ...this.defaultJobOpts(),
+      jobId: `${job.kind}:${job.entityId}`,
     });
   }
 
@@ -139,7 +155,7 @@ export class AdNotificationDispatchQueueService
     }
     await this.queue.add(JOB_RECIPIENT_BATCH, payload, {
       ...this.defaultJobOpts(),
-      jobId: `batch:${payload.entityType}:${payload.entityId}:${payload.recipients[0]?.userId ?? '0'}:${payload.recipients.length}`,
+      jobId: `batch:${payload.entityType}:${payload.entityId}:${randomUUID()}`,
     });
   }
 }

@@ -18,6 +18,11 @@ import type {
 import { MailerService } from '@modules/mailer/mailer.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import {
+  applyChannelAvailabilityToAddon,
+  parseAvailableChannelsFromDoc,
+  type AdNotificationChannelAvailability,
+} from '@modules/ads/ad-notification-channel-availability.util';
+import {
   notificationAddonFromDoc,
   type NotificationAddonPayload,
 } from '@modules/ads/ad-notification.util';
@@ -33,7 +38,7 @@ import {
   buildAdNotificationWebOpenUrl,
 } from '@modules/ads/ad-notification-link.util';
 import { trySendAdSms } from '@modules/ads/twilio-sms.util';
-import { trySendAdWhatsApp } from '@modules/ads/twilio-whatsapp.util';
+import { trySendAdWhatsApp } from '@modules/ads/meta-whatsapp.util';
 import { TrackAdNotificationEventDto, TrackAdNotificationEventKindEnum } from '@modules/ads/dto/ad-notification-tracking.dto';
 import { AdModel } from '@schemas/ad.schema';
 import { AdCampaignModel } from '@schemas/ad-campaign.schema';
@@ -43,9 +48,13 @@ import {
   AdNotificationEventModel,
 } from '@schemas/ad-notification-event.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
+import { AdNotificationPricingSettingsModel } from '@schemas/ad-notification-pricing-settings.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
+
+const AD_NOTIFICATION_PRICING_KEY = 'default';
+const CHANNEL_AVAILABILITY_TTL_MS = 60_000;
 
 const AUDIENCE_ORDER_STATUSES = [
   OrderStatusEnum.COMPLETED,
@@ -58,7 +67,6 @@ const AUDIENCE_LOOKBACK_DAYS = 180;
 const MAX_RECIPIENTS_PER_DISPATCH = 5000;
 const DEFAULT_RECIPIENT_BATCH_SIZE = 50;
 const DEFAULT_RECIPIENT_PARALLEL = 12;
-const DEFAULT_FCM_PARALLEL = 20;
 
 type RecipientRow = {
   userId: string;
@@ -70,6 +78,10 @@ type RecipientRow = {
 @Injectable()
 export class AdNotificationService {
   private readonly logger = new Logger(AdNotificationService.name);
+  private channelAvailabilityCache: {
+    at: number;
+    channels: AdNotificationChannelAvailability;
+  } | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -81,6 +93,8 @@ export class AdNotificationService {
     @InjectModel(OrderModel.name) private readonly orderModel: Model<OrderModel>,
     @InjectModel(UserModel.name) private readonly userModel: Model<UserModel>,
     @InjectModel(StoreModel.name) private readonly storeModel: Model<StoreModel>,
+    @InjectModel(AdNotificationPricingSettingsModel.name)
+    private readonly notificationPricingModel: Model<AdNotificationPricingSettingsModel>,
     private readonly notifications: NotificationsService,
     private readonly mailer: MailerService,
     @Inject(forwardRef(() => AdNotificationDispatchQueueService))
@@ -99,6 +113,25 @@ export class AdNotificationService {
       this.config.get<string>('AD_NOTIFICATION_RECIPIENT_PARALLEL'),
       DEFAULT_RECIPIENT_PARALLEL,
     );
+  }
+
+  private async loadAvailableChannels(): Promise<AdNotificationChannelAvailability> {
+    const now = Date.now();
+    if (
+      this.channelAvailabilityCache &&
+      now - this.channelAvailabilityCache.at < CHANNEL_AVAILABILITY_TTL_MS
+    ) {
+      return this.channelAvailabilityCache.channels;
+    }
+    const doc = await this.notificationPricingModel
+      .findOne({ key: AD_NOTIFICATION_PRICING_KEY })
+      .lean()
+      .exec();
+    const channels = parseAvailableChannelsFromDoc(
+      doc as unknown as Record<string, unknown> | null,
+    );
+    this.channelAvailabilityCache = { at: now, channels };
+    return channels;
   }
 
   /** Exécution pool limité — évite de saturer SMTP / Twilio / Mongo. */
@@ -155,86 +188,365 @@ export class AdNotificationService {
     });
   }
 
+  /** Point d’entrée cron : file BullMQ si Redis, sinon synchrone. */
   async runDispatchPass(): Promise<{
     bannersDispatched: number;
     campaignsDispatched: number;
   }> {
-    const now = new Date();
+    if (this.dispatchQueue.isEnabled()) {
+      return this.dispatchQueue.enqueuePendingDispatches();
+    }
+    return this.runDispatchPassSync();
+  }
+
+  /** Mode sans Redis — traitement entités en parallèle limité. */
+  async runDispatchPassSync(): Promise<{
+    bannersDispatched: number;
+    campaignsDispatched: number;
+  }> {
+    const pending = await this.findPendingEntities();
     let bannersDispatched = 0;
     let campaignsDispatched = 0;
-
-    const banners = await this.adModel
-      .find({
-        isActive: true,
-        validUntil: { $gte: now },
-        'notificationAddon.enabled': true,
-        $and: [
-          { $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }] },
-          {
-            $or: [
-              { notificationDispatchedAt: { $exists: false } },
-              { notificationDispatchedAt: null },
-            ],
-          },
-        ],
-      })
-      .select('_id store title subtitle notificationAddon audienceTotal')
-      .limit(20)
-      .lean()
-      .exec();
-
-    for (const row of banners as Array<Record<string, unknown>>) {
-      const addon = notificationAddonFromDoc(
-        row.notificationAddon as Record<string, unknown>,
-      );
-      if (!addon.enabled) continue;
+    await this.mapPool(pending.banners, 2, async (row) => {
       try {
-        await this.dispatchBanner(row, addon);
+        await this.processEntityDispatchJob({ kind: 'banner', entityId: String(row._id) });
         bannersDispatched++;
       } catch (e) {
         this.logger.warn(
           `dispatch banner ${row._id}: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
-    }
-
-    const campaigns = await this.campaignModel
-      .find({
-        isActive: true,
-        startsAt: { $lte: now },
-        endsAt: { $gte: now },
-        'notificationAddon.enabled': true,
-        $and: [
-          { $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }] },
-          {
-            $or: [
-              { notificationDispatchedAt: { $exists: false } },
-              { notificationDispatchedAt: null },
-            ],
-          },
-        ],
-      })
-      .select('_id store title subtitle notificationAddon audienceTotal')
-      .limit(20)
-      .lean()
-      .exec();
-
-    for (const row of campaigns as Array<Record<string, unknown>>) {
-      const addon = notificationAddonFromDoc(
-        row.notificationAddon as Record<string, unknown>,
-      );
-      if (!addon.enabled) continue;
+    });
+    await this.mapPool(pending.campaigns, 2, async (row) => {
       try {
-        await this.dispatchCampaign(row, addon);
+        await this.processEntityDispatchJob({
+          kind: 'campaign',
+          entityId: String(row._id),
+        });
         campaignsDispatched++;
       } catch (e) {
         this.logger.warn(
           `dispatch campaign ${row._id}: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
+    });
+    return { bannersDispatched, campaignsDispatched };
+  }
+
+  async enqueuePendingEntities(
+    queue: Queue<AdNotifyEntityJob | AdNotifyRecipientBatchJob>,
+    opts: {
+      entityJobName: string;
+      batchJobName: string;
+      jobOpts: JobsOptions;
+    },
+  ): Promise<{ bannersDispatched: number; campaignsDispatched: number }> {
+    const pending = await this.findPendingEntities();
+    let bannersDispatched = 0;
+    let campaignsDispatched = 0;
+    await Promise.all(
+      pending.banners.map(async (row) => {
+        const id = String(row._id);
+        await queue.add(
+          opts.entityJobName,
+          { kind: 'banner', entityId: id } satisfies AdNotifyEntityJob,
+          { ...opts.jobOpts, jobId: `banner:${id}` },
+        );
+        bannersDispatched++;
+      }),
+    );
+    await Promise.all(
+      pending.campaigns.map(async (row) => {
+        const id = String(row._id);
+        await queue.add(
+          opts.entityJobName,
+          { kind: 'campaign', entityId: id } satisfies AdNotifyEntityJob,
+          { ...opts.jobOpts, jobId: `campaign:${id}` },
+        );
+        campaignsDispatched++;
+      }),
+    );
+    return { bannersDispatched, campaignsDispatched };
+  }
+
+  private notArchivedFilter() {
+    return {
+      $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
+    };
+  }
+
+  private notDispatchedFilter() {
+    return {
+      $or: [
+        { notificationDispatchedAt: { $exists: false } },
+        { notificationDispatchedAt: null },
+      ],
+    };
+  }
+
+  private bannerStartedFilter(now: Date) {
+    return {
+      $or: [
+        { validFrom: { $exists: false } },
+        { validFrom: null },
+        { validFrom: { $lte: now } },
+      ],
+    };
+  }
+
+  /** Vérifie si une entité peut être envoyée maintenant (cron ou enqueue immédiat). */
+  async isEntityEligibleForDispatch(job: AdNotifyEntityJob): Promise<boolean> {
+    if (!Types.ObjectId.isValid(job.entityId)) return false;
+    const now = new Date();
+    const id = new Types.ObjectId(job.entityId);
+    const base = {
+      _id: id,
+      isActive: true,
+      'notificationAddon.enabled': true,
+      ...this.notArchivedFilter(),
+      ...this.notDispatchedFilter(),
+    };
+    if (job.kind === 'banner') {
+      const n = await this.adModel.countDocuments({
+        ...base,
+        validUntil: { $gte: now },
+        ...this.bannerStartedFilter(now),
+      });
+      return n > 0;
+    }
+    const n = await this.campaignModel.countDocuments({
+      ...base,
+      startsAt: { $lte: now },
+      endsAt: { $gte: now },
+    });
+    return n > 0;
+  }
+
+  /**
+   * Après création / mise à jour d’une pub avec add-on actif — ne bloque pas la requête HTTP.
+   */
+  scheduleImmediateDispatch(job: AdNotifyEntityJob): void {
+    void this.runImmediateDispatch(job);
+  }
+
+  private async runImmediateDispatch(job: AdNotifyEntityJob): Promise<void> {
+    try {
+      if (!(await this.isEntityEligibleForDispatch(job))) return;
+      await this.dispatchQueue.enqueueEntityDispatch(job);
+      this.logger.log(
+        `Ad notification enqueue immédiat: ${job.kind} ${job.entityId}`,
+      );
+    } catch (e) {
+      this.logger.warn(
+        `Ad notification enqueue immédiat ${job.kind} ${job.entityId}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
+  private async findPendingEntities(): Promise<{
+    banners: Array<Record<string, unknown>>;
+    campaigns: Array<Record<string, unknown>>;
+  }> {
+    const now = new Date();
+    const pendingFilter = this.notDispatchedFilter();
+    const [banners, campaigns] = await Promise.all([
+      this.adModel
+        .find({
+          isActive: true,
+          validUntil: { $gte: now },
+          'notificationAddon.enabled': true,
+          $and: [
+            this.notArchivedFilter(),
+            this.bannerStartedFilter(now),
+            pendingFilter,
+          ],
+        })
+        .select('_id store title subtitle notificationAddon audienceTotal')
+        .limit(30)
+        .lean()
+        .exec(),
+      this.campaignModel
+        .find({
+          isActive: true,
+          startsAt: { $lte: now },
+          endsAt: { $gte: now },
+          'notificationAddon.enabled': true,
+          $and: [this.notArchivedFilter(), pendingFilter],
+        })
+        .select('_id store title subtitle notificationAddon audienceTotal')
+        .limit(30)
+        .lean()
+        .exec(),
+    ]);
+    return {
+      banners: banners as Array<Record<string, unknown>>,
+      campaigns: campaigns as Array<Record<string, unknown>>,
+    };
+  }
+
+  /** Worker BullMQ : réserve l’entité puis enqueue des lots destinataires. */
+  async processEntityDispatchJob(job: AdNotifyEntityJob): Promise<void> {
+    const row = await this.claimEntityRow(job);
+    if (!row) return;
+
+    const addon = applyChannelAvailabilityToAddon(
+      notificationAddonFromDoc(
+        row.notificationAddon as Record<string, unknown>,
+      ),
+      await this.loadAvailableChannels(),
+    );
+    if (!addon.enabled) {
+      this.logger.log(
+        `ad notification ${job.kind} ${job.entityId}: aucun canal actif (admin ou add-on)`,
+      );
+      return;
     }
 
-    return { bannersDispatched, campaignsDispatched };
+    const storeId = new Types.ObjectId(String(row.store));
+    const entityId =
+      job.kind === 'banner' ? String(row._id) : String(row._id);
+    const cap =
+      row.audienceTotal != null ? Math.floor(Number(row.audienceTotal)) : null;
+    const recipients = await this.resolveStoreAudience(storeId, cap);
+    const storeName = String(row.storeName ?? 'Restaurant');
+    const title = String(row.title ?? (job.kind === 'banner' ? 'Offre' : 'Campagne'));
+    const subtitle = String(row.subtitle ?? '').trim();
+    const body =
+      subtitle ||
+      (job.kind === 'banner'
+        ? `${storeName} a une nouvelle offre pour vous.`
+        : `${storeName} : découvrez notre campagne.`);
+
+    const entityType =
+      job.kind === 'banner'
+        ? AdNotificationEntityTypeEnum.BANNER
+        : AdNotificationEntityTypeEnum.CAMPAIGN;
+
+    const batchPayloadBase: Omit<AdNotifyRecipientBatchJob, 'recipients'> = {
+      entityType,
+      entityId,
+      adId: job.kind === 'banner' ? entityId : undefined,
+      campaignId: job.kind === 'campaign' ? entityId : undefined,
+      storeId: storeId.toString(),
+      storeName,
+      title,
+      body,
+      addon,
+    };
+
+    if (!recipients.length) {
+      this.logger.log(`ad notification ${entityType} ${entityId}: audience vide`);
+      return;
+    }
+
+    const batchSize = this.recipientBatchSize();
+    for (let i = 0; i < recipients.length; i += batchSize) {
+      const slice = recipients.slice(i, i + batchSize);
+      const payload: AdNotifyRecipientBatchJob = {
+        ...batchPayloadBase,
+        recipients: slice,
+      };
+      if (this.dispatchQueue.isEnabled()) {
+        await this.dispatchQueue.enqueueRecipientBatch(payload);
+      } else {
+        await this.processRecipientBatchJob(payload);
+      }
+    }
+  }
+
+  private async claimEntityRow(
+    job: AdNotifyEntityJob,
+  ): Promise<Record<string, unknown> | null> {
+    const now = new Date();
+    const id = new Types.ObjectId(job.entityId);
+    const pending = {
+      $or: [
+        { notificationDispatchedAt: { $exists: false } },
+        { notificationDispatchedAt: null },
+      ],
+    };
+
+    if (job.kind === 'banner') {
+      const doc = await this.adModel
+        .findOneAndUpdate(
+          {
+            _id: id,
+            isActive: true,
+            validUntil: { $gte: now },
+            'notificationAddon.enabled': true,
+            ...this.notArchivedFilter(),
+            ...this.bannerStartedFilter(now),
+            ...pending,
+          },
+          { $set: { notificationDispatchedAt: now } },
+          { new: true, lean: true },
+        )
+        .select('_id store title subtitle notificationAddon audienceTotal')
+        .exec();
+      if (!doc) return null;
+      const store = await this.storeModel
+        .findById(doc.store)
+        .select('name')
+        .lean()
+        .exec();
+      return {
+        ...(doc as Record<string, unknown>),
+        storeName: (store as { name?: string } | null)?.name,
+      };
+    }
+
+    const doc = await this.campaignModel
+      .findOneAndUpdate(
+        {
+          _id: id,
+          isActive: true,
+          startsAt: { $lte: now },
+          endsAt: { $gte: now },
+          'notificationAddon.enabled': true,
+          $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
+          ...pending,
+        },
+        { $set: { notificationDispatchedAt: now } },
+        { new: true, lean: true },
+      )
+      .select('_id store title subtitle notificationAddon audienceTotal')
+      .exec();
+    if (!doc) return null;
+    const store = await this.storeModel
+      .findById(doc.store)
+      .select('name')
+      .lean()
+      .exec();
+    return {
+      ...(doc as Record<string, unknown>),
+      storeName: (store as { name?: string } | null)?.name,
+    };
+  }
+
+  /** Worker BullMQ : envoi par lot (FCM groupé + canaux en parallèle limité). */
+  async processRecipientBatchJob(
+    job: AdNotifyRecipientBatchJob,
+  ): Promise<void> {
+    const storeId = new Types.ObjectId(job.storeId);
+    const adId = job.adId ? new Types.ObjectId(job.adId) : undefined;
+    const campaignId = job.campaignId
+      ? new Types.ObjectId(job.campaignId)
+      : undefined;
+
+    await this.sendRecipientBatch({
+      entityType: job.entityType,
+      entityId: job.entityId,
+      adId,
+      campaignId,
+      storeId,
+      storeName: job.storeName,
+      title: job.title,
+      body: job.body,
+      addon: job.addon,
+      recipients: job.recipients,
+    });
   }
 
   private async resolveStoreAudience(
@@ -279,80 +591,7 @@ export class AdNotificationService {
     });
   }
 
-  private async dispatchBanner(
-    row: Record<string, unknown>,
-    addon: NotificationAddonPayload,
-  ): Promise<void> {
-    const adId = new Types.ObjectId(String(row._id));
-    const storeId = new Types.ObjectId(String(row.store));
-    const cap =
-      row.audienceTotal != null ? Math.floor(Number(row.audienceTotal)) : null;
-    const recipients = await this.resolveStoreAudience(storeId, cap);
-    const store = await this.storeModel
-      .findById(storeId)
-      .select('name')
-      .lean()
-      .exec();
-    const storeName = String((store as { name?: string } | null)?.name ?? 'Restaurant');
-    const title = String(row.title ?? 'Offre');
-    const subtitle = String(row.subtitle ?? '').trim();
-
-    await this.sendBatch({
-      entityType: AdNotificationEntityTypeEnum.BANNER,
-      entityId: adId.toString(),
-      adId,
-      storeId,
-      storeName,
-      title,
-      body: subtitle || `${storeName} a une nouvelle offre pour vous.`,
-      addon,
-      recipients,
-    });
-
-    await this.adModel
-      .updateOne({ _id: adId }, { $set: { notificationDispatchedAt: new Date() } })
-      .exec();
-  }
-
-  private async dispatchCampaign(
-    row: Record<string, unknown>,
-    addon: NotificationAddonPayload,
-  ): Promise<void> {
-    const campaignId = new Types.ObjectId(String(row._id));
-    const storeId = new Types.ObjectId(String(row.store));
-    const cap =
-      row.audienceTotal != null ? Math.floor(Number(row.audienceTotal)) : null;
-    const recipients = await this.resolveStoreAudience(storeId, cap);
-    const store = await this.storeModel
-      .findById(storeId)
-      .select('name')
-      .lean()
-      .exec();
-    const storeName = String((store as { name?: string } | null)?.name ?? 'Restaurant');
-    const title = String(row.title ?? 'Campagne');
-    const subtitle = String(row.subtitle ?? '').trim();
-
-    await this.sendBatch({
-      entityType: AdNotificationEntityTypeEnum.CAMPAIGN,
-      entityId: campaignId.toString(),
-      campaignId,
-      storeId,
-      storeName,
-      title,
-      body: subtitle || `${storeName} : découvrez notre campagne.`,
-      addon,
-      recipients,
-    });
-
-    await this.campaignModel
-      .updateOne(
-        { _id: campaignId },
-        { $set: { notificationDispatchedAt: new Date() } },
-      )
-      .exec();
-  }
-
-  private async sendBatch(args: {
+  private async sendRecipientBatch(args: {
     entityType: AdNotificationEntityTypeEnum;
     entityId: string;
     adId?: Types.ObjectId;
@@ -364,24 +603,23 @@ export class AdNotificationService {
     addon: NotificationAddonPayload;
     recipients: RecipientRow[];
   }): Promise<void> {
-    if (!args.recipients.length) {
-      this.logger.log(
-        `ad notification ${args.entityType} ${args.entityId}: audience vide`,
-      );
-      return;
-    }
+    if (!args.recipients.length) return;
 
-    for (let i = 0; i < args.recipients.length; i += DISPATCH_CHUNK) {
-      const slice = args.recipients.slice(i, i + DISPATCH_CHUNK);
-      await Promise.all(
-        slice.map((r) =>
-          this.sendToRecipient({
-            ...args,
-            recipient: r,
-          }),
-        ),
-      );
-    }
+    const linkBase = {
+      entityType: args.entityType,
+      entityId: args.entityId,
+      storeId: args.storeId.toString(),
+      webBaseUrl: this.webBaseUrl(),
+      appScheme: this.appScheme(),
+    };
+
+    await this.mapPool(
+      args.recipients,
+      this.recipientParallel(),
+      async (recipient) => {
+        await this.sendToRecipient({ ...args, recipient, linkBase });
+      },
+    );
   }
 
   private async sendToRecipient(args: {
@@ -395,15 +633,9 @@ export class AdNotificationService {
     body: string;
     addon: NotificationAddonPayload;
     recipient: RecipientRow;
+    linkBase: Omit<Parameters<typeof buildAdNotificationAppDeepLink>[0], 'deliveryId'>;
   }): Promise<void> {
-    const { addon, recipient } = args;
-    const linkBase = {
-      entityType: args.entityType,
-      entityId: args.entityId,
-      storeId: args.storeId.toString(),
-      webBaseUrl: this.webBaseUrl(),
-      appScheme: this.appScheme(),
-    };
+    const { addon, recipient, linkBase } = args;
 
     const tasks: Promise<void>[] = [];
 
@@ -445,16 +677,35 @@ export class AdNotificationService {
     userId: string;
     channel: AdNotificationChannelEnum;
   }): Promise<void> {
-    await this.eventModel.create({
-      deliveryId: args.deliveryId,
-      entityType: args.entityType,
-      ad: args.adId,
-      campaign: args.campaignId,
-      store: args.storeId,
-      user: new Types.ObjectId(args.userId),
-      channel: args.channel,
-      deliveredAt: new Date(),
-    });
+    await this.recordDeliveriesBulk([args]);
+  }
+
+  private async recordDeliveriesBulk(
+    rows: Array<{
+      deliveryId: string;
+      entityType: AdNotificationEntityTypeEnum;
+      adId?: Types.ObjectId;
+      campaignId?: Types.ObjectId;
+      storeId: Types.ObjectId;
+      userId: string;
+      channel: AdNotificationChannelEnum;
+    }>,
+  ): Promise<void> {
+    if (!rows.length) return;
+    const now = new Date();
+    await this.eventModel.insertMany(
+      rows.map((r) => ({
+        deliveryId: r.deliveryId,
+        entityType: r.entityType,
+        ad: r.adId,
+        campaign: r.campaignId,
+        store: r.storeId,
+        user: new Types.ObjectId(r.userId),
+        channel: r.channel,
+        deliveredAt: now,
+      })),
+      { ordered: false },
+    );
   }
 
   /** Canal Android FCM — doit correspondre à l’app Flutter (`african_meals_promotions`). */
@@ -596,8 +847,17 @@ export class AdNotificationService {
       }
     }
 
+    const deliveryRows: Array<{
+      deliveryId: string;
+      entityType: AdNotificationEntityTypeEnum;
+      adId?: Types.ObjectId;
+      campaignId?: Types.ObjectId;
+      storeId: Types.ObjectId;
+      userId: string;
+      channel: AdNotificationChannelEnum;
+    }> = [];
     if (args.inApp && deliveryIdInApp) {
-      await this.recordDelivery({
+      deliveryRows.push({
         deliveryId: deliveryIdInApp,
         entityType: args.entityType,
         adId: args.adId,
@@ -608,7 +868,7 @@ export class AdNotificationService {
       });
     }
     if (args.push && deliveryIdPush) {
-      await this.recordDelivery({
+      deliveryRows.push({
         deliveryId: deliveryIdPush,
         entityType: args.entityType,
         adId: args.adId,
@@ -618,6 +878,7 @@ export class AdNotificationService {
         channel: AdNotificationChannelEnum.PUSH,
       });
     }
+    await this.recordDeliveriesBulk(deliveryRows);
   }
 
   private async sendEmailChannel(args: {
@@ -688,12 +949,13 @@ export class AdNotificationService {
       entityId: args.entityId,
       storeId: args.storeId.toString(),
     });
-    const message =
-      `${args.storeName} — ${args.title}\n${args.body}\n${webUrl}`.slice(0, 1600);
     const sent = await trySendAdWhatsApp({
       env: process.env,
       toPhone: args.recipient.phone,
-      body: message,
+      storeName: args.storeName,
+      title: args.title,
+      body: args.body,
+      webUrl,
     });
     if (!sent) {
       this.logger.debug(

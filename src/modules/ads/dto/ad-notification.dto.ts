@@ -54,12 +54,49 @@ export class NotificationAddonDto {
   channels?: NotificationChannelsDto;
 }
 
+export class UpdateAdNotificationChannelAvailabilityDto {
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  email?: boolean;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  push?: boolean;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  inApp?: boolean;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  sms?: boolean;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  whatsapp?: boolean;
+}
+
 export class UpdateAdNotificationPricingDto {
   @ApiPropertyOptional({ example: 'CAD' })
   @IsOptional()
   @IsString()
   @MaxLength(8)
   currency?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Canaux activés plateforme (admin). Les boutiques ne peuvent pas sélectionner un canal désactivé.',
+    type: UpdateAdNotificationChannelAvailabilityDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdateAdNotificationChannelAvailabilityDto)
+  availableChannels?: UpdateAdNotificationChannelAvailabilityDto;
 
   @IsOptional()
   @IsNumber()

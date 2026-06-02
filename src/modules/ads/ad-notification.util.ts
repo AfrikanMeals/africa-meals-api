@@ -1,3 +1,8 @@
+import {
+  applyChannelAvailabilityToAddon,
+  type AdNotificationChannelAvailability,
+  DEFAULT_CHANNEL_AVAILABILITY,
+} from '@modules/ads/ad-notification-channel-availability.util';
 import { NotificationAddonDto } from '@modules/ads/dto/ad-notification.dto';
 import { AdNotificationAddonModel } from '@schemas/ad-notification-addon.schema';
 
@@ -44,6 +49,7 @@ export function audienceTotalFromDoc(
 
 export function normalizeNotificationAddonInput(
   dto?: NotificationAddonDto | null,
+  available: AdNotificationChannelAvailability = DEFAULT_CHANNEL_AVAILABILITY,
 ): AdNotificationAddonModel {
   const ch = dto?.channels ?? {};
   const hasChannel = !!(ch.email || ch.push || ch.inApp || ch.sms || ch.whatsapp);
@@ -51,15 +57,25 @@ export function normalizeNotificationAddonInput(
   if (!enabled || !hasChannel) {
     return { ...EMPTY_NOTIFICATION_ADDON };
   }
+  const normalized = applyChannelAvailabilityToAddon(
+    {
+      enabled: true,
+      channels: {
+        email: !!ch.email,
+        push: !!ch.push,
+        inApp: !!ch.inApp,
+        sms: !!ch.sms,
+        whatsapp: !!ch.whatsapp,
+      },
+    },
+    available,
+  );
+  if (!normalized.enabled) {
+    return { ...EMPTY_NOTIFICATION_ADDON };
+  }
   return {
     enabled: true,
-    channels: {
-      email: !!ch.email,
-      push: !!ch.push,
-      inApp: !!ch.inApp,
-      sms: !!ch.sms,
-      whatsapp: !!ch.whatsapp,
-    },
+    channels: normalized.channels,
   };
 }
 

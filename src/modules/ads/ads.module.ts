@@ -36,13 +36,19 @@ import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import { AdNotificationController } from './ad-notification.controller';
 import { AdNotificationDispatchCron } from './ad-notification-dispatch.cron';
+import { AdNotificationDispatchQueueService } from './ad-notification-dispatch-queue.service';
 import { AdNotificationService } from './ad-notification.service';
 import { AdsController } from './ads.controller';
 import { AdsService } from './ads.service';
 
 @Module({
   controllers: [AdsController, AdNotificationController],
-  providers: [AdsService, AdNotificationService, AdNotificationDispatchCron],
+  providers: [
+    AdsService,
+    AdNotificationService,
+    AdNotificationDispatchQueueService,
+    AdNotificationDispatchCron,
+  ],
   imports: [
     AuthModule,
     MailerModule,

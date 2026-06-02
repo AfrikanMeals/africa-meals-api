@@ -284,7 +284,7 @@ export class AdsController {
   @ApiBearerAuth('bearer')
   @ApiOperation({
     summary:
-      'Barème notifications Ads (Email, Push, In-App, SMS) — livraison, interaction, conversion (ADMIN)',
+      'Barème + canaux disponibles notifications Ads (lecture boutique / admin)',
   })
   async getManageNotificationPricing(@Req() req: Request) {
     return this.adsService.getNotificationPricing(req.user as UserModel);
@@ -294,7 +294,10 @@ export class AdsController {
   @UseGuards(JwtGuard)
   @ApiBearerAuth('bearer')
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  @ApiOperation({ summary: 'Mettre à jour le barème notifications Ads (ADMIN)' })
+  @ApiOperation({
+    summary:
+      'Mettre à jour barème et/ou canaux disponibles notifications Ads (ADMIN)',
+  })
   async updateManageNotificationPricing(
     @Req() req: Request,
     @Body() body: UpdateAdNotificationPricingDto,

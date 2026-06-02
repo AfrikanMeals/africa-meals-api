@@ -11,6 +11,7 @@ import {
 } from '@modules/ads/dto/ad-campaign.dto';
 import { UpdateAdNotificationPricingDto } from '@modules/ads/dto/ad-notification.dto';
 import { UpdateAdPricingDto } from '@modules/ads/dto/ad-pricing.dto';
+import { parseAvailableChannelsFromDoc } from '@modules/ads/ad-notification-channel-availability.util';
 import {
   audienceTotalFromDoc,
   normalizeAudienceTotal,
@@ -300,8 +301,17 @@ export type AdPricingPayload = {
   updatedAt: string | null;
 };
 
+export type AdNotificationChannelAvailabilityPayload = {
+  email: boolean;
+  push: boolean;
+  inApp: boolean;
+  sms: boolean;
+  whatsapp: boolean;
+};
+
 export type AdNotificationPricingPayload = {
   currency: string;
+  availableChannels: AdNotificationChannelAvailabilityPayload;
   emailDeliveryCad: number;
   emailInteractionCad: number;
   emailConversionCad: number;
@@ -342,6 +352,13 @@ const AD_NOTIFICATION_PRICING_DEFAULTS: Omit<
   'updatedAt'
 > = {
   currency: 'CAD',
+  availableChannels: {
+    email: true,
+    push: true,
+    inApp: true,
+    sms: true,
+    whatsapp: true,
+  },
   emailDeliveryCad: 0,
   emailInteractionCad: 0,
   emailConversionCad: 0,
@@ -422,6 +439,22 @@ export class AdsService implements OnModuleInit {
 
   private invalidateListCache() {
     this._listCache = null;
+  }
+
+  /** Enqueue immédiat si add-on notifications actif et pub éligible. */
+  private scheduleNotificationDispatchAfterSave(
+    kind: 'banner' | 'campaign',
+    entityId: Types.ObjectId | string,
+    notificationAddon: unknown,
+  ): void {
+    const addon = notificationAddonFromDoc(
+      notificationAddon as Record<string, unknown> | null | undefined,
+    );
+    if (!addon.enabled) return;
+    this._adNotifications.scheduleImmediateDispatch({
+      kind,
+      entityId: String(entityId),
+    });
   }
 
   private assertVendorOrAdmin(user: UserModel) {
@@ -874,6 +907,9 @@ export class AdsService implements OnModuleInit {
     };
     return {
       currency: currency || AD_NOTIFICATION_PRICING_DEFAULTS.currency,
+      availableChannels: parseAvailableChannelsFromDoc(
+        doc as unknown as Record<string, unknown>,
+      ),
       emailDeliveryCad: n(doc.emailDeliveryCad),
       emailInteractionCad: n(doc.emailInteractionCad),
       emailConversionCad: n(doc.emailConversionCad),
@@ -896,6 +932,13 @@ export class AdsService implements OnModuleInit {
           ? updatedAt
           : null,
     };
+  }
+
+  private async _getAvailableNotificationChannels(): Promise<AdNotificationChannelAvailabilityPayload> {
+    const doc = await this._ensureNotificationPricingDoc();
+    return parseAvailableChannelsFromDoc(
+      doc as unknown as Record<string, unknown>,
+    );
   }
 
   private async _ensureNotificationPricingDoc(): Promise<AdNotificationPricingSettingsModel> {
@@ -936,12 +979,26 @@ export class AdsService implements OnModuleInit {
       const x = Number(raw ?? fallback);
       return Number.isFinite(x) && x >= 0 ? x : 0;
     };
+    const availDto = dto.availableChannels;
+    const currentAvail = parseAvailableChannelsFromDoc(
+      current as unknown as Record<string, unknown>,
+    );
+    const nextAvailableChannels = availDto
+      ? {
+          email: availDto.email ?? currentAvail.email,
+          push: availDto.push ?? currentAvail.push,
+          inApp: availDto.inApp ?? currentAvail.inApp,
+          sms: availDto.sms ?? currentAvail.sms,
+          whatsapp: availDto.whatsapp ?? currentAvail.whatsapp,
+        }
+      : currentAvail;
     const updated = await this._adNotificationPricingModel
       .findOneAndUpdate(
         { key: AD_NOTIFICATION_PRICING_KEY },
         {
           $set: {
             currency: nextCurrency || 'CAD',
+            availableChannels: nextAvailableChannels,
             emailDeliveryCad: n('emailDeliveryCad', current.emailDeliveryCad),
             emailInteractionCad: n(
               'emailInteractionCad',
@@ -1609,6 +1666,7 @@ export class AdsService implements OnModuleInit {
           ? new Types.ObjectId(it.drinkId)
           : undefined,
     }));
+    const channelAvailability = await this._getAvailableNotificationChannels();
     const created = await this._adCampaignModel.create({
       store: new Types.ObjectId(storeId),
       title: dto.title.trim(),
@@ -1622,8 +1680,16 @@ export class AdsService implements OnModuleInit {
       actionTarget: actionTarget || undefined,
       items,
       audienceTotal: normalizeAudienceTotal(dto.audienceTotal) ?? null,
-      notificationAddon: normalizeNotificationAddonInput(dto.notificationAddon),
+      notificationAddon: normalizeNotificationAddonInput(
+        dto.notificationAddon,
+        channelAvailability,
+      ),
     });
+    this.scheduleNotificationDispatchAfterSave(
+      'campaign',
+      created._id,
+      created.notificationAddon,
+    );
     const row = await this._adCampaignModel
       .findById(created._id)
       .populate('store', 'name profileImage')
@@ -1709,8 +1775,15 @@ export class AdsService implements OnModuleInit {
       existing.audienceTotal = normalizeAudienceTotal(dto.audienceTotal) ?? null;
     }
     if (dto.notificationAddon !== undefined) {
+      const channelAvailability = await this._getAvailableNotificationChannels();
       existing.notificationAddon = normalizeNotificationAddonInput(
         dto.notificationAddon,
+        channelAvailability,
+      );
+      this.scheduleNotificationDispatchAfterSave(
+        'campaign',
+        existing._id,
+        existing.notificationAddon,
       );
     }
     await existing.save();
@@ -3454,6 +3527,7 @@ export class AdsService implements OnModuleInit {
       ? this.assertActionTargetValue(dto.actionType, dto.actionTarget)
       : undefined;
 
+    const channelAvailability = await this._getAvailableNotificationChannels();
     const created = await this.adModel.create({
       isActive: dto.isActive !== false,
       title: dto.title.trim(),
@@ -3471,10 +3545,18 @@ export class AdsService implements OnModuleInit {
           ? productRefId(dto.productId)
           : undefined,
       audienceTotal: normalizeAudienceTotal(dto.audienceTotal) ?? null,
-      notificationAddon: normalizeNotificationAddonInput(dto.notificationAddon),
+      notificationAddon: normalizeNotificationAddonInput(
+        dto.notificationAddon,
+        channelAvailability,
+      ),
     });
 
     this.invalidateListCache();
+    this.scheduleNotificationDispatchAfterSave(
+      'banner',
+      created._id,
+      created.notificationAddon,
+    );
 
     const populated = await this.adModel
       .findById(created._id)
@@ -3618,8 +3700,15 @@ export class AdsService implements OnModuleInit {
       existing.audienceTotal = normalizeAudienceTotal(dto.audienceTotal) ?? null;
     }
     if (dto.notificationAddon !== undefined) {
+      const channelAvailability = await this._getAvailableNotificationChannels();
       existing.notificationAddon = normalizeNotificationAddonInput(
         dto.notificationAddon,
+        channelAvailability,
+      );
+      this.scheduleNotificationDispatchAfterSave(
+        'banner',
+        existing._id,
+        existing.notificationAddon,
       );
     }
 

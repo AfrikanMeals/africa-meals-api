@@ -1,4 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import {
+  AdNotificationChannelsModel,
+  AdNotificationChannelsSchema,
+} from '@schemas/ad-notification-addon.schema';
 import { HydratedDocument } from 'mongoose';
 
 /**
@@ -12,6 +16,20 @@ export class AdNotificationPricingSettingsModel {
 
   @Prop({ type: String, default: 'CAD', trim: true })
   currency: string;
+
+  /** Canaux proposés aux boutiques (admin — Paramètres notifications). */
+  @Prop({
+    type: AdNotificationChannelsSchema,
+    default: () => ({
+      email: true,
+      push: true,
+      inApp: true,
+      sms: true,
+      whatsapp: true,
+    }),
+    name: 'available_channels',
+  })
+  availableChannels: AdNotificationChannelsModel;
 
   @Prop({ type: Number, default: 0, name: 'email_delivery_cad' })
   emailDeliveryCad: number;
