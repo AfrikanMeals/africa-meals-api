@@ -13,6 +13,9 @@ export type SubscriptionPlanSeed = {
   mobileAccess?: boolean;
   maxCatalogItems?: number;
   maxDailyMenuItems?: number;
+  maxAdCampaignItems?: number;
+  maxActiveBanners?: number;
+  maxActiveCampaigns?: number;
 };
 
 export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [

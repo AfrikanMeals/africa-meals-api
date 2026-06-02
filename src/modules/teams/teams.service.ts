@@ -165,12 +165,34 @@ export class TeamsService {
         }
       }
     }
-    const planDowngradeImpact =
-      user.type === UserTypeEnum.VENDOR
-        ? await this.subscriptionsService.resolvePlanDowngradeImpactForOwner(
-            user._id as Types.ObjectId,
+    let planDowngradeImpact: {
+      hiddenStores: number;
+      hiddenCatalogItems: number;
+      hiddenDailyMenuItems: number;
+      maxDailyMenuItemsPerDay: number | null;
+    };
+    if (user.type === UserTypeEnum.VENDOR) {
+      const impact =
+        await this.subscriptionsService.resolvePlanDowngradeImpactForOwner(
+          user._id as Types.ObjectId,
+        );
+      const storeIdsForUser = await this.subscriptionsService
+        .resolveAccessibleStoreIdsForOwner(user._id as Types.ObjectId);
+      const firstStoreId = storeIdsForUser[0] ?? null;
+      const maxDailyMenuItemsPerDay = firstStoreId
+        ? await this.subscriptionsService.resolveDailyMenuItemLimitForStore(
+            firstStoreId,
           )
-        : { hiddenStores: 0, hiddenCatalogItems: 0, hiddenDailyMenuItems: 0 };
+        : null;
+      planDowngradeImpact = { ...impact, maxDailyMenuItemsPerDay };
+    } else {
+      planDowngradeImpact = {
+        hiddenStores: 0,
+        hiddenCatalogItems: 0,
+        hiddenDailyMenuItems: 0,
+        maxDailyMenuItemsPerDay: null,
+      };
+    }
     return {
       storeAccess,
       adminPermissions,

@@ -246,10 +246,8 @@ export class SubscriptionsService implements OnModuleInit {
     for (const seed of DEFAULT_SUBSCRIPTION_PLAN_SEEDS) {
       const existing = await this.planModel
         .findOne({ name: seed.name.trim() })
-        .select('_id')
         .lean()
         .exec();
-      if (existing) continue;
       const trial = resolvePlanTrialFields({
         name: seed.name,
         priceMonthly: seed.priceMonthly,
@@ -257,7 +255,7 @@ export class SubscriptionsService implements OnModuleInit {
         trialDays: seed.trialDays,
         trialReminderDays: seed.trialReminderDays,
       });
-      await this.planModel.create({
+      const docFields = {
         name: seed.name.trim(),
         description: seed.description.trim(),
         priceMonthly: seed.priceMonthly,
@@ -272,7 +270,40 @@ export class SubscriptionsService implements OnModuleInit {
         mobileAccess: seed.mobileAccess === true,
         maxCatalogItems: Math.max(0, Number(seed.maxCatalogItems ?? 0)),
         maxDailyMenuItems: Math.max(0, Number(seed.maxDailyMenuItems ?? 0)),
-      });
+        ...(seed.maxAdCampaignItems != null && {
+          maxAdCampaignItems: Math.max(0, Number(seed.maxAdCampaignItems)),
+        }),
+        ...(seed.maxActiveBanners != null && {
+          maxActiveBanners: Math.max(0, Number(seed.maxActiveBanners)),
+        }),
+        ...(seed.maxActiveCampaigns != null && {
+          maxActiveCampaigns: Math.max(0, Number(seed.maxActiveCampaigns)),
+        }),
+      };
+      if (existing) {
+        // Upsert : mettre à jour uniquement les champs manquants/nouveaux
+        const existingDoc = existing as Record<string, unknown>;
+        const patch: Record<string, unknown> = {};
+        if (existingDoc.maxAdCampaignItems == null && docFields.maxAdCampaignItems != null) {
+          patch.maxAdCampaignItems = docFields.maxAdCampaignItems;
+        }
+        if (existingDoc.maxActiveBanners == null && docFields.maxActiveBanners != null) {
+          patch.maxActiveBanners = docFields.maxActiveBanners;
+        }
+        if (existingDoc.maxActiveCampaigns == null && docFields.maxActiveCampaigns != null) {
+          patch.maxActiveCampaigns = docFields.maxActiveCampaigns;
+        }
+        if (Object.keys(patch).length > 0) {
+          await this.planModel
+            .updateOne({ _id: (existingDoc as { _id: unknown })._id }, { $set: patch })
+            .exec();
+          this.logger.log(
+            `Seed abonnement mis à jour (nouveaux champs): ${seed.name} → ${JSON.stringify(patch)}`,
+          );
+        }
+        continue;
+      }
+      await this.planModel.create(docFields);
       this.logger.log(`Seed abonnement créé: ${seed.name}`);
     }
   }
