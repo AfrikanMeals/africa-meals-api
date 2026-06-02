@@ -582,6 +582,14 @@ export class AdsService implements OnModuleInit {
     return new Stripe(key);
   }
 
+  private adCreditAdminAppBase(): string {
+    return (
+      this._config.get<string>('ADMIN_APP_URL')?.trim() ||
+      this._config.get<string>('FRONTEND_URL')?.trim() ||
+      'http://localhost:3001'
+    ).replace(/\/+$/, '');
+  }
+
   private adCreditSuccessUrl(): string {
     const configured = this._config
       .get<string>('STRIPE_AD_CREDIT_SUCCESS_URL')
@@ -593,14 +601,8 @@ export class AdsService implements OnModuleInit {
             configured.includes('?') ? '&' : '?'
           }ad_credit_session_id={CHECKOUT_SESSION_ID}`;
     }
-    const adminBase =
-      this._config.get<string>('FRONTEND_URL')?.trim() ||
-      this._config.get<string>('ADMIN_APP_URL')?.trim() ||
-      'http://localhost:3000';
-    return `${adminBase.replace(
-      /\/$/,
-      '',
-    )}/?ad_credit_session_id={CHECKOUT_SESSION_ID}`;
+    const adminBase = this.adCreditAdminAppBase();
+    return `${adminBase}/ad-credit-return?ad_credit_session_id={CHECKOUT_SESSION_ID}`;
   }
 
   private adCreditCancelUrl(): string {
@@ -608,11 +610,8 @@ export class AdsService implements OnModuleInit {
       .get<string>('STRIPE_AD_CREDIT_CANCEL_URL')
       ?.trim();
     if (configured) return configured;
-    const adminBase =
-      this._config.get<string>('FRONTEND_URL')?.trim() ||
-      this._config.get<string>('ADMIN_APP_URL')?.trim() ||
-      'http://localhost:3000';
-    return `${adminBase.replace(/\/$/, '')}/?ad_credit_payment=cancel`;
+    const adminBase = this.adCreditAdminAppBase();
+    return `${adminBase}/ad-credit-return?ad_credit_payment=cancel`;
   }
 
   private async _adCreditPaidTotalCad(
@@ -637,7 +636,8 @@ export class AdsService implements OnModuleInit {
     return Number(rows[0]?.total ?? 0);
   }
 
-  private async _backfillRecentAdCreditPayments(
+  /** Réconcilie les sessions Stripe payées (idempotent). */
+  private async _syncAdCreditPaymentsFromStripe(
     ownerId: Types.ObjectId,
   ): Promise<void> {
     let stripe: StripeClient;
@@ -689,14 +689,16 @@ export class AdsService implements OnModuleInit {
         .updateOne(
           { stripeCheckoutSessionId: session.id },
           {
-            $setOnInsert: {
+            $set: {
               owner: ownerId,
               amountPaidCad,
               currency,
               status: AdCreditPaymentStatusEnum.PAID,
-              stripeCheckoutSessionId: session.id,
               stripePaymentIntentId: paymentIntentId,
               paidAt: new Date(),
+            },
+            $setOnInsert: {
+              stripeCheckoutSessionId: session.id,
             },
           },
           { upsert: true },
@@ -2249,10 +2251,8 @@ export class AdsService implements OnModuleInit {
     if (!storeIds.length) {
       const ownerId = new Types.ObjectId(String(user._id));
       let paidTotal = await this._adCreditPaidTotalCad(ownerId);
-      if (paidTotal <= 0) {
-        await this._backfillRecentAdCreditPayments(ownerId);
-        paidTotal = await this._adCreditPaidTotalCad(ownerId);
-      }
+      await this._syncAdCreditPaymentsFromStripe(ownerId);
+      paidTotal = await this._adCreditPaidTotalCad(ownerId);
       return {
         currency: pricing.currency,
         grossDue: 0,
@@ -2619,11 +2619,8 @@ export class AdsService implements OnModuleInit {
     });
 
     const ownerId = new Types.ObjectId(String(user._id));
+    await this._syncAdCreditPaymentsFromStripe(ownerId);
     let paidTotal = await this._adCreditPaidTotalCad(ownerId);
-    if (paidTotal <= 0) {
-      await this._backfillRecentAdCreditPayments(ownerId);
-      paidTotal = await this._adCreditPaidTotalCad(ownerId);
-    }
     const applied = this.applyPaidAmountToStoreBreakdown(stores, paidTotal);
     return {
       currency: pricing.currency,
@@ -2958,23 +2955,27 @@ export class AdsService implements OnModuleInit {
       typeof session.payment_intent === 'string'
         ? session.payment_intent
         : session.payment_intent?.id ?? null;
+    const ownerOid = new Types.ObjectId(String(user._id));
     await this._adCreditPaymentModel
       .updateOne(
         { stripeCheckoutSessionId: sid },
         {
-          $setOnInsert: {
-            owner: new Types.ObjectId(String(user._id)),
+          $set: {
+            owner: ownerOid,
             amountPaidCad,
             currency: 'CAD',
             status: AdCreditPaymentStatusEnum.PAID,
-            stripeCheckoutSessionId: sid,
             stripePaymentIntentId: paymentIntentId,
             paidAt: new Date(),
+          },
+          $setOnInsert: {
+            stripeCheckoutSessionId: sid,
           },
         },
         { upsert: true },
       )
       .exec();
+    await this._syncAdCreditPaymentsFromStripe(ownerOid);
     return { ok: true, amountPaidCad, sessionId: sid };
   }
 

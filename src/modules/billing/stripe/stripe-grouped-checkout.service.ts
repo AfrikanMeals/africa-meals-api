@@ -484,14 +484,16 @@ export class StripeGroupedCheckoutService {
       .updateOne(
         { stripeCheckoutSessionId: session.id },
         {
-          $setOnInsert: {
+          $set: {
             owner: new Types.ObjectId(ownerId),
             amountPaidCad,
             currency,
             status: AdCreditPaymentStatusEnum.PAID,
-            stripeCheckoutSessionId: session.id,
             stripePaymentIntentId: paymentIntentId,
             paidAt: new Date(),
+          },
+          $setOnInsert: {
+            stripeCheckoutSessionId: session.id,
           },
         },
         { upsert: true },
