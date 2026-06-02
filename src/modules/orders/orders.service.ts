@@ -51,6 +51,11 @@ import {
 } from '@modules/ws-notify/ws-order-notify.service';
 import { LoyaltyService } from '@modules/loyalty/loyalty.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
+import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
+import {
+  buildVendorOrderPaidInboxMessage,
+  buildVendorOrderPaidPushBody,
+} from './vendor-order-paid-message.util';
 
 @Injectable()
 export class OrdersService {
@@ -106,6 +111,9 @@ export class OrdersService {
 
   @Inject(AdsService)
   private readonly _adsService: AdsService;
+
+  @Inject(WsInboxNotifyService)
+  private readonly _wsInboxNotify: WsInboxNotifyService;
 
   /** Expose l’adresse de livraison figée au paiement dans `user.addresses`. */
   static enrichOrdersWithDeliveryAddress(
@@ -798,6 +806,31 @@ export class OrdersService {
     return null;
   }
 
+  /** Message détaillé dans le fil notifications vendeur + refresh WebSocket inbox. */
+  private async appendStoreVendorPaidMessage(
+    storeId: string,
+    message: string,
+    notifyUserIds: string[],
+  ): Promise<void> {
+    const text = message.trim();
+    if (!text || !Types.ObjectId.isValid(storeId)) return;
+    await this._storeModel.updateOne(
+      { _id: new Types.ObjectId(storeId) },
+      {
+        $push: {
+          vendorMessages: {
+            message: text,
+            from: 'SYSTEM',
+            createdAt: new Date(),
+          },
+        },
+      },
+    );
+    for (const id of [...new Set(notifyUserIds)]) {
+      this._wsInboxNotify.notifyUserInboxRefresh(id);
+    }
+  }
+
   /**
    * Après paiement Stripe : statut payé + frais + total.
    * Si `opts.charged*Cents` sont fournis (métadonnées Stripe / payout), le total
@@ -1043,11 +1076,25 @@ export class OrdersService {
             await this._storeAccess.listStorePushRecipientUserIds(storeIdPaid)
           ).filter((id) => id !== uid);
           if (vendorIds.length > 0) {
+            const paidMsgArgs = {
+              orderId,
+              items: o.items as OrdeLineItem[],
+              totalPrice,
+              currency:
+                opts?.currency?.trim() ||
+                (typeof o.currency === 'string' ? o.currency : undefined),
+              pickupCode:
+                typeof $set['pickupCode'] === 'string'
+                  ? $set['pickupCode']
+                  : undefined,
+              storeName,
+            };
+            const pushBody = buildVendorOrderPaidPushBody(paidMsgArgs);
             void this._notificationsService
               .pushVendorOrderNotify({
                 vendorUserIds: vendorIds,
                 title: 'Commande payée',
-                body: `${storeName ?? 'Boutique'} : la commande a été payée.`,
+                body: pushBody,
                 orderId,
                 storeName,
                 reason: 'order_paid',
@@ -1060,6 +1107,17 @@ export class OrdersService {
                   }`,
                 ),
               );
+            void this.appendStoreVendorPaidMessage(
+              storeIdPaid,
+              buildVendorOrderPaidInboxMessage(paidMsgArgs),
+              vendorIds,
+            ).catch((err) =>
+              this.logger.warn(
+                `vendor inbox order paid: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              ),
+            );
           }
         }
       }
