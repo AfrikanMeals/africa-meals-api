@@ -82,7 +82,12 @@ export class UpdateAdNotificationChannelAvailabilityDto {
 }
 
 export class UpdateAdNotificationPricingDto {
-  @ApiPropertyOptional({ example: 'CAD' })
+  @ApiPropertyOptional({
+    example: 'CAD',
+    deprecated: true,
+    description:
+      'Ignoré — la devise provient des paramètres Régions (SupportedCountries).',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(8)

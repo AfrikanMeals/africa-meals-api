@@ -119,6 +119,14 @@ export class SupportedCountriesService implements OnModuleInit {
     return String(doc.currency).toUpperCase();
   }
 
+  /** Devise plateforme (paramètres Régions) — Canada prioritaire, sinon 1ère région active. */
+  async getPrimaryBillingCurrency(): Promise<string> {
+    const rows = await this.listActive();
+    const ca = rows.find((r) => r.code === 'CA');
+    if (ca?.currency) return ca.currency;
+    return rows[0]?.currency ?? 'CAD';
+  }
+
   async listAllForAdmin(): Promise<
     Array<{
       code: string;

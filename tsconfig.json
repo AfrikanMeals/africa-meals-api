@@ -33,6 +33,9 @@
       ],
       "@common/*": [
         "src/common/*"
+      ],
+      "@common/bullmq-redis.connection": [
+        "src/common/bullmq-redis.connection.ts"
       ]
     }
   }

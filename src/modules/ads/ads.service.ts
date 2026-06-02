@@ -30,6 +30,7 @@ import {
 import { MediasService } from '@modules/medias/medias.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -433,6 +434,9 @@ export class AdsService implements OnModuleInit {
   @Inject(AdNotificationService)
   private readonly _adNotifications: AdNotificationService;
 
+  @Inject(SupportedCountriesService)
+  private readonly _supportedCountries: SupportedCountriesService;
+
   async onModuleInit() {
     await this.seedIfEmpty();
   }
@@ -444,7 +448,7 @@ export class AdsService implements OnModuleInit {
   /** Enqueue immédiat si add-on notifications actif et pub éligible. */
   private scheduleNotificationDispatchAfterSave(
     kind: 'banner' | 'campaign',
-    entityId: Types.ObjectId | string,
+    entityId: Types.ObjectId | string | unknown,
     notificationAddon: unknown,
   ): void {
     const addon = notificationAddonFromDoc(
@@ -962,7 +966,9 @@ export class AdsService implements OnModuleInit {
   ): Promise<AdNotificationPricingPayload> {
     this.assertVendorOrAdmin(user);
     const doc = await this._ensureNotificationPricingDoc();
-    return this._toNotificationPricingPayload(doc);
+    const payload = this._toNotificationPricingPayload(doc);
+    const currency = await this._supportedCountries.getPrimaryBillingCurrency();
+    return { ...payload, currency };
   }
 
   async updateNotificationPricing(
@@ -971,9 +977,8 @@ export class AdsService implements OnModuleInit {
   ): Promise<AdNotificationPricingPayload> {
     this.assertAdmin(user);
     const current = await this._ensureNotificationPricingDoc();
-    const nextCurrency = String(dto.currency ?? current.currency ?? 'CAD')
-      .trim()
-      .toUpperCase();
+    const nextCurrency =
+      await this._supportedCountries.getPrimaryBillingCurrency();
     const n = (key: keyof UpdateAdNotificationPricingDto, fallback: number) => {
       const raw = dto[key];
       const x = Number(raw ?? fallback);
@@ -1043,9 +1048,10 @@ export class AdsService implements OnModuleInit {
         { upsert: true, new: true, setDefaultsOnInsert: true },
       )
       .exec();
-    return this._toNotificationPricingPayload(
+    const payload = this._toNotificationPricingPayload(
       updated as unknown as AdNotificationPricingSettingsModel,
     );
+    return { ...payload, currency: nextCurrency };
   }
 
   private _normalizeCampaignItems(items: CampaignItemDto[]): CampaignItemDto[] {
