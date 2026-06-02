@@ -69,6 +69,7 @@ import {
 } from '@modules/ads/dto/send-ad-notification-test.dto';
 import { TrackAdNotificationEventDto, TrackAdNotificationEventKindEnum } from '@modules/ads/dto/ad-notification-tracking.dto';
 import { StoreAccessService } from '@modules/teams/store-access.service';
+import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 import { AdModel } from '@schemas/ad.schema';
 import { AdCampaignModel } from '@schemas/ad-campaign.schema';
 import {
@@ -131,6 +132,7 @@ export class AdNotificationService {
     @Inject(forwardRef(() => AdNotificationDispatchQueueService))
     private readonly dispatchQueue: AdNotificationDispatchQueueService,
     private readonly storeAccess: StoreAccessService,
+    private readonly wsInboxNotify: WsInboxNotifyService,
   ) {}
 
   private async assertAdminSettings(user: UserModel): Promise<void> {
@@ -1077,6 +1079,7 @@ export class AdNotificationService {
           sendPush: false,
         });
         inboxNotificationId = created.id;
+        this.wsInboxNotify.notifyUserInboxRefresh(args.recipient.userId);
       } catch (e) {
         this.logger.warn(
           `in-app ad inbox ${deliveryIdInApp}: ${e instanceof Error ? e.message : String(e)}`,

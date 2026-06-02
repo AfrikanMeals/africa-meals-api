@@ -5,6 +5,7 @@ import { NotificationsModule } from '@modules/notifications/notifications.module
 import { TeamsModule } from '@modules/teams/teams.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
+import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
@@ -67,6 +68,7 @@ import { AdsService } from './ads.service';
     TeamsModule,
     SubscriptionsModule,
     SupportedCountriesModule,
+    WsNotifyModule,
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       { name: AdNotificationEventModel.name, schema: AdNotificationEventSchema },
