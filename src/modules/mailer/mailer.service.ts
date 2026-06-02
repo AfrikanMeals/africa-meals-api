@@ -147,7 +147,9 @@ export class MailerService {
         content: a.content,
         contentType:
           a.contentType ??
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          (/\.pdf$/i.test(a.filename)
+            ? 'application/pdf'
+            : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
       })),
     });
   }

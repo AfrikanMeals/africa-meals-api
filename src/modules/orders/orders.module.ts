@@ -39,6 +39,9 @@ import { NotificationsModule } from '@modules/notifications/notifications.module
 import { TeamsModule } from '@modules/teams/teams.module';
 import { BusinessReportsModule } from '@modules/business-reports/business-reports.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
+import { MailerModule } from '@modules/mailer/mailer.module';
+import { OrderInvoicePdfService } from './order-invoice-pdf.service';
+import { OrderPaidInvoiceEmailService } from './order-paid-invoice-email.service';
 
 @Module({
   controllers: [OrdersController],
@@ -47,12 +50,15 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
     OrderStatusEventsService,
     OrdersDemoSeedService,
     ProductRatingsDemoSeedService,
+    OrderInvoicePdfService,
+    OrderPaidInvoiceEmailService,
   ],
   exports: [OrdersService, OrderStatusEventsService],
   imports: [
     NotificationsModule,
     TeamsModule,
     WsNotifyModule,
+    MailerModule,
     BusinessReportsModule,
     CartModule,
     AdsModule,

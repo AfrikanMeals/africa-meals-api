@@ -56,6 +56,7 @@ import {
   buildVendorOrderPaidInboxMessage,
   buildVendorOrderPaidPushBody,
 } from './vendor-order-paid-message.util';
+import { OrderPaidInvoiceEmailService } from './order-paid-invoice-email.service';
 
 @Injectable()
 export class OrdersService {
@@ -114,6 +115,9 @@ export class OrdersService {
 
   @Inject(WsInboxNotifyService)
   private readonly _wsInboxNotify: WsInboxNotifyService;
+
+  @Inject(OrderPaidInvoiceEmailService)
+  private readonly _orderPaidInvoiceEmail: OrderPaidInvoiceEmailService;
 
   /** Expose l’adresse de livraison figée au paiement dans `user.addresses`. */
   static enrichOrdersWithDeliveryAddress(
@@ -1125,6 +1129,16 @@ export class OrdersService {
         orderId,
         OrderStatusEnum.PAIED,
       );
+
+      void this._orderPaidInvoiceEmail
+        .sendForPaidOrder(orderId)
+        .catch((err) =>
+          this.logger.warn(
+            `order paid invoice email order=${orderId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
 
       // Fidélité : crédit dès encaissement confirmé (respecte éligibilité + réglages admin).
       void this._loyaltyService
