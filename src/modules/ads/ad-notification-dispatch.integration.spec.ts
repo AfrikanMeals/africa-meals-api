@@ -41,20 +41,24 @@ describe('Ad notification dispatch (integration)', () => {
   };
   const eventModel = { insertMany: jest.fn().mockResolvedValue([]), create: jest.fn() };
   const orderModel = {
-    distinct: jest.fn().mockResolvedValue([userId.toString()]),
+    distinct: jest.fn().mockReturnValue({
+      exec: jest.fn().mockResolvedValue([userId.toString()]),
+    }),
   };
   const userModel = {
     find: jest.fn().mockReturnValue({
-      limit: jest.fn().mockReturnValue({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue([
-            {
-              _id: userId,
-              email: 'client@example.com',
-              phoneNumber: '+15145551234',
-              fullName: 'Client Test',
-            },
-          ]),
+      select: jest.fn().mockReturnValue({
+        limit: jest.fn().mockReturnValue({
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue([
+              {
+                _id: userId,
+                email: 'client@example.com',
+                phoneNumber: '+15145551234',
+                fullName: 'Client Test',
+              },
+            ]),
+          }),
         }),
       }),
     }),
@@ -180,6 +184,39 @@ describe('Ad notification dispatch (integration)', () => {
     expect(enqueueEntityDispatch).not.toHaveBeenCalled();
   });
 
+  it('processEntityDispatchJob push seul déclenche FCM', async () => {
+    const claimedDoc = {
+      _id: adId,
+      store: storeId,
+      title: 'Promo été',
+      subtitle: '20 % de rabais',
+      notificationAddon: {
+        enabled: true,
+        channels: {
+          email: false,
+          push: true,
+          inApp: false,
+          sms: false,
+          whatsapp: false,
+        },
+      },
+      audienceTotal: null,
+    };
+    adModel.findOneAndUpdate.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue(claimedDoc),
+      }),
+    });
+
+    await adNotifications.processEntityDispatchJob({
+      kind: 'banner',
+      entityId: adId.toString(),
+    });
+
+    expect(sendMulticast).toHaveBeenCalled();
+    expect(sendMulticast.mock.calls[0][0].data?.type).toBe('ad_promo');
+  });
+
   it('cron runDispatchPass → lot push déclenche FCM', async () => {
     const claimedDoc = {
       _id: adId,
@@ -216,9 +253,12 @@ describe('Ad notification dispatch (integration)', () => {
       }),
     });
 
+    const batchSpy = jest.spyOn(adNotifications, 'processRecipientBatchJob');
+
     await cron.runScheduledDispatch();
 
     expect(adModel.findOneAndUpdate).toHaveBeenCalled();
+    expect(batchSpy).toHaveBeenCalled();
     expect(sendMulticast).toHaveBeenCalled();
     const fcmArgs = sendMulticast.mock.calls[0][0];
     expect(fcmArgs.recipientUserIds).toContain(userId.toString());
