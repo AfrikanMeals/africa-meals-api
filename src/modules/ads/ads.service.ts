@@ -19,6 +19,7 @@ import {
 } from '@modules/billing/stripe/stripe-connect-visibility';
 import { MediasService } from '@modules/medias/medias.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -334,11 +335,17 @@ export class AdsService implements OnModuleInit {
   @InjectModel(DrinkModel.name)
   private readonly _drinkModel: Model<DrinkModel>;
 
+  @InjectModel(UserModel.name)
+  private readonly _userModel: Model<UserModel>;
+
   @Inject(MediasService)
   private readonly _mediasService: MediasService;
 
   @Inject(StoreAccessService)
   private readonly _storeAccess: StoreAccessService;
+
+  @Inject(SubscriptionsService)
+  private readonly _subscriptions: SubscriptionsService;
 
   @Inject(ConfigService)
   private readonly _config: ConfigService;
@@ -363,6 +370,28 @@ export class AdsService implements OnModuleInit {
     }
   }
 
+  /** Lecture robuste des docs `.lean()` (champs camelCase ou snake_case Mongo). */
+  private _archivedAtFromLean(doc: Record<string, unknown>): Date | null {
+    const raw = doc.archivedAt ?? doc.archived_at;
+    if (raw == null || String(raw).trim() === '') return null;
+    return raw instanceof Date ? raw : new Date(String(raw));
+  }
+
+  private _billingFinalizedFromLean(doc: Record<string, unknown>): boolean {
+    const raw = doc.billingFinalizedAt ?? doc.billing_finalized_at;
+    return raw != null && String(raw).trim() !== '';
+  }
+
+  private _billingFinalAmountFromLean(doc: Record<string, unknown>): number {
+    const raw =
+      doc.billingFinalAmountCad ??
+      doc.billing_final_amount_cad ??
+      doc.billingFinalAmount ??
+      0;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : 0;
+  }
+
   private assertVendorStripeConnectReadyForWrites(user: UserModel): void {
     if (user.type !== UserTypeEnum.VENDOR) return;
     if (
@@ -385,6 +414,52 @@ export class AdsService implements OnModuleInit {
     const credit = await this.getMyAdCredit(user);
     if (Number(credit.totalDue ?? 0) > 0) {
       throw new ForbiddenException('ad_credit_payment_required');
+    }
+  }
+
+  /**
+   * Bloque la création / activation si la boutique a atteint la limite
+   * de bannières actives définie par son plan.
+   */
+  private async assertActiveBannerLimit(storeId: string): Promise<void> {
+    const limit =
+      await this._subscriptions.resolveActiveBannerLimitForStore(storeId);
+    if (limit == null) return; // illimité
+    const now = new Date();
+    const count = await this.adModel
+      .countDocuments({
+        store: new Types.ObjectId(storeId),
+        isActive: true,
+        $or: [
+          { archivedAt: { $exists: false } },
+          { archivedAt: null },
+        ],
+        $and: [
+          { $or: [{ validUntil: { $exists: false } }, { validUntil: null }, { validUntil: { $gt: now } }] },
+        ],
+      })
+      .exec();
+    if (count >= limit) {
+      throw new ForbiddenException(`active_banner_limit_reached:${limit}`);
+    }
+  }
+
+  /**
+   * Bloque la création si la boutique a atteint la limite
+   * de campagnes actives (non archivées) définie par son plan.
+   */
+  private async assertActiveCampaignLimit(storeId: string): Promise<void> {
+    const limit =
+      await this._subscriptions.resolveActiveCampaignLimitForStore(storeId);
+    if (limit == null) return; // illimité
+    const count = await this._adCampaignModel
+      .countDocuments({
+        store: new Types.ObjectId(storeId),
+        $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
+      })
+      .exec();
+    if (count >= limit) {
+      throw new ForbiddenException(`active_campaign_limit_reached:${limit}`);
     }
   }
 
@@ -742,6 +817,25 @@ export class AdsService implements OnModuleInit {
     }
   }
 
+  async resolveAdCampaignItemLimitForStore(storeId: string): Promise<number> {
+    return this._subscriptions.resolveAdCampaignItemLimitForStore(
+      storeId,
+      AD_CAMPAIGN_MAX_ITEMS,
+    );
+  }
+
+  async resolveActiveBannerLimitForStore(
+    storeId: string,
+  ): Promise<number | null> {
+    return this._subscriptions.resolveActiveBannerLimitForStore(storeId);
+  }
+
+  async resolveActiveCampaignLimitForStore(
+    storeId: string,
+  ): Promise<number | null> {
+    return this._subscriptions.resolveActiveCampaignLimitForStore(storeId);
+  }
+
   private async _assertCampaignItemsBelongToStore(
     storeId: string,
     items: CampaignItemDto[],
@@ -750,8 +844,9 @@ export class AdsService implements OnModuleInit {
     if (!normalized.length) {
       throw new BadRequestException('campaign_items_required');
     }
-    if (normalized.length > AD_CAMPAIGN_MAX_ITEMS) {
-      throw new BadRequestException('campaign_items_max_exceeded');
+    const maxItems = await this.resolveAdCampaignItemLimitForStore(storeId);
+    if (normalized.length > maxItems) {
+      throw new BadRequestException(`campaign_items_max_exceeded:${maxItems}`);
     }
     const productIds = normalized
       .filter((i) => i.itemType === AdCampaignItemTypeEnum.PRODUCT)
@@ -1183,6 +1278,7 @@ export class AdsService implements OnModuleInit {
       throw new BadRequestException('store_not_found');
     }
     await this.assertCanManageCampaignStore(user, storeId);
+    await this.assertActiveCampaignLimit(storeId);
     const startsAt = new Date(dto.startsAt);
     const endsAt = new Date(dto.endsAt);
     this._assertCampaignDateRange(startsAt, endsAt);
@@ -1323,18 +1419,22 @@ export class AdsService implements OnModuleInit {
     }
     const existing = await this._adCampaignModel
       .findById(id)
-      .select('_id store archivedAt')
+      .select('_id store archivedAt billingFinalizedAt')
       .lean()
       .exec();
     if (!existing) {
       throw new NotFoundException('campaign_not_found');
     }
     await this.assertCanManageCampaignStore(user, String(existing.store));
-    if (!existing.archivedAt) {
-      await this._archiveCampaignById(
-        new Types.ObjectId(String(existing._id)),
-        { forceEndsNow: true, reason: AdCampaignArchiveReasonEnum.ENDED },
-      );
+    const campaignOid = new Types.ObjectId(String(existing._id));
+    const lean = existing as unknown as Record<string, unknown>;
+    if (!this._archivedAtFromLean(lean)) {
+      await this._archiveCampaignById(campaignOid, {
+        forceEndsNow: true,
+        reason: AdCampaignArchiveReasonEnum.ENDED,
+      });
+    } else if (!this._billingFinalizedFromLean(lean)) {
+      await this._finalizeCampaignBilling(campaignOid);
     }
     const out = await this._adCampaignModel
       .findById(id)
@@ -1918,11 +2018,10 @@ export class AdsService implements OnModuleInit {
         clicks: 0,
         conversions: 0,
       };
-      const archivedAt = doc.archivedAt;
-      const isArchived = archivedAt != null && String(archivedAt).trim() !== '';
+      const isArchived = this._archivedAtFromLean(doc) != null;
       const due = isArchived
         ? Number(
-            doc.billingFinalAmountCad ??
+            this._billingFinalAmountFromLean(doc) ||
               this._adBillingAmount(pricing, metrics),
           )
         : 0;
@@ -2083,11 +2182,10 @@ export class AdsService implements OnModuleInit {
         actionClicks: 0,
         conversions: 0,
       };
-      const archivedAt = doc.archivedAt;
-      const isArchived = archivedAt != null && String(archivedAt).trim() !== '';
+      const isArchived = this._archivedAtFromLean(doc) != null;
       const due = isArchived
         ? Number(
-            doc.billingFinalAmountCad ??
+            this._billingFinalAmountFromLean(doc) ||
               this._campaignBillingAmount(pricing, metrics),
           )
         : 0;
@@ -2103,17 +2201,8 @@ export class AdsService implements OnModuleInit {
     const grossDue = Number((bannersDue + campaignsDue).toFixed(2));
 
     const stores = [...perStore.entries()].map(([storeId, row]) => {
-      const bannerDue =
-        bannerDueByStore.get(storeId) ??
-        (row.banners.impressions / 1000) * pricing.cpmCad +
-          row.banners.clicks * pricing.cpcCad +
-          row.banners.conversions * pricing.conversionCad;
-      const campaignDue =
-        campaignDueByStore.get(storeId) ??
-        (row.campaigns.impressions / 1000) * pricing.campaignCpmCad +
-          row.campaigns.clicks * pricing.campaignCpcCad +
-          row.campaigns.actionClicks * pricing.campaignActionCad +
-          row.campaigns.conversions * pricing.conversionCad;
+      const bannerDue = bannerDueByStore.get(storeId) ?? 0;
+      const campaignDue = campaignDueByStore.get(storeId) ?? 0;
       return {
         storeId,
         storeName: row.storeName,
@@ -2223,6 +2312,144 @@ export class AdsService implements OnModuleInit {
     }));
 
     return { items };
+  }
+
+  /**
+   * Recalcule et finalise la facturation de toutes les bannières / campagnes archivées
+   * dont `billingFinalizedAt` est absent. Idempotent : ne touche pas ce qui est déjà figé.
+   * - Vendeur : uniquement ses boutiques.
+   * - Admin : fournir `targetOwnerId` pour cibler un vendeur, null = toutes les boutiques.
+   */
+  async reconcileAdCreditBilling(
+    user: UserModel,
+    opts?: { targetOwnerId?: string },
+  ): Promise<{
+    bannersReconciled: number;
+    campaignsReconciled: number;
+    totalBillableCad: number;
+  }> {
+    const isAdmin = user.type === UserTypeEnum.ADMIN;
+    if (!isAdmin && user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_or_admin_only');
+    }
+
+    let storeIds: Types.ObjectId[];
+
+    if (isAdmin && opts?.targetOwnerId) {
+      if (!Types.ObjectId.isValid(opts.targetOwnerId)) {
+        throw new BadRequestException('invalid_owner_id');
+      }
+      const ownerUser = await this._userModel
+        ?.findById(opts.targetOwnerId)
+        .select('_id')
+        .lean()
+        .exec();
+      if (!ownerUser) throw new NotFoundException('owner_not_found');
+      const access = await this._storeAccess.resolveStoreAccess(
+        ownerUser as unknown as UserModel,
+      );
+      storeIds = access
+        .filter((a) => Types.ObjectId.isValid(a.storeId))
+        .map((a) => new Types.ObjectId(a.storeId));
+    } else if (isAdmin && !opts?.targetOwnerId) {
+      // Toutes les boutiques
+      storeIds = [];
+    } else {
+      const access = await this._storeAccess.resolveStoreAccess(user);
+      storeIds = access
+        .filter((a) => Types.ObjectId.isValid(a.storeId))
+        .map((a) => new Types.ObjectId(a.storeId));
+    }
+
+    const storeFilter =
+      storeIds.length > 0 ? { store: { $in: storeIds } } : {};
+    const archivedFilter = {
+      $or: [
+        { archivedAt: { $exists: true, $ne: null } },
+      ],
+      $and: [
+        {
+          $or: [
+            { billingFinalizedAt: { $exists: false } },
+            { billingFinalizedAt: null },
+          ],
+        },
+      ],
+    };
+
+    const [pendingBanners, pendingCampaigns] = await Promise.all([
+      this.adModel
+        .find({ ...storeFilter, ...archivedFilter })
+        .select('_id')
+        .lean()
+        .exec(),
+      this._adCampaignModel
+        .find({ ...storeFilter, ...archivedFilter })
+        .select('_id')
+        .lean()
+        .exec(),
+    ]);
+
+    let bannersReconciled = 0;
+    let campaignsReconciled = 0;
+    let totalBillableCad = 0;
+
+    for (const doc of pendingBanners as Array<Record<string, unknown>>) {
+      const oid = new Types.ObjectId(String(doc._id));
+      await this._finalizeAdBilling(oid);
+      bannersReconciled++;
+    }
+    for (const doc of pendingCampaigns as Array<Record<string, unknown>>) {
+      const oid = new Types.ObjectId(String(doc._id));
+      await this._finalizeCampaignBilling(oid);
+      campaignsReconciled++;
+    }
+
+    // Somme des montants recalculés
+    if (bannersReconciled + campaignsReconciled > 0) {
+      const [bannerSum, campaignSum] = await Promise.all([
+        pendingBanners.length
+          ? this.adModel
+              .aggregate<{ _id: null; total: number }>([
+                {
+                  $match: {
+                    _id: {
+                      $in: (pendingBanners as Array<Record<string, unknown>>).map(
+                        (d) => new Types.ObjectId(String(d._id)),
+                      ),
+                    },
+                  },
+                },
+                { $group: { _id: null, total: { $sum: '$billingFinalAmountCad' } } },
+              ])
+              .exec()
+          : Promise.resolve([]),
+        pendingCampaigns.length
+          ? this._adCampaignModel
+              .aggregate<{ _id: null; total: number }>([
+                {
+                  $match: {
+                    _id: {
+                      $in: (
+                        pendingCampaigns as Array<Record<string, unknown>>
+                      ).map((d) => new Types.ObjectId(String(d._id))),
+                    },
+                  },
+                },
+                { $group: { _id: null, total: { $sum: '$billingFinalAmountCad' } } },
+              ])
+              .exec()
+          : Promise.resolve([]),
+      ]);
+      totalBillableCad = Number(
+        (
+          Number((bannerSum as Array<{ total: number }>)[0]?.total ?? 0) +
+          Number((campaignSum as Array<{ total: number }>)[0]?.total ?? 0)
+        ).toFixed(2),
+      );
+    }
+
+    return { bannersReconciled, campaignsReconciled, totalBillableCad };
   }
 
   async createAdCreditCheckoutSession(
@@ -2882,6 +3109,9 @@ export class AdsService implements OnModuleInit {
 
     if (storeOid) {
       await this.assertUserCanManageStore(user, storeOid.toString());
+      if (dto.isActive !== false) {
+        await this.assertActiveBannerLimit(storeOid.toString());
+      }
     }
 
     const validFrom = new Date(dto.validFrom);
@@ -2959,6 +3189,11 @@ export class AdsService implements OnModuleInit {
       dto.actionType ?? existing.actionType ?? StoreAdActionTypeEnum.SHOP;
     if (!storeIdStr && nextAction === StoreAdActionTypeEnum.PRODUCT) {
       throw new BadRequestException('global_product_action_forbidden');
+    }
+
+    // Enforce banner limit when activating a previously inactive banner
+    if (dto.isActive === true && !existing.isActive && storeIdStr) {
+      await this.assertActiveBannerLimit(storeIdStr);
     }
 
     if (dto.validFrom != null || dto.validUntil != null) {
@@ -3078,7 +3313,7 @@ export class AdsService implements OnModuleInit {
     }
     const existing = await this.adModel
       .findById(id)
-      .select('_id store archivedAt')
+      .select('_id store archivedAt billingFinalizedAt')
       .lean()
       .exec();
     if (!existing) {
@@ -3090,11 +3325,16 @@ export class AdsService implements OnModuleInit {
     } else if (user.type !== UserTypeEnum.ADMIN) {
       throw new ForbiddenException('global_ad_vendor_forbidden');
     }
-    if (!existing.archivedAt) {
-      await this._archiveAdById(new Types.ObjectId(String(existing._id)), {
+    const adOid = new Types.ObjectId(String(existing._id));
+    const lean = existing as unknown as Record<string, unknown>;
+    if (!this._archivedAtFromLean(lean)) {
+      await this._archiveAdById(adOid, {
         forceEndsNow: true,
         reason: AdArchiveReasonEnum.ENDED,
       });
+      this.invalidateListCache();
+    } else if (!this._billingFinalizedFromLean(lean)) {
+      await this._finalizeAdBilling(adOid);
       this.invalidateListCache();
     }
     const out = await this.adModel

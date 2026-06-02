@@ -8,6 +8,8 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { AdModel } from '@schemas/ad.schema';
+import { AdCampaignModel } from '@schemas/ad-campaign.schema';
 import { DrinkModel } from '@schemas/drink.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { SubscriptionPlanModel } from '@schemas/subscription-plan.schema';
@@ -64,6 +66,9 @@ function mapPlan(doc: Record<string, unknown>) {
     mobileAccess: doc.mobileAccess === true,
     maxCatalogItems: Math.max(0, Number(doc.maxCatalogItems ?? 0)),
     maxDailyMenuItems: Math.max(0, Number(doc.maxDailyMenuItems ?? 0)),
+    maxAdCampaignItems: Math.max(0, Number(doc.maxAdCampaignItems ?? 0)),
+    maxActiveBanners: Math.max(0, Number(doc.maxActiveBanners ?? 0)),
+    maxActiveCampaigns: Math.max(0, Number(doc.maxActiveCampaigns ?? 0)),
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -132,6 +137,12 @@ export class SubscriptionsService implements OnModuleInit {
 
   @InjectModel(DrinkModel.name)
   private readonly drinkModel: Model<DrinkModel>;
+
+  @InjectModel(AdModel.name)
+  private readonly adModel: Model<AdModel>;
+
+  @InjectModel(AdCampaignModel.name)
+  private readonly adCampaignModel: Model<AdCampaignModel>;
 
   async onModuleInit() {
     await this.ensureDefaultPlansSeeded();
@@ -480,6 +491,74 @@ export class SubscriptionsService implements OnModuleInit {
     return configured > 0 ? configured : null;
   }
 
+  private adCampaignItemLimitFromPlanDoc(
+    plan: Record<string, unknown> | null,
+    defaultMax: number,
+  ): number {
+    if (!plan) return defaultMax;
+    const configured = Math.max(0, Number(plan.maxAdCampaignItems ?? 0));
+    return configured > 0 ? configured : defaultMax;
+  }
+
+  async resolveAdCampaignItemLimitForStore(
+    storeId: string | Types.ObjectId,
+    defaultMax: number,
+  ): Promise<number> {
+    const preferred = await this.findPreferredStoreSubscription(storeId);
+    if (!preferred) {
+      const freePlan = await this.findDefaultFreePlan();
+      return this.adCampaignItemLimitFromPlanDoc(
+        freePlan as Record<string, unknown> | null,
+        defaultMax,
+      );
+    }
+    const planId = String(preferred.plan ?? '');
+    if (!Types.ObjectId.isValid(planId)) {
+      return defaultMax;
+    }
+    const plan = await this.planModel.findById(planId).lean().exec();
+    return this.adCampaignItemLimitFromPlanDoc(
+      plan as Record<string, unknown> | null,
+      defaultMax,
+    );
+  }
+
+  /**
+   * Lit `maxActiveBanners` / `maxActiveCampaigns` depuis le plan actif.
+   * Retourne `null` si illimité (champ à 0).
+   */
+  async resolveActiveBannerLimitForStore(
+    storeId: string | Types.ObjectId,
+  ): Promise<number | null> {
+    const preferred = await this.findPreferredStoreSubscription(storeId);
+    const planId = preferred ? String(preferred.plan ?? '') : null;
+    const plan =
+      planId && Types.ObjectId.isValid(planId)
+        ? ((await this.planModel.findById(planId).lean().exec()) as Record<
+            string,
+            unknown
+          > | null)
+        : ((await this.findDefaultFreePlan()) as Record<string, unknown> | null);
+    const v = Math.max(0, Number(plan?.maxActiveBanners ?? 0));
+    return v > 0 ? v : null;
+  }
+
+  async resolveActiveCampaignLimitForStore(
+    storeId: string | Types.ObjectId,
+  ): Promise<number | null> {
+    const preferred = await this.findPreferredStoreSubscription(storeId);
+    const planId = preferred ? String(preferred.plan ?? '') : null;
+    const plan =
+      planId && Types.ObjectId.isValid(planId)
+        ? ((await this.planModel.findById(planId).lean().exec()) as Record<
+            string,
+            unknown
+          > | null)
+        : ((await this.findDefaultFreePlan()) as Record<string, unknown> | null);
+    const v = Math.max(0, Number(plan?.maxActiveCampaigns ?? 0));
+    return v > 0 ? v : null;
+  }
+
   async resolveDailyMenuItemLimitForStore(
     storeId: string | Types.ObjectId,
   ): Promise<number | null> {
@@ -784,12 +863,108 @@ export class SubscriptionsService implements OnModuleInit {
   }
 
   /**
+   * Downgrade : désactive en excès les bannières et campagnes d'une boutique
+   * si le plan actif impose une limite inférieure au nombre actif courant.
+   * Les plus récentes sont désactivées en premier (last-in, first-out).
+   */
+  async applyAdLimitsDowngradeForStore(
+    storeId: string | Types.ObjectId,
+  ): Promise<{ bannersDeactivated: number; campaignsDeactivated: number }> {
+    const sid = this.normalizeStoreObjectId(storeId);
+    let bannersDeactivated = 0;
+    let campaignsDeactivated = 0;
+
+    // Bannières
+    const bannerLimit = await this.resolveActiveBannerLimitForStore(sid);
+    if (bannerLimit != null && bannerLimit >= 0) {
+      const now = new Date();
+      const activeBanners = await this.adModel
+        .find({
+          store: sid,
+          isActive: true,
+          $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
+          $and: [
+            {
+              $or: [
+                { validUntil: { $exists: false } },
+                { validUntil: null },
+                { validUntil: { $gt: now } },
+              ],
+            },
+          ],
+        })
+        .select('_id')
+        .sort({ createdAt: -1, _id: -1 })
+        .lean()
+        .exec();
+      const excess = activeBanners.length - bannerLimit;
+      if (excess > 0) {
+        const toDeactivate = (activeBanners as Array<{ _id: unknown }>)
+          .slice(0, excess)
+          .map((b) => b._id);
+        await this.adModel
+          .updateMany({ _id: { $in: toDeactivate } }, { $set: { isActive: false } })
+          .exec();
+        bannersDeactivated = excess;
+      }
+    }
+
+    // Campagnes
+    const campaignLimit = await this.resolveActiveCampaignLimitForStore(sid);
+    if (campaignLimit != null && campaignLimit >= 0) {
+      const activeCampaigns = await this.adCampaignModel
+        .find({
+          store: sid,
+          $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
+        })
+        .select('_id isActive')
+        .sort({ createdAt: -1, _id: -1 })
+        .lean()
+        .exec();
+      const excess = activeCampaigns.length - campaignLimit;
+      if (excess > 0) {
+        const toDeactivate = (activeCampaigns as Array<{ _id: unknown }>)
+          .slice(0, excess)
+          .map((c) => c._id);
+        await this.adCampaignModel
+          .updateMany(
+            { _id: { $in: toDeactivate } },
+            { $set: { isActive: false } },
+          )
+          .exec();
+        campaignsDeactivated = excess;
+      }
+    }
+
+    return { bannersDeactivated, campaignsDeactivated };
+  }
+
+  /**
+   * Applique le downgrade Ads sur toutes les boutiques (appelé par le cron lifecycle).
+   */
+  private async applyAdLimitsDowngradeAllStores(): Promise<void> {
+    const stores = await this.storeModel
+      .find({})
+      .select('_id')
+      .lean()
+      .exec();
+    for (const store of stores) {
+      try {
+        await this.applyAdLimitsDowngradeForStore(String(store._id));
+      } catch {
+        // erreur non bloquante par boutique
+      }
+    }
+  }
+
+  /**
    * Entretien lifecycle: expire abonnements échus puis garantit un FREE actif
    * sur les boutiques sans abonnement en cours.
    */
   async reconcileSubscriptionLifecycle(now = new Date()): Promise<void> {
     await this.expireElapsedActiveSubscriptions(now);
     await this.ensureDefaultFreePlanForStoresWithoutActiveSubscription();
+    await this.applyAdLimitsDowngradeAllStores();
   }
 
   private async ensureDefaultFreePlanForStoresWithoutActiveSubscription() {
@@ -837,6 +1012,18 @@ export class SubscriptionsService implements OnModuleInit {
         0,
         Math.floor(Number(dto.maxDailyMenuItems ?? 0)),
       ),
+      maxAdCampaignItems: Math.max(
+        0,
+        Math.floor(Number(dto.maxAdCampaignItems ?? 0)),
+      ),
+      maxActiveBanners: Math.max(
+        0,
+        Math.floor(Number(dto.maxActiveBanners ?? 0)),
+      ),
+      maxActiveCampaigns: Math.max(
+        0,
+        Math.floor(Number(dto.maxActiveCampaigns ?? 0)),
+      ),
     });
     return mapPlan(doc.toObject() as Record<string, unknown>);
   }
@@ -878,6 +1065,24 @@ export class SubscriptionsService implements OnModuleInit {
       patch.maxDailyMenuItems = Math.max(
         0,
         Math.floor(Number(dto.maxDailyMenuItems)),
+      );
+    }
+    if (dto.maxAdCampaignItems != null) {
+      patch.maxAdCampaignItems = Math.max(
+        0,
+        Math.floor(Number(dto.maxAdCampaignItems)),
+      );
+    }
+    if (dto.maxActiveBanners != null) {
+      patch.maxActiveBanners = Math.max(
+        0,
+        Math.floor(Number(dto.maxActiveBanners)),
+      );
+    }
+    if (dto.maxActiveCampaigns != null) {
+      patch.maxActiveCampaigns = Math.max(
+        0,
+        Math.floor(Number(dto.maxActiveCampaigns)),
       );
     }
 

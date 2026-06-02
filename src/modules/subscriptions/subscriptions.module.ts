@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { AdModel, AdSchema } from '@schemas/ad.schema';
+import { AdCampaignModel, AdCampaignSchema } from '@schemas/ad-campaign.schema';
 import { DrinkModel, DrinkSchema } from '@schemas/drink.schema';
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
 import {
@@ -31,6 +33,8 @@ import { SubscriptionsStripeCheckoutService } from './subscriptions-stripe-check
       { name: StoreModel.name, schema: StoreSchema },
       { name: ProductModel.name, schema: ProductSchema },
       { name: DrinkModel.name, schema: DrinkSchema },
+      { name: AdModel.name, schema: AdSchema },
+      { name: AdCampaignModel.name, schema: AdCampaignSchema },
     ]),
   ],
   controllers: [SubscriptionsController],

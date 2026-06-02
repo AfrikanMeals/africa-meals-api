@@ -77,6 +77,21 @@ export class CreateSubscriptionPlanDto {
   @IsInt()
   @Min(0)
   maxDailyMenuItems?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxAdCampaignItems?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxActiveBanners?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxActiveCampaigns?: number;
 }
 
 export class UpdateSubscriptionPlanDto {
@@ -148,6 +163,21 @@ export class UpdateSubscriptionPlanDto {
   @IsInt()
   @Min(0)
   maxDailyMenuItems?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxAdCampaignItems?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxActiveBanners?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxActiveCampaigns?: number;
 }
 
 export class SubscribeVendorDto {

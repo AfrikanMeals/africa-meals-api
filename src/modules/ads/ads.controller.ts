@@ -14,6 +14,7 @@ import { TrackAdCampaignEventDto } from '@modules/ads/dto/ad-campaign-tracking.d
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import { OptionalAuthGuard } from '@modules/auth/guards/optional.auth.guard';
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -70,6 +71,26 @@ export class AdsController {
   @ApiBearerAuth('bearer')
   async listCampaignsManage(@Req() req: Request) {
     return this.adsService.listCampaignsForManagement(req.user as UserModel);
+  }
+
+  /** Toutes les limites Ads de la boutique selon son plan d'abonnement. */
+  @Get('campaigns/manage/item-limit')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: "Limites Ads (items, bannières, campagnes) selon le plan d'abonnement." })
+  async campaignItemLimit(
+    @Req() req: Request,
+    @Query('storeId') storeId?: string,
+  ) {
+    const sid = storeId?.trim() ?? '';
+    if (!sid) throw new BadRequestException('storeId_required');
+    const [maxCampaignItems, maxActiveBanners, maxActiveCampaigns] =
+      await Promise.all([
+        this.adsService.resolveAdCampaignItemLimitForStore(sid),
+        this.adsService.resolveActiveBannerLimitForStore(sid),
+        this.adsService.resolveActiveCampaignLimitForStore(sid),
+      ]);
+    return { maxCampaignItems, maxActiveBanners, maxActiveCampaigns };
   }
 
   @Get('campaigns/manage/archives')
@@ -219,6 +240,25 @@ export class AdsController {
       req.user as UserModel,
       body.sessionId,
     );
+  }
+
+  /**
+   * Recalcule la facturation de toutes les bannières / campagnes archivées
+   * sans `billingFinalizedAt`. Idempotent.
+   * - Vendeur : ses boutiques uniquement.
+   * - Admin : peut passer `?ownerId=<userId>` pour cibler un vendeur, ou rien pour tout.
+   */
+  @Post('my-credit/reconcile-billing')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Recalculer le crédit Ads (bannières/campagnes archivées).' })
+  async reconcileAdCreditBilling(
+    @Req() req: Request,
+    @Query('ownerId') ownerId?: string,
+  ) {
+    return this.adsService.reconcileAdCreditBilling(req.user as UserModel, {
+      targetOwnerId: ownerId?.trim() || undefined,
+    });
   }
 
   @Get('manage/pricing')

@@ -58,6 +58,27 @@ export class SubscriptionPlanModel {
    */
   @Prop({ type: Number, default: 0, min: 0 })
   maxDailyMenuItems: number;
+
+  /**
+   * Nombre max d'items (plats + boissons) par campagne publicitaire.
+   * 0 = utilise la valeur globale par défaut (AD_CAMPAIGN_MAX_ITEMS).
+   */
+  @Prop({ type: Number, default: 0, min: 0 })
+  maxAdCampaignItems: number;
+
+  /**
+   * Nombre max de bannières Ads actives simultanément par boutique.
+   * 0 = illimité.
+   */
+  @Prop({ type: Number, default: 0, min: 0 })
+  maxActiveBanners: number;
+
+  /**
+   * Nombre max de campagnes Ads actives (non archivées) simultanément par boutique.
+   * 0 = illimité.
+   */
+  @Prop({ type: Number, default: 0, min: 0 })
+  maxActiveCampaigns: number;
 }
 
 export type SubscriptionPlanDocument = HydratedDocument<SubscriptionPlanModel>;
