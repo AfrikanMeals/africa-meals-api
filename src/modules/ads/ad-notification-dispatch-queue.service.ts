@@ -10,7 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   parsePositiveInt,
   readBullmqRedisConnection,
-} from '@common/bullmq-redis.connection';
+} from '../../common/bullmq-redis-connection';
 import { randomUUID } from 'crypto';
 import { JobsOptions, Queue, Worker } from 'bullmq';
 import { AdNotificationService } from './ad-notification.service';

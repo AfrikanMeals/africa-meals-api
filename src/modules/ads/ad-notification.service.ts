@@ -9,7 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { JobsOptions, Queue } from 'bullmq';
 import { randomUUID } from 'crypto';
-import { parsePositiveInt } from '@common/bullmq-redis.connection';
+import { parsePositiveInt } from '../../common/bullmq-redis-connection';
 import { AdNotificationDispatchQueueService } from '@modules/ads/ad-notification-dispatch-queue.service';
 import type {
   AdNotifyEntityJob,
