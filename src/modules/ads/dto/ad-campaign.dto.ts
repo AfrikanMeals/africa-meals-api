@@ -1,3 +1,4 @@
+import { NotificationAddonDto } from '@modules/ads/dto/ad-notification.dto';
 import { AdCampaignItemTypeEnum } from '@schemas/ad-campaign.schema';
 import { StoreAdActionTypeEnum } from '@schemas/ad.schema';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -180,4 +181,10 @@ export class PatchAdCampaignDto {
   @IsOptional()
   @IsObject()
   targetingRules?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ type: NotificationAddonDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => NotificationAddonDto)
+  notificationAddon?: NotificationAddonDto;
 }

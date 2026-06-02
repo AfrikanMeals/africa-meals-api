@@ -107,15 +107,24 @@ export function slimAdForPublicClient(
     }
   }
   const productRaw = raw['product'];
-  let productId: string | undefined;
-  if (
-    productRaw != null &&
-    typeof productRaw === 'object' &&
-    !(productRaw instanceof Date)
-  ) {
-    const p = productRaw as Record<string, unknown>;
-    productId = mongoIdToString(p['_id'] ?? p['id']);
-    if (productId === '') productId = undefined;
+  let productId = mongoIdToString(
+    raw['productId'] ?? raw['product_id'] ?? '',
+  );
+  if (productId === '') productId = undefined;
+  if (productRaw != null) {
+    if (
+      typeof productRaw === 'object' &&
+      !(productRaw instanceof Date)
+    ) {
+      const fromRef = mongoIdToString(
+        (productRaw as Record<string, unknown>)['_id'] ??
+          (productRaw as Record<string, unknown>)['id'],
+      );
+      if (fromRef !== '') productId = fromRef;
+    } else {
+      const fromRef = mongoIdToString(productRaw);
+      if (fromRef !== '') productId = fromRef;
+    }
   }
   return {
     _id: id,

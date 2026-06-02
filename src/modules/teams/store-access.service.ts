@@ -239,6 +239,15 @@ export class StoreAccessService {
     user: UserModel,
     storeId: string,
   ): Promise<StorePermission[]> {
+    if (user.type === UserTypeEnum.ADMIN) {
+      const exists = await this.storeModel
+        .findById(storeId)
+        .select('_id')
+        .lean()
+        .exec();
+      if (exists) return [...ALL_STORE_PERMISSIONS];
+      return [];
+    }
     const access = await this.resolveStoreAccess(user);
     const row = access.find((a) => a.storeId === storeId);
     return row?.permissions ?? [];

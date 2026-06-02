@@ -1,3 +1,4 @@
+import { NotificationAddonDto } from '@modules/ads/dto/ad-notification.dto';
 import { StoreAdActionTypeEnum } from '@schemas/ad.schema';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
@@ -13,6 +14,7 @@ import {
   MaxLength,
   Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 
 export const AD_LINK_ACTION_TYPES: StoreAdActionTypeEnum[] = [
@@ -95,6 +97,12 @@ export class CreateAdManagementDto {
   @IsString()
   @MaxLength(2000)
   actionTarget?: string;
+
+  @ApiPropertyOptional({ type: NotificationAddonDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => NotificationAddonDto)
+  notificationAddon?: NotificationAddonDto;
 }
 
 export class PatchAdManagementDto {
@@ -163,6 +171,12 @@ export class PatchAdManagementDto {
   @IsString()
   @MaxLength(2000)
   actionTarget?: string | null;
+
+  @ApiPropertyOptional({ type: NotificationAddonDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => NotificationAddonDto)
+  notificationAddon?: NotificationAddonDto;
 }
 
 /** Bannière pub : JSON + base64 — fiable quand multipart est tronqué (Firebase / CF / proxys). */

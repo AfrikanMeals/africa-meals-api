@@ -9,7 +9,13 @@ import {
   CreateAdCampaignDto,
   PatchAdCampaignDto,
 } from '@modules/ads/dto/ad-campaign.dto';
+import { UpdateAdNotificationPricingDto } from '@modules/ads/dto/ad-notification.dto';
 import { UpdateAdPricingDto } from '@modules/ads/dto/ad-pricing.dto';
+import {
+  normalizeNotificationAddonInput,
+  notificationAddonFromDoc,
+  NotificationAddonPayload,
+} from '@modules/ads/ad-notification.util';
 import { TrackAdEventDto } from '@modules/ads/dto/ad-tracking.dto';
 import { TrackAdCampaignEventDto } from '@modules/ads/dto/ad-campaign-tracking.dto';
 import {
@@ -45,6 +51,10 @@ import {
   AdCampaignItemTypeEnum,
   AdCampaignModel,
 } from '@schemas/ad-campaign.schema';
+import {
+  AdNotificationPricingSettingsDocument,
+  AdNotificationPricingSettingsModel,
+} from '@schemas/ad-notification-pricing-settings.schema';
 import {
   AdPricingSettingsDocument,
   AdPricingSettingsModel,
@@ -92,6 +102,7 @@ export type AdManagementRow = {
   archiveReason: AdArchiveReasonEnum | null;
   billingFinalizedAt: string | null;
   billingFinalAmountCad: number;
+  notificationAddon: NotificationAddonPayload;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -200,6 +211,7 @@ export type AdCampaignManagementRow = {
   archiveReason?: AdCampaignArchiveReasonEnum | null;
   billingFinalizedAt?: string | null;
   billingFinalAmountCad?: number;
+  notificationAddon: NotificationAddonPayload;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -283,7 +295,25 @@ export type AdPricingPayload = {
   updatedAt: string | null;
 };
 
+export type AdNotificationPricingPayload = {
+  currency: string;
+  emailDeliveryCad: number;
+  emailInteractionCad: number;
+  emailConversionCad: number;
+  pushDeliveryCad: number;
+  pushInteractionCad: number;
+  pushConversionCad: number;
+  inAppDeliveryCad: number;
+  inAppInteractionCad: number;
+  inAppConversionCad: number;
+  smsDeliveryCad: number;
+  smsInteractionCad: number;
+  smsConversionCad: number;
+  updatedAt: string | null;
+};
+
 const ADS_PRICING_KEY = 'default';
+const AD_NOTIFICATION_PRICING_KEY = 'default';
 const AD_CONVERSION_ATTRIBUTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const AD_CREDIT_CHECKOUT_METADATA_KIND = 'ad_credit_payment';
 const AD_CREDIT_STRIPE_MIN_CAD = 0.5;
@@ -297,6 +327,25 @@ const ADS_PRICING_DEFAULTS: Omit<AdPricingPayload, 'updatedAt'> = {
   campaignActionCad: 0,
   conversionCad: 0,
   minimumBudgetCad: 0,
+};
+
+const AD_NOTIFICATION_PRICING_DEFAULTS: Omit<
+  AdNotificationPricingPayload,
+  'updatedAt'
+> = {
+  currency: 'CAD',
+  emailDeliveryCad: 0,
+  emailInteractionCad: 0,
+  emailConversionCad: 0,
+  pushDeliveryCad: 0,
+  pushInteractionCad: 0,
+  pushConversionCad: 0,
+  inAppDeliveryCad: 0,
+  inAppInteractionCad: 0,
+  inAppConversionCad: 0,
+  smsDeliveryCad: 0,
+  smsInteractionCad: 0,
+  smsConversionCad: 0,
 };
 
 @Injectable()
@@ -322,6 +371,9 @@ export class AdsService implements OnModuleInit {
 
   @InjectModel(AdPricingSettingsModel.name)
   private readonly _adPricingModel: Model<AdPricingSettingsDocument>;
+
+  @InjectModel(AdNotificationPricingSettingsModel.name)
+  private readonly _adNotificationPricingModel: Model<AdNotificationPricingSettingsDocument>;
 
   @InjectModel(AdCreditPaymentModel.name)
   private readonly _adCreditPaymentModel: Model<AdCreditPaymentModel>;
@@ -421,7 +473,11 @@ export class AdsService implements OnModuleInit {
    * Bloque la création / activation si la boutique a atteint la limite
    * de bannières actives définie par son plan.
    */
-  private async assertActiveBannerLimit(storeId: string): Promise<void> {
+  private async assertActiveBannerLimit(
+    storeId: string,
+    user: UserModel,
+  ): Promise<void> {
+    if (user.type === UserTypeEnum.ADMIN) return;
     const limit =
       await this._subscriptions.resolveActiveBannerLimitForStore(storeId);
     if (limit == null) return; // illimité
@@ -448,7 +504,11 @@ export class AdsService implements OnModuleInit {
    * Bloque la création si la boutique a atteint la limite
    * de campagnes actives (non archivées) définie par son plan.
    */
-  private async assertActiveCampaignLimit(storeId: string): Promise<void> {
+  private async assertActiveCampaignLimit(
+    storeId: string,
+    user: UserModel,
+  ): Promise<void> {
+    if (user.type === UserTypeEnum.ADMIN) return;
     const limit =
       await this._subscriptions.resolveActiveCampaignLimitForStore(storeId);
     if (limit == null) return; // illimité
@@ -786,6 +846,122 @@ export class AdsService implements OnModuleInit {
     return this._toPricingPayload(updated as unknown as AdPricingSettingsModel);
   }
 
+  private _toNotificationPricingPayload(
+    doc: AdNotificationPricingSettingsModel &
+      Partial<{ updatedAt: Date | string | null }>,
+  ): AdNotificationPricingPayload {
+    const currency = String(doc.currency ?? AD_NOTIFICATION_PRICING_DEFAULTS.currency)
+      .trim()
+      .toUpperCase();
+    const updatedAt = doc.updatedAt;
+    const n = (v: unknown) => {
+      const x = Number(v ?? 0);
+      return Number.isFinite(x) && x >= 0 ? x : 0;
+    };
+    return {
+      currency: currency || AD_NOTIFICATION_PRICING_DEFAULTS.currency,
+      emailDeliveryCad: n(doc.emailDeliveryCad),
+      emailInteractionCad: n(doc.emailInteractionCad),
+      emailConversionCad: n(doc.emailConversionCad),
+      pushDeliveryCad: n(doc.pushDeliveryCad),
+      pushInteractionCad: n(doc.pushInteractionCad),
+      pushConversionCad: n(doc.pushConversionCad),
+      inAppDeliveryCad: n(doc.inAppDeliveryCad),
+      inAppInteractionCad: n(doc.inAppInteractionCad),
+      inAppConversionCad: n(doc.inAppConversionCad),
+      smsDeliveryCad: n(doc.smsDeliveryCad),
+      smsInteractionCad: n(doc.smsInteractionCad),
+      smsConversionCad: n(doc.smsConversionCad),
+      updatedAt:
+        updatedAt instanceof Date
+          ? updatedAt.toISOString()
+          : typeof updatedAt === 'string'
+          ? updatedAt
+          : null,
+    };
+  }
+
+  private async _ensureNotificationPricingDoc(): Promise<AdNotificationPricingSettingsModel> {
+    const doc = await this._adNotificationPricingModel
+      .findOneAndUpdate(
+        { key: AD_NOTIFICATION_PRICING_KEY },
+        {
+          $setOnInsert: {
+            key: AD_NOTIFICATION_PRICING_KEY,
+            ...AD_NOTIFICATION_PRICING_DEFAULTS,
+          },
+        },
+        { upsert: true, new: true, lean: true, setDefaultsOnInsert: true },
+      )
+      .exec();
+    return doc as unknown as AdNotificationPricingSettingsModel;
+  }
+
+  async getNotificationPricing(
+    user: UserModel,
+  ): Promise<AdNotificationPricingPayload> {
+    this.assertAdmin(user);
+    const doc = await this._ensureNotificationPricingDoc();
+    return this._toNotificationPricingPayload(doc);
+  }
+
+  async updateNotificationPricing(
+    user: UserModel,
+    dto: UpdateAdNotificationPricingDto,
+  ): Promise<AdNotificationPricingPayload> {
+    this.assertAdmin(user);
+    const current = await this._ensureNotificationPricingDoc();
+    const nextCurrency = String(dto.currency ?? current.currency ?? 'CAD')
+      .trim()
+      .toUpperCase();
+    const n = (key: keyof UpdateAdNotificationPricingDto, fallback: number) => {
+      const raw = dto[key];
+      const x = Number(raw ?? fallback);
+      return Number.isFinite(x) && x >= 0 ? x : 0;
+    };
+    const updated = await this._adNotificationPricingModel
+      .findOneAndUpdate(
+        { key: AD_NOTIFICATION_PRICING_KEY },
+        {
+          $set: {
+            currency: nextCurrency || 'CAD',
+            emailDeliveryCad: n('emailDeliveryCad', current.emailDeliveryCad),
+            emailInteractionCad: n(
+              'emailInteractionCad',
+              current.emailInteractionCad,
+            ),
+            emailConversionCad: n(
+              'emailConversionCad',
+              current.emailConversionCad,
+            ),
+            pushDeliveryCad: n('pushDeliveryCad', current.pushDeliveryCad),
+            pushInteractionCad: n(
+              'pushInteractionCad',
+              current.pushInteractionCad,
+            ),
+            pushConversionCad: n('pushConversionCad', current.pushConversionCad),
+            inAppDeliveryCad: n('inAppDeliveryCad', current.inAppDeliveryCad),
+            inAppInteractionCad: n(
+              'inAppInteractionCad',
+              current.inAppInteractionCad,
+            ),
+            inAppConversionCad: n(
+              'inAppConversionCad',
+              current.inAppConversionCad,
+            ),
+            smsDeliveryCad: n('smsDeliveryCad', current.smsDeliveryCad),
+            smsInteractionCad: n('smsInteractionCad', current.smsInteractionCad),
+            smsConversionCad: n('smsConversionCad', current.smsConversionCad),
+          },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      )
+      .exec();
+    return this._toNotificationPricingPayload(
+      updated as unknown as AdNotificationPricingSettingsModel,
+    );
+  }
+
   private _normalizeCampaignItems(items: CampaignItemDto[]): CampaignItemDto[] {
     const out: CampaignItemDto[] = [];
     const seen = new Set<string>();
@@ -836,15 +1012,44 @@ export class AdsService implements OnModuleInit {
     return this._subscriptions.resolveActiveCampaignLimitForStore(storeId);
   }
 
+  /** Limites affichées / appliquées selon le rôle (admin = hors formule vendeur). */
+  async resolveAdLimitsForManagementUser(
+    user: UserModel,
+    storeId: string,
+  ): Promise<{
+    maxCampaignItems: number;
+    maxActiveBanners: number | null;
+    maxActiveCampaigns: number | null;
+  }> {
+    if (user.type === UserTypeEnum.ADMIN) {
+      return {
+        maxCampaignItems: AD_CAMPAIGN_MAX_ITEMS,
+        maxActiveBanners: null,
+        maxActiveCampaigns: null,
+      };
+    }
+    const [maxCampaignItems, maxActiveBanners, maxActiveCampaigns] =
+      await Promise.all([
+        this.resolveAdCampaignItemLimitForStore(storeId),
+        this.resolveActiveBannerLimitForStore(storeId),
+        this.resolveActiveCampaignLimitForStore(storeId),
+      ]);
+    return { maxCampaignItems, maxActiveBanners, maxActiveCampaigns };
+  }
+
   private async _assertCampaignItemsBelongToStore(
     storeId: string,
     items: CampaignItemDto[],
+    user: UserModel,
   ): Promise<void> {
     const normalized = this._normalizeCampaignItems(items);
     if (!normalized.length) {
       throw new BadRequestException('campaign_items_required');
     }
-    const maxItems = await this.resolveAdCampaignItemLimitForStore(storeId);
+    const maxItems =
+      user.type === UserTypeEnum.ADMIN
+        ? AD_CAMPAIGN_MAX_ITEMS
+        : await this.resolveAdCampaignItemLimitForStore(storeId);
     if (normalized.length > maxItems) {
       throw new BadRequestException(`campaign_items_max_exceeded:${maxItems}`);
     }
@@ -958,6 +1163,11 @@ export class AdsService implements OnModuleInit {
           ? String(doc.billingFinalizedAt)
           : null,
       billingFinalAmountCad: Number(doc.billingFinalAmountCad ?? 0),
+      notificationAddon: notificationAddonFromDoc(
+        (doc.notificationAddon ?? doc.notification_addon) as
+          | Record<string, unknown>
+          | undefined,
+      ),
       createdAt:
         doc.createdAt instanceof Date
           ? doc.createdAt.toISOString()
@@ -1278,11 +1488,11 @@ export class AdsService implements OnModuleInit {
       throw new BadRequestException('store_not_found');
     }
     await this.assertCanManageCampaignStore(user, storeId);
-    await this.assertActiveCampaignLimit(storeId);
+    await this.assertActiveCampaignLimit(storeId, user);
     const startsAt = new Date(dto.startsAt);
     const endsAt = new Date(dto.endsAt);
     this._assertCampaignDateRange(startsAt, endsAt);
-    await this._assertCampaignItemsBelongToStore(storeId, dto.items);
+    await this._assertCampaignItemsBelongToStore(storeId, dto.items, user);
     const actionType = dto.actionType ?? StoreAdActionTypeEnum.SHOP;
     if (actionType === StoreAdActionTypeEnum.PRODUCT) {
       throw new BadRequestException('invalid_campaign_action_type');
@@ -1315,6 +1525,7 @@ export class AdsService implements OnModuleInit {
       actionText,
       actionTarget: actionTarget || undefined,
       items,
+      notificationAddon: normalizeNotificationAddonInput(dto.notificationAddon),
     });
     const row = await this._adCampaignModel
       .findById(created._id)
@@ -1384,7 +1595,7 @@ export class AdsService implements OnModuleInit {
     );
     if (dto.items != null) {
       const sid = existingStoreId;
-      await this._assertCampaignItemsBelongToStore(sid, dto.items);
+      await this._assertCampaignItemsBelongToStore(sid, dto.items, user);
       existing.items = this._normalizeCampaignItems(dto.items).map((it) => ({
         itemType: it.itemType,
         product:
@@ -1396,6 +1607,11 @@ export class AdsService implements OnModuleInit {
             ? (new Types.ObjectId(it.drinkId) as unknown as DrinkModel)
             : undefined,
       }));
+    }
+    if (dto.notificationAddon !== undefined) {
+      existing.notificationAddon = normalizeNotificationAddonInput(
+        dto.notificationAddon,
+      );
     }
     await existing.save();
     const row = await this._adCampaignModel
@@ -2801,6 +3017,11 @@ export class AdsService implements OnModuleInit {
           ? String(doc.billingFinalizedAt)
           : null,
       billingFinalAmountCad: Number(doc.billingFinalAmountCad ?? 0),
+      notificationAddon: notificationAddonFromDoc(
+        (doc.notificationAddon ?? doc.notification_addon) as
+          | Record<string, unknown>
+          | undefined,
+      ),
       createdAt:
         doc.createdAt instanceof Date
           ? doc.createdAt.toISOString()
@@ -3110,7 +3331,7 @@ export class AdsService implements OnModuleInit {
     if (storeOid) {
       await this.assertUserCanManageStore(user, storeOid.toString());
       if (dto.isActive !== false) {
-        await this.assertActiveBannerLimit(storeOid.toString());
+        await this.assertActiveBannerLimit(storeOid.toString(), user);
       }
     }
 
@@ -3148,6 +3369,7 @@ export class AdsService implements OnModuleInit {
         dto.actionType === StoreAdActionTypeEnum.PRODUCT && dto.productId
           ? productRefId(dto.productId)
           : undefined,
+      notificationAddon: normalizeNotificationAddonInput(dto.notificationAddon),
     });
 
     this.invalidateListCache();
@@ -3193,7 +3415,7 @@ export class AdsService implements OnModuleInit {
 
     // Enforce banner limit when activating a previously inactive banner
     if (dto.isActive === true && !existing.isActive && storeIdStr) {
-      await this.assertActiveBannerLimit(storeIdStr);
+      await this.assertActiveBannerLimit(storeIdStr, user);
     }
 
     if (dto.validFrom != null || dto.validUntil != null) {
@@ -3288,6 +3510,12 @@ export class AdsService implements OnModuleInit {
       );
     } else {
       existing.actionTarget = undefined;
+    }
+
+    if (dto.notificationAddon !== undefined) {
+      existing.notificationAddon = normalizeNotificationAddonInput(
+        dto.notificationAddon,
+      );
     }
 
     await existing.save();

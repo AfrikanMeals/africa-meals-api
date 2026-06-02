@@ -8,6 +8,7 @@ import {
   CreateAdCampaignDto,
   PatchAdCampaignDto,
 } from '@modules/ads/dto/ad-campaign.dto';
+import { UpdateAdNotificationPricingDto } from '@modules/ads/dto/ad-notification.dto';
 import { UpdateAdPricingDto } from '@modules/ads/dto/ad-pricing.dto';
 import { TrackAdEventDto } from '@modules/ads/dto/ad-tracking.dto';
 import { TrackAdCampaignEventDto } from '@modules/ads/dto/ad-campaign-tracking.dto';
@@ -84,13 +85,10 @@ export class AdsController {
   ) {
     const sid = storeId?.trim() ?? '';
     if (!sid) throw new BadRequestException('storeId_required');
-    const [maxCampaignItems, maxActiveBanners, maxActiveCampaigns] =
-      await Promise.all([
-        this.adsService.resolveAdCampaignItemLimitForStore(sid),
-        this.adsService.resolveActiveBannerLimitForStore(sid),
-        this.adsService.resolveActiveCampaignLimitForStore(sid),
-      ]);
-    return { maxCampaignItems, maxActiveBanners, maxActiveCampaigns };
+    return this.adsService.resolveAdLimitsForManagementUser(
+      req.user as UserModel,
+      sid,
+    );
   }
 
   @Get('campaigns/manage/archives')
@@ -279,6 +277,32 @@ export class AdsController {
     @Body() body: UpdateAdPricingDto,
   ) {
     return this.adsService.updatePricing(req.user as UserModel, body);
+  }
+
+  @Get('manage/notification-pricing')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    summary:
+      'Barème notifications Ads (Email, Push, In-App, SMS) — livraison, interaction, conversion (ADMIN)',
+  })
+  async getManageNotificationPricing(@Req() req: Request) {
+    return this.adsService.getNotificationPricing(req.user as UserModel);
+  }
+
+  @Put('manage/notification-pricing')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({ summary: 'Mettre à jour le barème notifications Ads (ADMIN)' })
+  async updateManageNotificationPricing(
+    @Req() req: Request,
+    @Body() body: UpdateAdNotificationPricingDto,
+  ) {
+    return this.adsService.updateNotificationPricing(
+      req.user as UserModel,
+      body,
+    );
   }
 
   /** Image bannière → Firebase Storage (SDK Admin), dossier `marketing/ads`. */

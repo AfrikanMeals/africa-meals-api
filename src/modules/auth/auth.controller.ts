@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Inject,
   Logger,
   Param,
@@ -263,6 +264,7 @@ export class AuthController {
   }
 
   @Post('me/cancel-deletion')
+  @HttpCode(200)
   @ApiBearerAuth('bearer')
   @UseGuards(JwtGuard)
   async cancelAccountDeletion(@Req() req: Request) {

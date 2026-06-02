@@ -11,6 +11,10 @@ import {
   AdCampaignEventSchema,
 } from '@schemas/ad-campaign-event.schema';
 import {
+  AdNotificationPricingSettingsModel,
+  AdNotificationPricingSettingsSchema,
+} from '@schemas/ad-notification-pricing-settings.schema';
+import {
   AdPricingSettingsModel,
   AdPricingSettingsSchema,
 } from '@schemas/ad-pricing-settings.schema';
@@ -40,6 +44,10 @@ import { AdsService } from './ads.service';
       { name: AdCampaignModel.name, schema: AdCampaignSchema },
       { name: AdCampaignEventModel.name, schema: AdCampaignEventSchema },
       { name: AdPricingSettingsModel.name, schema: AdPricingSettingsSchema },
+      {
+        name: AdNotificationPricingSettingsModel.name,
+        schema: AdNotificationPricingSettingsSchema,
+      },
       { name: AdCreditPaymentModel.name, schema: AdCreditPaymentSchema },
       { name: StoreModel.name, schema: StoreSchema },
       { name: ProductModel.name, schema: ProductSchema },

@@ -1059,10 +1059,18 @@ export class AuthService {
     }
     // Dossier profil : supprime aussi d’éventuels fichiers orphelins (anciens uploads)
     await this._mediasService.deleteFilesWithPrefix(`users/${userId}/profile`);
-    await this._usersModel
-      .updateOne({ _id: userId }, { $unset: { profile_image: 1 } })
+    const updated = await this._usersModel
+      .findByIdAndUpdate(
+        userId,
+        { $set: { profileImage: null } },
+        { new: true },
+      )
+      .populate('addresses')
+      .populate('stores')
+      .populate('paymentMethods')
       .exec();
-    return this.findUserById(userId);
+    if (!updated) throw new NotFoundException('user_not_found');
+    return updated;
   }
 
   async findUserByEmail(email: string) {

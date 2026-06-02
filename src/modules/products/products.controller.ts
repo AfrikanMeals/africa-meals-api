@@ -6,6 +6,7 @@ import {
   Delete,
   Get,
   Inject,
+  NotFoundException,
   Param,
   Post,
   Query,
@@ -50,7 +51,11 @@ export class ProductsController {
 
   @Get(':id')
   async getOneById(@Param('id') id: string) {
-    return this._productsService.findOneById(id);
+    const doc = await this._productsService.findOneById(id);
+    if (!doc) {
+      throw new NotFoundException('product_not_found');
+    }
+    return doc;
   }
 
   @Post(':id/favorite')

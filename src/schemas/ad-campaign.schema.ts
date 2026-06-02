@@ -1,6 +1,10 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Schema as MongooseSchema } from 'mongoose';
 import { BaseSchema } from './base.schema';
+import {
+  AdNotificationAddonModel,
+  AdNotificationAddonSchema,
+} from './ad-notification-addon.schema';
 import { DrinkModel } from './drink.schema';
 import { ProductModel } from './product.schema';
 import { StoreModel } from './store.schema';
@@ -132,6 +136,16 @@ export class AdCampaignModel extends BaseSchema {
     name: 'billing_snapshot',
   })
   billingSnapshot?: Record<string, unknown>;
+
+  @Prop({
+    type: AdNotificationAddonSchema,
+    default: () => ({
+      enabled: false,
+      channels: { email: false, push: false, inApp: false, sms: false },
+    }),
+    name: 'notification_addon',
+  })
+  notificationAddon?: AdNotificationAddonModel;
 }
 
 export const AdCampaignSchema = SchemaFactory.createForClass(AdCampaignModel);
