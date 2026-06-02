@@ -33,6 +33,7 @@ import {
   generatePickupCode,
   normalizePickupCodeInput,
 } from 'src/utils/pickup-code';
+import { objectIdStringFromRef } from 'src/utils/mongoose-ref.util';
 import {
   ConfirmPickupDto,
   CreateRefundRequestDto,
@@ -998,7 +999,10 @@ export class OrdersService {
       totalPrice,
       shouldShip: !isPickup,
     };
-    if (isPickup) {
+    if (
+      isPickup &&
+      !(typeof o.pickupCode === 'string' && o.pickupCode.trim())
+    ) {
       $set['pickupCode'] = generatePickupCode();
     }
     if (opts?.stripeParentPaymentId?.trim()) {
@@ -1083,47 +1087,23 @@ export class OrdersService {
     }
 
     if (prevStatus !== OrderStatusEnum.PAIED) {
-      const rawUser = o.user as
-        | Types.ObjectId
-        | { _id?: Types.ObjectId }
-        | null
-        | undefined;
-      let uid: string | null = null;
-      if (rawUser instanceof Types.ObjectId) {
-        uid = rawUser.toHexString();
-      } else if (
-        rawUser &&
-        typeof rawUser === 'object' &&
-        '_id' in rawUser &&
-        rawUser._id instanceof Types.ObjectId
-      ) {
-        uid = rawUser._id.toHexString();
-      } else if (rawUser != null) {
-        uid = String(rawUser);
-      }
+      const uid = objectIdStringFromRef(o.user);
       let storeName: string | undefined;
-      let storeIdForNotif: string | undefined;
       const rawStore = o.store as unknown;
-      if (rawStore && typeof rawStore === 'object' && rawStore !== null) {
-        const stObj = rawStore as { _id?: unknown; name?: unknown };
-        const nm = stObj.name;
+      if (rawStore && typeof rawStore === 'object' && 'name' in rawStore) {
+        const nm = (rawStore as { name?: unknown }).name;
         if (typeof nm === 'string' && nm.trim()) {
           storeName = nm.trim();
         }
-        const sid = stObj._id;
-        if (sid instanceof Types.ObjectId) {
-          storeIdForNotif = sid.toHexString();
-        } else if (typeof sid === 'string' && Types.ObjectId.isValid(sid)) {
-          storeIdForNotif = sid;
-        }
       }
+      const storeIdForCustomer = objectIdStringFromRef(o.store);
       if (uid && Types.ObjectId.isValid(uid)) {
         void this._notificationsService
           .pushCustomerOrderStatusChanged({
             userId: uid,
             orderId,
             storeName,
-            storeId: storeIdForNotif,
+            storeId: storeIdForCustomer,
             previousStatus: prevStatus,
             newStatus: OrderStatusEnum.PAIED,
           })
@@ -1134,35 +1114,6 @@ export class OrdersService {
               }`,
             ),
           );
-        if (storeIdForNotif) {
-          const paidMsgArgs = {
-            orderId,
-            items: o.items as OrdeLineItem[],
-            totalPrice,
-            currency:
-              opts?.currency?.trim() ||
-              (typeof o.currency === 'string' ? o.currency : undefined),
-            pickupCode:
-              typeof $set['pickupCode'] === 'string'
-                ? $set['pickupCode']
-                : undefined,
-            storeName,
-          };
-          void this.notifyStoreVendorsForOrder({
-            storeId: storeIdForNotif,
-            customerUserId: uid,
-            inboxMessage: buildVendorOrderPaidInboxMessage(paidMsgArgs),
-            push: {
-              title: 'Commande payée',
-              body: buildVendorOrderPaidPushBody(paidMsgArgs),
-              orderId,
-              storeName,
-              reason: 'order_paid',
-              status: OrderStatusEnum.PAIED,
-            },
-            logTag: 'order_paid',
-          });
-        }
       }
       void this.notifyPartiesOrderRealtimeByOrderId(
         orderId,
@@ -1201,12 +1152,13 @@ export class OrdersService {
               item.itemType === CartItemTypeEnum.DRINK) &&
             Types.ObjectId.isValid(item.entityId),
         );
-      if (uid && storeIdForNotif && paidItemRefs.length > 0) {
+      const storeIdForAds = objectIdStringFromRef(o.store);
+      if (uid && storeIdForAds && paidItemRefs.length > 0) {
         void this._adsService
           .trackOrderConversions({
             orderId,
             userId: uid,
-            storeId: storeIdForNotif,
+            storeId: storeIdForAds,
             items: paidItemRefs,
           })
           .catch((err) =>
@@ -1218,6 +1170,89 @@ export class OrdersService {
           );
       }
     }
+
+    void this.ensureVendorPaidOrderNotifications(orderId).catch((err) =>
+      this.logger.warn(
+        `vendor paid notify order=${orderId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
+    );
+  }
+
+  /**
+   * Message inbox + push vendeur après paiement. Idempotent (`vendorPaidNotifiedAt`).
+   * Rattrape les retry Stripe où la commande est déjà `paied` sans notification.
+   */
+  async ensureVendorPaidOrderNotifications(orderId: string): Promise<void> {
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) return;
+
+    const order = await this._orderModel
+      .findOne({
+        _id: new Types.ObjectId(oid),
+        status: OrderStatusEnum.PAIED,
+        vendorPaidNotifiedAt: { $exists: false },
+      })
+      .populate('store', 'name')
+      .lean()
+      .exec();
+    if (!order) {
+      return;
+    }
+
+    const storeId = objectIdStringFromRef(order.store);
+    if (!storeId) {
+      this.logger.warn(
+        `ensureVendorPaidOrderNotifications: storeId missing order=${oid}`,
+      );
+      return;
+    }
+
+    let storeName: string | undefined;
+    const rawStore = order.store as unknown;
+    if (rawStore && typeof rawStore === 'object' && 'name' in rawStore) {
+      const nm = (rawStore as { name?: unknown }).name;
+      if (typeof nm === 'string' && nm.trim()) {
+        storeName = nm.trim();
+      }
+    }
+
+    const paidMsgArgs = {
+      orderId: oid,
+      items: (order.items ?? []) as OrdeLineItem[],
+      totalPrice: Number(order.totalPrice) || 0,
+      currency:
+        typeof order.currency === 'string' ? order.currency : undefined,
+      pickupCode:
+        typeof order.pickupCode === 'string' ? order.pickupCode : undefined,
+      storeName,
+    };
+
+    await this.notifyStoreVendorsForOrder({
+      storeId,
+      customerUserId: objectIdStringFromRef(order.user),
+      inboxMessage: buildVendorOrderPaidInboxMessage(paidMsgArgs),
+      push: {
+        title: 'Commande payée',
+        body: buildVendorOrderPaidPushBody(paidMsgArgs),
+        orderId: oid,
+        storeName,
+        reason: 'order_paid',
+        status: OrderStatusEnum.PAIED,
+      },
+      logTag: 'order_paid',
+    });
+
+    await this._orderModel
+      .updateOne(
+        {
+          _id: new Types.ObjectId(oid),
+          vendorPaidNotifiedAt: { $exists: false },
+        },
+        { $set: { vendorPaidNotifiedAt: new Date() } },
+      )
+      .exec();
   }
 
   async calculateShippingPrice(orderId: string, user: UserModel) {

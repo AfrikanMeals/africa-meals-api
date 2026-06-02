@@ -947,16 +947,27 @@ export class StoreService {
   }
 
   /**
-   * Centre de notifications : tous les `vendorMessages` des boutiques dont l’utilisateur est propriétaire,
-   * plus l’historique fidélité `rewardHistory` du document user (seule entrée type « messages » côté users).
+   * Centre de notifications : `vendorMessages` des boutiques accessibles (propriétaire + équipe),
+   * plus l’historique fidélité `rewardHistory` du document user.
    */
   async findMyNotificationFeed(user: UserModel) {
     const uid = user._id;
-    const stores = await this._storeModel
-      .find({ owner: uid })
-      .select('name vendorMessages')
-      .lean()
-      .exec();
+    const access = await this._storeAccess.resolveStoreAccess(user);
+    const storeIds = [
+      ...new Set(
+        access
+          .map((a) => a.storeId)
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ].map((id) => new Types.ObjectId(id));
+    const stores =
+      storeIds.length > 0
+        ? await this._storeModel
+            .find({ _id: { $in: storeIds } })
+            .select('name vendorMessages')
+            .lean()
+            .exec()
+        : [];
 
     type FeedItem = {
       id: string;

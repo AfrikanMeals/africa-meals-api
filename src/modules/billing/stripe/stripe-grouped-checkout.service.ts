@@ -1229,6 +1229,15 @@ export class StripeGroupedCheckoutService {
             stripePaymentId,
           );
         if (alreadyPaid) {
+          void this.ordersService
+            .ensureVendorPaidOrderNotifications(prior.orderId)
+            .catch((err) =>
+              this.logger.warn(
+                `vendor paid notify retry order=${prior.orderId}: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              ),
+            );
           const g = prior.goodsCents ?? 0;
           const s = prior.shipCents ?? 0;
           let transferId = prior.transferId;

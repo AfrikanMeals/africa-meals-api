@@ -146,6 +146,10 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'pickup_code', trim: true, uppercase: true })
   pickupCode?: string;
 
+  /** Horodatage de l’envoi du message vendeur « commande payée » (évite les doublons / retry Stripe). */
+  @Prop({ required: false, name: 'vendor_paid_notified_at' })
+  vendorPaidNotifiedAt?: Date;
+
   /** Date/heure de remise au client (retrait confirmé). */
   @Prop({ required: false, name: 'picked_up_at', type: Date })
   pickedUpAt?: Date;
