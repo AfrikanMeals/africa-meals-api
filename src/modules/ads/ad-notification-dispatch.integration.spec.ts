@@ -70,15 +70,17 @@ describe('Ad notification dispatch (integration)', () => {
   };
   const pricingModel = {
     findOne: jest.fn().mockReturnValue({
-      lean: jest.fn().mockResolvedValue({
-        key: 'default',
-        availableChannels: {
-          email: true,
-          push: true,
-          inApp: true,
-          sms: true,
-          whatsapp: true,
-        },
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          key: 'default',
+          availableChannels: {
+            email: true,
+            push: true,
+            inApp: true,
+            sms: true,
+            whatsapp: true,
+          },
+        }),
       }),
     }),
   };

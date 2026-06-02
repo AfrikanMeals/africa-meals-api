@@ -294,31 +294,46 @@ export class AdNotificationService {
     };
   }
 
+  private entityEligibilityFilter(
+    now: Date,
+    kind: AdNotifyEntityJob['kind'],
+  ): Record<string, unknown> {
+    const $and = [
+      this.notArchivedFilter(),
+      this.notDispatchedFilter(),
+      ...(kind === 'banner' ? [this.bannerStartedFilter(now)] : []),
+    ];
+    if (kind === 'banner') {
+      return {
+        isActive: true,
+        validUntil: { $gte: now },
+        'notificationAddon.enabled': true,
+        $and,
+      };
+    }
+    return {
+      isActive: true,
+      startsAt: { $lte: now },
+      endsAt: { $gte: now },
+      'notificationAddon.enabled': true,
+      $and,
+    };
+  }
+
   /** Vérifie si une entité peut être envoyée maintenant (cron ou enqueue immédiat). */
   async isEntityEligibleForDispatch(job: AdNotifyEntityJob): Promise<boolean> {
     if (!Types.ObjectId.isValid(job.entityId)) return false;
     const now = new Date();
     const id = new Types.ObjectId(job.entityId);
-    const base = {
+    const filter = {
       _id: id,
-      isActive: true,
-      'notificationAddon.enabled': true,
-      ...this.notArchivedFilter(),
-      ...this.notDispatchedFilter(),
+      ...this.entityEligibilityFilter(now, job.kind),
     };
     if (job.kind === 'banner') {
-      const n = await this.adModel.countDocuments({
-        ...base,
-        validUntil: { $gte: now },
-        ...this.bannerStartedFilter(now),
-      });
+      const n = await this.adModel.countDocuments(filter);
       return n > 0;
     }
-    const n = await this.campaignModel.countDocuments({
-      ...base,
-      startsAt: { $lte: now },
-      endsAt: { $gte: now },
-    });
+    const n = await this.campaignModel.countDocuments(filter);
     return n > 0;
   }
 
@@ -461,24 +476,12 @@ export class AdNotificationService {
   ): Promise<Record<string, unknown> | null> {
     const now = new Date();
     const id = new Types.ObjectId(job.entityId);
-    const pending = {
-      $or: [
-        { notificationDispatchedAt: { $exists: false } },
-        { notificationDispatchedAt: null },
-      ],
-    };
-
     if (job.kind === 'banner') {
       const doc = await this.adModel
         .findOneAndUpdate(
           {
             _id: id,
-            isActive: true,
-            validUntil: { $gte: now },
-            'notificationAddon.enabled': true,
-            ...this.notArchivedFilter(),
-            ...this.bannerStartedFilter(now),
-            ...pending,
+            ...this.entityEligibilityFilter(now, 'banner'),
           },
           { $set: { notificationDispatchedAt: now } },
           { new: true, lean: true },
@@ -501,12 +504,7 @@ export class AdNotificationService {
       .findOneAndUpdate(
         {
           _id: id,
-          isActive: true,
-          startsAt: { $lte: now },
-          endsAt: { $gte: now },
-          'notificationAddon.enabled': true,
-          $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
-          ...pending,
+          ...this.entityEligibilityFilter(now, 'campaign'),
         },
         { $set: { notificationDispatchedAt: now } },
         { new: true, lean: true },
