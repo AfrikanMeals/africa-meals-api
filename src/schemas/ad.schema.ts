@@ -106,16 +106,30 @@ export class AdModel extends BaseSchema {
   @Prop({ required: false, type: MongooseSchema.Types.Mixed, default: null })
   billingSnapshot?: Record<string, unknown> | null;
 
-  /** Add-on : notifications Email / Push / In-App / SMS (facturation séparée). */
+  /** Taille d’audience ciblée (estimation de coûts / planification). */
+  @Prop({ type: Number, required: false, default: null, name: 'audience_total' })
+  audienceTotal?: number | null;
+
+  /** Add-on : notifications Email / Push / In-App / SMS / WhatsApp (facturation séparée). */
   @Prop({
     type: AdNotificationAddonSchema,
     default: () => ({
       enabled: false,
-      channels: { email: false, push: false, inApp: false, sms: false },
+      channels: {
+        email: false,
+        push: false,
+        inApp: false,
+        sms: false,
+        whatsapp: false,
+      },
     }),
     name: 'notification_addon',
   })
   notificationAddon?: AdNotificationAddonModel;
+
+  /** Date d’envoi des notifications add-on (worker). */
+  @Prop({ required: false, default: null, name: 'notification_dispatched_at' })
+  notificationDispatchedAt?: Date | null;
 }
 
 export const AdSchema = SchemaFactory.createForClass(AdModel);

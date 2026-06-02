@@ -24,6 +24,13 @@ import {
   AdCreditPaymentModel,
   AdCreditPaymentSchema,
 } from '@schemas/ad-credit-payment.schema';
+import { AdModel, AdSchema } from '@schemas/ad.schema';
+import { AdEventModel, AdEventSchema } from '@schemas/ad-event.schema';
+import { AdCampaignModel, AdCampaignSchema } from '@schemas/ad-campaign.schema';
+import {
+  AdCampaignEventModel,
+  AdCampaignEventSchema,
+} from '@schemas/ad-campaign-event.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import {
   StripeProcessedCheckoutModel,
@@ -68,6 +75,10 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
       },
       { name: AddressModel.name, schema: AddressSchema },
       { name: AdCreditPaymentModel.name, schema: AdCreditPaymentSchema },
+      { name: AdModel.name, schema: AdSchema },
+      { name: AdEventModel.name, schema: AdEventSchema },
+      { name: AdCampaignModel.name, schema: AdCampaignSchema },
+      { name: AdCampaignEventModel.name, schema: AdCampaignEventSchema },
       { name: VendorFeedbackModel.name, schema: VendorFeedbackSchema },
     ]),
   ],

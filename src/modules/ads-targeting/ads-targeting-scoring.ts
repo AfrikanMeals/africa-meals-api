@@ -3,6 +3,14 @@ export type AdsTargetingScoreInput = {
   recencyBoost: number;
   engagementScore: number;
   conversionProbability: number;
+  /** Adéquation placement ↔ règles campagne (0–1). */
+  placementMatch?: number;
+  /** Priorité éditoriale + slot demandé (0–1). */
+  positionBoost?: number;
+  /** Action / items / segment orientés conversion & livraison (0–1). */
+  deliveryConversionBoost?: number;
+  /** CTR / conversions passées sur ce placement (0–1). */
+  placementPerformance?: number;
 };
 
 function clamp01(v: number): number {
@@ -19,10 +27,22 @@ export function computeAdsTargetingScore(
   const recencyBoost = clamp01(input.recencyBoost);
   const engagementScore = clamp01(input.engagementScore);
   const conversionProbability = clamp01(input.conversionProbability);
+  const placementMatch = clamp01(input.placementMatch ?? 1);
+  const positionBoost = clamp01(input.positionBoost ?? 0.5);
+  const deliveryConversionBoost = clamp01(
+    input.deliveryConversionBoost ?? 0.4,
+  );
+  const placementPerformance = clamp01(input.placementPerformance ?? 0.45);
+
   const raw =
-    interestMatch * 0.5 +
-    recencyBoost * 0.2 +
-    engagementScore * 0.2 +
-    conversionProbability * 0.1;
+    interestMatch * 0.34 +
+    recencyBoost * 0.1 +
+    engagementScore * 0.1 +
+    conversionProbability * 0.08 +
+    placementMatch * 0.1 +
+    positionBoost * 0.1 +
+    deliveryConversionBoost * 0.12 +
+    placementPerformance * 0.06;
+
   return Number(raw.toFixed(4));
 }

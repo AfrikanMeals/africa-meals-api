@@ -1,4 +1,5 @@
 import { MailerService } from '@modules/mailer/mailer.service';
+import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { OrderStatusEventsService } from '@modules/orders/order-status-events.service';
 import { OrdersService } from '@modules/orders/orders.service';
@@ -73,6 +74,7 @@ export class DeliveryAgentService {
     private readonly _notifications: NotificationsService,
     @Inject(MailerService)
     private readonly _mailer: MailerService,
+    private readonly _emailTpl: EmailTemplateService,
     private readonly _config: ConfigService,
     @Inject(PlatformShippingSettingsService)
     private readonly _platformShipping: PlatformShippingSettingsService,
@@ -578,22 +580,18 @@ export class DeliveryAgentService {
     const safeBody = this.escapeHtml(body);
     const safeReason = reason ? this.escapeHtml(reason) : '';
 
-    const html = approved
-      ? `
-<p>Bonjour ${safeName},</p>
-<p>${safeBody}</p>
-<p>— L’équipe ${this.escapeHtml(appName)}</p>`.trim()
-      : suspended
-      ? `
-<p>Bonjour ${safeName},</p>
-<p>${safeBody}</p>
-${safeReason ? `<p><strong>Motif :</strong> ${safeReason}</p>` : ''}
-<p>— L’équipe ${this.escapeHtml(appName)}</p>`.trim()
-      : `
-<p>Bonjour ${safeName},</p>
-<p>${safeBody}</p>
-${safeReason ? `<p><strong>Motif :</strong> ${safeReason}</p>` : ''}
-<p>— L’équipe ${this.escapeHtml(appName)}</p>`.trim();
+    const html = [
+      this._emailTpl.heading(title),
+      this._emailTpl.paragraph(`Bonjour <strong>${safeName}</strong>,`),
+      this._emailTpl.paragraph(safeBody),
+      safeReason
+        ? this._emailTpl.infoPanel(
+            this._emailTpl.paragraph(`<strong>Motif :</strong> ${safeReason}`),
+          )
+        : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
 
     try {
       await this._mailer.sendSimple({

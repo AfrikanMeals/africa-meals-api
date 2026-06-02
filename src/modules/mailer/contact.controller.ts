@@ -11,16 +11,8 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { GoogleAuth } from 'google-auth-library';
 import { ContactDto } from './dto/contact.dto';
+import { EmailTemplateService } from './email-template.service';
 import { MailerService } from './mailer.service';
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
 
 @ApiTags('contact')
 @Controller('contact')
@@ -33,6 +25,7 @@ export class ContactController {
   constructor(
     private readonly mailerService: MailerService,
     private readonly configService: ConfigService,
+    private readonly emailTpl: EmailTemplateService,
   ) {}
 
   @Post()
@@ -60,23 +53,29 @@ export class ContactController {
     const subject =
       body.subject?.trim() || `Contact ${appName} — ${name}`.slice(0, 200);
     const message = body.message.trim();
-    const safeName = escapeHtml(name);
-    const safeEmail = escapeHtml(email);
-    const safeSubject = escapeHtml(subject);
-    const safeMessage = escapeHtml(message).replace(/\n/g, '<br>');
+    const safeName = this.emailTpl.escapeHtml(name);
+    const safeEmail = this.emailTpl.escapeHtml(email);
+    const safeSubject = this.emailTpl.escapeHtml(subject);
+    const safeMessage = this.emailTpl.escapeHtml(message).replace(/\n/g, '<br>');
+    const safeApp = this.emailTpl.escapeHtml(appName);
 
     await this.mailerService.sendSimple({
       to,
       toName: appName,
       subject: `[Contact] ${subject}`,
-      html: `
-        <h2>Nouveau message — site ${escapeHtml(appName)}</h2>
-        <p><strong>Nom :</strong> ${safeName}</p>
-        <p><strong>E-mail :</strong> <a href="mailto:${safeEmail}">${safeEmail}</a></p>
-        <p><strong>Sujet :</strong> ${safeSubject}</p>
-        <hr>
-        <p>${safeMessage}</p>
-      `.trim(),
+      html: [
+        this.emailTpl.heading(`Nouveau message — ${safeApp}`),
+        this.emailTpl.keyValues([
+          { label: 'Nom', value: safeName },
+          {
+            label: 'E-mail',
+            value: `<a href="mailto:${safeEmail}" style="color:#aa6900;text-decoration:none;">${safeEmail}</a>`,
+          },
+          { label: 'Sujet', value: safeSubject },
+        ]),
+        this.emailTpl.divider(),
+        this.emailTpl.infoPanel(this.emailTpl.paragraph(safeMessage)),
+      ].join('\n'),
       text: [
         `Nouveau message — site ${appName}`,
         `Nom : ${name}`,

@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { EmailParams, MailerSend, Recipient, Sender } from 'mailersend';
 import * as nodemailer from 'nodemailer';
 import { SendMailDto } from './dto/mailer.dto';
+import { EmailTemplateService } from './email-template.service';
 
 export type SendSimpleMailDto = {
   to: string;
@@ -19,45 +20,98 @@ export type SendSimpleMailDto = {
   replyToName?: string;
 };
 
+/** Profil SMTP dédié (ex. notifications publicitaires `AD_SMTP_*`). */
+export type SmtpSendProfile = {
+  host: string;
+  port: number;
+  user: string;
+  pass: string;
+  from: string;
+  fromDisplayName: string;
+};
+
 // https://github.com/mailersend/mailersend-nodejs?tab=readme-ov-file#send-a-template-based-email
 @Injectable()
 export class MailerService {
   private readonly _logger = new Logger(MailerService.name);
 
-  @Inject('MAILER') private readonly _mailer: MailerSend;
+  constructor(
+    @Inject('MAILER') private readonly _mailer: MailerSend,
+    private readonly _configService: ConfigService,
+    private readonly _emailTemplate: EmailTemplateService,
+  ) {}
 
-  @Inject(ConfigService) private readonly _configService: ConfigService;
+  private prepareHtml(html: string, subject: string): string {
+    if (!this._emailTemplate.shouldWrap(html)) {
+      return html;
+    }
+    return this._emailTemplate.wrapBody(html, {
+      title: subject,
+      preheader: subject,
+    });
+  }
 
   /** Gmail / SMTP (voir docs MAIL_SETUP.md) — prioritaire sur MailerSend pour les e-mails simples. */
   private smtpConfigured(): boolean {
-    const u = this._configService.get<string>('SMTP_USER')?.trim();
-    const p =
-      this._configService.get<string>('SMTP_APP_PASSWORD')?.trim() ||
-      this._configService.get<string>('SMTP_PASS')?.trim();
-    return Boolean(u && p);
+    return this.readDefaultSmtpProfile() != null;
   }
 
-  private async sendSimpleSmtp(args: SendSimpleMailDto): Promise<void> {
+  /** Profil `AD_SMTP_*` pour les e-mails marketing / notifications ads. */
+  readAdNotificationSmtpProfile(): SmtpSendProfile | null {
+    const user = this._configService.get<string>('AD_SMTP_USER')?.trim() ?? '';
+    const passRaw =
+      this._configService.get<string>('AD_SMTP_APP_PASSWORD')?.trim() ||
+      this._configService.get<string>('AD_SMTP_PASS')?.trim() ||
+      '';
+    const pass = passRaw.replace(/\s/g, '');
+    if (!user || !pass) return null;
+    const from =
+      this._configService.get<string>('AD_SMTP_FROM')?.trim() || user;
     const host =
-      this._configService.get<string>('SMTP_HOST')?.trim() || 'smtp.gmail.com';
+      this._configService.get<string>('AD_SMTP_HOST')?.trim() ||
+      this._configService.get<string>('SMTP_HOST')?.trim() ||
+      'smtp.gmail.com';
     const portRaw =
-      this._configService.get<string>('SMTP_PORT')?.trim() || '587';
+      this._configService.get<string>('AD_SMTP_PORT')?.trim() ||
+      this._configService.get<string>('SMTP_PORT')?.trim() ||
+      '587';
     const port = parseInt(portRaw, 10) || 587;
-    const user = this._configService.get<string>('SMTP_USER')!.trim();
+    const fromDisplayName =
+      this._configService.get<string>('AD_SMTP_FROM_NAME')?.trim() ||
+      this._configService.get<string>('APP_NAME')?.trim() ||
+      'Wise Eat';
+    return { host, port, user, pass, from, fromDisplayName };
+  }
+
+  private readDefaultSmtpProfile(): SmtpSendProfile | null {
+    const user = this._configService.get<string>('SMTP_USER')?.trim() ?? '';
     const passRaw =
       this._configService.get<string>('SMTP_APP_PASSWORD')?.trim() ||
       this._configService.get<string>('SMTP_PASS')?.trim() ||
       '';
     const pass = passRaw.replace(/\s/g, '');
-    const from = this._configService.get<string>('SMTP_FROM')?.trim() || user;
-    const appName =
-      this._configService.get<string>('APP_NAME') ?? 'Africa Meals';
+    if (!user || !pass) return null;
+    const from =
+      this._configService.get<string>('SMTP_FROM')?.trim() || user;
+    const host =
+      this._configService.get<string>('SMTP_HOST')?.trim() || 'smtp.gmail.com';
+    const portRaw =
+      this._configService.get<string>('SMTP_PORT')?.trim() || '587';
+    const port = parseInt(portRaw, 10) || 587;
+    const fromDisplayName =
+      this._configService.get<string>('APP_NAME')?.trim() || 'Africa Meals';
+    return { host, port, user, pass, from, fromDisplayName };
+  }
 
+  private async sendSimpleSmtp(
+    args: SendSimpleMailDto,
+    profile: SmtpSendProfile,
+  ): Promise<void> {
     const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: { user, pass },
+      host: profile.host,
+      port: profile.port,
+      secure: profile.port === 465,
+      auth: { user: profile.user, pass: profile.pass },
     });
 
     const replyToRaw = args.replyTo?.trim();
@@ -67,7 +121,7 @@ export class MailerService {
         : replyToRaw || undefined;
 
     await transporter.sendMail({
-      from: `"${appName}" <${from}>`,
+      from: `"${profile.fromDisplayName}" <${profile.from}>`,
       to: args.to,
       replyTo,
       subject: args.subject,
@@ -103,11 +157,41 @@ export class MailerService {
     return this._mailer.email.send(paramsBuilder);
   }
 
+  /**
+   * E-mails des notifications publicitaires — SMTP `AD_SMTP_*` (expéditeur sales/marketing).
+   */
+  async sendAdNotificationEmail(args: SendSimpleMailDto): Promise<void> {
+    const profile = this.readAdNotificationSmtpProfile();
+    if (!profile) {
+      throw new BadGatewayException(
+        'ad_email_not_configured — AD_SMTP_USER et AD_SMTP_APP_PASSWORD requis',
+      );
+    }
+    const prepared: SendSimpleMailDto = {
+      ...args,
+      html: this.prepareHtml(args.html, args.subject),
+      replyTo: args.replyTo ?? profile.from,
+      replyToName: args.replyToName ?? profile.fromDisplayName,
+    };
+    try {
+      await this.sendSimpleSmtp(prepared, profile);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this._logger.error(`AD SMTP send failed: ${msg}`);
+      throw new BadGatewayException(`email_send_failed — ${msg}`);
+    }
+  }
+
   /** E-mail HTML/text sans template (ex. reset password, test). */
   async sendSimple(args: SendSimpleMailDto) {
-    if (this.smtpConfigured()) {
+    const prepared: SendSimpleMailDto = {
+      ...args,
+      html: this.prepareHtml(args.html, args.subject),
+    };
+    const smtpProfile = this.readDefaultSmtpProfile();
+    if (smtpProfile) {
       try {
-        await this.sendSimpleSmtp(args);
+        await this.sendSimpleSmtp(prepared, smtpProfile);
         return;
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -145,10 +229,10 @@ export class MailerService {
             )
           : sentFrom,
       )
-      .setSubject(args.subject)
-      .setHtml(args.html);
-    if (args.text?.trim()) {
-      paramsBuilder.setText(args.text);
+      .setSubject(prepared.subject)
+      .setHtml(prepared.html);
+    if (prepared.text?.trim()) {
+      paramsBuilder.setText(prepared.text);
     }
 
     try {

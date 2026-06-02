@@ -30,6 +30,11 @@ export class NotificationChannelsDto {
   @IsOptional()
   @IsBoolean()
   sms?: boolean;
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  whatsapp?: boolean;
 }
 
 /** Add-on notifications sur bannière ou campagne. */
@@ -115,4 +120,19 @@ export class UpdateAdNotificationPricingDto {
   @IsNumber()
   @Min(0)
   smsConversionCad?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  whatsappDeliveryCad?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  whatsappInteractionCad?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  whatsappConversionCad?: number;
 }

@@ -130,6 +130,18 @@ export class AdsTargetingRecommendQueryDto {
   @MaxLength(64)
   placement?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Index de position dans le placement (0 = premier slot). Fusionné en placement si absent de placement.',
+    default: 0,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(20)
+  slot?: number;
+
   @ApiPropertyOptional({ default: 3 })
   @IsOptional()
   @Type(() => Number)

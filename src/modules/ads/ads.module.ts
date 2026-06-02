@@ -1,9 +1,16 @@
 import { AuthModule } from '@modules/auth/auth.module';
+import { MailerModule } from '@modules/mailer/mailer.module';
 import { MediasModule } from '@modules/medias/medias.module';
+import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { TeamsModule } from '@modules/teams/teams.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { OrderModel, OrderSchema } from '@schemas/order.schema';
+import {
+  AdNotificationEventModel,
+  AdNotificationEventSchema,
+} from '@schemas/ad-notification-event.schema';
 import { AdEventModel, AdEventSchema } from '@schemas/ad-event.schema';
 import { AdCampaignModel, AdCampaignSchema } from '@schemas/ad-campaign.schema';
 import {
@@ -27,18 +34,25 @@ import { DrinkModel, DrinkSchema } from '@schemas/drink.schema';
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
+import { AdNotificationController } from './ad-notification.controller';
+import { AdNotificationDispatchCron } from './ad-notification-dispatch.cron';
+import { AdNotificationService } from './ad-notification.service';
 import { AdsController } from './ads.controller';
 import { AdsService } from './ads.service';
 
 @Module({
-  controllers: [AdsController],
-  providers: [AdsService],
+  controllers: [AdsController, AdNotificationController],
+  providers: [AdsService, AdNotificationService, AdNotificationDispatchCron],
   imports: [
     AuthModule,
+    MailerModule,
+    NotificationsModule,
     MediasModule,
     TeamsModule,
     SubscriptionsModule,
     MongooseModule.forFeature([
+      { name: OrderModel.name, schema: OrderSchema },
+      { name: AdNotificationEventModel.name, schema: AdNotificationEventSchema },
       { name: AdModel.name, schema: AdSchema },
       { name: AdEventModel.name, schema: AdEventSchema },
       { name: AdCampaignModel.name, schema: AdCampaignSchema },

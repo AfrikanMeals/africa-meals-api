@@ -48,6 +48,15 @@ export class AdNotificationPricingSettingsModel {
 
   @Prop({ type: Number, default: 0, name: 'sms_conversion_cad' })
   smsConversionCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'whatsapp_delivery_cad' })
+  whatsappDeliveryCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'whatsapp_interaction_cad' })
+  whatsappInteractionCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'whatsapp_conversion_cad' })
+  whatsappConversionCad: number;
 }
 
 export type AdNotificationPricingSettingsDocument =

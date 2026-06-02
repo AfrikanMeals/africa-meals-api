@@ -137,15 +137,27 @@ export class AdCampaignModel extends BaseSchema {
   })
   billingSnapshot?: Record<string, unknown>;
 
+  @Prop({ type: Number, required: false, default: null, name: 'audience_total' })
+  audienceTotal?: number | null;
+
   @Prop({
     type: AdNotificationAddonSchema,
     default: () => ({
       enabled: false,
-      channels: { email: false, push: false, inApp: false, sms: false },
+      channels: {
+        email: false,
+        push: false,
+        inApp: false,
+        sms: false,
+        whatsapp: false,
+      },
     }),
     name: 'notification_addon',
   })
   notificationAddon?: AdNotificationAddonModel;
+
+  @Prop({ required: false, default: null, name: 'notification_dispatched_at' })
+  notificationDispatchedAt?: Date | null;
 }
 
 export const AdCampaignSchema = SchemaFactory.createForClass(AdCampaignModel);

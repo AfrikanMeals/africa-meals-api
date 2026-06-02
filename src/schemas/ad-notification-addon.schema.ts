@@ -14,6 +14,9 @@ export class AdNotificationChannelsModel {
 
   @Prop({ type: Boolean, default: false, name: 'sms' })
   sms: boolean;
+
+  @Prop({ type: Boolean, default: false, name: 'whatsapp' })
+  whatsapp: boolean;
 }
 
 export const AdNotificationChannelsSchema = SchemaFactory.createForClass(
@@ -32,6 +35,7 @@ export class AdNotificationAddonModel {
       push: false,
       inApp: false,
       sms: false,
+      whatsapp: false,
     }),
     name: 'channels',
   })

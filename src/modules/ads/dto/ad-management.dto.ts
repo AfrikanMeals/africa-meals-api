@@ -11,6 +11,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
   ValidateIf,
@@ -98,6 +99,17 @@ export class CreateAdManagementDto {
   @MaxLength(2000)
   actionTarget?: string;
 
+  @ApiPropertyOptional({
+    description: 'Audience totale ciblée (estimation de coûts).',
+    example: 5000,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(100_000_000)
+  audienceTotal?: number;
+
   @ApiPropertyOptional({ type: NotificationAddonDto })
   @IsOptional()
   @ValidateNested()
@@ -171,6 +183,14 @@ export class PatchAdManagementDto {
   @IsString()
   @MaxLength(2000)
   actionTarget?: string | null;
+
+  @ApiPropertyOptional({ description: 'Audience totale ciblée' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(100_000_000)
+  audienceTotal?: number | null;
 
   @ApiPropertyOptional({ type: NotificationAddonDto })
   @IsOptional()

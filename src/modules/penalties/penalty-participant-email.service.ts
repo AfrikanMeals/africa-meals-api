@@ -1,4 +1,5 @@
 import { MailerService } from '@modules/mailer/mailer.service';
+import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -25,6 +26,7 @@ export class PenaltyParticipantEmailService {
   constructor(
     private readonly config: ConfigService,
     private readonly mailer: MailerService,
+    private readonly emailTpl: EmailTemplateService,
     @InjectModel(UserModel.name)
     private readonly userModel: Model<UserModel>,
     @InjectModel(StoreModel.name)
@@ -78,18 +80,34 @@ export class PenaltyParticipantEmailService {
         `— L’équipe ${appName}`,
       );
       const text = lines.join('\n');
-      const html = lines
-        .map((line) =>
-          line === '' ? '<br/>' : `<p>${this.escapeHtml(line)}</p>`,
-        )
-        .join('\n');
+      const rows: Array<{ label: string; value: string }> = [
+        { label: 'Montant', value: amountStr },
+        { label: 'Type', value: routeLabel },
+        { label: 'Motif', value: args.reasonLabel },
+      ];
+      if (orderRef) rows.push({ label: 'Commande', value: orderRef });
+      if (args.note?.trim()) rows.push({ label: 'Note', value: args.note.trim() });
+
+      const html = [
+        this.emailTpl.heading('Mouvement financier'),
+        this.emailTpl.paragraph(
+          `Bonjour <strong>${this.escapeHtml(r.name)}</strong>,`,
+        ),
+        this.emailTpl.paragraph(
+          'Un mouvement financier a été enregistré sur votre compte.',
+        ),
+        this.emailTpl.infoPanel(this.emailTpl.keyValues(rows)),
+        this.emailTpl.muted(
+          'Pour toute question, contactez le support via les coordonnées en bas de ce message.',
+        ),
+      ].join('\n');
 
       try {
         await this.mailer.sendSimple({
           to: r.email,
           toName: r.name,
           subject,
-          html: `<div>${html}</div>`,
+          html,
           text,
         });
         logs.push({

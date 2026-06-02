@@ -1,4 +1,5 @@
 import { MailerService } from '@modules/mailer/mailer.service';
+import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { MediasService } from '@modules/medias/medias.service';
 import {
   BadRequestException,
@@ -55,6 +56,9 @@ export class AuthService {
 
   @Inject(MailerService)
   private readonly _mailer: MailerService;
+
+  @Inject(EmailTemplateService)
+  private readonly _emailTpl: EmailTemplateService;
 
   @Inject(ConfigService)
   private readonly _configService: ConfigService;
@@ -203,6 +207,41 @@ export class AuthService {
     };
   }
 
+  private buildVerificationEmailHtml(
+    fullName: string,
+    code: string,
+    variant: 'signup' | 'activation' | 'reset',
+  ): string {
+    const safeName = this._emailTpl.escapeHtml(fullName.trim() || 'Bonjour');
+    const titles = {
+      signup: 'Finalisez votre inscription',
+      activation: 'Vérifiez votre courriel',
+      reset: 'Réinitialisation de mot de passe',
+    };
+    const intros = {
+      signup:
+        'Utilisez le code ci-dessous pour confirmer votre adresse et créer votre compte.',
+      activation:
+        'Voici votre code de vérification pour activer votre compte.',
+      reset:
+        'Voici votre code de réinitialisation. Ne le partagez avec personne.',
+    };
+    const validity =
+      variant === 'reset'
+        ? 'Ce code est valable <strong>15 minutes</strong>.'
+        : 'Ce code est valable <strong>30 minutes</strong>.';
+    return [
+      this._emailTpl.heading(titles[variant]),
+      this._emailTpl.paragraph(`Bonjour <strong>${safeName}</strong>,`),
+      this._emailTpl.paragraph(intros[variant]),
+      this._emailTpl.codeBox(code),
+      this._emailTpl.paragraph(validity),
+      this._emailTpl.muted(
+        'Si vous n’avez pas demandé ce code, vous pouvez ignorer ce message en toute sécurité.',
+      ),
+    ].join('\n');
+  }
+
   private async _sendSignupVerificationEmail(
     toEmail: string,
     fullName: string,
@@ -211,14 +250,7 @@ export class AuthService {
     const appName =
       this._configService.get<string>('APP_NAME') ?? 'African Meals';
     const subject = `Vérifiez votre courriel - ${appName}`;
-    const html = `
-      <h2>Finalisez votre inscription</h2>
-      <p>Bonjour ${fullName},</p>
-      <p>Votre code de vérification : <strong>${code}</strong></p>
-      <p>Il est valable 30 minutes. Après validation, votre compte sera créé.</p>
-      <p>Si vous n’avez pas demandé d’inscription, ignorez ce message.</p>
-      <p>— L’équipe ${appName}</p>
-    `.trim();
+    const html = this.buildVerificationEmailHtml(fullName, code, 'signup');
     const text = `Code d’inscription ${appName} : ${code} (30 min).`;
     await this._mailer.sendSimple({
       to: toEmail,
@@ -349,13 +381,17 @@ export class AuthService {
       try {
         const appName =
           this._configService.get<string>('APP_NAME') ?? 'African Meals';
-        await this._mailer.send({
+        const subject = `Bienvenue sur ${appName}`;
+        await this._mailer.sendSimple({
           to: args.email,
-          subject: `Bienvenue sur ${appName}`,
-          context: {
-            name: args.fullName,
-            code: activationCode,
-          },
+          toName: args.fullName,
+          subject,
+          html: this.buildVerificationEmailHtml(
+            args.fullName,
+            activationCode,
+            'activation',
+          ),
+          text: `Code d’activation ${appName} : ${activationCode}`,
         });
         this.logger.log(
           `[register] email de vérification envoyé vers ${args.email}`,
@@ -801,13 +837,13 @@ export class AuthService {
     }
     const appName =
       this._configService.get<string>('APP_NAME') ?? 'African Meals';
-    await this._mailer.send({
+    const subject = `Bienvenue sur ${appName}`;
+    await this._mailer.sendSimple({
       to: email,
-      subject: `Bienvenue sur ${appName}`,
-      context: {
-        name: user.fullName,
-        code,
-      },
+      toName: user.fullName,
+      subject,
+      html: this.buildVerificationEmailHtml(user.fullName, code, 'activation'),
+      text: `Code d’activation ${appName} : ${code}`,
     });
     return user;
   }
@@ -844,14 +880,11 @@ export class AuthService {
     const appName =
       this._configService.get<string>('APP_NAME') ?? 'African Meals';
     const subject = `Réinitialisation de mot de passe - ${appName}`;
-    const html = `
-      <h2>Réinitialisation de mot de passe</h2>
-      <p>Bonjour ${user.fullName},</p>
-      <p>Voici votre code de réinitialisation : <strong>${code}</strong></p>
-      <p>Ce code est valide 15 minutes. Ne le partagez avec personne.</p>
-      <p>Si vous n'avez pas demandé ce code, ignorez cet email.</p>
-      <p>— L'équipe ${appName}</p>
-    `.trim();
+    const html = this.buildVerificationEmailHtml(
+      user.fullName,
+      code,
+      'reset',
+    );
     const text = `Code de réinitialisation : ${code}. Valide 15 min. - ${appName}`;
 
     const smtpUser = this._configService.get<string>('SMTP_USER')?.trim();

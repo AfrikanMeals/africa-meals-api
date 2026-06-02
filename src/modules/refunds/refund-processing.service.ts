@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { MailerService } from '@modules/mailer/mailer.service';
+import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { OrdersService } from '@modules/orders/orders.service';
 import { StripeChargeFeeService } from '@modules/billing/stripe/stripe-charge-fee.service';
@@ -179,6 +180,7 @@ export class RefundProcessingService {
     private readonly notifications: NotificationsService,
     @Inject(MailerService)
     private readonly mailer: MailerService,
+    private readonly emailTpl: EmailTemplateService,
     @Inject(OrdersService)
     private readonly ordersService: OrdersService,
     private readonly platformFeesService: PlatformFeesService,
@@ -1183,15 +1185,22 @@ export class RefundProcessingService {
     if (!email) return;
 
     const appName = process.env.APP_NAME?.trim() || 'Afrika Meals';
-    const html = `
-      <p>Bonjour ${args.customer.fullName},</p>
-      <p>${body}</p>
-      <p>Commande : <strong>#AE-${args.orderId
-        .slice(-6)
-        .toUpperCase()}</strong></p>
-      ${args.note ? `<p><em>${args.note}</em></p>` : ''}
-      <p>— ${appName}</p>
-    `;
+    const safeName = this.emailTpl.escapeHtml(args.customer.fullName);
+    const safeBody = this.emailTpl.escapeHtml(body);
+    const orderRef = `#AE-${args.orderId.slice(-6).toUpperCase()}`;
+    const html = [
+      this.emailTpl.heading(title),
+      this.emailTpl.paragraph(`Bonjour <strong>${safeName}</strong>,`),
+      this.emailTpl.paragraph(safeBody),
+      this.emailTpl.infoPanel(
+        this.emailTpl.paragraph(`Commande : <strong>${orderRef}</strong>`),
+      ),
+      args.note?.trim()
+        ? this.emailTpl.muted(this.emailTpl.escapeHtml(args.note.trim()))
+        : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
     try {
       await this.mailer.sendSimple({
         to: email,

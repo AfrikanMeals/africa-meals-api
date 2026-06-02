@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { MailerSend } from 'mailersend';
 import { MailerController } from './mailer.controller';
 import { ContactController } from './contact.controller';
+import { EmailTemplateService } from './email-template.service';
 import { MailerService } from './mailer.service';
 
 @Module({
@@ -16,8 +17,9 @@ import { MailerService } from './mailer.service';
           apiKey: config.get<string>('MAILER_API_KEY') ?? '',
         }),
     },
+    EmailTemplateService,
     MailerService,
   ],
-  exports: [MailerService],
+  exports: [MailerService, EmailTemplateService],
 })
 export class MailerModule {}

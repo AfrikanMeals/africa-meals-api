@@ -12,10 +12,13 @@ import {
 import { UpdateAdNotificationPricingDto } from '@modules/ads/dto/ad-notification.dto';
 import { UpdateAdPricingDto } from '@modules/ads/dto/ad-pricing.dto';
 import {
+  audienceTotalFromDoc,
+  normalizeAudienceTotal,
   normalizeNotificationAddonInput,
   notificationAddonFromDoc,
   NotificationAddonPayload,
 } from '@modules/ads/ad-notification.util';
+import { AdNotificationService } from '@modules/ads/ad-notification.service';
 import { TrackAdEventDto } from '@modules/ads/dto/ad-tracking.dto';
 import { TrackAdCampaignEventDto } from '@modules/ads/dto/ad-campaign-tracking.dto';
 import {
@@ -102,6 +105,7 @@ export type AdManagementRow = {
   archiveReason: AdArchiveReasonEnum | null;
   billingFinalizedAt: string | null;
   billingFinalAmountCad: number;
+  audienceTotal: number | null;
   notificationAddon: NotificationAddonPayload;
   createdAt?: string;
   updatedAt?: string;
@@ -211,6 +215,7 @@ export type AdCampaignManagementRow = {
   archiveReason?: AdCampaignArchiveReasonEnum | null;
   billingFinalizedAt?: string | null;
   billingFinalAmountCad?: number;
+  audienceTotal: number | null;
   notificationAddon: NotificationAddonPayload;
   createdAt?: string;
   updatedAt?: string;
@@ -309,6 +314,9 @@ export type AdNotificationPricingPayload = {
   smsDeliveryCad: number;
   smsInteractionCad: number;
   smsConversionCad: number;
+  whatsappDeliveryCad: number;
+  whatsappInteractionCad: number;
+  whatsappConversionCad: number;
   updatedAt: string | null;
 };
 
@@ -346,6 +354,9 @@ const AD_NOTIFICATION_PRICING_DEFAULTS: Omit<
   smsDeliveryCad: 0,
   smsInteractionCad: 0,
   smsConversionCad: 0,
+  whatsappDeliveryCad: 0,
+  whatsappInteractionCad: 0,
+  whatsappConversionCad: 0,
 };
 
 @Injectable()
@@ -401,6 +412,9 @@ export class AdsService implements OnModuleInit {
 
   @Inject(ConfigService)
   private readonly _config: ConfigService;
+
+  @Inject(AdNotificationService)
+  private readonly _adNotifications: AdNotificationService;
 
   async onModuleInit() {
     await this.seedIfEmpty();
@@ -794,7 +808,7 @@ export class AdsService implements OnModuleInit {
   }
 
   async getPricing(user: UserModel): Promise<AdPricingPayload> {
-    this.assertAdmin(user);
+    this.assertVendorOrAdmin(user);
     const doc = await this._ensurePricingDoc();
     return this._toPricingPayload(doc);
   }
@@ -872,6 +886,9 @@ export class AdsService implements OnModuleInit {
       smsDeliveryCad: n(doc.smsDeliveryCad),
       smsInteractionCad: n(doc.smsInteractionCad),
       smsConversionCad: n(doc.smsConversionCad),
+      whatsappDeliveryCad: n(doc.whatsappDeliveryCad),
+      whatsappInteractionCad: n(doc.whatsappInteractionCad),
+      whatsappConversionCad: n(doc.whatsappConversionCad),
       updatedAt:
         updatedAt instanceof Date
           ? updatedAt.toISOString()
@@ -900,7 +917,7 @@ export class AdsService implements OnModuleInit {
   async getNotificationPricing(
     user: UserModel,
   ): Promise<AdNotificationPricingPayload> {
-    this.assertAdmin(user);
+    this.assertVendorOrAdmin(user);
     const doc = await this._ensureNotificationPricingDoc();
     return this._toNotificationPricingPayload(doc);
   }
@@ -952,6 +969,18 @@ export class AdsService implements OnModuleInit {
             smsDeliveryCad: n('smsDeliveryCad', current.smsDeliveryCad),
             smsInteractionCad: n('smsInteractionCad', current.smsInteractionCad),
             smsConversionCad: n('smsConversionCad', current.smsConversionCad),
+            whatsappDeliveryCad: n(
+              'whatsappDeliveryCad',
+              current.whatsappDeliveryCad,
+            ),
+            whatsappInteractionCad: n(
+              'whatsappInteractionCad',
+              current.whatsappInteractionCad,
+            ),
+            whatsappConversionCad: n(
+              'whatsappConversionCad',
+              current.whatsappConversionCad,
+            ),
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },
@@ -1163,6 +1192,7 @@ export class AdsService implements OnModuleInit {
           ? String(doc.billingFinalizedAt)
           : null,
       billingFinalAmountCad: Number(doc.billingFinalAmountCad ?? 0),
+      audienceTotal: audienceTotalFromDoc(doc),
       notificationAddon: notificationAddonFromDoc(
         (doc.notificationAddon ?? doc.notification_addon) as
           | Record<string, unknown>
@@ -1236,7 +1266,38 @@ export class AdsService implements OnModuleInit {
   ): Promise<void> {
     const pricing = this._toPricingPayload(await this._ensurePricingDoc());
     const metrics = await this._campaignBillingMetrics(campaignId);
-    const finalAmount = this._campaignBillingAmount(pricing, metrics);
+    const displayAmount = this._campaignBillingAmount(pricing, metrics);
+
+    const campDoc = await this._adCampaignModel
+      .findById(campaignId)
+      .select('notificationAddon')
+      .lean()
+      .exec();
+    const addon = notificationAddonFromDoc(
+      (campDoc as { notificationAddon?: unknown } | null)?.notificationAddon as
+        | Record<string, unknown>
+        | undefined,
+    );
+    let notificationAmountCad = 0;
+    let notificationBlock: Record<string, unknown> | null = null;
+    if (addon.enabled) {
+      const notifPricing = this._toNotificationPricingPayload(
+        await this._ensureNotificationPricingDoc(),
+      );
+      const notifMetrics =
+        await this._adNotifications.aggregateMetricsForCampaign(campaignId);
+      notificationAmountCad = this._adNotifications.computeNotificationAmount(
+        notifMetrics,
+        notifPricing,
+      );
+      notificationBlock = {
+        metrics: notifMetrics,
+        pricing: notifPricing,
+        amountCad: notificationAmountCad,
+      };
+    }
+
+    const finalAmount = displayAmount + notificationAmountCad;
     await this._adCampaignModel
       .updateOne(
         { _id: campaignId },
@@ -1253,6 +1314,8 @@ export class AdsService implements OnModuleInit {
                 conversionCad: pricing.conversionCad,
                 currency: pricing.currency,
               },
+              displayAmountCad: Number(displayAmount.toFixed(2)),
+              notification: notificationBlock,
             },
           },
         },
@@ -1340,7 +1403,38 @@ export class AdsService implements OnModuleInit {
   private async _finalizeAdBilling(adId: Types.ObjectId): Promise<void> {
     const pricing = this._toPricingPayload(await this._ensurePricingDoc());
     const metrics = await this._adBillingMetrics(adId);
-    const finalAmount = this._adBillingAmount(pricing, metrics);
+    const displayAmount = this._adBillingAmount(pricing, metrics);
+
+    const adDoc = await this.adModel
+      .findById(adId)
+      .select('notificationAddon')
+      .lean()
+      .exec();
+    const addon = notificationAddonFromDoc(
+      (adDoc as { notificationAddon?: unknown } | null)?.notificationAddon as
+        | Record<string, unknown>
+        | undefined,
+    );
+    let notificationAmountCad = 0;
+    let notificationBlock: Record<string, unknown> | null = null;
+    if (addon.enabled) {
+      const notifPricing = this._toNotificationPricingPayload(
+        await this._ensureNotificationPricingDoc(),
+      );
+      const notifMetrics =
+        await this._adNotifications.aggregateMetricsForAd(adId);
+      notificationAmountCad = this._adNotifications.computeNotificationAmount(
+        notifMetrics,
+        notifPricing,
+      );
+      notificationBlock = {
+        metrics: notifMetrics,
+        pricing: notifPricing,
+        amountCad: notificationAmountCad,
+      };
+    }
+
+    const finalAmount = displayAmount + notificationAmountCad;
     await this.adModel
       .updateOne(
         { _id: adId },
@@ -1356,6 +1450,8 @@ export class AdsService implements OnModuleInit {
                 conversionCad: pricing.conversionCad,
                 currency: pricing.currency,
               },
+              displayAmountCad: Number(displayAmount.toFixed(2)),
+              notification: notificationBlock,
             },
           },
         },
@@ -1525,6 +1621,7 @@ export class AdsService implements OnModuleInit {
       actionText,
       actionTarget: actionTarget || undefined,
       items,
+      audienceTotal: normalizeAudienceTotal(dto.audienceTotal) ?? null,
       notificationAddon: normalizeNotificationAddonInput(dto.notificationAddon),
     });
     const row = await this._adCampaignModel
@@ -1607,6 +1704,9 @@ export class AdsService implements OnModuleInit {
             ? (new Types.ObjectId(it.drinkId) as unknown as DrinkModel)
             : undefined,
       }));
+    }
+    if (dto.audienceTotal !== undefined) {
+      existing.audienceTotal = normalizeAudienceTotal(dto.audienceTotal) ?? null;
     }
     if (dto.notificationAddon !== undefined) {
       existing.notificationAddon = normalizeNotificationAddonInput(
@@ -3017,6 +3117,7 @@ export class AdsService implements OnModuleInit {
           ? String(doc.billingFinalizedAt)
           : null,
       billingFinalAmountCad: Number(doc.billingFinalAmountCad ?? 0),
+      audienceTotal: audienceTotalFromDoc(doc),
       notificationAddon: notificationAddonFromDoc(
         (doc.notificationAddon ?? doc.notification_addon) as
           | Record<string, unknown>
@@ -3369,6 +3470,7 @@ export class AdsService implements OnModuleInit {
         dto.actionType === StoreAdActionTypeEnum.PRODUCT && dto.productId
           ? productRefId(dto.productId)
           : undefined,
+      audienceTotal: normalizeAudienceTotal(dto.audienceTotal) ?? null,
       notificationAddon: normalizeNotificationAddonInput(dto.notificationAddon),
     });
 
@@ -3512,6 +3614,9 @@ export class AdsService implements OnModuleInit {
       existing.actionTarget = undefined;
     }
 
+    if (dto.audienceTotal !== undefined) {
+      existing.audienceTotal = normalizeAudienceTotal(dto.audienceTotal) ?? null;
+    }
     if (dto.notificationAddon !== undefined) {
       existing.notificationAddon = normalizeNotificationAddonInput(
         dto.notificationAddon,

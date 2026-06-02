@@ -15,6 +15,7 @@ import { ProductsService } from '@modules/products/products.service';
 import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import { RatingsService } from '@modules/ratings/ratings.service';
 import { MailerService } from '@modules/mailer/mailer.service';
+import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { UsersService } from '@modules/users/users.service';
 import {
@@ -167,6 +168,9 @@ export class StoreService {
 
   @Inject(MailerService)
   private readonly _mailerService: MailerService;
+
+  @Inject(EmailTemplateService)
+  private readonly _emailTpl: EmailTemplateService;
 
   @Inject(WsInboxNotifyService)
   private readonly _wsInboxNotify: WsInboxNotifyService;
@@ -2198,24 +2202,20 @@ export class StoreService {
     );
     const safeOwner = this._escapeHtml(ownerName || 'restaurant');
     const safeStatus = this._escapeHtml(statusLabel);
-    const html = `
-<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:system-ui,Segoe UI,sans-serif;line-height:1.5;color:#374151;">
-  <p>Bonjour ${safeOwner},</p>
-  <p>Le statut de votre restaurant <strong>${safeStore}</strong> a ete mis a jour par l'equipe <strong>${this._escapeHtml(
-      appName,
-    )}</strong>.</p>
-  <p>Nouveau statut : <strong>${safeStatus}</strong>.</p>
-  <p style="font-size:14px;color:#6b7280;">
-    ${
+    const statusHint =
       status === StoreStatusEnum.ACTIVE
         ? 'Votre boutique est maintenant active et peut recevoir des commandes.'
-        : "Votre boutique est actuellement inactive. Si besoin, contactez l'equipe support pour plus d'informations."
-    }
-  </p>
-  <p style="font-size:14px;color:#9ca3af;">— L’equipe ${this._escapeHtml(
-    appName,
-  )}</p>
-</body></html>`.trim();
+        : "Votre boutique est actuellement inactive. Si besoin, contactez l'équipe support pour plus d'informations.";
+    const html = [
+      this._emailTpl.heading('Statut de votre restaurant'),
+      this._emailTpl.paragraph(`Bonjour <strong>${safeOwner}</strong>,`),
+      this._emailTpl.paragraph(
+        `Le statut de votre restaurant <strong>${safeStore}</strong> a été mis à jour par l'équipe <strong>${this._escapeHtml(appName)}</strong>.`,
+      ),
+      this._emailTpl.infoPanel(
+        `${this._emailTpl.paragraph(`Nouveau statut : <strong>${safeStatus}</strong>`)}${this._emailTpl.muted(statusHint)}`,
+      ),
+    ].join('\n');
     const text = [
       `Bonjour ${ownerName || 'restaurant'},`,
       ``,
@@ -2294,25 +2294,28 @@ export class StoreService {
     };
 
     const subject = `${appName} — Inscription restaurant`;
-    const hrefAttr = signupUrl.replace(/&/g, '&amp;');
 
-    const html = `
-<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:system-ui,Segoe UI,sans-serif;line-height:1.5;color:#374151;">
-  <p>Bonjour ${safe.prenom} ${safe.nom},</p>
-  <p>Vous avez été invité·e à créer un compte <strong>restaurant</strong> sur <strong>${
-    safe.app
-  }</strong>.</p>
-  <p>Cliquez sur le lien ci-dessous pour commencer votre inscription :</p>
-  <p><a href="${hrefAttr}" style="display:inline-block;margin:12px 0;padding:12px 20px;background:#7c3aed;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">Créer mon compte restaurant</a></p>
-  <p style="word-break:break-all;font-size:14px;color:#6b7280;">${this._escapeHtml(
-    signupUrl,
-  )}</p>
-  <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;" />
-  <p style="font-size:14px;color:#6b7280;">Coordonnées communiquées :<br/>
-  Téléphone : ${safe.phone}<br/>
-  Courriel : ${safe.email}</p>
-  <p style="font-size:14px;color:#9ca3af;">— L’équipe ${safe.app}</p>
-</body></html>`.trim();
+    const html = [
+      this._emailTpl.heading('Invitation restaurant'),
+      this._emailTpl.paragraph(
+        `Bonjour <strong>${safe.prenom} ${safe.nom}</strong>,`,
+      ),
+      this._emailTpl.paragraph(
+        `Vous avez été invité·e à créer un compte <strong>restaurant</strong> sur <strong>${safe.app}</strong>.`,
+      ),
+      this._emailTpl.paragraph(
+        'Cliquez sur le bouton ci-dessous pour commencer votre inscription :',
+      ),
+      this._emailTpl.button('Créer mon compte restaurant', signupUrl),
+      this._emailTpl.muted(
+        `Lien direct : <span style="word-break:break-all;">${this._escapeHtml(signupUrl)}</span>`,
+      ),
+      this._emailTpl.divider(),
+      this._emailTpl.keyValues([
+        { label: 'Téléphone', value: safe.phone },
+        { label: 'Courriel', value: safe.email },
+      ]),
+    ].join('\n');
 
     const text = [
       `Bonjour ${prenom} ${nom},`,

@@ -28,6 +28,18 @@ import {
   AdsTargetingEventDto,
   AdsTargetingIngestDto,
 } from './dto/ads-targeting.dto';
+import {
+  buildPlacementWithSlot,
+  computeDeliveryConversionBoost,
+  computePlacementPerformanceBoost,
+  computePositionBoost,
+  expandPlacementKeys,
+  matchesPlacementRules,
+  placementMatchScore,
+  readEditorialPriority,
+  readPreferredSlot,
+  type CampaignPlacementStats,
+} from './ads-targeting-placement.util';
 import { computeAdsTargetingScore } from './ads-targeting-scoring';
 
 type InterestScores = Record<string, number>;
@@ -536,6 +548,62 @@ export class AdsTargetingService {
     return { value: 0.3, reason: 'interest:baseline' };
   }
 
+  private async campaignPlacementStats(
+    userKey: string,
+    placement: string,
+    campaignIds: string[],
+  ): Promise<Map<string, CampaignPlacementStats>> {
+    const out = new Map<string, CampaignPlacementStats>();
+    if (!campaignIds.length) return out;
+    const placementKeys = expandPlacementKeys(placement);
+    if (!placementKeys.length) return out;
+
+    const rows = await this.eventModel
+      .aggregate<{
+        _id: { campaignId: string; eventType: string };
+        n: number;
+      }>([
+        {
+          $match: {
+            userKey,
+            campaignId: { $in: campaignIds },
+            placement: { $in: placementKeys },
+          },
+        },
+        {
+          $group: {
+            _id: { campaignId: '$campaignId', eventType: '$eventType' },
+            n: { $sum: 1 },
+          },
+        },
+      ])
+      .exec();
+
+    for (const row of rows) {
+      const cid = String(row._id?.campaignId ?? '').trim();
+      if (!cid) continue;
+      const cur = out.get(cid) ?? {
+        impressions: 0,
+        clicks: 0,
+        purchases: 0,
+      };
+      const t = String(row._id?.eventType ?? '');
+      const n = Number(row.n ?? 0);
+      if (t === AdsTargetingEventTypeEnum.AD_IMPRESSION) {
+        cur.impressions += n;
+      } else if (
+        t === AdsTargetingEventTypeEnum.AD_CLICK ||
+        t === AdsTargetingEventTypeEnum.ITEM_CLICK
+      ) {
+        cur.clicks += n;
+      } else if (t === AdsTargetingEventTypeEnum.PURCHASE) {
+        cur.purchases += n;
+      }
+      out.set(cid, cur);
+    }
+    return out;
+  }
+
   private async latestSessionId(userKey: string): Promise<string> {
     const row = await this.eventModel
       .findOne({ userKey })
@@ -550,7 +618,12 @@ export class AdsTargetingService {
 
   async recommend(
     requester: UserModel | null | undefined,
-    query: { userId?: string; placement?: string; limit?: number },
+    query: {
+      userId?: string;
+      placement?: string;
+      slot?: number;
+      limit?: number;
+    },
   ): Promise<{ ads: RecommendResult[] }> {
     const fallbackUserId = requester?._id ? String(requester._id) : '';
     const userKey = String(query.userId ?? '').trim() || fallbackUserId;
@@ -561,9 +634,17 @@ export class AdsTargetingService {
     if (!profile) return { ads: [] };
 
     const now = new Date();
-    const placement = String(query.placement ?? 'home_feed')
+    const basePlacement = String(query.placement ?? 'home_feed')
       .trim()
       .toLowerCase();
+    const requestSlot =
+      query.slot != null && Number.isFinite(Number(query.slot))
+        ? Math.max(0, Math.min(20, Math.floor(Number(query.slot))))
+        : null;
+    const placement =
+      requestSlot != null && !basePlacement.includes(':slot_')
+        ? buildPlacementWithSlot(basePlacement, requestSlot)
+        : basePlacement;
     const limit = Math.max(1, Math.min(10, Number(query.limit ?? 3)));
     const campaigns = await this.campaignModel
       .find({
@@ -577,8 +658,9 @@ export class AdsTargetingService {
       .lean()
       .exec();
 
-    const out: Array<RecommendResult & { campaignId: string; score: number }> =
-      [];
+    const out: Array<
+      RecommendResult & { campaignId: string; score: number; editorialPriority: number }
+    > = [];
     const lastActive = profile.lastActive ? new Date(profile.lastActive) : null;
     const daysSinceActive = lastActive
       ? Math.max(0, (Date.now() - lastActive.getTime()) / 86_400_000)
@@ -592,11 +674,23 @@ export class AdsTargetingService {
     const interestScores = (profile.interestScores ?? {}) as InterestScores;
     const topCategories = (profile.topCategories ?? []) as string[];
     const latestSession = await this.latestSessionId(userKey);
+    const campaignIds = (campaigns as Array<Record<string, unknown>>)
+      .map((c) => String(c._id ?? '').trim())
+      .filter(Boolean);
+    const placementStats = await this.campaignPlacementStats(
+      userKey,
+      placement,
+      campaignIds,
+    );
+    const profileSegment = String(profile.segment ?? '');
 
     for (const campaign of campaigns as Array<Record<string, unknown>>) {
       const campaignId = String(campaign._id ?? '').trim();
       if (!campaignId) continue;
       const rules = (campaign.targetingRules ?? {}) as Record<string, unknown>;
+      if (!matchesPlacementRules(rules, placement)) {
+        continue;
+      }
       const segments = Array.isArray(rules.segments)
         ? rules.segments.map((x) => String(x))
         : [];
@@ -640,17 +734,44 @@ export class AdsTargetingService {
         rules,
         topCategories,
       );
+      const items = Array.isArray(campaign.items)
+        ? (campaign.items as Record<string, unknown>[])
+        : [];
+      const hasProductItems = items.some(
+        (it) =>
+          String(it.itemType ?? '')
+            .trim()
+            .toUpperCase() === 'PRODUCT',
+      );
+      const actionType = String(campaign.actionType ?? 'SHOP');
+      const priority = readEditorialPriority(rules);
+      const preferredSlot = readPreferredSlot(rules);
+      const slotForScoring =
+        requestSlot ?? preferredSlot;
+      const stats = placementStats.get(campaignId);
+
       const score = computeAdsTargetingScore({
         interestMatch: interest.value,
         recencyBoost,
         engagementScore,
         conversionProbability,
+        placementMatch: placementMatchScore(rules, placement),
+        positionBoost: computePositionBoost({
+          priority,
+          preferredSlot,
+          requestSlot: slotForScoring,
+        }),
+        deliveryConversionBoost: computeDeliveryConversionBoost({
+          actionType,
+          hasProductItems,
+          segment: profileSegment,
+          conversionProbability,
+          requestSlot: slotForScoring,
+        }),
+        placementPerformance: computePlacementPerformanceBoost(stats),
       });
       if (score <= 0) continue;
 
-      const items = Array.isArray(campaign.items)
-        ? (campaign.items as Record<string, unknown>[])
-        : [];
       const first = items[0];
       let creativeUrl = '';
       let adId = `camp:${campaignId}`;
@@ -676,13 +797,25 @@ export class AdsTargetingService {
         creative_url: creativeUrl,
         cta: String(campaign.actionText ?? 'Découvrir'),
         relevance_score: score,
-        targeting_reason: interest.reason,
+        targeting_reason: [
+          interest.reason,
+          `placement:${placement}`,
+          `position:p${priority}`,
+        ].join('|'),
         campaignId,
         score,
+        editorialPriority: priority,
       });
     }
 
-    out.sort((a, b) => b.score - a.score);
+    out.sort((a, b) => {
+      const byScore = b.score - a.score;
+      if (byScore !== 0) return byScore;
+      if (a.editorialPriority !== b.editorialPriority) {
+        return a.editorialPriority - b.editorialPriority;
+      }
+      return a.campaignId.localeCompare(b.campaignId);
+    });
     const selected = out.slice(0, limit);
     for (const row of selected) {
       await this.increaseDailyCap(userKey, row.campaignId);
@@ -694,7 +827,12 @@ export class AdsTargetingService {
       action: 'recommend_read',
       actorKey: this.actorKey(requester),
       targetUserKey: userKey,
-      metadata: { placement, limit, returned: selected.length },
+      metadata: {
+        placement,
+        slot: requestSlot,
+        limit,
+        returned: selected.length,
+      },
     });
     return {
       ads: selected.map((row) => ({

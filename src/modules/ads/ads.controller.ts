@@ -262,7 +262,7 @@ export class AdsController {
   @Get('manage/pricing')
   @UseGuards(JwtGuard)
   @ApiBearerAuth('bearer')
-  @ApiOperation({ summary: 'Lire le barème Ads (ADMIN)' })
+  @ApiOperation({ summary: 'Lire le barème Ads (admin et boutique)' })
   async getManagePricing(@Req() req: Request) {
     return this.adsService.getPricing(req.user as UserModel);
   }

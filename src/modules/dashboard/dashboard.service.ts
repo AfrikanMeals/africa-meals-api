@@ -24,6 +24,13 @@ import {
   AdCreditPaymentModel,
   AdCreditPaymentStatusEnum,
 } from '@schemas/ad-credit-payment.schema';
+import { AdModel } from '@schemas/ad.schema';
+import { AdEventModel, AdEventTypeEnum } from '@schemas/ad-event.schema';
+import { AdCampaignModel } from '@schemas/ad-campaign.schema';
+import {
+  AdCampaignEventModel,
+  AdCampaignEventTypeEnum,
+} from '@schemas/ad-campaign-event.schema';
 import { StockItemModel, StockStatutEnum } from '@schemas/stock-item.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { StoreRatingModel } from '@schemas/store_rating.schema';
@@ -47,6 +54,12 @@ import { OrderStatusEventsService } from '@modules/orders/order-status-events.se
 import { OrdersService } from '@modules/orders/orders.service';
 import { WsOrderNotifyService } from '@modules/ws-notify/ws-order-notify.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
+import {
+  buildDashboardAdPerformancePayload,
+  DASHBOARD_AD_PERFORMANCE_DAYS,
+  type AdPerformanceCounts,
+  type DashboardAdPerformancePayload,
+} from './dashboard-ad-performance.util';
 import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema';
 import {
   defaultDeliveryCapacity,
@@ -225,6 +238,7 @@ export type AdminDashboardKpis = {
   deliveryDeltaMinutes: number | null;
   revenueTargetFcfa: number;
   deliveryTargetMinutes: number;
+  adPerformance: DashboardAdPerformancePayload;
 };
 
 export type DashboardProductReviewRow = {
@@ -523,6 +537,14 @@ export class DashboardService {
     private readonly stripeProcessedCheckoutModel: Model<StripeProcessedCheckoutModel>,
     @InjectModel(VendorFeedbackModel.name)
     private readonly vendorFeedbackModel: Model<VendorFeedbackModel>,
+    @InjectModel(AdModel.name)
+    private readonly adModel: Model<AdModel>,
+    @InjectModel(AdEventModel.name)
+    private readonly adEventModel: Model<AdEventModel>,
+    @InjectModel(AdCampaignModel.name)
+    private readonly adCampaignModel: Model<AdCampaignModel>,
+    @InjectModel(AdCampaignEventModel.name)
+    private readonly adCampaignEventModel: Model<AdCampaignEventModel>,
     private readonly notificationsService: NotificationsService,
     private readonly orderStatusEvents: OrderStatusEventsService,
     @Inject(OrdersService)
@@ -1653,6 +1675,147 @@ export class DashboardService {
     return this.getDailyKpis(user);
   }
 
+  private emptyAdPerformance(): DashboardAdPerformancePayload {
+    return buildDashboardAdPerformancePayload({
+      current: { impressions: 0, clicks: 0, conversions: 0 },
+      previous: { impressions: 0, clicks: 0, conversions: 0 },
+      activeBanners: 0,
+      activeCampaigns: 0,
+    });
+  }
+
+  private adStoreFilter(
+    storeIds: Types.ObjectId[] | null,
+  ): Record<string, unknown> {
+    if (storeIds?.length) {
+      return { store: { $in: storeIds } };
+    }
+    return {};
+  }
+
+  private async countAdEventsInRange(
+    storeIds: Types.ObjectId[] | null,
+    from: Date,
+    to: Date,
+  ): Promise<AdPerformanceCounts> {
+    const storeMatch = this.adStoreFilter(storeIds);
+    const adIds = await this.adModel
+      .find({ ...storeMatch, archivedAt: { $exists: false } })
+      .distinct('_id')
+      .exec();
+    const campaignIds = await this.adCampaignModel
+      .find({ ...storeMatch, archivedAt: { $exists: false } })
+      .distinct('_id')
+      .exec();
+
+    const dateMatch = { createdAt: { $gte: from, $lt: to } };
+    const countByType = async (
+      model: Model<AdEventModel | AdCampaignEventModel>,
+      idField: 'ad' | 'campaign',
+      ids: Types.ObjectId[],
+      eventTypes: { impression: string; click: string; conversion: string },
+    ): Promise<AdPerformanceCounts> => {
+      if (!ids.length) {
+        return { impressions: 0, clicks: 0, conversions: 0 };
+      }
+      const base = { [idField]: { $in: ids }, ...dateMatch };
+      const [impressions, clicks, conversions] = await Promise.all([
+        model.countDocuments({
+          ...base,
+          eventType: eventTypes.impression,
+        }),
+        model.countDocuments({
+          ...base,
+          eventType: eventTypes.click,
+        }),
+        model.countDocuments({
+          ...base,
+          eventType: eventTypes.conversion,
+        }),
+      ]);
+      return { impressions, clicks, conversions };
+    };
+
+    const [banner, campaign] = await Promise.all([
+      countByType(
+        this.adEventModel as Model<AdEventModel>,
+        'ad',
+        adIds as Types.ObjectId[],
+        {
+          impression: AdEventTypeEnum.IMPRESSION,
+          click: AdEventTypeEnum.CLICK,
+          conversion: AdEventTypeEnum.CONVERSION,
+        },
+      ),
+      countByType(
+        this.adCampaignEventModel as Model<AdCampaignEventModel>,
+        'campaign',
+        campaignIds as Types.ObjectId[],
+        {
+          impression: AdCampaignEventTypeEnum.IMPRESSION,
+          click: AdCampaignEventTypeEnum.CLICK,
+          conversion: AdCampaignEventTypeEnum.CONVERSION,
+        },
+      ),
+    ]);
+
+    return {
+      impressions: banner.impressions + campaign.impressions,
+      clicks: banner.clicks + campaign.clicks,
+      conversions: banner.conversions + campaign.conversions,
+    };
+  }
+
+  private async countActiveAds(
+    storeIds: Types.ObjectId[] | null,
+  ): Promise<{ banners: number; campaigns: number }> {
+    const storeMatch = this.adStoreFilter(storeIds);
+    const now = new Date();
+    const [banners, campaigns] = await Promise.all([
+      this.adModel
+        .countDocuments({
+          ...storeMatch,
+          isActive: true,
+          archivedAt: { $exists: false },
+        })
+        .exec(),
+      this.adCampaignModel
+        .countDocuments({
+          ...storeMatch,
+          isActive: true,
+          archivedAt: { $exists: false },
+          startsAt: { $lte: now },
+          endsAt: { $gte: now },
+        })
+        .exec(),
+    ]);
+    return { banners, campaigns };
+  }
+
+  private async getDashboardAdPerformance(
+    storeIds: Types.ObjectId[] | null,
+  ): Promise<DashboardAdPerformancePayload> {
+    const days = DASHBOARD_AD_PERFORMANCE_DAYS;
+    const to = new Date();
+    const from = new Date(to.getTime() - days * 86_400_000);
+    const prevTo = from;
+    const prevFrom = new Date(prevTo.getTime() - days * 86_400_000);
+
+    const [current, previous, active] = await Promise.all([
+      this.countAdEventsInRange(storeIds, from, to),
+      this.countAdEventsInRange(storeIds, prevFrom, prevTo),
+      this.countActiveAds(storeIds),
+    ]);
+
+    return buildDashboardAdPerformancePayload({
+      current,
+      previous,
+      activeBanners: active.banners,
+      activeCampaigns: active.campaigns,
+      periodDays: days,
+    });
+  }
+
   /**
    * KPIs du jour — admin (plateforme) ou vendeur (ses boutiques).
    */
@@ -1681,6 +1844,7 @@ export class DashboardService {
           deliveryDeltaMinutes: null,
           revenueTargetFcfa: DASHBOARD_CA_MONTHLY_TARGET_VENDOR,
           deliveryTargetMinutes: ADMIN_DELIVERY_TARGET_MIN,
+          adPerformance: this.emptyAdPerformance(),
         };
       }
     }
@@ -1702,6 +1866,7 @@ export class DashboardService {
       newClientsYesterday,
       avgDelToday,
       avgDelYesterday,
+      adPerformance,
     ] = await Promise.all([
       this.sumRevenueInRange(todayStart, todayEnd, storeIds),
       this.sumRevenueInRange(yesterdayStart, yesterdayEnd, storeIds),
@@ -1712,6 +1877,7 @@ export class DashboardService {
       this.countNewClientsInRange(yesterdayStart, yesterdayEnd, storeIds),
       this.avgCompletedDeliveryMinutes(todayStart, todayEnd, storeIds),
       this.avgCompletedDeliveryMinutes(yesterdayStart, yesterdayEnd, storeIds),
+      this.getDashboardAdPerformance(storeIds),
     ]);
 
     const deliveryDeltaMinutes =
@@ -1741,6 +1907,7 @@ export class DashboardService {
           ? ADMIN_REVENUE_TARGET_FCFA
           : DASHBOARD_CA_MONTHLY_TARGET_VENDOR,
       deliveryTargetMinutes: ADMIN_DELIVERY_TARGET_MIN,
+      adPerformance,
     };
   }
 

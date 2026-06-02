@@ -43,6 +43,12 @@ SUPPORT_EMAIL=support@votredomaine.com
 | `SMTP_FROM` | Adresse affichée comme expéditeur (souvent = SMTP_USER) | `monapp@gmail.com` |
 | `APP_NAME` | Nom de l’application (utilisé dans les e-mails) | `African Meals` |
 | `SUPPORT_EMAIL` | Email de support (affiché en bas des e-mails) | `support@...` |
+| `EMAIL_LOGO_URL` | URL absolue du logo (header) | `https://…/logo.png` |
+| `EMAIL_WEBSITE_URL` ou `PUBLIC_WEB_URL` | Lien « Visiter le site » (footer) | `https://…` |
+| `EMAIL_BRAND_PRIMARY` | Couleur principale (brun) | `#392800` |
+| `EMAIL_BRAND_ACCENT` | Couleur d’accent (or) | `#aa6900` |
+
+Sans `EMAIL_LOGO_URL`, l’API tente `{PUBLIC_WEB_URL ou FRONTEND_URL}/logo.png`.
 
 ### Anciennes variables (à retirer)
 
@@ -94,9 +100,11 @@ Si la configuration est correcte, vous recevrez un email de test.
 
 | Cas | Méthode | Contenu |
 |-----|--------|--------|
-| Inscription | `send()` | Email de bienvenue + code de vérification (HTML généré) |
-| Renvoyer le code de vérification | `send()` | Même type d’email avec un nouveau code |
-| Mot de passe oublié | `sendSimple()` | Lien / code de réinitialisation (HTML + texte) |
+| Inscription / vérification | `sendSimple()` | Code OTP + en-tête / pied de page brandés |
+| Mot de passe oublié | `sendSimple()` | Code de réinitialisation (mise en page commune) |
+| Bannières, campagnes, remboursements, etc. | `sendSimple()` | Corps HTML + enveloppe automatique |
 | Test | `sendSimple()` | Email de test via `POST /mailer/test-email` |
+
+Tous les e-mails `sendSimple()` sont enveloppés par le module `email-layout` (header logo, dégradé marque, footer support). Pour désactiver l’enveloppe sur un envoi ponctuel, préfixer le HTML avec `<!-- email-layout:skip -->`.
 
 Tous ces e-mails passent par le même transport Gmail SMTP configuré dans `.env`.

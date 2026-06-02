@@ -12,10 +12,13 @@ import {
   IsEnum,
   IsMongoId,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsObject,
   IsString,
+  Max,
   MaxLength,
+  Min,
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
@@ -115,6 +118,26 @@ export class CreateAdCampaignDto {
   @IsOptional()
   @IsObject()
   targetingRules?: Record<string, unknown>;
+
+  @ApiPropertyOptional({
+    description: 'Audience totale ciblée (estimation de coûts).',
+    example: 5000,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(100_000_000)
+  audienceTotal?: number;
+
+  @ApiPropertyOptional({
+    description: 'Add-on notifications (Email, Push, In-App, SMS).',
+    type: NotificationAddonDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => NotificationAddonDto)
+  notificationAddon?: NotificationAddonDto;
 }
 
 export class PatchAdCampaignDto {
@@ -181,6 +204,14 @@ export class PatchAdCampaignDto {
   @IsOptional()
   @IsObject()
   targetingRules?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'Audience totale ciblée' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(100_000_000)
+  audienceTotal?: number | null;
 
   @ApiPropertyOptional({ type: NotificationAddonDto })
   @IsOptional()

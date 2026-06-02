@@ -61,6 +61,7 @@ export class AdsTargetingController {
     return this.svc.recommend((req.user as UserModel | undefined) ?? null, {
       userId: query.user_id,
       placement: query.placement,
+      slot: query.slot,
       limit: query.limit,
     });
   }
