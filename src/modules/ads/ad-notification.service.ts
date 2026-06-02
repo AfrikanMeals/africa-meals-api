@@ -959,6 +959,23 @@ export class AdNotificationService {
     );
   }
 
+  private logAdFcmResult(
+    channel: 'push' | 'in-app',
+    userId: string,
+    res: { sent: number; failures: number; deviceCount: number },
+  ): void {
+    if (res.deviceCount === 0) {
+      this.logger.warn(
+        `ad FCM ${channel}: aucun appareil enregistré pour ${userId} (POST /auth/me/fcm-token sur chaque appareil)`,
+      );
+      return;
+    }
+    this.logger.log(
+      `ad FCM ${channel}: ${res.sent}/${res.deviceCount} appareil(s) pour ${userId}` +
+        (res.failures > 0 ? ` (${res.failures} échec(s))` : ''),
+    );
+  }
+
   private buildAdFcmData(args: {
     deliveryId: string;
     entityType: AdNotificationEntityTypeEnum;
@@ -1029,7 +1046,9 @@ export class AdNotificationService {
   }
 
   /**
-   * In-App + Push : inbox Mongo + un seul envoi FCM (évite les doublons si les deux canaux).
+   * In-App + Push : inbox Mongo + FCM.
+   * - in-app seul : inbox + WS + FCM data-only sur tous les jetons de l’utilisateur
+   * - push (± in-app) : un multicast par jeton appareil (bannière push)
    */
   private async sendFcmMobileChannels(args: {
     entityType: AdNotificationEntityTypeEnum;
@@ -1053,7 +1072,6 @@ export class AdNotificationService {
       : args.body;
     const deliveryIdInApp = args.inApp ? randomUUID() : '';
     const deliveryIdPush = args.push ? randomUUID() : '';
-    const fcmDeliveryId = args.push ? deliveryIdPush : deliveryIdInApp;
 
     let inboxNotificationId: string | undefined;
     if (args.inApp && deliveryIdInApp) {
@@ -1070,6 +1088,8 @@ export class AdNotificationService {
           targetLink: args.targetLink,
           linkBase: args.linkBase,
         });
+        inAppData.channel = 'inApp';
+        inAppData.inAppPrompt = '1';
         const created = await this.notifications.createUserScopedNotification({
           recipientUserId: args.recipient.userId,
           title: args.title,
@@ -1087,10 +1107,10 @@ export class AdNotificationService {
       }
     }
 
-    if (fcmDeliveryId) {
+    if (args.push && deliveryIdPush) {
       try {
         const fcmData = this.buildAdFcmData({
-          deliveryId: fcmDeliveryId,
+          deliveryId: deliveryIdPush,
           entityType: args.entityType,
           entityId: args.entityId,
           storeId: args.storeId.toString(),
@@ -1113,17 +1133,45 @@ export class AdNotificationService {
           body: pushBody,
           data: fcmData,
           androidChannelId: this.adFcmAndroidChannelId(),
-          /** In-app seul : data-only pour que l’app affiche l’aperçu plein écran au premier plan. */
-          dataOnly: args.inApp && !args.push,
         });
-        if (res.deviceCount === 0) {
-          this.logger.warn(
-            `ad FCM: aucun jeton pour l’utilisateur ${args.recipient.userId}`,
-          );
-        }
+        this.logAdFcmResult('push', args.recipient.userId, res);
       } catch (e) {
         this.logger.warn(
-          `ad FCM ${fcmDeliveryId}: ${e instanceof Error ? e.message : String(e)}`,
+          `ad FCM push ${deliveryIdPush}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    } else if (args.inApp && deliveryIdInApp) {
+      /** In-app seul : inbox + WS + FCM data-only sur tous les appareils (pas de bannière push). */
+      try {
+        const fcmData = this.buildAdFcmData({
+          deliveryId: deliveryIdInApp,
+          entityType: args.entityType,
+          entityId: args.entityId,
+          storeId: args.storeId.toString(),
+          storeName: args.storeName,
+          title: args.title,
+          body: args.body,
+          campaignItems: args.campaignItems,
+          targetLink: args.targetLink,
+          linkBase: args.linkBase,
+        });
+        fcmData.channel = 'inApp';
+        fcmData.inAppPrompt = '1';
+        if (inboxNotificationId) {
+          fcmData.notificationId = inboxNotificationId;
+        }
+        const res = await this.notifications.sendMulticastNotification({
+          recipientUserIds: [args.recipient.userId],
+          title: args.title,
+          body: args.body,
+          data: fcmData,
+          androidChannelId: this.adFcmAndroidChannelId(),
+          dataOnly: true,
+        });
+        this.logAdFcmResult('in-app', args.recipient.userId, res);
+      } catch (e) {
+        this.logger.warn(
+          `ad FCM in-app ${deliveryIdInApp}: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     }

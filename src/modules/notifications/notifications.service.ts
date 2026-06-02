@@ -62,14 +62,21 @@ export class NotificationsService implements OnModuleInit {
   private mergeFcmTokenRows(...arrays: unknown[]): { token: string }[] {
     const seen = new Set<string>();
     const out: { token: string }[] = [];
+    const pushToken = (raw: string) => {
+      const token = raw.trim();
+      if (!token || seen.has(token)) return;
+      seen.add(token);
+      out.push({ token });
+    };
     for (const arr of arrays) {
       if (!Array.isArray(arr)) continue;
       for (const row of arr) {
+        if (typeof row === 'string') {
+          pushToken(row);
+          continue;
+        }
         if (!row || typeof row !== 'object') continue;
-        const token = String((row as { token?: unknown }).token ?? '').trim();
-        if (!token || seen.has(token)) continue;
-        seen.add(token);
-        out.push({ token });
+        pushToken(String((row as { token?: unknown }).token ?? ''));
       }
     }
     return out;
