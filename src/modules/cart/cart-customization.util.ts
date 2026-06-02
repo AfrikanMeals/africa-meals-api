@@ -51,12 +51,36 @@ export function normalizeSelectedSupplements(
     .filter((s): s is NormalizedLineSupplement => Boolean(s));
 }
 
+/** Ordre stable pour que deux sélections identiques produisent la même clé. */
+export function canonicalizeCustomizationSelections(
+  complements: NormalizedLineComplementGroup[],
+  supplements: NormalizedLineSupplement[],
+): {
+  c: NormalizedLineComplementGroup[];
+  s: NormalizedLineSupplement[];
+} {
+  const c = [...complements]
+    .sort((a, b) => a.groupTitle.localeCompare(b.groupTitle))
+    .map((g) => ({
+      groupTitle: g.groupTitle,
+      options: [...g.options].sort((a, b) => a.label.localeCompare(b.label)),
+    }));
+  const s = [...supplements].sort((a, b) => a.name.localeCompare(b.name));
+  return { c, s };
+}
+
 export function customizationKeyFromSelections(
   complements: NormalizedLineComplementGroup[],
   supplements: NormalizedLineSupplement[],
 ): string {
-  const payload = JSON.stringify({ c: complements, s: supplements });
-  return createHash('sha256').update(payload).digest('hex').slice(0, 32);
+  const payload = canonicalizeCustomizationSelections(
+    complements,
+    supplements,
+  );
+  return createHash('sha256')
+    .update(JSON.stringify(payload))
+    .digest('hex')
+    .slice(0, 32);
 }
 
 export function customizationSummaryLabel(
