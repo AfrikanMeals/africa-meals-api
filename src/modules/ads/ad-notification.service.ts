@@ -43,6 +43,15 @@ import type {
   AdNotificationStatsRecentRow,
 } from '@modules/ads/ad-notification-stats.types';
 import {
+  AD_NOTIFICATION_ITEMS_FCM_KEY,
+  buildAdNotificationEmailBodyHtml,
+  buildAdNotificationEmailText,
+  campaignItemsToFcmValue,
+  mapBannerToNotificationItems,
+  mapPopulatedCampaignItems,
+  type AdNotificationItemPayload,
+} from '@modules/ads/ad-notification-items.util';
+import {
   buildAdNotificationAppDeepLink,
   buildAdNotificationWebOpenUrl,
 } from '@modules/ads/ad-notification-link.util';
@@ -458,6 +467,11 @@ export class AdNotificationService {
         ? AdNotificationEntityTypeEnum.BANNER
         : AdNotificationEntityTypeEnum.CAMPAIGN;
 
+    const campaignItems = await this.loadNotificationItemsForEntity(
+      job.kind,
+      entityId,
+    );
+
     const batchPayloadBase: Omit<AdNotifyRecipientBatchJob, 'recipients'> = {
       entityType,
       entityId,
@@ -467,6 +481,7 @@ export class AdNotificationService {
       storeName,
       title,
       body,
+      campaignItems,
       addon,
     };
 
@@ -561,9 +576,37 @@ export class AdNotificationService {
       storeName: job.storeName,
       title: job.title,
       body: job.body,
+      campaignItems: job.campaignItems,
       addon: job.addon,
       recipients: job.recipients,
     });
+  }
+
+  private async loadNotificationItemsForEntity(
+    kind: AdNotifyEntityJob['kind'],
+    entityId: string,
+  ): Promise<AdNotificationItemPayload[]> {
+    if (!Types.ObjectId.isValid(entityId)) return [];
+    if (kind === 'campaign') {
+      const doc = await this.campaignModel
+        .findById(entityId)
+        .select('items')
+        .populate('items.product', 'title profileImage price')
+        .populate('items.drink', 'name imageUrl priceCad')
+        .lean()
+        .exec();
+      if (!doc) return [];
+      const raw = (doc as { items?: unknown }).items;
+      return mapPopulatedCampaignItems(Array.isArray(raw) ? raw : []);
+    }
+    const doc = await this.adModel
+      .findById(entityId)
+      .select('title imageUrl product')
+      .populate('product', 'title profileImage price')
+      .lean()
+      .exec();
+    if (!doc) return [];
+    return mapBannerToNotificationItems(doc as Record<string, unknown>);
   }
 
   private async resolveStoreAudience(
@@ -617,10 +660,23 @@ export class AdNotificationService {
     storeName: string;
     title: string;
     body: string;
+    campaignItems?: AdNotificationItemPayload[];
     addon: NotificationAddonPayload;
     recipients: RecipientRow[];
   }): Promise<void> {
     if (!args.recipients.length) return;
+
+    let campaignItems = args.campaignItems ?? [];
+    if (!campaignItems.length) {
+      const kind =
+        args.entityType === AdNotificationEntityTypeEnum.CAMPAIGN
+          ? ('campaign' as const)
+          : ('banner' as const);
+      campaignItems = await this.loadNotificationItemsForEntity(
+        kind,
+        args.entityId,
+      );
+    }
 
     const linkBase = {
       entityType: args.entityType,
@@ -634,7 +690,12 @@ export class AdNotificationService {
       args.recipients,
       this.recipientParallel(),
       async (recipient) => {
-        await this.sendToRecipient({ ...args, recipient, linkBase });
+        await this.sendToRecipient({
+          ...args,
+          campaignItems,
+          recipient,
+          linkBase,
+        });
       },
     );
   }
@@ -648,6 +709,7 @@ export class AdNotificationService {
     storeName: string;
     title: string;
     body: string;
+    campaignItems: AdNotificationItemPayload[];
     addon: NotificationAddonPayload;
     recipient: RecipientRow;
     linkBase: Omit<Parameters<typeof buildAdNotificationAppDeepLink>[0], 'deliveryId'>;
@@ -740,13 +802,15 @@ export class AdNotificationService {
     storeId: string;
     storeName: string;
     title: string;
+    body: string;
+    campaignItems?: AdNotificationItemPayload[];
     linkBase: Omit<Parameters<typeof buildAdNotificationAppDeepLink>[0], 'deliveryId'>;
   }): Record<string, string> {
     const deepLink = buildAdNotificationAppDeepLink({
       ...args.linkBase,
       deliveryId: args.deliveryId,
     });
-    return {
+    const data: Record<string, string> = {
       ...this.pushDataPayload({
         deliveryId: args.deliveryId,
         entityType: args.entityType,
@@ -754,9 +818,15 @@ export class AdNotificationService {
         storeId: args.storeId,
         storeName: args.storeName,
         title: args.title,
+        body: args.body,
       }),
       deepLink,
     };
+    const itemsJson = campaignItemsToFcmValue(args.campaignItems ?? []);
+    if (itemsJson) {
+      data[AD_NOTIFICATION_ITEMS_FCM_KEY] = itemsJson;
+    }
+    return data;
   }
 
   private pushDataPayload(args: {
@@ -766,6 +836,7 @@ export class AdNotificationService {
     storeId: string;
     storeName: string;
     title: string;
+    body: string;
   }): Record<string, string> {
     return {
       type: 'ad_promo',
@@ -779,6 +850,7 @@ export class AdNotificationService {
       storeId: args.storeId,
       storeName: args.storeName,
       title: args.title,
+      body: args.body,
     };
   }
 
@@ -796,6 +868,7 @@ export class AdNotificationService {
     body: string;
     recipient: RecipientRow;
     linkBase: Omit<Parameters<typeof buildAdNotificationAppDeepLink>[0], 'deliveryId'>;
+    campaignItems: AdNotificationItemPayload[];
     inApp: boolean;
     push: boolean;
   }): Promise<void> {
@@ -813,6 +886,8 @@ export class AdNotificationService {
           storeId: args.storeId.toString(),
           storeName: args.storeName,
           title: args.title,
+          body: args.body,
+          campaignItems: args.campaignItems,
           linkBase: args.linkBase,
         });
         const created = await this.notifications.createUserScopedNotification({
@@ -840,6 +915,8 @@ export class AdNotificationService {
           storeId: args.storeId.toString(),
           storeName: args.storeName,
           title: args.title,
+          body: args.body,
+          campaignItems: args.campaignItems,
           linkBase: args.linkBase,
         });
         if (inboxNotificationId) {
@@ -909,6 +986,7 @@ export class AdNotificationService {
     body: string;
     recipient: RecipientRow;
     linkBase: Omit<Parameters<typeof buildAdNotificationWebOpenUrl>[0], 'deliveryId'>;
+    campaignItems: AdNotificationItemPayload[];
     deliveryId: string;
   }): Promise<void> {
     const webUrl = this.trackedClickUrl({
@@ -917,19 +995,29 @@ export class AdNotificationService {
       entityId: args.entityId,
       storeId: args.storeId.toString(),
     });
-    const html = `
-      <p>Bonjour ${args.recipient.fullName},</p>
-      <p><strong>${args.storeName}</strong> — ${args.title}</p>
-      <p>${args.body}</p>
-      <p><a href="${webUrl}" style="display:inline-block;padding:12px 20px;background:#7c3aed;color:#fff;text-decoration:none;border-radius:8px;">Voir l'offre</a></p>
-    `;
+    const html = buildAdNotificationEmailBodyHtml({
+      recipientName: args.recipient.fullName,
+      storeName: args.storeName,
+      title: args.title,
+      body: args.body,
+      webUrl,
+      items: args.campaignItems,
+    });
+    const text = buildAdNotificationEmailText({
+      recipientName: args.recipient.fullName,
+      storeName: args.storeName,
+      title: args.title,
+      body: args.body,
+      webUrl,
+      items: args.campaignItems,
+    });
     try {
       await this.mailer.sendAdNotificationEmail({
         to: args.recipient.email,
         toName: args.recipient.fullName,
         subject: `${args.storeName} — ${args.title}`,
         html,
-        text: `${args.storeName} — ${args.title}\n${args.body}\n${webUrl}`,
+        text,
       });
       await this.recordDelivery({
         deliveryId: args.deliveryId,
@@ -1447,6 +1535,14 @@ export class AdNotificationService {
 
     const payload = await this.resolveAdminTestPayload(dto);
     const recipient = this.userToRecipientRow(recipientUser);
+    const kind =
+      payload.entityType === AdNotificationEntityTypeEnum.CAMPAIGN
+        ? ('campaign' as const)
+        : ('banner' as const);
+    const campaignItems = await this.loadNotificationItemsForEntity(
+      kind,
+      payload.entityId,
+    );
 
     await this.sendRecipientBatch({
       entityType: payload.entityType,
@@ -1457,6 +1553,7 @@ export class AdNotificationService {
       storeName: payload.storeName,
       title: payload.title,
       body: payload.body,
+      campaignItems,
       addon,
       recipients: [recipient],
     });

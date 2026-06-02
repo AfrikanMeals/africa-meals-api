@@ -81,7 +81,7 @@ export class MailerService {
     const host =
       this._configService.get<string>('AD_SMTP_HOST')?.trim() ||
       this._configService.get<string>('SMTP_HOST')?.trim() ||
-      'smtp.gmail.com';
+      'smtp.zoho.com';
     const portRaw =
       this._configService.get<string>('AD_SMTP_PORT')?.trim() ||
       this._configService.get<string>('SMTP_PORT')?.trim() ||
