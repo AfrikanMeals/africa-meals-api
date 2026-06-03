@@ -4,6 +4,7 @@ import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -25,6 +26,15 @@ export class AppPolicySectionDto {
   @IsString()
   @MaxLength(2048)
   imageUrl?: string;
+
+  @ApiPropertyOptional({
+    enum: ['sm', 'md', 'lg'],
+    default: 'md',
+    description: 'Taille d’affichage de l’image sur le site vitrine',
+  })
+  @IsOptional()
+  @IsIn(['sm', 'md', 'lg'])
+  imageSize?: 'sm' | 'md' | 'lg';
 
   @ApiProperty()
   @IsString()
