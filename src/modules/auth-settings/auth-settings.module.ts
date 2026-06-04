@@ -12,7 +12,6 @@ import { AuthSettingsService } from './auth-settings.service';
     MongooseModule.forFeature([
       { name: AuthSettingsModel.name, schema: AuthSettingsSchema },
     ]),
-    AuthModule,
   ],
   controllers: [AuthSettingsController],
   providers: [AuthSettingsService],
