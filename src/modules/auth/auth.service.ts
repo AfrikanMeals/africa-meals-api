@@ -21,6 +21,7 @@ import * as bcrypt from 'bcryptjs';
 import { Model } from 'mongoose';
 import { App } from 'firebase-admin/app';
 import { DecodedIdToken, getAuth } from 'firebase-admin/auth';
+import { AuthSettingsService } from '@modules/auth-settings/auth-settings.service';
 import { LoyaltyService } from '@modules/loyalty/loyalty.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import {
@@ -71,6 +72,9 @@ export class AuthService {
 
   @Inject(LoyaltyService)
   private readonly _loyaltyService: LoyaltyService;
+
+  @Inject(AuthSettingsService)
+  private readonly _authSettings: AuthSettingsService;
 
   /**
    * Inscription en deux temps : aucune ligne dans `users` tant que le code e-mail
@@ -426,11 +430,13 @@ export class AuthService {
    * puis trouve ou crée l’utilisateur Mongo (googleId = identifiant Google dans le jeton).
    */
   async authWithGoogle(args: GoogleAuthDto) {
+    await this._authSettings.assertProviderEnabled('google');
     return this._authWithGoogle(args, UserTypeEnum.USER);
   }
 
   /** Variante dashboard/admin : création sociale par défaut en VENDOR. */
   async authWithGoogleAsVendor(args: GoogleAuthDto) {
+    await this._authSettings.assertProviderEnabled('google');
     return this._authWithGoogle(args, UserTypeEnum.VENDOR);
   }
 
@@ -518,11 +524,13 @@ export class AuthService {
    * puis trouve ou crée l’utilisateur Mongo (appleId = identifiant Apple/Firebase).
    */
   async authWithApple(args: AppleAuthDto) {
+    await this._authSettings.assertProviderEnabled('apple');
     return this._authWithApple(args, UserTypeEnum.USER);
   }
 
   /** Variante dashboard/admin : création sociale par défaut en VENDOR. */
   async authWithAppleAsVendor(args: AppleAuthDto) {
+    await this._authSettings.assertProviderEnabled('apple');
     return this._authWithApple(args, UserTypeEnum.VENDOR);
   }
 
@@ -614,11 +622,13 @@ export class AuthService {
    * puis trouve ou crée l’utilisateur Mongo (facebookId = identifiant Facebook/Firebase).
    */
   async authWithFacebook(args: FacebookAuthDto) {
+    await this._authSettings.assertProviderEnabled('facebook');
     return this._authWithFacebook(args, UserTypeEnum.USER);
   }
 
   /** Variante dashboard/admin : création sociale par défaut en VENDOR. */
   async authWithFacebookAsVendor(args: FacebookAuthDto) {
+    await this._authSettings.assertProviderEnabled('facebook');
     return this._authWithFacebook(args, UserTypeEnum.VENDOR);
   }
 

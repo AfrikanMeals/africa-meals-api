@@ -40,6 +40,7 @@ import { DbMaintenanceModule } from './modules/db-maintenance/db-maintenance.mod
 import { AdminOpsReportsModule } from './modules/admin-ops-reports/admin-ops-reports.module';
 import { RequestStatsModule } from './modules/request-stats/request-stats.module';
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
+import { AuthSettingsModule } from './modules/auth-settings/auth-settings.module';
 import { MobileAppSettingsModule } from './modules/mobile-app-settings/mobile-app-settings.module';
 import { AdsTargetingModule } from './modules/ads-targeting/ads-targeting.module';
 
@@ -279,6 +280,7 @@ function redactRedisUrl(url: string): string {
     AdminOpsReportsModule,
     RequestStatsModule,
     FieldSelectionModule,
+    AuthSettingsModule,
     MobileAppSettingsModule,
     AdsTargetingModule,
     // SharedModule,
