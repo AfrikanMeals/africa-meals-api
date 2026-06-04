@@ -8,6 +8,7 @@
   "main": "dist/firebase-main.js",
   "scripts": {
     "build": "nest build",
+    "build:watch": "nest build --watch",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "NODE_OPTIONS='-r tsconfig-paths/register' nest start",
     "start:dev": "NODE_OPTIONS='-r tsconfig-paths/register' nest start --watch",
@@ -15,6 +16,8 @@
     "start:debug": "NODE_OPTIONS='-r tsconfig-paths/register' nest start --debug --watch",
     "start:debug:resilient": "node scripts/dev-resilient.mjs start:debug",
     "start:prod": "node -r tsconfig-paths/register dist/main.js",
+    "pm2:start": "pm2 start ../ecosystem.config.cjs --only africa-meals-api",
+    "pm2:reload": "npm run build && pm2 reload africa-meals-api",
     "serve:functions": "npm run build && npx firebase emulators:start --only functions",
     "functions": "npx firebase deploy --only functions",
     "deploy": "npx firebase deploy",
