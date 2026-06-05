@@ -42,6 +42,7 @@ import { VendorSubscriptionModel } from '@schemas/vendor-subscription.schema';
 import { Model, Types } from 'mongoose';
 import {
   CreateStoreDto,
+  DailyMenuItemDto,
   DailyMenuSlotDto,
   PatchVendorShippingZonesDto,
 } from './dto/store.dto';
@@ -579,7 +580,12 @@ export class StoreService {
 
     const merged = new Map<
       number,
-      { productId: string; stockUnlimited: boolean; stockRemaining: number }[]
+      Array<{
+        productId: string;
+        stockUnlimited: boolean;
+        stockRemaining: number;
+        addonsAvailability?: DailyMenuItemDto['addonsAvailability'];
+      }>
     >();
     const dailyMenuLimit =
       await this._subscriptionsService.resolveDailyMenuItemLimitForStore(
@@ -593,7 +599,12 @@ export class StoreService {
       const entries = this.dailyMenuEntriesFromSlotDto(s);
       const byPid = new Map<
         string,
-        { productId: string; stockUnlimited: boolean; stockRemaining: number }
+        {
+          productId: string;
+          stockUnlimited: boolean;
+          stockRemaining: number;
+          addonsAvailability?: DailyMenuItemDto['addonsAvailability'];
+        }
       >();
       for (const e of entries) {
         byPid.set(e.productId, e);
@@ -622,13 +633,18 @@ export class StoreService {
     const dailyMenuByWeekday = [...merged.entries()].map(
       ([dayOfWeek, itemList]) => ({
         dayOfWeek,
-        items: itemList.map((it) => ({
-          productId: new Types.ObjectId(it.productId),
-          stockUnlimited: it.stockUnlimited,
-          stockRemaining: it.stockUnlimited
-            ? 0
-            : Math.max(0, it.stockRemaining),
-        })),
+        items: itemList.map((it) => {
+          const doc: Record<string, unknown> = {
+            productId: new Types.ObjectId(it.productId),
+            stockUnlimited: it.stockUnlimited,
+            stockRemaining: it.stockUnlimited
+              ? 0
+              : Math.max(0, it.stockRemaining),
+          };
+          const addons = this.sanitizeAddonsAvailability(it.addonsAvailability);
+          if (addons) doc.addonsAvailability = addons;
+          return doc;
+        }),
       }),
     );
 
@@ -658,6 +674,7 @@ export class StoreService {
       stockUnlimited: boolean;
       stockRemaining: number;
       soldOut: boolean;
+      addonsAvailability?: DailyMenuItemDto['addonsAvailability'];
     }>;
   }> {
     if (!rows?.length) return [];
@@ -671,6 +688,7 @@ export class StoreService {
         stockUnlimited: boolean;
         stockRemaining: number;
         soldOut: boolean;
+        addonsAvailability?: DailyMenuItemDto['addonsAvailability'];
       }> = [];
       const rawItems = (row as { items?: unknown[] }).items;
       if (Array.isArray(rawItems) && rawItems.length) {
@@ -682,11 +700,13 @@ export class StoreService {
           const stockRemaining = stockUnlimited
             ? 0
             : Math.max(0, Math.floor(Number(o.stockRemaining ?? 0)));
+          const addons = this.parseAddonsAvailabilityFromDoc(o.addonsAvailability);
           items.push({
             productId: pid,
             stockUnlimited,
             stockRemaining,
             soldOut: !stockUnlimited && stockRemaining <= 0,
+            ...(addons ? { addonsAvailability: addons } : {}),
           });
         }
       } else {
@@ -716,6 +736,7 @@ export class StoreService {
     productId: string;
     stockUnlimited: boolean;
     stockRemaining: number;
+    addonsAvailability?: DailyMenuItemDto['addonsAvailability'];
   }[] {
     if (s.items?.length) {
       return s.items.map((i) => ({
@@ -724,6 +745,9 @@ export class StoreService {
         stockRemaining: i.stockUnlimited
           ? 0
           : Math.max(0, Math.floor(Number(i.stockRemaining ?? 0))),
+        addonsAvailability: this.sanitizeAddonsAvailability(
+          i.addonsAvailability,
+        ),
       }));
     }
     return (s.productIds ?? [])
@@ -735,6 +759,77 @@ export class StoreService {
         stockUnlimited: true,
         stockRemaining: 0,
       }));
+  }
+
+  private parseAddonsAvailabilityFromDoc(
+    raw: unknown,
+  ): DailyMenuItemDto['addonsAvailability'] | undefined {
+    if (!raw || typeof raw !== 'object') return undefined;
+    const o = raw as Record<string, unknown>;
+    return this.sanitizeAddonsAvailability({
+      variantIndexes: Array.isArray(o.variantIndexes)
+        ? (o.variantIndexes as unknown[]).map((n) => Number(n))
+        : undefined,
+      complements: Array.isArray(o.complements)
+        ? (o.complements as unknown[]).map((row) => {
+            const r = row as Record<string, unknown>;
+            return {
+              groupIndex: Number(r.groupIndex),
+              optionIndexes: Array.isArray(r.optionIndexes)
+                ? (r.optionIndexes as unknown[]).map((n) => Number(n))
+                : [],
+            };
+          })
+        : undefined,
+      supplementIndexes: Array.isArray(o.supplementIndexes)
+        ? (o.supplementIndexes as unknown[]).map((n) => Number(n))
+        : undefined,
+    });
+  }
+
+  private sanitizeAddonsAvailability(
+    raw: DailyMenuItemDto['addonsAvailability'] | undefined,
+  ): DailyMenuItemDto['addonsAvailability'] | undefined {
+    if (!raw) return undefined;
+    const out: DailyMenuItemDto['addonsAvailability'] = {};
+    if (Array.isArray(raw.variantIndexes)) {
+      out.variantIndexes = [
+        ...new Set(
+          raw.variantIndexes
+            .map((n) => Math.floor(Number(n)))
+            .filter((n) => n >= 0),
+        ),
+      ].sort((a, b) => a - b);
+    }
+    if (Array.isArray(raw.complements) && raw.complements.length) {
+      const groups = raw.complements
+        .map((g) => ({
+          groupIndex: Math.floor(Number(g.groupIndex)),
+          optionIndexes: [
+            ...new Set(
+              (g.optionIndexes ?? [])
+                .map((n) => Math.floor(Number(n)))
+                .filter((n) => n >= 0),
+            ),
+          ].sort((a, b) => a - b),
+        }))
+        .filter((g) => g.groupIndex >= 0 && g.optionIndexes.length > 0)
+        .sort((a, b) => a.groupIndex - b.groupIndex);
+      if (groups.length) out.complements = groups;
+    }
+    if (Array.isArray(raw.supplementIndexes)) {
+      out.supplementIndexes = [
+        ...new Set(
+          raw.supplementIndexes
+            .map((n) => Math.floor(Number(n)))
+            .filter((n) => n >= 0),
+        ),
+      ].sort((a, b) => a - b);
+    }
+    if (Object.keys(out).length === 0) {
+      return undefined;
+    }
+    return out;
   }
 
   private async dailyMenuNeedsLimitedDecrement(

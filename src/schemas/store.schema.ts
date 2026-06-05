@@ -177,6 +177,19 @@ export class StoreModel extends BaseSchema {
               min: 0,
               default: 0,
             },
+            addonsAvailability: {
+              type: {
+                variantIndexes: [{ type: Number }],
+                complements: [
+                  {
+                    groupIndex: { type: Number, required: true },
+                    optionIndexes: [{ type: Number }],
+                  },
+                ],
+                supplementIndexes: [{ type: Number }],
+              },
+              required: false,
+            },
           },
         ],
       },
@@ -191,6 +204,14 @@ export class StoreModel extends BaseSchema {
       productId: unknown;
       stockUnlimited: boolean;
       stockRemaining: number;
+      addonsAvailability?: {
+        variantIndexes?: number[];
+        complements?: Array<{
+          groupIndex: number;
+          optionIndexes: number[];
+        }>;
+        supplementIndexes?: number[];
+      };
     }>;
   }>;
 }

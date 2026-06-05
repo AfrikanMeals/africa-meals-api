@@ -885,6 +885,62 @@ export class SearchService {
     }));
   }
 
+  private _parseDailyMenuAddonsAvailability(
+    raw: unknown,
+  ):
+    | {
+        variantIndexes?: number[];
+        complements?: { groupIndex: number; optionIndexes: number[] }[];
+        supplementIndexes?: number[];
+      }
+    | undefined {
+    if (!raw || typeof raw !== 'object') return undefined;
+    const o = raw as Record<string, unknown>;
+    const out: {
+      variantIndexes?: number[];
+      complements?: { groupIndex: number; optionIndexes: number[] }[];
+      supplementIndexes?: number[];
+    } = {};
+    if (Array.isArray(o.variantIndexes) && o.variantIndexes.length) {
+      out.variantIndexes = [
+        ...new Set(
+          o.variantIndexes
+            .map((n) => Math.floor(Number(n)))
+            .filter((n) => n >= 0),
+        ),
+      ].sort((a, b) => a - b);
+    }
+    if (Array.isArray(o.complements) && o.complements.length) {
+      const groups = (o.complements as unknown[])
+        .map((row) => {
+          const r = row as Record<string, unknown>;
+          return {
+            groupIndex: Math.floor(Number(r.groupIndex)),
+            optionIndexes: [
+              ...new Set(
+                (Array.isArray(r.optionIndexes) ? r.optionIndexes : [])
+                  .map((n) => Math.floor(Number(n)))
+                  .filter((n) => n >= 0),
+              ),
+            ].sort((a, b) => a - b),
+          };
+        })
+        .filter((g) => g.groupIndex >= 0 && g.optionIndexes.length > 0)
+        .sort((a, b) => a.groupIndex - b.groupIndex);
+      if (groups.length) out.complements = groups;
+    }
+    if (Array.isArray(o.supplementIndexes) && o.supplementIndexes.length) {
+      out.supplementIndexes = [
+        ...new Set(
+          o.supplementIndexes
+            .map((n) => Math.floor(Number(n)))
+            .filter((n) => n >= 0),
+        ),
+      ].sort((a, b) => a - b);
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+
   private _buildDailyMenuTodayForProduct(
     storeRaw: Record<string, unknown> | null | undefined,
     productId: string,
@@ -893,6 +949,11 @@ export class SearchService {
     stockUnlimited: boolean;
     stockRemaining: number;
     soldOut: boolean;
+    addonsAvailability?: {
+      variantIndexes?: number[];
+      complements?: { groupIndex: number; optionIndexes: number[] }[];
+      supplementIndexes?: number[];
+    };
   } {
     const dow = new Date().getDay();
     const rows = Array.isArray(storeRaw?.['dailyMenuByWeekday'])
@@ -917,11 +978,15 @@ export class SearchService {
       ? 0
       : Math.max(0, Math.floor(Number(it['stockRemaining'] ?? 0)));
     const soldOut = !stockUnlimited && stockRemaining <= 0;
+    const addonsAvailability = this._parseDailyMenuAddonsAvailability(
+      it['addonsAvailability'],
+    );
     return {
       onMenu: true,
       stockUnlimited,
       stockRemaining,
       soldOut,
+      ...(addonsAvailability ? { addonsAvailability } : {}),
     };
   }
 

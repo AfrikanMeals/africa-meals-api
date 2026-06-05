@@ -104,6 +104,57 @@ export class CreateStoreDto {
   shippingZones?: StoreShippingZoneDto[];
 }
 
+export class DailyMenuComplementAvailabilityDto {
+  @ApiProperty({ description: 'Index du groupe de compléments sur le produit' })
+  @IsInt()
+  @Min(0)
+  groupIndex: number;
+
+  @ApiProperty({
+    type: [Number],
+    description: 'Indexes des options disponibles pour ce jour',
+  })
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  optionIndexes: number[];
+}
+
+export class DailyMenuAddonsAvailabilityDto {
+  @ApiPropertyOptional({
+    type: [Number],
+    description:
+      'Variantes proposées ce jour (indexes). Absent = toutes les variantes du produit.',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  variantIndexes?: number[];
+
+  @ApiPropertyOptional({
+    type: () => [DailyMenuComplementAvailabilityDto],
+    description:
+      'Compléments disponibles par groupe. Groupe absent = toutes les options du groupe.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DailyMenuComplementAvailabilityDto)
+  complements?: DailyMenuComplementAvailabilityDto[];
+
+  @ApiPropertyOptional({
+    type: [Number],
+    description:
+      'Suppléments proposés ce jour (indexes). Absent = tous les suppléments du produit.',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  supplementIndexes?: number[];
+}
+
 export class DailyMenuItemDto {
   @ApiProperty({
     description: 'Identifiant du plat (produit) dans le catalogue',
@@ -129,6 +180,16 @@ export class DailyMenuItemDto {
   @IsInt()
   @Min(0)
   stockRemaining?: number;
+
+  @ApiPropertyOptional({
+    type: () => DailyMenuAddonsAvailabilityDto,
+    description:
+      'Variantes, compléments et suppléments disponibles pour ce plat ce jour-là.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DailyMenuAddonsAvailabilityDto)
+  addonsAvailability?: DailyMenuAddonsAvailabilityDto;
 }
 
 export class DailyMenuSlotDto {
