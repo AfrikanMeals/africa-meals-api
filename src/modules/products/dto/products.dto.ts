@@ -74,12 +74,56 @@ export class ProductComplementGroupDto {
   @IsBoolean()
   multiChoice?: boolean;
 
+  @ApiPropertyOptional({
+    example: true,
+    description:
+      'Si true, le client doit choisir au moins une option. Sinon l’app propose « Aucun » (sans surcoût).',
+  })
+  @IsOptional()
+  @Transform(({ value }) => toOptionalBoolean(value))
+  @IsBoolean()
+  required?: boolean;
+
   @ApiPropertyOptional({ type: [ProductComplementOptionDto] })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ProductComplementOptionDto)
   options?: ProductComplementOptionDto[];
+}
+
+export class ProductVariantDto {
+  @ApiProperty({ example: 'Medium' })
+  @IsNotEmpty()
+  @Trim()
+  label: string;
+
+  @ApiProperty({ example: 12.99, type: Number })
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return value;
+    const n = Number(value);
+    return Number.isNaN(n) ? value : n;
+  })
+  @IsNumber()
+  @Min(0)
+  price: number;
+
+  @ApiPropertyOptional({ example: 0, type: Number })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === '' || value === null || value === undefined) return value;
+    const n = Number(value);
+    return Number.isNaN(n) ? value : n;
+  })
+  @IsNumber()
+  @Min(0)
+  discountPrice?: number;
+
+  @ApiPropertyOptional({ example: true, type: Boolean })
+  @IsOptional()
+  @Transform(({ value }) => toOptionalBoolean(value))
+  @IsBoolean()
+  isDefault?: boolean;
 }
 
 export class ProductSupplementDto {
@@ -216,6 +260,17 @@ export class CreateProductDto {
   supplements?: ProductSupplementDto[];
 
   @ApiPropertyOptional({
+    type: [ProductVariantDto],
+    description:
+      'Variantes de prix (ex. tailles). Si présentes, prix & promo affichés = variante par défaut.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductVariantDto)
+  variants?: ProductVariantDto[];
+
+  @ApiPropertyOptional({
     example: 12.99,
     description: 'Prix catalogue hors promotion planifiée.',
   })
@@ -324,6 +379,16 @@ export class PatchProductDto {
   @ValidateNested({ each: true })
   @Type(() => ProductSupplementDto)
   supplements?: ProductSupplementDto[];
+
+  @ApiPropertyOptional({
+    type: [ProductVariantDto],
+    description: 'Variantes de prix (tailles, etc.).',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductVariantDto)
+  variants?: ProductVariantDto[];
 
   @ApiPropertyOptional({
     description: 'Prix catalogue hors promotion planifiée.',

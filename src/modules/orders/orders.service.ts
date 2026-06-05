@@ -59,6 +59,8 @@ import {
   buildVendorOrderPaidPushBody,
 } from './vendor-order-paid-message.util';
 import { OrderPaidInvoiceEmailService } from './order-paid-invoice-email.service';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
+import type { RegionTaxLineResult } from '@modules/supported-countries/region-tax.constants';
 
 @Injectable()
 export class OrdersService {
@@ -120,6 +122,9 @@ export class OrdersService {
 
   @Inject(OrderPaidInvoiceEmailService)
   private readonly _orderPaidInvoiceEmail: OrderPaidInvoiceEmailService;
+
+  @Inject(SupportedCountriesService)
+  private readonly _supportedCountries: SupportedCountriesService;
 
   /** Expose l’adresse de livraison figée au paiement dans `user.addresses`. */
   static enrichOrdersWithDeliveryAddress(
@@ -950,6 +955,11 @@ export class OrdersService {
       couponCode?: string;
       chargedGoodsCents?: number;
       chargedShipCents?: number;
+      chargedTaxCents?: number;
+      taxTotal?: number;
+      taxLines?: RegionTaxLineResult[];
+      taxCountryCode?: string;
+      subtotalBeforeTax?: number;
       deliveryAddressId?: string;
       currency?: string;
     },
@@ -980,16 +990,64 @@ export class OrdersService {
       opts?.chargedShipCents != null && Number.isFinite(opts.chargedShipCents)
         ? Math.max(0, Math.round(opts.chargedShipCents))
         : null;
+    const tC =
+      opts?.chargedTaxCents != null && Number.isFinite(opts.chargedTaxCents)
+        ? Math.max(0, Math.round(opts.chargedTaxCents))
+        : null;
+
+    let taxTotal = Math.max(0, Number(opts?.taxTotal) || 0);
+    let taxLines = Array.isArray(opts?.taxLines) ? opts!.taxLines : [];
+    let taxCountryCode = String(opts?.taxCountryCode ?? '')
+      .trim()
+      .toUpperCase();
+    let subtotalBeforeTax =
+      opts?.subtotalBeforeTax != null
+        ? Math.max(0, Number(opts.subtotalBeforeTax) || 0)
+        : goods + ship;
+
+    if (!taxLines.length && !taxTotal) {
+      const customer = await this._userModel
+        .findById(o.user)
+        .select('appCountryCode')
+        .lean()
+        .exec();
+      let deliveryCc: string | undefined;
+      const aid = opts?.deliveryAddressId?.trim();
+      if (aid) {
+        const addr = await this._addressModel
+          .findById(aid)
+          .select('countryCode')
+          .lean()
+          .exec();
+        deliveryCc = addr?.countryCode;
+      } else if (o.deliveryAddressSnapshot?.countryCode) {
+        deliveryCc = o.deliveryAddressSnapshot.countryCode;
+      }
+      const cc = this._supportedCountries.resolveUserTaxCountryCode(
+        customer as UserModel,
+        deliveryCc,
+      );
+      const breakdown = await this._supportedCountries.computeTaxesForModule({
+        countryCode: cc,
+        baseAmount: subtotalBeforeTax,
+        module: 'order',
+      });
+      taxTotal = breakdown.taxTotal;
+      taxLines = breakdown.lines;
+      taxCountryCode = breakdown.countryCode;
+    }
 
     let totalPrice: number;
     let shippingStored: number;
     if (gC != null && sC != null) {
-      totalPrice = Math.round(gC + sC + Number.EPSILON) / 100;
+      const taxPart = tC ?? Math.round(taxTotal * 100 + Number.EPSILON);
+      totalPrice = Math.round(gC + sC + taxPart + Number.EPSILON) / 100;
       shippingStored = sC / 100;
     } else {
       shippingStored = ship;
       totalPrice =
-        Math.round((goods + shippingStored) * 100 + Number.EPSILON) / 100;
+        Math.round((subtotalBeforeTax + taxTotal) * 100 + Number.EPSILON) /
+        100;
     }
 
     const isPickup = shippingStored <= 0;
@@ -997,6 +1055,17 @@ export class OrdersService {
       status: OrderStatusEnum.PAIED,
       shippingPrice: shippingStored,
       totalPrice,
+      subtotalBeforeTax,
+      taxTotal,
+      taxLines: taxLines.map((line) => ({
+        name: line.name,
+        description: line.description,
+        feeType: line.feeType,
+        feeValue: line.feeValue,
+        modules: line.modules,
+        amount: line.amount,
+      })),
+      taxCountryCode: taxCountryCode || undefined,
       shouldShip: !isPickup,
     };
     if (

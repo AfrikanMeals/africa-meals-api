@@ -68,6 +68,10 @@ export class ProductComplementGroupModel {
   @Prop({ required: false, name: 'multi_choice', default: false })
   multiChoice: boolean;
 
+  /** Si true, le client doit choisir au moins une option (app mobile). Sinon « Aucun » possible. */
+  @Prop({ required: false, name: 'required', default: false })
+  required: boolean;
+
   @Prop({
     required: true,
     name: 'options',
@@ -92,6 +96,25 @@ export class ProductSupplementModel {
 
 export const ProductSupplementSchema =
   SchemaFactory.createForClass(ProductSupplementModel);
+
+/** Variante de prix (ex. Small / Medium / Large) — remplace prix & promo produit quand définies. */
+@Schema({ _id: false })
+export class ProductVariantModel {
+  @Prop({ required: true, name: 'label' })
+  label: string;
+
+  @Prop({ required: true, name: 'price', default: 0 })
+  price: number;
+
+  @Prop({ required: false, name: 'discount_price', default: 0 })
+  discountPrice?: number;
+
+  @Prop({ required: false, name: 'is_default', default: false })
+  isDefault: boolean;
+}
+
+export const ProductVariantSchema =
+  SchemaFactory.createForClass(ProductVariantModel);
 
 /** Fenêtre planifiée : prix catalogue + promo appliqués par le cron entre startAt et endAt. */
 export class ProductDiscountScheduleModel {
@@ -246,6 +269,13 @@ export class ProductModel extends BaseSchema {
     type: [ProductSupplementSchema],
   })
   supplements: ProductSupplementModel[];
+
+  @Prop({
+    default: [],
+    name: 'variants',
+    type: [ProductVariantSchema],
+  })
+  variants: ProductVariantModel[];
 }
 
 export const ProductSchema = SchemaFactory.createForClass(ProductModel);

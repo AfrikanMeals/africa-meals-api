@@ -227,13 +227,26 @@ export class OrderInvoicePdfService {
         .stroke();
       y += 14;
 
-      const totals = [
+      const totals: Array<[string, string]> = [
         ['Sous-total articles', formatInvoiceMoney(subLines, currency)],
-        [
-          'Frais de livraison',
-          formatInvoiceMoney(snapshot.shippingPrice ?? 0, currency),
-        ],
       ];
+      if ((snapshot.taxLines ?? []).length > 0) {
+        for (const tax of snapshot.taxLines ?? []) {
+          totals.push([
+            tax.name,
+            formatInvoiceMoney(tax.amount, currency),
+          ]);
+        }
+      } else if ((snapshot.taxTotal ?? 0) > 0) {
+        totals.push([
+          'Taxes',
+          formatInvoiceMoney(snapshot.taxTotal ?? 0, currency),
+        ]);
+      }
+      totals.push([
+        'Frais de livraison',
+        formatInvoiceMoney(snapshot.shippingPrice ?? 0, currency),
+      ]);
       for (const [left, right] of totals) {
         doc.font('Helvetica').fontSize(10).fillColor(colors.text);
         doc.text(left, col1, y);

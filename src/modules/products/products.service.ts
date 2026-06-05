@@ -296,6 +296,13 @@ export class ProductsService {
       id: String(doc._id),
       complements: this.normalizeComplements(obj.complements),
       supplements: this.normalizeSupplements(obj.supplements),
+      variants: this.normalizeVariants(obj.variants),
+      usesVariants: this.normalizeVariants(obj.variants).length > 0,
+      ...this.effectivePriceFromVariants(
+        Number(obj.price ?? 0),
+        Number(obj.discountPrice ?? obj.discount_price ?? 0),
+        obj.variants,
+      ),
       fieldsets: this.normalizeFieldsets(obj.fieldsets),
       listPrice: this._discountSchedules.resolveListPrice(
         obj as unknown as ProductModel,
@@ -356,6 +363,7 @@ export class ProductsService {
     title: string;
     firstOptionFree: boolean;
     multiChoice: boolean;
+    required: boolean;
     options: Array<{ label: string; priceDelta: number; isDefault: boolean }>;
   }> {
     if (!Array.isArray(raw)) return [];
@@ -363,6 +371,7 @@ export class ProductsService {
       title: string;
       firstOptionFree: boolean;
       multiChoice: boolean;
+      required: boolean;
       options: Array<{ label: string; priceDelta: number; isDefault: boolean }>;
     }> = [];
     for (const g of raw) {
@@ -375,6 +384,8 @@ export class ProductsService {
       const multiChoice = Boolean(
         row.multiChoice ?? row.multi_choice ?? false,
       );
+      const required =
+        row.required === true || row.is_required === true;
       const rawOptions = Array.isArray(row.options) ? row.options : [];
       const options = rawOptions
         .map((o) => {
@@ -407,6 +418,7 @@ export class ProductsService {
         title,
         firstOptionFree,
         multiChoice,
+        required,
         options: normalizedOptions,
       });
     }
@@ -427,6 +439,99 @@ export class ProductsService {
         return { name, price };
       })
       .filter((s): s is { name: string; price: number } => Boolean(s));
+  }
+
+  normalizeVariants(raw: unknown): Array<{
+    label: string;
+    price: number;
+    discountPrice: number;
+    isDefault: boolean;
+  }> {
+    if (!Array.isArray(raw)) return [];
+    const items: Array<{
+      label: string;
+      price: number;
+      discountPrice: number;
+      isDefault: boolean;
+    }> = [];
+    for (const row of raw) {
+      const r = (row ?? {}) as Record<string, unknown>;
+      const label = String(r.label ?? '').trim();
+      if (!label) continue;
+      const priceNum = Number(r.price ?? 0);
+      const price = Number.isFinite(priceNum) && priceNum >= 0 ? priceNum : 0;
+      const discNum = Number(r.discountPrice ?? r.discount_price ?? 0);
+      let discountPrice =
+        Number.isFinite(discNum) && discNum >= 0 ? discNum : 0;
+      if (discountPrice > 0 && discountPrice >= price) {
+        discountPrice = 0;
+      }
+      items.push({
+        label,
+        price,
+        discountPrice,
+        isDefault: Boolean(r.isDefault ?? r.is_default),
+      });
+    }
+    if (!items.length) return [];
+    let defaultIndex = items.findIndex((v) => v.isDefault);
+    if (defaultIndex < 0) defaultIndex = 0;
+    return items.map((v, i) => ({
+      ...v,
+      isDefault: i === defaultIndex,
+    }));
+  }
+
+  private pickDefaultVariant(
+    variants: Array<{
+      label: string;
+      price: number;
+      discountPrice: number;
+      isDefault: boolean;
+    }>,
+  ) {
+    if (!variants.length) return null;
+    return variants.find((v) => v.isDefault) ?? variants[0];
+  }
+
+  private effectivePriceFromVariants(
+    basePrice: number,
+    baseDiscountPrice: number,
+    rawVariants: unknown,
+  ): {
+    price: number;
+    discountPrice: number;
+    basePrice: number;
+    baseDiscountPrice: number;
+    usesVariants: boolean;
+  } {
+    const variants = this.normalizeVariants(rawVariants);
+    if (!variants.length) {
+      return {
+        price: basePrice,
+        discountPrice: baseDiscountPrice,
+        basePrice,
+        baseDiscountPrice,
+        usesVariants: false,
+      };
+    }
+    const def = this.pickDefaultVariant(variants);
+    if (!def) {
+      return {
+        price: basePrice,
+        discountPrice: baseDiscountPrice,
+        basePrice,
+        baseDiscountPrice,
+        usesVariants: true,
+      };
+    }
+    return {
+      price: def.price,
+      discountPrice: def.discountPrice,
+      basePrice,
+      baseDiscountPrice,
+      usesVariants: true,
+    };
   }
 
   private mapVendorProductRow(
@@ -507,6 +612,14 @@ export class ProductsService {
             : '';
         return Boolean(gb);
       });
+    const rawPrice = Number(p.price ?? 0);
+    const rawDiscount = Number(p.discountPrice ?? p.discount_price ?? 0);
+    const variants = this.normalizeVariants(p.variants);
+    const pricing = this.effectivePriceFromVariants(
+      rawPrice,
+      rawDiscount,
+      variants,
+    );
     return {
       id: String(p._id),
       title: String(p.title ?? ''),
@@ -515,9 +628,13 @@ export class ProductsService {
       fieldsets: this.normalizeFieldsets(p.fieldsets),
       complements: this.normalizeComplements(p.complements),
       supplements: this.normalizeSupplements(p.supplements),
+      variants,
+      usesVariants: pricing.usesVariants,
       originCountry: String(p.originCountry ?? p.origin_country ?? ''),
-      price: Number(p.price ?? 0),
-      discountPrice: Number(p.discountPrice ?? p.discount_price ?? 0),
+      basePrice: pricing.basePrice,
+      baseDiscountPrice: pricing.baseDiscountPrice,
+      price: pricing.price,
+      discountPrice: pricing.discountPrice,
       listPrice: Number(
         p.listPrice ?? p.list_price ?? p.price ?? 0,
       ),
@@ -655,8 +772,13 @@ export class ProductsService {
       fieldsets: this.normalizeFieldsets(p.fieldsets),
       complements: this.normalizeComplements(p.complements),
       supplements: this.normalizeSupplements(p.supplements),
-      price: Number(p.price ?? 0),
-      discountPrice: Number(p.discountPrice ?? p.discount_price ?? 0),
+      variants: this.normalizeVariants(p.variants),
+      usesVariants: this.normalizeVariants(p.variants).length > 0,
+      ...this.effectivePriceFromVariants(
+        Number(p.price ?? 0),
+        Number(p.discountPrice ?? p.discount_price ?? 0),
+        p.variants,
+      ),
       currency: String(forcedCurrency || p.currency || 'CAD'),
       status: String(p.status ?? ProductStatusEnum.PENDING),
       categoryId: catId,
@@ -868,6 +990,7 @@ export class ProductsService {
         fieldsets: this.normalizeFieldsets(args.fieldsets),
         complements: this.normalizeComplements(args.complements),
         supplements: this.normalizeSupplements(args.supplements),
+        variants: this.normalizeVariants(args.variants),
         originCountry,
         price: listPrice,
         discountPrice: listDiscountPrice,
@@ -952,6 +1075,9 @@ export class ProductsService {
     }
     if (args.supplements !== undefined) {
       doc.set('supplements', this.normalizeSupplements(args.supplements));
+    }
+    if (args.variants !== undefined) {
+      doc.set('variants', this.normalizeVariants(args.variants));
     }
     if (args.originCountry != null) {
       doc.originCountry = args.originCountry.trim();

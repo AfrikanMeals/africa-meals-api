@@ -5,6 +5,16 @@ import { SupportedCountryModel } from '@schemas/supported-country.schema';
 import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { Model } from 'mongoose';
 import { CreateStoreDto } from '@modules/store/dto/store.dto';
+import {
+  type RegionTaxBreakdown,
+  type RegionTaxModule,
+  type RegionTaxRule,
+} from './region-tax.constants';
+import {
+  computeRegionTaxBreakdown,
+  normalizeRegionTaxRules,
+  resolveTaxCountryCode,
+} from './region-tax.util';
 
 export const DEFAULT_SUPPORTED_COUNTRIES: Array<{
   code: string;
@@ -134,6 +144,7 @@ export class SupportedCountriesService implements OnModuleInit {
       phoneRegion: string;
       currency: string;
       active: boolean;
+      taxes: RegionTaxRule[];
     }>
   > {
     const docs = await this._model
@@ -147,7 +158,96 @@ export class SupportedCountriesService implements OnModuleInit {
       phoneRegion: String(d.phoneRegion ?? '').toUpperCase(),
       currency: String(d.currency ?? 'CAD').toUpperCase(),
       active: Boolean(d.active),
+      taxes: normalizeRegionTaxRules(d.taxes),
     }));
+  }
+
+  async getTaxRulesForCountry(code: string): Promise<RegionTaxRule[]> {
+    const c = String(code ?? '')
+      .trim()
+      .toUpperCase();
+    if (!/^[A-Z]{2}$/.test(c)) return [];
+    const doc = await this._model.findOne({ code: c, active: true }).lean().exec();
+    if (!doc) return [];
+    return normalizeRegionTaxRules(doc.taxes);
+  }
+
+  async getTaxRulesForCountryAdmin(code: string): Promise<RegionTaxRule[]> {
+    const c = String(code ?? '')
+      .trim()
+      .toUpperCase();
+    if (!/^[A-Z]{2}$/.test(c)) return [];
+    const doc = await this._model.findOne({ code: c }).lean().exec();
+    if (!doc) return [];
+    return normalizeRegionTaxRules(doc.taxes);
+  }
+
+  async saveTaxRulesForCountry(
+    code: string,
+    taxes: RegionTaxRule[],
+  ): Promise<RegionTaxRule[]> {
+    const c = String(code ?? '')
+      .trim()
+      .toUpperCase();
+    if (!/^[A-Z]{2}$/.test(c)) {
+      throw new BadRequestException('invalid_country_code');
+    }
+    const normalized = normalizeRegionTaxRules(taxes);
+    const doc = await this._model.findOne({ code: c }).exec();
+    if (!doc) {
+      throw new BadRequestException('country_not_found');
+    }
+    doc.taxes = normalized as SupportedCountryModel['taxes'];
+    await doc.save();
+    this._listActiveCache = null;
+    return normalized;
+  }
+
+  /**
+   * Taxes pour un module : 0 % si le pays n’est pas actif dans les régions.
+   */
+  async computeTaxesForModule(args: {
+    countryCode: string;
+    baseAmount: number;
+    module: RegionTaxModule;
+  }): Promise<RegionTaxBreakdown> {
+    const countryCode = resolveTaxCountryCode([args.countryCode]);
+    const baseAmount = Math.max(0, Number(args.baseAmount) || 0);
+    if (!countryCode) {
+      return {
+        countryCode: '',
+        module: args.module,
+        baseAmount,
+        lines: [],
+        taxTotal: 0,
+      };
+    }
+    const rules = await this.getTaxRulesForCountry(countryCode);
+    if (!rules.length) {
+      return {
+        countryCode,
+        module: args.module,
+        baseAmount,
+        lines: [],
+        taxTotal: 0,
+      };
+    }
+    return computeRegionTaxBreakdown({
+      countryCode,
+      baseAmount,
+      module: args.module,
+      rules,
+    });
+  }
+
+  resolveUserTaxCountryCode(
+    user: UserModel,
+    deliveryCountryCode?: string | null,
+  ): string {
+    return resolveTaxCountryCode([
+      deliveryCountryCode,
+      (user as UserModel & { appCountryCode?: string }).appCountryCode,
+    ]);
   }
 
   async saveAllForAdmin(

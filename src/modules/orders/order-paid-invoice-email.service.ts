@@ -102,6 +102,15 @@ export class OrderPaidInvoiceEmailService {
       createdAt: order.createdAt,
       status: String(order.status ?? 'paied'),
       totalPrice: Number(order.totalPrice) || 0,
+      subtotalBeforeTax: Number(order.subtotalBeforeTax) || undefined,
+      taxTotal: Number(order.taxTotal) || undefined,
+      taxLines: Array.isArray(order.taxLines)
+        ? order.taxLines.map((t) => ({
+            name: String((t as { name?: string }).name ?? 'Taxe'),
+            description: (t as { description?: string }).description,
+            amount: Number((t as { amount?: number }).amount) || 0,
+          }))
+        : undefined,
       shippingPrice: Number(order.shippingPrice) || 0,
       shouldShip: Boolean(order.shouldShip),
       currency:

@@ -9,6 +9,11 @@ const SKIP_PATH_PREFIXES = [
   '/docs',
   '/favicon',
   '/request-stats/admin',
+  '/request-stats/store-menu',
+  '/request-stats/store-session',
+  '/request-stats/store-engagement',
+  '/request-stats/products',
+  '/request-stats/drinks',
 ];
 
 export function isRequestStatsEnabled(raw: string | undefined): boolean {

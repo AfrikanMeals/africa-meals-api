@@ -40,6 +40,7 @@ import { TeamsModule } from '@modules/teams/teams.module';
 import { BusinessReportsModule } from '@modules/business-reports/business-reports.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
+import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { OrderInvoicePdfService } from './order-invoice-pdf.service';
 import { OrderPaidInvoiceEmailService } from './order-paid-invoice-email.service';
 
@@ -59,6 +60,7 @@ import { OrderPaidInvoiceEmailService } from './order-paid-invoice-email.service
     TeamsModule,
     WsNotifyModule,
     MailerModule,
+    SupportedCountriesModule,
     BusinessReportsModule,
     CartModule,
     AdsModule,

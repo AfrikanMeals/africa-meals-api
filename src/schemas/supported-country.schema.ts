@@ -1,6 +1,29 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { BaseSchema } from './base.schema';
 
+/** Règle de taxe régionale (par pays). */
+@Schema({ _id: false })
+export class RegionTaxRuleModel {
+  @Prop({ required: true, trim: true })
+  name: string;
+
+  @Prop({ required: false, trim: true })
+  description?: string;
+
+  @Prop({ required: true, enum: ['percent', 'fixed'], default: 'percent' })
+  feeType: 'percent' | 'fixed';
+
+  @Prop({ required: true, default: 0 })
+  feeValue: number;
+
+  /** Modules : order, payout, subscription, refund */
+  @Prop({ type: [String], default: [] })
+  modules: string[];
+}
+
+export const RegionTaxRuleSchema =
+  SchemaFactory.createForClass(RegionTaxRuleModel);
+
 @Schema({
   timestamps: true,
   collection: 'supported_countries',
@@ -22,6 +45,9 @@ export class SupportedCountryModel extends BaseSchema {
 
   @Prop({ default: true })
   active: boolean;
+
+  @Prop({ type: [RegionTaxRuleSchema], default: [] })
+  taxes: RegionTaxRuleModel[];
 }
 
 export const SupportedCountrySchema = SchemaFactory.createForClass(

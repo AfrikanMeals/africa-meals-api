@@ -13,6 +13,8 @@ import {
 import { StripeConnectService } from './stripe-connect.service';
 import { StripeConnectTransferService } from './stripe-connect-transfer.service';
 import { OrdersService } from '@modules/orders/orders.service';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
+import type { RegionTaxBreakdown } from '@modules/supported-countries/region-tax.constants';
 import { PlatformFeesService } from '@modules/platform-fees/platform-fees.service';
 import { PlatformShippingQuoteService } from '@modules/platform-shipping-settings/platform-shipping-quote.service';
 import { StoreService } from '@modules/store/store.service';
@@ -31,6 +33,7 @@ import {
   StripePerStoreBreakdownRow,
   StripeProcessedCheckoutModel,
 } from '@schemas/stripe-processed-checkout.schema';
+import { AddressModel } from '@schemas/address.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
@@ -71,7 +74,13 @@ type GroupedStripeBuilt = {
   /** Montants agrégés par boutique (goods + ship) pour suivi / remboursements partiels côté Dashboard. */
   payoutByStore: Record<
     string,
-    { storeName: string; goodsCents: number; shipCents: number }
+    {
+      storeName: string;
+      goodsCents: number;
+      shipCents: number;
+      taxCents?: number;
+      taxBreakdown?: RegionTaxBreakdown;
+    }
   >;
   groups: CartGroup[];
   coupons: Array<{ storeId: string; code: string }>;
@@ -244,7 +253,7 @@ function distributeCentsByWeights(weights: number[], target: number): number[] {
 function stripeProductMetadata(params: {
   storeId: string;
   storeName: string;
-  lineKind: 'goods' | 'shipping' | 'promo_goods' | 'payment_fee';
+  lineKind: 'goods' | 'shipping' | 'promo_goods' | 'payment_fee' | 'tax';
   line: Record<string, unknown>;
 }): Record<string, string> {
   const { storeId, storeName, lineKind, line } = params;
@@ -279,7 +288,7 @@ function checkoutLineFromCartRow(params: {
   line: Record<string, unknown>;
   quantity: number;
   unitAmountCents: number;
-  lineKind: 'goods' | 'shipping' | 'promo_goods' | 'payment_fee';
+  lineKind: 'goods' | 'shipping' | 'promo_goods' | 'payment_fee' | 'tax';
   extraDescription?: string;
 }): CheckoutLineItem | null {
   const {
@@ -441,8 +450,11 @@ export class StripeGroupedCheckoutService {
     private readonly stripeConnect: StripeConnectService,
     private readonly stripeTransfers: StripeConnectTransferService,
     private readonly platformFees: PlatformFeesService,
+    private readonly supportedCountries: SupportedCountriesService,
     @InjectModel(StripeProcessedCheckoutModel.name)
     private readonly processedModel: Model<StripeProcessedCheckoutModel>,
+    @InjectModel(AddressModel.name)
+    private readonly addressModel: Model<AddressModel>,
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
     @InjectModel(AdCreditPaymentModel.name)
@@ -513,6 +525,77 @@ export class StripeGroupedCheckoutService {
       .exec();
 
     return true;
+  }
+
+  private async resolveOrderTaxCountryForCheckout(
+    user: UserModel,
+    addressId?: string,
+  ): Promise<string> {
+    let deliveryCc: string | undefined;
+    const aid = addressId?.trim();
+    if (aid) {
+      const addr = await this.addressModel
+        .findById(aid)
+        .select('countryCode')
+        .lean()
+        .exec();
+      deliveryCc = addr?.countryCode;
+    }
+    return this.supportedCountries.resolveUserTaxCountryCode(user, deliveryCc);
+  }
+
+  private async appendOrderTaxLinesForStore(args: {
+    user: UserModel;
+    currency: string;
+    storeId: string;
+    storeName: string;
+    mode: 'delivery' | 'pickup';
+    addressId?: string;
+    lineItems: CheckoutLineItem[];
+    payoutRow: {
+      storeName: string;
+      goodsCents: number;
+      shipCents: number;
+      taxCents?: number;
+      taxBreakdown?: RegionTaxBreakdown;
+    };
+  }): Promise<void> {
+    const subtotalCad =
+      (args.payoutRow.goodsCents + args.payoutRow.shipCents) / 100;
+    if (subtotalCad <= 0) return;
+    const countryCode = await this.resolveOrderTaxCountryForCheckout(
+      args.user,
+      args.addressId,
+    );
+    const breakdown = await this.supportedCountries.computeTaxesForModule({
+      countryCode,
+      baseAmount: subtotalCad,
+      module: 'order',
+    });
+    args.payoutRow.taxBreakdown = breakdown;
+    args.payoutRow.taxCents = 0;
+    for (const taxLine of breakdown.lines) {
+      const taxCents = Math.round(taxLine.amount * 100 + Number.EPSILON);
+      if (taxCents < 1) continue;
+      const li = checkoutLineFromCartRow({
+        currency: args.currency,
+        storeId: args.storeId,
+        storeName: args.storeName,
+        mode: args.mode,
+        line: {
+          type: 'tax',
+          entity: { title: `${taxLine.name} — ${args.storeName}` },
+        },
+        quantity: 1,
+        unitAmountCents: taxCents,
+        lineKind: 'tax',
+        extraDescription: taxLine.description,
+      });
+      if (li) {
+        args.lineItems.push(li);
+        args.payoutRow.taxCents = (args.payoutRow.taxCents ?? 0) + taxCents;
+      }
+    }
   }
 
   private stripe() {
@@ -737,6 +820,16 @@ export class StripeGroupedCheckoutService {
           });
           if (shipLi) lineItems.push(shipLi);
         }
+        await this.appendOrderTaxLinesForStore({
+          user,
+          currency,
+          storeId,
+          storeName,
+          mode,
+          addressId: dto.addressId?.trim(),
+          lineItems,
+          payoutRow: payoutByStore[storeId],
+        });
         continue;
       }
 
@@ -783,11 +876,23 @@ export class StripeGroupedCheckoutService {
         if (shipLi) lineItems.push(shipLi);
       }
 
+      await this.appendOrderTaxLinesForStore({
+        user,
+        currency,
+        storeId,
+        storeName,
+        mode,
+        addressId: dto.addressId?.trim(),
+        lineItems,
+        payoutRow: payoutByStore[storeId],
+      });
+
       let bundleCents = 0;
       for (const line of cartLines) {
         bundleCents += cartLineUnitCents(line) * cartLineQuantity(line);
       }
-      bundleCents += shipCentsByStore[storeId] ?? 0;
+      bundleCents +=
+        (shipCentsByStore[storeId] ?? 0) + (payoutByStore[storeId].taxCents ?? 0);
       if (bundleCents < 50) {
         throw new BadRequestException({
           message: 'amount_below_stripe_minimum',
@@ -1339,6 +1444,10 @@ export class StripeGroupedCheckoutService {
             couponCode,
             chargedGoodsCents: useStripeCents ? goodsCents : undefined,
             chargedShipCents: useStripeCents ? shipCents : undefined,
+            subtotalBeforeTax:
+              goodsCents != null && shipCents != null
+                ? (goodsCents + shipCents) / 100
+                : undefined,
             deliveryAddressId:
               shipCents > 0 && checkoutAddressId
                 ? checkoutAddressId

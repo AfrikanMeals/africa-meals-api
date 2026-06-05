@@ -5,11 +5,20 @@ import {
 } from '@modules/cart/cart-customization.util';
 import type { OrdeLineItem } from '@schemas/order.schema';
 
+export type OrderTaxLineInvoice = {
+  name: string;
+  description?: string;
+  amount: number;
+};
+
 export type OrderInvoiceSnapshot = {
   orderId: string;
   createdAt?: Date | string;
   status: string;
   totalPrice: number;
+  subtotalBeforeTax?: number;
+  taxTotal?: number;
+  taxLines?: OrderTaxLineInvoice[];
   shippingPrice: number;
   shouldShip?: boolean;
   currency?: string;

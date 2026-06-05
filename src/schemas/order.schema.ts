@@ -69,6 +69,31 @@ export const OrderDeliveryAddressSnapshotSchema = SchemaFactory.createForClass(
   OrderDeliveryAddressSnapshot,
 );
 
+@Schema({ _id: false })
+export class OrderTaxLineSnapshot {
+  @Prop({ required: true, trim: true })
+  name: string;
+
+  @Prop({ required: false, trim: true })
+  description?: string;
+
+  @Prop({ required: true, enum: ['percent', 'fixed'] })
+  feeType: 'percent' | 'fixed';
+
+  @Prop({ required: true })
+  feeValue: number;
+
+  @Prop({ type: [String], default: [] })
+  modules: string[];
+
+  @Prop({ required: true })
+  amount: number;
+}
+
+export const OrderTaxLineSnapshotSchema = SchemaFactory.createForClass(
+  OrderTaxLineSnapshot,
+);
+
 @Schema({
   toJSON: {
     getters: true,
@@ -218,6 +243,26 @@ export class OrderModel extends BaseSchema {
 
   @Prop({ required: true, name: 'total_price' })
   totalPrice: number;
+
+  /** Sous-total articles (hors livraison et taxes) au paiement. */
+  @Prop({ required: false, name: 'subtotal_before_tax', default: 0 })
+  subtotalBeforeTax?: number;
+
+  /** Total des taxes régionales appliquées. */
+  @Prop({ required: false, name: 'tax_total', default: 0 })
+  taxTotal?: number;
+
+  /** Détail des taxes (nom, module, montant). */
+  @Prop({
+    type: [OrderTaxLineSnapshotSchema],
+    default: [],
+    name: 'tax_lines',
+  })
+  taxLines?: OrderTaxLineSnapshot[];
+
+  /** Pays utilisé pour le calcul des taxes (ISO2). */
+  @Prop({ required: false, name: 'tax_country_code', trim: true, uppercase: true })
+  taxCountryCode?: string;
 
   /** Points fidélité déjà crédités pour cette commande (évite double crédit). */
   @Prop({ default: false, name: 'loyalty_points_credited' })

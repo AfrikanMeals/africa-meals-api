@@ -1824,7 +1824,22 @@ export class AdsService implements OnModuleInit {
     if (dto.description != null) existing.description = dto.description.trim();
     if (dto.isActive != null) existing.isActive = dto.isActive;
     if (dto.startsAt != null) existing.startsAt = new Date(dto.startsAt);
-    if (dto.endsAt != null) existing.endsAt = new Date(dto.endsAt);
+    if (dto.endsAt != null) {
+      const hadBothDates = Boolean(existing.startsAt && existing.endsAt);
+      if (hadBothDates) {
+        const existingEnd = new Date(existing.endsAt as Date).getTime();
+        const proposedEnd = new Date(dto.endsAt).getTime();
+        if (
+          !Number.isNaN(existingEnd) &&
+          !Number.isNaN(proposedEnd) &&
+          existingEnd !== proposedEnd
+        ) {
+          throw new BadRequestException('campaign_end_date_locked');
+        }
+      } else {
+        existing.endsAt = new Date(dto.endsAt);
+      }
+    }
     if (dto.actionType != null) {
       if (dto.actionType === StoreAdActionTypeEnum.PRODUCT) {
         throw new BadRequestException('invalid_campaign_action_type');
@@ -3724,6 +3739,18 @@ export class AdsService implements OnModuleInit {
     });
 
     if (dto.validFrom != null || dto.validUntil != null) {
+      const hadBothDates = Boolean(existing.validFrom && existing.validUntil);
+      if (hadBothDates && dto.validUntil != null) {
+        const existingUntil = new Date(existing.validUntil as Date).getTime();
+        const proposedUntil = new Date(dto.validUntil).getTime();
+        if (
+          !Number.isNaN(existingUntil) &&
+          !Number.isNaN(proposedUntil) &&
+          existingUntil !== proposedUntil
+        ) {
+          throw new BadRequestException('ad_end_date_locked');
+        }
+      }
       const nf =
         dto.validFrom != null
           ? new Date(dto.validFrom)
@@ -3741,7 +3768,9 @@ export class AdsService implements OnModuleInit {
       }
       this.assertDateRange(nf, nu);
       if (dto.validFrom != null) existing.validFrom = nf;
-      if (dto.validUntil != null) existing.validUntil = nu;
+      if (dto.validUntil != null && !hadBothDates) {
+        existing.validUntil = nu;
+      }
     }
 
     if (dto.title != null) existing.title = dto.title.trim();

@@ -9,8 +9,14 @@ import { AdEventModel, AdEventTypeEnum } from '@schemas/ad-event.schema';
 import { AdModel } from '@schemas/ad.schema';
 import { CartItemModel } from '@schemas/cart_item.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
+import { DrinkModel } from '@schemas/drink.schema';
+import { ProductModel } from '@schemas/product.schema';
 import { StoreCouponModel } from '@schemas/store_coupon.schema';
 import { StoreModel } from '@schemas/store.schema';
+import {
+  VendorAnalyticsEventModel,
+  VendorAnalyticsEventTypeEnum,
+} from '@schemas/vendor-analytics-event.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { StoreAccessService } from '../teams/store-access.service';
@@ -22,9 +28,21 @@ import {
   requestStatsMaxEntries,
 } from './request-stats.util';
 
+type VendorAnalyticsTopViewedItemRow = {
+  itemId: string;
+  label: string;
+  kind: 'product' | 'drink';
+  views: number;
+};
+
 type VendorAnalyticsSummary = {
   pageViews: number;
   itemViews: number;
+  engagements: number;
+  storeSessions: number;
+  avgStoreSessionSec: number;
+  totalStoreTimeSec: number;
+  uniqueVisitors: number;
   ordersTotal: number;
   ordersPaidOrCompleted: number;
   ordersCancelled: number;
@@ -44,6 +62,8 @@ type VendorAnalyticsSeriesRow = {
   date: string;
   pageViews: number;
   itemViews: number;
+  engagements: number;
+  storeSessions: number;
   orders: number;
   revenue: number;
   abandonedCarts: number;
@@ -71,9 +91,9 @@ type VendorAnalyticsTopCouponRow = {
 };
 
 const PAGE_VIEW_ROUTE_RE =
-  /(\/shop-home|\/stores(?:\/|$)|\/store-menu(?:\/|$)|\/catalog(?:\/|$)|\/categories(?:\/|$)|\/offers(?:\/?$))/i;
+  /(\/shop-home|\/stores(?:\/|$)|\/store-menu(?:\/|$)|\/catalog(?:\/|$)|\/categories(?:\/|$)|\/offers(?:\/?$)|\/mobile\/store-menu)/i;
 const ITEM_VIEW_ROUTE_RE =
-  /(\/products\/:id$|\/drinks\/:id$|\/offers\/:id$|\/items\/:id$)/i;
+  /(\/products\/:id$|\/drinks\/:id$|\/offers\/:id$|\/items\/:id$|\/mobile\/products\/|\/mobile\/drinks\/)/i;
 
 @Injectable()
 export class RequestStatsService {
@@ -93,6 +113,12 @@ export class RequestStatsService {
     private readonly adEventModel: Model<AdEventModel>,
     @InjectModel(StoreCouponModel.name)
     private readonly couponModel: Model<StoreCouponModel>,
+    @InjectModel(VendorAnalyticsEventModel.name)
+    private readonly vendorAnalyticsEventModel: Model<VendorAnalyticsEventModel>,
+    @InjectModel(ProductModel.name)
+    private readonly productModel: Model<ProductModel>,
+    @InjectModel(DrinkModel.name)
+    private readonly drinkModel: Model<DrinkModel>,
   ) {}
 
   async assertViewer(user: UserModel): Promise<void> {
@@ -263,12 +289,21 @@ export class RequestStatsService {
       .filter((e) => e.kind === 'http' && e.method.toUpperCase() === 'GET')
       .filter((e) => (e.statusCode == null ? true : e.statusCode < 400))
       .filter(inScopeEntry);
-    const pageViews = statsEntries.filter((e) =>
+    let pageViews = statsEntries.filter((e) =>
       PAGE_VIEW_ROUTE_RE.test(e.route),
     ).length;
-    const itemViews = statsEntries.filter((e) =>
+    let itemViews = statsEntries.filter((e) =>
       ITEM_VIEW_ROUTE_RE.test(e.route),
     ).length;
+
+    const mobileStats = await this.loadMobileVendorAnalytics({
+      from,
+      to,
+      scopedStoreObjectIds,
+      hasStoreScope,
+    });
+    pageViews += mobileStats.pageViews;
+    itemViews += mobileStats.itemViews;
     const topPagesMap = new Map<string, number>();
     for (const e of statsEntries) {
       if (!PAGE_VIEW_ROUTE_RE.test(e.route)) continue;
@@ -535,6 +570,8 @@ export class RequestStatsService {
           date: d,
           pageViews: 0,
           itemViews: 0,
+          engagements: 0,
+          storeSessions: 0,
           orders: 0,
           revenue: 0,
           abandonedCarts: 0,
@@ -551,6 +588,14 @@ export class RequestStatsService {
       if (!row) continue;
       if (PAGE_VIEW_ROUTE_RE.test(e.route)) row.pageViews += 1;
       if (ITEM_VIEW_ROUTE_RE.test(e.route)) row.itemViews += 1;
+    }
+    for (const row of mobileStats.seriesByDay) {
+      const bucket = byDay.get(row.date);
+      if (!bucket) continue;
+      bucket.pageViews += row.pageViews;
+      bucket.itemViews += row.itemViews;
+      bucket.engagements += row.engagements;
+      bucket.storeSessions += row.storeSessions;
     }
 
     const orderDailyRows = (await this.orderModel
@@ -656,6 +701,11 @@ export class RequestStatsService {
     const summary: VendorAnalyticsSummary = {
       pageViews,
       itemViews,
+      engagements: mobileStats.engagements,
+      storeSessions: mobileStats.storeSessions,
+      avgStoreSessionSec: mobileStats.avgStoreSessionSec,
+      totalStoreTimeSec: mobileStats.totalStoreTimeSec,
+      uniqueVisitors: mobileStats.uniqueVisitors,
       ordersTotal: Number(ordersTotal ?? 0),
       ordersPaidOrCompleted: Number(ordersPaidOrCompleted ?? 0),
       ordersCancelled: Number(ordersCancelled ?? 0),
@@ -681,6 +731,250 @@ export class RequestStatsService {
       topPages,
       topItems,
       topCoupons,
+      topViewedCatalogItems: mobileStats.topViewedCatalogItems,
+    };
+  }
+
+  private async loadMobileVendorAnalytics(params: {
+    from: Date;
+    to: Date;
+    scopedStoreObjectIds: Types.ObjectId[];
+    hasStoreScope: boolean;
+  }): Promise<{
+    pageViews: number;
+    itemViews: number;
+    engagements: number;
+    storeSessions: number;
+    avgStoreSessionSec: number;
+    totalStoreTimeSec: number;
+    uniqueVisitors: number;
+    seriesByDay: Array<{
+      date: string;
+      pageViews: number;
+      itemViews: number;
+      engagements: number;
+      storeSessions: number;
+    }>;
+    topViewedCatalogItems: VendorAnalyticsTopViewedItemRow[];
+  }> {
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: params.from, $lte: params.to },
+    };
+    if (params.hasStoreScope) {
+      match.store = { $in: params.scopedStoreObjectIds };
+    }
+
+    const [summaryRows, dailyRows, topViewedRows] = await Promise.all([
+      this.vendorAnalyticsEventModel
+        .aggregate([
+          { $match: match },
+          {
+            $group: {
+              _id: '$eventType',
+              count: { $sum: 1 },
+              totalDuration: { $sum: { $ifNull: ['$durationSec', 0] } },
+              users: { $addToSet: '$user' },
+            },
+          },
+        ])
+        .exec(),
+      this.vendorAnalyticsEventModel
+        .aggregate([
+          { $match: match },
+          {
+            $group: {
+              _id: {
+                date: {
+                  $dateToString: { format: '%Y-%m-%d', date: '$createdAt' },
+                },
+                eventType: '$eventType',
+              },
+              count: { $sum: 1 },
+            },
+          },
+        ])
+        .exec(),
+      this.vendorAnalyticsEventModel
+        .aggregate([
+          {
+            $match: {
+              ...match,
+              eventType: {
+                $in: [
+                  VendorAnalyticsEventTypeEnum.PRODUCT_VIEW,
+                  VendorAnalyticsEventTypeEnum.DRINK_VIEW,
+                ],
+              },
+              itemId: { $exists: true, $ne: null },
+            },
+          },
+          {
+            $group: {
+              _id: { itemId: '$itemId', itemKind: '$itemKind' },
+              views: { $sum: 1 },
+            },
+          },
+          { $sort: { views: -1 } },
+          { $limit: 12 },
+        ])
+        .exec(),
+    ]);
+
+    let pageViews = 0;
+    let itemViews = 0;
+    let engagements = 0;
+    let storeSessions = 0;
+    let totalStoreTimeSec = 0;
+    const visitorIds = new Set<string>();
+
+    for (const row of summaryRows as Array<{
+      _id: VendorAnalyticsEventTypeEnum;
+      count: number;
+      totalDuration: number;
+      users: Array<Types.ObjectId | null | undefined>;
+    }>) {
+      const count = Number(row.count ?? 0);
+      switch (row._id) {
+        case VendorAnalyticsEventTypeEnum.STORE_PAGE_VIEW:
+          pageViews += count;
+          break;
+        case VendorAnalyticsEventTypeEnum.PRODUCT_VIEW:
+        case VendorAnalyticsEventTypeEnum.DRINK_VIEW:
+          itemViews += count;
+          break;
+        case VendorAnalyticsEventTypeEnum.STORE_ENGAGEMENT:
+          engagements += count;
+          break;
+        case VendorAnalyticsEventTypeEnum.STORE_SESSION:
+          storeSessions += count;
+          totalStoreTimeSec += Number(row.totalDuration ?? 0);
+          break;
+        default:
+          break;
+      }
+      for (const u of row.users ?? []) {
+        if (u) visitorIds.add(String(u));
+      }
+    }
+
+    const seriesMap = new Map<
+      string,
+      {
+        date: string;
+        pageViews: number;
+        itemViews: number;
+        engagements: number;
+        storeSessions: number;
+      }
+    >();
+    for (const row of dailyRows as Array<{
+      _id: { date: string; eventType: VendorAnalyticsEventTypeEnum };
+      count: number;
+    }>) {
+      const date = String(row._id?.date ?? '');
+      if (!date) continue;
+      const bucket = seriesMap.get(date) ?? {
+        date,
+        pageViews: 0,
+        itemViews: 0,
+        engagements: 0,
+        storeSessions: 0,
+      };
+      const count = Number(row.count ?? 0);
+      switch (row._id.eventType) {
+        case VendorAnalyticsEventTypeEnum.STORE_PAGE_VIEW:
+          bucket.pageViews += count;
+          break;
+        case VendorAnalyticsEventTypeEnum.PRODUCT_VIEW:
+        case VendorAnalyticsEventTypeEnum.DRINK_VIEW:
+          bucket.itemViews += count;
+          break;
+        case VendorAnalyticsEventTypeEnum.STORE_ENGAGEMENT:
+          bucket.engagements += count;
+          break;
+        case VendorAnalyticsEventTypeEnum.STORE_SESSION:
+          bucket.storeSessions += count;
+          break;
+        default:
+          break;
+      }
+      seriesMap.set(date, bucket);
+    }
+
+    const productIds: Types.ObjectId[] = [];
+    const drinkIds: Types.ObjectId[] = [];
+    for (const row of topViewedRows as Array<{
+      _id: { itemId: Types.ObjectId; itemKind?: string };
+      views: number;
+    }>) {
+      const id = row._id?.itemId;
+      if (!id) continue;
+      if (row._id.itemKind === 'drink') drinkIds.push(id);
+      else productIds.push(id);
+    }
+
+    const [products, drinks] = await Promise.all([
+      productIds.length
+        ? this.productModel
+            .find({ _id: { $in: productIds } })
+            .select('title')
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+      drinkIds.length
+        ? this.drinkModel
+            .find({ _id: { $in: drinkIds } })
+            .select('name')
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+    ]);
+
+    const productTitleById = new Map(
+      products.map((p) => [String(p._id), String(p.title ?? '').trim()]),
+    );
+    const drinkTitleById = new Map(
+      drinks.map((d) => [String(d._id), String(d.name ?? '').trim()]),
+    );
+
+    const topViewedCatalogItems: VendorAnalyticsTopViewedItemRow[] = (
+      topViewedRows as Array<{
+        _id: { itemId: Types.ObjectId; itemKind?: string };
+        views: number;
+      }>
+    ).map((row) => {
+      const itemId = String(row._id.itemId);
+      const kind =
+        row._id.itemKind === 'drink' ? ('drink' as const) : ('product' as const);
+      const label =
+        kind === 'drink'
+          ? drinkTitleById.get(itemId) || '(boisson)'
+          : productTitleById.get(itemId) || '(plat)';
+      return {
+        itemId,
+        label,
+        kind,
+        views: Number(row.views ?? 0),
+      };
+    });
+
+    const avgStoreSessionSec =
+      storeSessions > 0
+        ? Math.round(totalStoreTimeSec / storeSessions)
+        : 0;
+
+    return {
+      pageViews,
+      itemViews,
+      engagements,
+      storeSessions,
+      avgStoreSessionSec,
+      totalStoreTimeSec,
+      uniqueVisitors: visitorIds.size,
+      seriesByDay: [...seriesMap.values()].sort((a, b) =>
+        a.date.localeCompare(b.date),
+      ),
+      topViewedCatalogItems,
     };
   }
 }
