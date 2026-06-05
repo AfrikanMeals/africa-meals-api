@@ -18,6 +18,7 @@ import {
   SortBy,
   SortOrder,
 } from './dto/search.dto';
+import { buildDailyMenuTodayForProduct } from '@utils/daily-menu-today-product.util';
 import { mapInChunks } from '@utils/map-in-chunks';
 import { productDailyMenuListingPipelineStages } from '@utils/product-daily-menu-listing.pipeline';
 import { storeArticlesAvailabilityPipelineStages } from '@utils/store-articles-availability.pipeline';
@@ -1075,10 +1076,7 @@ export class SearchService {
     }
 
     const productIdStr = String(doc._id);
-    const dailyMenuToday = this._buildDailyMenuTodayForProduct(
-      st,
-      productIdStr,
-    );
+    const dailyMenuToday = buildDailyMenuTodayForProduct(st, productIdStr);
     const distRaw = doc.distanceKm;
     const distanceKm =
       distRaw != null && Number.isFinite(Number(distRaw))

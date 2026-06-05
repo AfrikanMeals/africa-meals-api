@@ -21,6 +21,7 @@ import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, PipelineStage, Types } from 'mongoose';
 import type { FavoriteListingPagePayload } from './dto/favorite-listing.payload';
+import { buildDailyMenuTodayForProduct } from '@utils/daily-menu-today-product.util';
 import { productDailyMenuListingPipelineStages } from '@utils/product-daily-menu-listing.pipeline';
 import {
   CreateProductDto,
@@ -291,9 +292,21 @@ export class ProductsService {
       throw new NotFoundException('product_not_found');
     }
     const obj = doc.toObject({ virtuals: true }) as Record<string, unknown>;
+    const storeRaw = obj.store as Record<string, unknown> | undefined;
+    const dailyMenuToday = buildDailyMenuTodayForProduct(
+      storeRaw != null
+        ? {
+            dailyMenuByWeekday:
+              storeRaw['dailyMenuByWeekday'] ??
+              storeRaw['daily_menu_by_weekday'],
+          }
+        : null,
+      String(doc._id),
+    );
     return {
       ...obj,
       id: String(doc._id),
+      dailyMenuToday,
       complements: this.normalizeComplements(obj.complements),
       supplements: this.normalizeSupplements(obj.supplements),
       variants: this.normalizeVariants(obj.variants),
