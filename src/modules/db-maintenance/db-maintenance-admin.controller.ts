@@ -7,6 +7,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Req,
   UseGuards,
   UsePipes,
@@ -17,6 +18,11 @@ import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { ClearDbTablesDto } from './dto/clear-db-tables.dto';
 import { UpdateInfraRuntimeSettingsDto } from './dto/update-infra-runtime-settings.dto';
+import { AdminAlertEmailService } from './admin-alert-email.service';
+import {
+  AdminAlertAudienceQueryDto,
+  SendAdminAlertEmailDto,
+} from './dto/send-admin-alert-email.dto';
 import { DbMaintenanceService } from './db-maintenance.service';
 
 @ApiTags('db-maintenance')
@@ -25,6 +31,9 @@ import { DbMaintenanceService } from './db-maintenance.service';
 export class DbMaintenanceAdminController {
   @Inject(DbMaintenanceService)
   private readonly _dbMaintenance: DbMaintenanceService;
+
+  @Inject(AdminAlertEmailService)
+  private readonly _adminAlertEmail: AdminAlertEmailService;
 
   @Get('admin/tables')
   @UseGuards(JwtGuard)
@@ -119,5 +128,33 @@ export class DbMaintenanceAdminController {
   })
   async getMqttStatus(@Req() req: Request) {
     return this._dbMaintenance.getInfraMqttStatus(req.user as UserModel);
+  }
+
+  @Get('admin/alert-system/audience-count')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+  @ApiOperation({
+    summary:
+      'Nombre de destinataires e-mail pour une audience Alert System (admin.settings)',
+  })
+  async countAlertAudience(
+    @Req() req: Request,
+    @Query() query: AdminAlertAudienceQueryDto,
+  ) {
+    return this._adminAlertEmail.countAudience(req.user as UserModel, query);
+  }
+
+  @Post('admin/alert-system/send')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+  @ApiOperation({
+    summary:
+      'Envoie une alerte e-mail (HTML + template) via file BullMQ ou synchrone (admin.settings)',
+  })
+  async sendAlertEmails(
+    @Req() req: Request,
+    @Body() dto: SendAdminAlertEmailDto,
+  ) {
+    return this._adminAlertEmail.enqueueCampaign(req.user as UserModel, dto);
   }
 }

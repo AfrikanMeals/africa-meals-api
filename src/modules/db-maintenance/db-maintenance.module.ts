@@ -26,10 +26,14 @@ import {
   StoreCouponSchema,
 } from '@schemas/store_coupon.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
+import { UserModel, UserSchema } from '@schemas/user.schema';
+import { MailerModule } from '../mailer/mailer.module';
 import { SharedModule } from '../shared/shared.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { TeamsModule } from '../teams/teams.module';
 import { WsNotifyModule } from '../ws-notify/ws-notify.module';
+import { AdminAlertEmailQueueService } from './admin-alert-email-queue.service';
+import { AdminAlertEmailService } from './admin-alert-email.service';
 import { DbMaintenanceAdminController } from './db-maintenance-admin.controller';
 import { DbMaintenanceService } from './db-maintenance.service';
 
@@ -66,7 +70,11 @@ import { DbMaintenanceService } from './db-maintenance.service';
     ]),
   ],
   controllers: [DbMaintenanceAdminController],
-  providers: [DbMaintenanceService],
+  providers: [
+    DbMaintenanceService,
+    AdminAlertEmailService,
+    AdminAlertEmailQueueService,
+  ],
   exports: [DbMaintenanceService],
 })
 export class DbMaintenanceModule {}
