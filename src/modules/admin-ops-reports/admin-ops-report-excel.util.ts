@@ -10,7 +10,7 @@ export async function buildOpsReportWorkbook(
   sheets: OpsReportSheet[],
 ): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'Africa Meals';
+  workbook.creator = 'Wise Eat';
   workbook.created = new Date();
 
   for (const sheet of sheets) {

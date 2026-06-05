@@ -43,7 +43,9 @@ import { DbMaintenanceService } from './db-maintenance.service';
     SharedModule,
     SubscriptionsModule,
     WsNotifyModule,
+    MailerModule,
     MongooseModule.forFeature([
+      { name: UserModel.name, schema: UserSchema },
       { name: OrderModel.name, schema: OrderSchema },
       {
         name: StripeProcessedCheckoutModel.name,

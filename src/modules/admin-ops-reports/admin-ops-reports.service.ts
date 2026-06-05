@@ -322,7 +322,7 @@ export class AdminOpsReportsService {
       ? new Set<string>()
       : await this.ownersAlreadySentForPeriod(bounds.periodKey);
 
-    const appName = process.env.APP_NAME?.trim() || 'Africa Meals';
+    const appName = process.env.APP_NAME?.trim() || 'Wise Eat';
     let sent = 0;
     let skipped = 0;
     let failed = 0;

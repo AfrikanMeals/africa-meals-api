@@ -110,7 +110,7 @@ export class MailerService {
       this._configService.get<string>('SMTP_PORT')?.trim() || '587';
     const port = parseInt(portRaw, 10) || 587;
     const fromDisplayName =
-      this._configService.get<string>('APP_NAME')?.trim() || 'Africa Meals';
+      this._configService.get<string>('APP_NAME')?.trim() || 'Wise Eat';
     return { host, port, user, pass, from, fromDisplayName };
   }
 

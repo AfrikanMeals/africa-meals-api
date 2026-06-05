@@ -110,8 +110,8 @@ export async function configureApplication(
   }
 
   const config = new DocumentBuilder()
-    .setTitle('Africa Meals API')
-    .setDescription("Documentation de l'API Africa Meals")
+    .setTitle('Wise Eat API')
+    .setDescription("Documentation de l'API Wise Eat")
     .setVersion('1.0')
     .addBearerAuth(
       { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
@@ -149,6 +149,6 @@ export async function configureApplication(
       showRequestDuration: true,
       tryItOutEnabled: true,
     },
-    customSiteTitle: 'Africa Meals API Docs',
+    customSiteTitle: 'Wise Eat API Docs',
   });
 }
