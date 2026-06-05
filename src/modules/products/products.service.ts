@@ -292,15 +292,35 @@ export class ProductsService {
       throw new NotFoundException('product_not_found');
     }
     const obj = doc.toObject({ virtuals: true }) as Record<string, unknown>;
-    const storeRaw = obj.store as Record<string, unknown> | undefined;
+    const storeRef = obj.store as Record<string, unknown> | { _id?: unknown } | undefined;
+    const storeId =
+      storeRef != null && typeof storeRef === 'object'
+        ? String(
+            (storeRef as { _id?: unknown })._id ??
+              (storeRef as { id?: unknown }).id ??
+              '',
+          ).trim()
+        : '';
+    let dailyMenuRows: unknown = undefined;
+    if (storeId && Types.ObjectId.isValid(storeId)) {
+      const storeLean = await this._storeModel
+        .findById(storeId)
+        .select('dailyMenuByWeekday')
+        .lean()
+        .exec();
+      dailyMenuRows =
+        (storeLean as { dailyMenuByWeekday?: unknown } | null)
+          ?.dailyMenuByWeekday ??
+        (storeLean as { daily_menu_by_weekday?: unknown } | null)
+          ?.daily_menu_by_weekday;
+    }
+    if (dailyMenuRows == null && storeRef != null && typeof storeRef === 'object') {
+      dailyMenuRows =
+        (storeRef as Record<string, unknown>)['dailyMenuByWeekday'] ??
+        (storeRef as Record<string, unknown>)['daily_menu_by_weekday'];
+    }
     const dailyMenuToday = buildDailyMenuTodayForProduct(
-      storeRaw != null
-        ? {
-            dailyMenuByWeekday:
-              storeRaw['dailyMenuByWeekday'] ??
-              storeRaw['daily_menu_by_weekday'],
-          }
-        : null,
+      dailyMenuRows != null ? { dailyMenuByWeekday: dailyMenuRows } : null,
       String(doc._id),
     );
     return {
