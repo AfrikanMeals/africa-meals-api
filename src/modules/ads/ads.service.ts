@@ -36,6 +36,7 @@ import {
   AdMarketingEntityStatus,
   VendorStatusEmailService,
 } from '@modules/vendor-emails/vendor-status-email.service';
+import { WsAdManagerNotifyService } from '@modules/ws-notify/ws-ad-manager-notify.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -446,6 +447,9 @@ export class AdsService implements OnModuleInit {
 
   @Inject(VendorStatusEmailService)
   private readonly _vendorStatusEmail: VendorStatusEmailService;
+
+  @Inject(WsAdManagerNotifyService)
+  private readonly _wsAdManager: WsAdManagerNotifyService;
 
   async onModuleInit() {
     await this.seedIfEmpty();
@@ -2105,6 +2109,13 @@ export class AdsService implements OnModuleInit {
       itemType,
       itemId,
       clientInstallId: dto.clientInstallId?.trim() || undefined,
+    });
+    this._wsAdManager.broadcastAdEvent({
+      scope: 'CAMPAIGN',
+      eventType: dto.eventType,
+      entityId: campaignId,
+      storeId: String((campaign as { store?: unknown }).store ?? '') || null,
+      itemType,
     });
 
     return { ok: true };
@@ -4010,6 +4021,11 @@ export class AdsService implements OnModuleInit {
       user: uid,
       eventType: dto.eventType,
       ...(install ? { clientInstallId: install } : {}),
+    });
+    this._wsAdManager.broadcastAdEvent({
+      scope: 'BANNER',
+      eventType: dto.eventType,
+      entityId: dto.adId,
     });
     return { ok: true };
   }

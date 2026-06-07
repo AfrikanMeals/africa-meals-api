@@ -4,6 +4,7 @@ import {
   InfraRuntimeSettingsModel,
   InfraRuntimeSettingsSchema,
 } from '@schemas/infra-runtime-settings.schema';
+import { WsAdManagerNotifyService } from './ws-ad-manager-notify.service';
 import { WsAdsTargetingNotifyService } from './ws-ads-targeting-notify.service';
 import { WsChatNotifyService } from './ws-chat-notify.service';
 import { WsInboxNotifyService } from './ws-inbox-notify.service';
@@ -27,6 +28,7 @@ import { WsStripeConnectNotifyService } from './ws-stripe-connect-notify.service
     WsStripeConnectNotifyService,
     WsChatNotifyService,
     WsAdsTargetingNotifyService,
+    WsAdManagerNotifyService,
   ],
   exports: [
     WsNotifyDispatchQueueService,
@@ -35,6 +37,7 @@ import { WsStripeConnectNotifyService } from './ws-stripe-connect-notify.service
     WsStripeConnectNotifyService,
     WsChatNotifyService,
     WsAdsTargetingNotifyService,
+    WsAdManagerNotifyService,
   ],
 })
 export class WsNotifyModule {}

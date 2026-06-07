@@ -46,17 +46,21 @@ import { AdNotificationController } from './ad-notification.controller';
 import { AdNotificationDispatchCron } from './ad-notification-dispatch.cron';
 import { AdNotificationDispatchQueueService } from './ad-notification-dispatch-queue.service';
 import { AdNotificationService } from './ad-notification.service';
+import { AdsAdminController } from './ads-admin.controller';
+import { AdsAdminService } from './ads-admin.service';
 import { AdsController } from './ads.controller';
 import { AdsService } from './ads.service';
 
 @Module({
   controllers: [
     AdsController,
+    AdsAdminController,
     AdNotificationController,
     AdNotificationAdminController,
   ],
   providers: [
     AdsService,
+    AdsAdminService,
     AdNotificationService,
     AdNotificationDispatchQueueService,
     AdNotificationDispatchCron,

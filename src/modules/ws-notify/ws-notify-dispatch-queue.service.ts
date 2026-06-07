@@ -34,6 +34,7 @@ const WS_NOTIFY_SUFFIX_TO_TOPIC = {
   'order/staff-broadcast': 'order/staff-broadcast',
   'stripe/connect-status': 'stripe/connect-status',
   'ads-targeting/event': 'ads-targeting/event',
+  'ad-manager/event': 'ad-manager/event',
   'chat/archive-order-delivery': 'chat/archive-order-delivery',
 } as const;
 

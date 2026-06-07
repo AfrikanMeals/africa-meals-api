@@ -4,17 +4,14 @@ import {
   type VendorNotificationCategory,
   type VendorNotificationChannelPrefs,
 } from '@modules/vendor-notifications/vendor-notification.constants';
-import { Type } from 'class-transformer';
 import {
   IsBoolean,
-  IsIn,
   IsNumber,
   IsObject,
   IsOptional,
   IsString,
   Max,
   Min,
-  ValidateNested,
 } from 'class-validator';
 
 export class VendorNotificationChannelPrefsDto {
@@ -32,10 +29,13 @@ export class VendorNotificationChannelPrefsDto {
 }
 
 export class UpdateVendorNotificationPreferencesDto {
+  // NOTE: categories est une map à clés dynamiques (order, delivery, ...).
+  // On ne met PAS @Type/@ValidateNested ici : combiné à whitelist:true, cela
+  // transformerait la map entière en VendorNotificationChannelPrefsDto et
+  // supprimerait toutes les clés de catégorie. La sanitation par catégorie/canal
+  // est assurée côté service via normalizeChannelPrefs.
   @IsOptional()
   @IsObject()
-  @ValidateNested({ each: true })
-  @Type(() => VendorNotificationChannelPrefsDto)
   categories?: Partial<
     Record<VendorNotificationCategory, VendorNotificationChannelPrefsDto>
   >;
@@ -79,10 +79,15 @@ export function normalizeChannelPrefs(
   raw?: VendorNotificationChannelPrefsDto | null,
   fallback?: VendorNotificationChannelPrefs,
 ): VendorNotificationChannelPrefs {
+  const coerce = (
+    value: unknown,
+    fb: boolean | undefined,
+    dflt: boolean,
+  ): boolean => (typeof value === 'boolean' ? value : (fb ?? dflt));
   return {
-    push: raw?.push ?? fallback?.push ?? true,
-    email: raw?.email ?? fallback?.email ?? true,
-    sms: raw?.sms ?? fallback?.sms ?? false,
+    push: coerce(raw?.push, fallback?.push, true),
+    email: coerce(raw?.email, fallback?.email, true),
+    sms: coerce(raw?.sms, fallback?.sms, false),
   };
 }
 

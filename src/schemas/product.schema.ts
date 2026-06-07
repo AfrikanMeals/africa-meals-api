@@ -276,6 +276,10 @@ export class ProductModel extends BaseSchema {
     type: [ProductVariantSchema],
   })
   variants: ProductVariantModel[];
+
+  /** Libellé du groupe de variantes affiché au client (ex. « Taille », « Format »). */
+  @Prop({ required: false, default: '', name: 'variants_label' })
+  variantsLabel?: string;
 }
 
 export const ProductSchema = SchemaFactory.createForClass(ProductModel);
