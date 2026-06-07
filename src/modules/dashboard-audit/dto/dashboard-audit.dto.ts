@@ -91,4 +91,9 @@ export class QueryDashboardAuditEventsDto {
   @IsOptional()
   @IsString()
   path?: string;
+
+  /** `platform` = journal admin complet ; défaut = périmètre vendeur (ses actions + boutiques). */
+  @IsOptional()
+  @IsString()
+  scope?: string;
 }

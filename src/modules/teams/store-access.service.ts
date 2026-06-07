@@ -347,6 +347,101 @@ export class StoreAccessService {
     return [...ids].filter((id) => Types.ObjectId.isValid(id));
   }
 
+  /**
+   * Libellés de rôle boutique pour des paires (userId, storeId) — journal d’audit.
+   */
+  async resolveStoreRoleLabelsForActors(
+    pairs: Array<{ userId: string; storeId: string }>,
+  ): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    if (!pairs.length) return map;
+
+    const storeIds = [
+      ...new Set(
+        pairs
+          .map((p) => p.storeId)
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ];
+    const userIds = [
+      ...new Set(
+        pairs
+          .map((p) => p.userId)
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ];
+    if (!storeIds.length || !userIds.length) return map;
+
+    const storeOids = storeIds.map((id) => new Types.ObjectId(id));
+    const userOids = userIds.map((id) => new Types.ObjectId(id));
+
+    const stores = await this.storeModel
+      .find({ _id: { $in: storeOids } })
+      .select('owner')
+      .lean()
+      .exec();
+    const ownerByStore = new Map(
+      stores.map((s) => [String(s._id), String(s.owner ?? '')]),
+    );
+
+    const members = await this.storeMemberModel
+      .find({
+        store: { $in: storeOids },
+        user: { $in: userOids },
+        status: 'ACTIVE',
+      })
+      .lean()
+      .exec();
+
+    const allRoleIds = members.flatMap((m) =>
+      normalizeStoreMemberRoleIds(
+        m as { role?: Types.ObjectId; roles?: Types.ObjectId[] },
+      ),
+    );
+    const roles = allRoleIds.length
+      ? await this.storeRoleModel
+          .find({ _id: { $in: allRoleIds } })
+          .lean()
+          .exec()
+      : [];
+    const roleById = new Map(roles.map((r) => [String(r._id), r]));
+
+    for (const { userId, storeId } of pairs) {
+      const key = `${userId}:${storeId}`;
+      if (map.has(key)) continue;
+
+      if (ownerByStore.get(storeId) === userId) {
+        map.set(key, 'Propriétaire');
+        continue;
+      }
+
+      const member = members.find(
+        (m) => String(m.user) === userId && String(m.store) === storeId,
+      );
+      if (!member) {
+        map.set(key, 'Vendeur');
+        continue;
+      }
+
+      const memberRoleIds = normalizeStoreMemberRoleIds(
+        member as { role?: Types.ObjectId; roles?: Types.ObjectId[] },
+      );
+      const memberRoles = memberRoleIds
+        .map((rid) => roleById.get(String(rid)))
+        .filter((r): r is NonNullable<typeof r> => r != null);
+
+      if (memberRoles.some((r) => r.isOwnerRole === true)) {
+        map.set(key, 'Propriétaire');
+      } else if (memberRoles[0]?.name) {
+        map.set(key, String(memberRoles[0].name));
+      } else {
+        map.set(key, 'Membre');
+      }
+    }
+
+    return map;
+  }
+
   /** ObjectId utilisateur depuis une ref lean (ObjectId, string ou document peuplé). */
   private userIdFromRef(raw: unknown): string | null {
     if (raw == null) return null;

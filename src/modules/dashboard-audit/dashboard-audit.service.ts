@@ -11,6 +11,10 @@ import {
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import {
+  dashboardApiActionFromMethod,
+  inferDashboardAuditCategory,
+} from './dashboard-audit.util';
+import {
   BatchDashboardAuditEventsDto,
   QueryDashboardAuditEventsDto,
 } from './dto/dashboard-audit.dto';
@@ -21,6 +25,8 @@ export type DashboardAuditEventRow = {
   actorType: string;
   actorEmail: string | null;
   actorName: string | null;
+  /** Rôle boutique (Propriétaire, Manager, …) ou Administrateur. */
+  actorStoreRole: string | null;
   action: string;
   category: string | null;
   path: string | null;
@@ -90,6 +96,58 @@ export class DashboardAuditService {
     return { ok: true, inserted: docs.length };
   }
 
+  /** Enregistrement serveur (interceptor) des appels API depuis le dashboard web. */
+  recordHttpEvent(
+    user: UserModel,
+    input: {
+      method: string;
+      apiPath: string;
+      dashboardPath?: string;
+      storeId?: string | null;
+      status?: number;
+      userAgent?: string;
+      ip?: string;
+      resource?: string;
+      resourceId?: string;
+      resourceName?: string;
+    },
+  ): void {
+    const actorName = user.fullName?.trim() || undefined;
+    const method = input.method.toUpperCase();
+    let storeOid: Types.ObjectId | undefined;
+    if (input.storeId?.trim() && Types.ObjectId.isValid(input.storeId.trim())) {
+      storeOid = new Types.ObjectId(input.storeId.trim());
+    }
+    const dashboardPath = input.dashboardPath?.trim().slice(0, 512) || undefined;
+    const apiPath = input.apiPath.trim().slice(0, 512);
+    const resourceName = input.resourceName?.trim().slice(0, 128) || undefined;
+    void this.auditModel
+      .create({
+        actorUserId: user._id,
+        actorType: user.type,
+        actorEmail: user.email?.trim() || undefined,
+        actorName,
+        action: dashboardApiActionFromMethod(method),
+        category: inferDashboardAuditCategory(dashboardPath, apiPath),
+        path: dashboardPath,
+        storeId: storeOid,
+        resource: input.resource?.trim().slice(0, 128) || resourceName,
+        resourceId: input.resourceId?.trim().slice(0, 128) || undefined,
+        metadata: {
+          method,
+          apiPath,
+          status: input.status ?? null,
+          ...(resourceName ? { resourceName } : {}),
+          ...(input.resource ? { resourceType: input.resource } : {}),
+        },
+        userAgent: input.userAgent?.slice(0, 512) || undefined,
+        ip: input.ip?.slice(0, 64) || undefined,
+        source: 'admin-web',
+        occurredAt: new Date(),
+      })
+      .catch(() => undefined);
+  }
+
   async list(
     user: UserModel,
     query: QueryDashboardAuditEventsDto,
@@ -114,7 +172,10 @@ export class DashboardAuditService {
     }
 
     const isAdmin = user.type === UserTypeEnum.ADMIN;
-    if (isAdmin) {
+    const wantsPlatformScope =
+      isAdmin && query.scope?.trim().toLowerCase() === 'platform';
+
+    if (wantsPlatformScope) {
       await this.storeAccess.assertAdminPermission(user, 'admin.settings');
       if (query.userId?.trim() && Types.ObjectId.isValid(query.userId.trim())) {
         filter.actorUserId = new Types.ObjectId(query.userId.trim());
@@ -123,40 +184,92 @@ export class DashboardAuditService {
         filter.storeId = new Types.ObjectId(query.storeId.trim());
       }
     } else {
-      const accessibleStoreIds = await this.resolveAccessibleStoreIds(user);
-      if (!accessibleStoreIds.length) {
-        filter.actorUserId = user._id;
-      } else if (query.storeId?.trim()) {
-        const sid = query.storeId.trim();
-        if (!accessibleStoreIds.includes(sid)) {
-          throw new ForbiddenException('store_access_denied');
-        }
-        filter.storeId = new Types.ObjectId(sid);
-      } else {
-        filter.$or = [
-          { actorUserId: user._id },
-          {
-            storeId: {
-              $in: accessibleStoreIds.map((id) => new Types.ObjectId(id)),
-            },
-          },
-        ];
-      }
+      await this.applyVendorScopeFilter(user, filter, query.storeId?.trim());
     }
 
     const docs = await this.auditModel
       .find(filter)
-      .populate('store', 'name')
+      .populate('storeId', 'name')
       .sort({ occurredAt: -1 })
       .limit(limit)
       .lean()
       .exec();
 
+    const rolePairs: Array<{ userId: string; storeId: string }> = [];
+    for (const doc of docs as Record<string, unknown>[]) {
+      const userId = String(doc.actorUserId ?? doc.actor_user_id ?? '');
+      const storeId = this.extractStoreIdFromDoc(doc);
+      if (userId && storeId) {
+        rolePairs.push({ userId, storeId });
+      }
+    }
+    const roleMap =
+      await this.storeAccess.resolveStoreRoleLabelsForActors(rolePairs);
+
     return {
-      items: (docs as Record<string, unknown>[]).map((doc) =>
-        this.toRow(doc),
-      ),
+      items: (docs as Record<string, unknown>[]).map((doc) => {
+        const row = this.toRow(doc);
+        row.actorStoreRole = this.resolveActorStoreRole(row, roleMap);
+        return row;
+      }),
     };
+  }
+
+  private extractStoreIdFromDoc(doc: Record<string, unknown>): string | null {
+    const store = doc.storeId as
+      | { _id?: Types.ObjectId; name?: string }
+      | Types.ObjectId
+      | null
+      | undefined;
+    if (store && typeof store === 'object' && '_id' in store) {
+      return String(store._id ?? '') || null;
+    }
+    if (doc.storeId) return String(doc.storeId);
+    return null;
+  }
+
+  private resolveActorStoreRole(
+    row: DashboardAuditEventRow,
+    roleMap: Map<string, string>,
+  ): string | null {
+    if (row.storeId) {
+      return roleMap.get(`${row.actorUserId}:${row.storeId}`) ?? 'Vendeur';
+    }
+    if (row.actorType.toUpperCase() === UserTypeEnum.ADMIN) {
+      return 'Administrateur';
+    }
+    if (row.actorType.toUpperCase() === UserTypeEnum.VENDOR) {
+      return 'Vendeur';
+    }
+    return null;
+  }
+
+  private async applyVendorScopeFilter(
+    user: UserModel,
+    filter: Record<string, unknown>,
+    storeIdQuery?: string,
+  ): Promise<void> {
+    const accessibleStoreIds = await this.resolveAccessibleStoreIds(user);
+    if (!accessibleStoreIds.length) {
+      filter.actorUserId = user._id;
+      return;
+    }
+    if (storeIdQuery?.trim()) {
+      const sid = storeIdQuery.trim();
+      if (!accessibleStoreIds.includes(sid)) {
+        throw new ForbiddenException('store_access_denied');
+      }
+      filter.storeId = new Types.ObjectId(sid);
+      return;
+    }
+    filter.$or = [
+      { actorUserId: user._id },
+      {
+        storeId: {
+          $in: accessibleStoreIds.map((id) => new Types.ObjectId(id)),
+        },
+      },
+    ];
   }
 
   private async resolveAccessibleStoreIds(user: UserModel): Promise<string[]> {
@@ -187,7 +300,7 @@ export class DashboardAuditService {
   }
 
   private toRow(doc: Record<string, unknown>): DashboardAuditEventRow {
-    const store = doc.store as
+    const store = doc.storeId as
       | { _id?: Types.ObjectId; name?: string }
       | Types.ObjectId
       | null
@@ -218,6 +331,7 @@ export class DashboardAuditService {
           : doc.actor_name != null
             ? String(doc.actor_name)
             : null,
+      actorStoreRole: null,
       action: String(doc.action ?? ''),
       category: doc.category != null ? String(doc.category) : null,
       path: doc.path != null ? String(doc.path) : null,

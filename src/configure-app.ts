@@ -100,8 +100,12 @@ export async function configureApplication(
       'Content-Type',
       'Authorization',
       'Accept',
-      // Clients (admin / mobile) derrière ngrok : en-tête documenté par ngrok pour éviter l’interstitiel HTML.
       'ngrok-skip-browser-warning',
+      'x-dashboard-client',
+      'x-dashboard-path',
+      'x-dashboard-resource-name',
+      'x-no-auth-refresh',
+      'x-auth-refresh-retry',
     ],
   });
 
