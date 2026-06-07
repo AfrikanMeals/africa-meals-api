@@ -39,3 +39,21 @@ export const DRINK_CATEGORY_ICONS = new Set([
   'alcoholic_drink',
   'wine',
 ]);
+
+/** Type effectif d’une catégorie (aligné admin + seed). */
+export function resolveProductCategoryKind(
+  raw: Record<string, unknown>,
+): ProductCategoryKindEnum {
+  const k = raw.kind ?? raw.category_kind;
+  if (k === ProductCategoryKindEnum.DRINK || k === 'drink') {
+    return ProductCategoryKindEnum.DRINK;
+  }
+  if (k === ProductCategoryKindEnum.FOOD || k === 'food') {
+    return ProductCategoryKindEnum.FOOD;
+  }
+  const icon = String(raw.icon ?? '').trim();
+  if (DRINK_CATEGORY_ICONS.has(icon)) {
+    return ProductCategoryKindEnum.DRINK;
+  }
+  return ProductCategoryKindEnum.FOOD;
+}

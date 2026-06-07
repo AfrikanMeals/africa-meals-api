@@ -3,6 +3,7 @@ import {
   storeOwnerStripeOnboardedPipelineStages,
 } from '@modules/billing/stripe/stripe-connect-visibility';
 import { OffersService } from '@modules/offers/offers.service';
+import { DrinksService } from '@modules/drinks/drinks.service';
 import { ProductsService } from '@modules/products/products.service';
 import { StoreService } from '@modules/store/store.service';
 import {
@@ -27,7 +28,10 @@ import {
   SortBy,
   SortOrder,
 } from './dto/search.dto';
-import { buildDailyMenuTodayForProduct } from '@utils/daily-menu-today-product.util';
+import {
+  buildDailyMenuTodayForProduct,
+  parseDailyMenuAddonsAvailability,
+} from '@utils/daily-menu-today-product.util';
 import { mapInChunks } from '@utils/map-in-chunks';
 import { productDailyMenuListingPipelineStages } from '@utils/product-daily-menu-listing.pipeline';
 import { storeArticlesAvailabilityPipelineStages } from '@utils/store-articles-availability.pipeline';
@@ -663,6 +667,9 @@ export class SearchService {
   @Inject(OffersService)
   private readonly _offersService: OffersService;
 
+  @Inject(DrinksService)
+  private readonly _drinksService: DrinksService;
+
   @Inject(CACHE_MANAGER)
   private readonly _cache: Cache;
 
@@ -708,11 +715,16 @@ export class SearchService {
       [key: string]:
         | SearchResultDto<ProductModel>
         | SearchResultDto<StoreModel>
-        | SearchResultDto<OfferModel>;
+        | SearchResultDto<OfferModel>
+        | SearchResultDto<Record<string, unknown>>;
     } = {};
 
     if (searchContent.includes(SearchContent.PRODUCTS)) {
       response.products = await this._filterProducts(args, user);
+    }
+
+    if (searchContent.includes(SearchContent.DRINKS)) {
+      response.drinks = await this._drinksService.filterMarketplaceCatalog(args);
     }
 
     if (searchContent.includes(SearchContent.STORES)) {
@@ -1120,7 +1132,32 @@ export class SearchService {
     }
 
     const productIdStr = String(doc._id);
-    const dailyMenuToday = buildDailyMenuTodayForProduct(st, productIdStr);
+    const precomputed = doc['dailyMenuToday'] as
+      | Record<string, unknown>
+      | undefined;
+    const dailyMenuToday =
+      precomputed != null &&
+      typeof precomputed === 'object' &&
+      precomputed['onMenu'] === true
+        ? {
+            onMenu: true,
+            stockUnlimited: precomputed['stockUnlimited'] !== false,
+            stockRemaining: Math.max(
+              0,
+              Math.floor(Number(precomputed['stockRemaining'] ?? 0)),
+            ),
+            soldOut: precomputed['soldOut'] === true,
+            ...(parseDailyMenuAddonsAvailability(
+              precomputed['addonsAvailability'],
+            )
+              ? {
+                  addonsAvailability: parseDailyMenuAddonsAvailability(
+                    precomputed['addonsAvailability'],
+                  ),
+                }
+              : {}),
+          }
+        : buildDailyMenuTodayForProduct(st, productIdStr);
     const distRaw = doc.distanceKm;
     const distanceKm =
       distRaw != null && Number.isFinite(Number(distRaw))
@@ -1490,6 +1527,30 @@ export class SearchService {
                 null,
               ],
             },
+          },
+          dailyMenuToday: {
+            $cond: [
+              { $eq: ['$__onDailyMenu', true] },
+              {
+                onMenu: true,
+                stockUnlimited: {
+                  $ne: [
+                    { $ifNull: ['$__menuItem.stockUnlimited', true] },
+                    false,
+                  ],
+                },
+                stockRemaining: {
+                  $ifNull: ['$__menuItem.stockRemaining', 0],
+                },
+                soldOut: { $eq: ['$__menuSoldOut', true] },
+              },
+              {
+                onMenu: false,
+                stockUnlimited: true,
+                stockRemaining: 0,
+                soldOut: false,
+              },
+            ],
           },
         },
       },

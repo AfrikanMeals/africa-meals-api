@@ -6,6 +6,7 @@ import {
   ProductCategoryModel,
   ProductCategorySchema,
 } from '@schemas/product-category.schema';
+import { DrinkModel, DrinkSchema } from '@schemas/drink.schema';
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { ProductCategoryController } from './product-category.controller';
@@ -21,6 +22,7 @@ import { ProductsService } from './products.service';
     RatingsModule,
     MongooseModule.forFeature([
       { name: ProductModel.name, schema: ProductSchema },
+      { name: DrinkModel.name, schema: DrinkSchema },
       { name: ProductCategoryModel.name, schema: ProductCategorySchema },
       { name: StoreModel.name, schema: StoreSchema },
     ]),

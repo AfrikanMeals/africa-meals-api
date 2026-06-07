@@ -1,8 +1,10 @@
 import {
   isStripeConnectOnboardingCompleteUser,
+  productEmbeddedStoreOwnerStripeOnboardedStages,
   resolveStoreIdsVisibleOnMobileApp,
 } from '@modules/billing/stripe/stripe-connect-visibility';
 import { MediasService } from '@modules/medias/medias.service';
+import { ProductCategoryService } from '@modules/products/product-category.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import {
@@ -14,12 +16,14 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { DrinkModel, DrinkStatutEnum } from '@schemas/drink.schema';
+import { resolveProductCategoryKind } from '@modules/products/data/categories';
 import { ProductCategoryKindEnum, ProductCategoryModel } from '@schemas/product-category.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
-import { Model, Types } from 'mongoose';
+import { Model, PipelineStage, Types } from 'mongoose';
 import { CreateDrinkDto, PatchDrinkDto } from './dto/drink.dto';
+import { SearchDto } from '@modules/search/dto/search.dto';
 
 function computeStatut(quantite: number, seuil: number): DrinkStatutEnum {
   return quantite <= seuil ? DrinkStatutEnum.ALERTE : DrinkStatutEnum.OK;
@@ -63,10 +67,9 @@ function mapDrinkDoc(doc: Record<string, unknown>) {
   let categoryTitle: string | undefined;
   if (rawCat != null && typeof rawCat === 'object') {
     const c = rawCat as Record<string, unknown>;
-    if (c.title != null) {
-      categoryTitle = String(c.title);
-      categoryId = String(c._id ?? c.id ?? '');
-    }
+    const oid = c._id ?? c.id;
+    if (oid != null) categoryId = String(oid);
+    if (c.title != null) categoryTitle = String(c.title);
   } else if (rawCat != null) {
     categoryId = String(rawCat);
   }
@@ -131,6 +134,13 @@ export class DrinksService {
   @Inject(StoreAccessService)
   private readonly _storeAccess: StoreAccessService;
 
+  @Inject(ProductCategoryService)
+  private readonly _productCategoryService: ProductCategoryService;
+
+  private async _invalidateCategoryCountsCache(): Promise<void> {
+    await this._productCategoryService.invalidatePublicListCache();
+  }
+
   private async isStoreVisibleOnMobileApp(storeId: string): Promise<boolean> {
     if (!Types.ObjectId.isValid(storeId)) {
       return false;
@@ -171,14 +181,14 @@ export class DrinksService {
     }
     const cat = await this._productCategoryModel
       .findById(id)
-      .select('kind isEnabled title')
+      .select('kind icon isEnabled title')
       .lean()
       .exec();
     if (!cat || cat.isEnabled === false) {
       throw new NotFoundException('category_not_found');
     }
-    const kind = (cat as { kind?: string }).kind;
-    if (kind === ProductCategoryKindEnum.DRINK || kind === 'drink') {
+    const kind = resolveProductCategoryKind(cat as Record<string, unknown>);
+    if (kind === ProductCategoryKindEnum.DRINK) {
       return new Types.ObjectId(id);
     }
     throw new BadRequestException('category_must_be_drink');
@@ -364,6 +374,7 @@ export class DrinksService {
     }
     let query = this._drinkModel
       .find(baseFilter)
+      .populate('category', 'title kind isEnabled')
       .sort({ updatedAt: -1 })
       .lean();
     if (q) {
@@ -398,6 +409,103 @@ export class DrinksService {
   }
 
   /**
+   * Catalogue marketplace : boissons en stock, boutiques visibles client.
+   * Pas de filtre géo (aligné sur le filtre catégorie côté mobile).
+   */
+  async filterMarketplaceCatalog(args: SearchDto) {
+    const page = Math.max(1, Math.floor(args.page ?? 1));
+    const take = Math.min(80, Math.max(1, Math.floor(args.take ?? 40)));
+    const match: Record<string, unknown> = { ...DRINK_IN_STOCK_FILTER };
+    const cid = args.categoryId?.trim();
+    if (cid && Types.ObjectId.isValid(cid)) {
+      match.category = new Types.ObjectId(cid);
+    }
+    const q = args.query?.trim();
+    if (q) {
+      const esc = this._escapeRegex(q);
+      match.$or = [
+        { name: { $regex: esc, $options: 'i' } },
+        { description: { $regex: esc, $options: 'i' } },
+      ];
+    }
+
+    const pipeline: PipelineStage[] = [
+      { $match: match },
+      {
+        $lookup: {
+          from: 'stores',
+          localField: 'store',
+          foreignField: '_id',
+          as: 'store',
+        },
+      },
+      {
+        $addFields: {
+          store: { $arrayElemAt: ['$store', 0] },
+        },
+      },
+      {
+        $match: {
+          'store.status': StoreStatusEnum.ACTIVE,
+          'store.acceptsOrders': true,
+        },
+      },
+      ...productEmbeddedStoreOwnerStripeOnboardedStages(),
+      {
+        $facet: {
+          rows: [
+            { $sort: { updatedAt: -1 } },
+            { $skip: (page - 1) * take },
+            { $limit: take },
+            {
+              $lookup: {
+                from: 'product_categories',
+                localField: 'category',
+                foreignField: '_id',
+                as: '_cat',
+              },
+            },
+            {
+              $addFields: {
+                category: { $arrayElemAt: ['$_cat', 0] },
+              },
+            },
+            { $project: { _cat: 0 } },
+          ],
+          total: [{ $count: 'n' }],
+        },
+      },
+    ];
+
+    const agg = await this._drinkModel
+      .aggregate(pipeline)
+      .option({ allowDiskUse: true })
+      .exec();
+    const facet = (agg[0] ?? {}) as {
+      rows?: Record<string, unknown>[];
+      total?: Array<{ n?: number }>;
+    };
+    const rows = facet.rows ?? [];
+    const total = Number(facet.total?.[0]?.n ?? 0);
+    const items = rows.map((row) => {
+      const store = row['store'] as Record<string, unknown> | undefined;
+      const storeId =
+        store?._id != null
+          ? String(store._id)
+          : row['store'] != null
+          ? String(row['store'])
+          : '';
+      const storeName = store?.name != null ? String(store.name) : '';
+      return {
+        ...mapDrinkDoc(row),
+        ...(storeId ? { storeId } : {}),
+        ...(storeName ? { storeName } : {}),
+      };
+    });
+    return { items, total, page, limit: take };
+  }
+
+  /**
    * Boissons en stock pour plusieurs boutiques (recommandations accueil, etc.).
    */
   async findByStoresForCatalog(
@@ -420,6 +528,7 @@ export class DrinksService {
         store: { $in: oids },
         ...DRINK_IN_STOCK_FILTER,
       })
+      .populate('category', 'title kind isEnabled')
       .sort({ updatedAt: -1 })
       .limit(limit)
       .lean()
@@ -514,6 +623,7 @@ export class DrinksService {
       .populate('category', 'title kind isEnabled')
       .lean()
       .exec();
+    await this._invalidateCategoryCountsCache();
     return mapDrinkDoc((populated ?? doc.toObject()) as Record<string, unknown>);
   }
 
@@ -558,7 +668,8 @@ export class DrinksService {
 
     if (dto.categoryId !== undefined) {
       const categoryOid = await this.resolveDrinkCategoryId(dto.categoryId);
-      found.set('category', categoryOid ?? undefined);
+      found.set('category', categoryOid ?? null);
+      found.markModified('category');
     }
 
     if (file?.buffer?.length) {
@@ -584,6 +695,7 @@ export class DrinksService {
       .populate('category', 'title kind isEnabled')
       .lean()
       .exec();
+    await this._invalidateCategoryCountsCache();
     return mapDrinkDoc((populated ?? found.toObject()) as Record<string, unknown>);
   }
 
@@ -606,6 +718,7 @@ export class DrinksService {
       await this._mediasService.delete(doc.imageUrl).catch(() => undefined);
     }
     await doc.deleteOne();
+    await this._invalidateCategoryCountsCache();
   }
 
   /**

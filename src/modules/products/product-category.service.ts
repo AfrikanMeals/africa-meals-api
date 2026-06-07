@@ -11,8 +11,10 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { InjectModel } from '@nestjs/mongoose';
 import { Cache } from 'cache-manager';
 import { ProductCategoryModel, ProductCategoryKindEnum } from '@schemas/product-category.schema';
-import { ProductModel } from '@schemas/product.schema';
+import { DrinkModel } from '@schemas/drink.schema';
+import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
+import { StoreStatusEnum } from '@schemas/store.schema';
 import { Model, PipelineStage, Types } from 'mongoose';
 import { DEFAULT_CATEGORIES, DRINK_CATEGORY_ICONS } from './data/categories';
 import {
@@ -20,6 +22,7 @@ import {
   PatchProductCategoryDto,
 } from './dto/product-category.dto';
 import { mapInChunks } from '@utils/map-in-chunks';
+import { productDailyMenuListingPipelineStages } from '@utils/product-daily-menu-listing.pipeline';
 
 /** Ligne JSON renvoyée par [filter] / REST / GraphQL public. */
 export type PublicProductCategoryRow = {
@@ -39,7 +42,7 @@ export class ProductCategoryService implements OnModuleInit {
   private readonly _logger = new Logger(ProductCategoryService.name);
 
   /** Cache liste publique catégories (invalidé à chaque mutation admin). */
-  private static readonly _publicListCacheKey = 'product-categories:public:v2';
+  private static readonly _publicListCacheKey = 'product-categories:public:v4';
 
   @Inject(CACHE_MANAGER)
   private readonly _cache: Cache;
@@ -49,6 +52,82 @@ export class ProductCategoryService implements OnModuleInit {
 
   @InjectModel(ProductModel.name)
   private readonly _productModel: Model<ProductModel>;
+
+  @InjectModel(DrinkModel.name)
+  private readonly _drinkModel: Model<DrinkModel>;
+
+  private static readonly _drinkCategoryIcons = [
+    ...DRINK_CATEGORY_ICONS,
+  ] as string[];
+
+  async invalidatePublicListCache(): Promise<void> {
+    await this._bustPublicCategoriesCache();
+  }
+
+  private _isDrinkCategory(raw: Record<string, unknown>): boolean {
+    return this.resolveKind(raw) === ProductCategoryKindEnum.DRINK;
+  }
+
+  /** Plats « menu du jour » actifs pour une catégorie food (catalogue client). */
+  private _dailyMenuFoodCountLookupStages(): PipelineStage[] {
+    return [
+      {
+        $match: {
+          status: ProductStatusEnum.ACTIVE,
+        },
+      },
+      {
+        $lookup: {
+          from: 'stores',
+          localField: 'store',
+          foreignField: '_id',
+          as: 'store',
+        },
+      },
+      {
+        $addFields: {
+          store: { $arrayElemAt: ['$store', 0] },
+        },
+      },
+      {
+        $match: {
+          'store.status': StoreStatusEnum.ACTIVE,
+          'store.acceptsOrders': true,
+        },
+      },
+      ...productDailyMenuListingPipelineStages(),
+      { $group: { _id: null, n: { $sum: 1 } } },
+    ];
+  }
+
+  private async _dailyMenuFoodCountForCategory(
+    catId: unknown,
+  ): Promise<number> {
+    const pipeline: PipelineStage[] = [
+      {
+        $match: {
+          category: catId,
+        },
+      },
+      ...this._dailyMenuFoodCountLookupStages(),
+    ];
+    const rows = await this._productModel
+      .aggregate(pipeline)
+      .option({ allowDiskUse: true })
+      .exec();
+    const row = rows[0] as { n?: number } | undefined;
+    return Number(row?.n ?? 0);
+  }
+
+  private async _itemCountForCategory(
+    cat: Record<string, unknown>,
+  ): Promise<number> {
+    const catId = cat._id;
+    if (this._isDrinkCategory(cat)) {
+      return this._drinkModel.countDocuments({ category: catId }).exec();
+    }
+    return this._dailyMenuFoodCountForCategory(catId);
+  }
 
   private _categoriesListTtlMs() {
     const n = Number(process.env.PRODUCT_CATEGORIES_CACHE_TTL_MS);
@@ -157,10 +236,8 @@ export class ProductCategoryService implements OnModuleInit {
     }
     await existing.save();
     await this._bustPublicCategoriesCache();
-    const productCount = await this._productModel
-      .countDocuments({ category: existing._id })
-      .exec();
     const lean = existing.toObject() as Record<string, unknown>;
+    const productCount = await this._itemCountForCategory(lean);
     return this.mapLeanCategory(lean, productCount);
   }
 
@@ -173,10 +250,9 @@ export class ProductCategoryService implements OnModuleInit {
     if (!existing) {
       throw new NotFoundException('category_not_found');
     }
-    const productCount = await this._productModel
-      .countDocuments({ category: existing._id })
-      .exec();
-    if (productCount > 0) {
+    const lean = existing.toObject() as Record<string, unknown>;
+    const itemCount = await this._itemCountForCategory(lean);
+    if (itemCount > 0) {
       throw new ConflictException('category_has_products');
     }
     await existing.deleteOne();
@@ -208,22 +284,65 @@ export class ProductCategoryService implements OnModuleInit {
                   $expr: { $eq: ['$category', '$$catId'] },
                 },
               },
-              { $group: { _id: null, n: { $sum: 1 } } },
-            ],
+              ...this._dailyMenuFoodCountLookupStages(),
+            ] as any[],
             as: '_cnt',
           },
         },
         {
+          $lookup: {
+            from: 'drinks',
+            let: { catId: '$_id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ['$category', '$$catId'] },
+                },
+              },
+              { $group: { _id: null, n: { $sum: 1 } } },
+            ],
+            as: '_drinkCnt',
+          },
+        },
+        {
           $addFields: {
-            productCount: {
+            _productN: {
               $let: {
                 vars: { row: { $arrayElemAt: ['$_cnt', 0] } },
                 in: { $ifNull: ['$$row.n', 0] },
               },
             },
+            _drinkN: {
+              $let: {
+                vars: { row: { $arrayElemAt: ['$_drinkCnt', 0] } },
+                in: { $ifNull: ['$$row.n', 0] },
+              },
+            },
           },
         },
-        { $project: { _cnt: 0 } },
+        {
+          $addFields: {
+            productCount: {
+              $cond: [
+                {
+                  $or: [
+                    { $eq: ['$kind', ProductCategoryKindEnum.DRINK] },
+                    { $eq: ['$kind', 'drink'] },
+                    {
+                      $in: [
+                        '$icon',
+                        ProductCategoryService._drinkCategoryIcons,
+                      ],
+                    },
+                  ],
+                },
+                '$_drinkN',
+                '$_productN',
+              ],
+            },
+          },
+        },
+        { $project: { _cnt: 0, _drinkCnt: 0 } },
       ];
 
       const raw = await this._productCategoryModel
@@ -289,9 +408,7 @@ export class ProductCategoryService implements OnModuleInit {
       .exec();
     /** Ne pas lancer un `countDocuments` par catégorie en parallèle (pic connexions Atlas). */
     return mapInChunks(categories, 3, async (cat: Record<string, unknown>) => {
-      const productCount = await this._productModel
-        .countDocuments({ category: cat._id })
-        .exec();
+      const productCount = await this._itemCountForCategory(cat);
       return this.serializeCategoryRow({
         ...cat,
         productCount,

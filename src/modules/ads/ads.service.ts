@@ -84,6 +84,7 @@ import {
 } from '@schemas/ad-credit-payment.schema';
 import {
   AdArchiveReasonEnum,
+  AdModerationStatusEnum,
   AdModel,
   StoreAdActionTypeEnum,
 } from '@schemas/ad.schema';
@@ -123,6 +124,9 @@ export type AdManagementRow = {
   billingFinalAmountCad: number;
   audienceTotal: number | null;
   notificationAddon: NotificationAddonPayload;
+  moderationStatus: AdModerationStatusEnum;
+  rejectionReason: string | null;
+  reviewedAt: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -205,15 +209,6 @@ export type AdCampaignStatsPayload = {
   notifications: AdNotificationStatsPayload;
 };
 
-export type AdCampaignItemRow = {
-  itemType: AdCampaignItemTypeEnum;
-  productId: string | null;
-  drinkId: string | null;
-  title: string;
-  imageUrl: string | null;
-  priceCad: number;
-};
-
 export type AdCampaignManagementRow = {
   id: string;
   storeId: string;
@@ -235,8 +230,20 @@ export type AdCampaignManagementRow = {
   billingFinalAmountCad?: number;
   audienceTotal: number | null;
   notificationAddon: NotificationAddonPayload;
+  moderationStatus: AdModerationStatusEnum;
+  rejectionReason: string | null;
+  reviewedAt: string | null;
   createdAt?: string;
   updatedAt?: string;
+};
+
+export type AdCampaignItemRow = {
+  itemType: AdCampaignItemTypeEnum;
+  productId: string | null;
+  drinkId: string | null;
+  title: string;
+  imageUrl: string | null;
+  priceCad: number;
 };
 
 export type PublicAdCampaignRow = {
@@ -254,6 +261,10 @@ export type PublicAdCampaignRow = {
   actionTarget: string | null;
   items: AdCampaignItemRow[];
 };
+
+export type AdModerationQueueItem =
+  | ({ kind: 'BANNER' } & AdManagementRow)
+  | ({ kind: 'CAMPAIGN' } & AdCampaignManagementRow);
 
 export type AdCreditSummaryPayload = {
   currency: string;
@@ -515,6 +526,77 @@ export class AdsService implements OnModuleInit {
     }
   }
 
+  private moderationStatusFromDoc(
+    doc: Record<string, unknown>,
+  ): AdModerationStatusEnum {
+    const raw = String(doc.moderationStatus ?? doc.moderation_status ?? '')
+      .trim()
+      .toUpperCase();
+    if (raw === AdModerationStatusEnum.PENDING_REVIEW) {
+      return AdModerationStatusEnum.PENDING_REVIEW;
+    }
+    if (raw === AdModerationStatusEnum.REJECTED) {
+      return AdModerationStatusEnum.REJECTED;
+    }
+    if (raw === AdModerationStatusEnum.BLOCKED) {
+      return AdModerationStatusEnum.BLOCKED;
+    }
+    return AdModerationStatusEnum.APPROVED;
+  }
+
+  private assertVendorAdNotBlocked(
+    user: UserModel,
+    moderationStatus: AdModerationStatusEnum | undefined,
+  ): void {
+    if (user.type !== UserTypeEnum.VENDOR) return;
+    if (moderationStatus === AdModerationStatusEnum.BLOCKED) {
+      throw new ForbiddenException('ad_blocked');
+    }
+  }
+
+  private moderationReviewedAtFromDoc(
+    doc: Record<string, unknown>,
+  ): string | null {
+    const raw = doc.reviewedAt ?? doc.reviewed_at;
+    if (raw == null || String(raw).trim() === '') return null;
+    return raw instanceof Date ? raw.toISOString() : String(raw);
+  }
+
+  private rejectionReasonFromDoc(doc: Record<string, unknown>): string | null {
+    const raw = doc.rejectionReason ?? doc.rejection_reason;
+    if (raw == null || String(raw).trim() === '') return null;
+    return String(raw).trim();
+  }
+
+  private moderationFieldsForRow(doc: Record<string, unknown>): {
+    moderationStatus: AdModerationStatusEnum;
+    rejectionReason: string | null;
+    reviewedAt: string | null;
+  } {
+    return {
+      moderationStatus: this.moderationStatusFromDoc(doc),
+      rejectionReason: this.rejectionReasonFromDoc(doc),
+      reviewedAt: this.moderationReviewedAtFromDoc(doc),
+    };
+  }
+
+  private approvedForPublicModerationFilter(): Record<string, unknown> {
+    return {
+      $or: [
+        { moderationStatus: AdModerationStatusEnum.APPROVED },
+        { moderationStatus: { $exists: false } },
+        { moderationStatus: null },
+      ],
+    };
+  }
+
+  private vendorRequiresModeration(
+    user: UserModel,
+    storeId: string | null | undefined,
+  ): boolean {
+    return user.type === UserTypeEnum.VENDOR && Boolean(storeId);
+  }
+
   /** Lecture robuste des docs `.lean()` (champs camelCase ou snake_case Mongo). */
   private _archivedAtFromLean(doc: Record<string, unknown>): Date | null {
     const raw = doc.archivedAt ?? doc.archived_at;
@@ -569,8 +651,9 @@ export class AdsService implements OnModuleInit {
   private async assertActiveBannerLimit(
     storeId: string,
     user: UserModel,
+    opts?: { enforcePlanLimit?: boolean },
   ): Promise<void> {
-    if (user.type === UserTypeEnum.ADMIN) return;
+    if (user.type === UserTypeEnum.ADMIN && !opts?.enforcePlanLimit) return;
     const limit =
       await this._subscriptions.resolveActiveBannerLimitForStore(storeId);
     if (limit == null) return; // illimité
@@ -579,6 +662,7 @@ export class AdsService implements OnModuleInit {
       .countDocuments({
         store: new Types.ObjectId(storeId),
         isActive: true,
+        ...this.approvedForPublicModerationFilter(),
         $or: [
           { archivedAt: { $exists: false } },
           { archivedAt: null },
@@ -600,8 +684,9 @@ export class AdsService implements OnModuleInit {
   private async assertActiveCampaignLimit(
     storeId: string,
     user: UserModel,
+    opts?: { enforcePlanLimit?: boolean },
   ): Promise<void> {
-    if (user.type === UserTypeEnum.ADMIN) return;
+    if (user.type === UserTypeEnum.ADMIN && !opts?.enforcePlanLimit) return;
     const limit =
       await this._subscriptions.resolveActiveCampaignLimitForStore(storeId);
     if (limit == null) return; // illimité
@@ -1305,6 +1390,7 @@ export class AdsService implements OnModuleInit {
           | Record<string, unknown>
           | undefined,
       ),
+      ...this.moderationFieldsForRow(doc),
       createdAt:
         doc.createdAt instanceof Date
           ? doc.createdAt.toISOString()
@@ -1743,6 +1829,11 @@ export class AdsService implements OnModuleInit {
     }
     await this.assertCanManageCampaignStore(user, storeId);
     await this.assertActiveCampaignLimit(storeId, user);
+    const requiresModeration = user.type === UserTypeEnum.VENDOR;
+    const moderationStatus = requiresModeration
+      ? AdModerationStatusEnum.PENDING_REVIEW
+      : AdModerationStatusEnum.APPROVED;
+    const isActive = requiresModeration ? false : dto.isActive !== false;
     const startsAt = new Date(dto.startsAt);
     const endsAt = new Date(dto.endsAt);
     this._assertCampaignDateRange(startsAt, endsAt);
@@ -1775,7 +1866,8 @@ export class AdsService implements OnModuleInit {
       description: dto.description?.trim() || '',
       startsAt,
       endsAt,
-      isActive: dto.isActive !== false,
+      isActive,
+      moderationStatus,
       actionType,
       actionText,
       actionTarget: actionTarget || undefined,
@@ -1786,11 +1878,13 @@ export class AdsService implements OnModuleInit {
         channelAvailability,
       ),
     });
-    this.scheduleNotificationDispatchAfterSave(
-      'campaign',
-      created._id,
-      created.notificationAddon,
-    );
+    if (moderationStatus === AdModerationStatusEnum.APPROVED) {
+      this.scheduleNotificationDispatchAfterSave(
+        'campaign',
+        created._id,
+        created.notificationAddon,
+      );
+    }
     const row = await this._adCampaignModel
       .findById(created._id)
       .populate('store', 'name profileImage')
@@ -1820,6 +1914,22 @@ export class AdsService implements OnModuleInit {
     }
     const existingStoreId = String(existing.store);
     await this.assertCanManageCampaignStore(user, existingStoreId);
+    if (user.type === UserTypeEnum.VENDOR) {
+      this.assertVendorAdNotBlocked(user, existing.moderationStatus);
+      if (
+        dto.isActive === true &&
+        existing.moderationStatus !== AdModerationStatusEnum.APPROVED
+      ) {
+        throw new ForbiddenException('ad_moderation_required');
+      }
+      if (existing.moderationStatus === AdModerationStatusEnum.REJECTED) {
+        existing.moderationStatus = AdModerationStatusEnum.PENDING_REVIEW;
+        existing.rejectionReason = undefined;
+        existing.reviewedAt = null;
+        existing.reviewedBy = null;
+        existing.isActive = false;
+      }
+    }
     const previousCampaignStatus = VendorStatusEmailService.resolveCampaignStatus({
       isActive: Boolean(existing.isActive),
       startsAt: existing.startsAt,
@@ -1903,11 +2013,13 @@ export class AdsService implements OnModuleInit {
         dto.notificationAddon,
         channelAvailability,
       );
-      this.scheduleNotificationDispatchAfterSave(
-        'campaign',
-        existing._id,
-        existing.notificationAddon,
-      );
+      if (existing.moderationStatus === AdModerationStatusEnum.APPROVED) {
+        this.scheduleNotificationDispatchAfterSave(
+          'campaign',
+          existing._id,
+          existing.notificationAddon,
+        );
+      }
     }
     await existing.save();
     const newCampaignStatus = VendorStatusEmailService.resolveCampaignStatus({
@@ -1945,15 +2057,19 @@ export class AdsService implements OnModuleInit {
     }
     const existing = await this._adCampaignModel
       .findById(id)
-      .select('_id store archivedAt billingFinalizedAt')
+      .select('_id store archivedAt billingFinalizedAt moderationStatus')
       .lean()
       .exec();
     if (!existing) {
       throw new NotFoundException('campaign_not_found');
     }
     await this.assertCanManageCampaignStore(user, String(existing.store));
-    const campaignOid = new Types.ObjectId(String(existing._id));
     const lean = existing as unknown as Record<string, unknown>;
+    this.assertVendorAdNotBlocked(
+      user,
+      this.moderationStatusFromDoc(lean),
+    );
+    const campaignOid = new Types.ObjectId(String(existing._id));
     if (!this._archivedAtFromLean(lean)) {
       await this._archiveCampaignById(campaignOid, {
         forceEndsNow: true,
@@ -1984,13 +2100,17 @@ export class AdsService implements OnModuleInit {
     this.assertVendorStripeConnectReadyForWrites(user);
     const existing = await this._adCampaignModel
       .findById(id)
-      .select('store')
+      .select('store moderationStatus')
       .lean()
       .exec();
     if (!existing) {
       throw new NotFoundException('campaign_not_found');
     }
     await this.assertCanManageCampaignStore(user, String(existing.store));
+    this.assertVendorAdNotBlocked(
+      user,
+      this.moderationStatusFromDoc(existing as unknown as Record<string, unknown>),
+    );
     const res = await this._adCampaignModel.deleteOne({ _id: id }).exec();
     if (!res.deletedCount) {
       throw new NotFoundException('campaign_not_found');
@@ -2002,10 +2122,15 @@ export class AdsService implements OnModuleInit {
     const now = new Date();
     const docs = await this._adCampaignModel
       .find({
-        $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
-        isActive: true,
-        startsAt: { $lte: now },
-        endsAt: { $gte: now },
+        $and: [
+          {
+            $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
+          },
+          this.approvedForPublicModerationFilter(),
+          { isActive: true },
+          { startsAt: { $lte: now } },
+          { endsAt: { $gte: now } },
+        ],
       })
       .populate('store', 'name status profileImage')
       .populate('items.product', 'title profileImage price status')
@@ -2053,10 +2178,15 @@ export class AdsService implements OnModuleInit {
     const campaign = await this._adCampaignModel
       .findOne({
         _id: new Types.ObjectId(campaignId),
-        $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
-        isActive: true,
-        startsAt: { $lte: now },
-        endsAt: { $gte: now },
+        $and: [
+          {
+            $or: [{ archivedAt: { $exists: false } }, { archivedAt: null }],
+          },
+          this.approvedForPublicModerationFilter(),
+          { isActive: true },
+          { startsAt: { $lte: now } },
+          { endsAt: { $gte: now } },
+        ],
       })
       .select('_id store')
       .lean()
@@ -3339,6 +3469,7 @@ export class AdsService implements OnModuleInit {
           | Record<string, unknown>
           | undefined,
       ),
+      ...this.moderationFieldsForRow(doc),
       createdAt:
         doc.createdAt instanceof Date
           ? doc.createdAt.toISOString()
@@ -3529,7 +3660,10 @@ export class AdsService implements OnModuleInit {
   private async _loadListPublic(): Promise<AdModel[]> {
     await this._autoArchiveExpiredAds();
     const raw = await this.adModel
-      .find({ isActive: true })
+      .find({
+        isActive: true,
+        ...this.approvedForPublicModerationFilter(),
+      })
       .populate('store', 'name profileImage status')
       .populate('product', 'title')
       .sort({ sortOrder: 1 })
@@ -3645,9 +3779,19 @@ export class AdsService implements OnModuleInit {
 
     if (storeOid) {
       await this.assertUserCanManageStore(user, storeOid.toString());
-      if (dto.isActive !== false) {
-        await this.assertActiveBannerLimit(storeOid.toString(), user);
-      }
+    }
+
+    const requiresModeration = this.vendorRequiresModeration(
+      user,
+      storeOid?.toString(),
+    );
+    const moderationStatus = requiresModeration
+      ? AdModerationStatusEnum.PENDING_REVIEW
+      : AdModerationStatusEnum.APPROVED;
+    const isActive = requiresModeration ? false : dto.isActive !== false;
+
+    if (storeOid && isActive) {
+      await this.assertActiveBannerLimit(storeOid.toString(), user);
     }
 
     const validFrom = new Date(dto.validFrom);
@@ -3670,7 +3814,8 @@ export class AdsService implements OnModuleInit {
 
     const channelAvailability = await this._getAvailableNotificationChannels();
     const created = await this.adModel.create({
-      isActive: dto.isActive !== false,
+      isActive,
+      moderationStatus,
       title: dto.title.trim(),
       subtitle: dto.subtitle.trim(),
       actionText: dto.actionText.trim(),
@@ -3693,11 +3838,13 @@ export class AdsService implements OnModuleInit {
     });
 
     this.invalidateListCache();
-    this.scheduleNotificationDispatchAfterSave(
-      'banner',
-      created._id,
-      created.notificationAddon,
-    );
+    if (moderationStatus === AdModerationStatusEnum.APPROVED) {
+      this.scheduleNotificationDispatchAfterSave(
+        'banner',
+        created._id,
+        created.notificationAddon,
+      );
+    }
 
     const populated = await this.adModel
       .findById(created._id)
@@ -3732,6 +3879,23 @@ export class AdsService implements OnModuleInit {
       throw new ForbiddenException('global_ad_vendor_forbidden');
     }
 
+    if (user.type === UserTypeEnum.VENDOR) {
+      this.assertVendorAdNotBlocked(user, existing.moderationStatus);
+      if (
+        dto.isActive === true &&
+        existing.moderationStatus !== AdModerationStatusEnum.APPROVED
+      ) {
+        throw new ForbiddenException('ad_moderation_required');
+      }
+      if (existing.moderationStatus === AdModerationStatusEnum.REJECTED) {
+        existing.moderationStatus = AdModerationStatusEnum.PENDING_REVIEW;
+        existing.rejectionReason = undefined;
+        existing.reviewedAt = null;
+        existing.reviewedBy = null;
+        existing.isActive = false;
+      }
+    }
+
     const nextAction =
       dto.actionType ?? existing.actionType ?? StoreAdActionTypeEnum.SHOP;
     if (!storeIdStr && nextAction === StoreAdActionTypeEnum.PRODUCT) {
@@ -3739,7 +3903,12 @@ export class AdsService implements OnModuleInit {
     }
 
     // Enforce banner limit when activating a previously inactive banner
-    if (dto.isActive === true && !existing.isActive && storeIdStr) {
+    if (
+      dto.isActive === true &&
+      !existing.isActive &&
+      storeIdStr &&
+      existing.moderationStatus === AdModerationStatusEnum.APPROVED
+    ) {
       await this.assertActiveBannerLimit(storeIdStr, user);
     }
 
@@ -3868,11 +4037,13 @@ export class AdsService implements OnModuleInit {
         dto.notificationAddon,
         channelAvailability,
       );
-      this.scheduleNotificationDispatchAfterSave(
-        'banner',
-        existing._id,
-        existing.notificationAddon,
-      );
+      if (existing.moderationStatus === AdModerationStatusEnum.APPROVED) {
+        this.scheduleNotificationDispatchAfterSave(
+          'banner',
+          existing._id,
+          existing.notificationAddon,
+        );
+      }
     }
 
     await existing.save();
@@ -3915,7 +4086,7 @@ export class AdsService implements OnModuleInit {
     }
     const existing = await this.adModel
       .findById(id)
-      .select('_id store archivedAt billingFinalizedAt')
+      .select('_id store archivedAt billingFinalizedAt moderationStatus')
       .lean()
       .exec();
     if (!existing) {
@@ -3929,6 +4100,7 @@ export class AdsService implements OnModuleInit {
     }
     const adOid = new Types.ObjectId(String(existing._id));
     const lean = existing as unknown as Record<string, unknown>;
+    this.assertVendorAdNotBlocked(user, this.moderationStatusFromDoc(lean));
     if (!this._archivedAtFromLean(lean)) {
       await this._archiveAdById(adOid, {
         forceEndsNow: true,
@@ -4665,5 +4837,290 @@ export class AdsService implements OnModuleInit {
         actionType: StoreAdActionTypeEnum.SHOP,
       },
     ]);
+  }
+
+  async listModerationQueue(
+    user: UserModel,
+    status?: AdModerationStatusEnum | 'ALL',
+  ): Promise<{ items: AdModerationQueueItem[] }> {
+    this.assertAdmin(user);
+    const bannerFilter: Record<string, unknown> = {
+      store: { $exists: true, $ne: null },
+    };
+    const campaignFilter: Record<string, unknown> = {};
+    if (!status || status === 'ALL') {
+      if (!status) {
+        bannerFilter.moderationStatus = AdModerationStatusEnum.PENDING_REVIEW;
+        campaignFilter.moderationStatus = AdModerationStatusEnum.PENDING_REVIEW;
+      }
+    } else {
+      bannerFilter.moderationStatus = status;
+      campaignFilter.moderationStatus = status;
+    }
+    const [bannerDocs, campaignDocs] = await Promise.all([
+      this.adModel
+        .find(bannerFilter)
+        .populate('store', 'name')
+        .populate('product', 'title')
+        .sort({ createdAt: -1 })
+        .lean()
+        .exec(),
+      this._adCampaignModel
+        .find(campaignFilter)
+        .populate('store', 'name profileImage')
+        .populate('items.product', 'title profileImage price')
+        .populate('items.drink', 'name imageUrl priceCad')
+        .sort({ createdAt: -1 })
+        .lean()
+        .exec(),
+    ]);
+    const items: AdModerationQueueItem[] = [
+      ...(bannerDocs as Record<string, unknown>[]).map((d) => ({
+        kind: 'BANNER' as const,
+        ...this.toManagementRow(d),
+      })),
+      ...(campaignDocs as Record<string, unknown>[]).map((d) => ({
+        kind: 'CAMPAIGN' as const,
+        ...this._toCampaignRow(d),
+      })),
+    ].sort((a, b) => {
+      const aTs = Date.parse(a.createdAt ?? '') || 0;
+      const bTs = Date.parse(b.createdAt ?? '') || 0;
+      return bTs - aTs;
+    });
+    return { items };
+  }
+
+  async approveBannerModeration(
+    user: UserModel,
+    id: string,
+  ): Promise<AdManagementRow> {
+    this.assertAdmin(user);
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('ad_not_found');
+    }
+    const existing = await this.adModel.findById(id).exec();
+    if (!existing) {
+      throw new NotFoundException('ad_not_found');
+    }
+    if (!existing.store) {
+      throw new BadRequestException('ad_moderation_not_applicable');
+    }
+    if (existing.moderationStatus !== AdModerationStatusEnum.PENDING_REVIEW) {
+      throw new BadRequestException('ad_moderation_not_pending');
+    }
+    const storeIdStr = String(existing.store);
+    await this.assertActiveBannerLimit(storeIdStr, user, {
+      enforcePlanLimit: true,
+    });
+    existing.moderationStatus = AdModerationStatusEnum.APPROVED;
+    existing.rejectionReason = undefined;
+    existing.reviewedAt = new Date();
+    existing.set('reviewedBy', user._id);
+    existing.isActive = true;
+    await existing.save();
+    this.invalidateListCache();
+    this.scheduleNotificationDispatchAfterSave(
+      'banner',
+      existing._id,
+      existing.notificationAddon,
+    );
+    const populated = await this.adModel
+      .findById(existing._id)
+      .populate('store', 'name')
+      .populate('product', 'title')
+      .lean()
+      .exec();
+    return this.toManagementRow(populated as Record<string, unknown>);
+  }
+
+  async rejectBannerModeration(
+    user: UserModel,
+    id: string,
+    rejectionReason: string,
+  ): Promise<AdManagementRow> {
+    this.assertAdmin(user);
+    const reason = rejectionReason.trim();
+    if (reason.length < 3) {
+      throw new BadRequestException('ad_rejection_reason_required');
+    }
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('ad_not_found');
+    }
+    const existing = await this.adModel.findById(id).exec();
+    if (!existing) {
+      throw new NotFoundException('ad_not_found');
+    }
+    if (!existing.store) {
+      throw new BadRequestException('ad_moderation_not_applicable');
+    }
+    if (existing.moderationStatus !== AdModerationStatusEnum.PENDING_REVIEW) {
+      throw new BadRequestException('ad_moderation_not_pending');
+    }
+    existing.moderationStatus = AdModerationStatusEnum.REJECTED;
+    existing.rejectionReason = reason;
+    existing.reviewedAt = new Date();
+    existing.set('reviewedBy', user._id);
+    existing.isActive = false;
+    await existing.save();
+    this.invalidateListCache();
+    const populated = await this.adModel
+      .findById(existing._id)
+      .populate('store', 'name')
+      .populate('product', 'title')
+      .lean()
+      .exec();
+    return this.toManagementRow(populated as Record<string, unknown>);
+  }
+
+  async approveCampaignModeration(
+    user: UserModel,
+    id: string,
+  ): Promise<AdCampaignManagementRow> {
+    this.assertAdmin(user);
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('campaign_not_found');
+    }
+    const existing = await this._adCampaignModel.findById(id).exec();
+    if (!existing) {
+      throw new NotFoundException('campaign_not_found');
+    }
+    if (existing.moderationStatus !== AdModerationStatusEnum.PENDING_REVIEW) {
+      throw new BadRequestException('ad_moderation_not_pending');
+    }
+    const storeIdStr = String(existing.store);
+    await this.assertActiveCampaignLimit(storeIdStr, user, {
+      enforcePlanLimit: true,
+    });
+    existing.moderationStatus = AdModerationStatusEnum.APPROVED;
+    existing.rejectionReason = undefined;
+    existing.reviewedAt = new Date();
+    existing.set('reviewedBy', user._id);
+    existing.isActive = true;
+    await existing.save();
+    this.scheduleNotificationDispatchAfterSave(
+      'campaign',
+      existing._id,
+      existing.notificationAddon,
+    );
+    const row = await this._adCampaignModel
+      .findById(existing._id)
+      .populate('store', 'name profileImage')
+      .populate('items.product', 'title profileImage price store')
+      .populate('items.drink', 'name imageUrl priceCad store')
+      .lean()
+      .exec();
+    return this._toCampaignRow(row as unknown as Record<string, unknown>);
+  }
+
+  async rejectCampaignModeration(
+    user: UserModel,
+    id: string,
+    rejectionReason: string,
+  ): Promise<AdCampaignManagementRow> {
+    this.assertAdmin(user);
+    const reason = rejectionReason.trim();
+    if (reason.length < 3) {
+      throw new BadRequestException('ad_rejection_reason_required');
+    }
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('campaign_not_found');
+    }
+    const existing = await this._adCampaignModel.findById(id).exec();
+    if (!existing) {
+      throw new NotFoundException('campaign_not_found');
+    }
+    if (existing.moderationStatus !== AdModerationStatusEnum.PENDING_REVIEW) {
+      throw new BadRequestException('ad_moderation_not_pending');
+    }
+    existing.moderationStatus = AdModerationStatusEnum.REJECTED;
+    existing.rejectionReason = reason;
+    existing.reviewedAt = new Date();
+    existing.set('reviewedBy', user._id);
+    existing.isActive = false;
+    await existing.save();
+    const row = await this._adCampaignModel
+      .findById(existing._id)
+      .populate('store', 'name profileImage')
+      .populate('items.product', 'title profileImage price store')
+      .populate('items.drink', 'name imageUrl priceCad store')
+      .lean()
+      .exec();
+    return this._toCampaignRow(row as unknown as Record<string, unknown>);
+  }
+
+  async blockBannerModeration(
+    user: UserModel,
+    id: string,
+    blockReason: string,
+  ): Promise<AdManagementRow> {
+    this.assertAdmin(user);
+    const reason = blockReason.trim();
+    if (reason.length < 3) {
+      throw new BadRequestException('ad_block_reason_required');
+    }
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('ad_not_found');
+    }
+    const existing = await this.adModel.findById(id).exec();
+    if (!existing) {
+      throw new NotFoundException('ad_not_found');
+    }
+    if (!existing.store) {
+      throw new BadRequestException('ad_moderation_not_applicable');
+    }
+    if (existing.moderationStatus === AdModerationStatusEnum.BLOCKED) {
+      throw new BadRequestException('ad_already_blocked');
+    }
+    existing.moderationStatus = AdModerationStatusEnum.BLOCKED;
+    existing.rejectionReason = reason;
+    existing.reviewedAt = new Date();
+    existing.set('reviewedBy', user._id);
+    existing.isActive = false;
+    await existing.save();
+    this.invalidateListCache();
+    const populated = await this.adModel
+      .findById(existing._id)
+      .populate('store', 'name')
+      .populate('product', 'title')
+      .lean()
+      .exec();
+    return this.toManagementRow(populated as Record<string, unknown>);
+  }
+
+  async blockCampaignModeration(
+    user: UserModel,
+    id: string,
+    blockReason: string,
+  ): Promise<AdCampaignManagementRow> {
+    this.assertAdmin(user);
+    const reason = blockReason.trim();
+    if (reason.length < 3) {
+      throw new BadRequestException('ad_block_reason_required');
+    }
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('campaign_not_found');
+    }
+    const existing = await this._adCampaignModel.findById(id).exec();
+    if (!existing) {
+      throw new NotFoundException('campaign_not_found');
+    }
+    if (existing.moderationStatus === AdModerationStatusEnum.BLOCKED) {
+      throw new BadRequestException('ad_already_blocked');
+    }
+    existing.moderationStatus = AdModerationStatusEnum.BLOCKED;
+    existing.rejectionReason = reason;
+    existing.reviewedAt = new Date();
+    existing.set('reviewedBy', user._id);
+    existing.isActive = false;
+    await existing.save();
+    const row = await this._adCampaignModel
+      .findById(existing._id)
+      .populate('store', 'name profileImage')
+      .populate('items.product', 'title profileImage price store')
+      .populate('items.drink', 'name imageUrl priceCad store')
+      .lean()
+      .exec();
+    return this._toCampaignRow(row as unknown as Record<string, unknown>);
   }
 }

@@ -126,15 +126,7 @@ export class PatchDrinkDto {
 }
 
 /** Mise à jour boisson : JSON partiel + image base64 optionnelle. */
-export class PatchDrinkJsonDto extends PartialType(CreateDrinkDto) {
-  @ApiPropertyOptional({
-    description: 'Retirer l’image existante (sans envoyer imageBase64)',
-  })
-  @IsOptional()
-  @Transform(({ value }) => value === true || value === 'true')
-  @IsBoolean()
-  clearImage?: boolean;
-
+export class PatchDrinkJsonDto extends PartialType(PatchDrinkDto) {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

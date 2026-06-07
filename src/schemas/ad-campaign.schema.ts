@@ -8,7 +8,7 @@ import {
 import { DrinkModel } from './drink.schema';
 import { ProductModel } from './product.schema';
 import { StoreModel } from './store.schema';
-import { StoreAdActionTypeEnum } from './ad.schema';
+import { AdModerationStatusEnum, StoreAdActionTypeEnum } from './ad.schema';
 
 export enum AdCampaignItemTypeEnum {
   PRODUCT = 'PRODUCT',
@@ -158,6 +158,29 @@ export class AdCampaignModel extends BaseSchema {
 
   @Prop({ required: false, default: null, name: 'notification_dispatched_at' })
   notificationDispatchedAt?: Date | null;
+
+  @Prop({
+    required: false,
+    enum: AdModerationStatusEnum,
+    default: AdModerationStatusEnum.APPROVED,
+    name: 'moderation_status',
+  })
+  moderationStatus?: AdModerationStatusEnum;
+
+  @Prop({ required: false, maxlength: 500, name: 'rejection_reason' })
+  rejectionReason?: string;
+
+  @Prop({ required: false, default: null, name: 'reviewed_at' })
+  reviewedAt?: Date | null;
+
+  @Prop({
+    required: false,
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserModel',
+    default: null,
+    name: 'reviewed_by',
+  })
+  reviewedBy?: MongooseSchema.Types.ObjectId | null;
 }
 
 export const AdCampaignSchema = SchemaFactory.createForClass(AdCampaignModel);

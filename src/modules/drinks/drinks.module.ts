@@ -1,4 +1,5 @@
 import { MediasModule } from '@modules/medias/medias.module';
+import { ProductsModule } from '@modules/products/products.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { TeamsModule } from '@modules/teams/teams.module';
 import { Module } from '@nestjs/common';
@@ -16,6 +17,7 @@ import { DrinksService } from './drinks.service';
 @Module({
   imports: [
     MediasModule,
+    ProductsModule,
     SubscriptionsModule,
     TeamsModule,
     MongooseModule.forFeature([

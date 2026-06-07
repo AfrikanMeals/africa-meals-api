@@ -23,6 +23,15 @@ export enum AdArchiveReasonEnum {
   EXPIRED = 'EXPIRED',
 }
 
+/** Modération admin des bannières vendeur avant diffusion publique. */
+export enum AdModerationStatusEnum {
+  PENDING_REVIEW = 'PENDING_REVIEW',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  /** Bloquée par l’admin : le vendeur ne peut plus modifier la publication. */
+  BLOCKED = 'BLOCKED',
+}
+
 @Schema({
   timestamps: true,
   collection: 'ads',
@@ -130,6 +139,29 @@ export class AdModel extends BaseSchema {
   /** Date d’envoi des notifications add-on (worker). */
   @Prop({ required: false, default: null, name: 'notification_dispatched_at' })
   notificationDispatchedAt?: Date | null;
+
+  @Prop({
+    required: false,
+    enum: AdModerationStatusEnum,
+    default: AdModerationStatusEnum.APPROVED,
+    name: 'moderation_status',
+  })
+  moderationStatus?: AdModerationStatusEnum;
+
+  @Prop({ required: false, maxlength: 500, name: 'rejection_reason' })
+  rejectionReason?: string;
+
+  @Prop({ required: false, default: null, name: 'reviewed_at' })
+  reviewedAt?: Date | null;
+
+  @Prop({
+    required: false,
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserModel',
+    default: null,
+    name: 'reviewed_by',
+  })
+  reviewedBy?: MongooseSchema.Types.ObjectId | null;
 }
 
 export const AdSchema = SchemaFactory.createForClass(AdModel);

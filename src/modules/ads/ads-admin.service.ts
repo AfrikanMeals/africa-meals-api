@@ -103,6 +103,13 @@ export type AdManagerNotificationStats = {
   }>;
 };
 
+export type AdManagerLiveEventRow = {
+  at: string;
+  scope: 'BANNER' | 'CAMPAIGN';
+  eventType: string;
+  entityId: string;
+};
+
 type Counts = { impressions: number; clicks: number; conversions: number };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -931,5 +938,52 @@ export class AdsAdminService {
       })),
       last7Days,
     };
+  }
+
+  /** Derniers événements bannières + campagnes sur la période (flux Ad Manager). */
+  async getRecentEvents(
+    user: UserModel,
+    query: AdManagerRangeQuery & { limit?: number },
+  ): Promise<AdManagerLiveEventRow[]> {
+    this.assertAdmin(user);
+    const range = this.resolveRange(query);
+    const limit = Math.min(Math.max(Number(query.limit) || 60, 1), 200);
+    const match = {
+      createdAt: { $gte: range.start, $lt: range.endExclusive },
+    };
+    const [bannerDocs, campaignDocs] = await Promise.all([
+      this.adEventModel
+        .find(match)
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .select('ad eventType createdAt')
+        .lean()
+        .exec(),
+      this.campaignEventModel
+        .find(match)
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .select('campaign eventType createdAt')
+        .lean()
+        .exec(),
+    ]);
+    const rows: AdManagerLiveEventRow[] = [
+      ...(bannerDocs as Array<Record<string, unknown>>).map((doc) => ({
+        at: new Date(String(doc.createdAt ?? '')).toISOString(),
+        scope: 'BANNER' as const,
+        eventType: String(doc.eventType ?? ''),
+        entityId: String(doc.ad ?? ''),
+      })),
+      ...(campaignDocs as Array<Record<string, unknown>>).map((doc) => ({
+        at: new Date(String(doc.createdAt ?? '')).toISOString(),
+        scope: 'CAMPAIGN' as const,
+        eventType: String(doc.eventType ?? ''),
+        entityId: String(doc.campaign ?? ''),
+      })),
+    ]
+      .filter((row) => row.entityId && !Number.isNaN(Date.parse(row.at)))
+      .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
+      .slice(0, limit);
+    return rows;
   }
 }
