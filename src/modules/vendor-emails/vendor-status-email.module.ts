@@ -1,4 +1,5 @@
 import { MailerModule } from '@modules/mailer/mailer.module';
+import { VendorNotificationModule } from '@modules/vendor-notifications/vendor-notification.module';
 import { TeamsModule } from '@modules/teams/teams.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -10,6 +11,7 @@ import { VendorStatusEmailService } from './vendor-status-email.service';
   imports: [
     MailerModule,
     TeamsModule,
+    VendorNotificationModule,
     MongooseModule.forFeature([
       { name: UserModel.name, schema: UserSchema },
       { name: StoreModel.name, schema: StoreSchema },

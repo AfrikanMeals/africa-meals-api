@@ -72,6 +72,10 @@ export class CartItemModel extends BaseSchema {
   })
   selectedSupplements?: LineSupplementSnapshot[];
 
+  /** Variante de prix choisie (ex. Medium, Large). */
+  @Prop({ required: false, name: 'selected_variant_label', trim: true })
+  selectedVariantLabel?: string;
+
   @Prop({
     required: true,
     name: 'user',

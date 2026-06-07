@@ -43,6 +43,8 @@ import { MailerModule } from '@modules/mailer/mailer.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { OrderInvoicePdfService } from './order-invoice-pdf.service';
 import { OrderPaidInvoiceEmailService } from './order-paid-invoice-email.service';
+import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
+import { VendorNotificationModule } from '@modules/vendor-notifications/vendor-notification.module';
 
 @Module({
   controllers: [OrdersController],
@@ -61,6 +63,8 @@ import { OrderPaidInvoiceEmailService } from './order-paid-invoice-email.service
     WsNotifyModule,
     MailerModule,
     SupportedCountriesModule,
+    VendorStatusEmailModule,
+    VendorNotificationModule,
     BusinessReportsModule,
     CartModule,
     AdsModule,

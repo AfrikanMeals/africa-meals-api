@@ -2781,6 +2781,7 @@ export class DashboardService {
     }
 
     if (customerId && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
+      this.ordersService.sendShippedInvoiceEmail(orderDoc._id.toString());
       void this.notificationsService
         .pushCustomerOrderStatusChanged({
           userId: customerId,
@@ -2806,30 +2807,14 @@ export class DashboardService {
 
     if (orderStoreId && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
       const sname = this.storeNameForOrderPush(orderDoc);
-      const vendorIds = await this.storeAccess.listStorePushRecipientUserIds(
-        orderStoreId,
-      );
-      if (vendorIds.length > 0) {
-        void this.notificationsService
-          .pushVendorOrderNotify({
-            vendorUserIds: vendorIds,
-            title: 'Commande en livraison',
-            body: `${
-              sname ?? 'Boutique'
-            } : commande prise en charge par ${agentName}.`,
-            orderId: orderDoc._id.toString(),
-            storeName: sname,
-            reason: 'order_shipped',
-            status: OrderStatusEnum.SHIPPED,
-          })
-          .catch((err) => {
-            this.logger.warn(
-              `FCM vendor order shipped: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            );
-          });
-      }
+      this.ordersService.notifyStoreVendorsForOrderStatusChange(orderDoc, {
+        reason: 'order_shipped',
+        status: OrderStatusEnum.SHIPPED,
+        note: `Prise en charge par ${agentName}`,
+        pushBodyOverride: `${
+          sname ?? 'Boutique'
+        } : commande prise en charge par ${agentName}.`,
+      });
     }
 
     const rows = await this.listDashboardLivreurs(actor);

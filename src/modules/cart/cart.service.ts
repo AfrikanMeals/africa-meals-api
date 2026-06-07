@@ -291,6 +291,7 @@ export class CartService {
       return {
         selectedComplements: [] as ReturnType<typeof normalizeSelectedComplements>,
         selectedSupplements: [] as ReturnType<typeof normalizeSelectedSupplements>,
+        selectedVariantLabel: undefined as string | undefined,
         customizationKey: '',
       };
     }
@@ -300,12 +301,15 @@ export class CartService {
     const selectedSupplements = normalizeSelectedSupplements(
       args.selectedSupplements,
     );
+    const selectedVariantLabel = String(args.selectedVariantLabel ?? '').trim();
     return {
       selectedComplements,
       selectedSupplements,
+      selectedVariantLabel: selectedVariantLabel || undefined,
       customizationKey: customizationKeyFromSelections(
         selectedComplements,
         selectedSupplements,
+        selectedVariantLabel,
       ),
     };
   }
@@ -408,6 +412,7 @@ export class CartService {
                 price: priceForLine,
                 selectedComplements: customization.selectedComplements,
                 selectedSupplements: customization.selectedSupplements,
+                selectedVariantLabel: customization.selectedVariantLabel,
               },
             },
           )
@@ -427,6 +432,7 @@ export class CartService {
         customizationKey: customization.customizationKey,
         selectedComplements: customization.selectedComplements,
         selectedSupplements: customization.selectedSupplements,
+        selectedVariantLabel: customization.selectedVariantLabel,
       });
     }
 

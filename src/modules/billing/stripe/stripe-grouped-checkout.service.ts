@@ -19,6 +19,7 @@ import { PlatformFeesService } from '@modules/platform-fees/platform-fees.servic
 import { PlatformShippingQuoteService } from '@modules/platform-shipping-settings/platform-shipping-quote.service';
 import { StoreService } from '@modules/store/store.service';
 import { UsersService } from '@modules/users/users.service';
+import { VendorNotificationStripeBillingService } from '@modules/vendor-notifications/vendor-notification-stripe-billing.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -26,6 +27,8 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
+  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -461,6 +464,9 @@ export class StripeGroupedCheckoutService {
     private readonly adCreditPaymentModel: Model<AdCreditPaymentModel>,
     @Inject(SubscriptionsStripeCheckoutService)
     private readonly subscriptionStripeCheckout: SubscriptionsStripeCheckoutService,
+    @Inject(forwardRef(() => VendorNotificationStripeBillingService))
+    @Optional()
+    private readonly vendorSmsBilling?: VendorNotificationStripeBillingService,
   ) {}
 
   private async settleAdCreditFromCheckoutSession(session: {
@@ -1816,6 +1822,13 @@ export class StripeGroupedCheckoutService {
       );
       if (adCreditSettled) {
         return { received: true };
+      }
+      if (this.vendorSmsBilling) {
+        const smsBillingSettled =
+          await this.vendorSmsBilling.fulfillFromCheckoutSession(session);
+        if (smsBillingSettled) {
+          return { received: true };
+        }
       }
       const uid = session.metadata?.uid;
       const storesCsv = session.metadata?.stores;

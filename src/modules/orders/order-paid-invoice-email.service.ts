@@ -7,10 +7,17 @@ import { OrderModel } from '@schemas/order.schema';
 import { Model, Types } from 'mongoose';
 import { OrderInvoicePdfService } from './order-invoice-pdf.service';
 import {
+  buildOrderEmailJsonLd,
+  formatInvoiceMoney,
   formatOrderDeliveryLine,
+  OrderSchemaStatus,
   orderInvoiceRef,
+  resolveOrderPublicUrl,
   type OrderInvoiceSnapshot,
 } from './order-invoice.util';
+
+/** Variante d'e-mail de commande (copie + statut Schema.org). */
+type OrderEmailVariant = 'paid' | 'shipped';
 
 @Injectable()
 export class OrderPaidInvoiceEmailService {
@@ -25,17 +32,45 @@ export class OrderPaidInvoiceEmailService {
     private readonly config: ConfigService,
   ) {}
 
-  isEnabled(): boolean {
-    const raw =
-      this.config.get<string>('DISABLE_ORDER_PAID_INVOICE_EMAIL')?.trim() ??
-      '';
-    return raw !== '1' && raw.toLowerCase() !== 'true';
+  private isFlagDisabled(key: string): boolean {
+    const raw = this.config.get<string>(key)?.trim() ?? '';
+    return raw === '1' || raw.toLowerCase() === 'true';
   }
 
+  isEnabled(): boolean {
+    return !this.isFlagDisabled('DISABLE_ORDER_PAID_INVOICE_EMAIL');
+  }
+
+  isShippedEnabled(): boolean {
+    return !this.isFlagDisabled('DISABLE_ORDER_SHIPPED_EMAIL');
+  }
+
+  /** E-mail de reçu (paiement confirmé) + PDF + balisage achat Schema.org. */
   async sendForPaidOrder(orderId: string): Promise<void> {
     if (!this.isEnabled()) return;
+    await this.sendOrderEmail(orderId, 'paid');
+  }
+
+  /** E-mail « commande en livraison » + balisage Schema.org (OrderInTransit). */
+  async sendForShippedOrder(orderId: string): Promise<void> {
+    if (!this.isShippedEnabled()) return;
+    await this.sendOrderEmail(orderId, 'shipped');
+  }
+
+  /** URL publique configurable de la commande (sinon pas de bouton). */
+  private resolveOrderUrl(orderId: string): string | undefined {
+    const template =
+      this.config.get<string>('EMAIL_ORDER_URL_TEMPLATE')?.trim() || undefined;
+    return resolveOrderPublicUrl(template, orderId);
+  }
+
+  /** Charge la commande, vérifie l'e-mail client et construit le snapshot facture. */
+  private async loadSnapshot(
+    orderId: string,
+    logTag: string,
+  ): Promise<{ snapshot: OrderInvoiceSnapshot; email: string } | null> {
     const oid = orderId?.trim();
-    if (!oid || !Types.ObjectId.isValid(oid)) return;
+    if (!oid || !Types.ObjectId.isValid(oid)) return null;
 
     const order = await this.orderModel
       .findById(oid)
@@ -53,8 +88,8 @@ export class OrderPaidInvoiceEmailService {
       .exec();
 
     if (!order) {
-      this.logger.warn(`order-paid-invoice: commande introuvable ${oid}`);
-      return;
+      this.logger.warn(`${logTag}: commande introuvable ${oid}`);
+      return null;
     }
 
     const userRaw = order.user as
@@ -67,18 +102,14 @@ export class OrderPaidInvoiceEmailService {
       | undefined;
     const email = userRaw?.email?.trim();
     if (!email) {
-      this.logger.warn(`order-paid-invoice: pas d'e-mail client order=${oid}`);
-      return;
+      this.logger.warn(`${logTag}: pas d'e-mail client order=${oid}`);
+      return null;
     }
 
     const storeRaw = order.store as
       | {
           name?: string;
-          address?: {
-            address?: string;
-            city?: string;
-            zipCode?: string;
-          };
+          address?: { address?: string; city?: string; zipCode?: string };
         }
       | null
       | undefined;
@@ -127,66 +158,132 @@ export class OrderPaidInvoiceEmailService {
       items: order.items ?? [],
     };
 
-    const pdf = await this.invoicePdf.buildPdf(snapshot);
-    const ref = orderInvoiceRef(oid);
+    return { snapshot, email };
+  }
+
+  /** Compose et envoie l'e-mail (corps + PDF + JSON-LD) selon la variante. */
+  private async sendOrderEmail(
+    orderId: string,
+    variant: OrderEmailVariant,
+  ): Promise<void> {
+    const logTag =
+      variant === 'paid' ? 'order-paid-invoice' : 'order-shipped';
+    const loaded = await this.loadSnapshot(orderId, logTag);
+    if (!loaded) return;
+    const { snapshot, email } = loaded;
+
+    const ref = orderInvoiceRef(snapshot.orderId);
     const esc = this.emailTemplate.escapeHtml.bind(this.emailTemplate);
-    const storeEsc = esc(storeName);
+    const storeEsc = esc(snapshot.storeName);
     const refEsc = esc(ref);
+    const orderUrl = this.resolveOrderUrl(snapshot.orderId);
+    const amountStr = formatInvoiceMoney(snapshot.totalPrice, snapshot.currency);
 
     const pickupHtml = snapshot.pickupCode?.trim()
       ? [
           this.emailTemplate.paragraph('<strong>Code retrait</strong>'),
-          this.emailTemplate.codeBox(
-            snapshot.pickupCode.trim().toUpperCase(),
-          ),
+          this.emailTemplate.codeBox(snapshot.pickupCode.trim().toUpperCase()),
         ].join('')
       : '';
 
+    const ctaHtml = orderUrl
+      ? this.emailTemplate.button('Voir la commande', orderUrl)
+      : '';
+
+    let heading: string;
+    let intro: string;
+    let subject: string;
+    let preheader: string;
+    let orderStatus: string;
+    let withPdf: boolean;
+    let textLines: string[];
+
+    if (variant === 'paid') {
+      heading = 'Paiement confirmé';
+      intro = `Merci pour votre commande chez <strong>${storeEsc}</strong>. Votre paiement a bien été enregistré.`;
+      subject = `${snapshot.storeName} — Facture commande #${ref}`;
+      preheader = `Commande #${ref} confirmée — ${amountStr}`;
+      orderStatus = OrderSchemaStatus.processing;
+      withPdf = true;
+      textLines = [
+        `Paiement confirmé — ${snapshot.storeName}`,
+        `Référence commande : ${ref}`,
+        snapshot.deliveryLine,
+        snapshot.pickupCode?.trim()
+          ? `Code retrait : ${snapshot.pickupCode.trim().toUpperCase()}`
+          : '',
+        'La facture PDF est jointe à ce message.',
+      ];
+    } else {
+      heading = 'Commande en livraison';
+      intro = `Bonne nouvelle ! Votre commande chez <strong>${storeEsc}</strong> est en cours de livraison.`;
+      subject = `${snapshot.storeName} — Commande #${ref} en livraison`;
+      preheader = `Commande #${ref} en cours de livraison`;
+      orderStatus = OrderSchemaStatus.inTransit;
+      withPdf = false;
+      textLines = [
+        `Commande en livraison — ${snapshot.storeName}`,
+        `Référence commande : ${ref}`,
+        snapshot.deliveryLine,
+        orderUrl ? `Suivre la commande : ${orderUrl}` : '',
+      ];
+    }
+
     const html = [
-      this.emailTemplate.heading('Paiement confirmé'),
-      this.emailTemplate.paragraph(
-        `Merci pour votre commande chez <strong>${storeEsc}</strong>. Votre paiement a bien été enregistré.`,
-      ),
+      this.emailTemplate.heading(heading),
+      this.emailTemplate.paragraph(intro),
       this.emailTemplate.keyValues([
         { label: 'Référence', value: refEsc },
         { label: 'Restaurant', value: storeEsc },
-        { label: 'Mode', value: esc(deliveryLine) },
+        { label: 'Mode', value: esc(snapshot.deliveryLine) },
       ]),
       pickupHtml,
-      this.emailTemplate.paragraph(
-        'Vous trouverez en pièce jointe la facture au format PDF (détail des articles, compléments et montants).',
-      ),
+      variant === 'paid'
+        ? this.emailTemplate.paragraph(
+            'Vous trouverez en pièce jointe la facture au format PDF (détail des articles, compléments et montants).',
+          )
+        : '',
+      ctaHtml,
       this.emailTemplate.muted(
         'Conservez ce message pour vos archives. Pour toute question, répondez à cet e-mail ou contactez le restaurant.',
       ),
-    ].join('');
-
-    const text = [
-      `Paiement confirmé — ${storeName}`,
-      `Référence commande : ${ref}`,
-      deliveryLine,
-      snapshot.pickupCode?.trim()
-        ? `Code retrait : ${snapshot.pickupCode.trim().toUpperCase()}`
-        : '',
-      'La facture PDF est jointe à ce message.',
     ]
       .filter(Boolean)
-      .join('\n');
+      .join('');
+
+    const text = textLines.filter(Boolean).join('\n');
+
+    // Balisage Schema.org « Order » : Gmail/Google affichent la carte achat
+    // (vendeur, articles, « Voir la commande »). Cf. developers.google.com/gmail/markup.
+    const jsonLd = buildOrderEmailJsonLd(snapshot, {
+      ref,
+      orderStatus,
+      orderUrl,
+    });
+    const wrappedHtml = this.emailTemplate.wrapBody(html, {
+      title: subject,
+      preheader,
+      jsonLd,
+    });
+
+    const pdf = withPdf ? await this.invoicePdf.buildPdf(snapshot) : undefined;
 
     await this.mailer.sendSimple({
       to: email,
       toName: snapshot.clientName,
-      subject: `${storeName} — Facture commande #${ref}`,
-      html,
+      subject,
+      html: wrappedHtml,
       text,
-      logContext: 'order-paid-invoice',
-      attachments: [
-        {
-          filename: `facture-${ref}.pdf`,
-          content: pdf,
-          contentType: 'application/pdf',
-        },
-      ],
+      logContext: logTag,
+      attachments: pdf
+        ? [
+            {
+              filename: `facture-${ref}.pdf`,
+              content: pdf,
+              contentType: 'application/pdf',
+            },
+          ]
+        : undefined,
     });
   }
 }

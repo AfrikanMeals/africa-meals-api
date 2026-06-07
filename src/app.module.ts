@@ -43,6 +43,7 @@ import { FieldSelectionModule } from './common/field-selection/field-selection.m
 import { AuthSettingsModule } from './modules/auth-settings/auth-settings.module';
 import { MobileAppSettingsModule } from './modules/mobile-app-settings/mobile-app-settings.module';
 import { AdsTargetingModule } from './modules/ads-targeting/ads-targeting.module';
+import { VendorNotificationModule } from './modules/vendor-notifications/vendor-notification.module';
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
@@ -283,6 +284,7 @@ function redactRedisUrl(url: string): string {
     AuthSettingsModule,
     MobileAppSettingsModule,
     AdsTargetingModule,
+    VendorNotificationModule,
     // SharedModule,
   ],
   controllers: [AppController, EnvDebugController],

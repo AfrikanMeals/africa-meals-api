@@ -9,7 +9,27 @@ export type WrapEmailOptions = {
   preheader?: string;
   /** Titre document HTML. */
   title?: string;
+  /**
+   * Données structurées Schema.org (JSON-LD) injectées en tête de `<body>`.
+   * Gmail/Google les lisent pour afficher une carte (ex. reçu d'achat « Order »).
+   */
+  jsonLd?: Record<string, unknown>;
 };
+
+/**
+ * Sérialise un objet JSON-LD pour une insertion sûre dans un `<script>`.
+ * Échappe `<`, `>`, `&` et les séparateurs de ligne U+2028/U+2029 afin
+ * d'empêcher toute sortie prématurée de la balise script.
+ */
+function renderJsonLdScript(data: Record<string, unknown>): string {
+  const json = JSON.stringify(data)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+  return `<script type="application/ld+json">${json}</script>`;
+}
 
 export const EMAIL_LAYOUT_ID = 'am-email-layout';
 const LAYOUT_MARKER = `id="${EMAIL_LAYOUT_ID}"`;
@@ -184,6 +204,8 @@ export function wrapEmailHtml(
     ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:${colors.background};">${preheader}</div>`
     : '';
 
+  const jsonLdBlock = options?.jsonLd ? renderJsonLdScript(options.jsonLd) : '';
+
   return `<!DOCTYPE html>
 <html lang="fr" ${LAYOUT_MARKER}>
 <head>
@@ -195,6 +217,7 @@ export function wrapEmailHtml(
   <title>${title}</title>
 </head>
 <body style="margin:0;padding:0;background-color:${colors.background};-webkit-text-size-adjust:100%;">
+  ${jsonLdBlock}
   ${preheaderBlock}
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${colors.background};">
     <tr>

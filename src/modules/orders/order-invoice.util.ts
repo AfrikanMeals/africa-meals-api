@@ -145,13 +145,115 @@ export function formatOrderDeliveryLine(args: {
   );
 }
 
+/**
+ * Statuts Schema.org pour le balisage e-mail « Order » (carte achat Gmail).
+ * @see https://schema.org/OrderStatus
+ */
+export const OrderSchemaStatus = {
+  processing: 'https://schema.org/OrderProcessing',
+  inTransit: 'https://schema.org/OrderInTransit',
+  delivered: 'https://schema.org/OrderDelivered',
+  problem: 'https://schema.org/OrderProblem',
+  cancelled: 'https://schema.org/OrderCancelled',
+} as const;
+
+export type OrderEmailJsonLdOptions = {
+  /** Numéro de commande affiché (ex. 8 derniers caractères). */
+  ref: string;
+  /** URL Schema.org (cf. OrderSchemaStatus). Défaut : processing. */
+  orderStatus?: string;
+  /** URL publique de la commande (https). Active le bouton « Voir la commande ». */
+  orderUrl?: string;
+  /** Libellé du bouton d'action. */
+  actionName?: string;
+};
+
+/**
+ * Résout l'URL publique d'une commande pour les e-mails.
+ * - `template` contenant `{orderId}` → substitution directe.
+ * - sinon, base URL → `<base>/orders/<id>`.
+ * Retourne `undefined` si aucun template/base n'est fourni (pas de lien cassé).
+ */
+export function resolveOrderPublicUrl(
+  template: string | undefined | null,
+  orderId: string,
+): string | undefined {
+  const tmpl = (template ?? '').trim();
+  const id = (orderId ?? '').trim();
+  if (!tmpl || !id) return undefined;
+  if (tmpl.includes('{orderId}')) {
+    return tmpl.replace('{orderId}', encodeURIComponent(id));
+  }
+  return `${tmpl.replace(/\/+$/, '')}/orders/${encodeURIComponent(id)}`;
+}
+
+/**
+ * Construit le balisage Schema.org `Order` (JSON-LD) à partir d'un reçu.
+ * Réutilisable par tous les e-mails de commande (payée, expédiée, etc.).
+ */
+export function buildOrderEmailJsonLd(
+  snapshot: OrderInvoiceSnapshot,
+  opts: OrderEmailJsonLdOptions,
+): Record<string, unknown> {
+  const currency = (snapshot.currency || 'CAD').trim().toUpperCase() || 'CAD';
+  const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+
+  const acceptedOffer = items
+    .filter((it): it is OrdeLineItem => Boolean(it) && typeof it === 'object')
+    .map((it) => {
+      const row = it as { label?: unknown; price?: unknown; quantity?: unknown };
+      const name = String(row.label ?? '').trim() || 'Article';
+      const qty = Number(row.quantity);
+      const unit = Number(row.price);
+      const offer: Record<string, unknown> = {
+        '@type': 'Offer',
+        itemOffered: { '@type': 'Product', name },
+        eligibleQuantity: {
+          '@type': 'QuantitativeValue',
+          value: qty > 0 ? Math.floor(qty) : 1,
+        },
+      };
+      if (Number.isFinite(unit)) {
+        offer.price = unit.toFixed(2);
+        offer.priceCurrency = currency;
+      }
+      return offer;
+    });
+
+  const orderUrl = opts.orderUrl?.trim();
+
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'Order',
+    merchant: { '@type': 'Organization', name: snapshot.storeName },
+    orderNumber: opts.ref,
+    priceCurrency: currency,
+    price: (Number(snapshot.totalPrice) || 0).toFixed(2),
+    orderStatus: opts.orderStatus ?? OrderSchemaStatus.processing,
+    customer: { '@type': 'Person', name: snapshot.clientName },
+    acceptedOffer,
+    ...(orderUrl
+      ? {
+          url: orderUrl,
+          potentialAction: {
+            '@type': 'ViewAction',
+            name: opts.actionName ?? 'Voir la commande',
+            target: orderUrl,
+          },
+        }
+      : {}),
+  };
+}
+
 export function lineCustomizationText(item: OrdeLineItem): string {
   const row = item as OrdeLineItem & {
     selectedComplements?: unknown;
     selectedSupplements?: unknown;
+    selectedVariantLabel?: string;
   };
   return customizationSummaryLabel(
     normalizeSelectedComplements(row.selectedComplements),
     normalizeSelectedSupplements(row.selectedSupplements),
+    row.selectedVariantLabel,
   );
 }

@@ -9,6 +9,7 @@ import { StoreModule } from '@modules/store/store.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { UsersModule } from '@modules/users/users.module';
 import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
+import { VendorNotificationModule } from '@modules/vendor-notifications/vendor-notification.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { StripeConnectTransferModule } from './stripe/stripe-connect-transfer.module';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -55,6 +56,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
     PlatformShippingSettingsModule,
     SupportedCountriesModule,
     VendorStatusEmailModule,
+    forwardRef(() => VendorNotificationModule),
     MongooseModule.forFeature([
       { name: PaymentMethodModel.name, schema: PaymentMethodSchema },
       { name: StoreModel.name, schema: StoreSchema },

@@ -489,7 +489,7 @@ export class ProductsService {
     }> = [];
     for (const row of raw) {
       const r = (row ?? {}) as Record<string, unknown>;
-      const label = String(r.label ?? '').trim();
+      const label = String(r.label ?? r.name ?? '').trim();
       if (!label) continue;
       const priceNum = Number(r.price ?? 0);
       const price = Number.isFinite(priceNum) && priceNum >= 0 ? priceNum : 0;

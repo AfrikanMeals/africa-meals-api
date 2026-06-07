@@ -69,16 +69,23 @@ export function canonicalizeCustomizationSelections(
   return { c, s };
 }
 
+export function normalizeSelectedVariantLabel(raw: unknown): string {
+  return String(raw ?? '').trim();
+}
+
 export function customizationKeyFromSelections(
   complements: NormalizedLineComplementGroup[],
   supplements: NormalizedLineSupplement[],
+  variantLabel?: string,
 ): string {
   const payload = canonicalizeCustomizationSelections(
     complements,
     supplements,
   );
+  const variant = normalizeSelectedVariantLabel(variantLabel);
+  const body = variant ? { ...payload, v: variant } : payload;
   return createHash('sha256')
-    .update(JSON.stringify(payload))
+    .update(JSON.stringify(body))
     .digest('hex')
     .slice(0, 32);
 }
@@ -86,8 +93,11 @@ export function customizationKeyFromSelections(
 export function customizationSummaryLabel(
   complements: NormalizedLineComplementGroup[],
   supplements: NormalizedLineSupplement[],
+  variantLabel?: string,
 ): string {
   const parts: string[] = [];
+  const variant = normalizeSelectedVariantLabel(variantLabel);
+  if (variant) parts.push(`Variante : ${variant}`);
   for (const g of complements) {
     for (const o of g.options) {
       parts.push(`${g.groupTitle}: ${o.label}`);

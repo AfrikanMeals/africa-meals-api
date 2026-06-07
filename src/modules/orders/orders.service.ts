@@ -57,8 +57,18 @@ import {
   buildVendorOrderCreatedInboxMessage,
   buildVendorOrderPaidInboxMessage,
   buildVendorOrderPaidPushBody,
+  buildVendorOrderStatusInboxMessage,
+  buildVendorOrderStatusPush,
+  vendorOrderStatusLabelFr,
+  type VendorOrderNotifyReason,
 } from './vendor-order-paid-message.util';
 import { OrderPaidInvoiceEmailService } from './order-paid-invoice-email.service';
+import {
+  VendorStatusEmailService,
+  type VendorOrderEmailEvent,
+} from '@modules/vendor-emails/vendor-status-email.service';
+import { VendorNotificationDispatchService } from '@modules/vendor-notifications/vendor-notification-dispatch.service';
+import { vendorOrderReasonToCategory } from '@modules/vendor-notifications/vendor-notification.constants';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import type { RegionTaxLineResult } from '@modules/supported-countries/region-tax.constants';
 
@@ -125,6 +135,12 @@ export class OrdersService {
 
   @Inject(SupportedCountriesService)
   private readonly _supportedCountries: SupportedCountriesService;
+
+  @Inject(VendorStatusEmailService)
+  private readonly _vendorStatusEmail: VendorStatusEmailService;
+
+  @Inject(VendorNotificationDispatchService)
+  private readonly _vendorNotificationDispatch: VendorNotificationDispatchService;
 
   /** Expose l’adresse de livraison figée au paiement dans `user.addresses`. */
   static enrichOrdersWithDeliveryAddress(
@@ -655,7 +671,9 @@ export class OrdersService {
         const row = item as CartItemModel & {
           selectedComplements?: unknown;
           selectedSupplements?: unknown;
+          selectedVariantLabel?: string;
         };
+        const variantLabel = String(row.selectedVariantLabel ?? '').trim();
         return {
           label,
           itemType: item.type!,
@@ -670,6 +688,7 @@ export class OrdersService {
           selectedSupplements: Array.isArray(row.selectedSupplements)
             ? row.selectedSupplements
             : [],
+          ...(variantLabel ? { selectedVariantLabel: variantLabel } : {}),
         };
       },
     );
@@ -722,6 +741,10 @@ export class OrdersService {
       totalPrice: calculatedPrice,
       storeName: sname,
     };
+    const itemCount = items.reduce(
+      (s, i) => s + Math.max(1, Math.round(Number(i.quantity) || 1)),
+      0,
+    );
     void this.notifyStoreVendorsForOrder({
       storeId: String(storeId),
       customerUserId: String(user.id),
@@ -733,6 +756,14 @@ export class OrdersService {
         storeName: sname,
         reason: 'new_order',
         status: OrderStatusEnum.CREATED,
+      },
+      email: {
+        event: 'new_order',
+        orderId: orderIdStr,
+        storeName: sname,
+        totalPrice: calculatedPrice,
+        itemCount,
+        statusLabel: vendorOrderStatusLabelFr(OrderStatusEnum.CREATED),
       },
       logTag: 'new_order',
     });
@@ -849,56 +880,156 @@ export class OrdersService {
       reason: string;
       status: string;
     };
+    email?: {
+      event: VendorOrderEmailEvent;
+      orderId: string;
+      storeName?: string;
+      totalPrice?: number;
+      currency?: string;
+      itemCount?: number;
+      note?: string;
+      statusLabel?: string;
+    };
     logTag: string;
   }): Promise<void> {
     const sid = args.storeId?.trim();
     if (!sid || !Types.ObjectId.isValid(sid)) return;
 
-    const allVendorIds =
-      await this._storeAccess.listStorePushRecipientUserIds(sid);
-    const customerId = args.customerUserId?.trim() ?? '';
-    const pushIds =
-      customerId && Types.ObjectId.isValid(customerId)
-        ? allVendorIds.filter((id) => id !== customerId)
-        : allVendorIds;
-
-    if (args.push && pushIds.length > 0) {
-      void this._notificationsService
-        .pushVendorOrderNotify({
-          vendorUserIds: pushIds,
-          title: args.push.title,
-          body: args.push.body,
-          orderId: args.push.orderId,
-          storeName: args.push.storeName,
-          reason: args.push.reason,
-          status: args.push.status,
+    const reason = args.push?.reason ?? args.email?.event ?? 'order';
+    const category = vendorOrderReasonToCategory(reason);
+    const emailPayload = args.email
+      ? this._vendorStatusEmail.buildVendorOrderEmailPayload({
+          storeId: sid,
+          orderId: args.email.orderId,
+          event: args.email.event,
+          storeName: args.email.storeName ?? args.push?.storeName,
+          totalPrice: args.email.totalPrice,
+          currency: args.email.currency,
+          itemCount: args.email.itemCount,
+          note: args.email.note,
+          statusLabel: args.email.statusLabel,
         })
-        .catch((err) =>
-          this.logger.warn(
-            `FCM vendor ${args.logTag}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          ),
-        );
-    }
+      : undefined;
 
-    const inboxNotifyIds =
-      allVendorIds.length > 0
-        ? allVendorIds
-        : customerId && Types.ObjectId.isValid(customerId)
-          ? [customerId]
-          : [];
-    void this.appendStoreVendorOrderMessage(
-      sid,
-      args.inboxMessage,
-      inboxNotifyIds,
-    ).catch((err) =>
-      this.logger.warn(
-        `vendor inbox ${args.logTag}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      ),
+    void this._vendorNotificationDispatch.notifyStoreVendors({
+      storeId: sid,
+      category,
+      customerUserId: args.customerUserId,
+      push: args.push
+        ? {
+            title: args.push.title,
+            body: args.push.body,
+            orderId: args.push.orderId,
+            storeName: args.push.storeName,
+            reason: args.push.reason,
+            status: args.push.status,
+          }
+        : undefined,
+      email: emailPayload,
+      smsBody: args.push?.body ?? emailPayload?.body,
+      metadata: {
+        orderId: args.push?.orderId ?? args.email?.orderId ?? '',
+        reason,
+      },
+      logTag: args.logTag,
+      onInbox: async (notifyUserIds) => {
+        await this.appendStoreVendorOrderMessage(
+          sid,
+          args.inboxMessage,
+          notifyUserIds,
+        );
+      },
+    });
+  }
+
+  /**
+   * Push + inbox + e-mail vendeur pour un changement de statut commande.
+   */
+  notifyStoreVendorsForOrderStatusChange(
+    order: OrderModel,
+    ctx: {
+      reason: VendorOrderNotifyReason;
+      status: OrderStatusEnum;
+      note?: string;
+      isPickup?: boolean;
+      pushBodyOverride?: string;
+    },
+  ): void {
+    const storeId = this.storeIdFromOrderDoc(order);
+    if (!storeId) return;
+
+    const storeName = this.storeNameFromPopulated(order.store);
+    const orderIdStr = order._id.toString();
+    const items = (order.items ?? []) as OrdeLineItem[];
+    const totalPrice = Number(order.totalPrice) || 0;
+    const currency =
+      typeof order.currency === 'string' ? order.currency : undefined;
+    const pickupCode =
+      typeof order.pickupCode === 'string' ? order.pickupCode : undefined;
+    const itemCount = items.reduce(
+      (s, i) => s + Math.max(1, Math.round(Number(i.quantity) || 1)),
+      0,
     );
+    const msgArgs = {
+      orderId: orderIdStr,
+      items,
+      totalPrice,
+      currency,
+      pickupCode,
+      storeName,
+    };
+    const statusLabel = vendorOrderStatusLabelFr(
+      ctx.status,
+      ctx.isPickup ?? this.isPickupOrder(order),
+    );
+    const push = buildVendorOrderStatusPush({
+      reason: ctx.reason,
+      storeName,
+      orderId: orderIdStr,
+      totalPrice,
+      currency,
+      note: ctx.note,
+      isPickup: ctx.isPickup ?? this.isPickupOrder(order),
+      pushBodyOverride: ctx.pushBodyOverride,
+    });
+    const inbox =
+      ctx.reason === 'order_paid'
+        ? buildVendorOrderPaidInboxMessage(msgArgs)
+        : ctx.reason === 'new_order'
+          ? buildVendorOrderCreatedInboxMessage(msgArgs)
+          : buildVendorOrderStatusInboxMessage({
+              ...msgArgs,
+              statusLabel,
+              note: ctx.note,
+            });
+
+    void this.notifyStoreVendorsForOrder({
+      storeId,
+      customerUserId: this.userIdFromOrderDoc(order),
+      inboxMessage: inbox,
+      push: {
+        title: push.title,
+        body:
+          ctx.reason === 'order_paid'
+            ? buildVendorOrderPaidPushBody(msgArgs)
+            : push.body,
+        orderId: orderIdStr,
+        storeName,
+        reason: push.reason,
+        status: ctx.status,
+      },
+      email: {
+        event: ctx.reason,
+        orderId: orderIdStr,
+        storeName,
+        totalPrice,
+        currency,
+        itemCount,
+        note: ctx.note,
+        statusLabel,
+      },
+      logTag: ctx.reason,
+    });
   }
 
   /**
@@ -1250,6 +1381,22 @@ export class OrdersService {
   }
 
   /**
+   * E-mail client « commande en livraison » (balisage Schema.org OrderInTransit).
+   * Non bloquant : les erreurs sont seulement journalisées.
+   */
+  sendShippedInvoiceEmail(orderId: string): void {
+    void this._orderPaidInvoiceEmail
+      .sendForShippedOrder(orderId)
+      .catch((err) =>
+        this.logger.warn(
+          `order shipped email order=${orderId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
+  }
+
+  /**
    * Message inbox + push vendeur après paiement. Idempotent (`vendorPaidNotifiedAt`).
    * Rattrape les retry Stripe où la commande est déjà `paied` sans notification.
    */
@@ -1298,6 +1445,10 @@ export class OrdersService {
       storeName,
     };
 
+    const paidItemCount = (order.items ?? []).reduce(
+      (s, i) => s + Math.max(1, Math.round(Number(i.quantity) || 1)),
+      0,
+    );
     await this.notifyStoreVendorsForOrder({
       storeId,
       customerUserId: objectIdStringFromRef(order.user),
@@ -1309,6 +1460,16 @@ export class OrdersService {
         storeName,
         reason: 'order_paid',
         status: OrderStatusEnum.PAIED,
+      },
+      email: {
+        event: 'order_paid',
+        orderId: oid,
+        storeName,
+        totalPrice: Number(order.totalPrice) || 0,
+        currency:
+          typeof order.currency === 'string' ? order.currency : undefined,
+        itemCount: paidItemCount,
+        statusLabel: vendorOrderStatusLabelFr(OrderStatusEnum.PAIED),
       },
       logTag: 'order_paid',
     });
@@ -1557,6 +1718,12 @@ export class OrdersService {
 
     await this.ensurePickupCodeForOrderDoc(order);
     this.notifyPartiesOrderRealtimeFromDoc(order, OrderStatusEnum.APPROVED);
+    this.notifyStoreVendorsForOrderStatusChange(order, {
+      reason: 'order_ready',
+      status: OrderStatusEnum.APPROVED,
+      isPickup,
+      note: isPickup ? 'Prête pour retrait' : 'Prête pour livraison',
+    });
 
     return { orderId: oid, status: OrderStatusEnum.APPROVED, isPickup };
   }
@@ -1701,6 +1868,11 @@ export class OrdersService {
       oid,
       OrderStatusEnum.CANCELLED,
     );
+    this.notifyStoreVendorsForOrderStatusChange(order, {
+      reason: 'order_cancelled',
+      status: OrderStatusEnum.CANCELLED,
+      note: resolved.details,
+    });
 
     return {
       orderId: oid,
@@ -2146,6 +2318,12 @@ export class OrdersService {
       populated ?? order,
       OrderStatusEnum.COMPLETED,
     );
+    this.notifyStoreVendorsForOrderStatusChange(order, {
+      reason: 'order_completed',
+      status: OrderStatusEnum.COMPLETED,
+      isPickup,
+      note: isPickup ? 'Retrait confirmé' : 'Livraison confirmée',
+    });
 
     void this._loyaltyService
       .creditOrderCompletion(oid)
@@ -2299,7 +2477,9 @@ export class OrdersService {
     const uid = new Types.ObjectId(String(user.id));
     const order = await this._orderModel
       .findOne({ _id: new Types.ObjectId(oid), user: uid })
-      .select('status shouldShip refundRequestLog store')
+      .select(
+        'status shouldShip refundRequestLog store items totalPrice currency pickupCode user',
+      )
       .populate('store', 'name')
       .exec();
     if (!order) {
@@ -2376,6 +2556,11 @@ export class OrdersService {
       oid,
       OrderStatusEnum.CANCELLED,
     );
+    this.notifyStoreVendorsForOrderStatusChange(order, {
+      reason: 'order_cancelled',
+      status: OrderStatusEnum.CANCELLED,
+      note: `Annulation client : ${resolved.details}`,
+    });
 
     return {
       orderId: oid,

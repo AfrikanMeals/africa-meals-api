@@ -143,6 +143,10 @@ export class OrdeLineItem {
     name: 'selected_supplements',
   })
   selectedSupplements?: LineSupplementSnapshot[];
+
+  /** Variante de prix choisie (figée à la commande). */
+  @Prop({ required: false, name: 'selected_variant_label', trim: true })
+  selectedVariantLabel?: string;
 }
 
 @Schema({

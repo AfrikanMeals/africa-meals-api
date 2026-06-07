@@ -1,6 +1,14 @@
 import { MailerService } from '@modules/mailer/mailer.service';
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
+import {
+  VendorNotificationDispatchService,
+  type VendorStoreNotifyEmail,
+} from '@modules/vendor-notifications/vendor-notification-dispatch.service';
+import {
+  vendorOrderEmailEventToCategory,
+  type VendorNotificationCategory,
+} from '@modules/vendor-notifications/vendor-notification.constants';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -17,6 +25,14 @@ export type AdMarketingEntityStatus =
 
 type EmailRecipient = { userId: string; email: string; name: string };
 
+export type VendorOrderEmailEvent =
+  | 'new_order'
+  | 'order_paid'
+  | 'order_ready'
+  | 'order_shipped'
+  | 'order_cancelled'
+  | 'order_completed';
+
 @Injectable()
 export class VendorStatusEmailService {
   private readonly logger = new Logger(VendorStatusEmailService.name);
@@ -30,7 +46,56 @@ export class VendorStatusEmailService {
     private readonly userModel: Model<UserModel>,
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
+    private readonly vendorDispatch: VendorNotificationDispatchService,
   ) {}
+
+  buildVendorOrderEmailPayload(args: {
+    storeId: string;
+    orderId: string;
+    event: VendorOrderEmailEvent;
+    storeName?: string;
+    totalPrice?: number;
+    currency?: string;
+    itemCount?: number;
+    note?: string;
+    statusLabel?: string;
+  }): VendorStoreNotifyEmail {
+    const storeName = (args.storeName ?? '').trim() || 'Restaurant';
+    const orderRef = this.orderRefLabel(args.orderId);
+    const copy = this.vendorOrderEmailCopy({
+      event: args.event,
+      storeName,
+      orderRef,
+      totalPrice: args.totalPrice,
+      currency: args.currency,
+      itemCount: args.itemCount,
+      note: args.note,
+      statusLabel: args.statusLabel,
+    });
+    const rows: Array<{ label: string; value: string }> = [
+      { label: 'Commande', value: orderRef },
+      { label: 'Restaurant', value: storeName },
+      { label: 'Statut', value: copy.statusLabel },
+    ];
+    if (args.itemCount != null && args.itemCount > 0) {
+      rows.push({ label: 'Articles', value: String(args.itemCount) });
+    }
+    if (args.totalPrice != null && Number.isFinite(args.totalPrice)) {
+      rows.push({
+        label: 'Montant',
+        value: this.formatAmount(args.totalPrice, args.currency ?? 'CAD'),
+      });
+    }
+    if (args.note?.trim()) {
+      rows.push({ label: 'Détail', value: args.note.trim() });
+    }
+    return {
+      subject: copy.subject,
+      heading: copy.heading,
+      body: copy.body,
+      infoRows: rows,
+    };
+  }
 
   static resolveCampaignStatus(doc: {
     isActive?: boolean;
@@ -87,6 +152,64 @@ export class VendorStatusEmailService {
     }
   }
 
+  async notifyVendorOrderEvent(args: {
+    storeId: string;
+    orderId: string;
+    event: VendorOrderEmailEvent;
+    storeName?: string;
+    totalPrice?: number;
+    currency?: string;
+    itemCount?: number;
+    note?: string;
+    statusLabel?: string;
+  }): Promise<void> {
+    const storeName =
+      (args.storeName ?? '').trim() || (await this.storeName(args.storeId));
+    const orderRef = this.orderRefLabel(args.orderId);
+    const copy = this.vendorOrderEmailCopy({
+      event: args.event,
+      storeName,
+      orderRef,
+      totalPrice: args.totalPrice,
+      currency: args.currency,
+      itemCount: args.itemCount,
+      note: args.note,
+      statusLabel: args.statusLabel,
+    });
+    const rows: Array<{ label: string; value: string }> = [
+      { label: 'Commande', value: orderRef },
+      { label: 'Restaurant', value: storeName },
+      { label: 'Statut', value: copy.statusLabel },
+    ];
+    if (args.itemCount != null && args.itemCount > 0) {
+      rows.push({
+        label: 'Articles',
+        value: String(args.itemCount),
+      });
+    }
+    if (args.totalPrice != null && Number.isFinite(args.totalPrice)) {
+      rows.push({
+        label: 'Montant',
+        value: this.formatAmount(args.totalPrice, args.currency ?? 'CAD'),
+      });
+    }
+    if (args.note?.trim()) {
+      rows.push({ label: 'Détail', value: args.note.trim() });
+    }
+
+    await this.sendToStoreRecipients({
+      storeId: args.storeId,
+      category: vendorOrderEmailEventToCategory(args.event),
+      subject: copy.subject,
+      heading: copy.heading,
+      body: copy.body,
+      infoRows: rows,
+      pushTitle: copy.subject,
+      metadata: { orderId: args.orderId, event: args.event },
+      logTag: `vendor_order_${args.event} store=${args.storeId} order=${args.orderId}`,
+    });
+  }
+
   async notifyAdCampaignStatusChange(args: {
     storeId: string;
     campaignId: string;
@@ -103,6 +226,7 @@ export class VendorStatusEmailService {
     const body = `Le statut de votre campagne publicitaire « ${args.campaignTitle.trim() || 'Sans titre'} » (${storeName}) est passé de « ${prev} » à « ${next} ».`;
     await this.sendToStoreRecipients({
       storeId: args.storeId,
+      category: 'marketing',
       subject: 'Statut de campagne publicitaire mis à jour',
       heading: 'Campagne publicitaire',
       body,
@@ -111,6 +235,8 @@ export class VendorStatusEmailService {
         { label: 'Restaurant', value: storeName },
         { label: 'Nouveau statut', value: next },
       ],
+      pushTitle: 'Campagne publicitaire',
+      metadata: { campaignId: args.campaignId },
       logTag: `ad_campaign_status store=${args.storeId} campaign=${args.campaignId}`,
     });
   }
@@ -131,6 +257,7 @@ export class VendorStatusEmailService {
     const body = `Le statut de votre bannière « ${args.bannerTitle.trim() || 'Sans titre'} » (${storeName}) est passé de « ${prev} » à « ${next} ».`;
     await this.sendToStoreRecipients({
       storeId: args.storeId,
+      category: 'marketing',
       subject: 'Statut de bannière mis à jour',
       heading: 'Bannière publicitaire',
       body,
@@ -139,6 +266,8 @@ export class VendorStatusEmailService {
         { label: 'Restaurant', value: storeName },
         { label: 'Nouveau statut', value: next },
       ],
+      pushTitle: 'Bannière publicitaire',
+      metadata: { bannerId: args.bannerId },
       logTag: `ad_banner_status store=${args.storeId} banner=${args.bannerId}`,
     });
   }
@@ -208,12 +337,84 @@ export class VendorStatusEmailService {
 
     await this.sendToStoreRecipients({
       storeId: args.storeId,
+      category: 'refund',
       subject: title,
       heading: 'Remboursement client',
       body,
       infoRows: rows,
+      pushTitle: title,
+      metadata: { orderId: args.orderId, kind: args.kind },
       logTag: `vendor_refund_status store=${args.storeId} order=${args.orderId} kind=${args.kind}`,
     });
+  }
+
+  private orderRefLabel(orderId: string): string {
+    const id = orderId.trim();
+    const tail = id.length > 6 ? id.slice(-6).toUpperCase() : id.toUpperCase();
+    return `#${tail}`;
+  }
+
+  private vendorOrderEmailCopy(args: {
+    event: VendorOrderEmailEvent;
+    storeName: string;
+    orderRef: string;
+    totalPrice?: number;
+    currency?: string;
+    itemCount?: number;
+    note?: string;
+    statusLabel?: string;
+  }): { subject: string; heading: string; body: string; statusLabel: string } {
+    const amountStr =
+      args.totalPrice != null && Number.isFinite(args.totalPrice)
+        ? this.formatAmount(args.totalPrice, args.currency ?? 'CAD')
+        : '';
+    const amountPart = amountStr ? ` (${amountStr})` : '';
+    const notePart = args.note?.trim() ? ` ${args.note.trim()}` : '';
+
+    switch (args.event) {
+      case 'new_order':
+        return {
+          subject: 'Nouvelle commande reçue',
+          heading: 'Nouvelle commande',
+          body: `${args.storeName} a reçu une nouvelle commande ${args.orderRef}${amountPart}. Le paiement est en attente.`,
+          statusLabel: args.statusLabel ?? 'En attente de paiement',
+        };
+      case 'order_paid':
+        return {
+          subject: 'Commande payée',
+          heading: 'Commande payée',
+          body: `La commande ${args.orderRef} pour ${args.storeName} a été payée${amountPart}. Vous pouvez la préparer.`,
+          statusLabel: args.statusLabel ?? 'Payée',
+        };
+      case 'order_ready':
+        return {
+          subject: 'Commande prête',
+          heading: 'Commande prête',
+          body: `La commande ${args.orderRef} pour ${args.storeName} est prête.${notePart}`,
+          statusLabel: args.statusLabel ?? 'Prête',
+        };
+      case 'order_shipped':
+        return {
+          subject: 'Commande en livraison',
+          heading: 'Commande en livraison',
+          body: `La commande ${args.orderRef} pour ${args.storeName} est en cours de livraison.${notePart}`,
+          statusLabel: args.statusLabel ?? 'En livraison',
+        };
+      case 'order_cancelled':
+        return {
+          subject: 'Commande annulée',
+          heading: 'Commande annulée',
+          body: `La commande ${args.orderRef} pour ${args.storeName} a été annulée.${notePart}`,
+          statusLabel: args.statusLabel ?? 'Annulée',
+        };
+      case 'order_completed':
+        return {
+          subject: 'Commande terminée',
+          heading: 'Commande terminée',
+          body: `La commande ${args.orderRef} pour ${args.storeName} est terminée.`,
+          statusLabel: args.statusLabel ?? 'Terminée',
+        };
+    }
   }
 
   private payoutCopy(
@@ -358,22 +559,34 @@ export class VendorStatusEmailService {
 
   private async sendToStoreRecipients(args: {
     storeId: string;
+    category: VendorNotificationCategory;
     subject: string;
     heading: string;
     body: string;
     infoRows: Array<{ label: string; value: string }>;
     logTag: string;
+    pushTitle?: string;
+    metadata?: Record<string, string>;
   }): Promise<void> {
-    const recipients = await this.storeRecipients(args.storeId);
-    if (!recipients.length) {
-      this.logger.warn(`${args.logTag}: aucun destinataire e-mail`);
-      return;
-    }
-    await Promise.all(
-      recipients.map((recipient) =>
-        this.sendToRecipient({ ...args, recipient }),
-      ),
-    );
+    await this.vendorDispatch.notifyStoreVendors({
+      storeId: args.storeId,
+      category: args.category,
+      email: {
+        subject: args.subject,
+        heading: args.heading,
+        body: args.body,
+        infoRows: args.infoRows,
+      },
+      push: args.pushTitle
+        ? {
+            title: args.pushTitle,
+            body: args.body,
+          }
+        : undefined,
+      smsBody: args.body,
+      metadata: args.metadata,
+      logTag: args.logTag,
+    });
   }
 
   private async sendToRecipient(args: {

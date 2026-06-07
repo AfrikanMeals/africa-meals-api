@@ -816,6 +816,7 @@ export class DeliveryAgentService {
     }
 
     if (customerId && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
+      this._ordersService.sendShippedInvoiceEmail(orderDoc._id.toString());
       void this._notifications
         .pushCustomerOrderStatusChanged({
           userId: customerId,
@@ -839,6 +840,19 @@ export class DeliveryAgentService {
       orderDoc,
       OrderStatusEnum.SHIPPED,
     );
+
+    if (orderStoreId && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
+      const sname = this.storeNameFromPopulatedOrder(orderDoc);
+      const agentName = user.fullName?.trim() || 'Livreur';
+      this._ordersService.notifyStoreVendorsForOrderStatusChange(orderDoc, {
+        reason: 'order_shipped',
+        status: OrderStatusEnum.SHIPPED,
+        note: `Prise en charge par ${agentName}`,
+        pushBodyOverride: `${
+          sname ?? 'Boutique'
+        } : commande prise en charge par ${agentName}.`,
+      });
+    }
 
     const appLoc = await this._applications
       .findOne({ user: agentId })

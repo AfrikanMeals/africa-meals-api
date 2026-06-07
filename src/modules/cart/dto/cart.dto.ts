@@ -127,6 +127,14 @@ export class AddItemToCartDto {
   @ValidateNested({ each: true })
   @Type(() => CartLineSupplementDto)
   selectedSupplements?: CartLineSupplementDto[];
+
+  @ApiPropertyOptional({
+    example: 'Medium',
+    description: 'Libellé de la variante de prix choisie (produit uniquement).',
+  })
+  @IsOptional()
+  @IsString()
+  selectedVariantLabel?: string;
 }
 
 export class CartItemApiResponse {
