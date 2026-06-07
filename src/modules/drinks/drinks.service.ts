@@ -10,9 +10,11 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { DrinkModel, DrinkStatutEnum } from '@schemas/drink.schema';
+import { ProductCategoryKindEnum, ProductCategoryModel } from '@schemas/product-category.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
@@ -56,6 +58,18 @@ function mapDrinkCatalogListRow(doc: Record<string, unknown>) {
 function mapDrinkDoc(doc: Record<string, unknown>) {
   const created = doc.createdAt;
   const updated = doc.updatedAt;
+  const rawCat = doc.category;
+  let categoryId: string | undefined;
+  let categoryTitle: string | undefined;
+  if (rawCat != null && typeof rawCat === 'object') {
+    const c = rawCat as Record<string, unknown>;
+    if (c.title != null) {
+      categoryTitle = String(c.title);
+      categoryId = String(c._id ?? c.id ?? '');
+    }
+  } else if (rawCat != null) {
+    categoryId = String(rawCat);
+  }
   return {
     id: String(doc._id),
     name: String(doc.name ?? ''),
@@ -70,6 +84,8 @@ function mapDrinkDoc(doc: Record<string, unknown>) {
         : doc.image_url != null
         ? String(doc.image_url)
         : undefined,
+    ...(categoryId ? { categoryId } : {}),
+    ...(categoryTitle ? { categoryTitle } : {}),
     createdAt:
       created instanceof Date
         ? created.toISOString()
@@ -99,6 +115,9 @@ export class DrinksService {
 
   @InjectModel(ProductModel.name)
   private readonly _productModel: Model<ProductModel>;
+
+  @InjectModel(ProductCategoryModel.name)
+  private readonly _productCategoryModel: Model<ProductCategoryModel>;
 
   @InjectModel(UserModel.name)
   private readonly _userModel: Model<UserModel>;
@@ -142,6 +161,29 @@ export class DrinksService {
     await this._storeAccess.assertStoreAccess(user, storeId, permission);
   }
 
+  private async resolveDrinkCategoryId(
+    categoryId?: string,
+  ): Promise<Types.ObjectId | undefined> {
+    const id = categoryId?.trim();
+    if (!id) return undefined;
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('category_not_found');
+    }
+    const cat = await this._productCategoryModel
+      .findById(id)
+      .select('kind isEnabled title')
+      .lean()
+      .exec();
+    if (!cat || cat.isEnabled === false) {
+      throw new NotFoundException('category_not_found');
+    }
+    const kind = (cat as { kind?: string }).kind;
+    if (kind === ProductCategoryKindEnum.DRINK || kind === 'drink') {
+      return new Types.ObjectId(id);
+    }
+    throw new BadRequestException('category_must_be_drink');
+  }
+
   private async accessibleDrinkIdsForStore(
     storeId: string,
   ): Promise<Set<string> | null> {
@@ -183,6 +225,7 @@ export class DrinksService {
         _id: new Types.ObjectId(drinkId),
         store: new Types.ObjectId(storeId),
       })
+      .populate('category', 'title kind isEnabled')
       .lean()
       .exec();
     if (!row) {
@@ -208,6 +251,7 @@ export class DrinksService {
     const rows = await this._drinkModel
       .find(baseFilter)
       .sort({ updatedAt: -1 })
+      .populate('category', 'title kind isEnabled')
       .lean()
       .exec();
     return rows.map((r) => mapDrinkDoc(r as Record<string, unknown>));
@@ -453,6 +497,7 @@ export class DrinksService {
         `stores/${storeId}/drinks`,
       );
     }
+    const categoryOid = await this.resolveDrinkCategoryId(dto.categoryId);
     const doc = await this._drinkModel.create({
       name: dto.name.trim(),
       description: dto.description?.trim() || undefined,
@@ -461,9 +506,15 @@ export class DrinksService {
       priceCad,
       statut,
       store: new Types.ObjectId(storeId),
+      ...(categoryOid ? { category: categoryOid } : {}),
       ...(imageUrl ? { imageUrl } : {}),
     });
-    return mapDrinkDoc(doc.toObject() as Record<string, unknown>);
+    const populated = await this._drinkModel
+      .findById(doc._id)
+      .populate('category', 'title kind isEnabled')
+      .lean()
+      .exec();
+    return mapDrinkDoc((populated ?? doc.toObject()) as Record<string, unknown>);
   }
 
   async updateForStore(
@@ -505,6 +556,11 @@ export class DrinksService {
     found.priceCad = priceCad;
     found.statut = statut;
 
+    if (dto.categoryId !== undefined) {
+      const categoryOid = await this.resolveDrinkCategoryId(dto.categoryId);
+      found.set('category', categoryOid ?? undefined);
+    }
+
     if (file?.buffer?.length) {
       const url = await this._mediasService.upload(
         file,
@@ -523,7 +579,12 @@ export class DrinksService {
     }
 
     await found.save();
-    return mapDrinkDoc(found.toObject() as Record<string, unknown>);
+    const populated = await this._drinkModel
+      .findById(found._id)
+      .populate('category', 'title kind isEnabled')
+      .lean()
+      .exec();
+    return mapDrinkDoc((populated ?? found.toObject()) as Record<string, unknown>);
   }
 
   async deleteForStore(storeId: string, drinkId: string, user: UserModel) {

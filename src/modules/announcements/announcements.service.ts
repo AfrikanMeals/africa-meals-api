@@ -1,4 +1,11 @@
 import { MediasService } from '@modules/medias/medias.service';
+import {
+  AppCacheKeys,
+  apiPublicCacheTtlMs,
+  bustCacheKey,
+  getOrSetCache,
+} from '@common/redis-app-cache';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import {
@@ -6,6 +13,7 @@ import {
   AnnouncementNavigationTypeEnum,
 } from '@schemas/announcement.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
+import { Cache } from 'cache-manager';
 import { Model } from 'mongoose';
 import { CreateAnnouncementDto } from './dto/announcements.dto';
 
@@ -17,13 +25,22 @@ export class AnnouncementsService {
   @Inject(MediasService)
   private readonly _mediasService: MediasService;
 
+  @Inject(CACHE_MANAGER)
+  private readonly _cache: Cache;
+
   async list() {
-    return this._announcementModel
-      .find({ isActive: true })
-      .sort({ updatedAt: -1 })
-      .limit(40)
-      .lean()
-      .exec();
+    return getOrSetCache(
+      this._cache,
+      AppCacheKeys.announcements,
+      apiPublicCacheTtlMs(),
+      () =>
+        this._announcementModel
+          .find({ isActive: true })
+          .sort({ updatedAt: -1 })
+          .limit(40)
+          .lean()
+          .exec(),
+    );
   }
 
   async create(
@@ -58,9 +75,11 @@ export class AnnouncementsService {
     }
     console.log('🚀 ~ AnnouncementsService ~ args:', args);
 
-    return await this._announcementModel.create({
+    const created = await this._announcementModel.create({
       ...args,
       ...(pictureUrl && { pictureUrl }),
     });
+    await bustCacheKey(this._cache, AppCacheKeys.announcements);
+    return created;
   }
 }

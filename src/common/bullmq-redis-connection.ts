@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 const logger = new Logger('BullmqRedis');
 
@@ -20,11 +21,12 @@ export type BullmqRedisConnection = {
   tls?: Record<string, unknown>;
 };
 
-/** Connexion Redis partagée pour les files BullMQ (ws-notify, ads-notify, …). */
-export function readBullmqRedisConnection(
-  env: NodeJS.ProcessEnv = process.env,
+type RedisEnvGetter = (key: string) => string | undefined;
+
+function readBullmqRedisConnectionFromGetter(
+  get: RedisEnvGetter,
 ): BullmqRedisConnection | null {
-  const redisUrl = env.REDIS_URL?.trim();
+  const redisUrl = get('REDIS_URL')?.trim();
   if (redisUrl) {
     try {
       const parsed = new URL(redisUrl);
@@ -37,7 +39,9 @@ export function readBullmqRedisConnection(
         username: parsed.username || undefined,
         password: parsed.password || undefined,
         tls:
-          parsed.protocol === 'rediss:' || toBool(env.REDIS_TLS) ? {} : undefined,
+          parsed.protocol === 'rediss:' || toBool(get('REDIS_TLS'))
+            ? {}
+            : undefined,
       };
     } catch {
       logger.warn('Invalid REDIS_URL — BullMQ disabled');
@@ -45,13 +49,29 @@ export function readBullmqRedisConnection(
     }
   }
 
-  const host = env.REDIS_HOST?.trim();
+  const host = get('REDIS_HOST')?.trim();
   if (!host) return null;
   return {
     host,
-    port: parsePositiveInt(env.REDIS_PORT, 6379),
-    username: env.REDIS_USERNAME?.trim() || undefined,
-    password: env.REDIS_PASSWORD?.trim() || undefined,
-    tls: toBool(env.REDIS_TLS) ? {} : undefined,
+    port: parsePositiveInt(get('REDIS_PORT'), 6379),
+    username: get('REDIS_USERNAME')?.trim() || undefined,
+    password: get('REDIS_PASSWORD')?.trim() || undefined,
+    tls: toBool(get('REDIS_TLS')) ? {} : undefined,
   };
+}
+
+/** Connexion Redis partagée pour les files BullMQ (process.env). */
+export function readBullmqRedisConnection(
+  env: NodeJS.ProcessEnv = process.env,
+): BullmqRedisConnection | null {
+  return readBullmqRedisConnectionFromGetter((key) => env[key]);
+}
+
+/** Connexion Redis BullMQ via Nest `ConfigService` (.env chargé par ConfigModule). */
+export function readBullmqRedisConnectionFromConfig(
+  config: ConfigService,
+): BullmqRedisConnection | null {
+  return readBullmqRedisConnectionFromGetter((key) =>
+    config.get<string>(key),
+  );
 }

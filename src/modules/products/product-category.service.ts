@@ -10,11 +10,11 @@ import {
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { InjectModel } from '@nestjs/mongoose';
 import { Cache } from 'cache-manager';
-import { ProductCategoryModel } from '@schemas/product-category.schema';
+import { ProductCategoryModel, ProductCategoryKindEnum } from '@schemas/product-category.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, PipelineStage, Types } from 'mongoose';
-import { DEFAULT_CATEGORIES } from './data/categories';
+import { DEFAULT_CATEGORIES, DRINK_CATEGORY_ICONS } from './data/categories';
 import {
   CreateProductCategoryDto,
   PatchProductCategoryDto,
@@ -27,6 +27,7 @@ export type PublicProductCategoryRow = {
   _id: string;
   title: string;
   icon: string;
+  kind: ProductCategoryKindEnum;
   isEnabled: boolean;
   productCount: number;
   createdAt: unknown;
@@ -38,7 +39,7 @@ export class ProductCategoryService implements OnModuleInit {
   private readonly _logger = new Logger(ProductCategoryService.name);
 
   /** Cache liste publique catégories (invalidé à chaque mutation admin). */
-  private static readonly _publicListCacheKey = 'product-categories:public:v1';
+  private static readonly _publicListCacheKey = 'product-categories:public:v2';
 
   @Inject(CACHE_MANAGER)
   private readonly _cache: Cache;
@@ -64,12 +65,30 @@ export class ProductCategoryService implements OnModuleInit {
     }
   }
 
+  private resolveKind(
+    raw: Record<string, unknown>,
+  ): ProductCategoryKindEnum {
+    const k = raw.kind ?? raw.category_kind;
+    if (k === ProductCategoryKindEnum.DRINK || k === 'drink') {
+      return ProductCategoryKindEnum.DRINK;
+    }
+    if (k === ProductCategoryKindEnum.FOOD || k === 'food') {
+      return ProductCategoryKindEnum.FOOD;
+    }
+    const icon = String(raw.icon ?? '').trim();
+    if (DRINK_CATEGORY_ICONS.has(icon)) {
+      return ProductCategoryKindEnum.DRINK;
+    }
+    return ProductCategoryKindEnum.FOOD;
+  }
+
   private mapLeanCategory(cat: Record<string, unknown>, productCount: number) {
     return {
       id: cat._id,
       _id: cat._id,
       title: cat.title,
       icon: cat.icon,
+      kind: this.resolveKind(cat),
       isEnabled: (cat.is_enabled as boolean) ?? true,
       productCount,
       createdAt: cat.createdAt,
@@ -94,6 +113,7 @@ export class ProductCategoryService implements OnModuleInit {
     const doc = await this._productCategoryModel.create({
       title,
       icon: args.icon.trim(),
+      kind: args.kind ?? ProductCategoryKindEnum.FOOD,
       isEnabled: args.isEnabled ?? true,
     });
     await this._bustPublicCategoriesCache();
@@ -128,6 +148,9 @@ export class ProductCategoryService implements OnModuleInit {
     }
     if (args.icon !== undefined) {
       existing.icon = args.icon.trim();
+    }
+    if (args.kind !== undefined) {
+      existing.kind = args.kind;
     }
     if (args.isEnabled !== undefined) {
       existing.isEnabled = args.isEnabled;
@@ -250,6 +273,7 @@ export class ProductCategoryService implements OnModuleInit {
       _id: id,
       title: String(doc.title ?? ''),
       icon: String(doc.icon ?? ''),
+      kind: this.resolveKind(doc),
       isEnabled: Boolean(doc.is_enabled ?? doc.isEnabled ?? true),
       productCount: Number(doc.productCount ?? 0),
       createdAt: doc.createdAt,
@@ -289,6 +313,21 @@ export class ProductCategoryService implements OnModuleInit {
     if (toCreate.length) {
       await this._productCategoryModel.insertMany(toCreate);
       console.log(`🚀 ~ Seeded ${toCreate.length} categories`);
+    }
+
+    const kindByTitle = new Map(
+      data.map((d) => [d.title, d.kind] as const),
+    );
+    for (const cat of existing) {
+      const expected =
+        kindByTitle.get(cat.title) ??
+        (DRINK_CATEGORY_ICONS.has(cat.icon)
+          ? ProductCategoryKindEnum.DRINK
+          : ProductCategoryKindEnum.FOOD);
+      if (cat.kind !== expected) {
+        cat.kind = expected;
+        await cat.save();
+      }
     }
   }
 }

@@ -5,11 +5,20 @@ import {
 import { OffersService } from '@modules/offers/offers.service';
 import { ProductsService } from '@modules/products/products.service';
 import { StoreService } from '@modules/store/store.service';
+import {
+  AppCacheKeys,
+  apiPublicCacheTtlMs,
+  cacheUserScope,
+  getOrSetCache,
+  stableCacheHash,
+} from '@common/redis-app-cache';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject, Injectable } from '@nestjs/common';
 import { OfferModel, OfferStatusEnum } from '@schemas/offer.schema';
 import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
+import { Cache } from 'cache-manager';
 import { PipelineStage, Types } from 'mongoose';
 import {
   SearchContent,
@@ -654,10 +663,45 @@ export class SearchService {
   @Inject(OffersService)
   private readonly _offersService: OffersService;
 
+  @Inject(CACHE_MANAGER)
+  private readonly _cache: Cache;
+
+  private _isSearchFilterCacheable(args: SearchDto): boolean {
+    if (args.query?.trim()) return false;
+    if (args.latitude != null || args.longitude != null) return false;
+    if (args.sortBy === SortBy.DISTANCE) return false;
+    return true;
+  }
+
   async filter(args: SearchDto, user?: UserModel) {
     args.page = args.page ?? 1;
     args.take = args.take ?? 5;
     this._normalizeSearchGeoArgs(args);
+    if (this._isSearchFilterCacheable(args)) {
+      const scope = cacheUserScope(user);
+      const hash = stableCacheHash({
+        scope,
+        searchContent: args.searchContent,
+        storeId: args.storeId ?? '',
+        categoryId: args.categoryId ?? '',
+        minPrice: args.minPrice ?? null,
+        maxPrice: args.maxPrice ?? null,
+        sortBy: args.sortBy ?? null,
+        sortDirection: args.sortDirection ?? null,
+        page: args.page,
+        take: args.take,
+      });
+      return getOrSetCache(
+        this._cache,
+        AppCacheKeys.searchFilter(hash),
+        apiPublicCacheTtlMs(),
+        () => this._filterUncached(args, user),
+      );
+    }
+    return this._filterUncached(args, user);
+  }
+
+  private async _filterUncached(args: SearchDto, user?: UserModel) {
     const searchContent = args.searchContent;
     // console.log('🚀 ~ SearchService ~ filter ~ args:', searchContent);
     const response: {
@@ -1192,6 +1236,19 @@ export class SearchService {
     limit = 48,
   ): Promise<Record<string, unknown>[]> {
     const safeLimit = Math.min(120, Math.max(1, Math.floor(limit)));
+    const scope = cacheUserScope(user);
+    return getOrSetCache(
+      this._cache,
+      AppCacheKeys.homeFeed(scope, safeLimit),
+      apiPublicCacheTtlMs(),
+      () => this._homeFeedProductsUncached(user, safeLimit),
+    );
+  }
+
+  private async _homeFeedProductsUncached(
+    user?: UserModel,
+    safeLimit = 48,
+  ): Promise<Record<string, unknown>[]> {
     /** Fenêtre récente avant `$lookup` stores — évite un scan joint sur toute la collection `products`. */
     const candidateCap = Math.min(900, Math.max(safeLimit * 12, 200));
     const pipeline: PipelineStage[] = [
@@ -1454,6 +1511,46 @@ export class SearchService {
    * (réduit fortement la charge par rapport à `_filterProducts`).
    */
   async storeMenuProductsLeanPage(
+    storeId: string,
+    page: number,
+    take: number,
+    user?: UserModel,
+    query?: string,
+  ): Promise<{ items: Record<string, unknown>[]; total: number }> {
+    if (!Types.ObjectId.isValid(storeId)) {
+      return { items: [], total: 0 };
+    }
+    if (!(await this._storeService.isStoreVisibleOnMobileApp(storeId))) {
+      return { items: [], total: 0 };
+    }
+    const q = query?.trim();
+    if (!q) {
+      const safeTake = Math.min(120, Math.max(1, Math.floor(take)));
+      const safePage = Math.max(1, Math.floor(page));
+      const scope = cacheUserScope(user);
+      return getOrSetCache(
+        this._cache,
+        AppCacheKeys.storeMenuPage(storeId, safePage, safeTake, scope),
+        apiPublicCacheTtlMs(),
+        () =>
+          this._storeMenuProductsLeanPageUncached(
+            storeId,
+            safePage,
+            safeTake,
+            user,
+          ),
+      );
+    }
+    return this._storeMenuProductsLeanPageUncached(
+      storeId,
+      page,
+      take,
+      user,
+      query,
+    );
+  }
+
+  private async _storeMenuProductsLeanPageUncached(
     storeId: string,
     page: number,
     take: number,

@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Schema as MongooseSchema } from 'mongoose';
 import { BaseSchema } from './base.schema';
+import { ProductCategoryModel } from './product-category.schema';
 import { StoreModel } from './store.schema';
 
 export enum DrinkStatutEnum {
@@ -41,6 +42,15 @@ export class DrinkModel extends BaseSchema {
   /** URL publique (ex. Firebase Storage) après upload. */
   @Prop({ required: false, name: 'image_url' })
   imageUrl?: string;
+
+  /** Catégorie catalogue boisson (ex. Boissons naturelles, Vins). */
+  @Prop({
+    required: false,
+    ref: ProductCategoryModel.name,
+    type: MongooseSchema.Types.ObjectId,
+    name: 'category',
+  })
+  category?: ProductCategoryModel;
 
   @Prop({
     required: true,

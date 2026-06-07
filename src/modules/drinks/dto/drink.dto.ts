@@ -4,6 +4,7 @@ import { Transform, Type } from 'class-transformer';
 import { PartialType } from '@nestjs/mapped-types';
 import {
   IsBoolean,
+  IsMongoId,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -48,6 +49,13 @@ export class CreateDrinkDto {
   @IsNumber()
   @Min(0)
   priceCad: number;
+
+  @ApiPropertyOptional({
+    description: 'Identifiant catégorie boisson (`product_categories`, kind=drink)',
+  })
+  @IsOptional()
+  @IsMongoId()
+  categoryId?: string;
 }
 
 /** Création boisson : JSON + image base64 optionnelle (évite multipart tronqué). */
@@ -110,6 +118,11 @@ export class PatchDrinkDto {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   clearImage?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsMongoId()
+  categoryId?: string;
 }
 
 /** Mise à jour boisson : JSON partiel + image base64 optionnelle. */

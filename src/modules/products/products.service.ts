@@ -1,5 +1,11 @@
 import { prepareIncomingUploadFile } from 'src/incoming-upload-file';
 import { MediasService } from '@modules/medias/medias.service';
+import {
+  AppCacheKeys,
+  apiPublicCacheTtlMs,
+  bustCacheKey,
+  getOrSetCache,
+} from '@common/redis-app-cache';
 import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import { isDemoProductRaterEmail } from '@modules/ratings/demo-product-rating-users';
 import { RatingsService } from '@modules/ratings/ratings.service';
@@ -287,6 +293,22 @@ export class ProductsService {
     if (!Types.ObjectId.isValid(id)) {
       throw new NotFoundException('product_not_found');
     }
+    return getOrSetCache(
+      this._cacheManager,
+      AppCacheKeys.productDetail(id),
+      apiPublicCacheTtlMs(),
+      () => this._loadProductDetailForShop(id),
+    );
+  }
+
+  private async _bustProductDetailCache(productId: string): Promise<void> {
+    await bustCacheKey(
+      this._cacheManager,
+      AppCacheKeys.productDetail(productId),
+    );
+  }
+
+  private async _loadProductDetailForShop(id: string) {
     const doc = await this.findOneById(id);
     if (!doc) {
       throw new NotFoundException('product_not_found');
@@ -330,6 +352,7 @@ export class ProductsService {
       complements: this.normalizeComplements(obj.complements),
       supplements: this.normalizeSupplements(obj.supplements),
       variants: this.normalizeVariants(obj.variants),
+      variantsLabel: String(obj.variantsLabel ?? obj.variants_label ?? ''),
       usesVariants: this.normalizeVariants(obj.variants).length > 0,
       ...this.effectivePriceFromVariants(
         Number(obj.price ?? 0),
@@ -662,6 +685,7 @@ export class ProductsService {
       complements: this.normalizeComplements(p.complements),
       supplements: this.normalizeSupplements(p.supplements),
       variants,
+      variantsLabel: String(p.variantsLabel ?? p.variants_label ?? ''),
       usesVariants: pricing.usesVariants,
       originCountry: String(p.originCountry ?? p.origin_country ?? ''),
       basePrice: pricing.basePrice,
@@ -806,6 +830,7 @@ export class ProductsService {
       complements: this.normalizeComplements(p.complements),
       supplements: this.normalizeSupplements(p.supplements),
       variants: this.normalizeVariants(p.variants),
+      variantsLabel: String(p.variantsLabel ?? p.variants_label ?? ''),
       usesVariants: this.normalizeVariants(p.variants).length > 0,
       ...this.effectivePriceFromVariants(
         Number(p.price ?? 0),
@@ -1024,6 +1049,7 @@ export class ProductsService {
         complements: this.normalizeComplements(args.complements),
         supplements: this.normalizeSupplements(args.supplements),
         variants: this.normalizeVariants(args.variants),
+        variantsLabel: (args.variantsLabel ?? '').trim(),
         originCountry,
         price: listPrice,
         discountPrice: listDiscountPrice,
@@ -1112,6 +1138,9 @@ export class ProductsService {
     if (args.variants !== undefined) {
       doc.set('variants', this.normalizeVariants(args.variants));
     }
+    if (args.variantsLabel !== undefined) {
+      doc.set('variantsLabel', (args.variantsLabel ?? '').trim());
+    }
     if (args.originCountry != null) {
       doc.originCountry = args.originCountry.trim();
     }
@@ -1192,6 +1221,7 @@ export class ProductsService {
 
     this._discountSchedules.applyToDocument(doc);
     await doc.save();
+    await this._bustProductDetailCache(productId);
     return this.findOneById(productId);
   }
 
@@ -1207,6 +1237,7 @@ export class ProductsService {
     }
     await this.deleteRemoteGalleryItems((doc.galleryImages as unknown[]) ?? []);
     await doc.deleteOne();
+    await this._bustProductDetailCache(productId);
   }
 
   async createExtra(

@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { InfraRuntimeSettingsModel } from '@schemas/infra-runtime-settings.schema';
 import { JobsOptions, Queue, Worker } from 'bullmq';
+import { readBullmqRedisConnectionFromConfig } from '../../common/bullmq-redis-connection';
 import {
   connect as mqttConnect,
   type IClientOptions,
@@ -41,11 +42,6 @@ const WS_NOTIFY_SUFFIX_TO_TOPIC = {
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : fallback;
-}
-
-function toBool(raw: string | undefined): boolean {
-  const v = (raw ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
 }
 
 function isMqttAuthError(message: string): boolean {
@@ -83,7 +79,7 @@ export class WsNotifyDispatchQueueService
 
   async onModuleInit(): Promise<void> {
     this.initMqttClient();
-    const connection = this.redisConnectionConfig();
+    const connection = readBullmqRedisConnectionFromConfig(this.config);
     if (!connection) {
       this.logger.log('BullMQ disabled (REDIS_* absent) -> direct notify mode');
       return;
@@ -250,48 +246,6 @@ export class WsNotifyDispatchQueueService
       this.logger.warn(`infra settings read failed: ${msg}`);
     }
     return this.infraSettingsCache;
-  }
-
-  private redisConnectionConfig(): {
-    host: string;
-    port: number;
-    username?: string;
-    password?: string;
-    tls?: Record<string, unknown>;
-  } | null {
-    const redisUrl = this.config.get<string>('REDIS_URL')?.trim();
-    if (redisUrl) {
-      try {
-        const parsed = new URL(redisUrl);
-        return {
-          host: parsed.hostname,
-          port: parsePositiveInt(
-            parsed.port,
-            parsed.protocol === 'rediss:' ? 6380 : 6379,
-          ),
-          username: parsed.username || undefined,
-          password: parsed.password || undefined,
-          tls:
-            parsed.protocol === 'rediss:' ||
-            toBool(this.config.get<string>('REDIS_TLS'))
-              ? {}
-              : undefined,
-        };
-      } catch (_) {
-        this.logger.warn('Invalid REDIS_URL, BullMQ disabled');
-        return null;
-      }
-    }
-
-    const host = this.config.get<string>('REDIS_HOST')?.trim();
-    if (!host) return null;
-    return {
-      host,
-      port: parsePositiveInt(this.config.get<string>('REDIS_PORT'), 6379),
-      username: this.config.get<string>('REDIS_USERNAME')?.trim() || undefined,
-      password: this.config.get<string>('REDIS_PASSWORD')?.trim() || undefined,
-      tls: toBool(this.config.get<string>('REDIS_TLS')) ? {} : undefined,
-    };
   }
 
   private async postInternal(

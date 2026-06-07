@@ -19,6 +19,7 @@ export class ProductCategoryResolver {
       id: r.id,
       title: r.title,
       icon: r.icon,
+      kind: r.kind,
       isEnabled: r.isEnabled,
       productCount: r.productCount,
     }));

@@ -271,6 +271,15 @@ export class CreateProductDto {
   variants?: ProductVariantDto[];
 
   @ApiPropertyOptional({
+    example: 'Taille',
+    description: 'Libellé du groupe de variantes affiché au client (ex. « Taille »).',
+  })
+  @IsOptional()
+  @IsString()
+  @Trim()
+  variantsLabel?: string;
+
+  @ApiPropertyOptional({
     example: 12.99,
     description: 'Prix catalogue hors promotion planifiée.',
   })
@@ -389,6 +398,15 @@ export class PatchProductDto {
   @ValidateNested({ each: true })
   @Type(() => ProductVariantDto)
   variants?: ProductVariantDto[];
+
+  @ApiPropertyOptional({
+    example: 'Taille',
+    description: 'Libellé du groupe de variantes affiché au client (ex. « Taille »).',
+  })
+  @IsOptional()
+  @IsString()
+  @Trim()
+  variantsLabel?: string;
 
   @ApiPropertyOptional({
     description: 'Prix catalogue hors promotion planifiée.',

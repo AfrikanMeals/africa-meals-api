@@ -1,7 +1,15 @@
 import { SearchService } from '@modules/search/search.service';
 import { StoreService } from '@modules/store/store.service';
+import {
+  AppCacheKeys,
+  apiPublicCacheTtlMs,
+  cacheUserScope,
+  getOrSetCache,
+} from '@common/redis-app-cache';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject, Injectable } from '@nestjs/common';
 import { UserModel } from '@schemas/user.schema';
+import { Cache } from 'cache-manager';
 
 export type StoreMenuBundlePayload = {
   store: Record<string, unknown> | null;
@@ -12,6 +20,9 @@ export type StoreMenuBundlePayload = {
 
 @Injectable()
 export class StoreMenuBundleService {
+  @Inject(CACHE_MANAGER)
+  private readonly _cache: Cache;
+
   @Inject(StoreService)
   private readonly _stores: StoreService;
 
@@ -37,15 +48,24 @@ export class StoreMenuBundleService {
   ): Promise<StoreMenuBundlePayload> {
     const take = Math.min(120, Math.max(8, Math.floor(productsTake)));
     const page = Math.max(1, Math.floor(productsPage));
-    const [meta, pageOut] = await Promise.all([
-      this._stores.findPublicStoreMenuMeta(storeId),
-      this._search.storeMenuProductsLeanPage(storeId, page, take, user),
-    ]);
-    const products = pageOut.items.map((p) => this._productToPlain(p));
-    return {
-      store: meta,
-      products,
-      productsTotal: pageOut.total,
-    };
+    const scope = cacheUserScope(user);
+    const cacheKey = AppCacheKeys.storeMenuBundle(storeId, page, take, scope);
+    return getOrSetCache(
+      this._cache,
+      cacheKey,
+      apiPublicCacheTtlMs(),
+      async () => {
+        const [meta, pageOut] = await Promise.all([
+          this._stores.findPublicStoreMenuMeta(storeId),
+          this._search.storeMenuProductsLeanPage(storeId, page, take, user),
+        ]);
+        const products = pageOut.items.map((p) => this._productToPlain(p));
+        return {
+          store: meta,
+          products,
+          productsTotal: pageOut.total,
+        };
+      },
+    );
   }
 }

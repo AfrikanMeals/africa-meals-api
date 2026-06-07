@@ -9,7 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   parsePositiveInt,
-  readBullmqRedisConnection,
+  readBullmqRedisConnectionFromConfig,
 } from '../../common/bullmq-redis-connection';
 import { randomUUID } from 'crypto';
 import { JobsOptions, Queue, Worker } from 'bullmq';
@@ -44,9 +44,7 @@ export class AdNotificationDispatchQueueService
   }
 
   async onModuleInit(): Promise<void> {
-    const connection = readBullmqRedisConnection(
-      this.config as unknown as NodeJS.ProcessEnv,
-    );
+    const connection = readBullmqRedisConnectionFromConfig(this.config);
     if (!connection) {
       this.logger.log(
         'BullMQ ads-notify disabled (REDIS_* absent) — mode synchrone',

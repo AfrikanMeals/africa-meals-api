@@ -1,6 +1,11 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { BaseSchema } from './base.schema';
 
+export enum ProductCategoryKindEnum {
+  FOOD = 'food',
+  DRINK = 'drink',
+}
+
 @Schema({
   timestamps: true,
   collection: 'product_categories',
@@ -18,6 +23,15 @@ export class ProductCategoryModel extends BaseSchema {
 
   @Prop({ default: true, name: 'is_enabled' })
   isEnabled: boolean;
+
+  /** Repas / plats vs boissons (affichage catalogue). */
+  @Prop({
+    type: String,
+    enum: Object.values(ProductCategoryKindEnum),
+    default: ProductCategoryKindEnum.FOOD,
+    name: 'kind',
+  })
+  kind: ProductCategoryKindEnum;
 }
 
 export const ProductCategorySchema =

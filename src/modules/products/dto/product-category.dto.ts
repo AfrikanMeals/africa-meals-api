@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ProductCategoryKindEnum } from '@schemas/product-category.schema';
 import { Trim } from 'class-sanitizer';
-import { IsBoolean, IsNotEmpty, IsOptional } from 'class-validator';
+import { IsBoolean, IsEnum, IsNotEmpty, IsOptional } from 'class-validator';
 
 export class CreateProductCategoryDto {
   @ApiProperty({ example: 'Plats traditionnels' })
@@ -12,6 +13,11 @@ export class CreateProductCategoryDto {
   @IsNotEmpty()
   @Trim()
   icon: string;
+
+  @ApiPropertyOptional({ enum: ProductCategoryKindEnum, default: ProductCategoryKindEnum.FOOD })
+  @IsOptional()
+  @IsEnum(ProductCategoryKindEnum)
+  kind?: ProductCategoryKindEnum;
 
   @ApiPropertyOptional({ default: true })
   @IsOptional()
@@ -31,6 +37,11 @@ export class PatchProductCategoryDto {
   @IsNotEmpty()
   @Trim()
   icon?: string;
+
+  @ApiPropertyOptional({ enum: ProductCategoryKindEnum })
+  @IsOptional()
+  @IsEnum(ProductCategoryKindEnum)
+  kind?: ProductCategoryKindEnum;
 
   @ApiPropertyOptional()
   @IsOptional()

@@ -1,4 +1,10 @@
-import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
+import { Field, ID, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
+import { ProductCategoryKindEnum } from '@schemas/product-category.schema';
+
+registerEnumType(ProductCategoryKindEnum, {
+  name: 'ProductCategoryKind',
+  description: 'Repas / plats ou boissons',
+});
 
 @ObjectType({
   description:
@@ -13,6 +19,9 @@ export class ProductCategoryPublicGql {
 
   @Field()
   icon!: string;
+
+  @Field(() => ProductCategoryKindEnum)
+  kind!: ProductCategoryKindEnum;
 
   @Field()
   isEnabled!: boolean;

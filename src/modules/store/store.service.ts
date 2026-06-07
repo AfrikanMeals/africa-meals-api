@@ -19,6 +19,12 @@ import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { UsersService } from '@modules/users/users.service';
 import {
+  AppCacheKeys,
+  apiPublicCacheTtlMs,
+  getOrSetCache,
+} from '@common/redis-app-cache';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -39,6 +45,7 @@ import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { VendorSubscriptionModel } from '@schemas/vendor-subscription.schema';
+import { Cache } from 'cache-manager';
 import { Model, Types } from 'mongoose';
 import {
   CreateStoreDto,
@@ -166,6 +173,9 @@ export class StoreService {
 
   @Inject(ConfigService)
   private readonly _configService: ConfigService;
+
+  @Inject(CACHE_MANAGER)
+  private readonly _cache: Cache;
 
   @Inject(MailerService)
   private readonly _mailerService: MailerService;
@@ -325,6 +335,17 @@ export class StoreService {
     if (!(await this.isStoreVisibleOnMobileApp(id))) {
       return null;
     }
+    return getOrSetCache(
+      this._cache,
+      AppCacheKeys.storeMeta(id),
+      apiPublicCacheTtlMs(),
+      () => this._loadPublicStoreMenuMeta(id),
+    );
+  }
+
+  private async _loadPublicStoreMenuMeta(
+    id: string,
+  ): Promise<Record<string, unknown> | null> {
     const storeOid = new Types.ObjectId(id);
     const doc = await this._storeModel
       .findById(storeOid)

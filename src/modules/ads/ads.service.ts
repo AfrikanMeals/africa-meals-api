@@ -38,6 +38,13 @@ import {
 } from '@modules/vendor-emails/vendor-status-email.service';
 import { WsAdManagerNotifyService } from '@modules/ws-notify/ws-ad-manager-notify.service';
 import {
+  AppCacheKeys,
+  apiPublicCacheTtlMs,
+  bustCacheKey,
+  getOrSetCache,
+} from '@common/redis-app-cache';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import {
   BadRequestException,
   ForbiddenException,
   Inject,
@@ -47,6 +54,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
+import { Cache } from 'cache-manager';
 import {
   AdConversionSourceEnum,
   AdEventModel,
@@ -387,13 +395,6 @@ const AD_NOTIFICATION_PRICING_DEFAULTS: Omit<
 
 @Injectable()
 export class AdsService implements OnModuleInit {
-  private static readonly _LIST_TTL_MS = 30_000;
-  private _listCache: {
-    at: number;
-    data: AdModel[];
-    stripeFiltered: boolean;
-  } | null = null;
-
   @InjectModel(AdModel.name)
   private readonly adModel: Model<AdModel>;
 
@@ -451,12 +452,15 @@ export class AdsService implements OnModuleInit {
   @Inject(WsAdManagerNotifyService)
   private readonly _wsAdManager: WsAdManagerNotifyService;
 
+  @Inject(CACHE_MANAGER)
+  private readonly _cache: Cache;
+
   async onModuleInit() {
     await this.seedIfEmpty();
   }
 
   private invalidateListCache() {
-    this._listCache = null;
+    void bustCacheKey(this._cache, AppCacheKeys.adsPublic);
   }
 
   private _queueCampaignStatusEmail(args: {
@@ -3514,16 +3518,16 @@ export class AdsService implements OnModuleInit {
    * Ordre renvoyé : au moins 2/3 de pubs **liées boutique** (`store` défini) quand le stock le permet.
    */
   async listPublic(): Promise<AdModel[]> {
+    return getOrSetCache(
+      this._cache,
+      AppCacheKeys.adsPublic,
+      apiPublicCacheTtlMs(),
+      () => this._loadListPublic(),
+    );
+  }
+
+  private async _loadListPublic(): Promise<AdModel[]> {
     await this._autoArchiveExpiredAds();
-    const now = Date.now();
-    // Ne pas servir un cache calculé avant le filtre Stripe Connect (paiements vendeur).
-    if (
-      this._listCache &&
-      this._listCache.stripeFiltered === true &&
-      now - this._listCache.at < AdsService._LIST_TTL_MS
-    ) {
-      return this._listCache.data;
-    }
     const raw = await this.adModel
       .find({ isActive: true })
       .populate('store', 'name profileImage status')
@@ -3563,9 +3567,7 @@ export class AdsService implements OnModuleInit {
       if (storeOid == null) return true;
       return paymentsReadyStoreIds.has(storeOid.toString());
     }) as unknown as AdModel[];
-    const ordered = this.orderPublicAdsByMinTwoThirdsShop(data);
-    this._listCache = { at: now, data: ordered, stripeFiltered: true };
-    return ordered;
+    return this.orderPublicAdsByMinTwoThirdsShop(data);
   }
 
   /** @deprecated Utiliser `listPublic` (même comportement). */
