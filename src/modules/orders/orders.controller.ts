@@ -119,6 +119,19 @@ export class OrdersController {
     return this._ordersService.markOrderReady(id, req.user as UserModel);
   }
 
+  /** Renvoie le reçu / facture PDF par e-mail au client. */
+  @Post(':id/send-receipt-email')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Envoyer le reçu client par e-mail (VENDOR / ADMIN)',
+  })
+  async sendReceiptEmail(@Req() req: Request, @Param('id') id: string) {
+    return this._ordersService.sendClientReceiptEmail(
+      id,
+      req.user as UserModel,
+    );
+  }
+
   /** Refus / annulation par vendeur ou admin avec motif. */
   @Post(':id/reject')
   @UseGuards(JwtGuard)

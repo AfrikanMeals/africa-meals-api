@@ -1728,6 +1728,25 @@ export class OrdersService {
     return { orderId: oid, status: OrderStatusEnum.APPROVED, isPickup };
   }
 
+  /** Vendeur / admin : renvoie le reçu (e-mail + PDF) au client. */
+  async sendClientReceiptEmail(
+    orderId: string,
+    user: UserModel,
+  ): Promise<{ ok: true; sentTo: string }> {
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const order = await this._orderModel.findById(new Types.ObjectId(oid)).exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    await this.assertUserCanManageOrderStore(user, order);
+    return this._orderPaidInvoiceEmail.resendPaidReceiptToClient(oid);
+  }
+
   /**
    * Vendeur / admin : refuse ou annule la commande avec motif structuré.
    */

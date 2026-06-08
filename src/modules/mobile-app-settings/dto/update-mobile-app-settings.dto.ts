@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsEmail,
   IsOptional,
   IsString,
   IsUrl,
@@ -84,4 +85,44 @@ export class UpdateMobileAppSettingsDto {
   @ValidateIf((_, value) => String(value ?? '').trim().length > 0)
   @IsUrl({ require_protocol: true }, { message: 'youtubeUrl_invalid' })
   youtubeUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'E-mail de contact public',
+    example: 'help@wise-eat.com',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(254)
+  @ValidateIf((_, value) => String(value ?? '').trim().length > 0)
+  @IsEmail({}, { message: 'contactEmail_invalid' })
+  contactEmail?: string;
+
+  @ApiPropertyOptional({
+    description: 'Numéro de téléphone de contact public',
+    example: '+1 514 555 0100',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  contactPhone?: string;
+
+  @ApiPropertyOptional({
+    description: 'E-mail principal public',
+    example: 'contact@wise-eat.com',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(254)
+  @ValidateIf((_, value) => String(value ?? '').trim().length > 0)
+  @IsEmail({}, { message: 'mainEmail_invalid' })
+  mainEmail?: string;
+
+  @ApiPropertyOptional({
+    description: 'Numéro WhatsApp public (format international recommandé)',
+    example: '+1 514 555 0100',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  whatsappNumber?: string;
 }

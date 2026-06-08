@@ -28,13 +28,13 @@ export class AppPolicySectionDto {
   imageUrl?: string;
 
   @ApiPropertyOptional({
-    enum: ['sm', 'md', 'lg'],
+    enum: ['sm', 'md', 'lg', 'xl'],
     default: 'md',
     description: 'Taille d’affichage de l’image sur le site vitrine',
   })
   @IsOptional()
-  @IsIn(['sm', 'md', 'lg'])
-  imageSize?: 'sm' | 'md' | 'lg';
+  @IsIn(['sm', 'md', 'lg', 'xl'])
+  imageSize?: 'sm' | 'md' | 'lg' | 'xl';
 
   @ApiProperty()
   @IsString()

@@ -148,6 +148,37 @@ export class LoyaltyService {
     return config.rewards.filter((r) => r.active);
   }
 
+  /** Programme fidélité + infos codes promo pour la page vitrine publique. */
+  async listPublicPromoProgram() {
+    const config = await this.resolveConfig();
+    return {
+      loyalty: {
+        currency: config.currency,
+        cadPerPoint: config.cadPerPoint,
+        welcomeBonusPoints: config.welcomeBonusPoints,
+        tiers: config.tiers.map((t) => ({
+          name: t.name,
+          min: t.min,
+          max: t.max,
+          icon: t.icon,
+          advantages: t.advantages,
+        })),
+        rewards: config.rewards
+          .filter((r) => r.active)
+          .map((r) => ({
+            id: r.id,
+            title: r.title,
+            icon: r.icon,
+            points: r.points,
+            category: r.category,
+          })),
+      },
+      coupons: {
+        discountTypes: ['PERCENTAGE', 'FIXED'] as const,
+      },
+    };
+  }
+
   /** État fidélité client (app mobile) — aligné config admin + éligibilité. */
   async getCustomerRewardsView(userId: string) {
     if (!Types.ObjectId.isValid(userId)) {

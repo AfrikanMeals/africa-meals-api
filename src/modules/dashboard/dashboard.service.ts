@@ -37,11 +37,25 @@ import { StoreRatingModel } from '@schemas/store_rating.schema';
 import { StripeProcessedCheckoutModel } from '@schemas/stripe-processed-checkout.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { VendorFeedbackModel } from '@schemas/vendor-feedback.schema';
+import {
+  VendorFeatureRequestCategoryEnum,
+  VendorFeatureRequestModel,
+  VendorFeatureRequestStatusEnum,
+} from '@schemas/vendor-feature-request.schema';
+import {
+  SiteContactRequestMailStatusEnum,
+  SiteContactRequestModel,
+} from '@schemas/site-contact-request.schema';
 import { Model, Types } from 'mongoose';
 import { AdminVendorFeedbacksQueryDto } from './dto/admin-vendor-feedbacks-query.dto';
+import { AdminVendorFeatureRequestsQueryDto } from './dto/admin-vendor-feature-requests-query.dto';
+import { AdminSiteContactRequestsQueryDto } from './dto/admin-site-contact-requests-query.dto';
+import { ReplySiteContactRequestDto } from './dto/reply-site-contact-request.dto';
 import { CreateDashboardLivreurDto } from './dto/create-dashboard-livreur.dto';
 import { AssignDashboardOrderDto } from './dto/assign-dashboard-order.dto';
 import { CreateVendorFeedbackDto } from './dto/create-vendor-feedback.dto';
+import { CreateVendorFeatureRequestDto } from './dto/create-vendor-feature-request.dto';
+import { UpdateVendorFeatureRequestAdminDto } from './dto/update-vendor-feature-request-admin.dto';
 import {
   coordsFromLngLat,
   lngLatFromPercentCoords,
@@ -54,6 +68,7 @@ import { OrderStatusEventsService } from '@modules/orders/order-status-events.se
 import { OrdersService } from '@modules/orders/orders.service';
 import { WsOrderNotifyService } from '@modules/ws-notify/ws-order-notify.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
+import { ContactSubmissionService } from '@modules/mailer/contact-submission.service';
 import {
   buildDashboardAdPerformancePayload,
   DASHBOARD_AD_PERFORMANCE_DAYS,
@@ -508,6 +523,20 @@ function emptyPeakHourSlots(): DashboardPeakHourRow[] {
   }));
 }
 
+function parseVendorFeatureRequestStatus(
+  raw: unknown,
+): VendorFeatureRequestStatusEnum {
+  const s = String(raw ?? '').trim();
+  if (
+    Object.values(VendorFeatureRequestStatusEnum).includes(
+      s as VendorFeatureRequestStatusEnum,
+    )
+  ) {
+    return s as VendorFeatureRequestStatusEnum;
+  }
+  return VendorFeatureRequestStatusEnum.PENDING;
+}
+
 @Injectable()
 export class DashboardService {
   private readonly logger = new Logger(DashboardService.name);
@@ -537,6 +566,10 @@ export class DashboardService {
     private readonly stripeProcessedCheckoutModel: Model<StripeProcessedCheckoutModel>,
     @InjectModel(VendorFeedbackModel.name)
     private readonly vendorFeedbackModel: Model<VendorFeedbackModel>,
+    @InjectModel(VendorFeatureRequestModel.name)
+    private readonly vendorFeatureRequestModel: Model<VendorFeatureRequestModel>,
+    @InjectModel(SiteContactRequestModel.name)
+    private readonly siteContactRequestModel: Model<SiteContactRequestModel>,
     @InjectModel(AdModel.name)
     private readonly adModel: Model<AdModel>,
     @InjectModel(AdEventModel.name)
@@ -552,6 +585,7 @@ export class DashboardService {
     @Inject(WsOrderNotifyService)
     private readonly wsOrderNotify: WsOrderNotifyService,
     private readonly storeAccess: StoreAccessService,
+    private readonly contactSubmissionService: ContactSubmissionService,
   ) {}
 
   async getAlerts(user: UserModel): Promise<{
@@ -1595,6 +1629,383 @@ export class DashboardService {
         from: fromRaw || null,
         to: toRaw || null,
       },
+    };
+  }
+
+  async submitVendorFeatureRequest(
+    user: UserModel,
+    body: CreateVendorFeatureRequestDto,
+  ): Promise<{
+    id: string;
+    title: string;
+    description: string;
+    category: VendorFeatureRequestCategoryEnum;
+    status: VendorFeatureRequestStatusEnum;
+    storeId: string | null;
+    createdAt: string;
+  }> {
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_feature_request_vendor_only');
+    }
+
+    const title = String(body.title ?? '').trim();
+    const description = String(body.description ?? '').trim();
+    if (title.length < 3) {
+      throw new BadRequestException('vendor_feature_request_title_too_short');
+    }
+    if (description.length < 10) {
+      throw new BadRequestException(
+        'vendor_feature_request_description_too_short',
+      );
+    }
+
+    const category =
+      body.category &&
+      Object.values(VendorFeatureRequestCategoryEnum).includes(body.category)
+        ? body.category
+        : VendorFeatureRequestCategoryEnum.FEATURE;
+
+    let storeId: Types.ObjectId | undefined;
+    const storeRaw = String(body.storeId ?? '').trim();
+    if (storeRaw) {
+      if (!Types.ObjectId.isValid(storeRaw)) {
+        throw new BadRequestException('vendor_feature_request_invalid_store');
+      }
+      try {
+        await this.storeAccess.assertStoreAccess(user, storeRaw);
+      } catch {
+        throw new ForbiddenException('vendor_feature_request_store_forbidden');
+      }
+      storeId = new Types.ObjectId(storeRaw);
+    }
+
+    const created = await this.vendorFeatureRequestModel.create({
+      user: user._id,
+      ...(storeId ? { store: storeId } : {}),
+      title,
+      description,
+      category,
+      status: VendorFeatureRequestStatusEnum.PENDING,
+    });
+
+    return {
+      id: String(created._id),
+      title: String(created.title),
+      description: String(created.description),
+      category: created.category as VendorFeatureRequestCategoryEnum,
+      status: created.status as VendorFeatureRequestStatusEnum,
+      storeId: storeId ? String(storeId) : null,
+      createdAt:
+        created.createdAt instanceof Date
+          ? created.createdAt.toISOString()
+          : new Date().toISOString(),
+    };
+  }
+
+  async listVendorFeatureRequestsAdmin(
+    user: UserModel,
+    query: AdminVendorFeatureRequestsQueryDto,
+  ): Promise<{
+    items: Array<{
+      id: string;
+      title: string;
+      description: string;
+      category: VendorFeatureRequestCategoryEnum;
+      status: VendorFeatureRequestStatusEnum;
+      createdAt: string;
+      store: { id: string; name: string } | null;
+      vendor: {
+        id: string;
+        fullName: string;
+        email: string | null;
+        profileImage: string | null;
+      };
+    }>;
+    total: number;
+    page: number;
+    take: number;
+    hasMore: boolean;
+    filters: {
+      status: VendorFeatureRequestStatusEnum | null;
+      from: string | null;
+      to: string | null;
+    };
+  }> {
+    if (user.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('vendor_feature_request_admin_only');
+    }
+
+    const page = Math.max(1, Number(query.page) || 1);
+    const take = Math.min(100, Math.max(1, Number(query.take) || 20));
+    const status =
+      query.status &&
+      Object.values(VendorFeatureRequestStatusEnum).includes(query.status)
+        ? query.status
+        : null;
+
+    const fromRaw = typeof query.from === 'string' ? query.from.trim() : '';
+    const toRaw = typeof query.to === 'string' ? query.to.trim() : '';
+    const fromDate = fromRaw ? new Date(fromRaw) : null;
+    const toDate = toRaw ? new Date(toRaw) : null;
+    if (fromDate && Number.isNaN(fromDate.getTime())) {
+      throw new BadRequestException('vendor_feature_request_invalid_from');
+    }
+    if (toDate && Number.isNaN(toDate.getTime())) {
+      throw new BadRequestException('vendor_feature_request_invalid_to');
+    }
+    if (toDate) {
+      toDate.setHours(23, 59, 59, 999);
+    }
+    if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
+      throw new BadRequestException('vendor_feature_request_invalid_date_range');
+    }
+
+    const where: Record<string, unknown> = {};
+    if (status) {
+      where.status = status;
+    }
+    if (fromDate || toDate) {
+      const createdAtWhere: Record<string, Date> = {};
+      if (fromDate) createdAtWhere.$gte = fromDate;
+      if (toDate) createdAtWhere.$lte = toDate;
+      where.createdAt = createdAtWhere;
+    }
+
+    const skip = (page - 1) * take;
+    const [rows, total] = await Promise.all([
+      this.vendorFeatureRequestModel
+        .find(where)
+        .populate({ path: 'user', select: 'fullName email profileImage' })
+        .populate({ path: 'store', select: 'name' })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(take)
+        .lean()
+        .exec(),
+      this.vendorFeatureRequestModel.countDocuments(where).exec(),
+    ]);
+
+    type LeanUser = {
+      _id?: unknown;
+      fullName?: string;
+      email?: string;
+      profileImage?: string;
+    };
+    type LeanStore = { _id?: unknown; name?: string };
+
+    const items = rows.map((row) => {
+      const vendor = (row.user ?? null) as LeanUser | null;
+      const store = (row.store ?? null) as LeanStore | null;
+      return {
+        id: String(row._id),
+        title: String(row.title ?? '').trim(),
+        description: String(row.description ?? '').trim(),
+        category: row.category as VendorFeatureRequestCategoryEnum,
+        status: parseVendorFeatureRequestStatus(row.status),
+        createdAt:
+          row.createdAt instanceof Date
+            ? row.createdAt.toISOString()
+            : new Date(String(row.createdAt ?? Date.now())).toISOString(),
+        store:
+          store && store._id
+            ? {
+                id: String(store._id),
+                name: String(store.name ?? '').trim() || 'Boutique',
+              }
+            : null,
+        vendor: {
+          id: String(vendor?._id ?? ''),
+          fullName: vendor?.fullName?.trim() || 'Vendeur',
+          email: vendor?.email?.trim() || null,
+          profileImage: vendor?.profileImage?.trim() || null,
+        },
+      };
+    });
+
+    return {
+      items,
+      total,
+      page,
+      take,
+      hasMore: page * take < total,
+      filters: {
+        status,
+        from: fromRaw || null,
+        to: toRaw || null,
+      },
+    };
+  }
+
+  async updateVendorFeatureRequestAdmin(
+    user: UserModel,
+    id: string,
+    body: UpdateVendorFeatureRequestAdminDto,
+  ): Promise<{
+    id: string;
+    status: VendorFeatureRequestStatusEnum;
+    message: string;
+  }> {
+    if (user.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('vendor_feature_request_admin_only');
+    }
+
+    const requestId = String(id ?? '').trim();
+    if (!requestId || !Types.ObjectId.isValid(requestId)) {
+      throw new BadRequestException('vendor_feature_request_invalid_id');
+    }
+
+    const doc = await this.vendorFeatureRequestModel.findById(requestId).exec();
+    if (!doc) {
+      throw new NotFoundException('vendor_feature_request_not_found');
+    }
+
+    doc.status = body.status;
+    await doc.save();
+
+    return {
+      id: String(doc._id),
+      status: doc.status as VendorFeatureRequestStatusEnum,
+      message: 'Statut mis à jour.',
+    };
+  }
+
+  async listSiteContactRequestsAdmin(
+    user: UserModel,
+    query: AdminSiteContactRequestsQueryDto,
+  ): Promise<{
+    items: Array<{
+      id: string;
+      name: string;
+      email: string;
+      subject: string;
+      message: string;
+      mailStatus: SiteContactRequestMailStatusEnum;
+      mailError: string | null;
+      createdAt: string;
+    }>;
+    total: number;
+    page: number;
+    take: number;
+    hasMore: boolean;
+    filters: {
+      mailStatus: SiteContactRequestMailStatusEnum | null;
+      from: string | null;
+      to: string | null;
+    };
+  }> {
+    if (user.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('site_contact_request_admin_only');
+    }
+
+    const page = Math.max(1, Number(query.page) || 1);
+    const take = Math.min(100, Math.max(1, Number(query.take) || 20));
+    const mailStatus =
+      query.mailStatus &&
+      Object.values(SiteContactRequestMailStatusEnum).includes(query.mailStatus)
+        ? query.mailStatus
+        : null;
+
+    const fromRaw = typeof query.from === 'string' ? query.from.trim() : '';
+    const toRaw = typeof query.to === 'string' ? query.to.trim() : '';
+    const fromDate = fromRaw ? new Date(fromRaw) : null;
+    const toDate = toRaw ? new Date(toRaw) : null;
+    if (fromDate && Number.isNaN(fromDate.getTime())) {
+      throw new BadRequestException('site_contact_request_invalid_from');
+    }
+    if (toDate && Number.isNaN(toDate.getTime())) {
+      throw new BadRequestException('site_contact_request_invalid_to');
+    }
+    if (toDate) {
+      toDate.setHours(23, 59, 59, 999);
+    }
+    if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
+      throw new BadRequestException('site_contact_request_invalid_date_range');
+    }
+
+    const where: Record<string, unknown> = {};
+    if (mailStatus) where.mailStatus = mailStatus;
+    if (fromDate || toDate) {
+      const createdAtWhere: Record<string, Date> = {};
+      if (fromDate) createdAtWhere.$gte = fromDate;
+      if (toDate) createdAtWhere.$lte = toDate;
+      where.createdAt = createdAtWhere;
+    }
+
+    const skip = (page - 1) * take;
+    const [rows, total] = await Promise.all([
+      this.siteContactRequestModel
+        .find(where)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(take)
+        .lean()
+        .exec(),
+      this.siteContactRequestModel.countDocuments(where).exec(),
+    ]);
+
+    const items = rows.map((row) => ({
+      id: String(row._id),
+      name: String(row.name ?? '').trim(),
+      email: String(row.email ?? '').trim(),
+      subject: String(row.subject ?? '').trim(),
+      message: String(row.message ?? '').trim(),
+      mailStatus: row.mailStatus as SiteContactRequestMailStatusEnum,
+      mailError: row.mailError ? String(row.mailError).trim() : null,
+      createdAt:
+        row.createdAt instanceof Date
+          ? row.createdAt.toISOString()
+          : new Date(String(row.createdAt ?? Date.now())).toISOString(),
+    }));
+
+    return {
+      items,
+      total,
+      page,
+      take,
+      hasMore: page * take < total,
+      filters: {
+        mailStatus,
+        from: fromRaw || null,
+        to: toRaw || null,
+      },
+    };
+  }
+
+  async replySiteContactRequestAdmin(
+    user: UserModel,
+    id: string,
+    body: ReplySiteContactRequestDto,
+  ): Promise<{ success: true; message: string }> {
+    if (user.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('site_contact_request_admin_only');
+    }
+
+    const requestId = String(id ?? '').trim();
+    if (!requestId || !Types.ObjectId.isValid(requestId)) {
+      throw new BadRequestException('site_contact_request_invalid_id');
+    }
+
+    const row = await this.siteContactRequestModel.findById(requestId).lean().exec();
+    if (!row) {
+      throw new NotFoundException('site_contact_request_not_found');
+    }
+
+    await this.contactSubmissionService.sendContactReply({
+      name: String(row.name ?? '').trim(),
+      email: String(row.email ?? '').trim(),
+      subject: String(row.subject ?? '').trim(),
+      message: String(row.message ?? '').trim(),
+      createdAt:
+        row.createdAt instanceof Date
+          ? row.createdAt
+          : new Date(String(row.createdAt ?? Date.now())),
+      replyMessage: body.message.trim(),
+      replySubject: body.subject?.trim(),
+    });
+
+    return {
+      success: true,
+      message: 'Réponse envoyée au client.',
     };
   }
 

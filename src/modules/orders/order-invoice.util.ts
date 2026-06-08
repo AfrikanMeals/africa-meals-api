@@ -13,6 +13,7 @@ export type OrderTaxLineInvoice = {
 
 export type OrderInvoiceSnapshot = {
   orderId: string;
+  storeId?: string;
   createdAt?: Date | string;
   status: string;
   totalPrice: number;
@@ -29,6 +30,7 @@ export type OrderInvoiceSnapshot = {
   clientName: string;
   clientEmail: string;
   deliveryLine: string;
+  deliveryAddressSnapshot?: Record<string, unknown>;
   items: OrdeLineItem[];
 };
 
@@ -64,6 +66,199 @@ export function formatInvoiceDate(iso?: Date | string): string {
 export function orderInvoiceRef(orderId: string): string {
   const id = orderId.trim();
   return id.length > 8 ? id.slice(-8).toUpperCase() : id.toUpperCase();
+}
+
+/** Objet e-mail compatible classification Gmail Purchases (mot-clé Receipt / Invoice). */
+export function orderReceiptEmailSubject(
+  storeName: string,
+  ref: string,
+): string {
+  const store = storeName.trim() || 'Restaurant';
+  return `${store} Receipt & Invoice #${ref}`;
+}
+
+function formatOrderDateIso(iso?: Date | string): string | undefined {
+  if (!iso) return undefined;
+  try {
+    const d = iso instanceof Date ? iso : new Date(iso);
+    if (Number.isNaN(d.getTime())) return undefined;
+    return d.toISOString();
+  } catch {
+    return undefined;
+  }
+}
+
+function buildBillingPostalAddress(
+  snapshot: OrderInvoiceSnapshot,
+): Record<string, unknown> | undefined {
+  const snap = snapshot.deliveryAddressSnapshot;
+  if (!snap || typeof snap !== 'object') return undefined;
+  const streetAddress = String(snap.address ?? '').trim();
+  if (!streetAddress) return undefined;
+
+  const locality = String(snap.city ?? '').trim();
+  const region = String(snap.zipCode ?? snap.zip_code ?? '').trim();
+  const cc = snap.countryCode ?? snap.country_code ?? snap.country;
+  let addressCountry = '';
+  if (cc === 'CA' || snap.country === 'Canada') {
+    addressCountry = 'Canada';
+  } else if (typeof cc === 'string' && cc.trim()) {
+    addressCountry = cc.trim();
+  } else if (typeof snap.country === 'string' && snap.country.trim()) {
+    addressCountry = snap.country.trim();
+  }
+
+  return {
+    '@type': 'PostalAddress',
+    name: snapshot.clientName.trim() || snapshot.clientEmail,
+    streetAddress,
+    ...(locality ? { addressLocality: locality } : {}),
+    ...(region ? { addressRegion: region } : {}),
+    ...(addressCountry ? { addressCountry } : {}),
+  };
+}
+
+type LineItemRow = OrdeLineItem & {
+  label?: string;
+  price?: number;
+  quantity?: number;
+  pictureUrl?: string;
+  picture_url?: string;
+  entityId?: string;
+  entity_id?: string;
+};
+
+/** URL publique d'un produit (boutique + article) pour le balisage Gmail. */
+export function resolveProductPublicUrl(
+  storeId: string | undefined,
+  entityId: string | undefined,
+  publicWebUrl?: string | null,
+): string | undefined {
+  const productId = entityId?.trim();
+  const base = publicWebUrl?.trim();
+  if (!productId || !base) return undefined;
+  const root = base.replace(/\/+$/, '');
+  if (storeId?.trim()) {
+    return `${root}/stores/${encodeURIComponent(storeId.trim())}/products/${encodeURIComponent(productId)}`;
+  }
+  return `${root}/products/${encodeURIComponent(productId)}`;
+}
+
+function estimateOrderDiscount(
+  snapshot: OrderInvoiceSnapshot,
+): { amount: string; currency: string } | null {
+  const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+  const linesSubtotal = items.reduce((acc, it) => {
+    const row = it as LineItemRow;
+    const qty = Number(row.quantity) || 0;
+    const price = Number(row.price) || 0;
+    return acc + qty * price;
+  }, 0);
+  const shipping = Number(snapshot.shippingPrice) || 0;
+  const tax = Number(snapshot.taxTotal) || 0;
+  const total = Number(snapshot.totalPrice) || 0;
+  const beforeDiscount = linesSubtotal + shipping + tax;
+  const discount = beforeDiscount - total;
+  const currency = (snapshot.currency || 'CAD').trim().toUpperCase() || 'CAD';
+  if (discount > 0.009) {
+    return { amount: discount.toFixed(2), currency };
+  }
+  return null;
+}
+
+function buildGmailAcceptedOffers(
+  snapshot: OrderInvoiceSnapshot,
+  currency: string,
+  publicWebUrl?: string,
+): Record<string, unknown>[] {
+  const storeName = snapshot.storeName.trim() || 'Restaurant';
+  const storeId = snapshot.storeId;
+  const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+  const total = Number(snapshot.totalPrice) || 0;
+
+  const toOffer = (
+    name: string,
+    unitPrice: number,
+    qty: number,
+    extras?: { sku?: string; image?: string; url?: string },
+  ): Record<string, unknown> => {
+    const itemOffered: Record<string, unknown> = {
+      '@type': 'Product',
+      name: name.trim() || 'Order item',
+    };
+    if (extras?.sku) itemOffered.sku = extras.sku;
+    if (extras?.url) itemOffered.url = extras.url;
+    if (extras?.image) itemOffered.image = extras.image;
+
+    return {
+      '@type': 'Offer',
+      itemOffered,
+      price: (Number.isFinite(unitPrice) ? unitPrice : total).toFixed(2),
+      priceCurrency: currency,
+      eligibleQuantity: {
+        '@type': 'QuantitativeValue',
+        value: String(qty > 0 ? qty : 1),
+      },
+      seller: { '@type': 'Organization', name: storeName },
+    };
+  };
+
+  if (!items.length) {
+    return [toOffer(`Order from ${storeName}`, total, 1)];
+  }
+
+  return items
+    .filter((it): it is OrdeLineItem => Boolean(it) && typeof it === 'object')
+    .map((it) => {
+      const row = it as LineItemRow;
+      const name = String(row.label ?? '').trim() || 'Article';
+      const qty = Number(row.quantity);
+      const unit = Number(row.price);
+      const sku = String(row.entityId ?? row.entity_id ?? '').trim() || undefined;
+      const image = String(row.pictureUrl ?? row.picture_url ?? '').trim() || undefined;
+      const url = resolveProductPublicUrl(storeId, sku, publicWebUrl);
+      return toOffer(
+        name,
+        Number.isFinite(unit) ? unit : 0,
+        qty > 0 ? Math.floor(qty) : 1,
+        { sku, image, url },
+      );
+    });
+}
+
+/**
+ * Résout l'URL publique d'une commande pour les e-mails (JSON-LD + bouton).
+ * Priorité : EMAIL_ORDER_URL_TEMPLATE → base site → undefined.
+ */
+export function resolveOrderEmailPublicUrl(
+  orderId: string,
+  urls?: {
+    orderUrlTemplate?: string | null;
+    publicWebUrl?: string | null;
+    clientAppUrl?: string | null;
+    emailWebsiteUrl?: string | null;
+  },
+): string | undefined {
+  const id = orderId.trim();
+  if (!id) return undefined;
+
+  const template = urls?.orderUrlTemplate?.trim();
+  if (template) {
+    return resolveOrderPublicUrl(template, id);
+  }
+
+  for (const raw of [
+    urls?.publicWebUrl,
+    urls?.clientAppUrl,
+    urls?.emailWebsiteUrl,
+  ]) {
+    const base = raw?.trim();
+    if (base) {
+      return resolveOrderPublicUrl(base, id);
+    }
+  }
+
+  return undefined;
 }
 
 export function inferInvoicePaymentMethodLabel(status: string): string {
@@ -147,14 +342,15 @@ export function formatOrderDeliveryLine(args: {
 
 /**
  * Statuts Schema.org pour le balisage e-mail « Order » (carte achat Gmail).
- * @see https://schema.org/OrderStatus
+ * Google utilise des URIs `http://schema.org/...` dans ses exemples officiels.
+ * @see https://developers.google.com/workspace/gmail/markup/reference/order
  */
 export const OrderSchemaStatus = {
-  processing: 'https://schema.org/OrderProcessing',
-  inTransit: 'https://schema.org/OrderInTransit',
-  delivered: 'https://schema.org/OrderDelivered',
-  problem: 'https://schema.org/OrderProblem',
-  cancelled: 'https://schema.org/OrderCancelled',
+  processing: 'http://schema.org/OrderProcessing',
+  inTransit: 'http://schema.org/OrderInTransit',
+  delivered: 'http://schema.org/OrderDelivered',
+  problem: 'http://schema.org/OrderProblem',
+  cancelled: 'http://schema.org/OrderCancelled',
 } as const;
 
 export type OrderEmailJsonLdOptions = {
@@ -164,6 +360,8 @@ export type OrderEmailJsonLdOptions = {
   orderStatus?: string;
   /** URL publique de la commande (https). Active le bouton « Voir la commande ». */
   orderUrl?: string;
+  /** Base site public pour les URLs produit dans acceptedOffer. */
+  publicWebUrl?: string;
   /** Libellé du bouton d'action. */
   actionName?: string;
 };
@@ -191,58 +389,141 @@ export function resolveOrderPublicUrl(
  * Construit le balisage Schema.org `Order` (JSON-LD) à partir d'un reçu.
  * Réutilisable par tous les e-mails de commande (payée, expédiée, etc.).
  */
+function normalizeAcceptedOfferForGmail(
+  offers: Record<string, unknown>[],
+): Record<string, unknown> | Record<string, unknown>[] {
+  if (offers.length === 1) return offers[0]!;
+  return offers;
+}
+
 export function buildOrderEmailJsonLd(
   snapshot: OrderInvoiceSnapshot,
   opts: OrderEmailJsonLdOptions,
 ): Record<string, unknown> {
   const currency = (snapshot.currency || 'CAD').trim().toUpperCase() || 'CAD';
-  const items = Array.isArray(snapshot.items) ? snapshot.items : [];
-
-  const acceptedOffer = items
-    .filter((it): it is OrdeLineItem => Boolean(it) && typeof it === 'object')
-    .map((it) => {
-      const row = it as { label?: unknown; price?: unknown; quantity?: unknown };
-      const name = String(row.label ?? '').trim() || 'Article';
-      const qty = Number(row.quantity);
-      const unit = Number(row.price);
-      const offer: Record<string, unknown> = {
-        '@type': 'Offer',
-        itemOffered: { '@type': 'Product', name },
-        eligibleQuantity: {
-          '@type': 'QuantitativeValue',
-          value: qty > 0 ? Math.floor(qty) : 1,
-        },
-      };
-      if (Number.isFinite(unit)) {
-        offer.price = unit.toFixed(2);
-        offer.priceCurrency = currency;
-      }
-      return offer;
-    });
-
   const orderUrl = opts.orderUrl?.trim();
+  const orderDate = formatOrderDateIso(snapshot.createdAt);
+  const offers = buildGmailAcceptedOffers(
+    snapshot,
+    currency,
+    opts.publicWebUrl,
+  );
+  const acceptedOffer = normalizeAcceptedOfferForGmail(offers);
+  const billingAddress = buildBillingPostalAddress(snapshot);
+  const totalPrice = (Number(snapshot.totalPrice) || 0).toFixed(2);
+  const discount = estimateOrderDiscount(snapshot);
 
-  return {
-    '@context': 'https://schema.org',
+  const payload: Record<string, unknown> = {
+    '@context': 'http://schema.org',
     '@type': 'Order',
     merchant: { '@type': 'Organization', name: snapshot.storeName },
     orderNumber: opts.ref,
     priceCurrency: currency,
-    price: (Number(snapshot.totalPrice) || 0).toFixed(2),
-    orderStatus: opts.orderStatus ?? OrderSchemaStatus.processing,
-    customer: { '@type': 'Person', name: snapshot.clientName },
+    price: totalPrice,
     acceptedOffer,
-    ...(orderUrl
-      ? {
-          url: orderUrl,
-          potentialAction: {
-            '@type': 'ViewAction',
-            name: opts.actionName ?? 'Voir la commande',
-            target: orderUrl,
-          },
-        }
+    orderStatus: opts.orderStatus ?? OrderSchemaStatus.processing,
+    paymentMethod: {
+      '@type': 'PaymentMethod',
+      name: 'http://schema.org/CreditCard',
+    },
+    isGift: 'false',
+    customer: { '@type': 'Person', name: snapshot.clientName },
+  };
+
+  if (orderDate) {
+    payload.orderDate = orderDate;
+    payload.priceSpecification = {
+      '@type': 'PriceSpecification',
+      validFrom: orderDate,
+    };
+  }
+
+  if (discount) {
+    payload.discount = discount.amount;
+    payload.discountCurrency = discount.currency;
+  }
+
+  if (billingAddress) {
+    payload.billingAddress = billingAddress;
+  }
+
+  if (orderUrl) {
+    payload.url = orderUrl;
+    payload.potentialAction = {
+      '@type': 'ViewAction',
+      url: orderUrl,
+    };
+  }
+
+  return payload;
+}
+
+/**
+ * Schéma `Invoice` lié à la commande (reçu payé).
+ * @see https://developers.google.com/workspace/gmail/markup/reference/invoice
+ */
+export function buildInvoiceEmailJsonLd(
+  snapshot: OrderInvoiceSnapshot,
+  opts: OrderEmailJsonLdOptions,
+  orderJsonLd: Record<string, unknown>,
+): Record<string, unknown> {
+  const currency = (snapshot.currency || 'CAD').trim().toUpperCase() || 'CAD';
+  const total = (Number(snapshot.totalPrice) || 0).toFixed(2);
+  const orderDate = formatOrderDateIso(snapshot.createdAt);
+  const dueDate = orderDate?.split('T')[0];
+
+  const referencesOrder: Record<string, unknown> = {
+    '@type': 'Order',
+    orderNumber: opts.ref,
+    merchant: orderJsonLd.merchant,
+    ...(orderJsonLd.orderDate ? { orderDate: orderJsonLd.orderDate } : {}),
+    ...(orderJsonLd.price ? { price: orderJsonLd.price } : {}),
+    ...(orderJsonLd.priceCurrency
+      ? { priceCurrency: orderJsonLd.priceCurrency }
       : {}),
   };
+
+  const payload: Record<string, unknown> = {
+    '@context': 'http://schema.org',
+    '@type': 'Invoice',
+    accountId: opts.ref,
+    confirmationNumber: opts.ref,
+    paymentStatus: 'PaymentAutomaticallyApplied',
+    paymentMethod: {
+      '@type': 'PaymentMethod',
+      name: 'http://schema.org/CreditCard',
+    },
+    provider: { '@type': 'Organization', name: snapshot.storeName },
+    customer: { '@type': 'Person', name: snapshot.clientName },
+    totalPaymentDue: {
+      '@type': 'PriceSpecification',
+      price: total,
+      priceCurrency: currency,
+    },
+    minimumPaymentDue: {
+      '@type': 'PriceSpecification',
+      price: '0.00',
+      priceCurrency: currency,
+    },
+    referencesOrder,
+  };
+
+  if (dueDate) {
+    payload.paymentDue = dueDate;
+    payload.scheduledPaymentDate = dueDate;
+  }
+
+  return payload;
+}
+
+/** Order + Invoice JSON-LD pour les e-mails de reçu payé. */
+export function buildOrderReceiptEmailJsonLd(
+  snapshot: OrderInvoiceSnapshot,
+  opts: OrderEmailJsonLdOptions,
+): Record<string, unknown>[] {
+  const order = buildOrderEmailJsonLd(snapshot, opts);
+  const invoice = buildInvoiceEmailJsonLd(snapshot, opts, order);
+  return [order, invoice];
 }
 
 export function lineCustomizationText(item: OrdeLineItem): string {

@@ -5,6 +5,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsEnum,
   IsInt,
   IsNotEmpty,
   IsNumber,
@@ -16,6 +17,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+import { StoreBusinessTypeEnum } from '@schemas/store.schema';
 
 export class StoreShippingZoneDto {
   @ApiProperty({
@@ -57,6 +59,18 @@ export class CreateStoreDto {
   @ApiProperty({ example: 'Cuisine africaine traditionnelle' })
   @IsNotEmpty()
   bio: string;
+
+  @ApiPropertyOptional({
+    enum: StoreBusinessTypeEnum,
+    description: 'Type d’établissement (optionnel)',
+    example: StoreBusinessTypeEnum.RESTAURANT,
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === '' || value === null || value === undefined ? undefined : value,
+  )
+  @IsEnum(StoreBusinessTypeEnum)
+  businessType?: StoreBusinessTypeEnum;
 
   @ApiProperty({ format: 'email', example: 'contact@store.com' })
   @IsNotEmpty()

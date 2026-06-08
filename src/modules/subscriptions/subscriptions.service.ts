@@ -74,6 +74,23 @@ function mapPlan(doc: Record<string, unknown>) {
   };
 }
 
+function mapPublicPlan(doc: Record<string, unknown>) {
+  const plan = mapPlan(doc);
+  return {
+    id: plan.id,
+    name: plan.name,
+    description: plan.description,
+    priceMonthly: plan.priceMonthly,
+    priceYearly: plan.priceYearly,
+    currency: plan.currency,
+    features: plan.features,
+    sortOrder: plan.sortOrder,
+    trialDays: plan.trialDays,
+    maxStores: plan.maxStores,
+    mobileAccess: plan.mobileAccess,
+  };
+}
+
 function mapVendorSubscription(
   doc: Record<string, unknown>,
   extras?: { storeName?: string; plan?: Record<string, unknown> },
@@ -172,6 +189,16 @@ export class SubscriptionsService implements OnModuleInit {
       .lean()
       .exec();
     return (rows as Record<string, unknown>[]).map(mapPlan);
+  }
+
+  /** Plans actifs pour la page tarifs publique (sans champs internes). */
+  async listPublicPlans() {
+    const rows = await this.planModel
+      .find({ active: true })
+      .sort({ sortOrder: 1, createdAt: 1 })
+      .lean()
+      .exec();
+    return (rows as Record<string, unknown>[]).map(mapPublicPlan);
   }
 
   private normalizeStoreObjectId(

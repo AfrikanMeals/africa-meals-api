@@ -492,7 +492,7 @@ export class StoreService {
         select: 'address city country zipCode countryCode location',
       })
       .select(
-        'name bio email phoneNumber currency status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones address profileImage dailyMenuByWeekday owner',
+        'name bio businessType email phoneNumber currency status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones address profileImage dailyMenuByWeekday owner',
       )
       .lean()
       .exec();
@@ -524,6 +524,9 @@ export class StoreService {
     const profile = {
       name: String(doc.name ?? ''),
       bio: String(doc.bio ?? ''),
+      businessType: doc.businessType
+        ? String(doc.businessType)
+        : undefined,
       email: String(doc.email ?? ''),
       phoneNumber: String(doc.phoneNumber ?? ''),
       currency: String(doc.currency ?? 'CAD'),
@@ -1225,19 +1228,24 @@ export class StoreService {
       ? args.shippingZones ?? store.shippingZones ?? []
       : [];
 
-    await this._storeModel.updateOne(
-      { _id: store._id },
-      {
-        name: args.name,
-        bio: args.bio,
-        email: args.email,
-        phoneNumber: args.phoneNumber,
-        currency: derivedCurrency,
-        supportsShipping: args.supportsShipping,
-        shippingZones,
-        ...(wasRevision && { status: StoreStatusEnum.PENDING }),
-      },
-    );
+    const setFields: Record<string, unknown> = {
+      name: args.name,
+      bio: args.bio,
+      email: args.email,
+      phoneNumber: args.phoneNumber,
+      currency: derivedCurrency,
+      supportsShipping: args.supportsShipping,
+      shippingZones,
+      ...(wasRevision && { status: StoreStatusEnum.PENDING }),
+    };
+    const updateDoc: Record<string, unknown> = { $set: setFields };
+    if (args.businessType) {
+      setFields.businessType = args.businessType;
+    } else {
+      updateDoc.$unset = { businessType: 1 };
+    }
+
+    await this._storeModel.updateOne({ _id: store._id }, updateDoc);
 
     await this._storeModel.updateOne(
       { _id: store._id },

@@ -10,9 +10,8 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { GoogleAuth } from 'google-auth-library';
+import { ContactSubmissionService } from './contact-submission.service';
 import { ContactDto } from './dto/contact.dto';
-import { EmailTemplateService } from './email-template.service';
-import { MailerService } from './mailer.service';
 
 @ApiTags('contact')
 @Controller('contact')
@@ -23,15 +22,15 @@ export class ContactController {
   });
 
   constructor(
-    private readonly mailerService: MailerService,
+    private readonly contactSubmissionService: ContactSubmissionService,
     private readonly configService: ConfigService,
-    private readonly emailTpl: EmailTemplateService,
   ) {}
 
   @Post()
   @HttpCode(200)
   @ApiOperation({
-    summary: 'Formulaire de contact du site vitrine (envoi SMTP / MailerSend)',
+    summary:
+      'Formulaire de contact du site vitrine (enregistrement puis envoi SMTP / MailerSend)',
   })
   async sendContactMessage(@Body(ValidationPipe) body: ContactDto) {
     if (body.website?.trim()) {
@@ -41,57 +40,7 @@ export class ContactController {
       };
     }
     await this.verifyRecaptchaEnterprise(body.recaptchaToken);
-
-    const appName =
-      this.configService.get<string>('APP_NAME')?.trim() || 'Wise Eat';
-    const to =
-      this.configService.get<string>('SUPPORT_EMAIL')?.trim() ||
-      this.configService.get<string>('SMTP_FROM')?.trim() ||
-      'contact@wiseeat.com';
-    const name = body.name.trim();
-    const email = body.email.trim().toLowerCase();
-    const subject =
-      body.subject?.trim() || `Contact ${appName} — ${name}`.slice(0, 200);
-    const message = body.message.trim();
-    const safeName = this.emailTpl.escapeHtml(name);
-    const safeEmail = this.emailTpl.escapeHtml(email);
-    const safeSubject = this.emailTpl.escapeHtml(subject);
-    const safeMessage = this.emailTpl.escapeHtml(message).replace(/\n/g, '<br>');
-    const safeApp = this.emailTpl.escapeHtml(appName);
-
-    await this.mailerService.sendSimple({
-      to,
-      toName: appName,
-      subject: `[Contact] ${subject}`,
-      html: [
-        this.emailTpl.heading(`Nouveau message — ${safeApp}`),
-        this.emailTpl.keyValues([
-          { label: 'Nom', value: safeName },
-          {
-            label: 'E-mail',
-            value: `<a href="mailto:${safeEmail}" style="color:#aa6900;text-decoration:none;">${safeEmail}</a>`,
-          },
-          { label: 'Sujet', value: safeSubject },
-        ]),
-        this.emailTpl.divider(),
-        this.emailTpl.infoPanel(this.emailTpl.paragraph(safeMessage)),
-      ].join('\n'),
-      text: [
-        `Nouveau message — site ${appName}`,
-        `Nom : ${name}`,
-        `E-mail : ${email}`,
-        `Sujet : ${subject}`,
-        '',
-        message,
-      ].join('\n'),
-      replyTo: email,
-      replyToName: name,
-    });
-
-    return {
-      success: true,
-      message: 'Votre message a été envoyé. Nous vous répondrons sous peu.',
-    };
+    return this.contactSubmissionService.submit(body);
   }
 
   private async verifyRecaptchaEnterprise(token?: string): Promise<void> {
@@ -113,7 +62,6 @@ export class ContactController {
         this.configService.get<string>('RECAPTCHA_ENTERPRISE_ENFORCE') ?? '',
       ).toLowerCase() === 'true';
 
-    // Mode optionnel : si non configuré et non forcé, on ne bloque pas le formulaire.
     if (!projectId || !siteKey) {
       if (enforce) {
         throw new BadRequestException('recaptcha_unavailable');
@@ -250,7 +198,6 @@ export class ContactController {
       projectId,
     )}/assessments`;
 
-    // Priorité: clé API explicite (simple et compatible partout).
     if (apiKey) {
       return {
         url: `${baseUrl}?key=${encodeURIComponent(apiKey)}`,
@@ -258,7 +205,6 @@ export class ContactController {
       };
     }
 
-    // Sinon, authentification Google (service account / ADC).
     try {
       const client = await this.googleAuth.getClient();
       const access = await client.getAccessToken();
@@ -266,8 +212,8 @@ export class ContactController {
         typeof access === 'string'
           ? access
           : typeof access?.token === 'string'
-          ? access.token
-          : '';
+            ? access.token
+            : '';
       if (!token) {
         throw new Error('missing_access_token');
       }

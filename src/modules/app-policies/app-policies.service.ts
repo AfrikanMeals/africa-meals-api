@@ -47,6 +47,13 @@ function serializePolicy(doc: AppPolicyDocument) {
     sections: (doc.sections ?? []).map((s: AppPolicySectionModel) => ({
       title: s.title ?? '',
       imageUrl: s.imageUrl?.trim() || undefined,
+      imageSize:
+        s.imageSize === 'sm' ||
+        s.imageSize === 'lg' ||
+        s.imageSize === 'md' ||
+        s.imageSize === 'xl'
+          ? s.imageSize
+          : undefined,
       htmlContent: s.htmlContent ?? '',
     })),
     isPublished: Boolean(doc.isPublished),
@@ -105,6 +112,13 @@ export class AppPoliciesService {
     const sections = (dto.sections ?? []).map((s) => ({
       title: s.title.trim(),
       imageUrl: s.imageUrl?.trim() || undefined,
+      imageSize:
+        s.imageSize === 'sm' ||
+        s.imageSize === 'lg' ||
+        s.imageSize === 'md' ||
+        s.imageSize === 'xl'
+          ? s.imageSize
+          : undefined,
       htmlContent: s.htmlContent ?? '',
     }));
 

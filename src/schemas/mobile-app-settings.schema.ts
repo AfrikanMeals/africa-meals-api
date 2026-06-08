@@ -27,6 +27,18 @@ export class MobileAppSettingsModel {
 
   @Prop({ type: String, default: '' })
   youtubeUrl: string;
+
+  @Prop({ type: String, default: '' })
+  contactEmail: string;
+
+  @Prop({ type: String, default: '' })
+  contactPhone: string;
+
+  @Prop({ type: String, default: '' })
+  mainEmail: string;
+
+  @Prop({ type: String, default: '' })
+  whatsappNumber: string;
 }
 
 export type MobileAppSettingsDocument =

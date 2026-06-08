@@ -41,6 +41,14 @@ import {
   VendorFeedbackModel,
   VendorFeedbackSchema,
 } from '@schemas/vendor-feedback.schema';
+import {
+  VendorFeatureRequestModel,
+  VendorFeatureRequestSchema,
+} from '@schemas/vendor-feature-request.schema';
+import {
+  SiteContactRequestModel,
+  SiteContactRequestSchema,
+} from '@schemas/site-contact-request.schema';
 import { DeliveryDriversCityMigrationService } from './delivery-drivers-city-migration.service';
 import { DeliveryDriversSeedService } from './delivery-drivers-seed.service';
 import { DashboardController } from './dashboard.controller';
@@ -49,6 +57,7 @@ import { NotificationsModule } from '@modules/notifications/notifications.module
 import { OrdersModule } from '@modules/orders/orders.module';
 import { TeamsModule } from '@modules/teams/teams.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
+import { MailerModule } from '@modules/mailer/mailer.module';
 
 @Module({
   imports: [
@@ -56,6 +65,7 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
     WsNotifyModule,
     OrdersModule,
     TeamsModule,
+    MailerModule,
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       { name: StoreRatingModel.name, schema: StoreRatingSchema },
@@ -80,6 +90,14 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
       { name: AdCampaignModel.name, schema: AdCampaignSchema },
       { name: AdCampaignEventModel.name, schema: AdCampaignEventSchema },
       { name: VendorFeedbackModel.name, schema: VendorFeedbackSchema },
+      {
+        name: VendorFeatureRequestModel.name,
+        schema: VendorFeatureRequestSchema,
+      },
+      {
+        name: SiteContactRequestModel.name,
+        schema: SiteContactRequestSchema,
+      },
     ]),
   ],
   controllers: [DashboardController],

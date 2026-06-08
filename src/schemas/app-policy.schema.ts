@@ -27,9 +27,14 @@ export class AppPolicySectionModel {
   @Prop({ type: String, required: false, trim: true })
   imageUrl?: string;
 
-  /** Affichage web : sm | md | lg (captures d’écran admin). */
-  @Prop({ type: String, required: false, enum: ['sm', 'md', 'lg'], default: 'md' })
-  imageSize?: 'sm' | 'md' | 'lg';
+  /** Affichage web : sm | md | lg | xl (captures d’écran admin). */
+  @Prop({
+    type: String,
+    required: false,
+    enum: ['sm', 'md', 'lg', 'xl'],
+    default: 'md',
+  })
+  imageSize?: 'sm' | 'md' | 'lg' | 'xl';
 
   @Prop({ type: String, required: true, default: '' })
   htmlContent: string;

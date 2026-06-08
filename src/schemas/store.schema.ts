@@ -13,6 +13,16 @@ export enum StoreStatusEnum {
   INACTIVE = 'INACTIVE',
 }
 
+export enum StoreBusinessTypeEnum {
+  RESTAURANT = 'RESTAURANT',
+  CONVENIENCE_STORE = 'CONVENIENCE_STORE',
+  GROCERY_STORE = 'GROCERY_STORE',
+  SPECIALTY_FOOD_STORE = 'SPECIALTY_FOOD_STORE',
+  LIQUOR_STORE = 'LIQUOR_STORE',
+  FLORIST = 'FLORIST',
+  PHARMACY = 'PHARMACY',
+}
+
 @Schema({
   toJSON: {
     getters: true,
@@ -48,6 +58,13 @@ export class StoreModel extends BaseSchema {
 
   @Prop({ required: true, name: 'bio' })
   bio?: string;
+
+  @Prop({
+    required: false,
+    name: 'business_type',
+    enum: StoreBusinessTypeEnum,
+  })
+  businessType?: StoreBusinessTypeEnum;
 
   @Prop({ required: true, name: 'email' })
   email: string;

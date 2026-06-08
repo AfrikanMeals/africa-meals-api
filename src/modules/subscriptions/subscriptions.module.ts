@@ -14,6 +14,7 @@ import {
   VendorSubscriptionSchema,
 } from '@schemas/vendor-subscription.schema';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
+import { PlatformSubscriptionPlansController } from './platform-subscription-plans.controller';
 import { SubscriptionsController } from './subscriptions.controller';
 import { SubscriptionLifecycleCron } from './subscription-lifecycle.cron';
 import { SubscriptionTrialReminderCron } from './subscription-trial-reminder.cron';
@@ -37,7 +38,7 @@ import { SubscriptionsStripeCheckoutService } from './subscriptions-stripe-check
       { name: AdCampaignModel.name, schema: AdCampaignSchema },
     ]),
   ],
-  controllers: [SubscriptionsController],
+  controllers: [SubscriptionsController, PlatformSubscriptionPlansController],
   providers: [
     SubscriptionsService,
     SubscriptionsStripeCheckoutService,

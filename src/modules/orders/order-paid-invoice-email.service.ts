@@ -1,6 +1,10 @@
 import { MailerService } from '@modules/mailer/mailer.service';
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { OrderModel } from '@schemas/order.schema';
@@ -8,11 +12,13 @@ import { Model, Types } from 'mongoose';
 import { OrderInvoicePdfService } from './order-invoice-pdf.service';
 import {
   buildOrderEmailJsonLd,
+  buildOrderReceiptEmailJsonLd,
   formatInvoiceMoney,
   formatOrderDeliveryLine,
   OrderSchemaStatus,
   orderInvoiceRef,
-  resolveOrderPublicUrl,
+  orderReceiptEmailSubject,
+  resolveOrderEmailPublicUrl,
   type OrderInvoiceSnapshot,
 } from './order-invoice.util';
 
@@ -51,17 +57,39 @@ export class OrderPaidInvoiceEmailService {
     await this.sendOrderEmail(orderId, 'paid');
   }
 
+  /** Renvoi manuel du reçu client (dashboard vendeur / admin). */
+  async resendPaidReceiptToClient(
+    orderId: string,
+  ): Promise<{ ok: true; sentTo: string }> {
+    if (!this.isEnabled()) {
+      throw new BadRequestException('order_receipt_email_disabled');
+    }
+    const loaded = await this.loadSnapshot(orderId, 'order-receipt-resend');
+    if (!loaded) {
+      throw new BadRequestException('order_receipt_no_client_email');
+    }
+    const st = String(loaded.snapshot.status ?? '').toLowerCase();
+    if (st === 'created') {
+      throw new BadRequestException('order_not_paid');
+    }
+    await this.sendOrderEmail(orderId, 'paid');
+    return { ok: true, sentTo: loaded.email };
+  }
+
   /** E-mail « commande en livraison » + balisage Schema.org (OrderInTransit). */
   async sendForShippedOrder(orderId: string): Promise<void> {
     if (!this.isShippedEnabled()) return;
     await this.sendOrderEmail(orderId, 'shipped');
   }
 
-  /** URL publique configurable de la commande (sinon pas de bouton). */
+  /** URL publique de la commande (JSON-LD + bouton « Voir la commande »). */
   private resolveOrderUrl(orderId: string): string | undefined {
-    const template =
-      this.config.get<string>('EMAIL_ORDER_URL_TEMPLATE')?.trim() || undefined;
-    return resolveOrderPublicUrl(template, orderId);
+    return resolveOrderEmailPublicUrl(orderId, {
+      orderUrlTemplate: this.config.get<string>('EMAIL_ORDER_URL_TEMPLATE'),
+      publicWebUrl: this.config.get<string>('PUBLIC_WEB_URL'),
+      clientAppUrl: this.config.get<string>('CLIENT_APP_URL'),
+      emailWebsiteUrl: this.config.get<string>('EMAIL_WEBSITE_URL'),
+    });
   }
 
   /** Charge la commande, vérifie l'e-mail client et construit le snapshot facture. */
@@ -106,14 +134,16 @@ export class OrderPaidInvoiceEmailService {
       return null;
     }
 
-    const storeRaw = order.store as
+    const storeRaw = order.store as unknown as
       | {
+          _id?: Types.ObjectId;
           name?: string;
           address?: { address?: string; city?: string; zipCode?: string };
         }
       | null
       | undefined;
     const storeName = storeRaw?.name?.trim() || 'Restaurant';
+    const storeId = storeRaw?._id ? String(storeRaw._id) : undefined;
     const addr = storeRaw?.address;
     const storeAddressLine = addr
       ? [addr.address, addr.city, addr.zipCode].filter(Boolean).join(', ')
@@ -130,6 +160,7 @@ export class OrderPaidInvoiceEmailService {
 
     const snapshot: OrderInvoiceSnapshot = {
       orderId: oid,
+      storeId,
       createdAt: order.createdAt,
       status: String(order.status ?? 'paied'),
       totalPrice: Number(order.totalPrice) || 0,
@@ -155,6 +186,7 @@ export class OrderPaidInvoiceEmailService {
       clientName: userRaw?.fullName?.trim() || email,
       clientEmail: email,
       deliveryLine,
+      deliveryAddressSnapshot: snap,
       items: order.items ?? [],
     };
 
@@ -177,6 +209,11 @@ export class OrderPaidInvoiceEmailService {
     const storeEsc = esc(snapshot.storeName);
     const refEsc = esc(ref);
     const orderUrl = this.resolveOrderUrl(snapshot.orderId);
+    const publicWebUrl =
+      this.config.get<string>('PUBLIC_WEB_URL')?.trim() ||
+      this.config.get<string>('EMAIL_WEBSITE_URL')?.trim() ||
+      this.config.get<string>('CLIENT_APP_URL')?.trim() ||
+      undefined;
     const amountStr = formatInvoiceMoney(snapshot.totalPrice, snapshot.currency);
 
     const pickupHtml = snapshot.pickupCode?.trim()
@@ -201,8 +238,8 @@ export class OrderPaidInvoiceEmailService {
     if (variant === 'paid') {
       heading = 'Paiement confirmé';
       intro = `Merci pour votre commande chez <strong>${storeEsc}</strong>. Votre paiement a bien été enregistré.`;
-      subject = `${snapshot.storeName} — Facture commande #${ref}`;
-      preheader = `Commande #${ref} confirmée — ${amountStr}`;
+      subject = orderReceiptEmailSubject(snapshot.storeName, ref);
+      preheader = `Receipt #${ref} — ${amountStr}`;
       orderStatus = OrderSchemaStatus.processing;
       withPdf = true;
       textLines = [
@@ -217,8 +254,8 @@ export class OrderPaidInvoiceEmailService {
     } else {
       heading = 'Commande en livraison';
       intro = `Bonne nouvelle ! Votre commande chez <strong>${storeEsc}</strong> est en cours de livraison.`;
-      subject = `${snapshot.storeName} — Commande #${ref} en livraison`;
-      preheader = `Commande #${ref} en cours de livraison`;
+      subject = `${snapshot.storeName} Order #${ref} — Shipped`;
+      preheader = `Order #${ref} in transit`;
       orderStatus = OrderSchemaStatus.inTransit;
       withPdf = false;
       textLines = [
@@ -253,13 +290,17 @@ export class OrderPaidInvoiceEmailService {
 
     const text = textLines.filter(Boolean).join('\n');
 
-    // Balisage Schema.org « Order » : Gmail/Google affichent la carte achat
-    // (vendeur, articles, « Voir la commande »). Cf. developers.google.com/gmail/markup.
-    const jsonLd = buildOrderEmailJsonLd(snapshot, {
+    // Balisage Schema.org « Order » + « Invoice » : carte achat Gmail
+    const jsonLdOpts = {
       ref,
       orderStatus,
       orderUrl,
-    });
+      publicWebUrl,
+    };
+    const jsonLd =
+      variant === 'paid'
+        ? buildOrderReceiptEmailJsonLd(snapshot, jsonLdOpts)
+        : [buildOrderEmailJsonLd(snapshot, jsonLdOpts)];
     const wrappedHtml = this.emailTemplate.wrapBody(html, {
       title: subject,
       preheader,

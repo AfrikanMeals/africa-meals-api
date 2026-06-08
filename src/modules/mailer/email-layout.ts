@@ -10,17 +10,22 @@ export type WrapEmailOptions = {
   /** Titre document HTML. */
   title?: string;
   /**
-   * Données structurées Schema.org (JSON-LD) injectées en tête de `<body>`.
+   * Données structurées Schema.org (JSON-LD) injectées dans le `<head>`.
    * Gmail/Google les lisent pour afficher une carte (ex. reçu d'achat « Order »).
    */
-  jsonLd?: Record<string, unknown>;
+  jsonLd?: Record<string, unknown> | Record<string, unknown>[];
 };
 
 /**
- * Sérialise un objet JSON-LD pour une insertion sûre dans un `<script>`.
- * Échappe `<`, `>`, `&` et les séparateurs de ligne U+2028/U+2029 afin
- * d'empêcher toute sortie prématurée de la balise script.
+ * Sérialise un ou plusieurs blocs JSON-LD pour une insertion sûre dans des balises `<script>`.
  */
+function renderJsonLdBlocks(
+  data: Record<string, unknown> | Record<string, unknown>[],
+): string {
+  const list = Array.isArray(data) ? data : [data];
+  return list.map((entry) => renderJsonLdScript(entry)).join('\n  ');
+}
+
 function renderJsonLdScript(data: Record<string, unknown>): string {
   const json = JSON.stringify(data)
     .replace(/</g, '\\u003c')
@@ -204,7 +209,9 @@ export function wrapEmailHtml(
     ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:${colors.background};">${preheader}</div>`
     : '';
 
-  const jsonLdBlock = options?.jsonLd ? renderJsonLdScript(options.jsonLd) : '';
+  const jsonLdBlock = options?.jsonLd
+    ? renderJsonLdBlocks(options.jsonLd)
+    : '';
 
   return `<!DOCTYPE html>
 <html lang="fr" ${LAYOUT_MARKER}>
@@ -215,9 +222,9 @@ export function wrapEmailHtml(
   <meta name="color-scheme" content="light" />
   <meta name="supported-color-schemes" content="light" />
   <title>${title}</title>
+  ${jsonLdBlock}
 </head>
 <body style="margin:0;padding:0;background-color:${colors.background};-webkit-text-size-adjust:100%;">
-  ${jsonLdBlock}
   ${preheaderBlock}
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${colors.background};">
     <tr>

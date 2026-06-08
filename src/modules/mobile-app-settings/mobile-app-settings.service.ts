@@ -23,21 +23,24 @@ export class MobileAppSettingsService {
     private readonly _settings: Model<MobileAppSettingsDocument>,
   ) {}
 
-  private _normalizeUrl(raw: string | undefined | null): string {
-    const value = String(raw ?? '').trim();
-    return value;
+  private _normalizeText(raw: string | undefined | null): string {
+    return String(raw ?? '').trim();
   }
 
   private _toResponse(doc: MobileAppSettingsModel) {
     const typed = doc as unknown as { updatedAt?: Date };
     return {
-      appStoreUrl: this._normalizeUrl(doc.appStoreUrl),
-      playStoreUrl: this._normalizeUrl(doc.playStoreUrl),
-      facebookUrl: this._normalizeUrl(doc.facebookUrl),
-      instagramUrl: this._normalizeUrl(doc.instagramUrl),
-      tiktokUrl: this._normalizeUrl(doc.tiktokUrl),
-      xUrl: this._normalizeUrl(doc.xUrl),
-      youtubeUrl: this._normalizeUrl(doc.youtubeUrl),
+      appStoreUrl: this._normalizeText(doc.appStoreUrl),
+      playStoreUrl: this._normalizeText(doc.playStoreUrl),
+      facebookUrl: this._normalizeText(doc.facebookUrl),
+      instagramUrl: this._normalizeText(doc.instagramUrl),
+      tiktokUrl: this._normalizeText(doc.tiktokUrl),
+      xUrl: this._normalizeText(doc.xUrl),
+      youtubeUrl: this._normalizeText(doc.youtubeUrl),
+      contactEmail: this._normalizeText(doc.contactEmail),
+      contactPhone: this._normalizeText(doc.contactPhone),
+      mainEmail: this._normalizeText(doc.mainEmail),
+      whatsappNumber: this._normalizeText(doc.whatsappNumber),
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
   }
@@ -56,6 +59,10 @@ export class MobileAppSettingsService {
             tiktokUrl: '',
             xUrl: '',
             youtubeUrl: '',
+            contactEmail: '',
+            contactPhone: '',
+            mainEmail: '',
+            whatsappNumber: '',
           },
         },
         { upsert: true, new: true, lean: true, setDefaultsOnInsert: true },
@@ -71,13 +78,17 @@ export class MobileAppSettingsService {
         { key: SETTINGS_KEY },
         {
           $set: {
-            appStoreUrl: this._normalizeUrl(dto.appStoreUrl),
-            playStoreUrl: this._normalizeUrl(dto.playStoreUrl),
-            facebookUrl: this._normalizeUrl(dto.facebookUrl),
-            instagramUrl: this._normalizeUrl(dto.instagramUrl),
-            tiktokUrl: this._normalizeUrl(dto.tiktokUrl),
-            xUrl: this._normalizeUrl(dto.xUrl),
-            youtubeUrl: this._normalizeUrl(dto.youtubeUrl),
+            appStoreUrl: this._normalizeText(dto.appStoreUrl),
+            playStoreUrl: this._normalizeText(dto.playStoreUrl),
+            facebookUrl: this._normalizeText(dto.facebookUrl),
+            instagramUrl: this._normalizeText(dto.instagramUrl),
+            tiktokUrl: this._normalizeText(dto.tiktokUrl),
+            xUrl: this._normalizeText(dto.xUrl),
+            youtubeUrl: this._normalizeText(dto.youtubeUrl),
+            contactEmail: this._normalizeText(dto.contactEmail),
+            contactPhone: this._normalizeText(dto.contactPhone),
+            mainEmail: this._normalizeText(dto.mainEmail),
+            whatsappNumber: this._normalizeText(dto.whatsappNumber),
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },

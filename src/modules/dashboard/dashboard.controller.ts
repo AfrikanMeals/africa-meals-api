@@ -19,6 +19,11 @@ import { Request } from 'express';
 import { AdminVendorFeedbacksQueryDto } from './dto/admin-vendor-feedbacks-query.dto';
 import { AssignDashboardOrderDto } from './dto/assign-dashboard-order.dto';
 import { CreateVendorFeedbackDto } from './dto/create-vendor-feedback.dto';
+import { CreateVendorFeatureRequestDto } from './dto/create-vendor-feature-request.dto';
+import { AdminVendorFeatureRequestsQueryDto } from './dto/admin-vendor-feature-requests-query.dto';
+import { UpdateVendorFeatureRequestAdminDto } from './dto/update-vendor-feature-request-admin.dto';
+import { AdminSiteContactRequestsQueryDto } from './dto/admin-site-contact-requests-query.dto';
+import { ReplySiteContactRequestDto } from './dto/reply-site-contact-request.dto';
 import { CreateDashboardLivreurDto } from './dto/create-dashboard-livreur.dto';
 import { UpdateDashboardLivreurStatutDto } from './dto/update-dashboard-livreur-statut.dto';
 import { FinancePeriodReportQueryDto } from './dto/finance-period-report-query.dto';
@@ -190,6 +195,80 @@ export class DashboardController {
     return this._dashboardService.listVendorFeedbacksAdmin(
       req.user as UserModel,
       query,
+    );
+  }
+
+  /** Demande de fonctionnalité depuis l’espace vendeur. */
+  @Post('vendor-feature-requests')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  submitVendorFeatureRequest(
+    @Req() req: Request,
+    @Body() body: CreateVendorFeatureRequestDto,
+  ) {
+    return this._dashboardService.submitVendorFeatureRequest(
+      req.user as UserModel,
+      body,
+    );
+  }
+
+  /** Liste admin des demandes de fonctionnalités vendeurs. */
+  @Get('admin/vendor-feature-requests')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  listVendorFeatureRequests(
+    @Req() req: Request,
+    @Query() query: AdminVendorFeatureRequestsQueryDto,
+  ) {
+    return this._dashboardService.listVendorFeatureRequestsAdmin(
+      req.user as UserModel,
+      query,
+    );
+  }
+
+  /** Mise à jour du statut d’une demande vendeur (admin). */
+  @Patch('admin/vendor-feature-requests/:id')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  updateVendorFeatureRequest(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: UpdateVendorFeatureRequestAdminDto,
+  ) {
+    return this._dashboardService.updateVendorFeatureRequestAdmin(
+      req.user as UserModel,
+      id,
+      body,
+    );
+  }
+
+  /** Messages contact site vitrine (formulaire wise-eat.com/contact). */
+  @Get('admin/site-contact-requests')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  listSiteContactRequests(
+    @Req() req: Request,
+    @Query() query: AdminSiteContactRequestsQueryDto,
+  ) {
+    return this._dashboardService.listSiteContactRequestsAdmin(
+      req.user as UserModel,
+      query,
+    );
+  }
+
+  /** Réponse e-mail au client (template Wise Eat). */
+  @Post('admin/site-contact-requests/:id/reply')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  replySiteContactRequest(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: ReplySiteContactRequestDto,
+  ) {
+    return this._dashboardService.replySiteContactRequestAdmin(
+      req.user as UserModel,
+      id,
+      body,
     );
   }
 
