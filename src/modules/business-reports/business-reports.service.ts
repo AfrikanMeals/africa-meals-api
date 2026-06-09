@@ -26,7 +26,7 @@ export class BusinessReportsService {
     private readonly _orderModel: Model<OrderModel>,
   ) {}
 
-  private assertAdmin(user: UserModel) {
+  assertAdmin(user: UserModel) {
     if (user.type !== UserTypeEnum.ADMIN) {
       throw new ForbiddenException('admin_only');
     }

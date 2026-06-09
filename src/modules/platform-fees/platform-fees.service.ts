@@ -414,6 +414,29 @@ export class PlatformFeesService {
     };
   }
 
+  /** Barèmes publics pour la page tarifs du site vitrine. */
+  async getPublicPricingFees() {
+    const doc = await this._ensureDoc();
+    const settings = this._toResponse(doc);
+    const currency = await this._resolveCurrencyFromStoreSettings();
+    return {
+      currency,
+      orderPaymentFeeMode: settings.orderPaymentFeeMode,
+      orderPaymentFeeFixed: settings.orderPaymentFeeFixed,
+      orderPaymentFeePercent: settings.orderPaymentFeePercent,
+      refundFeeMode: settings.refundFeeMode,
+      refundFeeFixed: settings.refundFeeFixed,
+      refundFeePercent: settings.refundFeePercent,
+      platformOrderFeeMode: settings.platformOrderFeeMode,
+      platformOrderFeeFixed: settings.platformOrderFeeFixed,
+      platformOrderFeePercent: settings.platformOrderFeePercent,
+      payoutFeeMode: settings.payoutFeeMode,
+      payoutFeeFixed: settings.payoutFeeFixed,
+      payoutFeePercent: settings.payoutFeePercent,
+      updatedAt: settings.updatedAt,
+    };
+  }
+
   async computeOrderPaymentFeeFromSettings(
     grossCents: number,
   ): Promise<OrderPaymentFeeSplit> {

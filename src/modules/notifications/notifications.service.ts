@@ -562,6 +562,7 @@ export class NotificationsService implements OnModuleInit {
       case 'created':
         return 'En attente de paiement';
       case 'paied':
+      case 'paid':
         return 'Payée';
       case 'approved':
         return 'Approuvée';

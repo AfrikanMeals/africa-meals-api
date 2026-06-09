@@ -136,6 +136,7 @@ export async function configureApplication(
     .addTag('mailer', 'Envoi d’emails (test)')
     .addTag('contact', 'Formulaire de contact site vitrine')
     .addTag('policies', 'Politiques & CGU (CMS)')
+    .addTag('documentation', 'Documentation & aide (CMS)')
     .addTag('supported-countries', 'Pays supportés')
     .addTag('health', 'Santé de l’API')
     .addTag('notifications', 'Notifications push (FCM)')

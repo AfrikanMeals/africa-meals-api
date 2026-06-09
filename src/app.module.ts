@@ -35,6 +35,7 @@ import { PenaltiesModule } from './modules/penalties/penalties.module';
 import { PlatformShippingSettingsModule } from './modules/platform-shipping-settings/platform-shipping-settings.module';
 import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
 import { AppPoliciesModule } from './modules/app-policies/app-policies.module';
+import { DocumentationModule } from './modules/documentation/documentation.module';
 import { CronMonitorModule } from './modules/cron-monitor/cron-monitor.module';
 import { DbMaintenanceModule } from './modules/db-maintenance/db-maintenance.module';
 import { AdminOpsReportsModule } from './modules/admin-ops-reports/admin-ops-reports.module';
@@ -278,6 +279,7 @@ function redactRedisUrl(url: string): string {
     RefundsModule,
     PenaltiesModule,
     AppPoliciesModule,
+    DocumentationModule,
     DbMaintenanceModule,
     AdminOpsReportsModule,
     RequestStatsModule,

@@ -28,6 +28,14 @@ export class PlatformFeesController {
     return this._platformFees.getPublicCheckoutFees();
   }
 
+  @Get('pricing')
+  @ApiOperation({
+    summary: 'Barèmes frais plateforme (public, page tarifs site vitrine)',
+  })
+  getPublicPricingFees() {
+    return this._platformFees.getPublicPricingFees();
+  }
+
   @ApiBearerAuth('bearer')
   @Get()
   @UseGuards(JwtGuard)

@@ -100,6 +100,7 @@ export function vendorOrderStatusLabelFr(
     case 'created':
       return 'Nouvelle commande (en attente de paiement)';
     case 'paied':
+    case 'paid':
       return 'Commande payée';
     case 'approved':
       return isPickup ? 'Prête pour retrait' : 'Prête pour livraison';

@@ -268,6 +268,7 @@ export function inferInvoicePaymentMethodLabel(status: string): string {
     case 'cancelled':
       return '—';
     case 'paied':
+    case 'paid':
     case 'approved':
     case 'shipped':
     case 'completed':

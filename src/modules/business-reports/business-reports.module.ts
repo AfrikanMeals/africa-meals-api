@@ -1,3 +1,4 @@
+import { MailerModule } from '@modules/mailer/mailer.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -5,6 +6,7 @@ import {
   BusinessStoreReportSchema,
 } from '@schemas/business-store-report.schema';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
+import { BusinessReportEmailService } from './business-report-email.service';
 import { BusinessReportsAdminController } from './business-reports-admin.controller';
 import { BusinessReportsService } from './business-reports.service';
 
@@ -17,9 +19,10 @@ import { BusinessReportsService } from './business-reports.service';
       },
       { name: OrderModel.name, schema: OrderSchema },
     ]),
+    MailerModule,
   ],
   controllers: [BusinessReportsAdminController],
-  providers: [BusinessReportsService],
+  providers: [BusinessReportsService, BusinessReportEmailService],
   exports: [BusinessReportsService],
 })
 export class BusinessReportsModule {}
