@@ -64,6 +64,7 @@ import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { TeamsService } from '@modules/teams/teams.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import { BusinessTypesService } from '@modules/business-types/business-types.service';
 
 @Injectable()
 export class StoreService {
@@ -200,6 +201,9 @@ export class StoreService {
 
   @Inject(SubscriptionsService)
   private readonly _subscriptionsService: SubscriptionsService;
+
+  @Inject(BusinessTypesService)
+  private readonly _businessTypesService: BusinessTypesService;
 
   getStoreModel() {
     return this._storeModel;
@@ -385,6 +389,7 @@ export class StoreService {
   async create(dto: CreateStoreDto, user: UserModel) {
     const { address, ...args } = dto;
     this._assertVendorShopAddressForOnboarding(address);
+    await this._businessTypesService.assertActiveSlug(args.businessType);
     const fullUser = await this._usersService.findById(
       (user._id as { toString(): string }).toString(),
     );
@@ -1182,6 +1187,7 @@ export class StoreService {
 
   /** Mise à jour fiche vendeur (dossier en PENDING ou REVISION). */
   async updateVendorApplication(user: UserModel, args: CreateStoreDto) {
+    await this._businessTypesService.assertActiveSlug(args.businessType);
     const fullUser = await this._usersService.findById(
       (user._id as { toString(): string }).toString(),
     );

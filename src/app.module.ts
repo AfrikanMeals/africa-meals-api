@@ -44,6 +44,7 @@ import { RequestStatsModule } from './modules/request-stats/request-stats.module
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
 import { AuthSettingsModule } from './modules/auth-settings/auth-settings.module';
 import { MobileAppSettingsModule } from './modules/mobile-app-settings/mobile-app-settings.module';
+import { BusinessTypesModule } from './modules/business-types/business-types.module';
 import { AdsTargetingModule } from './modules/ads-targeting/ads-targeting.module';
 import { VendorNotificationModule } from './modules/vendor-notifications/vendor-notification.module';
 import { DashboardAuditModule } from './modules/dashboard-audit/dashboard-audit.module';
@@ -288,6 +289,7 @@ function redactRedisUrl(url: string): string {
     FieldSelectionModule,
     AuthSettingsModule,
     MobileAppSettingsModule,
+    BusinessTypesModule,
     AdsTargetingModule,
     VendorNotificationModule,
     DashboardAuditModule,

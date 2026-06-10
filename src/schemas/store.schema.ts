@@ -62,9 +62,9 @@ export class StoreModel extends BaseSchema {
   @Prop({
     required: false,
     name: 'business_type',
-    enum: StoreBusinessTypeEnum,
+    type: String,
   })
-  businessType?: StoreBusinessTypeEnum;
+  businessType?: string;
 
   @Prop({ required: true, name: 'email' })
   email: string;
