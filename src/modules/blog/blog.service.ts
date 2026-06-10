@@ -18,6 +18,8 @@ import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 import { UpsertBlogArticleDto } from './dto/upsert-blog-article.dto';
 import { UpsertBlogGroupDto } from './dto/upsert-blog-group.dto';
+import { BlogNewsletterDispatchService } from './blog-newsletter-dispatch.service';
+import type { BlogNewsletterDispatchResult } from './blog-newsletter-dispatch.types';
 
 function assertAdmin(user: UserModel) {
   if (user.type !== UserTypeEnum.ADMIN) {
@@ -126,6 +128,7 @@ export class BlogService {
     private readonly _groups: Model<BlogGroupDocument>,
     @InjectModel(BlogArticleModel.name)
     private readonly _articles: Model<BlogArticleDocument>,
+    private readonly _blogNewsletterDispatch: BlogNewsletterDispatchService,
   ) {}
 
   async listGroupsForAdmin(user: UserModel) {
@@ -196,6 +199,8 @@ export class BlogService {
       htmlContent: s.htmlContent ?? '',
     }));
     const featuredImageUrl = dto.featuredImageUrl?.trim() || undefined;
+    const prev = await this._articles.findOne({ slug, locale }).exec();
+    const wasPublished = Boolean(prev?.isPublished);
     const doc = await this._articles
       .findOneAndUpdate(
         { slug, locale },
@@ -219,7 +224,21 @@ export class BlogService {
     if (!doc) {
       throw new BadRequestException('blog_article_save_failed');
     }
-    return serializeArticle(doc, true);
+
+    let newsletterDispatch: BlogNewsletterDispatchResult | undefined;
+    const isPublished = Boolean(dto.isPublished);
+    if (isPublished && !wasPublished) {
+      newsletterDispatch = await this._blogNewsletterDispatch.tryEnqueueForArticle(
+        doc,
+        { wasPublished },
+      );
+    }
+
+    const serialized = serializeArticle(doc, true) as Record<string, unknown>;
+    if (newsletterDispatch) {
+      serialized.newsletterDispatch = newsletterDispatch;
+    }
+    return serialized;
   }
 
   async getPublicHub(localeRaw?: string) {

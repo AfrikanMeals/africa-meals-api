@@ -66,6 +66,10 @@ export class BlogArticleModel {
 
   @Prop({ type: Boolean, default: false, name: 'is_published' })
   isPublished: boolean;
+
+  /** Date d'envoi newsletter (une seule diffusion par article). */
+  @Prop({ type: Date, required: false, name: 'newsletter_dispatched_at' })
+  newsletterDispatchedAt?: Date;
 }
 
 export type BlogArticleDocument = HydratedDocument<BlogArticleModel>;

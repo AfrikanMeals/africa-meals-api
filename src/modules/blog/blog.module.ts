@@ -6,18 +6,34 @@ import {
   BlogGroupModel,
   BlogGroupSchema,
 } from '@schemas/blog.schema';
+import {
+  NewsletterSubscriberModel,
+  NewsletterSubscriberSchema,
+} from '@schemas/newsletter-subscriber.schema';
+import { MailerModule } from '../mailer/mailer.module';
 import { BlogController } from './blog.controller';
+import { BlogNewsletterDispatchQueueService } from './blog-newsletter-dispatch-queue.service';
+import { BlogNewsletterDispatchService } from './blog-newsletter-dispatch.service';
 import { BlogService } from './blog.service';
 
 @Module({
   imports: [
+    MailerModule,
     MongooseModule.forFeature([
       { name: BlogGroupModel.name, schema: BlogGroupSchema },
       { name: BlogArticleModel.name, schema: BlogArticleSchema },
+      {
+        name: NewsletterSubscriberModel.name,
+        schema: NewsletterSubscriberSchema,
+      },
     ]),
   ],
   controllers: [BlogController],
-  providers: [BlogService],
+  providers: [
+    BlogService,
+    BlogNewsletterDispatchService,
+    BlogNewsletterDispatchQueueService,
+  ],
   exports: [BlogService],
 })
 export class BlogModule {}
