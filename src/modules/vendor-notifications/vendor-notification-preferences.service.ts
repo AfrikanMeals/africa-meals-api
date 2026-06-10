@@ -10,6 +10,10 @@ import { VendorNotificationPreferencesModel } from '@schemas/vendor-notification
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import {
+  VendorNotificationMonthlyChargeModel,
+  VendorNotificationChargeStatusEnum,
+} from '@schemas/vendor-notification-monthly-charge.schema';
+import {
   defaultVendorNotificationPreferences,
   VENDOR_NOTIFICATION_CATEGORIES,
   type VendorNotificationCategory,
@@ -25,6 +29,8 @@ export class VendorNotificationPreferencesService {
   constructor(
     @InjectModel(VendorNotificationPreferencesModel.name)
     private readonly prefsModel: Model<VendorNotificationPreferencesModel>,
+    @InjectModel(VendorNotificationMonthlyChargeModel.name)
+    private readonly chargeModel: Model<VendorNotificationMonthlyChargeModel>,
     private readonly storeAccess: StoreAccessService,
   ) {}
 
@@ -90,12 +96,21 @@ export class VendorNotificationPreferencesService {
   ): Promise<{ storeId: string; categories: VendorNotificationPreferencesMap }> {
     await this.assertCanManageStore(user, storeId);
     const sid = storeId.trim();
+    await this.syncOverdueSmsBillingForStore(sid);
+    const billing = await this.getBillingState(sid);
     const current = await this.getForStore(sid);
     const next = { ...current };
     const patch = dto.categories ?? {};
     for (const key of Object.keys(patch) as VendorNotificationCategory[]) {
       if (!VENDOR_NOTIFICATION_CATEGORIES.includes(key)) continue;
       next[key] = normalizeChannelPrefs(patch[key], current[key]);
+    }
+    if (billing.smsBillingSuspended) {
+      for (const cat of VENDOR_NOTIFICATION_CATEGORIES) {
+        if (next[cat].sms) {
+          throw new BadRequestException('sms_billing_unpaid');
+        }
+      }
     }
     await this.prefsModel
       .findOneAndUpdate(
@@ -125,6 +140,7 @@ export class VendorNotificationPreferencesService {
   ): Promise<boolean> {
     const sid = storeId.trim();
     if (!Types.ObjectId.isValid(sid)) return false;
+    await this.syncOverdueSmsBillingForStore(sid);
     const doc = await this.prefsModel
       .findOne({ store: new Types.ObjectId(sid) })
       .select('categories smsBillingSuspended')
@@ -135,6 +151,38 @@ export class VendorNotificationPreferencesService {
       (doc?.categories ?? null) as VendorNotificationPreferencesMap | null,
     );
     return categories[category]?.sms === true;
+  }
+
+  /** Suspend les SMS si une facture mensuelle est échue. */
+  async syncOverdueSmsBillingForStore(storeId: string): Promise<void> {
+    const sid = storeId.trim();
+    if (!Types.ObjectId.isValid(sid)) return;
+    const now = new Date();
+    const overdue = await this.chargeModel
+      .findOne({
+        store: new Types.ObjectId(sid),
+        smsTotalCad: { $gt: 0 },
+        $or: [
+          { status: VendorNotificationChargeStatusEnum.OVERDUE },
+          {
+            status: VendorNotificationChargeStatusEnum.INVOICED,
+            dueAt: { $lt: now },
+          },
+        ],
+      })
+      .sort({ billingMonth: -1 })
+      .exec();
+    if (!overdue) return;
+    if (overdue.status !== VendorNotificationChargeStatusEnum.OVERDUE) {
+      await this.chargeModel.updateOne(
+        { _id: overdue._id },
+        { $set: { status: VendorNotificationChargeStatusEnum.OVERDUE } },
+      );
+    }
+    await this.suspendSmsBilling(
+      sid,
+      `Facture SMS ${overdue.billingMonth} impayée`,
+    );
   }
 
   async suspendSmsBilling(storeId: string, reason: string): Promise<void> {

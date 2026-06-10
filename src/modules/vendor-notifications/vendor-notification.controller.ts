@@ -52,10 +52,11 @@ export class VendorNotificationController {
 
   @Get(':storeId/notification-preferences')
   @UseGuards(JwtGuard)
-  getPreferences(
+  async getPreferences(
     @Req() req: Request,
     @Param('storeId') storeId: string,
   ) {
+    await this.prefs.syncOverdueSmsBillingForStore(storeId);
     return this.prefs.getForStoreAsVendor(req.user as UserModel, storeId);
   }
 
@@ -95,6 +96,8 @@ export class VendorNotificationController {
   ) {
     await this.prefs.getForStoreAsVendor(req.user as UserModel, storeId);
     const pricing = await this.dispatch.getPricing();
+    const billingSummary =
+      await this.billing.getVendorSmsBillingSummary(storeId);
     const history = await this.billing.vendorSmsHistory({
       storeId,
       billingMonth,
@@ -105,6 +108,6 @@ export class VendorNotificationController {
       billingMonth,
       limit: 12,
     });
-    return { pricing, history, charges };
+    return { pricing, history, charges, billingSummary };
   }
 }

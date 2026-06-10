@@ -15,6 +15,24 @@ import {
   previousBillingMonthKey,
   VendorNotificationDispatchService,
 } from './vendor-notification-dispatch.service';
+import { VendorNotificationPreferencesService } from './vendor-notification-preferences.service';
+
+export type VendorSmsBillingSummary = {
+  smsBlocked: boolean;
+  smsBlockReason: string | null;
+  payableCharge: {
+    billingMonth: string;
+    smsCount: number;
+    smsTotalCad: number;
+    status: string;
+    dueAt: string | null;
+  } | null;
+  pendingCharge: {
+    billingMonth: string;
+    smsCount: number;
+    smsTotalCad: number;
+  } | null;
+};
 
 @Injectable()
 export class VendorNotificationBillingService {
@@ -28,6 +46,7 @@ export class VendorNotificationBillingService {
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
     private readonly dispatch: VendorNotificationDispatchService,
+    private readonly prefs: VendorNotificationPreferencesService,
   ) {}
 
   async closeMonthlyChargesForMonth(
@@ -107,6 +126,48 @@ export class VendorNotificationBillingService {
       `Monthly vendor notification charges closed for ${billingMonth}: ${stores} store(s)`,
     );
     return { billingMonth, stores };
+  }
+
+  async getVendorSmsBillingSummary(
+    storeId: string,
+  ): Promise<VendorSmsBillingSummary> {
+    const sid = storeId.trim();
+    await this.prefs.syncOverdueSmsBillingForStore(sid);
+    const billing = await this.prefs.getBillingState(sid);
+    const charges = await this.listMonthlyCharges({ storeId: sid, limit: 12 });
+    const payable = charges.find(
+      (c) =>
+        c.smsTotalCad > 0 &&
+        (c.status === VendorNotificationChargeStatusEnum.INVOICED ||
+          c.status === VendorNotificationChargeStatusEnum.OVERDUE),
+    );
+    const pending = charges.find(
+      (c) =>
+        c.status === VendorNotificationChargeStatusEnum.PENDING &&
+        c.smsTotalCad > 0,
+    );
+    return {
+      smsBlocked: billing.smsBillingSuspended,
+      smsBlockReason: billing.smsBillingSuspendReason ?? null,
+      payableCharge: payable
+        ? {
+            billingMonth: payable.billingMonth,
+            smsCount: payable.smsCount,
+            smsTotalCad: payable.smsTotalCad,
+            status: payable.status,
+            dueAt: payable.dueAt
+              ? new Date(payable.dueAt).toISOString()
+              : null,
+          }
+        : null,
+      pendingCharge: pending
+        ? {
+            billingMonth: pending.billingMonth,
+            smsCount: pending.smsCount,
+            smsTotalCad: pending.smsTotalCad,
+          }
+        : null,
+    };
   }
 
   async listMonthlyCharges(args: {

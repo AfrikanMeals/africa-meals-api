@@ -43,12 +43,17 @@ import {
   VendorFeatureRequestStatusEnum,
 } from '@schemas/vendor-feature-request.schema';
 import {
+  NewsletterSubscriberModel,
+  NewsletterSubscriberStatusEnum,
+} from '@schemas/newsletter-subscriber.schema';
+import {
   SiteContactRequestMailStatusEnum,
   SiteContactRequestModel,
 } from '@schemas/site-contact-request.schema';
 import { Model, Types } from 'mongoose';
 import { AdminVendorFeedbacksQueryDto } from './dto/admin-vendor-feedbacks-query.dto';
 import { AdminVendorFeatureRequestsQueryDto } from './dto/admin-vendor-feature-requests-query.dto';
+import { AdminNewsletterSubscribersQueryDto } from './dto/admin-newsletter-subscribers-query.dto';
 import { AdminSiteContactRequestsQueryDto } from './dto/admin-site-contact-requests-query.dto';
 import { ReplySiteContactRequestDto } from './dto/reply-site-contact-request.dto';
 import { CreateDashboardLivreurDto } from './dto/create-dashboard-livreur.dto';
@@ -570,6 +575,8 @@ export class DashboardService {
     private readonly vendorFeatureRequestModel: Model<VendorFeatureRequestModel>,
     @InjectModel(SiteContactRequestModel.name)
     private readonly siteContactRequestModel: Model<SiteContactRequestModel>,
+    @InjectModel(NewsletterSubscriberModel.name)
+    private readonly newsletterSubscriberModel: Model<NewsletterSubscriberModel>,
     @InjectModel(AdModel.name)
     private readonly adModel: Model<AdModel>,
     @InjectModel(AdEventModel.name)
@@ -1965,6 +1972,115 @@ export class DashboardService {
       hasMore: page * take < total,
       filters: {
         mailStatus,
+        from: fromRaw || null,
+        to: toRaw || null,
+      },
+    };
+  }
+
+  async listNewsletterSubscribersAdmin(
+    user: UserModel,
+    query: AdminNewsletterSubscribersQueryDto,
+  ): Promise<{
+    items: Array<{
+      id: string;
+      email: string;
+      locale: string;
+      source: string;
+      status: NewsletterSubscriberStatusEnum;
+      createdAt: string;
+      updatedAt: string;
+    }>;
+    total: number;
+    page: number;
+    take: number;
+    hasMore: boolean;
+    filters: {
+      status: NewsletterSubscriberStatusEnum | null;
+      q: string | null;
+      from: string | null;
+      to: string | null;
+    };
+  }> {
+    if (user.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('newsletter_subscriber_admin_only');
+    }
+
+    const page = Math.max(1, Number(query.page) || 1);
+    const take = Math.min(100, Math.max(1, Number(query.take) || 20));
+    const status =
+      query.status &&
+      Object.values(NewsletterSubscriberStatusEnum).includes(query.status)
+        ? query.status
+        : null;
+    const qRaw = typeof query.q === 'string' ? query.q.trim().toLowerCase() : '';
+
+    const fromRaw = typeof query.from === 'string' ? query.from.trim() : '';
+    const toRaw = typeof query.to === 'string' ? query.to.trim() : '';
+    const fromDate = fromRaw ? new Date(fromRaw) : null;
+    const toDate = toRaw ? new Date(toRaw) : null;
+    if (fromDate && Number.isNaN(fromDate.getTime())) {
+      throw new BadRequestException('newsletter_subscriber_invalid_from');
+    }
+    if (toDate && Number.isNaN(toDate.getTime())) {
+      throw new BadRequestException('newsletter_subscriber_invalid_to');
+    }
+    if (toDate) {
+      toDate.setHours(23, 59, 59, 999);
+    }
+    if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
+      throw new BadRequestException('newsletter_subscriber_invalid_date_range');
+    }
+
+    const where: Record<string, unknown> = {};
+    if (status) where.status = status;
+    if (qRaw) {
+      where.email = { $regex: qRaw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
+    }
+    if (fromDate || toDate) {
+      const createdAtWhere: Record<string, Date> = {};
+      if (fromDate) createdAtWhere.$gte = fromDate;
+      if (toDate) createdAtWhere.$lte = toDate;
+      where.createdAt = createdAtWhere;
+    }
+
+    const skip = (page - 1) * take;
+    const [rows, total] = await Promise.all([
+      this.newsletterSubscriberModel
+        .find(where)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(take)
+        .lean()
+        .exec(),
+      this.newsletterSubscriberModel.countDocuments(where).exec(),
+    ]);
+
+    const items = rows.map((row) => ({
+      id: String(row._id),
+      email: String(row.email ?? '').trim(),
+      locale: String(row.locale ?? '').trim(),
+      source: String(row.source ?? '').trim(),
+      status: row.status as NewsletterSubscriberStatusEnum,
+      createdAt:
+        row.createdAt instanceof Date
+          ? row.createdAt.toISOString()
+          : new Date(String(row.createdAt ?? Date.now())).toISOString(),
+      updatedAt:
+        row.updatedAt instanceof Date
+          ? row.updatedAt.toISOString()
+          : new Date(String(row.updatedAt ?? Date.now())).toISOString(),
+    }));
+
+    return {
+      items,
+      total,
+      page,
+      take,
+      hasMore: page * take < total,
+      filters: {
+        status,
+        q: qRaw || null,
         from: fromRaw || null,
         to: toRaw || null,
       },

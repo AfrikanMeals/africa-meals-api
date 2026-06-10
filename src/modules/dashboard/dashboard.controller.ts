@@ -22,6 +22,7 @@ import { CreateVendorFeedbackDto } from './dto/create-vendor-feedback.dto';
 import { CreateVendorFeatureRequestDto } from './dto/create-vendor-feature-request.dto';
 import { AdminVendorFeatureRequestsQueryDto } from './dto/admin-vendor-feature-requests-query.dto';
 import { UpdateVendorFeatureRequestAdminDto } from './dto/update-vendor-feature-request-admin.dto';
+import { AdminNewsletterSubscribersQueryDto } from './dto/admin-newsletter-subscribers-query.dto';
 import { AdminSiteContactRequestsQueryDto } from './dto/admin-site-contact-requests-query.dto';
 import { ReplySiteContactRequestDto } from './dto/reply-site-contact-request.dto';
 import { CreateDashboardLivreurDto } from './dto/create-dashboard-livreur.dto';
@@ -251,6 +252,20 @@ export class DashboardController {
     @Query() query: AdminSiteContactRequestsQueryDto,
   ) {
     return this._dashboardService.listSiteContactRequestsAdmin(
+      req.user as UserModel,
+      query,
+    );
+  }
+
+  /** Abonnés newsletter (inscriptions pied de page site vitrine). */
+  @Get('admin/newsletter-subscribers')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  listNewsletterSubscribers(
+    @Req() req: Request,
+    @Query() query: AdminNewsletterSubscribersQueryDto,
+  ) {
+    return this._dashboardService.listNewsletterSubscribersAdmin(
       req.user as UserModel,
       query,
     );

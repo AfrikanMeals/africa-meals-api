@@ -46,6 +46,10 @@ import {
   VendorFeatureRequestSchema,
 } from '@schemas/vendor-feature-request.schema';
 import {
+  NewsletterSubscriberModel,
+  NewsletterSubscriberSchema,
+} from '@schemas/newsletter-subscriber.schema';
+import {
   SiteContactRequestModel,
   SiteContactRequestSchema,
 } from '@schemas/site-contact-request.schema';
@@ -97,6 +101,10 @@ import { MailerModule } from '@modules/mailer/mailer.module';
       {
         name: SiteContactRequestModel.name,
         schema: SiteContactRequestSchema,
+      },
+      {
+        name: NewsletterSubscriberModel.name,
+        schema: NewsletterSubscriberSchema,
       },
     ]),
   ],
