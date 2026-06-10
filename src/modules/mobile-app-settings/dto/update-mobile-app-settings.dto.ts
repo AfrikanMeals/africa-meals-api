@@ -87,6 +87,39 @@ export class UpdateMobileAppSettingsDto {
   youtubeUrl?: string;
 
   @ApiPropertyOptional({
+    description: 'Lien page Snapchat',
+    example: 'https://www.snapchat.com/add/wiseeat',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  @ValidateIf((_, value) => String(value ?? '').trim().length > 0)
+  @IsUrl({ require_protocol: true }, { message: 'snapchatUrl_invalid' })
+  snapchatUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'Lien page LinkedIn',
+    example: 'https://www.linkedin.com/company/wiseeat',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  @ValidateIf((_, value) => String(value ?? '').trim().length > 0)
+  @IsUrl({ require_protocol: true }, { message: 'linkedinUrl_invalid' })
+  linkedinUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'Lien page Pinterest',
+    example: 'https://www.pinterest.com/wiseeat',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  @ValidateIf((_, value) => String(value ?? '').trim().length > 0)
+  @IsUrl({ require_protocol: true }, { message: 'pinterestUrl_invalid' })
+  pinterestUrl?: string;
+
+  @ApiPropertyOptional({
     description: 'E-mail de contact public',
     example: 'help@wise-eat.com',
   })

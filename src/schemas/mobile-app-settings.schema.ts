@@ -29,6 +29,15 @@ export class MobileAppSettingsModel {
   youtubeUrl: string;
 
   @Prop({ type: String, default: '' })
+  snapchatUrl: string;
+
+  @Prop({ type: String, default: '' })
+  linkedinUrl: string;
+
+  @Prop({ type: String, default: '' })
+  pinterestUrl: string;
+
+  @Prop({ type: String, default: '' })
   contactEmail: string;
 
   @Prop({ type: String, default: '' })
