@@ -34,6 +34,8 @@ export class AuthSettingsService {
       googleEnabled: doc.googleEnabled !== false,
       appleEnabled: doc.appleEnabled !== false,
       facebookEnabled: doc.facebookEnabled !== false,
+      loginEmailNotifyAdminEnabled: doc.loginEmailNotifyAdminEnabled !== false,
+      loginEmailNotifyMobileEnabled: doc.loginEmailNotifyMobileEnabled !== false,
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
   }
@@ -48,6 +50,8 @@ export class AuthSettingsService {
             googleEnabled: true,
             appleEnabled: true,
             facebookEnabled: true,
+            loginEmailNotifyAdminEnabled: true,
+            loginEmailNotifyMobileEnabled: true,
           },
         },
         { upsert: true, new: true, lean: true, setDefaultsOnInsert: true },
@@ -78,6 +82,8 @@ export class AuthSettingsService {
             googleEnabled: dto.googleEnabled,
             appleEnabled: dto.appleEnabled,
             facebookEnabled: dto.facebookEnabled,
+            loginEmailNotifyAdminEnabled: dto.loginEmailNotifyAdminEnabled,
+            loginEmailNotifyMobileEnabled: dto.loginEmailNotifyMobileEnabled,
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },

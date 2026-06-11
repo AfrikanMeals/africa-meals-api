@@ -44,6 +44,7 @@ import {
   UpdateProfileDto,
 } from './dto/auth.dto';
 import { JwtGuard } from './guards/jwt.guard';
+import { buildLoginRequestContext } from './login-notification/login-request-context.util';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -60,28 +61,31 @@ export class AuthController {
   private readonly _teamsService: TeamsService;
 
   @Post('register')
-  async register(@Body(ValidationPipe) args: RegisterDto) {
+  async register(@Body(ValidationPipe) args: RegisterDto, @Req() req: Request) {
     this.logger.log(
       `[POST /auth/register] corps validé email=${args.email} fullName=${
         args.fullName
       } source=${args.source} signupRole=${args.signupRole ?? '—'}`,
     );
-    return this._authService.register(args);
+    return this._authService.register(args, buildLoginRequestContext(req));
   }
 
   /** Étape 1 : envoi du code — pas encore de ligne dans `users` (sauf mode sans SMTP / compte test). */
   @Post('register/start')
-  async registerStart(@Body(ValidationPipe) args: RegisterDto) {
+  async registerStart(@Body(ValidationPipe) args: RegisterDto, @Req() req: Request) {
     this.logger.log(
       `[POST /auth/register/start] email=${args.email} fullName=${args.fullName}`,
     );
-    return this._authService.registerStart(args);
+    return this._authService.registerStart(args, buildLoginRequestContext(req));
   }
 
   /** Étape 2 : validation du code et création du compte. */
   @Post('register/complete')
-  async registerComplete(@Body(ValidationPipe) args: EmailVerificationDto) {
-    return this._authService.registerComplete(args);
+  async registerComplete(
+    @Body(ValidationPipe) args: EmailVerificationDto,
+    @Req() req: Request,
+  ) {
+    return this._authService.registerComplete(args, buildLoginRequestContext(req));
   }
 
   @Post('register/resend-code')
@@ -90,9 +94,9 @@ export class AuthController {
   }
 
   @Post('login')
-  async login(@Body(ValidationPipe) args: LoginDto) {
+  async login(@Body(ValidationPipe) args: LoginDto, @Req() req: Request) {
     this.logger.log(`login body: ${JSON.stringify(args)}`);
-    return this._authService.login(args);
+    return this._authService.login(args, buildLoginRequestContext(req));
   }
 
   @Post('refresh')
@@ -101,57 +105,84 @@ export class AuthController {
   }
 
   @Post('google')
-  async authWithGoogle(@Body(ValidationPipe) args: GoogleAuthDto) {
+  async authWithGoogle(
+    @Body(ValidationPipe) args: GoogleAuthDto,
+    @Req() req: Request,
+  ) {
     this.logger.log(
       `google auth: idToken présent (longueur=${args.idToken?.length ?? 0})`,
     );
-    return this._authService.authWithGoogle(args);
+    return this._authService.authWithGoogle(args, buildLoginRequestContext(req));
   }
 
   @Post('admin/google')
-  async authWithGoogleAdmin(@Body(ValidationPipe) args: GoogleAuthDto) {
+  async authWithGoogleAdmin(
+    @Body(ValidationPipe) args: GoogleAuthDto,
+    @Req() req: Request,
+  ) {
     this.logger.log(
       `admin google auth: idToken présent (longueur=${
         args.idToken?.length ?? 0
       })`,
     );
-    return this._authService.authWithGoogleAsVendor(args);
+    return this._authService.authWithGoogleAsVendor(
+      args,
+      buildLoginRequestContext(req),
+    );
   }
 
   @Post('apple')
-  async authWithApple(@Body(ValidationPipe) args: AppleAuthDto) {
+  async authWithApple(
+    @Body(ValidationPipe) args: AppleAuthDto,
+    @Req() req: Request,
+  ) {
     this.logger.log(
       `apple auth: idToken présent (longueur=${args.idToken?.length ?? 0})`,
     );
-    return this._authService.authWithApple(args);
+    return this._authService.authWithApple(args, buildLoginRequestContext(req));
   }
 
   @Post('admin/apple')
-  async authWithAppleAdmin(@Body(ValidationPipe) args: AppleAuthDto) {
+  async authWithAppleAdmin(
+    @Body(ValidationPipe) args: AppleAuthDto,
+    @Req() req: Request,
+  ) {
     this.logger.log(
       `admin apple auth: idToken présent (longueur=${
         args.idToken?.length ?? 0
       })`,
     );
-    return this._authService.authWithAppleAsVendor(args);
+    return this._authService.authWithAppleAsVendor(
+      args,
+      buildLoginRequestContext(req),
+    );
   }
 
   @Post('facebook')
-  async authWithFacebook(@Body(ValidationPipe) args: FacebookAuthDto) {
+  async authWithFacebook(
+    @Body(ValidationPipe) args: FacebookAuthDto,
+    @Req() req: Request,
+  ) {
     this.logger.log(
       `facebook auth: idToken présent (longueur=${args.idToken?.length ?? 0})`,
     );
-    return this._authService.authWithFacebook(args);
+    return this._authService.authWithFacebook(args, buildLoginRequestContext(req));
   }
 
   @Post('admin/facebook')
-  async authWithFacebookAdmin(@Body(ValidationPipe) args: FacebookAuthDto) {
+  async authWithFacebookAdmin(
+    @Body(ValidationPipe) args: FacebookAuthDto,
+    @Req() req: Request,
+  ) {
     this.logger.log(
       `admin facebook auth: idToken présent (longueur=${
         args.idToken?.length ?? 0
       })`,
     );
-    return this._authService.authWithFacebookAsVendor(args);
+    return this._authService.authWithFacebookAsVendor(
+      args,
+      buildLoginRequestContext(req),
+    );
   }
 
   @Post('verify-email')

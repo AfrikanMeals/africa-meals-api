@@ -19,6 +19,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
 import { AuthController } from './auth.controller';
 import { FcmTestController } from './fcm-test.controller';
 import { AuthService } from './auth.service';
+import { LoginNotificationService } from './login-notification/login-notification.service';
 import { AccountDeletionCron } from './account-deletion.cron';
 import { JwtGuard } from './guards/jwt.guard';
 import { OptionalAuthGuard } from './guards/optional.auth.guard';
@@ -28,6 +29,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
   controllers: [AuthController, FcmTestController],
   providers: [
     AuthService,
+    LoginNotificationService,
     JwtStrategy,
     JwtGuard,
     OptionalAuthGuard,

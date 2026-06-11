@@ -13,4 +13,16 @@ export class UpdateAuthSettingsDto {
   @ApiProperty({ description: 'Connexion Facebook (Firebase) active' })
   @IsBoolean()
   facebookEnabled: boolean;
+
+  @ApiProperty({
+    description: 'E-mail de notification à chaque connexion (tableau de bord admin)',
+  })
+  @IsBoolean()
+  loginEmailNotifyAdminEnabled: boolean;
+
+  @ApiProperty({
+    description: 'E-mail de notification à chaque connexion (application mobile)',
+  })
+  @IsBoolean()
+  loginEmailNotifyMobileEnabled: boolean;
 }

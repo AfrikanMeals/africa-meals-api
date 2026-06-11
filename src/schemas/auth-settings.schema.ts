@@ -15,6 +15,14 @@ export class AuthSettingsModel {
 
   @Prop({ type: Boolean, default: true })
   facebookEnabled: boolean;
+
+  /** E-mail de sécurité à chaque connexion sur le tableau de bord admin. */
+  @Prop({ type: Boolean, default: true })
+  loginEmailNotifyAdminEnabled: boolean;
+
+  /** E-mail de sécurité à chaque connexion sur l’application mobile. */
+  @Prop({ type: Boolean, default: true })
+  loginEmailNotifyMobileEnabled: boolean;
 }
 
 export type AuthSettingsDocument = HydratedDocument<AuthSettingsModel>;

@@ -36,6 +36,11 @@ import {
   ResetPasswordDto,
   UpdateProfileDto,
 } from './dto/auth.dto';
+import { LoginNotificationService } from './login-notification/login-notification.service';
+import {
+  type LoginAuthMethod,
+  type LoginRequestContext,
+} from './login-notification/login-request-context.util';
 
 @Injectable()
 export class AuthService {
@@ -76,11 +81,14 @@ export class AuthService {
   @Inject(AuthSettingsService)
   private readonly _authSettings: AuthSettingsService;
 
+  @Inject(LoginNotificationService)
+  private readonly _loginNotification: LoginNotificationService;
+
   /**
    * Inscription en deux temps : aucune ligne dans `users` tant que le code e-mail
    * n’est pas validé (`register/complete`), sauf si SMTP désactivé / compte test.
    */
-  async registerStart(args: RegisterDto) {
+  async registerStart(args: RegisterDto, ctx?: LoginRequestContext) {
     const { source } = args;
     if (source !== 'email') {
       throw new BadRequestException('unsupported_registration_source');
@@ -99,7 +107,7 @@ export class AuthService {
 
     if (skipEmailVerification || isTestAccount) {
       const user = await this.registerCreateUserDirectly(args);
-      const tokens = this.issueAuthTokens(user._id.toString());
+      const tokens = this.deliverAuthTokens(user, ctx, 'register');
       return {
         step: 'done' as const,
         ...tokens,
@@ -153,7 +161,10 @@ export class AuthService {
   }
 
   /** Finalise l’inscription : crée l’utilisateur en base (e-mail déjà vérifié). */
-  async registerComplete({ email: emailRaw, code }: EmailVerificationDto) {
+  async registerComplete(
+    { email: emailRaw, code }: EmailVerificationDto,
+    ctx?: LoginRequestContext,
+  ) {
     const email = emailRaw.trim().toLowerCase();
     const pending = await this._pendingSignupModel.findOne({ email }).exec();
     if (!pending) {
@@ -187,7 +198,7 @@ export class AuthService {
 
     await this._pendingSignupModel.deleteOne({ _id: pending._id }).exec();
     const user = await this.findUserById(newUser._id.toString());
-    return { ...this.issueAuthTokens(newUser._id.toString()), user };
+    return { ...this.deliverAuthTokens(newUser, ctx, 'register'), user };
   }
 
   async resendPendingSignupCode(emailRaw: string) {
@@ -271,9 +282,9 @@ export class AuthService {
    * compte créé seulement après `verify` ou `register/complete` (pas de ligne
    * `users` avant validation), sauf si SMTP désactivé / compte test.
    */
-  async register(args: RegisterDto) {
+  async register(args: RegisterDto, ctx?: LoginRequestContext) {
     if (args.source === 'email') {
-      return this.registerStart(args);
+      return this.registerStart(args, ctx);
     }
     return this.registerCreateUserDirectly(args);
   }
@@ -429,20 +440,21 @@ export class AuthService {
    * Connexion / inscription Google : vérifie le jeton Firebase (provider Google),
    * puis trouve ou crée l’utilisateur Mongo (googleId = identifiant Google dans le jeton).
    */
-  async authWithGoogle(args: GoogleAuthDto) {
+  async authWithGoogle(args: GoogleAuthDto, ctx?: LoginRequestContext) {
     await this._authSettings.assertProviderEnabled('google');
-    return this._authWithGoogle(args, UserTypeEnum.USER);
+    return this._authWithGoogle(args, UserTypeEnum.USER, ctx);
   }
 
   /** Variante dashboard/admin : création sociale par défaut en VENDOR. */
-  async authWithGoogleAsVendor(args: GoogleAuthDto) {
+  async authWithGoogleAsVendor(args: GoogleAuthDto, ctx?: LoginRequestContext) {
     await this._authSettings.assertProviderEnabled('google');
-    return this._authWithGoogle(args, UserTypeEnum.VENDOR);
+    return this._authWithGoogle(args, UserTypeEnum.VENDOR, ctx);
   }
 
   private async _authWithGoogle(
     args: GoogleAuthDto,
     defaultTypeForNewUser: UserTypeEnum,
+    ctx?: LoginRequestContext,
   ) {
     let decoded: DecodedIdToken;
     try {
@@ -486,7 +498,7 @@ export class AuthService {
           .exec();
       }
       return {
-        ...this.issueAuthTokens(user._id.toString()),
+        ...this.deliverAuthTokens(user, ctx, 'google'),
       };
     }
     user = await this._usersModel.findOne({ email: emailRaw }).exec();
@@ -502,7 +514,7 @@ export class AuthService {
         .updateOne({ _id: user._id }, { $set: setDoc })
         .exec();
       return {
-        ...this.issueAuthTokens(user._id.toString()),
+        ...this.deliverAuthTokens(user, ctx, 'google'),
       };
     }
     const newUser = await this._usersModel.create({
@@ -515,7 +527,7 @@ export class AuthService {
       ...(pictureFromGoogle ? { profileImage: pictureFromGoogle } : {}),
     });
     return {
-      ...this.issueAuthTokens(newUser._id.toString()),
+      ...this.deliverAuthTokens(newUser, ctx, 'google'),
     };
   }
 
@@ -523,20 +535,21 @@ export class AuthService {
    * Connexion / inscription Apple : vérifie le jeton Firebase (provider Apple),
    * puis trouve ou crée l’utilisateur Mongo (appleId = identifiant Apple/Firebase).
    */
-  async authWithApple(args: AppleAuthDto) {
+  async authWithApple(args: AppleAuthDto, ctx?: LoginRequestContext) {
     await this._authSettings.assertProviderEnabled('apple');
-    return this._authWithApple(args, UserTypeEnum.USER);
+    return this._authWithApple(args, UserTypeEnum.USER, ctx);
   }
 
   /** Variante dashboard/admin : création sociale par défaut en VENDOR. */
-  async authWithAppleAsVendor(args: AppleAuthDto) {
+  async authWithAppleAsVendor(args: AppleAuthDto, ctx?: LoginRequestContext) {
     await this._authSettings.assertProviderEnabled('apple');
-    return this._authWithApple(args, UserTypeEnum.VENDOR);
+    return this._authWithApple(args, UserTypeEnum.VENDOR, ctx);
   }
 
   private async _authWithApple(
     args: AppleAuthDto,
     defaultTypeForNewUser: UserTypeEnum,
+    ctx?: LoginRequestContext,
   ) {
     let decoded: DecodedIdToken;
     try {
@@ -576,7 +589,7 @@ export class AuthService {
           .exec();
       }
       return {
-        ...this.issueAuthTokens(user._id.toString()),
+        ...this.deliverAuthTokens(user, ctx, 'apple'),
       };
     }
 
@@ -594,7 +607,7 @@ export class AuthService {
           .updateOne({ _id: user._id }, { $set: setDoc })
           .exec();
         return {
-          ...this.issueAuthTokens(user._id.toString()),
+          ...this.deliverAuthTokens(user, ctx, 'apple'),
         };
       }
     }
@@ -613,7 +626,7 @@ export class AuthService {
       ...(pictureFromApple ? { profileImage: pictureFromApple } : {}),
     });
     return {
-      ...this.issueAuthTokens(newUser._id.toString()),
+      ...this.deliverAuthTokens(newUser, ctx, 'apple'),
     };
   }
 
@@ -621,20 +634,21 @@ export class AuthService {
    * Connexion / inscription Facebook : vérifie le jeton Firebase (provider Facebook),
    * puis trouve ou crée l’utilisateur Mongo (facebookId = identifiant Facebook/Firebase).
    */
-  async authWithFacebook(args: FacebookAuthDto) {
+  async authWithFacebook(args: FacebookAuthDto, ctx?: LoginRequestContext) {
     await this._authSettings.assertProviderEnabled('facebook');
-    return this._authWithFacebook(args, UserTypeEnum.USER);
+    return this._authWithFacebook(args, UserTypeEnum.USER, ctx);
   }
 
   /** Variante dashboard/admin : création sociale par défaut en VENDOR. */
-  async authWithFacebookAsVendor(args: FacebookAuthDto) {
+  async authWithFacebookAsVendor(args: FacebookAuthDto, ctx?: LoginRequestContext) {
     await this._authSettings.assertProviderEnabled('facebook');
-    return this._authWithFacebook(args, UserTypeEnum.VENDOR);
+    return this._authWithFacebook(args, UserTypeEnum.VENDOR, ctx);
   }
 
   private async _authWithFacebook(
     args: FacebookAuthDto,
     defaultTypeForNewUser: UserTypeEnum,
+    ctx?: LoginRequestContext,
   ) {
     let decoded: DecodedIdToken;
     try {
@@ -678,7 +692,7 @@ export class AuthService {
           .exec();
       }
       return {
-        ...this.issueAuthTokens(user._id.toString()),
+        ...this.deliverAuthTokens(user, ctx, 'facebook'),
       };
     }
 
@@ -695,7 +709,7 @@ export class AuthService {
         .updateOne({ _id: user._id }, { $set: setDoc })
         .exec();
       return {
-        ...this.issueAuthTokens(user._id.toString()),
+        ...this.deliverAuthTokens(user, ctx, 'facebook'),
       };
     }
 
@@ -709,11 +723,11 @@ export class AuthService {
       ...(pictureFromFacebook ? { profileImage: pictureFromFacebook } : {}),
     });
     return {
-      ...this.issueAuthTokens(newUser._id.toString()),
+      ...this.deliverAuthTokens(newUser, ctx, 'facebook'),
     };
   }
 
-  async login(args: LoginDto) {
+  async login(args: LoginDto, ctx?: LoginRequestContext) {
     const { source, ...rest } = args;
     const user = await this._usersModel
       .findOne({
@@ -738,7 +752,7 @@ export class AuthService {
 
     // TODO add user role(admin, user, etc) claims
     return {
-      ...this.issueAuthTokens(user._id.toString()),
+      ...this.deliverAuthTokens(user, ctx, 'email_password'),
     };
   }
 
@@ -1381,6 +1395,18 @@ export class AuthService {
       result += characters.charAt(Math.floor(Math.random() * charactersLength));
     }
     return result;
+  }
+
+  private deliverAuthTokens(
+    user: Pick<UserModel, '_id' | 'email' | 'fullName' | 'type'>,
+    ctx: LoginRequestContext | undefined,
+    method: LoginAuthMethod,
+  ): { authToken: string; refreshToken: string } {
+    const tokens = this.issueAuthTokens(String(user._id));
+    if (ctx) {
+      this._loginNotification.maybeNotifyLogin(user, ctx, method);
+    }
+    return tokens;
   }
 
   private issueAuthTokens(userId: string): {
