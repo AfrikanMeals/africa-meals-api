@@ -24,8 +24,9 @@ export class GoogleMerchantController {
   @ApiQuery({
     name: 'format',
     required: true,
-    enum: ['csv', 'xlsx', 'xls', 'json', 'xml'],
-    description: 'Format de sortie du flux produits (xls est accepté comme alias xlsx)',
+    enum: ['txt', 'tsv', 'csv', 'xlsx', 'xls', 'json', 'xml'],
+    description:
+      'Format du flux (txt/tsv recommandé GMC ; xls renvoie du texte tabulé car Excel n’est pas accepté par Google)',
   })
   @ApiQuery({
     name: 'store',

@@ -40,9 +40,16 @@ export function normalizeGoogleMerchantFormat(
 ): GoogleMerchantExportFormat | null {
   const value = raw?.trim().toLowerCase();
   if (!value) return null;
-  // Google Merchant Center and some clients request `xls`; we serve XLSX.
-  if (value === 'xls') return 'xlsx';
-  if (value === 'csv' || value === 'xlsx' || value === 'json' || value === 'xml') {
+  // GMC rejects legacy Excel (.xls) — serve tab-delimited .txt instead.
+  if (value === 'xls') return 'txt';
+  if (value === 'tsv') return 'txt';
+  if (
+    value === 'csv' ||
+    value === 'txt' ||
+    value === 'xlsx' ||
+    value === 'json' ||
+    value === 'xml'
+  ) {
     return value;
   }
   return null;
@@ -87,6 +94,13 @@ function escapeCsvCell(value: string): string {
   return value;
 }
 
+function escapeTxtCell(value: string): string {
+  if (/[\t\n\r"]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
 function escapeXml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -117,6 +131,17 @@ export function buildGoogleMerchantCsv(items: GoogleMerchantFeedItem[]): string 
   );
   const lines = items.map((item) =>
     feedItemToRow(item).map((cell) => escapeCsvCell(cell)).join(','),
+  );
+  return [headerLine, ...lines].join('\n');
+}
+
+/** Tab-delimited plain text — format accepted by Google Merchant Center scheduled feeds. */
+export function buildGoogleMerchantTxt(items: GoogleMerchantFeedItem[]): string {
+  const headerLine = GOOGLE_MERCHANT_FEED_FIELDS.map(({ label }) => label).join(
+    '\t',
+  );
+  const lines = items.map((item) =>
+    feedItemToRow(item).map((cell) => escapeTxtCell(cell)).join('\t'),
   );
   return [headerLine, ...lines].join('\n');
 }
@@ -203,6 +228,12 @@ export async function buildGoogleMerchantExport(
         body: buildGoogleMerchantCsv(items),
         contentType: 'text/csv; charset=utf-8',
         filename: `google-merchant-${safeSlug}.csv`,
+      };
+    case 'txt':
+      return {
+        body: buildGoogleMerchantTxt(items),
+        contentType: 'text/plain; charset=utf-8',
+        filename: `google-merchant-${safeSlug}.txt`,
       };
     case 'xlsx':
       return {

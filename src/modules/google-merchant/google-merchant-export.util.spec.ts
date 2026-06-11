@@ -1,6 +1,7 @@
 import {
   buildGoogleMerchantCsv,
   buildGoogleMerchantJson,
+  buildGoogleMerchantTxt,
   buildGoogleMerchantXml,
   feedItemToGoogleRecord,
   formatGoogleMerchantPrice,
@@ -36,7 +37,9 @@ describe('google-merchant-export.util', () => {
   it('normalizes supported formats', () => {
     expect(normalizeGoogleMerchantFormat('CSV')).toBe('csv');
     expect(normalizeGoogleMerchantFormat(' xml ')).toBe('xml');
-    expect(normalizeGoogleMerchantFormat('xls')).toBe('xlsx');
+    expect(normalizeGoogleMerchantFormat('txt')).toBe('txt');
+    expect(normalizeGoogleMerchantFormat('tsv')).toBe('txt');
+    expect(normalizeGoogleMerchantFormat('xls')).toBe('txt');
     expect(normalizeGoogleMerchantFormat('pdf')).toBeNull();
   });
 
@@ -60,6 +63,16 @@ describe('google-merchant-export.util', () => {
     expect(csv).toContain('identifier_exists');
     expect(csv).toContain('sale_price');
     expect(csv).toContain('5814');
+  });
+
+  it('builds tab-delimited TXT for Google Merchant scheduled feeds', () => {
+    const txt = buildGoogleMerchantTxt(sampleItems);
+    const [header, row] = txt.split('\n');
+    expect(header?.split('\t')[0]).toBe('id');
+    expect(header).toContain('google_product_category');
+    expect(row).toContain('prod123');
+    expect(row).toContain('5814');
+    expect(txt).not.toMatch(/\t.*\t.*,/);
   });
 
   it('builds JSON with snake_case Google attribute names', () => {

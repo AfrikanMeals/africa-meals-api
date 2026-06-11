@@ -1,4 +1,4 @@
-export type GoogleMerchantExportFormat = 'csv' | 'xlsx' | 'json' | 'xml';
+export type GoogleMerchantExportFormat = 'csv' | 'txt' | 'xlsx' | 'json' | 'xml';
 
 /** Internal model aligned with Google Merchant Center attribute names (camelCase). */
 export type GoogleMerchantFeedItem = {

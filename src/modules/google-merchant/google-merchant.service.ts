@@ -135,10 +135,10 @@ export class GoogleMerchantService {
       : sampleStoreName;
 
     return {
-      feedUrl: `${apiBase}/google-merchant/admin/export?format=xml`,
-      storeFeedUrlTemplate: `${apiBase}/google-merchant/export?format=xml&store={storeId}`,
-      recommendedFormat: 'xml',
-      supportedFormats: ['csv', 'xlsx', 'json', 'xml'],
+      feedUrl: `${apiBase}/google-merchant/admin/export?format=txt`,
+      storeFeedUrlTemplate: `${apiBase}/google-merchant/export?format=txt&store={storeId}`,
+      recommendedFormat: 'txt',
+      supportedFormats: ['txt', 'xml', 'csv', 'json', 'xlsx'],
       publicWebUrl,
       basicAuthConfigured: Boolean(credentials),
       basicAuthUser: credentials?.user ?? null,
@@ -327,14 +327,17 @@ export class GoogleMerchantService {
     const format = normalizeGoogleMerchantFormat(formatRaw);
     if (!format) {
       this.logger.warn(
-        `invalid_format raw=${JSON.stringify(formatRaw)} supported=csv,xlsx,xls,json,xml`,
+        `invalid_format raw=${JSON.stringify(formatRaw)} supported=txt,tsv,csv,xlsx,xls,json,xml`,
       );
       throw new BadRequestException(
-        'invalid_format: supported values are csv, xlsx, xls, json, xml',
+        'invalid_format: supported values are txt, tsv, csv, xlsx, xls, json, xml',
       );
     }
-    if (formatRaw?.trim().toLowerCase() === 'xls' && format === 'xlsx') {
-      this.logger.log('format alias applied: xls -> xlsx');
+    const raw = formatRaw?.trim().toLowerCase();
+    if ((raw === 'xls' || raw === 'tsv') && format === 'txt') {
+      this.logger.log(
+        `format alias applied: ${raw} -> txt (Google Merchant Center rejects Excel xls/xlsx)`,
+      );
     }
     return format;
   }
