@@ -1,3 +1,4 @@
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -18,6 +19,7 @@ const SETTINGS_KEY = 'default';
 const DEFAULTS = {
   perKmRate: 0,
   maxDeliveryRadiusKm: 25,
+  currency: 'CAD',
   ranges: [] as { minKm: number; maxKm: number; fee: number }[],
   deliveryWithheldFeeMode: 'percent' as PlatformFeeMode,
   deliveryWithheldFeeFixed: 0,
@@ -77,11 +79,31 @@ function normalizeRanges(
 @Injectable()
 export class PlatformShippingSettingsService {
   constructor(
+    private readonly _supportedCountries: SupportedCountriesService,
     @InjectModel(PlatformShippingSettingsModel.name)
     private readonly _model: Model<PlatformShippingSettingsDocument>,
   ) {}
 
-  private _toResponse(doc: PlatformShippingSettingsModel) {
+  private async _resolveCurrency(
+    stored?: string | null,
+  ): Promise<string> {
+    const normalized = String(stored ?? '')
+      .trim()
+      .toUpperCase();
+    if (normalized) return normalized;
+    return this._supportedCountries.getPrimaryBillingCurrency();
+  }
+
+  private async _assertActiveCurrency(currency: string): Promise<void> {
+    const cur = String(currency ?? '')
+      .trim()
+      .toUpperCase();
+    const rows = await this._supportedCountries.listActive();
+    if (rows.some((row) => row.currency === cur)) return;
+    throw new BadRequestException('invalid_currency');
+  }
+
+  private async _toResponse(doc: PlatformShippingSettingsModel) {
     const deliveryWithheldFeeMode = inferWithheldMode(
       doc.deliveryWithheldFeeMode,
       doc.deliveryWithheldFeeFixed ?? 0,
@@ -90,6 +112,7 @@ export class PlatformShippingSettingsService {
     return {
       perKmRate: doc.perKmRate,
       maxDeliveryRadiusKm: doc.maxDeliveryRadiusKm,
+      currency: await this._resolveCurrency(doc.currency),
       ranges: (doc.ranges ?? []).map((r) => ({
         minKm: r.minKm,
         maxKm: r.maxKm,
@@ -142,6 +165,10 @@ export class PlatformShippingSettingsService {
       dto.deliveryWithheldFeeFixed ?? current.deliveryWithheldFeeFixed;
     const withheldPercent =
       dto.deliveryWithheldFeePercent ?? current.deliveryWithheldFeePercent;
+    const currency = String(dto.currency ?? current.currency)
+      .trim()
+      .toUpperCase();
+    await this._assertActiveCurrency(currency);
 
     const updated = await this._model
       .findOneAndUpdate(
@@ -150,6 +177,7 @@ export class PlatformShippingSettingsService {
           $set: {
             perKmRate: dto.perKmRate,
             maxDeliveryRadiusKm: dto.maxDeliveryRadiusKm,
+            currency,
             ranges,
             deliveryWithheldFeeMode,
             deliveryWithheldFeeFixed:

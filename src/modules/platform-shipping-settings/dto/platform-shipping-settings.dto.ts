@@ -1,11 +1,15 @@
 import { PLATFORM_FEE_MODES } from '@schemas/platform-shipping-settings.schema';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
+import { Trim } from 'class-sanitizer';
 import {
   IsArray,
   IsIn,
   IsNumber,
   IsOptional,
+  IsString,
+  Length,
+  Matches,
   Max,
   Min,
   ValidateNested,
@@ -47,6 +51,16 @@ export class UpdatePlatformShippingSettingsDto {
   @IsNumber()
   @Min(0)
   perKmRate: number;
+
+  @ApiProperty({
+    example: 'CAD',
+    description: 'Devise des montants livraison (régions actives)',
+  })
+  @IsString()
+  @Trim()
+  @Length(3, 3)
+  @Matches(/^[A-Z]{3}$/i)
+  currency: string;
 
   @ApiProperty({
     example: 20,

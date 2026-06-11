@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { AddressModel, AddressSchema } from '@schemas/address.schema';
 import {
   PlatformShippingSettingsModel,
@@ -13,6 +14,7 @@ import { PlatformShippingSettingsService } from './platform-shipping-settings.se
 
 @Module({
   imports: [
+    SupportedCountriesModule,
     MongooseModule.forFeature([
       {
         name: PlatformShippingSettingsModel.name,

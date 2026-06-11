@@ -24,6 +24,10 @@ export class PlatformShippingSettingsModel {
   @Prop({ type: Number, default: 25 })
   maxDeliveryRadiusKm: number;
 
+  /** Devise des montants livraison (ISO 4217, alignée sur les régions actives). */
+  @Prop({ type: String, default: 'CAD', uppercase: true, trim: true })
+  currency: string;
+
   @Prop({
     type: [
       {
