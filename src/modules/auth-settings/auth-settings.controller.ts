@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Put,
   Req,
   UseGuards,
@@ -22,6 +23,7 @@ export class AuthSettingsController {
 
   /** Lecture publique : écrans de connexion admin + mobile. */
   @Get()
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
   getPublic() {
     return this._service.getPublicSettings();
   }
