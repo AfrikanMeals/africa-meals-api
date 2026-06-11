@@ -71,6 +71,10 @@ import { VendorNotificationDispatchService } from '@modules/vendor-notifications
 import { vendorOrderReasonToCategory } from '@modules/vendor-notifications/vendor-notification.constants';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import type { RegionTaxLineResult } from '@modules/supported-countries/region-tax.constants';
+import {
+  resolveStoreTaxCountryCode,
+  resolveTaxCountryCode,
+} from '@modules/supported-countries/region-tax.util';
 
 @Injectable()
 export class OrdersService {
@@ -1142,6 +1146,13 @@ export class OrdersService {
         .select('appCountryCode')
         .lean()
         .exec();
+      const storePop = await this._storeModel
+        .findById(o.store)
+        .populate('address', 'countryCode')
+        .select('region phoneNumber currency address')
+        .lean()
+        .exec();
+      const storeCc = resolveStoreTaxCountryCode(storePop);
       let deliveryCc: string | undefined;
       const aid = opts?.deliveryAddressId?.trim();
       if (aid) {
@@ -1154,10 +1165,13 @@ export class OrdersService {
       } else if (o.deliveryAddressSnapshot?.countryCode) {
         deliveryCc = o.deliveryAddressSnapshot.countryCode;
       }
-      const cc = this._supportedCountries.resolveUserTaxCountryCode(
-        customer as UserModel,
-        deliveryCc,
-      );
+      const cc =
+        resolveTaxCountryCode([
+          storeCc,
+          deliveryCc,
+          (customer as UserModel & { appCountryCode?: string })
+            ?.appCountryCode,
+        ]) || 'CA';
       const breakdown = await this._supportedCountries.computeTaxesForModule({
         countryCode: cc,
         baseAmount: subtotalBeforeTax,

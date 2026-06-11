@@ -7,7 +7,8 @@ import {
 import { VendorNotificationMonthlyChargeModel } from '@schemas/vendor-notification-monthly-charge.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { Model, Types } from 'mongoose';
-import { billingMonthKey } from './vendor-notification-dispatch.service';
+import { billingPeriodKey } from './vendor-notification-billing-period.util';
+import { VendorNotificationDispatchService } from './vendor-notification-dispatch.service';
 
 @Injectable()
 export class VendorNotificationAdminService {
@@ -18,6 +19,7 @@ export class VendorNotificationAdminService {
     private readonly chargeModel: Model<VendorNotificationMonthlyChargeModel>,
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
+    private readonly dispatch: VendorNotificationDispatchService,
   ) {}
 
   async platformStats(args: {
@@ -123,8 +125,11 @@ export class VendorNotificationAdminService {
       stores.map((s) => [String(s._id), String(s.name ?? '').trim()]),
     );
 
+    const pricing = await this.dispatch.getPricing();
     return {
-      billingMonth: args.billingMonth ?? billingMonthKey(new Date()),
+      billingMonth:
+        args.billingMonth ??
+        billingPeriodKey(new Date(), pricing.billingCyclePeriod),
       totals: {
         push:
           byChannel.find((r) => r._id === 'push')?.count ?? 0,

@@ -16,6 +16,7 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { BillingModule } from '@modules/billing/billing.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { BusinessTypesModule } from '@modules/business-types/business-types.module';
+import { DashboardAuditModule } from '@modules/dashboard-audit/dashboard-audit.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -38,11 +39,18 @@ import {
 import { DailyMenuReminderCron } from './daily-menu-reminder.cron';
 import { DailyMenuReminderService } from './daily-menu-reminder.service';
 import { StoreController } from './store.controller';
+import { StoreRegionBackfillService } from './store-region-backfill.service';
 import { StoreService } from './store.service';
+import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/store-delivery-drivers.module';
 
 @Module({
   controllers: [StoreController],
-  providers: [StoreService, DailyMenuReminderService, DailyMenuReminderCron],
+  providers: [
+    StoreService,
+    DailyMenuReminderService,
+    DailyMenuReminderCron,
+    StoreRegionBackfillService,
+  ],
   imports: [
     NotificationsModule,
     WsNotifyModule,
@@ -58,11 +66,13 @@ import { StoreService } from './store.service';
     OffersModule,
     SubscriptionsModule,
     BusinessTypesModule,
+    DashboardAuditModule,
     CartModule,
     OrdersModule,
     StockItemsModule,
     DrinksModule,
     forwardRef(() => BillingModule),
+    StoreDeliveryDriversModule,
     MongooseModule.forFeature([
       { name: AppNotificationModel.name, schema: AppNotificationSchema },
       { name: StoreModel.name, schema: StoreSchema },

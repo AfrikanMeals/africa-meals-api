@@ -201,6 +201,68 @@ export class DocumentationService {
     return serializeGroup(doc);
   }
 
+  async deleteGroup(user: UserModel, slugRaw: string, localeRaw?: string) {
+    assertAdmin(user);
+    const slug = normalizeDocSlug(slugRaw);
+    if (!isValidDocSlug(slug)) {
+      throw new BadRequestException('invalid_documentation_group_slug');
+    }
+    const locale = normalizeLocale(localeRaw ?? 'fr');
+    const doc = await this._groups.findOne({ slug, locale }).exec();
+    if (!doc) {
+      throw new NotFoundException('documentation_group_not_found');
+    }
+    const [topicCount, subjectCount] = await Promise.all([
+      this._topics.countDocuments({ groupSlug: slug, locale }).exec(),
+      this._subjects.countDocuments({ groupSlug: slug, locale }).exec(),
+    ]);
+    if (topicCount > 0 || subjectCount > 0) {
+      throw new BadRequestException('documentation_group_has_children');
+    }
+    await doc.deleteOne();
+    return { deleted: true, slug, locale };
+  }
+
+  async deleteTopic(user: UserModel, slugRaw: string, localeRaw?: string) {
+    assertAdmin(user);
+    const slug = normalizeDocSlug(slugRaw);
+    if (!isValidDocSlug(slug)) {
+      throw new BadRequestException('invalid_documentation_topic_slug');
+    }
+    const locale = normalizeLocale(localeRaw ?? 'fr');
+    const doc = await this._topics.findOne({ slug, locale }).exec();
+    if (!doc) {
+      throw new NotFoundException('documentation_topic_not_found');
+    }
+    const subjectCount = await this._subjects
+      .countDocuments({
+        topicSlug: slug,
+        groupSlug: doc.groupSlug,
+        locale,
+      })
+      .exec();
+    if (subjectCount > 0) {
+      throw new BadRequestException('documentation_topic_has_subjects');
+    }
+    await doc.deleteOne();
+    return { deleted: true, slug, locale };
+  }
+
+  async deleteSubject(user: UserModel, slugRaw: string, localeRaw?: string) {
+    assertAdmin(user);
+    const slug = normalizeDocSlug(slugRaw);
+    if (!isValidDocSlug(slug)) {
+      throw new BadRequestException('invalid_documentation_subject_slug');
+    }
+    const locale = normalizeLocale(localeRaw ?? 'fr');
+    const doc = await this._subjects.findOne({ slug, locale }).exec();
+    if (!doc) {
+      throw new NotFoundException('documentation_subject_not_found');
+    }
+    await doc.deleteOne();
+    return { deleted: true, slug, locale };
+  }
+
   async upsertTopic(user: UserModel, dto: UpsertDocumentationTopicDto) {
     assertAdmin(user);
     const slug = normalizeDocSlug(dto.slug);

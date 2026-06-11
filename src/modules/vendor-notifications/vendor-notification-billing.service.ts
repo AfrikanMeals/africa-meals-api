@@ -10,11 +10,8 @@ import {
 } from '@schemas/vendor-notification-monthly-charge.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { Model, Types } from 'mongoose';
-import {
-  billingMonthKey,
-  previousBillingMonthKey,
-  VendorNotificationDispatchService,
-} from './vendor-notification-dispatch.service';
+import { previousBillingPeriodKey } from './vendor-notification-billing-period.util';
+import { VendorNotificationDispatchService } from './vendor-notification-dispatch.service';
 import { VendorNotificationPreferencesService } from './vendor-notification-preferences.service';
 
 export type VendorSmsBillingSummary = {
@@ -50,7 +47,7 @@ export class VendorNotificationBillingService {
   ) {}
 
   async closeMonthlyChargesForMonth(
-    billingMonth = previousBillingMonthKey(),
+    billingMonth = previousBillingPeriodKey(),
   ): Promise<{ billingMonth: string; stores: number }> {
     const pricing = await this.dispatch.getPricing();
     const rows = await this.deliveryModel

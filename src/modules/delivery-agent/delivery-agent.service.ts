@@ -20,6 +20,11 @@ import {
 } from '@schemas/delivery-agent-application.schema';
 import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
+import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
+import {
+  StoreDeliveryAssignmentModeEnum,
+  StoreModel,
+} from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { haversineDistance } from 'src/utils/helpers';
 import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
@@ -69,6 +74,9 @@ export class DeliveryAgentService {
   @InjectModel(OrderModel.name)
   private readonly _orders: Model<OrderModel>;
 
+  @InjectModel(StoreModel.name)
+  private readonly _stores: Model<StoreModel>;
+
   constructor(
     @Inject(NotificationsService)
     private readonly _notifications: NotificationsService,
@@ -84,6 +92,7 @@ export class DeliveryAgentService {
     private readonly _orderStatusEvents: OrderStatusEventsService,
     @Inject(OrdersService)
     private readonly _ordersService: OrdersService,
+    private readonly _storeDeliveryDrivers: StoreDeliveryDriversService,
   ) {}
 
   private assertAdmin(user: UserModel) {
@@ -378,6 +387,9 @@ export class DeliveryAgentService {
     if (!app) {
       throw new NotFoundException('delivery_agent_application_not_found');
     }
+    if (app.status === DeliveryAgentApplicationStatus.SUSPENDED) {
+      return this.reactivateApplicationAdmin(user, applicationId);
+    }
     if (app.status !== DeliveryAgentApplicationStatus.AWAITING_REVIEW) {
       throw new BadRequestException('delivery_agent_application_not_pending');
     }
@@ -521,6 +533,53 @@ export class DeliveryAgentService {
     );
   }
 
+  async reactivateApplicationAdmin(user: UserModel, applicationId: string) {
+    this.assertAdmin(user);
+    if (!Types.ObjectId.isValid(applicationId)) {
+      throw new NotFoundException('delivery_agent_application_not_found');
+    }
+    const app = await this._applications.findById(applicationId).exec();
+    if (!app) {
+      throw new NotFoundException('delivery_agent_application_not_found');
+    }
+    if (app.status !== DeliveryAgentApplicationStatus.SUSPENDED) {
+      throw new BadRequestException('delivery_agent_application_not_suspended');
+    }
+
+    app.status = DeliveryAgentApplicationStatus.APPROVED;
+    app.rejectionReason = undefined;
+    await app.save();
+
+    await this._users
+      .updateOne({ _id: app.user }, { $set: { type: UserTypeEnum.DELIVERY } })
+      .exec();
+
+    void this._notifyApplicationReview({
+      userId: String(app.user),
+      applicationId: String(app._id),
+      status: 'APPROVED',
+    });
+
+    const lean = await this._applications
+      .findById(app._id)
+      .lean<LeanAppDoc>()
+      .exec();
+    const u = await this._users
+      .findById(app.user)
+      .select('fullName email phoneNumber profileImage type')
+      .lean()
+      .exec();
+    return this.mapAdminRow(
+      lean!,
+      u as {
+        fullName?: string;
+        email?: string;
+        phoneNumber?: string;
+        type?: string;
+      },
+    );
+  }
+
   private escapeHtml(value: string): string {
     return value
       .replace(/&/g, '&amp;')
@@ -613,6 +672,18 @@ export class DeliveryAgentService {
     }
   }
 
+  async listPendingInvites(user: UserModel) {
+    return this._storeDeliveryDrivers.listPendingInvitesForUser(user);
+  }
+
+  async acceptStoreDriverInvite(user: UserModel, token: string) {
+    return this._storeDeliveryDrivers.acceptInvite(user, token);
+  }
+
+  async declineStoreDriverInvite(user: UserModel, token: string) {
+    return this._storeDeliveryDrivers.declineInvite(user, token);
+  }
+
   async listPendingOrders(user: UserModel) {
     this.assertDeliveryAgent(user);
     const { maxDeliveryRadiusKm } =
@@ -636,7 +707,8 @@ export class DeliveryAgentService {
       .limit(50)
       .populate({
         path: 'store',
-        select: 'name address',
+        select:
+          'name address vendorManagesDeliveryDrivers deliveryAssignmentMode',
         populate: {
           path: 'address',
           select: 'address city zipCode location',
@@ -657,7 +729,31 @@ export class DeliveryAgentService {
       this.mapOrderRowForAgent(row as Record<string, unknown>),
     );
 
+    const agentId = String(user._id ?? user.id);
+    const userStoreIds = new Set(
+      await this._storeDeliveryDrivers.listStoreIdsForActiveDriver(agentId),
+    );
+
+    const managedStoreRows = await this._stores
+      .find({ vendorManagesDeliveryDrivers: true })
+      .select('_id deliveryAssignmentMode')
+      .lean()
+      .exec();
+    const managedStoreMap = new Map(
+      managedStoreRows.map((s) => [String(s._id), s]),
+    );
+
     const items = mapped.filter((item) => {
+      const sid = item.storeId ?? '';
+      const managed = sid ? managedStoreMap.get(sid) : undefined;
+      if (managed) {
+        if (!userStoreIds.has(sid)) return false;
+        const mode = String(
+          managed.deliveryAssignmentMode ?? StoreDeliveryAssignmentModeEnum.AUTO,
+        ).toUpperCase();
+        if (mode === StoreDeliveryAssignmentModeEnum.MANUAL) return false;
+        return true;
+      }
       if (item.distanceKm == null) return false;
       return item.distanceKm <= maxDeliveryRadiusKm + 1e-9;
     });
@@ -765,7 +861,10 @@ export class DeliveryAgentService {
 
     const orderDoc = await this._orders
       .findById(oid)
-      .populate('store', 'name owner address')
+      .populate(
+        'store',
+        'name owner address vendorManagesDeliveryDrivers deliveryAssignmentMode',
+      )
       .populate({
         path: 'user',
         select: 'fullName addresses',
@@ -793,6 +892,29 @@ export class DeliveryAgentService {
     }
 
     const orderStoreId = this.storeIdFromPopulatedOrder(orderDoc);
+    const storePop =
+      orderDoc.store && typeof orderDoc.store === 'object'
+        ? (orderDoc.store as StoreModel)
+        : null;
+    if (storePop?.vendorManagesDeliveryDrivers) {
+      const mode = String(
+        storePop.deliveryAssignmentMode ?? StoreDeliveryAssignmentModeEnum.AUTO,
+      ).toUpperCase();
+      if (mode === StoreDeliveryAssignmentModeEnum.MANUAL) {
+        throw new BadRequestException('order_manual_assignment_only');
+      }
+      if (!orderStoreId) {
+        throw new BadRequestException('order_store_missing');
+      }
+      const isMember = await this._storeDeliveryDrivers.isActiveStoreDriver(
+        orderStoreId,
+        String(agentId),
+      );
+      if (!isMember) {
+        throw new ForbiddenException('store_driver_membership_required');
+      }
+    }
+
     const prevOrderStatus = orderDoc.status as OrderStatusEnum;
     orderDoc.set('assigned_delivery_user', agentId);
     orderDoc.status = OrderStatusEnum.SHIPPED;
@@ -1019,6 +1141,13 @@ export class DeliveryAgentService {
     const storeLng = storeCoords?.[0];
     return {
       id,
+      storeId: (() => {
+        const st = row.store;
+        if (st && typeof st === 'object' && st !== null && '_id' in st) {
+          return String((st as { _id: unknown })._id);
+        }
+        return null;
+      })(),
       orderRef: `#AE-${tail}`,
       priceCad: Number(row.totalPrice) || 0,
       distanceKm: distanceKm ?? null,

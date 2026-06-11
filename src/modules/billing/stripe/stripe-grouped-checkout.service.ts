@@ -15,6 +15,9 @@ import { StripeConnectTransferService } from './stripe-connect-transfer.service'
 import { OrdersService } from '@modules/orders/orders.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import type { RegionTaxBreakdown } from '@modules/supported-countries/region-tax.constants';
+import {
+  resolveStoreTaxCountryCode,
+} from '@modules/supported-countries/region-tax.util';
 import { PlatformFeesService } from '@modules/platform-fees/platform-fees.service';
 import { PlatformShippingQuoteService } from '@modules/platform-shipping-settings/platform-shipping-quote.service';
 import { StoreService } from '@modules/store/store.service';
@@ -550,11 +553,22 @@ export class StripeGroupedCheckoutService {
     return this.supportedCountries.resolveUserTaxCountryCode(user, deliveryCc);
   }
 
+  private async resolveOrderTaxCountryForStore(
+    user: UserModel,
+    store: unknown,
+    addressId?: string,
+  ): Promise<string> {
+    const fromStore = resolveStoreTaxCountryCode(store);
+    if (fromStore) return fromStore;
+    return this.resolveOrderTaxCountryForCheckout(user, addressId);
+  }
+
   private async appendOrderTaxLinesForStore(args: {
     user: UserModel;
     currency: string;
     storeId: string;
     storeName: string;
+    store: unknown;
     mode: 'delivery' | 'pickup';
     addressId?: string;
     lineItems: CheckoutLineItem[];
@@ -569,8 +583,9 @@ export class StripeGroupedCheckoutService {
     const subtotalCad =
       (args.payoutRow.goodsCents + args.payoutRow.shipCents) / 100;
     if (subtotalCad <= 0) return;
-    const countryCode = await this.resolveOrderTaxCountryForCheckout(
+    const countryCode = await this.resolveOrderTaxCountryForStore(
       args.user,
+      args.store,
       args.addressId,
     );
     const breakdown = await this.supportedCountries.computeTaxesForModule({
@@ -831,6 +846,7 @@ export class StripeGroupedCheckoutService {
           currency,
           storeId,
           storeName,
+          store: g.store,
           mode,
           addressId: dto.addressId?.trim(),
           lineItems,
@@ -887,6 +903,7 @@ export class StripeGroupedCheckoutService {
         currency,
         storeId,
         storeName,
+        store: g.store,
         mode,
         addressId: dto.addressId?.trim(),
         lineItems,

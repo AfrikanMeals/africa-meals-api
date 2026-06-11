@@ -54,6 +54,7 @@ import {
   PatchVendorShippingZonesDto,
 } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
+import { AdminPatchVendorStoreDto } from './dto/admin-vendor-store.dto';
 import {
   DrinksService,
   maxDrinkOrderQuantity,
@@ -65,6 +66,7 @@ import { StoreAccessService } from '@modules/teams/store-access.service';
 import { TeamsService } from '@modules/teams/teams.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { BusinessTypesService } from '@modules/business-types/business-types.service';
+import { DashboardAuditService } from '@modules/dashboard-audit/dashboard-audit.service';
 
 @Injectable()
 export class StoreService {
@@ -122,6 +124,22 @@ export class StoreService {
       throw new BadRequestException('country_currency_not_configured');
     }
     return currency;
+  }
+
+  /** Région enregistrée (ISO) : champ `region` ou repli `address.countryCode` (legacy). */
+  private _resolveStoreRegion(dto: {
+    region?: string;
+    address?: { countryCode?: string };
+  }): string {
+    const fromField = String(dto.region ?? '')
+      .trim()
+      .toUpperCase();
+    if (/^[A-Z]{2}$/.test(fromField)) return fromField;
+    const fromAddress = String(dto.address?.countryCode ?? '')
+      .trim()
+      .toUpperCase();
+    if (/^[A-Z]{2}$/.test(fromAddress)) return fromAddress;
+    throw new BadRequestException('store_region_required');
   }
 
   @InjectModel(StoreModel.name)
@@ -204,6 +222,27 @@ export class StoreService {
 
   @Inject(BusinessTypesService)
   private readonly _businessTypesService: BusinessTypesService;
+
+  private _normalizeVendorDeliveryDriverSettings(args: {
+    supportsShipping: boolean;
+    vendorManagesDeliveryDrivers?: boolean;
+    deliveryAssignmentMode?: string;
+  }): {
+    vendorManagesDeliveryDrivers: boolean;
+    deliveryAssignmentMode: 'AUTO' | 'MANUAL';
+  } {
+    const vendorManagesDeliveryDrivers =
+      args.supportsShipping && args.vendorManagesDeliveryDrivers === true;
+    const deliveryAssignmentMode =
+      vendorManagesDeliveryDrivers &&
+      String(args.deliveryAssignmentMode ?? 'AUTO').toUpperCase() === 'MANUAL'
+        ? 'MANUAL'
+        : 'AUTO';
+    return { vendorManagesDeliveryDrivers, deliveryAssignmentMode };
+  }
+
+  @Inject(DashboardAuditService)
+  private readonly _dashboardAudit: DashboardAuditService;
 
   getStoreModel() {
     return this._storeModel;
@@ -397,8 +436,9 @@ export class StoreService {
       fullUser,
       dto,
     );
+    const storeRegion = this._resolveStoreRegion(dto);
     const derivedCurrency = await this._resolveCurrencyForCountryCode(
-      dto.address.countryCode,
+      storeRegion,
     );
     const ownerStoreCount = await this._storeModel
       .countDocuments({ owner: user._id })
@@ -430,9 +470,11 @@ export class StoreService {
 
     const store = await this._storeModel.create({
       ...args,
+      region: storeRegion,
       currency: derivedCurrency,
       address: addr._id,
       owner: user._id,
+      ...this._normalizeVendorDeliveryDriverSettings(args),
     });
 
     if (!store) {
@@ -497,7 +539,7 @@ export class StoreService {
         select: 'address city country zipCode countryCode location',
       })
       .select(
-        'name bio businessType email phoneNumber currency status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones address profileImage dailyMenuByWeekday owner',
+        'name bio businessType email phoneNumber currency region status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner',
       )
       .lean()
       .exec();
@@ -535,7 +577,16 @@ export class StoreService {
       email: String(doc.email ?? ''),
       phoneNumber: String(doc.phoneNumber ?? ''),
       currency: String(doc.currency ?? 'CAD'),
+      region: String(
+        doc.region ?? addr?.countryCode ?? '',
+      )
+        .trim()
+        .toUpperCase(),
       supportsShipping: !!doc.supportsShipping,
+      vendorManagesDeliveryDrivers: !!doc.vendorManagesDeliveryDrivers,
+      deliveryAssignmentMode: String(
+        doc.deliveryAssignmentMode ?? 'AUTO',
+      ).toUpperCase(),
       shippingZones: zones.map((z) => ({
         minDistance: Number(z.minDistance ?? 0),
         maxDistance: Number(z.maxDistance ?? 0),
@@ -577,6 +628,10 @@ export class StoreService {
         acceptsOrders: !!doc.acceptsOrders,
         canCreateProducts: !!doc.canCreateProducts,
         supportsShipping: !!doc.supportsShipping,
+        vendorManagesDeliveryDrivers: !!doc.vendorManagesDeliveryDrivers,
+        deliveryAssignmentMode: String(
+          doc.deliveryAssignmentMode ?? 'AUTO',
+        ).toUpperCase(),
         createdAt: doc.createdAt,
         updatedAt: doc.updatedAt,
         currency: profile.currency,
@@ -1195,8 +1250,9 @@ export class StoreService {
       fullUser,
       args,
     );
+    const storeRegion = this._resolveStoreRegion(args);
     const derivedCurrency = await this._resolveCurrencyForCountryCode(
-      args.address.countryCode,
+      storeRegion,
     );
     this._assertVendorShopAddressForOnboarding(args.address);
     const store = await this._storeModel
@@ -1234,14 +1290,21 @@ export class StoreService {
       ? args.shippingZones ?? store.shippingZones ?? []
       : [];
 
+    const deliveryDriverSettings = this._normalizeVendorDeliveryDriverSettings(
+      args,
+    );
     const setFields: Record<string, unknown> = {
       name: args.name,
       bio: args.bio,
       email: args.email,
       phoneNumber: args.phoneNumber,
+      region: storeRegion,
       currency: derivedCurrency,
       supportsShipping: args.supportsShipping,
       shippingZones,
+      vendorManagesDeliveryDrivers:
+        deliveryDriverSettings.vendorManagesDeliveryDrivers,
+      deliveryAssignmentMode: deliveryDriverSettings.deliveryAssignmentMode,
       ...(wasRevision && { status: StoreStatusEnum.PENDING }),
     };
     const updateDoc: Record<string, unknown> = { $set: setFields };
@@ -1282,8 +1345,25 @@ export class StoreService {
   async updateVendorShippingZones(
     user: UserModel,
     args: PatchVendorShippingZonesDto,
+    storeId?: string,
   ) {
-    const store = await this._storeModel.findOne({ owner: user._id }).exec();
+    const access = await this._storeAccess.resolveStoreAccess(user);
+    const requested = storeId?.trim();
+    let targetId = requested;
+    if (!targetId) {
+      const owned =
+        access.find((a) => a.isOwner)?.storeId ?? access[0]?.storeId;
+      targetId = owned;
+    }
+    if (!targetId) {
+      throw new NotFoundException('store_not_found');
+    }
+    const row = access.find((a) => a.storeId === targetId);
+    if (!row) {
+      throw new ForbiddenException('store_not_found');
+    }
+
+    const store = await this._storeModel.findById(targetId).exec();
     if (!store) {
       throw new NotFoundException('store_not_found');
     }
@@ -1298,11 +1378,17 @@ export class StoreService {
         }
       }
     }
+    const deliveryDriverSettings = this._normalizeVendorDeliveryDriverSettings(
+      args,
+    );
     await this._storeModel.updateOne(
       { _id: store._id },
       {
         supportsShipping: args.supportsShipping,
         shippingZones,
+        vendorManagesDeliveryDrivers:
+          deliveryDriverSettings.vendorManagesDeliveryDrivers,
+        deliveryAssignmentMode: deliveryDriverSettings.deliveryAssignmentMode,
       },
     );
     await this._storeModel.updateOne(
@@ -1320,7 +1406,7 @@ export class StoreService {
     this._wsInboxNotify.notifyUserInboxRefresh(
       (user._id as { toString(): string }).toString(),
     );
-    return this.findMyStoreSummary(user);
+    return this.findMyStoreSummary(user, targetId);
   }
 
   async updateProfileImage(
@@ -2199,6 +2285,19 @@ export class StoreService {
           createdAt: new Date(),
         },
       ];
+      this._dashboardAudit.recordPlatformEvent(admin, {
+        action: 'ADMIN_VENDOR_STORE_STATUS_CHANGED',
+        category: 'vendors',
+        path: `/vendeurs/${storeId}`,
+        storeId,
+        resource: 'vendor_store',
+        resourceId: storeId,
+        metadata: {
+          storeName: doc.name,
+          previousStatus,
+          newStatus: status,
+        },
+      });
       const ownerId = (() => {
         const o = doc.owner as unknown;
         if (o && typeof o === 'object' && '_id' in o) {
@@ -2267,6 +2366,339 @@ export class StoreService {
       }),
       emailNotification,
     };
+  }
+
+  private async _assertAdminVendorPermission(admin: UserModel): Promise<void> {
+    if (admin.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('admin_only');
+    }
+    await this._storeAccess.assertAdminPermission(admin, 'admin.vendors');
+  }
+
+  private _adminVendorProfileSnapshot(
+    doc: Record<string, unknown>,
+    addr?: Record<string, unknown> | null,
+  ): Record<string, unknown> {
+    const loc = addr?.location as { coordinates?: number[] } | undefined;
+    const coords = loc?.coordinates ?? [0, 0];
+    const zones = (doc.shippingZones as Record<string, unknown>[]) ?? [];
+    return {
+      name: String(doc.name ?? ''),
+      bio: String(doc.bio ?? ''),
+      businessType: doc.businessType ? String(doc.businessType) : null,
+      email: String(doc.email ?? ''),
+      phoneNumber: String(doc.phoneNumber ?? doc.phone_number ?? ''),
+      currency: String(doc.currency ?? 'CAD'),
+      region: String(doc.region ?? addr?.countryCode ?? '')
+        .trim()
+        .toUpperCase(),
+      supportsShipping: !!doc.supportsShipping,
+      acceptsOrders: doc.acceptsOrders !== false,
+      vendorManagesDeliveryDrivers: !!doc.vendorManagesDeliveryDrivers,
+      deliveryAssignmentMode: String(
+        doc.deliveryAssignmentMode ?? 'AUTO',
+      ).toUpperCase(),
+      shippingZones: zones.map((z) => ({
+        minDistance: Number(z.minDistance ?? 0),
+        maxDistance: Number(z.maxDistance ?? 0),
+        price: Number(z.price ?? 0),
+      })),
+      address: {
+        address: String(addr?.address ?? ''),
+        city: String(addr?.city ?? ''),
+        country: String(addr?.country ?? ''),
+        zipCode: String(addr?.zipCode ?? ''),
+        countryCode: String(addr?.countryCode ?? ''),
+        latitude: Number(coords[1] ?? 0),
+        longitude: Number(coords[0] ?? 0),
+      },
+      status: String(doc.status ?? ''),
+    };
+  }
+
+  private _diffAdminVendorProfileSnapshots(
+    before: Record<string, unknown>,
+    after: Record<string, unknown>,
+  ): { changedFields: string[]; before: Record<string, unknown>; after: Record<string, unknown> } {
+    const changedFields: string[] = [];
+    const beforeOut: Record<string, unknown> = {};
+    const afterOut: Record<string, unknown> = {};
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    for (const key of keys) {
+      const b = before[key];
+      const a = after[key];
+      const same =
+        JSON.stringify(b ?? null) === JSON.stringify(a ?? null);
+      if (!same) {
+        changedFields.push(key);
+        beforeOut[key] = b ?? null;
+        afterOut[key] = a ?? null;
+      }
+    }
+    return { changedFields, before: beforeOut, after: afterOut };
+  }
+
+  /** Détail fiche onboarding + historique pour l’admin vendeurs. */
+  async getVendorStoreDetailForAdmin(storeId: string, admin: UserModel) {
+    await this._assertAdminVendorPermission(admin);
+    const doc = await this._storeModel
+      .findById(storeId)
+      .populate({
+        path: 'owner',
+        select: 'fullName email',
+      })
+      .populate({
+        path: 'address',
+        select: 'address city country countryCode zipCode location',
+      })
+      .lean()
+      .exec();
+    if (!doc) {
+      throw new NotFoundException('store_not_found');
+    }
+    const row = doc as Record<string, unknown>;
+    const addr = row.address as Record<string, unknown> | undefined;
+    const profileSnapshot = this._adminVendorProfileSnapshot(row, addr);
+    const { status: _status, ...profile } = profileSnapshot;
+    const rawMessages =
+      (row.vendorMessages as Record<string, unknown>[]) ?? [];
+    const messages = [...rawMessages]
+      .sort(
+        (a, b) =>
+          new Date(String(b.createdAt)).getTime() -
+          new Date(String(a.createdAt)).getTime(),
+      )
+      .map((m) => ({
+        message: String(m.message ?? ''),
+        from: String(m.from ?? 'SYSTEM'),
+        createdAt: m.createdAt,
+      }));
+    const owner = row.owner as Record<string, unknown> | undefined;
+    const planByStore = await this._resolveSubscriptionPlanByStoreIds([
+      storeId,
+    ]);
+    const audit = await this._dashboardAudit.listRecentForAdminVendorStore(
+      admin,
+      storeId,
+      50,
+    );
+    return {
+      store: this._mapStoreToAdminVendorRow(row, {
+        subscriptionPlan: planByStore.get(storeId),
+      }),
+      profile,
+      messages,
+      owner: owner
+        ? {
+            id: String(owner._id ?? ''),
+            fullName: String(owner.fullName ?? '').trim(),
+            email: String(owner.email ?? '').trim(),
+          }
+        : null,
+      auditEvents: audit.items,
+    };
+  }
+
+  /** Édition admin des informations onboarding d’une boutique. */
+  async updateVendorStoreForAdmin(
+    storeId: string,
+    admin: UserModel,
+    args: AdminPatchVendorStoreDto,
+  ) {
+    await this._assertAdminVendorPermission(admin);
+    await this._businessTypesService.assertActiveSlug(args.businessType);
+    this._assertVendorShopAddressForOnboarding(args.address);
+    const store = await this._storeModel
+      .findById(storeId)
+      .populate('address')
+      .populate('owner')
+      .exec();
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+    const ownerRef = store.owner as unknown;
+    const ownerId =
+      ownerRef &&
+      typeof ownerRef === 'object' &&
+      '_id' in (ownerRef as object)
+        ? String((ownerRef as { _id: { toString(): string } })._id)
+        : String(ownerRef ?? '');
+    if (!ownerId) {
+      throw new BadRequestException('store_owner_missing');
+    }
+    const fullOwner = await this._usersService.findById(ownerId);
+    await this._supportedCountries.assertVendorApplicationCompatible(
+      fullOwner,
+      args,
+    );
+    const explicitCurrency = String(args.currency ?? '')
+      .trim()
+      .toUpperCase();
+    const storeRegion = this._resolveStoreRegion(args);
+    const storeCurrency =
+      explicitCurrency.length === 3
+        ? explicitCurrency
+        : await this._resolveCurrencyForCountryCode(storeRegion);
+    const dup = await this._storeModel
+      .findOne({ name: args.name, _id: { $ne: store._id } })
+      .exec();
+    if (dup) {
+      throw new ConflictException('store_already_exists');
+    }
+    const addrDoc = store.address as AddressModel & {
+      _id: { toString(): string };
+    };
+    if (!addrDoc?._id) {
+      throw new BadRequestException('store_address_missing');
+    }
+    const addrLean = addrDoc
+      ? (addrDoc as unknown as Record<string, unknown>)
+      : null;
+    const before = this._adminVendorProfileSnapshot(
+      store.toObject() as Record<string, unknown>,
+      addrLean,
+    );
+    if (args.supportsShipping && (args.shippingZones?.length ?? 0) > 0) {
+      for (const z of args.shippingZones ?? []) {
+        if (z.minDistance > z.maxDistance) {
+          throw new BadRequestException('invalid_shipping_zone_distances');
+        }
+      }
+    }
+    const addrId = addrDoc._id.toString();
+    await this._addressesService.patchById(addrId, {
+      ...args.address,
+      latitude: args.address.latitude,
+      longitude: args.address.longitude,
+    });
+    const shippingZones = args.supportsShipping
+      ? args.shippingZones ?? store.shippingZones ?? []
+      : [];
+    const deliveryDriverSettings = this._normalizeVendorDeliveryDriverSettings(
+      args,
+    );
+    const setFields: Record<string, unknown> = {
+      name: args.name,
+      bio: args.bio,
+      email: args.email,
+      phoneNumber: args.phoneNumber,
+      region: storeRegion,
+      currency: storeCurrency,
+      supportsShipping: args.supportsShipping,
+      acceptsOrders: args.acceptsOrders !== false,
+      shippingZones,
+      vendorManagesDeliveryDrivers:
+        deliveryDriverSettings.vendorManagesDeliveryDrivers,
+      deliveryAssignmentMode: deliveryDriverSettings.deliveryAssignmentMode,
+    };
+    const updateDoc: Record<string, unknown> = { $set: setFields };
+    if (args.businessType) {
+      setFields.businessType = args.businessType;
+    } else {
+      updateDoc.$unset = { businessType: 1 };
+    }
+    await this._storeModel.updateOne({ _id: store._id }, updateDoc);
+    const adminNote = args.adminNote?.trim();
+    if (adminNote) {
+      await this._storeModel.updateOne(
+        { _id: store._id },
+        {
+          $push: {
+            vendorMessages: {
+              message: adminNote,
+              from: 'ADMIN',
+              createdAt: new Date(),
+            },
+          },
+        },
+      );
+    } else {
+      await this._storeModel.updateOne(
+        { _id: store._id },
+        {
+          $push: {
+            vendorMessages: {
+              message: 'Informations établissement mises à jour par l’équipe.',
+              from: 'ADMIN',
+              createdAt: new Date(),
+            },
+          },
+        },
+      );
+    }
+    const refreshed = await this._storeModel
+      .findById(storeId)
+      .populate({
+        path: 'address',
+        select: 'address city country countryCode zipCode location',
+      })
+      .lean()
+      .exec();
+    const afterRow = refreshed as Record<string, unknown>;
+    const afterAddr = afterRow.address as Record<string, unknown> | undefined;
+    const after = this._adminVendorProfileSnapshot(afterRow, afterAddr);
+    const diff = this._diffAdminVendorProfileSnapshots(before, after);
+    this._dashboardAudit.recordPlatformEvent(admin, {
+      action: 'ADMIN_VENDOR_STORE_UPDATED',
+      category: 'vendors',
+      path: `/vendeurs/${storeId}`,
+      storeId,
+      resource: 'vendor_store',
+      resourceId: storeId,
+      metadata: {
+        storeName: String(after.name ?? store.name),
+        changedFields: diff.changedFields,
+        before: diff.before,
+        after: diff.after,
+        ...(adminNote ? { adminNote } : {}),
+      },
+    });
+    this._wsInboxNotify.notifyUserInboxRefresh(ownerId);
+    return this.getVendorStoreDetailForAdmin(storeId, admin);
+  }
+
+  /** Demande de corrections au vendeur (statut REVISION + message). */
+  async requestVendorStoreRevisionForAdmin(
+    storeId: string,
+    admin: UserModel,
+    message: string,
+  ) {
+    await this._assertAdminVendorPermission(admin);
+    const doc = await this._storeModel.findById(storeId).exec();
+    if (!doc) {
+      throw new NotFoundException('store_not_found');
+    }
+    const trimmed = message.trim();
+    const previousStatus = doc.status;
+    doc.status = StoreStatusEnum.REVISION;
+    doc.vendorMessages = [
+      ...(doc.vendorMessages || []),
+      {
+        message: trimmed,
+        from: 'ADMIN',
+        createdAt: new Date(),
+      },
+    ];
+    await doc.save();
+    const ownerId = this.stringifyIdLike(doc.owner);
+    if (ownerId) {
+      this._wsInboxNotify.notifyUserInboxRefresh(ownerId);
+    }
+    this._dashboardAudit.recordPlatformEvent(admin, {
+      action: 'ADMIN_VENDOR_STORE_REVISION_REQUESTED',
+      category: 'vendors',
+      path: `/vendeurs/${storeId}`,
+      storeId,
+      resource: 'vendor_store',
+      resourceId: storeId,
+      metadata: {
+        storeName: doc.name,
+        previousStatus,
+        newStatus: StoreStatusEnum.REVISION,
+        message: trimmed,
+      },
+    });
+    return this.getVendorStoreDetailForAdmin(storeId, admin);
   }
 
   /** Supprime une boutique non active (PENDING / REVISION / INACTIVE) — admin uniquement. */

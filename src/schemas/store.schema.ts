@@ -13,6 +13,12 @@ export enum StoreStatusEnum {
   INACTIVE = 'INACTIVE',
 }
 
+/** Assignation livreurs propres au restaurant : auto (self-assign) ou manuelle. */
+export enum StoreDeliveryAssignmentModeEnum {
+  AUTO = 'AUTO',
+  MANUAL = 'MANUAL',
+}
+
 export enum StoreBusinessTypeEnum {
   RESTAURANT = 'RESTAURANT',
   CONVENIENCE_STORE = 'CONVENIENCE_STORE',
@@ -75,6 +81,10 @@ export class StoreModel extends BaseSchema {
   @Prop({ required: true, name: 'currency', default: 'CAD' })
   currency: string;
 
+  /** Pays ISO enregistré à l’onboarding (taxes, devise) — distinct de l’adresse physique. */
+  @Prop({ required: false, name: 'region', type: String })
+  region?: string;
+
   @Prop({ required: false, name: 'profile_image' })
   profileImage?: string;
 
@@ -86,6 +96,21 @@ export class StoreModel extends BaseSchema {
 
   @Prop({ default: true, name: 'supports_shipping' })
   supportsShipping?: boolean;
+
+  /**
+   * Le restaurant gère sa propre flotte de livreurs (invitations, assignation).
+   * Nécessite `supportsShipping`.
+   */
+  @Prop({ default: false, name: 'vendor_manages_delivery_drivers' })
+  vendorManagesDeliveryDrivers?: boolean;
+
+  /** Mode d’assignation lorsque `vendorManagesDeliveryDrivers` est actif (défaut : AUTO). */
+  @Prop({
+    enum: StoreDeliveryAssignmentModeEnum,
+    default: StoreDeliveryAssignmentModeEnum.AUTO,
+    name: 'delivery_assignment_mode',
+  })
+  deliveryAssignmentMode?: StoreDeliveryAssignmentModeEnum;
 
   @Prop({
     required: true,

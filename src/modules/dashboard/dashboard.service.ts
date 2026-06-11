@@ -74,6 +74,7 @@ import { OrdersService } from '@modules/orders/orders.service';
 import { WsOrderNotifyService } from '@modules/ws-notify/ws-order-notify.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { ContactSubmissionService } from '@modules/mailer/contact-submission.service';
+import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
 import {
   buildDashboardAdPerformancePayload,
   DASHBOARD_AD_PERFORMANCE_DAYS,
@@ -593,6 +594,7 @@ export class DashboardService {
     private readonly wsOrderNotify: WsOrderNotifyService,
     private readonly storeAccess: StoreAccessService,
     private readonly contactSubmissionService: ContactSubmissionService,
+    private readonly storeDeliveryDrivers: StoreDeliveryDriversService,
   ) {}
 
   async getAlerts(user: UserModel): Promise<{
@@ -3142,6 +3144,19 @@ export class DashboardService {
     if (user.type === UserTypeEnum.VENDOR) {
       const ids = vendorStoreObjectIds(user);
       if (!ids.length) return [];
+      const managedStores = await this.storeModel
+        .find({
+          _id: { $in: ids },
+          vendorManagesDeliveryDrivers: true,
+        })
+        .select('_id name address')
+        .populate({ path: 'address', select: 'location city' })
+        .lean()
+        .exec();
+      if (managedStores.length > 0) {
+        const rows = await this.listStoreManagedLivreurs(managedStores);
+        return this.enrichLivreurRows(rows);
+      }
       const storePoints = await this.loadVendorStoreGeoPoints(ids);
       const rows = await this.listApprovedDeliveryUsersForDashboard(
         storePoints,
@@ -3269,6 +3284,21 @@ export class DashboardService {
     if (vendorStoreIds?.length) {
       if (!vendorStoreIds.some((s) => s.toString() === orderStoreId)) {
         throw new ForbiddenException('store_forbidden');
+      }
+    }
+
+    const orderStoreLean = await this.storeModel
+      .findById(orderStoreId)
+      .select('vendorManagesDeliveryDrivers name')
+      .lean()
+      .exec();
+    if (orderStoreLean?.vendorManagesDeliveryDrivers) {
+      const isMember = await this.storeDeliveryDrivers.isActiveStoreDriver(
+        orderStoreId,
+        deliveryUserId,
+      );
+      if (!isMember) {
+        throw new BadRequestException('livreur_not_store_member');
       }
     }
 
@@ -3699,6 +3729,94 @@ export class DashboardService {
   /**
    * Livreurs = utilisateurs DELIVERY avec candidature APPROVED (plus de collection `delivery_drivers`).
    */
+  private async listStoreManagedLivreurs(
+    stores: Array<Record<string, unknown>>,
+  ): Promise<DashboardLivreurRow[]> {
+    const rows: DashboardLivreurRow[] = [];
+    const seen = new Set<string>();
+
+    for (const st of stores) {
+      const storeId = String(st._id ?? '');
+      const storeName = String(st.name ?? 'Restaurant');
+      if (!storeId) continue;
+
+      const driverIds =
+        await this.storeDeliveryDrivers.listActiveDriverUserIdsForStore(storeId);
+      if (!driverIds.length) continue;
+
+      const addr = st.address as
+        | { location?: { coordinates?: number[] }; city?: string }
+        | undefined;
+      const coords = addr?.location?.coordinates ?? [0, 0];
+      const lng = Number(coords[0] ?? 0);
+      const lat = Number(coords[1] ?? 0);
+      const cityLabel = addr?.city?.trim() || '—';
+
+      const users = await this.userModel
+        .find({
+          _id: {
+            $in: driverIds.map((id) => new Types.ObjectId(id)),
+          },
+          type: UserTypeEnum.DELIVERY,
+        })
+        .select('fullName phoneNumber profileImage type')
+        .lean()
+        .exec();
+
+      for (const u of users) {
+        const uid = String(u._id);
+        if (seen.has(uid)) continue;
+        seen.add(uid);
+
+        const app = await this.deliveryAgentApplicationModel
+          .findOne({
+            user: u._id,
+            status: DeliveryAgentApplicationStatus.APPROVED,
+          })
+          .lean()
+          .exec();
+        if (!app) continue;
+
+        let statut: DashboardLivreurRow['statut'] = 'disponible';
+        if (app.dashboardAvailability === 'hors_ligne') {
+          statut = 'hors_ligne';
+        } else {
+          const active = await this.orderModel
+            .findOne({
+              assignedDeliveryUser: u._id,
+              shouldShip: true,
+              status: OrderStatusEnum.SHIPPED,
+            })
+            .select('_id')
+            .lean()
+            .exec();
+          if (active) statut = 'en_livraison';
+        }
+
+        rows.push(
+          this.toDashboardLivreurRowFromDeliveryUser(
+            u as unknown as DeliveryUserLean,
+            cityLabel,
+            lng,
+            lat,
+            storeId,
+            statut,
+            {
+              vehicle: app.vehicle,
+              vehicleRegistration: app.vehicleRegistration,
+              maxConcurrentOrders: app.maxConcurrentOrders,
+              serviceZone: app.serviceZone,
+            },
+          ),
+        );
+        const last = rows[rows.length - 1];
+        if (last) last.storeName = storeName;
+      }
+    }
+
+    return rows;
+  }
+
   private async listApprovedDeliveryUsersForDashboard(
     storePoints: VendorStorePoint[],
     radiusKm: number,

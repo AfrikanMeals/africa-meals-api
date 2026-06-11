@@ -25,6 +25,7 @@ import {
   UploadedFiles,
   UseGuards,
   UseInterceptors,
+  UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
 import {
@@ -53,7 +54,11 @@ import {
   VendorCatalogProductsQueryDto,
 } from './dto/vendor-catalog-query.dto';
 import { StockItemsService } from '@modules/stock-items/stock-items.service';
-import { AdminVendorStoreStatusDto } from './dto/admin-vendor-store.dto';
+import {
+  AdminPatchVendorStoreDto,
+  AdminVendorRequestRevisionDto,
+  AdminVendorStoreStatusDto,
+} from './dto/admin-vendor-store.dto';
 import {
   CreateStoreDto,
   PatchDailyMenuDto,
@@ -62,6 +67,11 @@ import {
 } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { StoreService } from './store.service';
+import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
+import {
+  AcceptStoreDeliveryDriverInviteDto,
+  InviteStoreDeliveryDriverDto,
+} from '@modules/store-delivery-drivers/dto/store-delivery-drivers.dto';
 
 const VENDOR_PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -191,6 +201,9 @@ export class StoreController {
   @Inject(DrinksService)
   private readonly _drinksService: DrinksService;
 
+  @Inject(StoreDeliveryDriversService)
+  private readonly _storeDeliveryDrivers: StoreDeliveryDriversService;
+
   /** Résumé vendeur (évite la collision avec GET :id = "my-store"). */
   @Get('vendor/summary')
   @UseGuards(JwtGuard)
@@ -231,6 +244,51 @@ export class StoreController {
       storeId,
       body.status,
       req.user as UserModel,
+    );
+  }
+
+  /** Détail fiche onboarding + historique — administrateurs vendeurs. */
+  @Get('admin/vendors/:storeId')
+  @UseGuards(JwtGuard)
+  async getAdminVendorStoreDetail(
+    @Param('storeId') storeId: string,
+    @Req() req: Request,
+  ) {
+    return this._storeService.getVendorStoreDetailForAdmin(
+      storeId,
+      req.user as UserModel,
+    );
+  }
+
+  /** Édition admin de la fiche onboarding — administrateurs vendeurs. */
+  @Patch('admin/vendors/:storeId')
+  @UseGuards(JwtGuard)
+  async patchAdminVendorStore(
+    @Param('storeId') storeId: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: AdminPatchVendorStoreDto,
+    @Req() req: Request,
+  ) {
+    return this._storeService.updateVendorStoreForAdmin(
+      storeId,
+      req.user as UserModel,
+      body,
+    );
+  }
+
+  /** Demande de corrections au vendeur (REVISION) — administrateurs vendeurs. */
+  @Post('admin/vendors/:storeId/request-revision')
+  @UseGuards(JwtGuard)
+  async postAdminVendorStoreRevision(
+    @Param('storeId') storeId: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: AdminVendorRequestRevisionDto,
+    @Req() req: Request,
+  ) {
+    return this._storeService.requestVendorStoreRevisionForAdmin(
+      storeId,
+      req.user as UserModel,
+      body.message,
     );
   }
 
@@ -647,10 +705,63 @@ export class StoreController {
     @Req() req: Request,
     @Body(new ValidationPipe({ transform: true, whitelist: true }))
     body: PatchVendorShippingZonesDto,
+    @Query('storeId') storeId?: string,
   ) {
     return this._storeService.updateVendorShippingZones(
       req.user as UserModel,
       body,
+      storeId,
+    );
+  }
+
+  @Get('vendor/delivery-drivers')
+  @UseGuards(JwtGuard)
+  async listVendorDeliveryDrivers(
+    @Req() req: Request,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this._storeDeliveryDrivers.listForVendor(
+      req.user as UserModel,
+      storeId,
+    );
+  }
+
+  @Post('vendor/delivery-drivers/invite')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  async inviteVendorDeliveryDriver(
+    @Req() req: Request,
+    @Body() body: InviteStoreDeliveryDriverDto,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this._storeDeliveryDrivers.inviteByEmail(
+      req.user as UserModel,
+      body.email,
+      storeId,
+    );
+  }
+
+  @Post('vendor/delivery-drivers/:membershipId/resend')
+  @UseGuards(JwtGuard)
+  async resendVendorDeliveryDriverInvite(
+    @Req() req: Request,
+    @Param('membershipId') membershipId: string,
+  ) {
+    return this._storeDeliveryDrivers.resendInvite(
+      req.user as UserModel,
+      membershipId,
+    );
+  }
+
+  @Delete('vendor/delivery-drivers/:membershipId')
+  @UseGuards(JwtGuard)
+  async revokeVendorDeliveryDriver(
+    @Req() req: Request,
+    @Param('membershipId') membershipId: string,
+  ) {
+    return this._storeDeliveryDrivers.revokeMembership(
+      req.user as UserModel,
+      membershipId,
     );
   }
 

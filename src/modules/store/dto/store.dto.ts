@@ -1,10 +1,12 @@
 import { CreateAddressDto } from '@modules/addresses/dto/addresses.dto';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { StoreDeliveryAssignmentModeEnum } from '@schemas/store.schema';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsEnum,
   IsInt,
   IsNotEmpty,
   IsNumber,
@@ -75,6 +77,22 @@ export class CreateStoreDto {
   @IsNotEmpty()
   email: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Région enregistrée (ISO 3166-1 alpha-2) pour taxes et devise — distincte de l’adresse physique.',
+    example: 'CM',
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    value == null || value === ''
+      ? undefined
+      : String(value).trim().toUpperCase(),
+  )
+  @IsString()
+  @MinLength(2)
+  @MaxLength(2)
+  region?: string;
+
   @ApiProperty({
     description: 'Livraison disponible',
     example: true,
@@ -83,6 +101,23 @@ export class CreateStoreDto {
   @IsNotEmpty()
   @IsBoolean()
   supportsShipping: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Le restaurant gère ses propres livreurs (invitations, assignation).',
+  })
+  @IsOptional()
+  @IsBoolean()
+  vendorManagesDeliveryDrivers?: boolean;
+
+  @ApiPropertyOptional({
+    enum: StoreDeliveryAssignmentModeEnum,
+    description: 'AUTO = self-assign livreurs ; MANUAL = assignation vendeur.',
+    default: StoreDeliveryAssignmentModeEnum.AUTO,
+  })
+  @IsOptional()
+  @IsEnum(StoreDeliveryAssignmentModeEnum)
+  deliveryAssignmentMode?: StoreDeliveryAssignmentModeEnum;
 
   @ApiProperty({
     description: 'Téléphone international (validé selon le pays du restaurant)',
@@ -251,6 +286,21 @@ export class PatchVendorShippingZonesDto {
   @ApiProperty({ description: 'Livraison assurée par le restaurant' })
   @IsBoolean()
   supportsShipping: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Flotte livreurs gérée par le restaurant.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  vendorManagesDeliveryDrivers?: boolean;
+
+  @ApiPropertyOptional({
+    enum: StoreDeliveryAssignmentModeEnum,
+    description: 'Mode d’assignation si flotte propre active.',
+  })
+  @IsOptional()
+  @IsEnum(StoreDeliveryAssignmentModeEnum)
+  deliveryAssignmentMode?: StoreDeliveryAssignmentModeEnum;
 
   @ApiPropertyOptional({
     type: () => [StoreShippingZoneDto],

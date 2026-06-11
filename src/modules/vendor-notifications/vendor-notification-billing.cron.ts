@@ -3,7 +3,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { VendorNotificationBillingService } from './vendor-notification-billing.service';
 import { VendorNotificationStripeBillingService } from './vendor-notification-stripe-billing.service';
-import { previousBillingMonthKey } from './vendor-notification-dispatch.service';
+import { VendorNotificationDispatchService } from './vendor-notification-dispatch.service';
+import {
+  previousBillingPeriodKey,
+  shouldClosePreviousBillingPeriod,
+} from './vendor-notification-billing-period.util';
 
 @Injectable()
 export class VendorNotificationBillingCron {
@@ -13,20 +17,28 @@ export class VendorNotificationBillingCron {
     private readonly billing: VendorNotificationBillingService,
     private readonly stripeBilling: VendorNotificationStripeBillingService,
     private readonly cronMonitor: CronMonitorService,
+    private readonly dispatch: VendorNotificationDispatchService,
   ) {}
 
-  /** Clôture mensuelle + facture Stripe (1er du mois, 04:15 UTC). */
-  @Cron(process.env.VENDOR_NOTIFICATION_BILLING_CRON ?? '15 4 1 * *')
-  async closePreviousMonthCharges(): Promise<void> {
-    const job = 'vendor-notification-monthly-billing';
+  /** Clôture période précédente + facture Stripe (quotidien 04:15 UTC). */
+  @Cron(process.env.VENDOR_NOTIFICATION_BILLING_CRON ?? '15 4 * * *')
+  async closePreviousPeriodCharges(): Promise<void> {
+    const job = 'vendor-notification-period-billing';
     await this.cronMonitor.execute(job, async () => {
-      const billingMonth = previousBillingMonthKey();
+      const pricing = await this.dispatch.getPricing();
+      if (!shouldClosePreviousBillingPeriod(new Date(), pricing.billingCyclePeriod)) {
+        return;
+      }
+      const billingMonth = previousBillingPeriodKey(
+        new Date(),
+        pricing.billingCyclePeriod,
+      );
       const result =
         await this.billing.closeMonthlyChargesForMonth(billingMonth);
       const issued =
         await this.stripeBilling.issueStripeInvoicesForMonth(billingMonth);
       this.logger.log(
-        `Closed vendor SMS billing ${result.billingMonth} (${result.stores} stores), Stripe issued=${issued.issued}`,
+        `Closed vendor SMS billing ${result.billingMonth} (${pricing.billingCyclePeriod}, ${result.stores} stores), Stripe issued=${issued.issued}`,
       );
     });
   }

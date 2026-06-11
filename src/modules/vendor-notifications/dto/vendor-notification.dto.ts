@@ -6,6 +6,7 @@ import {
 } from '@modules/vendor-notifications/vendor-notification.constants';
 import {
   IsBoolean,
+  IsEnum,
   IsNumber,
   IsObject,
   IsOptional,
@@ -13,6 +14,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { VendorNotificationBillingCyclePeriodEnum } from '@modules/vendor-notifications/vendor-notification-billing-period.util';
 
 export class VendorNotificationChannelPrefsDto {
   @IsOptional()
@@ -55,6 +57,10 @@ export class UpdateVendorNotificationPricingDto {
   @IsOptional()
   @IsBoolean()
   smsEnabled?: boolean;
+
+  @IsOptional()
+  @IsEnum(VendorNotificationBillingCyclePeriodEnum)
+  billingCyclePeriod?: VendorNotificationBillingCyclePeriodEnum;
 }
 
 export class VendorNotificationStatsQueryDto {

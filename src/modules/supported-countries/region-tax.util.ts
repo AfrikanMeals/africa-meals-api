@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import {
   REGION_TAX_FEE_TYPES,
   REGION_TAX_MODULES,
@@ -110,5 +111,74 @@ export function resolveTaxCountryCode(
       .toUpperCase();
     if (/^[A-Z]{2}$/.test(code)) return code;
   }
+  return '';
+}
+
+/** Pays ISO enregistré sur la boutique (`stores.region`) — taxes / devise. */
+export function countryCodeFromStoreRegion(store: unknown): string {
+  if (!store || typeof store !== 'object') return '';
+  const cc = String((store as Record<string, unknown>).region ?? '')
+    .trim()
+    .toUpperCase();
+  return /^[A-Z]{2}$/.test(cc) ? cc : '';
+}
+
+/** Pays ISO du restaurant (`address.countryCode` peuplé) — adresse physique. */
+export function countryCodeFromStoreAddress(store: unknown): string {
+  if (!store || typeof store !== 'object') return '';
+  const addr = (store as Record<string, unknown>).address;
+  if (!addr || typeof addr !== 'object' || Array.isArray(addr)) return '';
+  const cc = String(
+    (addr as Record<string, unknown>).countryCode ??
+      (addr as Record<string, unknown>).country_code ??
+      '',
+  )
+    .trim()
+    .toUpperCase();
+  return /^[A-Z]{2}$/.test(cc) ? cc : '';
+}
+
+/** Devises → pays ISO lorsqu’il n’y a qu’un seul candidat (ex. CAD → CA). */
+const UNIQUE_CURRENCY_COUNTRY: Record<string, string> = {
+  CAD: 'CA',
+  USD: 'US',
+  EUR: 'FR',
+  CHF: 'CH',
+  MAD: 'MA',
+  CDF: 'CD',
+};
+
+function countryCodeFromStorePhone(store: Record<string, unknown>): string {
+  const raw = String(store.phoneNumber ?? store.phone_number ?? '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = parsePhoneNumberFromString(raw);
+    const cc = parsed?.country?.trim().toUpperCase() ?? '';
+    return /^[A-Z]{2}$/.test(cc) ? cc : '';
+  } catch {
+    return '';
+  }
+}
+
+function countryCodeFromStoreCurrency(store: Record<string, unknown>): string {
+  const cur = String(store.currency ?? '').trim().toUpperCase();
+  return UNIQUE_CURRENCY_COUNTRY[cur] ?? '';
+}
+
+/**
+ * Pays fiscal d’une boutique : `stores.region` en priorité, repli legacy (téléphone, adresse).
+ */
+export function resolveStoreTaxCountryCode(store: unknown): string {
+  if (!store || typeof store !== 'object') return '';
+  const doc = store as Record<string, unknown>;
+  const fromRegion = countryCodeFromStoreRegion(store);
+  if (fromRegion) return fromRegion;
+  const fromPhone = countryCodeFromStorePhone(doc);
+  const fromCurrency = countryCodeFromStoreCurrency(doc);
+  const fromAddr = countryCodeFromStoreAddress(store);
+
+  if (fromPhone) return fromPhone;
+  if (fromAddr) return fromAddr;
+  if (fromCurrency) return fromCurrency;
   return '';
 }

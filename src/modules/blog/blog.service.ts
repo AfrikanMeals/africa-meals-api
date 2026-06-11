@@ -174,6 +174,42 @@ export class BlogService {
     return serializeGroup(doc);
   }
 
+  async deleteGroup(user: UserModel, slugRaw: string, localeRaw?: string) {
+    assertAdmin(user);
+    const slug = normalizeBlogSlug(slugRaw);
+    if (!isValidBlogSlug(slug)) {
+      throw new BadRequestException('invalid_blog_group_slug');
+    }
+    const locale = normalizeLocale(localeRaw ?? 'fr');
+    const doc = await this._groups.findOne({ slug, locale }).exec();
+    if (!doc) {
+      throw new NotFoundException('blog_group_not_found');
+    }
+    const articleCount = await this._articles
+      .countDocuments({ groupSlug: slug, locale })
+      .exec();
+    if (articleCount > 0) {
+      throw new BadRequestException('blog_group_has_articles');
+    }
+    await doc.deleteOne();
+    return { deleted: true, slug, locale };
+  }
+
+  async deleteArticle(user: UserModel, slugRaw: string, localeRaw?: string) {
+    assertAdmin(user);
+    const slug = normalizeBlogSlug(slugRaw);
+    if (!isValidBlogSlug(slug)) {
+      throw new BadRequestException('invalid_blog_article_slug');
+    }
+    const locale = normalizeLocale(localeRaw ?? 'fr');
+    const doc = await this._articles.findOne({ slug, locale }).exec();
+    if (!doc) {
+      throw new NotFoundException('blog_article_not_found');
+    }
+    await doc.deleteOne();
+    return { deleted: true, slug, locale };
+  }
+
   async upsertArticle(user: UserModel, dto: UpsertBlogArticleDto) {
     assertAdmin(user);
     const slug = normalizeBlogSlug(dto.slug);

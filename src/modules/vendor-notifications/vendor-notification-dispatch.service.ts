@@ -23,6 +23,12 @@ import {
   type VendorNotificationChannel,
 } from './vendor-notification.constants';
 import { VendorNotificationPreferencesService } from './vendor-notification-preferences.service';
+import {
+  billingPeriodKey,
+  normalizeBillingCyclePeriod,
+  previousBillingMonthKey,
+  VendorNotificationBillingCyclePeriodEnum,
+} from './vendor-notification-billing-period.util';
 
 export type VendorStoreNotifyPush = {
   title: string;
@@ -397,6 +403,7 @@ export class VendorNotificationDispatchService {
     deliveredAt?: Date;
   }): Promise<void> {
     const deliveredAt = args.deliveredAt ?? new Date();
+    const pricing = await this.getPricing();
     await this.deliveryModel.create({
       store: new Types.ObjectId(args.storeId),
       recipientUser:
@@ -414,7 +421,10 @@ export class VendorNotificationDispatchService {
       errorMessage: args.errorMessage ?? null,
       metadata: args.metadata ?? {},
       deliveredAt,
-      billingMonth: billingMonthKey(deliveredAt),
+      billingMonth: billingPeriodKey(
+        deliveredAt,
+        pricing.billingCyclePeriod,
+      ),
     });
   }
 
@@ -422,12 +432,14 @@ export class VendorNotificationDispatchService {
     currency: string;
     smsUnitCostCad: number;
     smsEnabled: boolean;
+    billingCyclePeriod: VendorNotificationBillingCyclePeriodEnum;
   }> {
     const doc = await this.pricingModel.findOne({ key: 'default' }).lean().exec();
     return {
       currency: String(doc?.currency ?? 'CAD').trim() || 'CAD',
       smsUnitCostCad: Number(doc?.smsUnitCostCad ?? 0.08) || 0,
       smsEnabled: doc?.smsEnabled !== false,
+      billingCyclePeriod: normalizeBillingCyclePeriod(doc?.billingCyclePeriod),
     };
   }
 
@@ -435,6 +447,7 @@ export class VendorNotificationDispatchService {
     currency?: string;
     smsUnitCostCad?: number;
     smsEnabled?: boolean;
+    billingCyclePeriod?: VendorNotificationBillingCyclePeriodEnum;
   }) {
     const current = await this.getPricing();
     const next = {
@@ -444,6 +457,9 @@ export class VendorNotificationDispatchService {
           ? Math.max(0, Number(input.smsUnitCostCad) || 0)
           : current.smsUnitCostCad,
       smsEnabled: input.smsEnabled ?? current.smsEnabled,
+      billingCyclePeriod: input.billingCyclePeriod
+        ? normalizeBillingCyclePeriod(input.billingCyclePeriod)
+        : current.billingCyclePeriod,
     };
     await this.pricingModel
       .findOneAndUpdate(
@@ -456,15 +472,9 @@ export class VendorNotificationDispatchService {
   }
 }
 
-export function billingMonthKey(date: Date): string {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
-  return `${y}-${m}`;
-}
-
-export function previousBillingMonthKey(from = new Date()): string {
-  const d = new Date(
-    Date.UTC(from.getUTCFullYear(), from.getUTCMonth() - 1, 1),
-  );
-  return billingMonthKey(d);
-}
+export {
+  billingMonthKey,
+  billingPeriodKey,
+  previousBillingMonthKey,
+  previousBillingPeriodKey,
+} from './vendor-notification-billing-period.util';

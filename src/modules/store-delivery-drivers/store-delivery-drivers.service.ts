@@ -1,0 +1,753 @@
+import { EmailTemplateService } from '@modules/mailer/email-template.service';
+import { MailerService } from '@modules/mailer/mailer.service';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { InjectModel } from '@nestjs/mongoose';
+import {
+  DeliveryAgentApplicationModel,
+  DeliveryAgentApplicationStatus,
+} from '@schemas/delivery-agent-application.schema';
+import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
+import {
+  StoreDeliveryDriverMembershipModel,
+  StoreDeliveryDriverMembershipStatus,
+} from '@schemas/store-delivery-driver-membership.schema';
+import {
+  StoreDeliveryAssignmentModeEnum,
+  StoreModel,
+} from '@schemas/store.schema';
+import { UserModel, UserTypeEnum } from '@schemas/user.schema';
+import { randomUUID } from 'crypto';
+import { Model, Types } from 'mongoose';
+import type {
+  StoreDeliveryDriverRowDto,
+  StoreDeliveryDriversListResponseDto,
+} from './dto/store-delivery-drivers.dto';
+
+const DELIVERED_STATUSES = [
+  OrderStatusEnum.SHIPPED,
+  OrderStatusEnum.COMPLETED,
+];
+
+@Injectable()
+export class StoreDeliveryDriversService {
+  @InjectModel(StoreDeliveryDriverMembershipModel.name)
+  private readonly _membershipModel: Model<StoreDeliveryDriverMembershipModel>;
+
+  @InjectModel(StoreModel.name)
+  private readonly _storeModel: Model<StoreModel>;
+
+  @InjectModel(UserModel.name)
+  private readonly _userModel: Model<UserModel>;
+
+  @InjectModel(OrderModel.name)
+  private readonly _orderModel: Model<OrderModel>;
+
+  @InjectModel(DeliveryAgentApplicationModel.name)
+  private readonly _applicationModel: Model<DeliveryAgentApplicationModel>;
+
+  @Inject(ConfigService)
+  private readonly _config: ConfigService;
+
+  @Inject(MailerService)
+  private readonly _mailer: MailerService;
+
+  @Inject(EmailTemplateService)
+  private readonly _emailTpl: EmailTemplateService;
+
+  async assertStoreOwner(user: UserModel, storeId: string): Promise<StoreModel> {
+    if (!Types.ObjectId.isValid(storeId)) {
+      throw new BadRequestException('invalid_store_id');
+    }
+    const store = await this._storeModel.findById(storeId).exec();
+    if (!store) throw new NotFoundException('store_not_found');
+    const ownerId = String(store.owner ?? '');
+    const userId = String(user._id ?? user.id ?? '');
+    if (user.type !== UserTypeEnum.ADMIN && ownerId !== userId) {
+      throw new ForbiddenException('store_forbidden');
+    }
+    return store;
+  }
+
+  async resolveOwnerStore(user: UserModel): Promise<StoreModel> {
+    const store = await this._storeModel.findOne({ owner: user._id }).exec();
+    if (!store) throw new NotFoundException('store_not_found');
+    return store;
+  }
+
+  isStoreManagedDelivery(store: unknown): boolean {
+    if (!store || typeof store !== 'object') return false;
+    const doc = store as Record<string, unknown>;
+    return !!doc.vendorManagesDeliveryDrivers;
+  }
+
+  storeAssignmentMode(store: unknown): StoreDeliveryAssignmentModeEnum {
+    if (!store || typeof store !== 'object') {
+      return StoreDeliveryAssignmentModeEnum.AUTO;
+    }
+    const raw = String(
+      (store as Record<string, unknown>).deliveryAssignmentMode ?? 'AUTO',
+    ).toUpperCase();
+    return raw === StoreDeliveryAssignmentModeEnum.MANUAL
+      ? StoreDeliveryAssignmentModeEnum.MANUAL
+      : StoreDeliveryAssignmentModeEnum.AUTO;
+  }
+
+  async isActiveStoreDriver(
+    storeId: string,
+    deliveryUserId: string,
+  ): Promise<boolean> {
+    if (!Types.ObjectId.isValid(storeId) || !Types.ObjectId.isValid(deliveryUserId)) {
+      return false;
+    }
+    const row = await this._membershipModel
+      .findOne({
+        store: new Types.ObjectId(storeId),
+        user: new Types.ObjectId(deliveryUserId),
+        status: StoreDeliveryDriverMembershipStatus.ACTIVE,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    return !!row;
+  }
+
+  async listActiveDriverUserIdsForStore(storeId: string): Promise<string[]> {
+    if (!Types.ObjectId.isValid(storeId)) return [];
+    const rows = await this._membershipModel
+      .find({
+        store: new Types.ObjectId(storeId),
+        status: StoreDeliveryDriverMembershipStatus.ACTIVE,
+        user: { $exists: true, $ne: null },
+      })
+      .select('user')
+      .lean()
+      .exec();
+    return rows
+      .map((r) => String((r as { user?: unknown }).user ?? ''))
+      .filter((id) => Types.ObjectId.isValid(id));
+  }
+
+  async listStoreIdsForActiveDriver(userId: string): Promise<string[]> {
+    if (!Types.ObjectId.isValid(userId)) return [];
+    const rows = await this._membershipModel
+      .find({
+        user: new Types.ObjectId(userId),
+        status: StoreDeliveryDriverMembershipStatus.ACTIVE,
+      })
+      .select('store')
+      .lean()
+      .exec();
+    return rows
+      .map((r) => String((r as { store?: unknown }).store ?? ''))
+      .filter((id) => Types.ObjectId.isValid(id));
+  }
+
+  async listForVendor(
+    user: UserModel,
+    storeId?: string,
+  ): Promise<StoreDeliveryDriversListResponseDto> {
+    const store = storeId
+      ? await this.assertStoreOwner(user, storeId)
+      : await this.resolveOwnerStore(user);
+    const sid = String(store._id);
+    const memberships = await this._membershipModel
+      .find({ store: store._id })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    const userIds = memberships
+      .map((m) => (m as { user?: unknown }).user)
+      .filter((u) => u && Types.ObjectId.isValid(String(u)))
+      .map((u) => new Types.ObjectId(String(u)));
+
+    const users =
+      userIds.length > 0
+        ? await this._userModel
+            .find({ _id: { $in: userIds } })
+            .select('fullName email phoneNumber profileImage')
+            .lean()
+            .exec()
+        : [];
+    const userMap = new Map(users.map((u) => [String(u._id), u]));
+
+    const statsByUser = await this._aggregateDriverStats(sid, userIds);
+
+    const items: StoreDeliveryDriverRowDto[] = memberships.map((m) => {
+      const doc = m as Record<string, unknown>;
+      const uid = doc.user ? String(doc.user) : '';
+      const u = uid ? userMap.get(uid) : undefined;
+      const stats = uid ? statsByUser.get(uid) : undefined;
+      return {
+        id: String(doc._id),
+        email: String(doc.email ?? ''),
+        userId: uid || undefined,
+        fullName: u?.fullName ? String(u.fullName) : undefined,
+        phoneNumber: u?.phoneNumber ? String(u.phoneNumber) : undefined,
+        status: String(doc.status ?? ''),
+        invitedAt: doc.invitedAt
+          ? new Date(String(doc.invitedAt)).toISOString()
+          : undefined,
+        respondedAt: doc.respondedAt
+          ? new Date(String(doc.respondedAt)).toISOString()
+          : undefined,
+        ordersDelivered: stats?.total ?? 0,
+        ordersDeliveredToday: stats?.today ?? 0,
+        deliveryRevenueTotal: stats?.revenueTotal ?? 0,
+        deliveryRevenueToday: stats?.revenueToday ?? 0,
+      };
+    });
+
+    return {
+      storeId: sid,
+      storeName: String(store.name ?? ''),
+      vendorManagesDeliveryDrivers: !!store.vendorManagesDeliveryDrivers,
+      deliveryAssignmentMode:
+        store.deliveryAssignmentMode ?? StoreDeliveryAssignmentModeEnum.AUTO,
+      items,
+    };
+  }
+
+  private async _aggregateDriverStats(
+    storeId: string,
+    userIds: Types.ObjectId[],
+  ): Promise<
+    Map<
+      string,
+      { total: number; today: number; revenueTotal: number; revenueToday: number }
+    >
+  > {
+    const out = new Map<
+      string,
+      { total: number; today: number; revenueTotal: number; revenueToday: number }
+    >();
+    if (!userIds.length) return out;
+
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const rows = await this._orderModel
+      .aggregate([
+        {
+          $match: {
+            store: new Types.ObjectId(storeId),
+            shouldShip: true,
+            assigned_delivery_user: { $in: userIds },
+            status: { $in: DELIVERED_STATUSES },
+          },
+        },
+        {
+          $group: {
+            _id: '$assigned_delivery_user',
+            total: { $sum: 1 },
+            revenueTotal: { $sum: { $ifNull: ['$shipping_price', 0] } },
+            today: {
+              $sum: {
+                $cond: [{ $gte: ['$updatedAt', startOfDay] }, 1, 0],
+              },
+            },
+            revenueToday: {
+              $sum: {
+                $cond: [
+                  { $gte: ['$updatedAt', startOfDay] },
+                  { $ifNull: ['$shipping_price', 0] },
+                  0,
+                ],
+              },
+            },
+          },
+        },
+      ])
+      .exec();
+
+    for (const row of rows) {
+      const id = String(row._id ?? '');
+      if (!id) continue;
+      out.set(id, {
+        total: Number(row.total ?? 0),
+        today: Number(row.today ?? 0),
+        revenueTotal: Math.round(Number(row.revenueTotal ?? 0) * 100) / 100,
+        revenueToday: Math.round(Number(row.revenueToday ?? 0) * 100) / 100,
+      });
+    }
+    return out;
+  }
+
+  async inviteByEmail(
+    user: UserModel,
+    emailRaw: string,
+    storeId?: string,
+  ): Promise<StoreDeliveryDriverRowDto> {
+    const store = storeId
+      ? await this.assertStoreOwner(user, storeId)
+      : await this.resolveOwnerStore(user);
+    if (!store.supportsShipping) {
+      throw new BadRequestException('store_shipping_disabled');
+    }
+    if (!store.vendorManagesDeliveryDrivers) {
+      throw new BadRequestException('store_delivery_drivers_not_enabled');
+    }
+
+    const email = emailRaw.trim().toLowerCase();
+    if (!email) throw new BadRequestException('invalid_email');
+
+    const approvedAgent =
+      await this._resolveApprovedDeliveryAgentByEmail(email);
+
+    const existing = await this._membershipModel
+      .findOne({ store: store._id, email })
+      .exec();
+    if (
+      existing &&
+      existing.status !== StoreDeliveryDriverMembershipStatus.REVOKED &&
+      existing.status !== StoreDeliveryDriverMembershipStatus.DECLINED
+    ) {
+      throw new ConflictException('store_driver_already_invited');
+    }
+
+    const token = randomUUID().replace(/-/g, '');
+    const invitedBy = new Types.ObjectId(String(user._id ?? user.id));
+
+    let membership: StoreDeliveryDriverMembershipModel;
+    if (existing) {
+      existing.status = StoreDeliveryDriverMembershipStatus.PENDING;
+      existing.inviteToken = token;
+      existing.invitedBy = invitedBy as unknown as StoreDeliveryDriverMembershipModel['invitedBy'];
+      existing.invitedAt = new Date();
+      existing.respondedAt = undefined;
+      existing.user = approvedAgent._id as unknown as StoreDeliveryDriverMembershipModel['user'];
+      await existing.save();
+      membership = existing;
+    } else {
+      membership = await this._membershipModel.create({
+        store: store._id,
+        email,
+        user: approvedAgent._id,
+        status: StoreDeliveryDriverMembershipStatus.PENDING,
+        inviteToken: token,
+        invitedBy,
+        invitedAt: new Date(),
+      });
+    }
+
+    await this._sendInviteEmail({
+      email,
+      storeName: String(store.name ?? 'Restaurant'),
+      token,
+      recipientName: approvedAgent.fullName ?? email,
+    });
+
+    const list = await this.listForVendor(user, String(store._id));
+    const row = list.items.find((i) => i.id === String(membership._id));
+    if (!row) {
+      return {
+        id: String(membership._id),
+        email,
+        status: StoreDeliveryDriverMembershipStatus.PENDING,
+        ordersDelivered: 0,
+        ordersDeliveredToday: 0,
+        deliveryRevenueTotal: 0,
+        deliveryRevenueToday: 0,
+      };
+    }
+    return row;
+  }
+
+  async revokeMembership(
+    user: UserModel,
+    membershipId: string,
+  ): Promise<{ ok: true }> {
+    if (!Types.ObjectId.isValid(membershipId)) {
+      throw new BadRequestException('invalid_id');
+    }
+    const membership = await this._membershipModel.findById(membershipId).exec();
+    if (!membership) throw new NotFoundException('membership_not_found');
+    await this.assertStoreOwner(user, String(membership.store));
+    membership.status = StoreDeliveryDriverMembershipStatus.REVOKED;
+    membership.inviteToken = undefined;
+    membership.respondedAt = new Date();
+    await membership.save();
+    return { ok: true };
+  }
+
+  async resendInvite(
+    user: UserModel,
+    membershipId: string,
+  ): Promise<StoreDeliveryDriverRowDto> {
+    if (!Types.ObjectId.isValid(membershipId)) {
+      throw new BadRequestException('invalid_id');
+    }
+    const membership = await this._membershipModel.findById(membershipId).exec();
+    if (!membership) throw new NotFoundException('membership_not_found');
+    const store = await this.assertStoreOwner(user, String(membership.store));
+    if (membership.status !== StoreDeliveryDriverMembershipStatus.PENDING) {
+      throw new BadRequestException('invite_not_pending');
+    }
+    await this._resolveApprovedDeliveryAgentByEmail(membership.email);
+    const token = randomUUID().replace(/-/g, '');
+    membership.inviteToken = token;
+    membership.invitedAt = new Date();
+    await membership.save();
+
+    const linked = membership.user
+      ? await this._userModel
+          .findById(membership.user)
+          .select('fullName')
+          .lean()
+          .exec()
+      : null;
+
+    await this._sendInviteEmail({
+      email: membership.email,
+      storeName: String(store.name ?? 'Restaurant'),
+      token,
+      recipientName: linked?.fullName
+        ? String(linked.fullName)
+        : membership.email,
+    });
+
+    const list = await this.listForVendor(user, String(store._id));
+    return (
+      list.items.find((i) => i.id === membershipId) ?? {
+        id: membershipId,
+        email: membership.email,
+        status: membership.status,
+        ordersDelivered: 0,
+        ordersDeliveredToday: 0,
+        deliveryRevenueTotal: 0,
+        deliveryRevenueToday: 0,
+      }
+    );
+  }
+
+  async previewInvite(
+    token: string,
+  ): Promise<{ valid: true; storeId: string; storeName: string }> {
+    const normalized = token.trim();
+    if (!normalized) throw new BadRequestException('invalid_token');
+
+    const membership = await this._membershipModel
+      .findOne({
+        inviteToken: normalized,
+        status: StoreDeliveryDriverMembershipStatus.PENDING,
+      })
+      .exec();
+    if (!membership) throw new NotFoundException('invite_not_found');
+
+    const store = await this._storeModel
+      .findById(membership.store)
+      .select('name vendorManagesDeliveryDrivers')
+      .exec();
+    if (!store?.vendorManagesDeliveryDrivers) {
+      throw new BadRequestException('store_delivery_drivers_not_enabled');
+    }
+
+    return {
+      valid: true,
+      storeId: String(store._id),
+      storeName: String(store.name ?? 'Restaurant'),
+    };
+  }
+
+  /** Acceptation via lien e-mail (sans connexion app / JWT). */
+  async acceptInviteByToken(
+    token: string,
+  ): Promise<{ ok: true; storeId: string; storeName: string }> {
+    const normalized = token.trim();
+    if (!normalized) throw new BadRequestException('invalid_token');
+
+    const membership = await this._membershipModel
+      .findOne({
+        inviteToken: normalized,
+        status: StoreDeliveryDriverMembershipStatus.PENDING,
+      })
+      .exec();
+    if (!membership) throw new NotFoundException('invite_not_found');
+
+    const userOid = await this._resolveInviteAcceptanceUser(membership);
+    return this._finalizeInviteAcceptance(membership, normalized, userOid);
+  }
+
+  async acceptInvite(user: UserModel, token: string): Promise<{ ok: true; storeId: string; storeName: string }> {
+    const normalized = token.trim();
+    if (!normalized) throw new BadRequestException('invalid_token');
+
+    const membership = await this._membershipModel
+      .findOne({
+        inviteToken: normalized,
+        status: StoreDeliveryDriverMembershipStatus.PENDING,
+      })
+      .exec();
+    if (!membership) throw new NotFoundException('invite_not_found');
+
+    const userEmail = String(user.email ?? '')
+      .trim()
+      .toLowerCase();
+    if (userEmail !== membership.email) {
+      throw new ForbiddenException('invite_email_mismatch');
+    }
+
+    await this._assertApprovedDeliveryAgentUser(user);
+
+    const userOid = new Types.ObjectId(String(user._id ?? user.id));
+    return this._finalizeInviteAcceptance(membership, normalized, userOid);
+  }
+
+  async declineInvite(user: UserModel, token: string): Promise<{ ok: true }> {
+    const normalized = token.trim();
+    if (!normalized) throw new BadRequestException('invalid_token');
+    const membership = await this._membershipModel
+      .findOne({
+        inviteToken: normalized,
+        status: StoreDeliveryDriverMembershipStatus.PENDING,
+      })
+      .exec();
+    if (!membership) throw new NotFoundException('invite_not_found');
+    const userEmail = String(user.email ?? '')
+      .trim()
+      .toLowerCase();
+    if (userEmail !== membership.email) {
+      throw new ForbiddenException('invite_email_mismatch');
+    }
+    membership.status = StoreDeliveryDriverMembershipStatus.DECLINED;
+    membership.inviteToken = undefined;
+    membership.respondedAt = new Date();
+    await membership.save();
+    return { ok: true };
+  }
+
+  async listPendingInvitesForUser(
+    user: UserModel,
+  ): Promise<
+    Array<{
+      membershipId: string;
+      storeId: string;
+      storeName: string;
+      invitedAt?: string;
+    }>
+  > {
+    const email = String(user.email ?? '')
+      .trim()
+      .toLowerCase();
+    if (!email) return [];
+    const rows = await this._membershipModel
+      .find({
+        email,
+        status: StoreDeliveryDriverMembershipStatus.PENDING,
+      })
+      .sort({ invitedAt: -1 })
+      .lean()
+      .exec();
+    const storeIds = [
+      ...new Set(
+        rows
+          .map((r) => String((r as { store?: unknown }).store ?? ''))
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ];
+    const stores =
+      storeIds.length > 0
+        ? await this._storeModel
+            .find({ _id: { $in: storeIds.map((id) => new Types.ObjectId(id)) } })
+            .select('name')
+            .lean()
+            .exec()
+        : [];
+    const storeMap = new Map(stores.map((s) => [String(s._id), s]));
+
+    return rows.map((r) => {
+      const doc = r as Record<string, unknown>;
+      const sid = String(doc.store ?? '');
+      const st = storeMap.get(sid);
+      return {
+        membershipId: String(doc._id),
+        storeId: sid,
+        storeName: st?.name ? String(st.name) : 'Restaurant',
+        invitedAt: doc.invitedAt
+          ? new Date(String(doc.invitedAt)).toISOString()
+          : undefined,
+      };
+    });
+  }
+
+  /** Livreur plateforme approuvé (type DELIVERY + candidature APPROVED). */
+  private async _resolveInviteAcceptanceUser(
+    membership: StoreDeliveryDriverMembershipModel,
+  ): Promise<Types.ObjectId> {
+    if (membership.user) {
+      const linked = await this._userModel.findById(membership.user).exec();
+      if (!linked) {
+        throw new BadRequestException('store_driver_user_not_found');
+      }
+      await this._assertApprovedDeliveryAgentUser(linked);
+      return new Types.ObjectId(String(linked._id ?? linked.id));
+    }
+
+    const agent = await this._resolveApprovedDeliveryAgentByEmail(membership.email);
+    return agent._id;
+  }
+
+  private async _finalizeInviteAcceptance(
+    membership: StoreDeliveryDriverMembershipModel,
+    inviteToken: string,
+    userOid: Types.ObjectId,
+  ): Promise<{ ok: true; storeId: string; storeName: string }> {
+    const store = await this._storeModel
+      .findById(membership.store)
+      .select('name vendorManagesDeliveryDrivers')
+      .exec();
+    if (!store?.vendorManagesDeliveryDrivers) {
+      throw new BadRequestException('store_delivery_drivers_not_enabled');
+    }
+
+    const updated = await this._membershipModel
+      .findOneAndUpdate(
+        {
+          _id: membership._id,
+          inviteToken,
+          status: StoreDeliveryDriverMembershipStatus.PENDING,
+        },
+        {
+          $set: {
+            status: StoreDeliveryDriverMembershipStatus.ACTIVE,
+            user: userOid,
+            respondedAt: new Date(),
+          },
+          $unset: { inviteToken: '' },
+        },
+        { new: true },
+      )
+      .exec();
+    if (!updated) throw new NotFoundException('invite_not_found');
+
+    return {
+      ok: true,
+      storeId: String(store._id),
+      storeName: String(store.name ?? ''),
+    };
+  }
+
+  private async _resolveApprovedDeliveryAgentByEmail(email: string): Promise<{
+    _id: Types.ObjectId;
+    fullName?: string;
+  }> {
+    const linkedUser = await this._userModel
+      .findOne({ email: email.trim().toLowerCase() })
+      .select('_id fullName type')
+      .lean()
+      .exec();
+    if (!linkedUser?._id) {
+      throw new BadRequestException('store_driver_user_not_found');
+    }
+    if (linkedUser.type !== UserTypeEnum.DELIVERY) {
+      throw new BadRequestException('store_driver_not_approved_agent');
+    }
+    const app = await this._applicationModel
+      .findOne({
+        user: linkedUser._id,
+        status: DeliveryAgentApplicationStatus.APPROVED,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    if (!app) {
+      throw new BadRequestException('store_driver_not_approved_agent');
+    }
+    return {
+      _id: linkedUser._id as Types.ObjectId,
+      fullName: linkedUser.fullName ? String(linkedUser.fullName) : undefined,
+    };
+  }
+
+  private async _assertApprovedDeliveryAgentUser(user: UserModel): Promise<void> {
+    if (user.type !== UserTypeEnum.DELIVERY) {
+      throw new ForbiddenException('store_driver_not_approved_agent');
+    }
+    const userOid = new Types.ObjectId(String(user._id ?? user.id));
+    const app = await this._applicationModel
+      .findOne({
+        user: userOid,
+        status: DeliveryAgentApplicationStatus.APPROVED,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    if (!app) {
+      throw new ForbiddenException('store_driver_not_approved_agent');
+    }
+  }
+
+  private _buildInviteAcceptUrl(token: string): string {
+    const base =
+      this._config.get<string>('MOBILE_APP_DEEP_LINK_BASE')?.trim() ||
+      this._config.get<string>('DASHBOARD_BASE_URL')?.trim() ||
+      'https://app.wiseeat.com';
+    const url = new URL(
+      base.endsWith('/') ? base : `${base}/`,
+    );
+    url.searchParams.set('storeDriverInvite', token);
+    return url.toString();
+  }
+
+  private _escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  private async _sendInviteEmail(args: {
+    email: string;
+    storeName: string;
+    token: string;
+    recipientName: string;
+  }): Promise<void> {
+    const appName = this._config.get<string>('APP_NAME') ?? 'AfrikanEats';
+    const acceptUrl = this._buildInviteAcceptUrl(args.token);
+    const safeStore = this._escapeHtml(args.storeName);
+    const safeName = this._escapeHtml(args.recipientName);
+    const safeApp = this._escapeHtml(appName);
+
+    const html = [
+      this._emailTpl.heading('Invitation livreur'),
+      this._emailTpl.paragraph(`Bonjour <strong>${safeName}</strong>,`),
+      this._emailTpl.paragraph(
+        `<strong>${safeStore}</strong> vous invite à rejoindre son équipe de livraison sur <strong>${safeApp}</strong>.`,
+      ),
+      this._emailTpl.paragraph(
+        'Seuls les livreurs déjà approuvés par la plateforme peuvent rejoindre cette équipe.',
+      ),
+      this._emailTpl.paragraph(
+        'Cliquez sur le bouton ci-dessous pour accepter l’invitation — aucune ouverture d’application requise.',
+      ),
+      this._emailTpl.button('Accepter l’invitation', acceptUrl),
+      this._emailTpl.muted(
+        `Lien direct : <span style="word-break:break-all;">${this._escapeHtml(acceptUrl)}</span>`,
+      ),
+    ].join('\n');
+
+    const text = [
+      `Bonjour ${args.recipientName},`,
+      ``,
+      `${args.storeName} vous invite à rejoindre son équipe de livraison sur ${appName}.`,
+      `Accepter : ${acceptUrl}`,
+    ].join('\n');
+
+    await this._mailer.sendSimple({
+      to: args.email,
+      toName: args.recipientName,
+      subject: `${appName} — Invitation livreur (${args.storeName})`,
+      html,
+      text,
+    });
+  }
+}

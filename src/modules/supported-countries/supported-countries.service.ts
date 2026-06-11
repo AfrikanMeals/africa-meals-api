@@ -321,7 +321,11 @@ export class SupportedCountriesService implements OnModuleInit {
     const activeCodes = new Set(
       (await this.listActive()).map((x) => x.code.toUpperCase()),
     );
-    const addrCode = (dto.address?.countryCode || '').toUpperCase();
+    const addrCode = (
+      dto.region ||
+      dto.address?.countryCode ||
+      ''
+    ).toUpperCase();
     if (!addrCode) {
       throw new BadRequestException('address_country_required');
     }

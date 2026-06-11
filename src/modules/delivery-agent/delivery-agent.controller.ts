@@ -104,6 +104,39 @@ export class DeliveryAgentController {
     );
   }
 
+  @Get('store-driver-invites/pending')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Invitations livreur en attente (restaurants).' })
+  listStoreDriverInvites(@Req() req: Request) {
+    return this._deliveryAgent.listPendingInvites(req.user as UserModel);
+  }
+
+  @Post('store-driver-invites/accept')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true }))
+  acceptStoreDriverInvite(
+    @Req() req: Request,
+    @Body() body: { token: string },
+  ) {
+    return this._deliveryAgent.acceptStoreDriverInvite(
+      req.user as UserModel,
+      body.token,
+    );
+  }
+
+  @Post('store-driver-invites/decline')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true }))
+  declineStoreDriverInvite(
+    @Req() req: Request,
+    @Body() body: { token: string },
+  ) {
+    return this._deliveryAgent.declineStoreDriverInvite(
+      req.user as UserModel,
+      body.token,
+    );
+  }
+
   @Get('payments/connect-status')
   @UseGuards(JwtGuard)
   @ApiOperation({ summary: 'Statut Stripe Connect du livreur.' })
@@ -231,6 +264,22 @@ export class DeliveryAgentController {
       req.user as UserModel,
       applicationId,
       body.suspensionReason,
+    );
+  }
+
+  @Post('admin/applications/:applicationId/reactivate')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Admin — réactiver un compte livreur suspendu (repasse le compte en DELIVERY).',
+  })
+  async reactivateApplicationAdmin(
+    @Req() req: Request,
+    @Param('applicationId') applicationId: string,
+  ) {
+    return this._deliveryAgent.reactivateApplicationAdmin(
+      req.user as UserModel,
+      applicationId,
     );
   }
 }

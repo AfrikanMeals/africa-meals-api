@@ -75,6 +75,10 @@ export function buildIncludeBranch(obj: unknown, segments: string[]): unknown {
     return { [head]: toPlainJson(child) };
   }
   if (Array.isArray(child)) {
+    // Tableau vide : conserver la clé (ex. `{ addresses: [] }`) pour les projections includeFields.
+    if (child.length === 0) {
+      return { [head]: [] };
+    }
     const mapped = child
       .map((el) => buildIncludeBranch(el, tail))
       .filter((v) => v !== undefined);

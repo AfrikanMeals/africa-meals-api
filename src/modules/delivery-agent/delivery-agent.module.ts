@@ -4,6 +4,7 @@ import { OrdersModule } from '@modules/orders/orders.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { PlatformShippingSettingsModule } from '@modules/platform-shipping-settings/platform-shipping-settings.module';
+import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/store-delivery-drivers.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -24,6 +25,7 @@ import { DeliveryAgentService } from './delivery-agent.service';
     BillingModule,
     OrdersModule,
     PlatformShippingSettingsModule,
+    StoreDeliveryDriversModule,
     MongooseModule.forFeature([
       {
         name: DeliveryAgentApplicationModel.name,

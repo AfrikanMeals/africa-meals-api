@@ -1,4 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { VendorNotificationBillingCyclePeriodEnum } from '@modules/vendor-notifications/vendor-notification-billing-period.util';
 
 /** Barème SMS notifications vendeur (singleton `key = default`). */
 @Schema({
@@ -18,6 +19,15 @@ export class VendorNotificationPricingSettingsModel {
 
   @Prop({ type: Boolean, default: true, name: 'sms_enabled' })
   smsEnabled: boolean;
+
+  /** Période de clôture des factures SMS (DAILY, WEEKLY, MONTHLY). */
+  @Prop({
+    type: String,
+    enum: VendorNotificationBillingCyclePeriodEnum,
+    default: VendorNotificationBillingCyclePeriodEnum.MONTHLY,
+    name: 'billing_cycle_period',
+  })
+  billingCyclePeriod: VendorNotificationBillingCyclePeriodEnum;
 }
 
 export const VendorNotificationPricingSettingsSchema =

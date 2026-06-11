@@ -2,6 +2,7 @@ import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Put,
@@ -70,5 +71,29 @@ export class BlogController {
   @ApiOperation({ summary: 'Créer / mettre à jour un article (ADMIN)' })
   upsertArticle(@Req() req: Request, @Body() body: UpsertBlogArticleDto) {
     return this._blog.upsertArticle(req.user as UserModel, body);
+  }
+
+  @ApiBearerAuth('bearer')
+  @Delete('admin/groups/:slug')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Supprimer un groupe (ADMIN)' })
+  deleteGroup(
+    @Req() req: Request,
+    @Param('slug') slug: string,
+    @Query('locale') locale?: string,
+  ) {
+    return this._blog.deleteGroup(req.user as UserModel, slug, locale);
+  }
+
+  @ApiBearerAuth('bearer')
+  @Delete('admin/articles/:slug')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Supprimer un article (ADMIN)' })
+  deleteArticle(
+    @Req() req: Request,
+    @Param('slug') slug: string,
+    @Query('locale') locale?: string,
+  ) {
+    return this._blog.deleteArticle(req.user as UserModel, slug, locale);
   }
 }

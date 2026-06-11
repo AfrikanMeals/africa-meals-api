@@ -2,6 +2,7 @@ import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Put,
@@ -102,5 +103,41 @@ export class DocumentationController {
     @Body() body: UpsertDocumentationSubjectDto,
   ) {
     return this._documentation.upsertSubject(req.user as UserModel, body);
+  }
+
+  @ApiBearerAuth('bearer')
+  @Delete('admin/groups/:slug')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Supprimer un groupe (ADMIN)' })
+  deleteGroup(
+    @Req() req: Request,
+    @Param('slug') slug: string,
+    @Query('locale') locale?: string,
+  ) {
+    return this._documentation.deleteGroup(req.user as UserModel, slug, locale);
+  }
+
+  @ApiBearerAuth('bearer')
+  @Delete('admin/topics/:slug')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Supprimer un topic (ADMIN)' })
+  deleteTopic(
+    @Req() req: Request,
+    @Param('slug') slug: string,
+    @Query('locale') locale?: string,
+  ) {
+    return this._documentation.deleteTopic(req.user as UserModel, slug, locale);
+  }
+
+  @ApiBearerAuth('bearer')
+  @Delete('admin/subjects/:slug')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Supprimer un sujet / article (ADMIN)' })
+  deleteSubject(
+    @Req() req: Request,
+    @Param('slug') slug: string,
+    @Query('locale') locale?: string,
+  ) {
+    return this._documentation.deleteSubject(req.user as UserModel, slug, locale);
   }
 }

@@ -148,6 +148,67 @@ export class DashboardAuditService {
       .catch(() => undefined);
   }
 
+  /** Journal serveur (mutations admin vendeurs, etc.) avec métadonnées structurées. */
+  recordPlatformEvent(
+    user: UserModel,
+    input: {
+      action: string;
+      category?: string;
+      path?: string;
+      storeId?: string;
+      resource?: string;
+      resourceId?: string;
+      metadata?: Record<string, unknown>;
+      source?: string;
+    },
+  ): void {
+    const actorName = user.fullName?.trim() || undefined;
+    let storeOid: Types.ObjectId | undefined;
+    if (input.storeId?.trim() && Types.ObjectId.isValid(input.storeId.trim())) {
+      storeOid = new Types.ObjectId(input.storeId.trim());
+    }
+    void this.auditModel
+      .create({
+        actorUserId: user._id,
+        actorType: user.type,
+        actorEmail: user.email?.trim() || undefined,
+        actorName,
+        action: input.action.trim().slice(0, 64).toUpperCase(),
+        category: input.category?.trim().slice(0, 64) || undefined,
+        path: input.path?.trim().slice(0, 512) || undefined,
+        storeId: storeOid,
+        resource: input.resource?.trim().slice(0, 128) || undefined,
+        resourceId: input.resourceId?.trim().slice(0, 128) || undefined,
+        metadata: input.metadata ?? {},
+        source: input.source?.trim().slice(0, 64) || 'api',
+        occurredAt: new Date(),
+      })
+      .catch(() => undefined);
+  }
+
+  /** Derniers événements d’audit liés à une boutique (admin vendeurs). */
+  async listRecentForAdminVendorStore(
+    user: UserModel,
+    storeId: string,
+    limit = 40,
+  ): Promise<{ items: DashboardAuditEventRow[] }> {
+    await this.storeAccess.assertAdminPermission(user, 'admin.vendors');
+    if (!Types.ObjectId.isValid(storeId.trim())) {
+      return { items: [] };
+    }
+    const capped = Math.min(Math.max(1, limit), 100);
+    const docs = await this.auditModel
+      .find({ storeId: new Types.ObjectId(storeId.trim()) })
+      .populate('storeId', 'name')
+      .sort({ occurredAt: -1 })
+      .limit(capped)
+      .lean()
+      .exec();
+    return {
+      items: (docs as Record<string, unknown>[]).map((doc) => this.toRow(doc)),
+    };
+  }
+
   async list(
     user: UserModel,
     query: QueryDashboardAuditEventsDto,

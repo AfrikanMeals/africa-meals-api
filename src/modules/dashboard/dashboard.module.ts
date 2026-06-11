@@ -1,3 +1,4 @@
+import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/store-delivery-drivers.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
@@ -70,6 +71,7 @@ import { MailerModule } from '@modules/mailer/mailer.module';
     OrdersModule,
     TeamsModule,
     MailerModule,
+    StoreDeliveryDriversModule,
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       { name: StoreRatingModel.name, schema: StoreRatingSchema },
