@@ -49,6 +49,8 @@ import { BusinessTypesModule } from './modules/business-types/business-types.mod
 import { AdsTargetingModule } from './modules/ads-targeting/ads-targeting.module';
 import { VendorNotificationModule } from './modules/vendor-notifications/vendor-notification.module';
 import { DashboardAuditModule } from './modules/dashboard-audit/dashboard-audit.module';
+import { GoogleMerchantModule } from './modules/google-merchant/google-merchant.module';
+import { PublicSeoModule } from './modules/public-seo/public-seo.module';
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
@@ -295,6 +297,8 @@ function redactRedisUrl(url: string): string {
     AdsTargetingModule,
     VendorNotificationModule,
     DashboardAuditModule,
+    GoogleMerchantModule,
+    PublicSeoModule,
     // SharedModule,
   ],
   controllers: [AppController, EnvDebugController],

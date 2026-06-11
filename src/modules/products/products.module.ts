@@ -1,4 +1,5 @@
 import { MediasModule } from '@modules/medias/medias.module';
+import { PublicSeoModule } from '@modules/public-seo/public-seo.module';
 import { RatingsModule } from '@modules/ratings/ratings.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -19,6 +20,7 @@ import { ProductsService } from './products.service';
 @Module({
   imports: [
     MediasModule,
+    PublicSeoModule,
     RatingsModule,
     MongooseModule.forFeature([
       { name: ProductModel.name, schema: ProductSchema },

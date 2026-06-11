@@ -67,6 +67,7 @@ import { TeamsService } from '@modules/teams/teams.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { BusinessTypesService } from '@modules/business-types/business-types.service';
 import { DashboardAuditService } from '@modules/dashboard-audit/dashboard-audit.service';
+import { SitemapDispatchService } from '@modules/public-seo/sitemap-dispatch.service';
 
 @Injectable()
 export class StoreService {
@@ -243,6 +244,9 @@ export class StoreService {
 
   @Inject(DashboardAuditService)
   private readonly _dashboardAudit: DashboardAuditService;
+
+  @Inject(SitemapDispatchService)
+  private readonly _sitemapDispatch: SitemapDispatchService;
 
   getStoreModel() {
     return this._storeModel;
@@ -2326,6 +2330,13 @@ export class StoreService {
       }
     }
     await doc.save();
+
+    if (
+      status === StoreStatusEnum.ACTIVE &&
+      previousStatus !== StoreStatusEnum.ACTIVE
+    ) {
+      this._sitemapDispatch.requestRegenerate('store_activated');
+    }
 
     const ownerIdForWs = (() => {
       const o = doc.owner as unknown;

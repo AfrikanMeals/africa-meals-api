@@ -35,6 +35,7 @@ import {
   PatchProductDto,
 } from './dto/products.dto';
 import { ProductDiscountScheduleService } from './product-discount-schedule.service';
+import { SitemapDispatchService } from '@modules/public-seo/sitemap-dispatch.service';
 
 @Injectable()
 export class ProductsService {
@@ -58,6 +59,9 @@ export class ProductsService {
 
   @Inject(ProductDiscountScheduleService)
   private readonly _discountSchedules: ProductDiscountScheduleService;
+
+  @Inject(SitemapDispatchService)
+  private readonly _sitemapDispatch: SitemapDispatchService;
 
   /** Incrémenté à chaque ajout/retrait favori : invalide les clés cache mémoire (TTL + génération). */
   private readonly _favoriteListRevision = new Map<string, number>();
@@ -1071,6 +1075,14 @@ export class ProductsService {
         await fresh.save();
       }
 
+      const createdStatus = args.status ?? ProductStatusEnum.ACTIVE;
+      if (
+        createdStatus === ProductStatusEnum.ACTIVE &&
+        store.status === StoreStatusEnum.ACTIVE
+      ) {
+        this._sitemapDispatch.requestRegenerate('product_created_active');
+      }
+
       return this.findOneById(product._id.toString());
     } catch (e) {
       for (const u of uploadedUrls) {
@@ -1095,6 +1107,8 @@ export class ProductsService {
     if (!doc) {
       throw new NotFoundException('product_not_found');
     }
+
+    const previousStatus = doc.status;
 
     if (args.title != null && args.title.trim() !== doc.title) {
       const dup = await this._productModel
@@ -1222,6 +1236,13 @@ export class ProductsService {
     this._discountSchedules.applyToDocument(doc);
     await doc.save();
     await this._bustProductDetailCache(productId);
+    if (
+      doc.status === ProductStatusEnum.ACTIVE &&
+      previousStatus !== ProductStatusEnum.ACTIVE &&
+      store.status === StoreStatusEnum.ACTIVE
+    ) {
+      this._sitemapDispatch.requestRegenerate('product_activated');
+    }
     return this.findOneById(productId);
   }
 

@@ -121,6 +121,10 @@ export async function configureApplication(
       { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
       'bearer',
     )
+    .addBasicAuth(
+      { type: 'http', scheme: 'basic' },
+      'google-merchant-basic',
+    )
     .addTag('auth', 'Authentification et inscription')
     .addTag('stores', 'Restaurants / magasins')
     .addTag('products', 'Produits et catégories')
@@ -139,6 +143,8 @@ export async function configureApplication(
     .addTag('documentation', 'Documentation & aide (CMS)')
     .addTag('supported-countries', 'Pays supportés')
     .addTag('health', 'Santé de l’API')
+    .addTag('google-merchant', 'Flux produits Google Merchant Center')
+    .addTag('platform-seo', 'SEO site vitrine (sitemaps catalogue)')
     .addTag('notifications', 'Notifications push (FCM)')
     .build();
 

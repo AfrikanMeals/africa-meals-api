@@ -17,6 +17,7 @@ import { BillingModule } from '@modules/billing/billing.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { BusinessTypesModule } from '@modules/business-types/business-types.module';
 import { DashboardAuditModule } from '@modules/dashboard-audit/dashboard-audit.module';
+import { PublicSeoModule } from '@modules/public-seo/public-seo.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -67,6 +68,7 @@ import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/stor
     SubscriptionsModule,
     BusinessTypesModule,
     DashboardAuditModule,
+    PublicSeoModule,
     CartModule,
     OrdersModule,
     StockItemsModule,
