@@ -68,6 +68,17 @@ describe('order-invoice.util Gmail markup', () => {
     expect(
       resolveProductPublicUrl('store456', 'prod123', 'https://wise-eat.com'),
     ).toBe('https://wise-eat.com/stores/store456/products/prod123');
+    expect(
+      resolveProductPublicUrl(
+        'store456',
+        'prod123',
+        'https://wise-eat.com',
+        'Resto 102',
+        'Okok',
+      ),
+    ).toBe(
+      'https://wise-eat.com/stores/store456-resto-102/products/prod123-okok',
+    );
   });
 
   it('builds billing Order JSON-LD aligned with Google docs', () => {
@@ -114,7 +125,7 @@ describe('order-invoice.util Gmail markup', () => {
       name: 'Okok',
       sku: 'prod123',
       image: 'https://cdn.example/okok.jpg',
-      url: 'https://wise-eat.com/stores/store456/products/prod123',
+      url: 'https://wise-eat.com/stores/store456-resto-102/products/prod123-okok',
     });
     expect(offer.price).toBe('17.07');
     expect(offer.priceCurrency).toBe('CAD');

@@ -1,4 +1,7 @@
 import {
+  resolveProductPublicUrl as buildCatalogProductPublicUrl,
+} from '@common/catalog-public-url.util';
+import {
   customizationSummaryLabel,
   normalizeSelectedComplements,
   normalizeSelectedSupplements,
@@ -128,18 +131,26 @@ type LineItemRow = OrdeLineItem & {
   entity_id?: string;
 };
 
-/** URL publique d'un produit (boutique + article) pour le balisage Gmail. */
+/** URL publique d'un produit (boutique + article) pour le balisage Gmail / Merchant. */
 export function resolveProductPublicUrl(
   storeId: string | undefined,
   entityId: string | undefined,
   publicWebUrl?: string | null,
+  storeName?: string | null,
+  productTitle?: string | null,
 ): string | undefined {
   const productId = entityId?.trim();
   const base = publicWebUrl?.trim();
   if (!productId || !base) return undefined;
   const root = base.replace(/\/+$/, '');
   if (storeId?.trim()) {
-    return `${root}/stores/${encodeURIComponent(storeId.trim())}/products/${encodeURIComponent(productId)}`;
+    return buildCatalogProductPublicUrl(
+      root,
+      storeId.trim(),
+      productId,
+      storeName,
+      productTitle,
+    );
   }
   return `${root}/products/${encodeURIComponent(productId)}`;
 }
@@ -216,7 +227,13 @@ function buildGmailAcceptedOffers(
       const unit = Number(row.price);
       const sku = String(row.entityId ?? row.entity_id ?? '').trim() || undefined;
       const image = String(row.pictureUrl ?? row.picture_url ?? '').trim() || undefined;
-      const url = resolveProductPublicUrl(storeId, sku, publicWebUrl);
+      const url = resolveProductPublicUrl(
+        storeId,
+        sku,
+        publicWebUrl,
+        storeName,
+        name,
+      );
       return toOffer(
         name,
         Number.isFinite(unit) ? unit : 0,

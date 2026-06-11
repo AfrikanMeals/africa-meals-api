@@ -1,4 +1,8 @@
-import { resolveProductPublicUrl } from '@modules/orders/order-invoice.util';
+import {
+  resolveDrinkPublicUrl,
+  resolveProductPublicUrl,
+  resolveStorePublicUrl,
+} from '@common/catalog-public-url.util';
 import {
   BadRequestException,
   Injectable,
@@ -110,7 +114,7 @@ export class GoogleMerchantService {
       filenameSlug: storeId,
       channel: {
         title: storeContext.name,
-        link: `${publicWebUrl}/stores/${encodeURIComponent(storeId)}`,
+        link: resolveStorePublicUrl(publicWebUrl, storeId, storeContext.name),
         description: `Product feed for ${storeContext.name}`,
       },
     });
@@ -254,9 +258,13 @@ export class GoogleMerchantService {
   ): GoogleMerchantFeedItem[] {
     const productId = String(product._id ?? '');
     const baseTitle = String(product.title ?? '').trim();
-    const productLink =
-      resolveProductPublicUrl(store.id, productId, publicWebUrl) ??
-      `${publicWebUrl}/stores/${encodeURIComponent(store.id)}/products/${encodeURIComponent(productId)}`;
+    const productLink = resolveProductPublicUrl(
+      publicWebUrl,
+      store.id,
+      productId,
+      store.name,
+      baseTitle,
+    );
     const { main, additional } = this.resolveImageLinks(product);
     const categoryTitle = this.resolveCategoryTitle(product);
     const googleProductCategory = this.resolveGoogleProductCategory(product);
@@ -303,7 +311,12 @@ export class GoogleMerchantService {
     const currency = store.currency || 'CAD';
     const priceCad = Number(drink.priceCad ?? drink.price_cad ?? 0);
     const quantite = Number(drink.quantite ?? 0);
-    const drinkLink = this.resolveDrinkPublicUrl(store.id, drinkId, publicWebUrl);
+    const drinkLink = resolveDrinkPublicUrl(
+      publicWebUrl,
+      store.id,
+      drinkId,
+      store.name,
+    );
     const imageUrl =
       typeof drink.imageUrl === 'string'
         ? drink.imageUrl
@@ -333,14 +346,6 @@ export class GoogleMerchantService {
       customLabel0: store.id,
       customLabel1: store.name,
     });
-  }
-
-  private resolveDrinkPublicUrl(
-    storeId: string,
-    drinkId: string,
-    publicWebUrl: string,
-  ): string {
-    return `${publicWebUrl}/stores/${encodeURIComponent(storeId)}/drinks/${encodeURIComponent(drinkId)}`;
   }
 
   private buildSingleItem(
