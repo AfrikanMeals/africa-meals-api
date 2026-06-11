@@ -40,6 +40,8 @@ export function normalizeGoogleMerchantFormat(
 ): GoogleMerchantExportFormat | null {
   const value = raw?.trim().toLowerCase();
   if (!value) return null;
+  // Google Merchant Center and some clients request `xls`; we serve XLSX.
+  if (value === 'xls') return 'xlsx';
   if (value === 'csv' || value === 'xlsx' || value === 'json' || value === 'xml') {
     return value;
   }

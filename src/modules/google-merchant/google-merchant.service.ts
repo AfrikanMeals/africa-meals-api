@@ -6,15 +6,19 @@ import {
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
+import { StoreAccessService } from '@modules/teams/store-access.service';
 import { DrinkModel } from '@schemas/drink.schema';
 import { ProductCategoryKindEnum } from '@schemas/product-category.schema';
 import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
+import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
+import { readGoogleMerchantBasicAuthCredentials } from './google-merchant-basic-auth.util';
 import {
   GOOGLE_MERCHANT_AVAILABILITY_IN_STOCK,
   GOOGLE_MERCHANT_AVAILABILITY_OUT_OF_STOCK,
@@ -32,6 +36,7 @@ import {
 import {
   GoogleMerchantExportFormat,
   GoogleMerchantExportResult,
+  GoogleMerchantAdminMeta,
   GoogleMerchantFeedItem,
 } from './google-merchant.types';
 
@@ -64,6 +69,8 @@ type ProductFeedContext = {
 
 @Injectable()
 export class GoogleMerchantService {
+  private readonly logger = new Logger(GoogleMerchantService.name);
+
   constructor(
     @InjectModel(ProductModel.name)
     private readonly _productModel: Model<ProductModel>,
@@ -72,106 +79,262 @@ export class GoogleMerchantService {
     @InjectModel(StoreModel.name)
     private readonly _storeModel: Model<StoreModel>,
     private readonly _config: ConfigService,
+    private readonly _storeAccess: StoreAccessService,
   ) {}
+
+  async getAdminMeta(user: UserModel): Promise<GoogleMerchantAdminMeta> {
+    await this._storeAccess.assertAdminPermission(user, 'admin.marketing');
+
+    const apiBase = this.resolveApiPublicBaseUrl();
+    const publicWebUrl = this.resolvePublicWebUrl();
+    const credentials = readGoogleMerchantBasicAuthCredentials(this._config);
+    const stores = await this._storeModel
+      .find({ status: StoreStatusEnum.ACTIVE })
+      .select('name')
+      .lean()
+      .exec();
+    const storeIds = stores
+      .map((row) => String(row._id ?? '').trim())
+      .filter(Boolean);
+    const products = storeIds.length
+      ? await this._productModel
+          .find({
+            store: { $in: storeIds },
+            status: ProductStatusEnum.ACTIVE,
+          })
+          .select('title store')
+          .sort({ updatedAt: -1 })
+          .limit(1)
+          .lean()
+          .exec()
+      : [];
+
+    const activeProductCount = storeIds.length
+      ? await this._productModel.countDocuments({
+          store: { $in: storeIds },
+          status: ProductStatusEnum.ACTIVE,
+        })
+      : 0;
+
+    const sampleStore = stores[0] as { _id?: unknown; name?: unknown } | undefined;
+    const sampleStoreId = sampleStore ? String(sampleStore._id ?? '').trim() : '';
+    const sampleStoreName = sampleStore
+      ? String(sampleStore.name ?? '').trim() || 'Restaurant'
+      : '';
+    const sampleProduct = products[0] as
+      | { _id?: unknown; title?: unknown; store?: unknown }
+      | undefined;
+    const sampleStoreForProduct = sampleProduct
+      ? stores.find((s) => String(s._id ?? '') === String(sampleProduct.store ?? ''))
+      : sampleStore;
+    const sampleProductStoreId = sampleStoreForProduct
+      ? String(sampleStoreForProduct._id ?? '').trim()
+      : sampleStoreId;
+    const sampleProductStoreName = sampleStoreForProduct
+      ? String(sampleStoreForProduct.name ?? '').trim() || 'Restaurant'
+      : sampleStoreName;
+
+    return {
+      feedUrl: `${apiBase}/google-merchant/admin/export?format=xml`,
+      storeFeedUrlTemplate: `${apiBase}/google-merchant/export?format=xml&store={storeId}`,
+      recommendedFormat: 'xml',
+      supportedFormats: ['csv', 'xlsx', 'json', 'xml'],
+      publicWebUrl,
+      basicAuthConfigured: Boolean(credentials),
+      basicAuthUser: credentials?.user ?? null,
+      activeStoreCount: stores.length,
+      activeProductCount,
+      sampleStoreLink: sampleStoreId
+        ? resolveStorePublicUrl(publicWebUrl, sampleStoreId, sampleStoreName)
+        : null,
+      sampleProductLink:
+        sampleProduct && sampleProductStoreId
+          ? resolveProductPublicUrl(
+              publicWebUrl,
+              sampleProductStoreId,
+              String(sampleProduct._id ?? '').trim(),
+              sampleProductStoreName,
+              String(sampleProduct.title ?? '').trim() || 'Produit',
+            )
+          : null,
+    };
+  }
+
+  async exportAllStoresFeedForAdmin(
+    user: UserModel,
+    formatRaw: string | undefined,
+  ): Promise<GoogleMerchantExportResult> {
+    await this._storeAccess.assertAdminPermission(user, 'admin.marketing');
+    return this.exportAllStoresFeed(formatRaw);
+  }
 
   async exportStoreFeed(
     formatRaw: string | undefined,
     storeIdRaw: string | undefined,
   ): Promise<GoogleMerchantExportResult> {
+    const startedAt = Date.now();
     const format = this.parseFormat(formatRaw);
     const storeId = storeIdRaw?.trim();
     if (!storeId || !Types.ObjectId.isValid(storeId)) {
+      this.logger.warn(
+        `exportStoreFeed rejected: invalid storeId=${JSON.stringify(storeIdRaw)} format=${JSON.stringify(formatRaw)}`,
+      );
       throw new BadRequestException('invalid_store: store query param is required');
     }
 
-    const store = await this._storeModel
-      .findById(storeId)
-      .select('name currency status')
-      .lean()
-      .exec();
-    if (!store) {
-      throw new NotFoundException('store_not_found');
-    }
-
-    const [products, drinks] = await Promise.all([
-      this.fetchActiveProducts([storeId]),
-      this.fetchDrinks([storeId]),
-    ]);
-    const publicWebUrl = this.resolvePublicWebUrl();
-    const storeContext: StoreFeedContext = {
-      id: storeId,
-      name: String(store.name ?? 'Store'),
-      currency: String(store.currency ?? 'CAD'),
-    };
-    const items = this.buildFeedItems(
-      products as Record<string, unknown>[],
-      drinks as Record<string, unknown>[],
-      storeContext,
-      publicWebUrl,
+    this.logger.log(
+      `exportStoreFeed start storeId=${storeId} format=${format} rawFormat=${JSON.stringify(formatRaw)}`,
     );
 
-    return this.buildExport(format, items, {
-      filenameSlug: storeId,
-      channel: {
-        title: storeContext.name,
-        link: resolveStorePublicUrl(publicWebUrl, storeId, storeContext.name),
-        description: `Product feed for ${storeContext.name}`,
-      },
-    });
+    try {
+      const store = await this._storeModel
+        .findById(storeId)
+        .select('name currency status')
+        .lean()
+        .exec();
+      if (!store) {
+        this.logger.warn(`exportStoreFeed store_not_found storeId=${storeId}`);
+        throw new NotFoundException('store_not_found');
+      }
+
+      const [products, drinks] = await Promise.all([
+        this.fetchActiveProducts([storeId]),
+        this.fetchDrinks([storeId]),
+      ]);
+      const publicWebUrl = this.resolvePublicWebUrl();
+      const storeContext: StoreFeedContext = {
+        id: storeId,
+        name: String(store.name ?? 'Store'),
+        currency: String(store.currency ?? 'CAD'),
+      };
+      const items = this.buildFeedItems(
+        products as Record<string, unknown>[],
+        drinks as Record<string, unknown>[],
+        storeContext,
+        publicWebUrl,
+      );
+
+      const result = await this.buildExport(format, items, {
+        filenameSlug: storeId,
+        channel: {
+          title: storeContext.name,
+          link: resolveStorePublicUrl(publicWebUrl, storeId, storeContext.name),
+          description: `Product feed for ${storeContext.name}`,
+        },
+      });
+
+      this.logExportSuccess('exportStoreFeed', {
+        format,
+        rawFormat: formatRaw,
+        storeId,
+        storeName: storeContext.name,
+        productCount: products.length,
+        drinkCount: drinks.length,
+        itemCount: items.length,
+        bodyBytes: this.resolveBodyByteLength(result.body),
+        durationMs: Date.now() - startedAt,
+      });
+
+      return result;
+    } catch (error) {
+      this.logExportFailure('exportStoreFeed', {
+        format,
+        rawFormat: formatRaw,
+        storeId,
+        durationMs: Date.now() - startedAt,
+        error,
+      });
+      throw error;
+    }
   }
 
   async exportAllStoresFeed(
     formatRaw: string | undefined,
   ): Promise<GoogleMerchantExportResult> {
+    const startedAt = Date.now();
     const format = this.parseFormat(formatRaw);
-    const stores = await this._storeModel
-      .find({ status: StoreStatusEnum.ACTIVE })
-      .select('name currency')
-      .lean()
-      .exec();
 
-    const storeContexts = new Map<string, StoreFeedContext>();
-    const storeIds: string[] = [];
-    for (const store of stores) {
-      const id = String(store._id ?? '');
-      if (!id) continue;
-      storeIds.push(id);
-      storeContexts.set(id, {
-        id,
-        name: String(store.name ?? 'Store'),
-        currency: String(store.currency ?? 'CAD'),
-      });
-    }
-
-    const [products, drinks] = await Promise.all([
-      this.fetchActiveProducts(storeIds),
-      this.fetchDrinks(storeIds),
-    ]);
-    const publicWebUrl = this.resolvePublicWebUrl();
-    const items = this.buildFeedItems(
-      products as Record<string, unknown>[],
-      drinks as Record<string, unknown>[],
-      null,
-      publicWebUrl,
-      storeContexts,
+    this.logger.log(
+      `exportAllStoresFeed start format=${format} rawFormat=${JSON.stringify(formatRaw)}`,
     );
 
-    return this.buildExport(format, items, {
-      filenameSlug: 'all-stores',
-      channel: {
-        title: 'Wise Eat — All stores',
-        link: publicWebUrl,
-        description: 'Product feed for all active stores',
-      },
-    });
+    try {
+      const stores = await this._storeModel
+        .find({ status: StoreStatusEnum.ACTIVE })
+        .select('name currency')
+        .lean()
+        .exec();
+
+      const storeContexts = new Map<string, StoreFeedContext>();
+      const storeIds: string[] = [];
+      for (const store of stores) {
+        const id = String(store._id ?? '');
+        if (!id) continue;
+        storeIds.push(id);
+        storeContexts.set(id, {
+          id,
+          name: String(store.name ?? 'Store'),
+          currency: String(store.currency ?? 'CAD'),
+        });
+      }
+
+      const [products, drinks] = await Promise.all([
+        this.fetchActiveProducts(storeIds),
+        this.fetchDrinks(storeIds),
+      ]);
+      const publicWebUrl = this.resolvePublicWebUrl();
+      const items = this.buildFeedItems(
+        products as Record<string, unknown>[],
+        drinks as Record<string, unknown>[],
+        null,
+        publicWebUrl,
+        storeContexts,
+      );
+
+      const result = await this.buildExport(format, items, {
+        filenameSlug: 'all-stores',
+        channel: {
+          title: 'Wise Eat — All stores',
+          link: publicWebUrl,
+          description: 'Product feed for all active stores',
+        },
+      });
+
+      this.logExportSuccess('exportAllStoresFeed', {
+        format,
+        rawFormat: formatRaw,
+        storeCount: storeIds.length,
+        productCount: products.length,
+        drinkCount: drinks.length,
+        itemCount: items.length,
+        bodyBytes: this.resolveBodyByteLength(result.body),
+        durationMs: Date.now() - startedAt,
+      });
+
+      return result;
+    } catch (error) {
+      this.logExportFailure('exportAllStoresFeed', {
+        format,
+        rawFormat: formatRaw,
+        durationMs: Date.now() - startedAt,
+        error,
+      });
+      throw error;
+    }
   }
 
   private parseFormat(formatRaw: string | undefined): GoogleMerchantExportFormat {
     const format = normalizeGoogleMerchantFormat(formatRaw);
     if (!format) {
-      throw new BadRequestException(
-        'invalid_format: supported values are csv, xlsx, json, xml',
+      this.logger.warn(
+        `invalid_format raw=${JSON.stringify(formatRaw)} supported=csv,xlsx,xls,json,xml`,
       );
+      throw new BadRequestException(
+        'invalid_format: supported values are csv, xlsx, xls, json, xml',
+      );
+    }
+    if (formatRaw?.trim().toLowerCase() === 'xls' && format === 'xlsx') {
+      this.logger.log('format alias applied: xls -> xlsx');
     }
     return format;
   }
@@ -249,6 +412,12 @@ export class GoogleMerchantService {
       this._config.get<string>('FRONTEND_URL')?.trim() ||
       'https://wise-eat.com';
     return url.replace(/\/+$/, '');
+  }
+
+  private resolveApiPublicBaseUrl(): string {
+    const configured = this._config.get<string>('API_PUBLIC_BASE_URL')?.trim();
+    if (configured) return configured.replace(/\/+$/, '');
+    return 'https://api.wise-eat.com';
   }
 
   private mapProductToFeedItems(
@@ -560,5 +729,39 @@ export class GoogleMerchantService {
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '') || String(index + 1);
     return `${productId}-${slug}`.slice(0, 50);
+  }
+
+  private resolveBodyByteLength(body: Buffer | string): number {
+    return Buffer.isBuffer(body)
+      ? body.length
+      : Buffer.byteLength(body, 'utf8');
+  }
+
+  private logExportSuccess(
+    operation: string,
+    details: Record<string, unknown>,
+  ): void {
+    this.logger.log(
+      `${operation} ok ${Object.entries(details)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(' ')}`,
+    );
+  }
+
+  private logExportFailure(
+    operation: string,
+    details: Record<string, unknown>,
+  ): void {
+    const { error, ...rest } = details;
+    const message =
+      error instanceof Error
+        ? `${error.name}: ${error.message}`
+        : String(error ?? 'unknown_error');
+    this.logger.error(
+      `${operation} failed ${Object.entries(rest)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(' ')} error=${message}`,
+      error instanceof Error ? error.stack : undefined,
+    );
   }
 }

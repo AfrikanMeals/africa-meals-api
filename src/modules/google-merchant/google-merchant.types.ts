@@ -30,3 +30,17 @@ export type GoogleMerchantExportResult = {
   contentType: string;
   filename: string;
 };
+
+export type GoogleMerchantAdminMeta = {
+  feedUrl: string;
+  storeFeedUrlTemplate: string;
+  recommendedFormat: GoogleMerchantExportFormat;
+  supportedFormats: GoogleMerchantExportFormat[];
+  publicWebUrl: string;
+  basicAuthConfigured: boolean;
+  basicAuthUser: string | null;
+  activeStoreCount: number;
+  activeProductCount: number;
+  sampleProductLink: string | null;
+  sampleStoreLink: string | null;
+};

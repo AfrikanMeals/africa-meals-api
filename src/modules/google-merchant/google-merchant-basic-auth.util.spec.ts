@@ -1,8 +1,10 @@
-import { ConfigService } from '@nestjs/config';
 import {
   readGoogleMerchantBasicAuthCredentials,
   verifyGoogleMerchantBasicAuthHeader,
+  checkGoogleMerchantBasicAuth,
 } from './google-merchant-basic-auth.util';
+import { ConfigService } from '@nestjs/config';
+import type { Request } from 'express';
 
 describe('google-merchant-basic-auth.util', () => {
   const config = {
@@ -36,5 +38,34 @@ describe('google-merchant-basic-auth.util', () => {
         'wrong',
       ),
     ).toBe(false);
+  });
+
+  it('reports auth failure reasons', () => {
+    const req = { headers: {} } as Request;
+    expect(checkGoogleMerchantBasicAuth(req, config)).toEqual({
+      ok: false,
+      status: 401,
+      reason: 'missing_authorization_header',
+      body: 'Unauthorized',
+    });
+
+    const badScheme = {
+      headers: { authorization: 'Bearer token' },
+    } as Request;
+    expect(checkGoogleMerchantBasicAuth(badScheme, config)).toEqual({
+      ok: false,
+      status: 401,
+      reason: 'invalid_authorization_scheme',
+      body: 'Unauthorized',
+    });
+
+    const token = Buffer.from('merchant:secret-pass').toString('base64');
+    const okReq = {
+      headers: { authorization: `Basic ${token}` },
+    } as Request;
+    expect(checkGoogleMerchantBasicAuth(okReq, config)).toEqual({
+      ok: true,
+      user: 'merchant',
+    });
   });
 });

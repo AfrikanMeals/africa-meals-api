@@ -36,6 +36,7 @@ describe('google-merchant-export.util', () => {
   it('normalizes supported formats', () => {
     expect(normalizeGoogleMerchantFormat('CSV')).toBe('csv');
     expect(normalizeGoogleMerchantFormat(' xml ')).toBe('xml');
+    expect(normalizeGoogleMerchantFormat('xls')).toBe('xlsx');
     expect(normalizeGoogleMerchantFormat('pdf')).toBeNull();
   });
 

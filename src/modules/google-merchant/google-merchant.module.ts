@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { TeamsModule } from '@modules/teams/teams.module';
 import { DrinkModel, DrinkSchema } from '@schemas/drink.schema';
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
@@ -9,6 +10,7 @@ import { GoogleMerchantService } from './google-merchant.service';
 
 @Module({
   imports: [
+    TeamsModule,
     MongooseModule.forFeature([
       { name: ProductModel.name, schema: ProductSchema },
       { name: DrinkModel.name, schema: DrinkSchema },
