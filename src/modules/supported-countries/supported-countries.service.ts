@@ -131,10 +131,62 @@ export class SupportedCountriesService implements OnModuleInit {
 
   /** Devise plateforme (paramètres Régions) — Canada prioritaire, sinon 1ère région active. */
   async getPrimaryBillingCurrency(): Promise<string> {
+    const primary = await this.getPrimaryActiveRegion();
+    return primary?.currency ?? 'CAD';
+  }
+
+  /** Région active prioritaire (CA si actif, sinon première région active). */
+  async getPrimaryActiveRegion(): Promise<{
+    code: string;
+    name: string;
+    phoneRegion: string;
+    currency: string;
+  } | null> {
     const rows = await this.listActive();
-    const ca = rows.find((r) => r.code === 'CA');
-    if (ca?.currency) return ca.currency;
-    return rows[0]?.currency ?? 'CAD';
+    if (!rows.length) return null;
+    return rows.find((r) => r.code === 'CA') ?? rows[0];
+  }
+
+  /** Résumé public pour la page tarifs (devise, pays actifs, taxes région principale). */
+  async getPublicRegionSettings(): Promise<{
+    primaryCountryCode: string;
+    primaryCountryName: string;
+    currency: string;
+    countries: Array<{
+      code: string;
+      name: string;
+      phoneRegion: string;
+      currency: string;
+    }>;
+    taxes: Array<{
+      name: string;
+      description?: string;
+      feeType: RegionTaxRule['feeType'];
+      feeValue: number;
+      modules: RegionTaxModule[];
+    }>;
+  }> {
+    const countries = await this.listActive();
+    const primary = (await this.getPrimaryActiveRegion()) ?? {
+      code: 'CA',
+      name: 'Canada',
+      phoneRegion: 'CA',
+      currency: 'CAD',
+    };
+    const taxes = await this.getTaxRulesForCountry(primary.code);
+    return {
+      primaryCountryCode: primary.code,
+      primaryCountryName: primary.name,
+      currency: primary.currency,
+      countries,
+      taxes: taxes.map((tax) => ({
+        name: tax.name,
+        description: tax.description,
+        feeType: tax.feeType,
+        feeValue: tax.feeValue,
+        modules: tax.modules,
+      })),
+    };
   }
 
   async listAllForAdmin(): Promise<

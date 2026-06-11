@@ -1,3 +1,4 @@
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import {
@@ -266,6 +267,7 @@ export function computeRefundAmountSplit(
 @Injectable()
 export class PlatformFeesService {
   constructor(
+    private readonly _supportedCountries: SupportedCountriesService,
     @InjectModel(PlatformFeesSettingsModel.name)
     private readonly _model: Model<PlatformFeesSettingsDocument>,
     @InjectModel(StoreModel.name)
@@ -405,9 +407,9 @@ export class PlatformFeesService {
   async getPublicCheckoutFees() {
     const doc = await this._ensureDoc();
     const settings = this._toResponse(doc);
-    const storeCurrency = await this._resolveCurrencyFromStoreSettings();
+    const currency = await this._supportedCountries.getPrimaryBillingCurrency();
     return {
-      currency: storeCurrency,
+      currency,
       orderPaymentFeeMode: settings.orderPaymentFeeMode,
       orderPaymentFeeFixed: settings.orderPaymentFeeFixed,
       orderPaymentFeePercent: settings.orderPaymentFeePercent,
@@ -418,7 +420,7 @@ export class PlatformFeesService {
   async getPublicPricingFees() {
     const doc = await this._ensureDoc();
     const settings = this._toResponse(doc);
-    const currency = await this._resolveCurrencyFromStoreSettings();
+    const currency = await this._supportedCountries.getPrimaryBillingCurrency();
     return {
       currency,
       orderPaymentFeeMode: settings.orderPaymentFeeMode,

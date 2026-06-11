@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import {
   PlatformFeesSettingsModel,
   PlatformFeesSettingsSchema,
@@ -10,6 +11,7 @@ import { PlatformFeesService } from './platform-fees.service';
 
 @Module({
   imports: [
+    SupportedCountriesModule,
     MongooseModule.forFeature([
       {
         name: PlatformFeesSettingsModel.name,

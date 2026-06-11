@@ -37,6 +37,11 @@ export class SupportedCountriesController {
     return { countries };
   }
 
+  @Get('region-settings')
+  async getPublicRegionSettings() {
+    return this._supportedCountries.getPublicRegionSettings();
+  }
+
   /** Estimation taxes (panier, abonnement, etc.) — pays actif requis, sinon 0 %. */
   @Get('taxes/estimate')
   async estimateTaxes(
