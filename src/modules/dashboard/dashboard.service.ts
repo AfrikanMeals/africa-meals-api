@@ -43,6 +43,10 @@ import {
   VendorFeatureRequestStatusEnum,
 } from '@schemas/vendor-feature-request.schema';
 import {
+  VendorNotificationChargeStatusEnum,
+  VendorNotificationMonthlyChargeModel,
+} from '@schemas/vendor-notification-monthly-charge.schema';
+import {
   NewsletterSubscriberModel,
   NewsletterSubscriberStatusEnum,
 } from '@schemas/newsletter-subscriber.schema';
@@ -445,6 +449,19 @@ export type FinancePeriodReportSummary = {
     paidByCurrency: Array<{ currency: string; amount: number }>;
     priorPaidByCurrency: Array<{ currency: string; amount: number }>;
   };
+  spending?: {
+    totalPaid: number;
+    totalEstimatedDue: number;
+    currency?: string;
+    sms: {
+      paidTotal: number;
+      priorPaidTotal: number;
+      trendPercent: number | null;
+      payableDue: number;
+      pendingEstimate: number;
+      currency?: string;
+    };
+  };
 };
 
 export type FinancePeriodDailyPoint = {
@@ -586,6 +603,8 @@ export class DashboardService {
     private readonly adCampaignModel: Model<AdCampaignModel>,
     @InjectModel(AdCampaignEventModel.name)
     private readonly adCampaignEventModel: Model<AdCampaignEventModel>,
+    @InjectModel(VendorNotificationMonthlyChargeModel.name)
+    private readonly vendorNotificationChargeModel: Model<VendorNotificationMonthlyChargeModel>,
     private readonly notificationsService: NotificationsService,
     private readonly orderStatusEvents: OrderStatusEventsService,
     @Inject(OrdersService)
@@ -4270,6 +4289,13 @@ export class DashboardService {
     if (user.type === UserTypeEnum.VENDOR) {
       storeIds = vendorStoreObjectIds(user);
       if (!storeIds.length) {
+        const [smsCurrent, smsPrior, smsDue] = await Promise.all([
+          this.aggregateSmsPaidInRange(start, endExclusive, storeIds),
+          this.aggregateSmsPaidInRange(priorStart, priorEndExclusive, storeIds),
+          this.aggregateSmsEstimatedDue(storeIds),
+        ]);
+        const totalPaid = adCreditCurrent.total + smsCurrent.total;
+        const totalEstimatedDue = smsDue.payableDue + smsDue.pendingEstimate;
         return {
           timezone: z,
           from: fromStr,
@@ -4291,6 +4317,19 @@ export class DashboardService {
               currency: adCreditCurrent.currency,
               paidByCurrency: adCreditCurrent.byCurrency,
               priorPaidByCurrency: adCreditPrior.byCurrency,
+            },
+            spending: {
+              totalPaid,
+              totalEstimatedDue,
+              currency: 'CAD',
+              sms: {
+                paidTotal: smsCurrent.total,
+                priorPaidTotal: smsPrior.total,
+                trendPercent: trendPercent(smsCurrent.total, smsPrior.total),
+                payableDue: smsDue.payableDue,
+                pendingEstimate: smsDue.pendingEstimate,
+                currency: 'CAD',
+              },
             },
           },
           daily: [],
@@ -4314,6 +4353,9 @@ export class DashboardService {
       priorPeriodRevenue,
       dailyAgg,
       orderDocs,
+      smsCurrent,
+      smsPrior,
+      smsDue,
     ] = await Promise.all([
       this.sumRevenueInRange(start, endExclusive, storeIds),
       this.countOrdersInRange(start, endExclusive, storeIds),
@@ -4337,6 +4379,9 @@ export class DashboardService {
         )
         .lean()
         .exec(),
+      this.aggregateSmsPaidInRange(start, endExclusive, storeIds),
+      this.aggregateSmsPaidInRange(priorStart, priorEndExclusive, storeIds),
+      this.aggregateSmsEstimatedDue(storeIds),
     ]);
 
     const missingCurrencyByPaymentId = new Map<string, true>();
@@ -4418,6 +4463,9 @@ export class DashboardService {
     const reportCurrency =
       reportCurrencySet.size === 1 ? [...reportCurrencySet][0] : undefined;
 
+    const totalPaid = adCreditCurrent.total + smsCurrent.total;
+    const totalEstimatedDue = smsDue.payableDue + smsDue.pendingEstimate;
+
     return {
       timezone: z,
       from: fromStr,
@@ -4444,9 +4492,105 @@ export class DashboardService {
           paidByCurrency: adCreditCurrent.byCurrency,
           priorPaidByCurrency: adCreditPrior.byCurrency,
         },
+        spending: {
+          totalPaid,
+          totalEstimatedDue,
+          currency: 'CAD',
+          sms: {
+            paidTotal: smsCurrent.total,
+            priorPaidTotal: smsPrior.total,
+            trendPercent: trendPercent(smsCurrent.total, smsPrior.total),
+            payableDue: smsDue.payableDue,
+            pendingEstimate: smsDue.pendingEstimate,
+            currency: 'CAD',
+          },
+        },
       },
       daily: dailyAgg,
       orders,
+    };
+  }
+
+  private async aggregateSmsPaidInRange(
+    start: Date,
+    end: Date,
+    storeIds: Types.ObjectId[] | null,
+  ): Promise<{ total: number }> {
+    const match: Record<string, unknown> = {
+      status: VendorNotificationChargeStatusEnum.PAID,
+      paidAt: { $gte: start, $lt: end },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+    const rows = await this.vendorNotificationChargeModel
+      .aggregate<{ total: number }>([
+        { $match: match },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: { $ifNull: ['$smsTotalCad', 0] } },
+          },
+        },
+      ])
+      .exec();
+    const total = Number(rows[0]?.total ?? 0);
+    return { total: Number.isFinite(total) ? Math.round(total * 100) / 100 : 0 };
+  }
+
+  private async aggregateSmsEstimatedDue(
+    storeIds: Types.ObjectId[] | null,
+  ): Promise<{ payableDue: number; pendingEstimate: number }> {
+    const match: Record<string, unknown> = {};
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+    const [payableRows, pendingRows] = await Promise.all([
+      this.vendorNotificationChargeModel
+        .aggregate<{ total: number }>([
+          {
+            $match: {
+              ...match,
+              smsTotalCad: { $gt: 0 },
+              status: {
+                $in: [
+                  VendorNotificationChargeStatusEnum.INVOICED,
+                  VendorNotificationChargeStatusEnum.OVERDUE,
+                ],
+              },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: { $ifNull: ['$smsTotalCad', 0] } },
+            },
+          },
+        ])
+        .exec(),
+      this.vendorNotificationChargeModel
+        .aggregate<{ total: number }>([
+          {
+            $match: {
+              ...match,
+              smsTotalCad: { $gt: 0 },
+              status: VendorNotificationChargeStatusEnum.PENDING,
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: { $ifNull: ['$smsTotalCad', 0] } },
+            },
+          },
+        ])
+        .exec(),
+    ]);
+    const round = (n: number) =>
+      Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+    return {
+      payableDue: round(Number(payableRows[0]?.total ?? 0)),
+      pendingEstimate: round(Number(pendingRows[0]?.total ?? 0)),
     };
   }
 

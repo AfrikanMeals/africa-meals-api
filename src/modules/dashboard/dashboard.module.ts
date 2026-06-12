@@ -51,6 +51,10 @@ import {
   NewsletterSubscriberSchema,
 } from '@schemas/newsletter-subscriber.schema';
 import {
+  VendorNotificationMonthlyChargeModel,
+  VendorNotificationMonthlyChargeSchema,
+} from '@schemas/vendor-notification-monthly-charge.schema';
+import {
   SiteContactRequestModel,
   SiteContactRequestSchema,
 } from '@schemas/site-contact-request.schema';
@@ -107,6 +111,10 @@ import { MailerModule } from '@modules/mailer/mailer.module';
       {
         name: NewsletterSubscriberModel.name,
         schema: NewsletterSubscriberSchema,
+      },
+      {
+        name: VendorNotificationMonthlyChargeModel.name,
+        schema: VendorNotificationMonthlyChargeSchema,
       },
     ]),
   ],

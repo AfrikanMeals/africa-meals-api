@@ -2639,8 +2639,12 @@ export class OrdersService {
         ),
       );
 
+    void this._wsChatNotify.archiveOrderChats(
+      oid,
+      isPickup ? 'order_pickup_completed' : 'order_delivered',
+    );
+
     if (!isPickup && order.shouldShip === true) {
-      void this._wsChatNotify.archiveOrderDeliveryChats(oid);
       void this._stripeTransfers
         .transferDeliveryShareForCompletedOrder({ orderId: oid })
         .then((tr) => {

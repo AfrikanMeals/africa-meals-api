@@ -10,16 +10,24 @@ export class WsChatNotifyService {
 
   constructor(private readonly queue: WsNotifyDispatchQueueService) {}
 
-  /** Archive les discussions ORDER client↔livreur quand la commande est livrée. */
-  archiveOrderDeliveryChats(orderId: string): void {
+  /** Archive les discussions liées à une commande (livreur + restaurant) quand elle est terminée. */
+  archiveOrderChats(orderId: string, reason = 'order_completed'): void {
     const oid = orderId?.trim();
     if (!oid) return;
 
     try {
-      this.queue.dispatch('chat/archive-order-delivery', { orderId: oid });
+      this.queue.dispatch('chat/archive-order-delivery', {
+        orderId: oid,
+        reason,
+      });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(`ws chat archive enqueue failed order=${oid}: ${msg}`);
     }
+  }
+
+  /** @deprecated Utiliser archiveOrderChats */
+  archiveOrderDeliveryChats(orderId: string): void {
+    this.archiveOrderChats(orderId, 'order_completed');
   }
 }
