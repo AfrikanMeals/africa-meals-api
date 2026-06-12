@@ -45,13 +45,13 @@ describe('order-invoice.util Gmail markup', () => {
     publicWebUrl: 'https://wise-eat.com',
   };
 
-  it('builds subject with Receipt and Invoice keywords', () => {
+  it('builds subject aligned with Gmail purchase card pattern', () => {
     expect(orderReceiptEmailSubject('Resto 102', 'AE95ED9A')).toBe(
-      'Resto 102 Receipt & Invoice #AE95ED9A',
+      'Your Resto 102 order #AE95ED9A is now complete',
     );
   });
 
-  it('resolves order URL from template or public web base', () => {
+  it('resolves order URL from template, public web base, or wise-eat fallback', () => {
     expect(
       resolveOrderEmailPublicUrl('abc123', {
         orderUrlTemplate: 'https://wise-eat.com/orders/{orderId}',
@@ -62,6 +62,9 @@ describe('order-invoice.util Gmail markup', () => {
         publicWebUrl: 'https://wise-eat.com',
       }),
     ).toBe('https://wise-eat.com/orders/abc123');
+    expect(resolveOrderEmailPublicUrl('abc123', {})).toBe(
+      'https://wise-eat.com/orders/abc123',
+    );
   });
 
   it('resolves product URL from store and entity id', () => {
@@ -165,10 +168,10 @@ describe('order-invoice.util Gmail markup', () => {
     });
   });
 
-  it('returns Order + Invoice blocks for paid receipt emails', () => {
-    const blocks = buildOrderReceiptEmailJsonLd(snapshot, opts);
-    expect(blocks).toHaveLength(2);
-    expect(blocks[0]?.['@type']).toBe('Order');
-    expect(blocks[1]?.['@type']).toBe('Invoice');
+  it('returns Order JSON-LD only for paid receipt emails', () => {
+    const jsonLd = buildOrderReceiptEmailJsonLd(snapshot, opts);
+    expect(jsonLd['@type']).toBe('Order');
+    expect(jsonLd['@context']).toBe('http://schema.org');
+    expect(jsonLd.orderNumber).toBe('AE95ED9A');
   });
 });

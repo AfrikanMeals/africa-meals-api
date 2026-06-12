@@ -71,13 +71,16 @@ export function orderInvoiceRef(orderId: string): string {
   return id.length > 8 ? id.slice(-8).toUpperCase() : id.toUpperCase();
 }
 
-/** Objet e-mail compatible classification Gmail Purchases (mot-clé Receipt / Invoice). */
+/**
+ * Objet e-mail pour la carte achat Gmail (« Your … order is now complete »).
+ * Conserve « Receipt » / « Order » pour l’onglet Achats.
+ */
 export function orderReceiptEmailSubject(
   storeName: string,
   ref: string,
 ): string {
   const store = storeName.trim() || 'Restaurant';
-  return `${store} Receipt & Invoice #${ref}`;
+  return `Your ${store} order #${ref} is now complete`;
 }
 
 function formatOrderDateIso(iso?: Date | string): string | undefined {
@@ -275,7 +278,7 @@ export function resolveOrderEmailPublicUrl(
     }
   }
 
-  return undefined;
+  return resolveOrderPublicUrl('https://wise-eat.com', id);
 }
 
 export function inferInvoicePaymentMethodLabel(status: string): string {
@@ -380,9 +383,22 @@ export type OrderEmailJsonLdOptions = {
   orderUrl?: string;
   /** Base site public pour les URLs produit dans acceptedOffer. */
   publicWebUrl?: string;
+  /** Logo marchand (recommandé pour la carte achat Gmail). */
+  merchantLogoUrl?: string;
   /** Libellé du bouton d'action. */
   actionName?: string;
 };
+
+export function firstOrderItemImageUrl(
+  snapshot: OrderInvoiceSnapshot,
+): string | undefined {
+  for (const it of snapshot.items ?? []) {
+    const row = it as { pictureUrl?: string; picture_url?: string };
+    const url = String(row.pictureUrl ?? row.picture_url ?? '').trim();
+    if (/^https?:\/\//i.test(url)) return url;
+  }
+  return undefined;
+}
 
 /**
  * Résout l'URL publique d'une commande pour les e-mails.
@@ -431,10 +447,20 @@ export function buildOrderEmailJsonLd(
   const totalPrice = (Number(snapshot.totalPrice) || 0).toFixed(2);
   const discount = estimateOrderDiscount(snapshot);
 
+  const merchant: Record<string, unknown> = {
+    '@type': 'Organization',
+    name: snapshot.storeName,
+  };
+  const logo = opts.merchantLogoUrl?.trim();
+  if (logo && /^https?:\/\//i.test(logo)) {
+    merchant.logo = logo;
+    merchant.image = logo;
+  }
+
   const payload: Record<string, unknown> = {
     '@context': 'http://schema.org',
     '@type': 'Order',
-    merchant: { '@type': 'Organization', name: snapshot.storeName },
+    merchant,
     orderNumber: opts.ref,
     priceCurrency: currency,
     price: totalPrice,
@@ -534,14 +560,14 @@ export function buildInvoiceEmailJsonLd(
   return payload;
 }
 
-/** Order + Invoice JSON-LD pour les e-mails de reçu payé. */
+/**
+ * JSON-LD Order seul — requis pour la carte achat Gmail (Invoice séparé peut bloquer le parseur).
+ */
 export function buildOrderReceiptEmailJsonLd(
   snapshot: OrderInvoiceSnapshot,
   opts: OrderEmailJsonLdOptions,
-): Record<string, unknown>[] {
-  const order = buildOrderEmailJsonLd(snapshot, opts);
-  const invoice = buildInvoiceEmailJsonLd(snapshot, opts, order);
-  return [order, invoice];
+): Record<string, unknown> {
+  return buildOrderEmailJsonLd(snapshot, opts);
 }
 
 export function lineCustomizationText(item: OrdeLineItem): string {

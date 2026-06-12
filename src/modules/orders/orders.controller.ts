@@ -204,6 +204,14 @@ export class OrdersController {
     );
   }
 
+  @Get(':id/public')
+  @ApiOperation({
+    summary: 'Résumé commande public (landing web / lien e-mail)',
+  })
+  async publicSummary(@Param('id') id: string) {
+    return this._ordersService.getPublicOrderSummary(id);
+  }
+
   @Get(':id')
   @UseGuards(JwtGuard)
   async findOneById(

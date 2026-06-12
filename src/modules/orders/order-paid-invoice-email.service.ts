@@ -10,6 +10,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { OrderModel } from '@schemas/order.schema';
 import { Model, Types } from 'mongoose';
 import { OrderInvoicePdfService } from './order-invoice-pdf.service';
+import { buildOrderReceiptEmailBodyHtml } from './order-receipt-email-html.util';
 import {
   buildOrderEmailJsonLd,
   buildOrderReceiptEmailJsonLd,
@@ -18,6 +19,7 @@ import {
   OrderSchemaStatus,
   orderInvoiceRef,
   orderReceiptEmailSubject,
+  firstOrderItemImageUrl,
   resolveOrderEmailPublicUrl,
   type OrderInvoiceSnapshot,
 } from './order-invoice.util';
@@ -83,13 +85,24 @@ export class OrderPaidInvoiceEmailService {
   }
 
   /** URL publique de la commande (JSON-LD + bouton « Voir la commande »). */
-  private resolveOrderUrl(orderId: string): string | undefined {
-    return resolveOrderEmailPublicUrl(orderId, {
-      orderUrlTemplate: this.config.get<string>('EMAIL_ORDER_URL_TEMPLATE'),
-      publicWebUrl: this.config.get<string>('PUBLIC_WEB_URL'),
-      clientAppUrl: this.config.get<string>('CLIENT_APP_URL'),
-      emailWebsiteUrl: this.config.get<string>('EMAIL_WEBSITE_URL'),
-    });
+  private resolvePublicWebUrl(): string {
+    return (
+      this.config.get<string>('PUBLIC_WEB_URL')?.trim() ||
+      this.config.get<string>('EMAIL_WEBSITE_URL')?.trim() ||
+      this.config.get<string>('CLIENT_APP_URL')?.trim() ||
+      'https://wise-eat.com'
+    );
+  }
+
+  private resolveOrderUrl(orderId: string): string {
+    return (
+      resolveOrderEmailPublicUrl(orderId, {
+        orderUrlTemplate: this.config.get<string>('EMAIL_ORDER_URL_TEMPLATE'),
+        publicWebUrl: this.resolvePublicWebUrl(),
+        clientAppUrl: this.config.get<string>('CLIENT_APP_URL'),
+        emailWebsiteUrl: this.config.get<string>('EMAIL_WEBSITE_URL'),
+      }) ?? `${this.resolvePublicWebUrl()}/orders/${encodeURIComponent(orderId.trim())}`
+    );
   }
 
   /** Charge la commande, vérifie l'e-mail client et construit le snapshot facture. */
@@ -207,14 +220,15 @@ export class OrderPaidInvoiceEmailService {
     const ref = orderInvoiceRef(snapshot.orderId);
     const esc = this.emailTemplate.escapeHtml.bind(this.emailTemplate);
     const storeEsc = esc(snapshot.storeName);
-    const refEsc = esc(ref);
     const orderUrl = this.resolveOrderUrl(snapshot.orderId);
-    const publicWebUrl =
-      this.config.get<string>('PUBLIC_WEB_URL')?.trim() ||
-      this.config.get<string>('EMAIL_WEBSITE_URL')?.trim() ||
-      this.config.get<string>('CLIENT_APP_URL')?.trim() ||
-      undefined;
+    const publicWebUrl = this.resolvePublicWebUrl();
     const amountStr = formatInvoiceMoney(snapshot.totalPrice, snapshot.currency);
+    const currency =
+      (snapshot.currency || 'CAD').trim().toUpperCase() || 'CAD';
+    const brand = this.emailTemplate.getBrand();
+    const orderDateIso = snapshot.createdAt
+      ? new Date(snapshot.createdAt).toISOString()
+      : undefined;
 
     const pickupHtml = snapshot.pickupCode?.trim()
       ? [
@@ -236,15 +250,15 @@ export class OrderPaidInvoiceEmailService {
     let textLines: string[];
 
     if (variant === 'paid') {
-      heading = 'Paiement confirmé';
-      intro = `Merci pour votre commande chez <strong>${storeEsc}</strong>. Votre paiement a bien été enregistré.`;
+      heading = 'Merci pour votre commande';
+      intro = `Votre commande chez <strong>${storeEsc}</strong> est confirmée.`;
       subject = orderReceiptEmailSubject(snapshot.storeName, ref);
-      preheader = `Receipt #${ref} — ${amountStr}`;
+      preheader = `Order #${ref} complete — ${amountStr}`;
       orderStatus = OrderSchemaStatus.processing;
       withPdf = true;
       textLines = [
-        `Paiement confirmé — ${snapshot.storeName}`,
-        `Référence commande : ${ref}`,
+        `Merci pour votre commande chez ${snapshot.storeName}`,
+        `Commande #${ref}`,
         snapshot.deliveryLine,
         snapshot.pickupCode?.trim()
           ? `Code retrait : ${snapshot.pickupCode.trim().toUpperCase()}`
@@ -266,25 +280,49 @@ export class OrderPaidInvoiceEmailService {
       ];
     }
 
-    const html = [
-      this.emailTemplate.heading(heading),
-      this.emailTemplate.paragraph(intro),
-      this.emailTemplate.keyValues([
-        { label: 'Référence', value: refEsc },
-        { label: 'Restaurant', value: storeEsc },
-        { label: 'Mode', value: esc(snapshot.deliveryLine) },
-      ]),
-      pickupHtml,
+    const receiptHtml =
       variant === 'paid'
-        ? this.emailTemplate.paragraph(
-            'Vous trouverez en pièce jointe la facture au format PDF (détail des articles, compléments et montants).',
-          )
-        : '',
-      ctaHtml,
-      this.emailTemplate.muted(
-        'Conservez ce message pour vos archives. Pour toute question, répondez à cet e-mail ou contactez le restaurant.',
-      ),
-    ]
+        ? buildOrderReceiptEmailBodyHtml(snapshot, {
+            ref,
+            orderUrl,
+            orderDateIso,
+            orderStatusUri: orderStatus,
+            currency,
+            appName: brand.appName,
+          })
+        : '';
+
+    const html = (variant === 'paid'
+      ? [
+          receiptHtml,
+          this.emailTemplate.keyValues([
+            { label: 'Restaurant', value: storeEsc },
+            { label: 'Mode', value: esc(snapshot.deliveryLine) },
+          ]),
+          pickupHtml,
+          this.emailTemplate.paragraph(
+            'La facture détaillée (articles, compléments et montants) est jointe en PDF à ce message.',
+          ),
+          ctaHtml,
+          this.emailTemplate.muted(
+            'Conservez ce message pour vos archives. Pour toute question, répondez à cet e-mail ou contactez le restaurant.',
+          ),
+        ]
+      : [
+          this.emailTemplate.heading(heading),
+          this.emailTemplate.paragraph(intro),
+          this.emailTemplate.keyValues([
+            { label: 'Référence', value: esc(ref) },
+            { label: 'Restaurant', value: storeEsc },
+            { label: 'Mode', value: esc(snapshot.deliveryLine) },
+          ]),
+          pickupHtml,
+          ctaHtml,
+          this.emailTemplate.muted(
+            'Conservez ce message pour vos archives. Pour toute question, répondez à cet e-mail ou contactez le restaurant.',
+          ),
+        ]
+    )
       .filter(Boolean)
       .join('');
 
@@ -296,11 +334,13 @@ export class OrderPaidInvoiceEmailService {
       orderStatus,
       orderUrl,
       publicWebUrl,
+      merchantLogoUrl:
+        brand.logoUrl ?? firstOrderItemImageUrl(snapshot) ?? undefined,
     };
     const jsonLd =
       variant === 'paid'
         ? buildOrderReceiptEmailJsonLd(snapshot, jsonLdOpts)
-        : [buildOrderEmailJsonLd(snapshot, jsonLdOpts)];
+        : buildOrderEmailJsonLd(snapshot, jsonLdOpts);
     const wrappedHtml = this.emailTemplate.wrapBody(html, {
       title: subject,
       preheader,

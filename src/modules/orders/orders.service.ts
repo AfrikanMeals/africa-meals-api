@@ -63,6 +63,7 @@ import {
   type VendorOrderNotifyReason,
 } from './vendor-order-paid-message.util';
 import { OrderPaidInvoiceEmailService } from './order-paid-invoice-email.service';
+import { orderInvoiceRef } from './order-invoice.util';
 import {
   VendorStatusEmailService,
   type VendorOrderEmailEvent,
@@ -650,6 +651,108 @@ export class OrdersService {
     return this.stripPickupCodeForNonClients([
       out,
     ])[0] as unknown as typeof order;
+  }
+
+  /** Résumé public pour la landing web `/orders/:id` (liens e-mail de reçu). */
+  async getPublicOrderSummary(orderId: string) {
+    const oid = orderId?.trim();
+    if (!oid || !Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const order = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .populate({ path: 'store', select: 'name profileImage' })
+      .lean()
+      .exec();
+
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const status = String(order.status ?? '').toLowerCase();
+    if (status === OrderStatusEnum.CREATED) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const storeRaw = order.store as
+      | { _id?: Types.ObjectId; name?: string; profileImage?: string }
+      | null
+      | undefined;
+    const storeId = storeRaw?._id ? String(storeRaw._id) : undefined;
+    const storeName = storeRaw?.name?.trim() || 'Restaurant';
+
+    const snap = order.deliveryAddressSnapshot as
+      | Record<string, unknown>
+      | undefined;
+    let deliveryLine = 'Retrait sur place';
+    if (order.shouldShip) {
+      const city = String(snap?.city ?? '').trim();
+      deliveryLine = city ? `Livraison — ${city}` : 'Livraison';
+    }
+
+    const items = (order.items ?? []).map((it) => {
+      const row = it as OrdeLineItem & {
+        pictureUrl?: string;
+        picture_url?: string;
+      };
+      return {
+        label: String(row.label ?? '').trim() || 'Article',
+        quantity: Math.max(0, Number(row.quantity) || 0),
+        price: Math.max(0, Number(row.price) || 0),
+        pictureUrl:
+          String(row.pictureUrl ?? row.picture_url ?? '').trim() || undefined,
+      };
+    });
+
+    const pickupCode =
+      !order.shouldShip &&
+      typeof order.pickupCode === 'string' &&
+      order.pickupCode.trim()
+        ? order.pickupCode.trim().toUpperCase()
+        : undefined;
+
+    return {
+      orderId: oid,
+      ref: orderInvoiceRef(oid),
+      status,
+      statusLabel: this.publicOrderStatusLabel(status),
+      createdAt: order.createdAt,
+      currency:
+        typeof order.currency === 'string'
+          ? order.currency.trim().toUpperCase()
+          : 'CAD',
+      totalPrice: Number(order.totalPrice) || 0,
+      subtotalBeforeTax: Number(order.subtotalBeforeTax) || undefined,
+      shippingPrice: Number(order.shippingPrice) || 0,
+      taxTotal: Number(order.taxTotal) || undefined,
+      shouldShip: Boolean(order.shouldShip),
+      deliveryLine,
+      pickupCode,
+      store: {
+        id: storeId,
+        name: storeName,
+        profileImage: storeRaw?.profileImage?.trim() || undefined,
+      },
+      items,
+    };
+  }
+
+  private publicOrderStatusLabel(status: string): string {
+    switch (String(status ?? '').toLowerCase()) {
+      case OrderStatusEnum.PAIED:
+        return 'Payée';
+      case OrderStatusEnum.APPROVED:
+        return 'Confirmée';
+      case OrderStatusEnum.SHIPPED:
+        return 'En livraison';
+      case OrderStatusEnum.COMPLETED:
+        return 'Terminée';
+      case OrderStatusEnum.CANCELLED:
+        return 'Annulée';
+      default:
+        return 'Commande';
+    }
   }
 
   async createFromCart(storeId: string, user: UserModel) {
