@@ -675,7 +675,7 @@ export class OrdersService {
       throw new NotFoundException('order_not_found');
     }
 
-    const storeRaw = order.store as
+    const storeRaw = order.store as unknown as
       | { _id?: Types.ObjectId; name?: string; profileImage?: string }
       | null
       | undefined;
