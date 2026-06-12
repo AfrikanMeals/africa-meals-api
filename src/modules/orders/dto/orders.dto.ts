@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   Max,
@@ -138,4 +139,20 @@ export class RejectOrderDto {
   @ValidateIf((o) => o.reasonCode === ORDER_CANCEL_REASON_OTHER)
   @MinLength(10)
   details?: string;
+}
+
+export class VendorCourierLocationDto {
+  @ApiProperty({ example: 14.7167 })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitude!: number;
+
+  @ApiProperty({ example: -17.4677 })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitude!: number;
 }

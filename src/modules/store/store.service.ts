@@ -247,6 +247,21 @@ export class StoreService {
     return { vendorManagesDeliveryDrivers, deliveryAssignmentMode };
   }
 
+  private _normalizeMealPreOrdersFlag(
+    acceptsMealPreOrders?: boolean,
+  ): boolean {
+    return acceptsMealPreOrders === true;
+  }
+
+  private _docAcceptsMealPreOrders(doc: Record<string, unknown>): boolean {
+    return (
+      doc.acceptsMealPreOrders === true ||
+      doc.accepts_meal_pre_orders === true ||
+      doc.acceptsPreProgrammedFoodDeliveries === true ||
+      doc.accepts_pre_programmed_food_deliveries === true
+    );
+  }
+
   @Inject(DashboardAuditService)
   private readonly _dashboardAudit: DashboardAuditService;
 
@@ -484,6 +499,9 @@ export class StoreService {
       address: addr._id,
       owner: user._id,
       ...this._normalizeVendorDeliveryDriverSettings(args),
+      acceptsMealPreOrders: this._normalizeMealPreOrdersFlag(
+        args.acceptsMealPreOrders,
+      ),
     });
 
     if (!store) {
@@ -592,6 +610,9 @@ export class StoreService {
         .trim()
         .toUpperCase(),
       supportsShipping: !!doc.supportsShipping,
+      acceptsMealPreOrders: this._docAcceptsMealPreOrders(
+        doc as Record<string, unknown>,
+      ),
       vendorManagesDeliveryDrivers: !!doc.vendorManagesDeliveryDrivers,
       deliveryAssignmentMode: String(
         doc.deliveryAssignmentMode ?? 'AUTO',
@@ -637,6 +658,9 @@ export class StoreService {
         acceptsOrders: !!doc.acceptsOrders,
         canCreateProducts: !!doc.canCreateProducts,
         supportsShipping: !!doc.supportsShipping,
+        acceptsMealPreOrders: this._docAcceptsMealPreOrders(
+          doc as Record<string, unknown>,
+        ),
         vendorManagesDeliveryDrivers: !!doc.vendorManagesDeliveryDrivers,
         deliveryAssignmentMode: String(
           doc.deliveryAssignmentMode ?? 'AUTO',
@@ -1327,6 +1351,9 @@ export class StoreService {
       currency: derivedCurrency,
       supportsShipping: args.supportsShipping,
       shippingZones,
+      acceptsMealPreOrders: this._normalizeMealPreOrdersFlag(
+        args.acceptsMealPreOrders,
+      ),
       vendorManagesDeliveryDrivers:
         deliveryDriverSettings.vendorManagesDeliveryDrivers,
       deliveryAssignmentMode: deliveryDriverSettings.deliveryAssignmentMode,
@@ -2426,6 +2453,9 @@ export class StoreService {
         .toUpperCase(),
       supportsShipping: !!doc.supportsShipping,
       acceptsOrders: doc.acceptsOrders !== false,
+      acceptsMealPreOrders: this._docAcceptsMealPreOrders(
+        doc as Record<string, unknown>,
+      ),
       vendorManagesDeliveryDrivers: !!doc.vendorManagesDeliveryDrivers,
       deliveryAssignmentMode: String(
         doc.deliveryAssignmentMode ?? 'AUTO',
@@ -2619,6 +2649,9 @@ export class StoreService {
       supportsShipping: args.supportsShipping,
       acceptsOrders: args.acceptsOrders !== false,
       shippingZones,
+      acceptsMealPreOrders: this._normalizeMealPreOrdersFlag(
+        args.acceptsMealPreOrders,
+      ),
       vendorManagesDeliveryDrivers:
         deliveryDriverSettings.vendorManagesDeliveryDrivers,
       deliveryAssignmentMode: deliveryDriverSettings.deliveryAssignmentMode,

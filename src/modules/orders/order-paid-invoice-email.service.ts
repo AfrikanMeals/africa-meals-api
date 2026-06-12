@@ -14,6 +14,8 @@ import { buildOrderReceiptEmailBodyHtml } from './order-receipt-email-html.util'
 import {
   buildOrderEmailJsonLd,
   buildOrderReceiptEmailJsonLd,
+  buildParcelDeliveryEmailJsonLd,
+  coordsFromAddressLike,
   formatInvoiceMoney,
   formatOrderDeliveryLine,
   OrderSchemaStatus,
@@ -125,6 +127,10 @@ export class OrderPaidInvoiceEmailService {
         select: 'fullName email addresses',
         populate: { path: 'addresses' },
       })
+      .populate({
+        path: 'assignedDeliveryUser',
+        select: 'fullName',
+      })
       .lean()
       .exec();
 
@@ -151,7 +157,16 @@ export class OrderPaidInvoiceEmailService {
       | {
           _id?: Types.ObjectId;
           name?: string;
-          address?: { address?: string; city?: string; zipCode?: string };
+          address?: {
+            address?: string;
+            city?: string;
+            zipCode?: string;
+            zip_code?: string;
+            country?: string;
+            countryCode?: string;
+            country_code?: string;
+            location?: { coordinates?: number[] };
+          };
         }
       | null
       | undefined;
@@ -159,8 +174,27 @@ export class OrderPaidInvoiceEmailService {
     const storeId = storeRaw?._id ? String(storeRaw._id) : undefined;
     const addr = storeRaw?.address;
     const storeAddressLine = addr
-      ? [addr.address, addr.city, addr.zipCode].filter(Boolean).join(', ')
+      ? [addr.address, addr.city, addr.zipCode ?? addr.zip_code]
+          .filter(Boolean)
+          .join(', ')
       : '';
+    const storeAddressSnapshot = addr
+      ? {
+          address: addr.address,
+          city: addr.city,
+          zipCode: addr.zipCode ?? addr.zip_code,
+          country: addr.country,
+          countryCode: addr.countryCode ?? addr.country_code,
+          location: addr.location,
+        }
+      : undefined;
+    const storeAddressCoords = coordsFromAddressLike(addr);
+
+    const agentRaw = order.assignedDeliveryUser as
+      | { fullName?: string }
+      | null
+      | undefined;
+    const carrierName = agentRaw?.fullName?.trim() || undefined;
 
     const snap = order.deliveryAddressSnapshot as
       | Record<string, unknown>
@@ -196,6 +230,9 @@ export class OrderPaidInvoiceEmailService {
         typeof order.pickupCode === 'string' ? order.pickupCode : undefined,
       storeName,
       storeAddressLine,
+      storeAddressSnapshot,
+      storeAddressCoords,
+      carrierName,
       clientName: userRaw?.fullName?.trim() || email,
       clientEmail: email,
       deliveryLine,
@@ -336,11 +373,20 @@ export class OrderPaidInvoiceEmailService {
       publicWebUrl,
       merchantLogoUrl:
         brand.logoUrl ?? firstOrderItemImageUrl(snapshot) ?? undefined,
+      appName: brand.appName,
+      carrierName: snapshot.carrierName,
     };
     const jsonLd =
       variant === 'paid'
         ? buildOrderReceiptEmailJsonLd(snapshot, jsonLdOpts)
-        : buildOrderEmailJsonLd(snapshot, jsonLdOpts);
+        : (() => {
+            const orderJsonLd = buildOrderEmailJsonLd(snapshot, jsonLdOpts);
+            const parcelJsonLd = buildParcelDeliveryEmailJsonLd(
+              snapshot,
+              jsonLdOpts,
+            );
+            return parcelJsonLd ? [orderJsonLd, parcelJsonLd] : orderJsonLd;
+          })();
     const wrappedHtml = this.emailTemplate.wrapBody(html, {
       title: subject,
       preheader,

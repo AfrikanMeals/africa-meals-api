@@ -258,8 +258,10 @@ describe('DbMaintenanceService integrity tests', () => {
     expect(
       out.checks.some((c) => c.key === 'ad-notification-channels-status'),
     ).toBe(true);
-    expect(out.checks.some((c) => c.key === 'twilio-api-status')).toBe(true);
-    expect(out.checks.some((c) => c.key === 'whatsapp-api-status')).toBe(true);
+    expect(out.checks.some((c) => c.key === 'bird-sms-api-status')).toBe(true);
+    expect(out.checks.some((c) => c.key === 'bird-whatsapp-api-status')).toBe(
+      true,
+    );
   });
 
   it('détecte les anomalies coupons (format, quota, période)', async () => {

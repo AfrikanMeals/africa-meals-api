@@ -39,6 +39,10 @@ L'envoi d'emails (vérification de compte, reset mot de passe) utilise **Gmail S
 1. Copiez `.env.example` vers `.env` et renseignez les variables `SMTP_*`.
 2. Suivez le guide détaillé : **[docs/MAIL_SETUP.md](docs/MAIL_SETUP.md)** (mot de passe d'application Gmail, 2FA, dépannage).
 
+## SMS & WhatsApp (Bird)
+
+Notifications publicitaires (SMS / WhatsApp) et SMS vendeurs : **[docs/BIRD_CHANNELS.md](docs/BIRD_CHANNELS.md)** (credentials Bird, template WhatsApp Studio, Secret Manager en production, migration depuis Twilio / Meta).
+
 ## Running the app
 
 ```bash

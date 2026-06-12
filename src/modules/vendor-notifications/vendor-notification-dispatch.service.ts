@@ -4,9 +4,9 @@ import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import {
   phoneToSmsE164,
-  readTwilioSmsConfig,
-  sendTwilioSmsMessage,
-} from '@modules/ads/twilio-sms.util';
+  readBirdSmsConfig,
+  sendBirdSmsMessage,
+} from '@modules/ads/bird-channels.util';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -342,23 +342,23 @@ export class VendorNotificationDispatchService {
       return;
     }
 
-    const twilio = readTwilioSmsConfig(process.env);
-    if (!twilio) {
+    const birdSms = readBirdSmsConfig(process.env);
+    if (!birdSms) {
       await this.recordDelivery({
         storeId: args.storeId,
         category: args.category,
         channel: 'sms',
         status: VendorNotificationDeliveryStatusEnum.FAILED,
         body: args.body,
-        errorMessage: 'twilio_not_configured',
+        errorMessage: 'sms_not_configured',
         metadata: args.metadata,
       });
       return;
     }
 
     try {
-      const res = await sendTwilioSmsMessage({
-        config: twilio,
+      const res = await sendBirdSmsMessage({
+        config: birdSms,
         to,
         body: args.body,
       });
@@ -369,7 +369,7 @@ export class VendorNotificationDispatchService {
         status: VendorNotificationDeliveryStatusEnum.SENT,
         body: args.body,
         unitCostCad: args.unitCostCad,
-        externalId: res.sid,
+        externalId: res.messageId,
         metadata: args.metadata,
       });
     } catch (e) {

@@ -7,6 +7,7 @@ import {
   normalizeSelectedSupplements,
 } from '@modules/cart/cart-customization.util';
 import type { OrdeLineItem } from '@schemas/order.schema';
+import { haversineDistance } from '@utils/helpers';
 
 export type OrderTaxLineInvoice = {
   name: string;
@@ -30,6 +31,21 @@ export type OrderInvoiceSnapshot = {
   pickupCode?: string;
   storeName: string;
   storeAddressLine?: string;
+  /** Adresse restaurant (origine livraison) pour ParcelDelivery. */
+  storeAddressSnapshot?: {
+    address?: string;
+    city?: string;
+    zipCode?: string;
+    zip_code?: string;
+    country?: string;
+    countryCode?: string;
+    country_code?: string;
+    location?: { coordinates?: number[] };
+  };
+  /** [longitude, latitude] — adresse restaurant. */
+  storeAddressCoords?: [number, number];
+  /** Livreur assigné (nom affiché comme transporteur). */
+  carrierName?: string;
   clientName: string;
   clientEmail: string;
   deliveryLine: string;
@@ -374,6 +390,100 @@ export const OrderSchemaStatus = {
   cancelled: 'http://schema.org/OrderCancelled',
 } as const;
 
+/** Statut livraison Schema.org (DeliveryEvent.eventStatus). */
+export const ParcelDeliverySchemaStatus = {
+  inTransit: 'http://schema.org/DeliveryInTransit',
+} as const;
+
+export function coordsFromAddressLike(addr: unknown): [number, number] | undefined {
+  if (!addr || typeof addr !== 'object') return undefined;
+  const loc = (addr as { location?: { coordinates?: unknown } }).location;
+  const c = loc?.coordinates;
+  if (Array.isArray(c) && c.length >= 2) {
+    const lng = Number(c[0]);
+    const lat = Number(c[1]);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      return [lng, lat];
+    }
+  }
+  return undefined;
+}
+
+/** ETA livraison (minutes) — aligné sur delivery-agent `etaLabelFromKm`. */
+export function estimateParcelDeliveryEtaMinutes(distanceKm?: number): number {
+  if (distanceKm != null && Number.isFinite(distanceKm)) {
+    return Math.max(15, Math.round(distanceKm * 4 + 10));
+  }
+  return 45;
+}
+
+export function estimateParcelDeliveryEtaUntilIso(
+  distanceKm?: number,
+  from?: Date,
+): string {
+  const base = from ?? new Date();
+  const minutes = estimateParcelDeliveryEtaMinutes(distanceKm);
+  return new Date(base.getTime() + minutes * 60 * 1000).toISOString();
+}
+
+export function estimateParcelDeliveryDistanceKm(
+  snapshot: OrderInvoiceSnapshot,
+): number | undefined {
+  const store = snapshot.storeAddressCoords;
+  const dest = coordsFromAddressLike(snapshot.deliveryAddressSnapshot);
+  if (store && dest) {
+    return +haversineDistance(store, dest).toFixed(2);
+  }
+  return undefined;
+}
+
+function resolvePostalCountry(
+  snap: {
+    country?: string;
+    countryCode?: string;
+    country_code?: string;
+  },
+): string {
+  const cc = snap.countryCode ?? snap.country_code ?? snap.country;
+  if (cc === 'CA' || snap.country === 'Canada') return 'CA';
+  if (typeof cc === 'string' && cc.trim()) return cc.trim();
+  if (typeof snap.country === 'string' && snap.country.trim()) {
+    return snap.country.trim();
+  }
+  return 'CA';
+}
+
+function buildParcelPostalAddress(
+  snap: {
+    address?: string;
+    city?: string;
+    zipCode?: string;
+    zip_code?: string;
+    country?: string;
+    countryCode?: string;
+    country_code?: string;
+  },
+  name: string,
+): Record<string, unknown> | undefined {
+  const streetAddress = String(snap.address ?? '').trim();
+  if (!streetAddress) return undefined;
+
+  const locality = String(snap.city ?? '').trim();
+  const postal = String(snap.zipCode ?? snap.zip_code ?? '').trim();
+  const addressCountry = resolvePostalCountry(snap);
+  const addressRegion = postal || locality || addressCountry;
+
+  return {
+    '@type': 'PostalAddress',
+    name: name.trim() || 'Recipient',
+    streetAddress,
+    addressLocality: locality || addressRegion,
+    addressRegion,
+    postalCode: postal || '00000',
+    addressCountry,
+  };
+}
+
 export type OrderEmailJsonLdOptions = {
   /** Numéro de commande affiché (ex. 8 derniers caractères). */
   ref: string;
@@ -568,6 +678,123 @@ export function buildOrderReceiptEmailJsonLd(
   opts: OrderEmailJsonLdOptions,
 ): Record<string, unknown> {
   return buildOrderEmailJsonLd(snapshot, opts);
+}
+
+export type ParcelDeliveryEmailJsonLdOptions = OrderEmailJsonLdOptions & {
+  /** Nom de la plateforme (transporteur par défaut). */
+  appName?: string;
+  /** Nom du livreur ou transporteur affiché dans `carrier`. */
+  carrierName?: string;
+};
+
+/**
+ * Balisage Schema.org `ParcelDelivery` pour les e-mails de suivi livraison.
+ * @see https://developers.google.com/workspace/gmail/markup/reference/parcel-delivery
+ */
+export function buildParcelDeliveryEmailJsonLd(
+  snapshot: OrderInvoiceSnapshot,
+  opts: ParcelDeliveryEmailJsonLdOptions,
+): Record<string, unknown> | undefined {
+  if (!snapshot.shouldShip) return undefined;
+
+  const deliveryAddress = buildParcelPostalAddress(
+    (snapshot.deliveryAddressSnapshot ?? {}) as {
+      address?: string;
+      city?: string;
+      zipCode?: string;
+      zip_code?: string;
+      country?: string;
+      countryCode?: string;
+      country_code?: string;
+    },
+    snapshot.clientName.trim() || snapshot.clientEmail,
+  );
+  if (!deliveryAddress) return undefined;
+
+  const distanceKm = estimateParcelDeliveryDistanceKm(snapshot);
+  const expectedArrivalUntil = estimateParcelDeliveryEtaUntilIso(distanceKm);
+  const carrierLabel =
+    (
+      opts.carrierName ??
+      snapshot.carrierName ??
+      opts.appName ??
+      'Wise Eat'
+    ).trim() || 'Wise Eat';
+  const orderUrl = opts.orderUrl?.trim();
+  const storeName = snapshot.storeName.trim() || 'Restaurant';
+
+  const merchant: Record<string, unknown> = {
+    '@type': 'Organization',
+    name: storeName,
+  };
+  const logo = opts.merchantLogoUrl?.trim();
+  if (logo && /^https?:\/\//i.test(logo)) {
+    merchant.logo = logo;
+  }
+
+  const partOfOrder: Record<string, unknown> = {
+    '@type': 'Order',
+    orderNumber: opts.ref,
+    merchant,
+    orderStatus: OrderSchemaStatus.inTransit,
+  };
+
+  const firstRow = snapshot.items?.[0] as LineItemRow | undefined;
+  const firstName = String(firstRow?.label ?? '').trim();
+  const itemShipped: Record<string, unknown> = {
+    '@type': 'Product',
+    name: firstName || `Commande ${storeName}`,
+  };
+  const sku = String(firstRow?.entityId ?? firstRow?.entity_id ?? '').trim();
+  const image = String(
+    firstRow?.pictureUrl ?? firstRow?.picture_url ?? '',
+  ).trim();
+  const productUrl = resolveProductPublicUrl(
+    snapshot.storeId,
+    sku || undefined,
+    opts.publicWebUrl,
+    storeName,
+    firstName || undefined,
+  );
+  if (sku) itemShipped.sku = sku;
+  if (image && /^https?:\/\//i.test(image)) itemShipped.image = image;
+  if (productUrl) itemShipped.url = productUrl;
+
+  const payload: Record<string, unknown> = {
+    '@context': 'http://schema.org',
+    '@type': 'ParcelDelivery',
+    deliveryAddress,
+    expectedArrivalUntil,
+    carrier: { '@type': 'Organization', name: carrierLabel },
+    itemShipped,
+    partOfOrder,
+    trackingNumber: opts.ref,
+    deliveryStatus: {
+      '@type': 'DeliveryEvent',
+      eventStatus: ParcelDeliverySchemaStatus.inTransit,
+      name: 'InTransit',
+    },
+    hasDeliveryMethod: {
+      '@type': 'ParcelService',
+      name: 'http://schema.org/ParcelService',
+    },
+  };
+
+  const originSnap = snapshot.storeAddressSnapshot;
+  if (originSnap) {
+    const originAddress = buildParcelPostalAddress(originSnap, storeName);
+    if (originAddress) payload.originAddress = originAddress;
+  }
+
+  if (orderUrl) {
+    payload.trackingUrl = orderUrl;
+    payload.potentialAction = {
+      '@type': 'TrackAction',
+      url: orderUrl,
+    };
+  }
+
+  return payload;
 }
 
 export function lineCustomizationText(item: OrdeLineItem): string {

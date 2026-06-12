@@ -104,6 +104,15 @@ export class CreateStoreDto {
 
   @ApiPropertyOptional({
     description:
+      'Autorise la pré-commande de repas (date/heure ultérieure). Indépendant de la livraison.',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  acceptsMealPreOrders?: boolean;
+
+  @ApiPropertyOptional({
+    description:
       'Le restaurant gère ses propres livreurs (invitations, assignation).',
   })
   @IsOptional()

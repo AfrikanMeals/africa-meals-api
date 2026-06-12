@@ -1,12 +1,10 @@
 import type { AdNotificationChannelAvailability } from '@modules/ads/ad-notification-channel-availability.util';
 import {
   isAdNotificationSmsEnabled,
-  readTwilioSmsConfig,
-} from '@modules/ads/twilio-sms.util';
-import {
   isAdNotificationWhatsAppEnabled,
-  readWhatsAppCloudConfig,
-} from '@modules/ads/meta-whatsapp.util';
+  readBirdSmsConfig,
+  readBirdWhatsAppConfig,
+} from '@modules/ads/bird-channels.util';
 
 export type AdNotificationChannelKey =
   | 'email'
@@ -37,8 +35,8 @@ const CHANNEL_META: Array<{ key: AdNotificationChannelKey; label: string }> = [
   { key: 'email', label: 'E-mail' },
   { key: 'push', label: 'Push (FCM)' },
   { key: 'inApp', label: 'In-App' },
-  { key: 'sms', label: 'SMS (Twilio)' },
-  { key: 'whatsapp', label: 'WhatsApp (Meta)' },
+  { key: 'sms', label: 'SMS' },
+  { key: 'whatsapp', label: 'WhatsApp' },
 ];
 
 function smtpConfigured(env: NodeJS.ProcessEnv): boolean {
@@ -69,12 +67,12 @@ export function evaluateAdNotificationChannelHealth(input: {
   const dispatchCronDisabled =
     env.DISABLE_AD_NOTIFICATION_DISPATCH_CRON === 'true';
   const redisOk = redisConfigured(env);
-  const twilio = readTwilioSmsConfig(env);
+  const birdSms = readBirdSmsConfig(env);
   const smsRuntime =
-    isAdNotificationSmsEnabled(env) && twilio != null;
+    isAdNotificationSmsEnabled(env) && birdSms != null;
   const waRuntime =
     isAdNotificationWhatsAppEnabled(env) &&
-    readWhatsAppCloudConfig(env) != null;
+    readBirdWhatsAppConfig(env) != null;
   const emailRuntime = smtpConfigured(env);
   const pushRuntime = input.firebaseMessagingOk;
   const inAppRuntime = input.wsReachable;
@@ -98,15 +96,15 @@ export function evaluateAdNotificationChannelHealth(input: {
       ? 'Service WS joignable'
       : 'WS interne injoignable (AFRICA_MEALS_WS_INTERNAL_URL)',
     sms: smsRuntime
-      ? 'Twilio + AD_NOTIFICATION_SMS_ENABLED=true'
+      ? 'Canal SMS configuré + AD_NOTIFICATION_SMS_ENABLED=true'
       : !isAdNotificationSmsEnabled(env)
         ? 'AD_NOTIFICATION_SMS_ENABLED≠true'
-        : 'Twilio incomplet (SID/token + numéro ou Messaging Service)',
+        : 'Canal SMS incomplet (credentials requis)',
     whatsapp: waRuntime
-      ? 'Meta WhatsApp Cloud configuré'
+      ? 'Canal WhatsApp configuré'
       : !isAdNotificationWhatsAppEnabled(env)
         ? 'AD_NOTIFICATION_WHATSAPP_ENABLED≠true'
-        : 'Token ou phone_number_id Meta manquant',
+        : 'Canal WhatsApp incomplet (credentials requis)',
   };
 
   const misconfiguredChannels: AdNotificationChannelKey[] = [];

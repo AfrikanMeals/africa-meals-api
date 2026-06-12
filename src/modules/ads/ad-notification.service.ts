@@ -61,8 +61,10 @@ import {
   buildAdNotificationAppDeepLink,
   buildAdNotificationWebOpenUrl,
 } from '@modules/ads/ad-notification-link.util';
-import { trySendAdSms } from '@modules/ads/twilio-sms.util';
-import { trySendAdWhatsApp } from '@modules/ads/meta-whatsapp.util';
+import {
+  trySendAdSms,
+  trySendAdWhatsApp,
+} from '@modules/ads/bird-channels.util';
 import {
   AdNotificationTestSourceEnum,
   SendAdNotificationTestDto,
@@ -196,7 +198,7 @@ export class AdNotificationService {
     return channels;
   }
 
-  /** Exécution pool limité — évite de saturer SMTP / Twilio / Mongo. */
+  /** Exécution pool limité — évite de saturer SMTP / Bird / Mongo. */
   private async mapPool<T>(
     items: T[],
     limit: number,

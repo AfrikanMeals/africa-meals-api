@@ -1845,6 +1845,174 @@ export class OrdersService {
     return { orderId: oid, status: OrderStatusEnum.APPROVED, isPickup };
   }
 
+  /**
+   * Vendeur : s’assigne la livraison (passe la commande en `shipped` + livreur assigné).
+   */
+  async assignVendorSelfDelivery(
+    orderId: string,
+    user: UserModel,
+  ): Promise<{ ok: true; orderId: string; orderRef: string; status: OrderStatusEnum }> {
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_only');
+    }
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+    const vendorId = new Types.ObjectId(String(user._id ?? user.id));
+
+    const activeOrder = await this._orderModel
+      .findOne({
+        assigned_delivery_user: vendorId,
+        shouldShip: true,
+        status: OrderStatusEnum.SHIPPED,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    if (activeOrder && String(activeOrder._id) !== oid) {
+      throw new BadRequestException('vendor_active_delivery');
+    }
+
+    const order = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .populate('store', 'name owner address')
+      .populate(OrdersService.orderUserWithAddressesPopulate)
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    await this.assertUserCanManageOrderStore(user, order);
+
+    if (!order.shouldShip) {
+      throw new BadRequestException('order_not_shippable');
+    }
+
+    const existingAssignee = this.assignedDeliveryUserIdFromOrderDoc(order);
+    if (existingAssignee && existingAssignee !== String(vendorId)) {
+      throw new BadRequestException('order_assigned_to_other');
+    }
+
+    const st = order.status as OrderStatusEnum;
+    if (
+      ![
+        OrderStatusEnum.CREATED,
+        OrderStatusEnum.PAIED,
+        OrderStatusEnum.APPROVED,
+      ].includes(st)
+    ) {
+      throw new BadRequestException('order_not_assignable');
+    }
+
+    const prevStatus = st;
+    order.set('assigned_delivery_user', vendorId);
+    order.status = OrderStatusEnum.SHIPPED;
+    await order.save();
+
+    const storeId = this.storeIdFromOrderDoc(order);
+    const customerId = this.userIdFromOrderDoc(order);
+    const tail = oid.slice(-6).toUpperCase();
+    const orderRef = `#AE-${tail}`;
+    const vendorName = user.fullName?.trim() || 'Restaurant';
+
+    if (prevStatus !== OrderStatusEnum.SHIPPED) {
+      await this._orderStatusEvents.record({
+        orderId: oid,
+        storeId,
+        customerUserId: customerId,
+        fromStatus: prevStatus,
+        toStatus: OrderStatusEnum.SHIPPED,
+        source: OrderStatusChangeSourceEnum.VENDOR,
+        actorUserId: String(vendorId),
+        note: `Auto-assignation vendeur (${vendorName})`,
+      });
+    }
+
+    if (customerId && prevStatus !== OrderStatusEnum.SHIPPED) {
+      this.sendShippedInvoiceEmail(oid);
+      void this._notificationsService
+        .pushCustomerOrderStatusChanged({
+          userId: customerId,
+          orderId: oid,
+          storeName: this.storeNameFromPopulated(order.store),
+          storeId: storeId ?? undefined,
+          previousStatus: prevStatus,
+          newStatus: OrderStatusEnum.SHIPPED,
+          bodyOverride: 'En cours de livraison',
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `FCM order shipped (vendor self): ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
+    }
+
+    this.notifyPartiesOrderRealtimeFromDoc(order, OrderStatusEnum.SHIPPED);
+
+    if (storeId && prevStatus !== OrderStatusEnum.SHIPPED) {
+      const sname = this.storeNameFromPopulated(order.store);
+      this.notifyStoreVendorsForOrderStatusChange(order, {
+        reason: 'order_shipped',
+        status: OrderStatusEnum.SHIPPED,
+        note: `Livraison par ${vendorName}`,
+        pushBodyOverride: `${sname ?? 'Boutique'} : livraison prise en charge par ${vendorName}.`,
+      });
+    }
+
+    return {
+      ok: true,
+      orderId: oid,
+      orderRef,
+      status: OrderStatusEnum.SHIPPED,
+    };
+  }
+
+  /** Vendeur assigné : met à jour la position GPS pour le suivi client. */
+  async reportVendorSelfDeliveryLocation(
+    orderId: string,
+    user: UserModel,
+    latitude: number,
+    longitude: number,
+  ): Promise<{ ok: true }> {
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_only');
+    }
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+    const lat = Number(latitude);
+    const lng = Number(longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      throw new BadRequestException('invalid_coordinates');
+    }
+
+    const vendorId = String(user._id ?? user.id);
+    const order = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .select('status shouldShip assigned_delivery_user store')
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    await this.assertUserCanManageOrderStore(user, order);
+
+    const assignee = this.assignedDeliveryUserIdFromOrderDoc(order);
+    if (!assignee || assignee !== vendorId) {
+      throw new ForbiddenException('not_assigned_courier');
+    }
+    if (!order.shouldShip || order.status !== OrderStatusEnum.SHIPPED) {
+      throw new BadRequestException('order_not_in_delivery');
+    }
+
+    await this.publishCourierPosition(oid, lat, lng);
+    return { ok: true };
+  }
+
   /** Vendeur / admin : renvoie le reçu (e-mail + PDF) au client. */
   async sendClientReceiptEmail(
     orderId: string,

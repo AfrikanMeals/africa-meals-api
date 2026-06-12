@@ -1216,6 +1216,9 @@ export class SearchService {
               bio: String(st['bio'] ?? ''),
               acceptsOrders: st['acceptsOrders'] !== false,
               supportsShipping: st['supportsShipping'] === true,
+              acceptsMealPreOrders:
+                st['acceptsMealPreOrders'] === true ||
+                st['acceptsPreProgrammedFoodDeliveries'] === true,
               currency: String(st['currency'] ?? 'CAD'),
               email: String(st['email'] ?? ''),
               phoneNumber: String(st['phoneNumber'] ?? ''),
@@ -1246,6 +1249,7 @@ export class SearchService {
               bio: '',
               acceptsOrders: false,
               supportsShipping: false,
+              acceptsMealPreOrders: false,
               currency: 'CAD',
               email: '',
               phoneNumber: '',

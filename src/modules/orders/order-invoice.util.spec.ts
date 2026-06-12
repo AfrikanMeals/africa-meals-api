@@ -2,7 +2,10 @@ import {
   buildInvoiceEmailJsonLd,
   buildOrderEmailJsonLd,
   buildOrderReceiptEmailJsonLd,
+  buildParcelDeliveryEmailJsonLd,
+  estimateParcelDeliveryEtaMinutes,
   orderReceiptEmailSubject,
+  ParcelDeliverySchemaStatus,
   resolveOrderEmailPublicUrl,
   resolveProductPublicUrl,
 } from './order-invoice.util';
@@ -173,5 +176,85 @@ describe('order-invoice.util Gmail markup', () => {
     expect(jsonLd['@type']).toBe('Order');
     expect(jsonLd['@context']).toBe('http://schema.org');
     expect(jsonLd.orderNumber).toBe('AE95ED9A');
+  });
+
+  it('estimates parcel ETA minutes from distance', () => {
+    expect(estimateParcelDeliveryEtaMinutes(2)).toBe(18);
+    expect(estimateParcelDeliveryEtaMinutes()).toBe(45);
+  });
+
+  it('builds ParcelDelivery JSON-LD for shipped delivery emails', () => {
+    const deliverySnapshot = {
+      ...snapshot,
+      shouldShip: true,
+      carrierName: 'Jean Livreur',
+      storeAddressSnapshot: {
+        address: '10 Rue Commerce',
+        city: 'Yaoundé',
+        zipCode: '0000',
+        countryCode: 'CM',
+      },
+      deliveryAddressSnapshot: {
+        address: '123 Main St',
+        city: 'Yaoundé',
+        zipCode: '0000',
+        countryCode: 'CM',
+      },
+    };
+
+    const parcel = buildParcelDeliveryEmailJsonLd(deliverySnapshot, {
+      ...opts,
+      appName: 'Wise Eat',
+    });
+
+    expect(parcel).toBeDefined();
+    expect(parcel!['@type']).toBe('ParcelDelivery');
+    expect(parcel!['@context']).toBe('http://schema.org');
+    expect(parcel!.trackingNumber).toBe('AE95ED9A');
+    expect(parcel!.trackingUrl).toBe('https://wise-eat.com/orders/abc');
+    expect(parcel!.expectedArrivalUntil).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/,
+    );
+    expect(parcel!.carrier).toEqual({
+      '@type': 'Organization',
+      name: 'Jean Livreur',
+    });
+    expect(parcel!.deliveryAddress).toMatchObject({
+      '@type': 'PostalAddress',
+      streetAddress: '123 Main St',
+      addressLocality: 'Yaoundé',
+    });
+    expect(parcel!.originAddress).toMatchObject({
+      '@type': 'PostalAddress',
+      streetAddress: '10 Rue Commerce',
+    });
+    expect(parcel!.itemShipped).toMatchObject({
+      '@type': 'Product',
+      name: 'Okok',
+      sku: 'prod123',
+    });
+    expect(parcel!.partOfOrder).toMatchObject({
+      '@type': 'Order',
+      orderNumber: 'AE95ED9A',
+      orderStatus: 'http://schema.org/OrderInTransit',
+    });
+    expect(parcel!.deliveryStatus).toEqual({
+      '@type': 'DeliveryEvent',
+      eventStatus: ParcelDeliverySchemaStatus.inTransit,
+      name: 'InTransit',
+    });
+    expect(parcel!.potentialAction).toEqual({
+      '@type': 'TrackAction',
+      url: 'https://wise-eat.com/orders/abc',
+    });
+  });
+
+  it('skips ParcelDelivery when order is pickup', () => {
+    expect(
+      buildParcelDeliveryEmailJsonLd(
+        { ...snapshot, shouldShip: false },
+        opts,
+      ),
+    ).toBeUndefined();
   });
 });

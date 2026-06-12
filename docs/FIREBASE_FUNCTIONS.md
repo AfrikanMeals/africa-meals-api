@@ -122,8 +122,20 @@ Variables utiles (alignées sur l’existant) :
 | `AM_FIREBASE_STORAGE_BUCKET` | Bucket Storage (sinon `<project_id>.appspot.com`) |
 | `AM_FIREBASE_SERVICE_ACCOUNT_JSON` | JSON compte de service (une ligne) |
 | `AM_FIREBASE_SERVICE_ACCOUNT_PATH` | Chemin vers le fichier JSON (alternative) |
+| `BIRD_ACCESS_KEY` | Access Key Bird (SMS + WhatsApp) — **secret** |
+| `BIRD_WORKSPACE_ID` | UUID workspace Bird |
+| `BIRD_SMS_CHANNEL_ID` | UUID canal SMS Bird |
+| `BIRD_WHATSAPP_CHANNEL_ID` | UUID canal WhatsApp Bird |
+| `AD_NOTIFICATION_SMS_ENABLED` | `true` pour activer SMS ads |
+| `AD_NOTIFICATION_WHATSAPP_ENABLED` | `true` pour activer WhatsApp ads |
+| `AD_NOTIFICATION_WHATSAPP_TEMPLATE_PROJECT_ID` | UUID template Bird Studio (mode template) |
+| `API_PUBLIC_BASE_URL` | URL publique API (liens trackés SMS / WhatsApp ads) |
 
-Après définition des secrets, ajoutez-les dans `src/firebase-main.ts` via l’option `secrets` de `onRequest` / `setGlobalOptions` si vous utilisez l’API Secrets de Firebase Functions v2.
+Les secrets **`BIRD_ACCESS_KEY`**, **`BIRD_WORKSPACE_ID`**, **`BIRD_SMS_CHANNEL_ID`** et **`BIRD_WHATSAPP_CHANNEL_ID`** sont liés automatiquement à la fonction `api` dans **`src/firebase-main.ts`** (`defineSecret` + option `secrets`). Créez-les avec `firebase functions:secrets:set` avant le premier déploiement post-migration Bird.
+
+Guide complet Bird (prod, template, migration Twilio/Meta) : **[docs/BIRD_CHANNELS.md](BIRD_CHANNELS.md)**.
+
+Après définition des secrets, **`src/firebase-main.ts`** déclare déjà les secrets Bird via `defineSecret` et les attache à la fonction `api` (`secrets: [...]`). Pour d’autres secrets (MongoDB, JWT, etc.), ajoutez-les de la même façon ou via la console Firebase.
 
 ## Émulateur local
 

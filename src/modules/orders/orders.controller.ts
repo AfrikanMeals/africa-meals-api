@@ -21,6 +21,7 @@ import {
   CreateRefundRequestDto,
   FilterOrdersDto,
   RejectOrderDto,
+  VendorCourierLocationDto,
 } from './dto/orders.dto';
 import {
   CLIENT_ORDER_CANCEL_REASON_CODES,
@@ -117,6 +118,35 @@ export class OrdersController {
   @ApiOperation({ summary: 'Marquer la commande prête (VENDOR / ADMIN)' })
   async markReady(@Req() req: Request, @Param('id') id: string) {
     return this._ordersService.markOrderReady(id, req.user as UserModel);
+  }
+
+  /** Vendeur : s’assigne la livraison puis passe la commande en `shipped`. */
+  @Post(':id/assign-self-delivery')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'S’assigner la livraison (VENDOR)' })
+  async assignSelfDelivery(@Req() req: Request, @Param('id') id: string) {
+    return this._ordersService.assignVendorSelfDelivery(
+      id,
+      req.user as UserModel,
+    );
+  }
+
+  /** Vendeur assigné : position GPS pour suivi temps réel. */
+  @Post(':id/vendor-courier-location')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Position livreur vendeur (VENDOR assigné)' })
+  async reportVendorCourierLocation(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: VendorCourierLocationDto,
+  ) {
+    return this._ordersService.reportVendorSelfDeliveryLocation(
+      id,
+      req.user as UserModel,
+      body.latitude,
+      body.longitude,
+    );
   }
 
   /** Renvoie le reçu / facture PDF par e-mail au client. */

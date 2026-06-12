@@ -1729,6 +1729,27 @@ export class ProductsService {
                           false,
                         ],
                       },
+                      acceptsMealPreOrders: {
+                        $eq: [
+                          {
+                            $ifNull: [
+                              '$$st0.acceptsMealPreOrders',
+                              {
+                                $ifNull: [
+                                  '$$st0.accepts_meal_pre_orders',
+                                  {
+                                    $ifNull: [
+                                      '$$st0.acceptsPreProgrammedFoodDeliveries',
+                                      '$$st0.accepts_pre_programmed_food_deliveries',
+                                    ],
+                                  },
+                                ],
+                              },
+                            ],
+                          },
+                          true,
+                        ],
+                      },
                       status: {
                         $toString: {
                           $ifNull: ['$$st0.status', 'INACTIVE'],

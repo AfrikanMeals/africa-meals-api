@@ -98,6 +98,13 @@ export class StoreModel extends BaseSchema {
   supportsShipping?: boolean;
 
   /**
+   * Autorise la pré-commande de repas (commande pour une date/heure ultérieure).
+   * Indépendant de la livraison (`supportsShipping`).
+   */
+  @Prop({ default: false, name: 'accepts_meal_pre_orders' })
+  acceptsMealPreOrders?: boolean;
+
+  /**
    * Le restaurant gère sa propre flotte de livreurs (invitations, assignation).
    * Nécessite `supportsShipping`.
    */
