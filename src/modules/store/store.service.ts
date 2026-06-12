@@ -12,6 +12,7 @@ import {
   PatchProductDto,
 } from '@modules/products/dto/products.dto';
 import { ProductsService } from '@modules/products/products.service';
+import { ProductCategoryService } from '@modules/products/product-category.service';
 import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import { RatingsService } from '@modules/ratings/ratings.service';
 import { MailerService } from '@modules/mailer/mailer.service';
@@ -21,6 +22,7 @@ import { UsersService } from '@modules/users/users.service';
 import {
   AppCacheKeys,
   apiPublicCacheTtlMs,
+  bustCatalogListingPublicCaches,
   getOrSetCache,
 } from '@common/redis-app-cache';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -172,6 +174,9 @@ export class StoreService {
 
   @Inject(ProductsService)
   private readonly _productsService: ProductsService;
+
+  @Inject(ProductCategoryService)
+  private readonly _productCategoryService: ProductCategoryService;
 
   @Inject(UsersService)
   private readonly _usersService: UsersService;
@@ -740,7 +745,23 @@ export class StoreService {
       .updateOne({ _id: storeId }, { $set: { dailyMenuByWeekday } })
       .exec();
 
+    await this._invalidateCatalogListingAfterDailyMenuChange(storeId);
+
     return this.findMyStoreSummary(user);
+  }
+
+  /** Menu du jour modifié → listing client (recherche, accueil, menu boutique). */
+  private async _invalidateCatalogListingAfterDailyMenuChange(
+    storeId: string,
+  ): Promise<void> {
+    try {
+      await bustCatalogListingPublicCaches(this._cache, storeId);
+      await this._productCategoryService.invalidatePublicListCache();
+    } catch (err) {
+      this._logger.warn(
+        `catalog cache bust after daily menu update failed: ${(err as Error).message}`,
+      );
+    }
   }
 
   private stringifyIdLike(value: unknown): string {

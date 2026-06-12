@@ -67,6 +67,55 @@ export async function bustCacheKey(
   await cache.del(key);
 }
 
+/** Supprime les clés Redis commençant par `prefix` (no-op si store sans SCAN). */
+export async function bustCacheKeysByPrefix(
+  cache: Cache,
+  prefix: string,
+): Promise<number> {
+  const store = (cache as { store?: unknown }).store;
+  if (!store) return 0;
+
+  const client = (
+    store as {
+      client?: {
+        keys?: (pattern: string) => Promise<string[]>;
+      };
+    }
+  ).client;
+
+  if (typeof client?.keys === 'function') {
+    const keys = await client.keys(`${prefix}*`);
+    if (keys.length) {
+      await Promise.all(keys.map((k) => cache.del(k)));
+    }
+    return keys.length;
+  }
+
+  return 0;
+}
+
+/**
+ * Invalide les réponses catalogue / recherche publiques (menu du jour, listing).
+ * Appelé après mise à jour du menu du jour ou changement impactant le catalogue client.
+ */
+export async function bustCatalogListingPublicCaches(
+  cache: Cache,
+  storeId?: string,
+): Promise<void> {
+  const prefixes = [
+    'search-filter:v1:',
+    'home-feed:v2:',
+    'shophome:v2-stripe:',
+  ];
+  if (storeId?.trim()) {
+    const sid = storeId.trim();
+    prefixes.push(`store-menu-page:v1:${sid}:`);
+    prefixes.push(`store-menu-bundle:v1:${sid}:`);
+    await bustCacheKey(cache, AppCacheKeys.storeMeta(sid));
+  }
+  await Promise.all(prefixes.map((p) => bustCacheKeysByPrefix(cache, p)));
+}
+
 export const AppCacheKeys = {
   announcements: 'announcements:active:v1',
   adsPublic: 'ads:public:v2-stripe',
