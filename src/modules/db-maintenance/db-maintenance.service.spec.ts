@@ -93,6 +93,13 @@ describe('DbMaintenanceService integrity tests', () => {
       infraRuntimeSettingsModel as any,
       { options: { projectId: 'test-project' } } as any,
       { getMqttStatus: jest.fn() } as any,
+      {
+        resolveSmtpFromAddress: jest.fn().mockReturnValue('orders@wise-eat.com'),
+        isSmtpConfigured: jest.fn().mockReturnValue(true),
+        isEnabled: jest.fn().mockReturnValue(true),
+        isShippedEnabled: jest.fn().mockReturnValue(true),
+        sendDebugOrderEmail: jest.fn(),
+      } as any,
     );
   });
 

@@ -23,6 +23,7 @@ import {
   AdminAlertAudienceQueryDto,
   SendAdminAlertEmailDto,
 } from './dto/send-admin-alert-email.dto';
+import { SendOrderEmailDebugDto } from './dto/send-order-email-debug.dto';
 import { DbMaintenanceService } from './db-maintenance.service';
 
 @ApiTags('db-maintenance')
@@ -156,5 +157,32 @@ export class DbMaintenanceAdminController {
     @Body() dto: SendAdminAlertEmailDto,
   ) {
     return this._adminAlertEmail.enqueueCampaign(req.user as UserModel, dto);
+  }
+
+  @Get('admin/email-debug/context')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Contexte Email Debug (SMTP, commandes récentes, liens Google) — admin.settings',
+  })
+  async getEmailDebugContext(@Req() req: Request) {
+    return this._dbMaintenance.getEmailDebugContext(req.user as UserModel);
+  }
+
+  @Post('admin/email-debug/send')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+  @ApiOperation({
+    summary:
+      'Envoie un e-mail de commande de test (JSON-LD Order / ParcelDelivery) — admin.settings',
+  })
+  async sendOrderEmailDebug(
+    @Req() req: Request,
+    @Body() dto: SendOrderEmailDebugDto,
+  ) {
+    return this._dbMaintenance.sendOrderEmailDebug(
+      req.user as UserModel,
+      dto,
+    );
   }
 }

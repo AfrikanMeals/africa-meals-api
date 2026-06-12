@@ -56,7 +56,14 @@ import { getStorage } from 'firebase-admin/storage';
 import { Connection, Model, Types } from 'mongoose';
 import * as nodemailer from 'nodemailer';
 import { StoreAccessService } from '../teams/store-access.service';
+import {
+  OrderPaidInvoiceEmailService,
+  type OrderEmailDebugSendResult,
+  type OrderEmailVariant,
+} from '@modules/orders/order-paid-invoice-email.service';
+import { orderInvoiceRef } from '@modules/orders/order-invoice.util';
 import { InjectModel } from '@nestjs/mongoose';
+import { SendOrderEmailDebugDto } from './dto/send-order-email-debug.dto';
 import Stripe = require('stripe');
 import {
   DB_CLEARABLE_TABLES,
@@ -287,6 +294,7 @@ export class DbMaintenanceService {
     @Inject('FIREBASE_ADMIN')
     private readonly firebaseApp: App,
     private readonly wsNotifyDispatchQueue: WsNotifyDispatchQueueService,
+    private readonly orderPaidInvoiceEmail: OrderPaidInvoiceEmailService,
   ) {}
 
   private assertMaintenanceEnabled(): void {
@@ -2949,5 +2957,92 @@ export class DbMaintenanceService {
     } catch {
       return 0;
     }
+  }
+
+  async getEmailDebugContext(user: UserModel) {
+    await this.assertAdminSettingsPermission(user);
+
+    const orders = await this.orderModel
+      .find({ status: { $nin: [OrderStatusEnum.CREATED, OrderStatusEnum.CANCELLED] } })
+      .sort({ createdAt: -1 })
+      .limit(40)
+      .populate('store', 'name')
+      .populate('user', 'email fullName')
+      .select(
+        '_id status totalPrice currency shouldShip createdAt store user',
+      )
+      .lean()
+      .exec();
+
+    const smtpFrom = this.orderPaidInvoiceEmail.resolveSmtpFromAddress();
+    const smtpConfigured = this.orderPaidInvoiceEmail.isSmtpConfigured();
+
+    return {
+      smtp: {
+        configured: smtpConfigured,
+        host: this.config.get<string>('SMTP_HOST')?.trim() || 'smtp.gmail.com',
+        from: smtpFrom,
+        user: this.config.get<string>('SMTP_USER')?.trim() || '',
+      },
+      templates: {
+        paidReceiptEnabled: this.orderPaidInvoiceEmail.isEnabled(),
+        shippedEnabled: this.orderPaidInvoiceEmail.isShippedEnabled(),
+      },
+      links: {
+        markupTester:
+          'https://developers.google.com/workspace/gmail/markup/testing-your-schema',
+        registerWithGoogle:
+          'https://developers.google.com/workspace/gmail/markup/registering-with-google',
+        allowlistForm:
+          'https://docs.google.com/forms/d/e/1FAIpQLSfT5F1VJXtBjGw2mLxY2aX557ctPTsCrJpURiKJjYeVrugHBQ/viewform',
+        schemaSampleEmail: 'schema.whitelisting+sample@gmail.com',
+      },
+      checklist: [
+        'Carte résumé au-dessus du corps (commande, total, statut) si Google a whitelisté le domaine.',
+        'Onglet Achats Gmail (mobile) : regroupement avec d’autres reçus.',
+        'JSON-LD dans <head> — pas seulement dans le corps.',
+        'SPF + DKIM alignés sur le domaine From (@wise-eat.com).',
+        'Attendre 1–5 min après réception avant de vérifier l’affichage.',
+      ],
+      troubleshooting: [
+        'Balise <script type="application/ld+json"> supprimée par certains clients.',
+        'Erreur JSON-LD — valider sur Email Markup Tester.',
+        'From @wise-eat.com sans enregistrement Google — pas de carte Achats pour les clients.',
+        'Test sans whitelist : From et To identiques sur le même @gmail.com.',
+      ],
+      orders: orders.map((o) => {
+        const id = String(o._id);
+        const store = o.store as { name?: string } | null | undefined;
+        const user = o.user as
+          | { email?: string; fullName?: string }
+          | null
+          | undefined;
+        return {
+          id,
+          ref: orderInvoiceRef(id),
+          status: String(o.status ?? ''),
+          storeName: store?.name?.trim() || 'Restaurant',
+          clientEmail: user?.email?.trim() || '',
+          clientName: user?.fullName?.trim() || '',
+          totalPrice: Number(o.totalPrice) || 0,
+          currency: typeof o.currency === 'string' ? o.currency : 'CAD',
+          shouldShip: Boolean(o.shouldShip),
+          createdAt: o.createdAt,
+        };
+      }),
+    };
+  }
+
+  async sendOrderEmailDebug(
+    user: UserModel,
+    dto: SendOrderEmailDebugDto,
+  ): Promise<{ result: OrderEmailDebugSendResult }> {
+    await this.assertAdminSettingsPermission(user);
+    const result = await this.orderPaidInvoiceEmail.sendDebugOrderEmail(
+      dto.orderId.trim(),
+      dto.variant as OrderEmailVariant,
+      dto.toEmail.trim(),
+    );
+    return { result };
   }
 }

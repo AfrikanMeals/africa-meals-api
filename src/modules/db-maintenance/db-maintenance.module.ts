@@ -27,6 +27,7 @@ import {
 } from '@schemas/store_coupon.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
+import { OrdersModule } from '../orders/orders.module';
 import { MailerModule } from '../mailer/mailer.module';
 import { SharedModule } from '../shared/shared.module';
 import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
@@ -44,6 +45,7 @@ import { DbMaintenanceService } from './db-maintenance.service';
     SubscriptionsModule,
     WsNotifyModule,
     MailerModule,
+    OrdersModule,
     MongooseModule.forFeature([
       { name: UserModel.name, schema: UserSchema },
       { name: OrderModel.name, schema: OrderSchema },

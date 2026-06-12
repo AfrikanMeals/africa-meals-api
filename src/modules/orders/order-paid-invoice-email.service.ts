@@ -27,7 +27,37 @@ import {
 } from './order-invoice.util';
 
 /** Variante d'e-mail de commande (copie + statut Schema.org). */
-type OrderEmailVariant = 'paid' | 'shipped';
+export type OrderEmailVariant = 'paid' | 'shipped';
+
+type ComposedOrderEmail = {
+  snapshot: OrderInvoiceSnapshot;
+  clientEmail: string;
+  subject: string;
+  preheader: string;
+  wrappedHtml: string;
+  text: string;
+  jsonLd: Record<string, unknown> | Record<string, unknown>[];
+  pdf?: Buffer;
+};
+
+export type OrderEmailDebugSendResult = {
+  ok: true;
+  sentTo: string;
+  originalClientEmail: string;
+  subject: string;
+  from: string;
+  smtpHost: string;
+  smtpConfigured: boolean;
+  orderId: string;
+  orderRef: string;
+  variant: OrderEmailVariant;
+  jsonLd: Record<string, unknown> | Record<string, unknown>[];
+  jsonLdTypes: string[];
+  hasJsonLdInHtml: boolean;
+  jsonLdInHead: boolean;
+  hints: string[];
+  sentAt: string;
+};
 
 @Injectable()
 export class OrderPaidInvoiceEmailService {
@@ -80,7 +110,7 @@ export class OrderPaidInvoiceEmailService {
     return { ok: true, sentTo: loaded.email };
   }
 
-  /** E-mail « commande en livraison » + balisage Schema.org (OrderInTransit). */
+  /** E-mail « commande en livraison » + balisage Schema.org (Order + ParcelDelivery). */
   async sendForShippedOrder(orderId: string): Promise<void> {
     if (!this.isShippedEnabled()) return;
     await this.sendOrderEmail(orderId, 'shipped');
@@ -243,15 +273,126 @@ export class OrderPaidInvoiceEmailService {
     return { snapshot, email };
   }
 
-  /** Compose et envoie l'e-mail (corps + PDF + JSON-LD) selon la variante. */
-  private async sendOrderEmail(
+  resolveSmtpFromAddress(): string {
+    return (
+      this.config.get<string>('SMTP_FROM')?.trim() ||
+      this.config.get<string>('SMTP_USER')?.trim() ||
+      ''
+    );
+  }
+
+  isSmtpConfigured(): boolean {
+    const user = this.config.get<string>('SMTP_USER')?.trim() ?? '';
+    const pass =
+      this.config.get<string>('SMTP_APP_PASSWORD')?.trim() ||
+      this.config.get<string>('SMTP_PASS')?.trim() ||
+      '';
+    return Boolean(user && pass.replace(/\s/g, ''));
+  }
+
+  /** Envoie un e-mail de commande réel à une adresse de test (admin Email Debug). */
+  async sendDebugOrderEmail(
     orderId: string,
     variant: OrderEmailVariant,
-  ): Promise<void> {
+    toEmail: string,
+  ): Promise<OrderEmailDebugSendResult> {
+    if (variant === 'paid' && !this.isEnabled()) {
+      throw new BadRequestException('order_receipt_email_disabled');
+    }
+    if (variant === 'shipped' && !this.isShippedEnabled()) {
+      throw new BadRequestException('order_shipped_email_disabled');
+    }
+    if (!this.isSmtpConfigured()) {
+      throw new BadRequestException('smtp_not_configured');
+    }
+
+    const composed = await this.composeOrderEmail(orderId, variant);
+    if (!composed) {
+      throw new BadRequestException('order_email_debug_no_snapshot');
+    }
+
+    const to = toEmail.trim().toLowerCase();
+    const ref = orderInvoiceRef(composed.snapshot.orderId);
+    const logTag = `order-email-debug-${variant}`;
+
+    await this.mailer.sendSimple({
+      to,
+      toName: composed.snapshot.clientName,
+      subject: composed.subject,
+      html: composed.wrappedHtml,
+      text: composed.text,
+      logContext: logTag,
+      attachments: composed.pdf
+        ? [
+            {
+              filename: `facture-${ref}.pdf`,
+              content: composed.pdf,
+              contentType: 'application/pdf',
+            },
+          ]
+        : undefined,
+    });
+
+    const from = this.resolveSmtpFromAddress();
+    const fromDomain = from.includes('@') ? from.split('@')[1] ?? '' : '';
+    const hints = [
+      'Ouvrez l’e-mail dans Gmail (web ou mobile) et attendez 1–5 minutes avant de juger l’affichage.',
+      'Carte résumé au-dessus du corps : commande #, restaurant, total, statut (si whitelist Google OK).',
+      'Onglet Achats (mobile) : regroupement avec d’autres reçus si le balisage Order est accepté.',
+      'Vérifiez « Afficher l’original » : Authentication-Results doit montrer SPF/DKIM pass pour wise-eat.com.',
+      'Si rien n’apparaît : validez le HTML sur le Email Markup Tester Google, puis enregistrez le domaine expéditeur.',
+    ];
+    if (fromDomain && to.endsWith('@gmail.com') && from.toLowerCase() !== to) {
+      hints.unshift(
+        `Test sans whitelist : From (${from}) ≠ To (${to}). Pour un test Gmail auto-validé, envoyez depuis et vers le même @gmail.com (mot de passe d’application). Depuis @${fromDomain}, l’enregistrement Google est requis pour la carte Achats.`,
+      );
+    }
+
+    return {
+      ok: true,
+      sentTo: to,
+      originalClientEmail: composed.clientEmail,
+      subject: composed.subject,
+      from,
+      smtpHost:
+        this.config.get<string>('SMTP_HOST')?.trim() || 'smtp.gmail.com',
+      smtpConfigured: true,
+      orderId: composed.snapshot.orderId,
+      orderRef: ref,
+      variant,
+      jsonLd: composed.jsonLd,
+      jsonLdTypes: this.extractJsonLdTypes(composed.jsonLd),
+      hasJsonLdInHtml: composed.wrappedHtml.includes('application/ld+json'),
+      jsonLdInHead: this.jsonLdAppearsInHead(composed.wrappedHtml),
+      hints,
+      sentAt: new Date().toISOString(),
+    };
+  }
+
+  private extractJsonLdTypes(
+    jsonLd: Record<string, unknown> | Record<string, unknown>[],
+  ): string[] {
+    const list = Array.isArray(jsonLd) ? jsonLd : [jsonLd];
+    return list
+      .map((entry) => String(entry['@type'] ?? '').trim())
+      .filter((t) => t.length > 0);
+  }
+
+  private jsonLdAppearsInHead(html: string): boolean {
+    const headClose = html.toLowerCase().indexOf('</head>');
+    const ld = html.indexOf('application/ld+json');
+    return headClose > 0 && ld > 0 && ld < headClose;
+  }
+
+  /** Compose l'e-mail (corps + PDF + JSON-LD) sans envoi. */
+  private async composeOrderEmail(
+    orderId: string,
+    variant: OrderEmailVariant,
+  ): Promise<ComposedOrderEmail | null> {
     const logTag =
       variant === 'paid' ? 'order-paid-invoice' : 'order-shipped';
     const loaded = await this.loadSnapshot(orderId, logTag);
-    if (!loaded) return;
+    if (!loaded) return null;
     const { snapshot, email } = loaded;
 
     const ref = orderInvoiceRef(snapshot.orderId);
@@ -307,7 +448,7 @@ export class OrderPaidInvoiceEmailService {
       intro = `Bonne nouvelle ! Votre commande chez <strong>${storeEsc}</strong> est en cours de livraison.`;
       subject = `${snapshot.storeName} Order #${ref} — Shipped`;
       preheader = `Order #${ref} in transit`;
-      orderStatus = OrderSchemaStatus.inTransit;
+      orderStatus = OrderSchemaStatus.processing;
       withPdf = false;
       textLines = [
         `Commande en livraison — ${snapshot.storeName}`,
@@ -395,18 +536,42 @@ export class OrderPaidInvoiceEmailService {
 
     const pdf = withPdf ? await this.invoicePdf.buildPdf(snapshot) : undefined;
 
-    await this.mailer.sendSimple({
-      to: email,
-      toName: snapshot.clientName,
+    return {
+      snapshot,
+      clientEmail: email,
       subject,
-      html: wrappedHtml,
+      preheader,
+      wrappedHtml,
       text,
+      jsonLd,
+      pdf,
+    };
+  }
+
+  /** Compose et envoie l'e-mail (corps + PDF + JSON-LD) selon la variante. */
+  private async sendOrderEmail(
+    orderId: string,
+    variant: OrderEmailVariant,
+  ): Promise<void> {
+    const composed = await this.composeOrderEmail(orderId, variant);
+    if (!composed) return;
+
+    const ref = orderInvoiceRef(composed.snapshot.orderId);
+    const logTag =
+      variant === 'paid' ? 'order-paid-invoice' : 'order-shipped';
+
+    await this.mailer.sendSimple({
+      to: composed.clientEmail,
+      toName: composed.snapshot.clientName,
+      subject: composed.subject,
+      html: composed.wrappedHtml,
+      text: composed.text,
       logContext: logTag,
-      attachments: pdf
+      attachments: composed.pdf
         ? [
             {
               filename: `facture-${ref}.pdf`,
-              content: pdf,
+              content: composed.pdf,
               contentType: 'application/pdf',
             },
           ]

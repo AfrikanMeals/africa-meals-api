@@ -56,7 +56,11 @@ import { VendorNotificationModule } from '@modules/vendor-notifications/vendor-n
     OrderInvoicePdfService,
     OrderPaidInvoiceEmailService,
   ],
-  exports: [OrdersService, OrderStatusEventsService],
+  exports: [
+    OrdersService,
+    OrderStatusEventsService,
+    OrderPaidInvoiceEmailService,
+  ],
   imports: [
     NotificationsModule,
     TeamsModule,

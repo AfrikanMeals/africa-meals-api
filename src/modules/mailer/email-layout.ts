@@ -213,11 +213,6 @@ export function wrapEmailHtml(
     ? renderJsonLdBlocks(options.jsonLd)
     : '';
 
-  /** Secours si le client mail retire les scripts du `<head>`. */
-  const jsonLdBodyBlock = options?.jsonLd
-    ? `<div aria-hidden="true" style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${renderJsonLdBlocks(options.jsonLd)}</div>`
-    : '';
-
   return `<!DOCTYPE html>
 <html lang="fr" ${LAYOUT_MARKER}>
 <head>
@@ -246,7 +241,6 @@ export function wrapEmailHtml(
       </td>
     </tr>
   </table>
-  ${jsonLdBodyBlock}
 </body>
 </html>`.trim();
 }

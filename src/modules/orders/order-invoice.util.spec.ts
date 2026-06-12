@@ -90,7 +90,7 @@ describe('order-invoice.util Gmail markup', () => {
   it('builds billing Order JSON-LD aligned with Google docs', () => {
     const jsonLd = buildOrderEmailJsonLd(snapshot, opts);
 
-    expect(jsonLd['@context']).toBe('http://schema.org');
+    expect(jsonLd['@context']).toBe('https://schema.org');
     expect(jsonLd['@type']).toBe('Order');
     expect(jsonLd.merchant).toEqual({
       '@type': 'Organization',
@@ -102,7 +102,7 @@ describe('order-invoice.util Gmail markup', () => {
     expect(jsonLd.priceCurrency).toBe('CAD');
     expect(jsonLd.discount).toBe('2.00');
     expect(jsonLd.discountCurrency).toBe('CAD');
-    expect(jsonLd.orderStatus).toBe('http://schema.org/OrderProcessing');
+    expect(jsonLd.orderStatus).toBe('https://schema.org/OrderProcessing');
     expect(jsonLd.priceSpecification).toEqual({
       '@type': 'PriceSpecification',
       validFrom: '2026-06-07T12:00:00.000Z',
@@ -174,7 +174,7 @@ describe('order-invoice.util Gmail markup', () => {
   it('returns Order JSON-LD only for paid receipt emails', () => {
     const jsonLd = buildOrderReceiptEmailJsonLd(snapshot, opts);
     expect(jsonLd['@type']).toBe('Order');
-    expect(jsonLd['@context']).toBe('http://schema.org');
+    expect(jsonLd['@context']).toBe('https://schema.org');
     expect(jsonLd.orderNumber).toBe('AE95ED9A');
   });
 
@@ -209,7 +209,7 @@ describe('order-invoice.util Gmail markup', () => {
 
     expect(parcel).toBeDefined();
     expect(parcel!['@type']).toBe('ParcelDelivery');
-    expect(parcel!['@context']).toBe('http://schema.org');
+    expect(parcel!['@context']).toBe('https://schema.org');
     expect(parcel!.trackingNumber).toBe('AE95ED9A');
     expect(parcel!.trackingUrl).toBe('https://wise-eat.com/orders/abc');
     expect(parcel!.expectedArrivalUntil).toMatch(
@@ -236,13 +236,9 @@ describe('order-invoice.util Gmail markup', () => {
     expect(parcel!.partOfOrder).toMatchObject({
       '@type': 'Order',
       orderNumber: 'AE95ED9A',
-      orderStatus: 'http://schema.org/OrderInTransit',
+      orderStatus: 'https://schema.org/OrderProcessing',
     });
-    expect(parcel!.deliveryStatus).toEqual({
-      '@type': 'DeliveryEvent',
-      eventStatus: ParcelDeliverySchemaStatus.inTransit,
-      name: 'InTransit',
-    });
+    expect(parcel!.deliveryStatus).toBe('InTransit');
     expect(parcel!.potentialAction).toEqual({
       '@type': 'TrackAction',
       url: 'https://wise-eat.com/orders/abc',

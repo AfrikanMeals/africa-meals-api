@@ -383,16 +383,15 @@ export function formatOrderDeliveryLine(args: {
  * @see https://developers.google.com/workspace/gmail/markup/reference/order
  */
 export const OrderSchemaStatus = {
-  processing: 'http://schema.org/OrderProcessing',
-  inTransit: 'http://schema.org/OrderInTransit',
-  delivered: 'http://schema.org/OrderDelivered',
-  problem: 'http://schema.org/OrderProblem',
-  cancelled: 'http://schema.org/OrderCancelled',
+  processing: 'https://schema.org/OrderProcessing',
+  delivered: 'https://schema.org/OrderDelivered',
+  problem: 'https://schema.org/OrderProblem',
+  cancelled: 'https://schema.org/OrderCancelled',
 } as const;
 
-/** Statut livraison Schema.org (DeliveryEvent.eventStatus). */
+/** Statut livraison (ParcelDelivery.deliveryStatus). */
 export const ParcelDeliverySchemaStatus = {
-  inTransit: 'http://schema.org/DeliveryInTransit',
+  inTransit: 'InTransit',
 } as const;
 
 export function coordsFromAddressLike(addr: unknown): [number, number] | undefined {
@@ -568,7 +567,7 @@ export function buildOrderEmailJsonLd(
   }
 
   const payload: Record<string, unknown> = {
-    '@context': 'http://schema.org',
+    '@context': 'https://schema.org',
     '@type': 'Order',
     merchant,
     orderNumber: opts.ref,
@@ -638,7 +637,7 @@ export function buildInvoiceEmailJsonLd(
   };
 
   const payload: Record<string, unknown> = {
-    '@context': 'http://schema.org',
+    '@context': 'https://schema.org',
     '@type': 'Invoice',
     accountId: opts.ref,
     confirmationNumber: opts.ref,
@@ -736,7 +735,7 @@ export function buildParcelDeliveryEmailJsonLd(
     '@type': 'Order',
     orderNumber: opts.ref,
     merchant,
-    orderStatus: OrderSchemaStatus.inTransit,
+    orderStatus: OrderSchemaStatus.processing,
   };
 
   const firstRow = snapshot.items?.[0] as LineItemRow | undefined;
@@ -761,7 +760,7 @@ export function buildParcelDeliveryEmailJsonLd(
   if (productUrl) itemShipped.url = productUrl;
 
   const payload: Record<string, unknown> = {
-    '@context': 'http://schema.org',
+    '@context': 'https://schema.org',
     '@type': 'ParcelDelivery',
     deliveryAddress,
     expectedArrivalUntil,
@@ -769,11 +768,7 @@ export function buildParcelDeliveryEmailJsonLd(
     itemShipped,
     partOfOrder,
     trackingNumber: opts.ref,
-    deliveryStatus: {
-      '@type': 'DeliveryEvent',
-      eventStatus: ParcelDeliverySchemaStatus.inTransit,
-      name: 'InTransit',
-    },
+    deliveryStatus: ParcelDeliverySchemaStatus.inTransit,
     hasDeliveryMethod: {
       '@type': 'ParcelService',
       name: 'http://schema.org/ParcelService',
