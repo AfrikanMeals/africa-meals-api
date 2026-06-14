@@ -48,7 +48,7 @@ export class NotificationsService implements OnModuleInit {
     if (!projectId) {
       this.logger.error(
         'FCM désactivé : Firebase Admin sans projectId. ' +
-          'Ajoutez GOOGLE_APPLICATION_CREDENTIALS=accounts.json et AM_FIREBASE_PROJECT_ID=wise-eat-ca dans .env puis redémarrez.',
+          'Définissez AM_FIREBASE_PROJECT_ID et un compte de service (AM_FIREBASE_SERVICE_ACCOUNT_JSON ou AM_FIREBASE_SERVICE_ACCOUNT_PATH hors dépôt) puis redémarrez.',
       );
       return;
     }
@@ -533,7 +533,7 @@ export class NotificationsService implements OnModuleInit {
           } else {
             const hint =
               code === 'messaging/third-party-auth-error'
-                ? ' — vérifiez GOOGLE_APPLICATION_CREDENTIALS=accounts.json (compte de service), pas la clé VAPID ; pour iOS, configurez APNs dans la console Firebase'
+                ? ' — vérifiez AM_FIREBASE_SERVICE_ACCOUNT_* (compte de service), pas la clé VAPID ; pour iOS, configurez APNs dans la console Firebase'
                 : '';
             this.logger.warn(
               `FCM error: ${code} ${resp.error?.message ?? ''}${hint}`,

@@ -13,7 +13,9 @@ import {
   VendorSubscriptionModel,
   VendorSubscriptionSchema,
 } from '@schemas/vendor-subscription.schema';
+import { MailerModule } from '@modules/mailer/mailer.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
+import { UserModel, UserSchema } from '@schemas/user.schema';
 import { PlatformSubscriptionPlansController } from './platform-subscription-plans.controller';
 import { SubscriptionsController } from './subscriptions.controller';
 import { SubscriptionLifecycleCron } from './subscription-lifecycle.cron';
@@ -21,11 +23,14 @@ import { SubscriptionTrialReminderCron } from './subscription-trial-reminder.cro
 import { SubscriptionTrialReminderService } from './subscription-trial-reminder.service';
 import { SubscriptionsService } from './subscriptions.service';
 import { SubscriptionsStripeCheckoutService } from './subscriptions-stripe-checkout.service';
+import { VendorSubscriptionEmailService } from './vendor-subscription-email.service';
 
 @Module({
   imports: [
+    MailerModule,
     NotificationsModule,
     MongooseModule.forFeature([
+      { name: UserModel.name, schema: UserSchema },
       { name: SubscriptionPlanModel.name, schema: SubscriptionPlanSchema },
       {
         name: VendorSubscriptionModel.name,
@@ -42,10 +47,15 @@ import { SubscriptionsStripeCheckoutService } from './subscriptions-stripe-check
   providers: [
     SubscriptionsService,
     SubscriptionsStripeCheckoutService,
+    VendorSubscriptionEmailService,
     SubscriptionLifecycleCron,
     SubscriptionTrialReminderService,
     SubscriptionTrialReminderCron,
   ],
-  exports: [SubscriptionsService, SubscriptionsStripeCheckoutService],
+  exports: [
+    SubscriptionsService,
+    SubscriptionsStripeCheckoutService,
+    VendorSubscriptionEmailService,
+  ],
 })
 export class SubscriptionsModule {}

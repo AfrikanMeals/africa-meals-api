@@ -37,6 +37,12 @@ lerna-debug.log*
 .env
 .env.local
 
+# Firebase / GCP service account keys (never commit)
+accounts.json
+serviceAccountKey.json
+*-firebase-adminsdk-*.json
+firebase-service-account.json
+
 # Rapports générés par `npm run bench:api`
 scripts/reports/
 

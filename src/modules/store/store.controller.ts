@@ -68,6 +68,7 @@ import {
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { StoreService } from './store.service';
 import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
+import { StoreSubscribersService } from '@modules/store-subscribers/store-subscribers.service';
 import {
   AcceptStoreDeliveryDriverInviteDto,
   InviteStoreDeliveryDriverDto,
@@ -203,6 +204,9 @@ export class StoreController {
 
   @Inject(StoreDeliveryDriversService)
   private readonly _storeDeliveryDrivers: StoreDeliveryDriversService;
+
+  @Inject(StoreSubscribersService)
+  private readonly _storeSubscribers: StoreSubscribersService;
 
   /** Résumé vendeur (évite la collision avec GET :id = "my-store"). */
   @Get('vendor/summary')
@@ -1029,6 +1033,40 @@ export class StoreController {
   @UseGuards(JwtGuard)
   async removeFromFavorites(@Param('id') id: string, @Req() req: Request) {
     return this._storeService.removeFromFavorites(id, req.user as UserModel);
+  }
+
+  @Get(':id/subscribe-status')
+  @UseGuards(JwtGuard)
+  async subscribeStatus(@Param('id') id: string, @Req() req: Request) {
+    const subscribed = await this._storeSubscribers.isSubscribed(
+      id,
+      req.user as UserModel,
+    );
+    return { subscribed };
+  }
+
+  @Post(':id/subscribe')
+  @UseGuards(JwtGuard)
+  async subscribeToStore(@Param('id') id: string, @Req() req: Request) {
+    return this._storeSubscribers.subscribe(id, req.user as UserModel);
+  }
+
+  @Delete(':id/subscribe')
+  @UseGuards(JwtGuard)
+  async unsubscribeFromStore(@Param('id') id: string, @Req() req: Request) {
+    return this._storeSubscribers.unsubscribe(id, req.user as UserModel);
+  }
+
+  @Get(':id/subscribers/stats')
+  @UseGuards(JwtGuard)
+  async storeSubscriberStats(@Param('id') id: string, @Req() req: Request) {
+    return this._storeSubscribers.statsForStore(id, req.user as UserModel);
+  }
+
+  @Get(':id/subscribers')
+  @UseGuards(JwtGuard)
+  async storeSubscribers(@Param('id') id: string, @Req() req: Request) {
+    return this._storeSubscribers.listForStore(id, req.user as UserModel);
   }
 
   @Post(':id/cart')

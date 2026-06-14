@@ -1,6 +1,9 @@
 import { storeOwnerStripeOnboardedPipelineStages } from '@modules/billing/stripe/stripe-connect-visibility';
 import { DrinksService } from '@modules/drinks/drinks.service';
 import { SearchService } from '@modules/search/search.service';
+import { StoreSubscribersService } from '@modules/store-subscribers/store-subscribers.service';
+import { SearchSettingsService } from '@modules/search-settings/search-settings.service';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { BadRequestException, Injectable, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
@@ -39,6 +42,9 @@ export class RecommendationsService {
 
   constructor(
     private readonly _search: SearchService,
+    private readonly _subscriptions: SubscriptionsService,
+    private readonly _storeSubscribers: StoreSubscribersService,
+    private readonly _searchSettings: SearchSettingsService,
     @InjectModel(UserRecommendationSignalModel.name)
     private readonly _signalModel: Model<UserRecommendationSignalModel>,
     @InjectModel(OrderModel.name)
@@ -127,45 +133,25 @@ export class RecommendationsService {
     });
   }
 
-  /** Poids du scoring fil (surcharge via variables d’environnement). */
-  private _scoreWeights(): {
-    perLike: number;
-    perRating: number;
-    recencyDivisor: number;
-    favProduct: number;
-    favStore: number;
-    viewedStore: number;
-    viewedProduct: number;
-    favCategory: number;
-    ratedProduct: number;
-    digestProduct: number;
-    digestStore: number;
-    trendProductMax: number;
-    trendProductDecay: number;
-    searchDigestMatch: number;
-    searchGlobalMatch: number;
-  } {
-    const n = (key: string, def: number, min = 0): number => {
-      const v = Number(process.env[key]);
-      return Number.isFinite(v) && v >= min ? v : def;
-    };
-    return {
-      perLike: n('RECO_SCORE_PER_LIKE', 0.12),
-      perRating: n('RECO_SCORE_PER_RATING', 2.8),
-      recencyDivisor: Math.max(1, n('RECO_SCORE_RECENCY_DIVISOR', 400, 1)),
-      favProduct: n('RECO_WEIGHT_FAV_PRODUCT', 85),
-      favStore: n('RECO_WEIGHT_FAV_STORE', 42),
-      viewedStore: n('RECO_WEIGHT_VIEWED_STORE', 28),
-      viewedProduct: n('RECO_WEIGHT_VIEWED_PRODUCT', 22),
-      favCategory: n('RECO_WEIGHT_FAV_CATEGORY', 24),
-      ratedProduct: n('RECO_WEIGHT_RATED_PRODUCT', 32),
-      digestProduct: n('RECO_WEIGHT_DIGEST_PRODUCT', 14),
-      digestStore: n('RECO_WEIGHT_DIGEST_STORE', 18),
-      trendProductMax: n('RECO_TREND_PRODUCT_BOOST_MAX', 38),
-      trendProductDecay: n('RECO_TREND_PRODUCT_BOOST_DECAY', 0.15),
-      searchDigestMatch: n('RECO_WEIGHT_SEARCH_DIGEST', 6),
-      searchGlobalMatch: n('RECO_WEIGHT_SEARCH_GLOBAL', 3),
-    };
+  /** Poids du scoring fil (admin + variables d’environnement). */
+  private async _scoreWeights() {
+    return this._searchSettings.getRecommendationWeights();
+  }
+
+  private _storeIdFromProduct(p: Record<string, unknown>): string {
+    const st = p.store as Record<string, unknown> | undefined;
+    return st ? String(st.id ?? st._id ?? '').trim() : '';
+  }
+
+  private _collectCandidateStoreIds(
+    candidates: Record<string, unknown>[],
+  ): string[] {
+    const ids = new Set<string>();
+    for (const p of candidates) {
+      const sid = this._storeIdFromProduct(p);
+      if (sid) ids.add(sid);
+    }
+    return [...ids];
   }
 
   async getFeed(
@@ -196,7 +182,17 @@ export class RecommendationsService {
         : Promise.resolve(null),
     ]);
 
-    const W = this._scoreWeights();
+    const W = await this._scoreWeights();
+    const candidateStoreIds = this._collectCandidateStoreIds(candidates);
+    const [planSortByStore, subscribedStoreIds] = await Promise.all([
+      this._subscriptions.resolveActivePlanSortOrderByStoreIds(
+        candidateStoreIds,
+      ),
+      user && userOid
+        ? this._storeSubscribers.listSubscribedStoreIds(user)
+        : Promise.resolve([]),
+    ]);
+    const subscribedStoreBoost = new Set(subscribedStoreIds);
     const trendProductBoost = new Map<string, number>();
     const trendIds = snapshot?.trendProductIds ?? [];
     for (let i = 0; i < trendIds.length; i++) {
@@ -304,8 +300,7 @@ export class RecommendationsService {
 
     const scoreOne = (p: Record<string, unknown>): number => {
       const id = String(p.id ?? p._id ?? '');
-      const st = p.store as Record<string, unknown> | undefined;
-      const storeId = st ? String(st.id ?? st._id ?? '') : '';
+      const storeId = this._storeIdFromProduct(p);
       const cat = p.category as Record<string, unknown> | undefined;
       const catId = cat ? String(cat.id ?? cat._id ?? '') : '';
 
@@ -327,6 +322,14 @@ export class RecommendationsService {
       score += trendProductBoost.get(id) ?? 0;
       if (digestProductBoost.has(id)) score += W.digestProduct;
       if (storeId && digestStoreBoost.has(storeId)) score += W.digestStore;
+
+      if (storeId && subscribedStoreBoost.has(storeId)) {
+        score += W.subscribedStore;
+      }
+      if (storeId) {
+        const planSort = planSortByStore.get(storeId) ?? 1;
+        score += Math.max(0, planSort) * W.vendorPlanSortOrder;
+      }
 
       const title = String(p.title ?? '');
       const bio = String(p.bio ?? '');
@@ -361,10 +364,20 @@ export class RecommendationsService {
       .filter((id) => Types.ObjectId.isValid(id))
       .slice(0, 28);
 
-    const stores = await this._trendingStores(12, [
-      ...storeIdsFromProducts,
-      ...extraBoostStores,
-    ]);
+    const stores = await this._trendingStores(
+      12,
+      [
+        ...storeIdsFromProducts,
+        ...extraBoostStores,
+        ...subscribedStoreIds,
+      ],
+      {
+        planSortByStore,
+        subscribedStoreIds: subscribedStoreBoost,
+        planSortWeight: W.vendorPlanSortOrder,
+        subscribedWeight: W.subscribedStore,
+      },
+    );
     const drinkStorePool = [
       ...new Set([
         ...storeIdsFromProducts,
@@ -392,11 +405,19 @@ export class RecommendationsService {
   private async _trendingStores(
     limit: number,
     boostStoreIds: string[],
+    opts?: {
+      planSortByStore?: Map<string, number>;
+      subscribedStoreIds?: Set<string>;
+      planSortWeight?: number;
+      subscribedWeight?: number;
+    },
   ): Promise<Record<string, unknown>[]> {
     const boostOids = boostStoreIds
       .filter((id) => Types.ObjectId.isValid(id))
       .slice(0, 40)
       .map((id) => new Types.ObjectId(id));
+
+    const preLimit = Math.max(limit * 6, 48);
 
     const rows = await this._storeModel
       .aggregate([
@@ -410,7 +431,7 @@ export class RecommendationsService {
         ...storeArticlesAvailabilityPipelineStages(),
         { $sort: { averageRating: -1, updatedAt: -1 } },
         /** Borne avant `$lookup` commandes — coût O(n×orders) sinon sur tout le parc boutiques. */
-        { $limit: 160 },
+        { $limit: preLimit },
         {
           $lookup: {
             from: 'orders',
@@ -451,7 +472,7 @@ export class RecommendationsService {
           },
         },
         { $sort: { rankScore: -1, likeCount: -1, updatedAt: -1 } },
-        { $limit: limit },
+        { $limit: preLimit },
         {
           $project: {
             _id: 1,
@@ -460,13 +481,54 @@ export class RecommendationsService {
             averageRating: 1,
             orderCount: 1,
             likeCount: 1,
+            rankScore: 1,
           },
         },
       ])
       .option({ allowDiskUse: true })
       .exec();
 
-    return rows.map((s) => ({
+    const planSortByStore = opts?.planSortByStore;
+    const subscribedStoreIds = opts?.subscribedStoreIds;
+    const planSortWeight = opts?.planSortWeight ?? 0;
+    const subscribedWeight = opts?.subscribedWeight ?? 0;
+
+    let storePlanSort = planSortByStore;
+    if (!storePlanSort || subscribedWeight > 0) {
+      const rowIds = (rows as Record<string, unknown>[]).map((s) =>
+        String(s._id ?? ''),
+      );
+      const missingPlanIds = storePlanSort
+        ? rowIds.filter((id) => !storePlanSort!.has(id))
+        : rowIds;
+      if (missingPlanIds.length) {
+        const fetched =
+          await this._subscriptions.resolveActivePlanSortOrderByStoreIds(
+            missingPlanIds,
+          );
+        storePlanSort = new Map([...(storePlanSort ?? []), ...fetched]);
+      }
+    }
+
+    const rescored = (rows as Record<string, unknown>[]).map((s) => {
+      const id = String(s._id ?? '');
+      let rankScore = Number(s.rankScore ?? 0);
+      if (storePlanSort && planSortWeight > 0) {
+        rankScore += Math.max(0, storePlanSort.get(id) ?? 1) * planSortWeight;
+      }
+      if (subscribedStoreIds?.has(id) && subscribedWeight > 0) {
+        rankScore += subscribedWeight;
+      }
+      return { ...s, rankScore } as Record<string, unknown>;
+    });
+
+    rescored.sort((a, b) => {
+      const diff = Number(b.rankScore ?? 0) - Number(a.rankScore ?? 0);
+      if (diff !== 0) return diff;
+      return Number(b.likeCount ?? 0) - Number(a.likeCount ?? 0);
+    });
+
+    return rescored.slice(0, limit).map((s) => ({
       id: String(s._id),
       name: String(s.name ?? ''),
       logo: String(s.profileImage ?? ''),

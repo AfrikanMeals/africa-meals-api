@@ -29,6 +29,12 @@ export enum StoreBusinessTypeEnum {
   PHARMACY = 'PHARMACY',
 }
 
+/** Plats proposés en pré-commande : menu du jour ou catalogue complet. */
+export enum MealPreOrderCatalogScopeEnum {
+  DAILY_MENU = 'DAILY_MENU',
+  CATALOG = 'CATALOG',
+}
+
 @Schema({
   toJSON: {
     getters: true,
@@ -103,6 +109,17 @@ export class StoreModel extends BaseSchema {
    */
   @Prop({ default: false, name: 'accepts_meal_pre_orders' })
   acceptsMealPreOrders?: boolean;
+
+  /**
+   * Périmètre catalogue en pré-commande : plats du menu du jour (`DAILY_MENU`)
+   * ou tout plat actif du catalogue (`CATALOG`).
+   */
+  @Prop({
+    enum: MealPreOrderCatalogScopeEnum,
+    default: MealPreOrderCatalogScopeEnum.DAILY_MENU,
+    name: 'meal_pre_order_catalog_scope',
+  })
+  mealPreOrderCatalogScope?: MealPreOrderCatalogScopeEnum;
 
   /**
    * Le restaurant gère sa propre flotte de livreurs (invitations, assignation).

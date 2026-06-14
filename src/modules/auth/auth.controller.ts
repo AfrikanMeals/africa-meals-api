@@ -29,7 +29,9 @@ import { AuthService } from './auth.service';
 import {
   ChatMediaJsonDto,
   ChatVoiceJsonDto,
+  ChangePasswordDto,
   CheckAccountDto,
+  Email2faConfirmDto,
   EmailVerificationDto,
   ForgotPasswordDto,
   AppleAuthDto,
@@ -40,8 +42,10 @@ import {
   RegisterDto,
   RegisterFcmTokenDto,
   RemoveFcmTokenDto,
+  Resend2faLoginDto,
   ResetPasswordDto,
   UpdateProfileDto,
+  Verify2faLoginDto,
 } from './dto/auth.dto';
 import { JwtGuard } from './guards/jwt.guard';
 import { buildLoginRequestContext } from './login-notification/login-request-context.util';
@@ -97,6 +101,19 @@ export class AuthController {
   async login(@Body(ValidationPipe) args: LoginDto, @Req() req: Request) {
     this.logger.log(`login body: ${JSON.stringify(args)}`);
     return this._authService.login(args, buildLoginRequestContext(req));
+  }
+
+  @Post('login/verify-2fa')
+  async verify2faLogin(
+    @Body(ValidationPipe) args: Verify2faLoginDto,
+    @Req() req: Request,
+  ) {
+    return this._authService.verify2faLogin(args, buildLoginRequestContext(req));
+  }
+
+  @Post('login/resend-2fa')
+  async resend2faLogin(@Body(ValidationPipe) args: Resend2faLoginDto) {
+    return this._authService.resend2faLogin(args);
   }
 
   @Post('refresh')
@@ -345,6 +362,56 @@ export class AuthController {
   ) {
     const user = req.user as UserModel;
     return this._authService.updateProfile(user._id.toString(), args);
+  }
+
+  @Get('me/security')
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Paramètres de sécurité du compte (2FA, mot de passe)' })
+  @UseGuards(JwtGuard)
+  async getSecuritySettings(@Req() req: Request) {
+    const user = req.user as UserModel;
+    return this._authService.getSecuritySettings(user._id.toString());
+  }
+
+  @Post('me/change-password')
+  @HttpCode(200)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Changer le mot de passe (compte e-mail)' })
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async changePassword(
+    @Req() req: Request,
+    @Body() body: ChangePasswordDto,
+  ) {
+    const user = req.user as UserModel;
+    return this._authService.changePassword(user._id.toString(), body);
+  }
+
+  @Post('me/email-2fa/request-enable')
+  @HttpCode(200)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Demander l’activation 2FA par e-mail (envoi code)' })
+  @UseGuards(JwtGuard)
+  async requestEmail2faEnable(@Req() req: Request) {
+    const user = req.user as UserModel;
+    return this._authService.requestEmail2faEnable(user._id.toString());
+  }
+
+  @Post('me/email-2fa/confirm-enable')
+  @HttpCode(200)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Confirmer l’activation 2FA avec le code e-mail' })
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async confirmEmail2faEnable(
+    @Req() req: Request,
+    @Body() body: Email2faConfirmDto,
+  ) {
+    const user = req.user as UserModel;
+    return this._authService.confirmEmail2faEnable(
+      user._id.toString(),
+      body,
+    );
   }
 
   @Post('me/chat-voice')

@@ -43,6 +43,7 @@ import { StoreController } from './store.controller';
 import { StoreRegionBackfillService } from './store-region-backfill.service';
 import { StoreService } from './store.service';
 import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/store-delivery-drivers.module';
+import { StoreSubscribersModule } from '@modules/store-subscribers/store-subscribers.module';
 
 @Module({
   controllers: [StoreController],
@@ -75,6 +76,7 @@ import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/stor
     DrinksModule,
     forwardRef(() => BillingModule),
     StoreDeliveryDriversModule,
+    StoreSubscribersModule,
     MongooseModule.forFeature([
       { name: AppNotificationModel.name, schema: AppNotificationSchema },
       { name: StoreModel.name, schema: StoreSchema },

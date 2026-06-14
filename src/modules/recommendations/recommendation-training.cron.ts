@@ -1,4 +1,5 @@
 import { CronMonitorService } from '@modules/cron-monitor/cron-monitor.service';
+import { SearchSettingsService } from '@modules/search-settings/search-settings.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { RecommendationTrainingService } from './recommendation-training.service';
@@ -8,6 +9,7 @@ import { RecommendationTrainingService } from './recommendation-training.service
  *
  * `RECOMMENDATION_TRAINING_CRON` — expression cron (défaut : tous les jours à 03:15 UTC).
  * `DISABLE_RECOMMENDATION_TRAINING_CRON=true` — désactive l’exécution planifiée.
+ * Respecte aussi `trainingCronEnabled` dans les paramètres admin.
  */
 @Injectable()
 export class RecommendationTrainingCron {
@@ -15,11 +17,20 @@ export class RecommendationTrainingCron {
 
   constructor(
     private readonly _training: RecommendationTrainingService,
+    private readonly _searchSettings: SearchSettingsService,
     private readonly cronMonitor: CronMonitorService,
   ) {}
 
   @Cron(process.env.RECOMMENDATION_TRAINING_CRON ?? '15 3 * * *')
   async runScheduledTraining(): Promise<void> {
+    if (process.env.DISABLE_RECOMMENDATION_TRAINING_CRON === 'true') {
+      return;
+    }
+    const runtime = await this._searchSettings.getSearchRuntimeConfig();
+    if (!runtime.trainingCronEnabled) {
+      return;
+    }
+
     await this.cronMonitor.execute('recommendation_training', async () => {
       try {
         await this._training.runTrainingPass();

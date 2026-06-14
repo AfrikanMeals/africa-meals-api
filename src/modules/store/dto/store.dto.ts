@@ -1,6 +1,6 @@
 import { CreateAddressDto } from '@modules/addresses/dto/addresses.dto';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { StoreDeliveryAssignmentModeEnum } from '@schemas/store.schema';
+import { StoreDeliveryAssignmentModeEnum, MealPreOrderCatalogScopeEnum } from '@schemas/store.schema';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
@@ -110,6 +110,16 @@ export class CreateStoreDto {
   @IsOptional()
   @IsBoolean()
   acceptsMealPreOrders?: boolean;
+
+  @ApiPropertyOptional({
+    enum: MealPreOrderCatalogScopeEnum,
+    description:
+      'Plats proposés en pré-commande : menu du jour (DAILY_MENU) ou catalogue complet (CATALOG).',
+    default: MealPreOrderCatalogScopeEnum.DAILY_MENU,
+  })
+  @IsOptional()
+  @IsEnum(MealPreOrderCatalogScopeEnum)
+  mealPreOrderCatalogScope?: MealPreOrderCatalogScopeEnum;
 
   @ApiPropertyOptional({
     description:
@@ -310,6 +320,24 @@ export class PatchVendorShippingZonesDto {
   @IsOptional()
   @IsEnum(StoreDeliveryAssignmentModeEnum)
   deliveryAssignmentMode?: StoreDeliveryAssignmentModeEnum;
+
+  @ApiPropertyOptional({
+    description:
+      'Autorise la pré-commande de repas. Nécessite une formule incluant cette option.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  acceptsMealPreOrders?: boolean;
+
+  @ApiPropertyOptional({
+    enum: MealPreOrderCatalogScopeEnum,
+    description:
+      'Plats proposés en pré-commande : menu du jour (DAILY_MENU) ou catalogue complet (CATALOG).',
+    default: MealPreOrderCatalogScopeEnum.DAILY_MENU,
+  })
+  @IsOptional()
+  @IsEnum(MealPreOrderCatalogScopeEnum)
+  mealPreOrderCatalogScope?: MealPreOrderCatalogScopeEnum;
 
   @ApiPropertyOptional({
     type: () => [StoreShippingZoneDto],

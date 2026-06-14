@@ -69,6 +69,14 @@ export class CreateSubscriptionPlanDto {
   mobileAccess?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  storeSubscriptionEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  mealPreOrderEnabled?: boolean;
+
+  @IsOptional()
   @IsInt()
   @Min(0)
   maxCatalogItems?: number;
@@ -153,6 +161,14 @@ export class UpdateSubscriptionPlanDto {
   @IsOptional()
   @IsBoolean()
   mobileAccess?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  storeSubscriptionEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  mealPreOrderEnabled?: boolean;
 
   @IsOptional()
   @IsInt()

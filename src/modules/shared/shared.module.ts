@@ -9,12 +9,11 @@ import {
   type App,
   type ServiceAccount,
 } from 'firebase-admin/app';
-import { resolve } from 'path';
 import {
+  FIREBASE_SERVICE_ACCOUNT_ENV_HINT,
   getAmFirebaseProjectId,
-  getAmFirebaseServiceAccountJson,
-  getAmFirebaseServiceAccountPath,
   getAmFirebaseStorageBucket,
+  loadFirebaseServiceAccount,
 } from 'src/config/firebase-env';
 import { MultipartToJsonPipe } from 'src/pipes/multipart-to-json/multipart-to-json.pipe';
 
@@ -27,27 +26,8 @@ type FirebaseAdminInit = {
   storageBucket: string;
 };
 
-function loadServiceAccountFromConfig(
-  config: ConfigService,
-): Record<string, unknown> | null {
-  const inline = getAmFirebaseServiceAccountJson(config);
-  if (inline?.trim()) {
-    return JSON.parse(inline) as Record<string, unknown>;
-  }
-  const pathEnv =
-    config.get<string>('GOOGLE_APPLICATION_CREDENTIALS') ||
-    getAmFirebaseServiceAccountPath(config);
-  if (!pathEnv?.trim()) {
-    return null;
-  }
-  const absolutePath = resolve(process.cwd(), pathEnv.trim());
-  process.env.GOOGLE_APPLICATION_CREDENTIALS = absolutePath;
-  const content = readFileSync(absolutePath, 'utf8');
-  return JSON.parse(content) as Record<string, unknown>;
-}
-
 function resolveFirebaseAdminInit(config: ConfigService): FirebaseAdminInit {
-  const sa = loadServiceAccountFromConfig(config);
+  const sa = loadFirebaseServiceAccount(config);
   const saProjectId = String(sa?.project_id ?? sa?.projectId ?? '').trim();
   const saEmail = String(sa?.client_email ?? sa?.clientEmail ?? '').trim();
   const saKey = String(sa?.private_key ?? sa?.privateKey ?? '').trim();
@@ -65,7 +45,7 @@ function resolveFirebaseAdminInit(config: ConfigService): FirebaseAdminInit {
   }
 
   firebaseBootstrapLog.warn(
-    'Compte de service Firebase introuvable — repli sur applicationDefault() (FCM peut échouer en local). Définissez GOOGLE_APPLICATION_CREDENTIALS=accounts.json',
+    `Compte de service Firebase introuvable — repli sur applicationDefault() (FCM peut échouer en local). ${FIREBASE_SERVICE_ACCOUNT_ENV_HINT}`,
   );
   const projectId = getAmFirebaseProjectId(config)?.trim() ?? '';
   return {
@@ -110,7 +90,7 @@ function getOrCreateFirebaseApp(options: FirebaseAdminInit): App {
         const init = resolveFirebaseAdminInit(config);
         if (!init.projectId) {
           firebaseBootstrapLog.error(
-            'AM_FIREBASE_PROJECT_ID ou accounts.json (project_id) requis pour FCM',
+            `AM_FIREBASE_PROJECT_ID ou compte de service requis pour FCM. ${FIREBASE_SERVICE_ACCOUNT_ENV_HINT}`,
           );
         }
         return getOrCreateFirebaseApp(init);

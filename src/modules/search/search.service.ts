@@ -4,6 +4,7 @@ import {
 } from '@modules/billing/stripe/stripe-connect-visibility';
 import { OffersService } from '@modules/offers/offers.service';
 import { DrinksService } from '@modules/drinks/drinks.service';
+import { SearchSettingsService } from '@modules/search-settings/search-settings.service';
 import { ProductsService } from '@modules/products/products.service';
 import { StoreService } from '@modules/store/store.service';
 import {
@@ -670,8 +671,32 @@ export class SearchService {
   @Inject(DrinksService)
   private readonly _drinksService: DrinksService;
 
+  @Inject(SearchSettingsService)
+  private readonly _searchSettings: SearchSettingsService;
+
   @Inject(CACHE_MANAGER)
   private readonly _cache: Cache;
+
+  private async _applyPlatformSearchSettings(args: SearchDto): Promise<void> {
+    const cfg = await this._searchSettings.getSearchRuntimeConfig();
+    if (this._hasSearchGeo(args) && args.maxDistanceKm == null) {
+      args.maxDistanceKm = cfg.defaultMaxDistanceKm;
+    }
+    const allowed = new Set<SearchContent>();
+    if (cfg.searchProductsEnabled) allowed.add(SearchContent.PRODUCTS);
+    if (cfg.searchStoresEnabled) allowed.add(SearchContent.STORES);
+    if (cfg.searchDrinksEnabled) allowed.add(SearchContent.DRINKS);
+    if (cfg.searchOffersEnabled) allowed.add(SearchContent.OFFERS);
+    args.searchContent = args.searchContent.filter((c) => allowed.has(c));
+    const q = args.query?.trim() ?? '';
+    if (
+      q.length > 0 &&
+      q.length < cfg.minQueryLength &&
+      !cfg.vectorSearchEnabled
+    ) {
+      args.query = '';
+    }
+  }
 
   private _isSearchFilterCacheable(args: SearchDto): boolean {
     if (args.query?.trim()) return false;
@@ -683,6 +708,7 @@ export class SearchService {
   async filter(args: SearchDto, user?: UserModel) {
     args.page = args.page ?? 1;
     args.take = args.take ?? 5;
+    await this._applyPlatformSearchSettings(args);
     this._normalizeSearchGeoArgs(args);
     if (this._isSearchFilterCacheable(args)) {
       const scope = cacheUserScope(user);

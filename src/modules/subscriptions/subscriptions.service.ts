@@ -28,6 +28,7 @@ import {
   resolvePlanTrialFields,
 } from './subscription-plan.util';
 import { DEFAULT_SUBSCRIPTION_PLAN_SEEDS } from './subscription-plan.seed';
+import { VendorSubscriptionEmailService } from './vendor-subscription-email.service';
 
 function vendorStoreObjectIds(user: UserModel): Types.ObjectId[] {
   const rawStores = user.stores || [];
@@ -64,6 +65,8 @@ function mapPlan(doc: Record<string, unknown>) {
       : [],
     maxStores: Math.max(0, Number(doc.maxStores ?? 0)),
     mobileAccess: doc.mobileAccess === true,
+    storeSubscriptionEnabled: doc.storeSubscriptionEnabled === true,
+    mealPreOrderEnabled: doc.mealPreOrderEnabled === true,
     maxCatalogItems: Math.max(0, Number(doc.maxCatalogItems ?? 0)),
     maxDailyMenuItems: Math.max(0, Number(doc.maxDailyMenuItems ?? 0)),
     maxAdCampaignItems: Math.max(0, Number(doc.maxAdCampaignItems ?? 0)),
@@ -162,6 +165,10 @@ export class SubscriptionsService implements OnModuleInit {
 
   @InjectModel(AdCampaignModel.name)
   private readonly adCampaignModel: Model<AdCampaignModel>;
+
+  constructor(
+    private readonly subscriptionEmails: VendorSubscriptionEmailService,
+  ) {}
 
   async onModuleInit() {
     await this.ensureDefaultPlansSeeded();
@@ -300,6 +307,8 @@ export class SubscriptionsService implements OnModuleInit {
         trialReminderDays: trial.trialReminderDays,
         maxStores: Math.max(0, Number(seed.maxStores ?? 0)),
         mobileAccess: seed.mobileAccess === true,
+        storeSubscriptionEnabled: seed.storeSubscriptionEnabled === true,
+        mealPreOrderEnabled: seed.mealPreOrderEnabled === true,
         maxCatalogItems: Math.max(0, Number(seed.maxCatalogItems ?? 0)),
         maxDailyMenuItems: Math.max(0, Number(seed.maxDailyMenuItems ?? 0)),
         ...(seed.maxAdCampaignItems != null && {
@@ -325,6 +334,12 @@ export class SubscriptionsService implements OnModuleInit {
         if (existingDoc.maxActiveCampaigns == null && docFields.maxActiveCampaigns != null) {
           patch.maxActiveCampaigns = docFields.maxActiveCampaigns;
         }
+        if (
+          existingDoc.mealPreOrderEnabled == null &&
+          docFields.mealPreOrderEnabled != null
+        ) {
+          patch.mealPreOrderEnabled = docFields.mealPreOrderEnabled;
+        }
         if (Object.keys(patch).length > 0) {
           await this.planModel
             .updateOne({ _id: (existingDoc as { _id: unknown })._id }, { $set: patch })
@@ -345,6 +360,29 @@ export class SubscriptionsService implements OnModuleInit {
    * Idempotent: rejouable sans effet secondaire.
    */
   async expireElapsedActiveSubscriptions(now = new Date()): Promise<number> {
+    const elapsed = await this.vendorSubModel
+      .find({
+        status: 'ACTIVE',
+        endsAt: { $lte: now },
+      })
+      .lean()
+      .exec();
+
+    for (const sub of elapsed) {
+      const ctx = await this.subscriptionEmails.buildContextFromSubscription(
+        sub as Record<string, unknown>,
+      );
+      if (ctx) {
+        void this.subscriptionEmails.notifyPlanExpiration(ctx).catch((e) => {
+          this.logger.warn(
+            `Expiration email failed sub=${ctx.subscriptionId}: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
+        });
+      }
+    }
+
     const result = await this.vendorSubModel
       .updateMany(
         {
@@ -824,6 +862,160 @@ export class SubscriptionsService implements OnModuleInit {
     return bestLimit;
   }
 
+  /** Formule vendeur active par boutique (nom affiché, ex. PRO). */
+  async resolveActivePlanNamesByStoreIds(
+    storeIds: string[],
+  ): Promise<Map<string, string>> {
+    const validOids = storeIds
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    if (!validOids.length) return new Map();
+
+    const rows = await this.vendorSubModel
+      .find({
+        store: { $in: validOids },
+        status: 'ACTIVE',
+      })
+      .select('store planName endsAt createdAt')
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    const nowMs = Date.now();
+    const byStore = new Map<
+      string,
+      { planName: string; endsAtMs: number; createdAtMs: number }
+    >();
+
+    const toMs = (raw: unknown): number => {
+      const t =
+        raw instanceof Date
+          ? raw.getTime()
+          : new Date(String(raw ?? '')).getTime();
+      return Number.isFinite(t) ? t : Number.MIN_SAFE_INTEGER;
+    };
+
+    for (const row of rows as Record<string, unknown>[]) {
+      const storeId = String(row.store ?? '');
+      if (!storeId) continue;
+      const planName = String(row.planName ?? '').trim();
+      if (!planName) continue;
+      const endsAtMs = toMs(row.endsAt);
+      const createdAtMs = toMs(row.createdAt);
+      const existing = byStore.get(storeId);
+      if (!existing) {
+        byStore.set(storeId, { planName, endsAtMs, createdAtMs });
+        continue;
+      }
+      const existingValid = existing.endsAtMs > nowMs;
+      const currentValid = endsAtMs > nowMs;
+      if (currentValid && !existingValid) {
+        byStore.set(storeId, { planName, endsAtMs, createdAtMs });
+        continue;
+      }
+      if (
+        currentValid === existingValid &&
+        createdAtMs > existing.createdAtMs
+      ) {
+        byStore.set(storeId, { planName, endsAtMs, createdAtMs });
+      }
+    }
+
+    const out = new Map<string, string>();
+    for (const [storeId, value] of byStore.entries()) {
+      out.set(storeId, value.planName);
+    }
+    return out;
+  }
+
+  /** Rang formule active par boutique (`sortOrder` du plan, ex. FREE=1, PRO=2). */
+  async resolveActivePlanSortOrderByStoreIds(
+    storeIds: string[],
+  ): Promise<Map<string, number>> {
+    const ids = [
+      ...new Set(
+        storeIds
+          .map((id) => String(id ?? '').trim())
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ];
+    if (!ids.length) return new Map();
+
+    const [planNameByStore, activePlans] = await Promise.all([
+      this.resolveActivePlanNamesByStoreIds(ids),
+      this.planModel
+        .find({ active: true })
+        .select('name sortOrder')
+        .lean()
+        .exec(),
+    ]);
+
+    const sortByPlanName = new Map<string, number>();
+    for (const row of activePlans as Record<string, unknown>[]) {
+      const name = String(row.name ?? '')
+        .trim()
+        .toUpperCase();
+      if (!name) continue;
+      sortByPlanName.set(name, Math.max(0, Number(row.sortOrder ?? 0)));
+    }
+    const freeSort = sortByPlanName.get('FREE') ?? 1;
+
+    const out = new Map<string, number>();
+    for (const storeId of ids) {
+      const planName = (planNameByStore.get(storeId) ?? 'FREE')
+        .trim()
+        .toUpperCase();
+      out.set(storeId, sortByPlanName.get(planName) ?? freeSort);
+    }
+    return out;
+  }
+
+  async isStoreSubscriptionEnabledForPlanName(
+    planName: string,
+  ): Promise<boolean> {
+    const name = String(planName ?? '').trim();
+    if (!name) return false;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const doc = await this.planModel
+      .findOne({
+        name: { $regex: new RegExp(`^${escaped}$`, 'i') },
+        active: { $ne: false },
+      })
+      .select('storeSubscriptionEnabled')
+      .lean()
+      .exec();
+    return (
+      (doc as { storeSubscriptionEnabled?: boolean } | null)
+        ?.storeSubscriptionEnabled === true
+    );
+  }
+
+  async isMealPreOrderEnabledForPlanName(planName: string): Promise<boolean> {
+    const name = String(planName ?? '').trim();
+    if (!name) return false;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const doc = await this.planModel
+      .findOne({
+        name: { $regex: new RegExp(`^${escaped}$`, 'i') },
+        active: { $ne: false },
+      })
+      .select('mealPreOrderEnabled')
+      .lean()
+      .exec();
+    return (
+      (doc as { mealPreOrderEnabled?: boolean } | null)?.mealPreOrderEnabled ===
+      true
+    );
+  }
+
+  async isMealPreOrderEnabledForStore(storeId: string): Promise<boolean> {
+    const id = String(storeId ?? '').trim();
+    if (!Types.ObjectId.isValid(id)) return false;
+    const planByStore = await this.resolveActivePlanNamesByStoreIds([id]);
+    const planName = String(planByStore.get(id) ?? '').trim();
+    return this.isMealPreOrderEnabledForPlanName(planName);
+  }
+
   /**
    * Liste des boutiques accessibles pour un propriétaire selon son quota courant.
    * En cas de downgrade, les boutiques excédentaires les plus récentes deviennent inaccessibles
@@ -1067,6 +1259,8 @@ export class SubscriptionsService implements OnModuleInit {
       trialReminderDays: trial.trialReminderDays,
       maxStores: Math.max(0, Math.floor(Number(dto.maxStores ?? 0))),
       mobileAccess: dto.mobileAccess === true,
+      storeSubscriptionEnabled: dto.storeSubscriptionEnabled === true,
+      mealPreOrderEnabled: dto.mealPreOrderEnabled === true,
       maxCatalogItems: Math.max(
         0,
         Math.floor(Number(dto.maxCatalogItems ?? 0)),
@@ -1118,6 +1312,12 @@ export class SubscriptionsService implements OnModuleInit {
     }
     if (dto.mobileAccess != null)
       patch.mobileAccess = dto.mobileAccess === true;
+    if (dto.storeSubscriptionEnabled != null) {
+      patch.storeSubscriptionEnabled = dto.storeSubscriptionEnabled === true;
+    }
+    if (dto.mealPreOrderEnabled != null) {
+      patch.mealPreOrderEnabled = dto.mealPreOrderEnabled === true;
+    }
     if (dto.maxCatalogItems != null) {
       patch.maxCatalogItems = Math.max(
         0,
@@ -1182,7 +1382,50 @@ export class SubscriptionsService implements OnModuleInit {
       .lean()
       .exec();
     if (!updated) throw new NotFoundException('plan_not_found');
+
+    const changedFields = this.describePlanUpdateFields(dto);
+    if (changedFields.length) {
+      void this.subscriptionEmails
+        .notifyPlanCatalogUpdate({
+          planId,
+          planName: String(updated.name ?? ''),
+          changedFields,
+        })
+        .catch((e) => {
+          this.logger.warn(
+            `Plan update emails failed plan=${planId}: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
+        });
+    }
+
     return mapPlan(updated as Record<string, unknown>);
+  }
+
+  private describePlanUpdateFields(dto: UpdateSubscriptionPlanDto): string[] {
+    const fields: string[] = [];
+    if (dto.name != null) fields.push('nom');
+    if (dto.description != null) fields.push('description');
+    if (dto.priceMonthly != null || dto.priceYearly != null) fields.push('tarifs');
+    if (dto.currency != null) fields.push('devise');
+    if (dto.features != null) fields.push('fonctionnalités');
+    if (dto.active != null) fields.push('disponibilité');
+    if (dto.trialDays != null || dto.trialReminderDays != null) {
+      fields.push('essai gratuit');
+    }
+    if (dto.maxStores != null) fields.push('nombre de boutiques');
+    if (dto.mobileAccess != null) fields.push('accès mobile');
+    if (dto.storeSubscriptionEnabled != null) {
+      fields.push('abonnements clients');
+    }
+    if (dto.mealPreOrderEnabled != null) fields.push('pré-commande');
+    if (dto.maxCatalogItems != null) fields.push('catalogue');
+    if (dto.maxDailyMenuItems != null) fields.push('menu du jour');
+    if (dto.maxAdCampaignItems != null) fields.push('campagnes pub');
+    if (dto.maxActiveBanners != null) fields.push('bannières');
+    if (dto.maxActiveCampaigns != null) fields.push('campagnes actives');
+    return fields;
   }
 
   async startVendorTrial(user: UserModel, dto: SubscribeVendorDto) {
@@ -1459,6 +1702,20 @@ export class SubscriptionsService implements OnModuleInit {
           { $set: { status: 'EXPIRED', endsAt: now } },
         )
         .exec();
+    }
+
+    const emailCtx = await this.subscriptionEmails.buildContextFromSubscription(
+      created.toObject() as Record<string, unknown>,
+    );
+    if (emailCtx) {
+      emailCtx.offerNote = offerNote || undefined;
+      void this.subscriptionEmails.notifyPlanOffer(emailCtx).catch((e) => {
+        this.logger.warn(
+          `Offer email failed sub=${emailCtx.subscriptionId}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      });
     }
 
     return mapVendorSubscription(created.toObject() as Record<string, unknown>, {

@@ -143,6 +143,18 @@ export class UserModel extends BaseSchema {
   @Prop({ required: false, name: 'password_reset_code', select: false })
   passwordResetCode?: string;
 
+  /** Double authentification par code e-mail à la connexion. */
+  @Prop({ default: false, name: 'email_2fa_enabled' })
+  email2faEnabled?: boolean;
+
+  /** Code en attente pour confirmer l’activation 2FA e-mail. */
+  @Prop({ required: false, name: 'email_2fa_enable_code', select: false })
+  email2faEnableCode?: string;
+
+  /** Code à la connexion lorsque la 2FA e-mail est active. */
+  @Prop({ required: false, name: 'email_2fa_login_code', select: false })
+  email2faLoginCode?: string;
+
   /** Demande de suppression de compte (soft delete), exécution différée. */
   @Prop({
     required: false,

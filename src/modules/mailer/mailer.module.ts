@@ -10,7 +10,6 @@ import {
   SiteContactRequestModel,
   SiteContactRequestSchema,
 } from '@schemas/site-contact-request.schema';
-import { MailerController } from './mailer.controller';
 import { ContactController } from './contact.controller';
 import { NewsletterController } from './newsletter.controller';
 import { ContactSubmissionService } from './contact-submission.service';
@@ -32,7 +31,7 @@ import { RecaptchaEnterpriseService } from './recaptcha-enterprise.service';
       },
     ]),
   ],
-  controllers: [MailerController, ContactController, NewsletterController],
+  controllers: [ContactController, NewsletterController],
   providers: [
     {
       provide: 'MAILER',

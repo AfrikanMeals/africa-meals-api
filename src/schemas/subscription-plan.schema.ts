@@ -45,6 +45,14 @@ export class SubscriptionPlanModel {
   @Prop({ type: Boolean, default: false })
   mobileAccess: boolean;
 
+  /** Permet aux clients de s’abonner à la boutique (bouton S’abonner). */
+  @Prop({ type: Boolean, default: false })
+  storeSubscriptionEnabled: boolean;
+
+  /** Autorise la pré-commande de repas pour les boutiques sur cette formule. */
+  @Prop({ type: Boolean, default: false })
+  mealPreOrderEnabled: boolean;
+
   /**
    * Nombre max d’éléments catalogue (plats + boissons) pour la boutique.
    * 0 = illimité.

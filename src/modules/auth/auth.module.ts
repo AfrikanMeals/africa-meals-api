@@ -21,18 +21,28 @@ import { FcmTestController } from './fcm-test.controller';
 import { AuthService } from './auth.service';
 import { LoginNotificationService } from './login-notification/login-notification.service';
 import { AccountDeletionCron } from './account-deletion.cron';
+import { AdminGuard } from './guards/admin.guard';
 import { JwtGuard } from './guards/jwt.guard';
 import { OptionalAuthGuard } from './guards/optional.auth.guard';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { MailerTestEmailController } from '@modules/mailer/mailer-test-email.controller';
+import { MailerTestEmailRateLimitGuard } from '@modules/mailer/guards/mailer-test-email-rate-limit.guard';
+import { isMailerTestEmailEnabled } from '@modules/mailer/mailer-test-email.util';
 
 @Module({
-  controllers: [AuthController, FcmTestController],
+  controllers: [
+    AuthController,
+    FcmTestController,
+    ...(isMailerTestEmailEnabled() ? [MailerTestEmailController] : []),
+  ],
   providers: [
     AuthService,
     LoginNotificationService,
     JwtStrategy,
     JwtGuard,
     OptionalAuthGuard,
+    AdminGuard,
+    MailerTestEmailRateLimitGuard,
     AccountDeletionCron,
   ],
   imports: [
@@ -66,6 +76,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     JwtStrategy,
     JwtGuard,
     OptionalAuthGuard,
+    AdminGuard,
   ],
 })
 export class AuthModule {}

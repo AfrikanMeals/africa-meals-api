@@ -11,6 +11,8 @@ export type SubscriptionPlanSeed = {
   trialReminderDays?: number[];
   maxStores?: number;
   mobileAccess?: boolean;
+  storeSubscriptionEnabled?: boolean;
+  mealPreOrderEnabled?: boolean;
   maxCatalogItems?: number;
   maxDailyMenuItems?: number;
   maxAdCampaignItems?: number;
@@ -39,6 +41,7 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     trialReminderDays: [],
     maxStores: 1,
     mobileAccess: false,
+    storeSubscriptionEnabled: false,
     maxCatalogItems: 10,
     maxDailyMenuItems: 0,
   },
@@ -62,6 +65,8 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     trialReminderDays: [7, 3, 1],
     maxStores: 0,
     mobileAccess: true,
+    storeSubscriptionEnabled: true,
+    mealPreOrderEnabled: true,
     maxCatalogItems: 0,
     maxDailyMenuItems: 0,
   },

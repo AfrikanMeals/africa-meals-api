@@ -13,7 +13,8 @@ Using the Admin SDK avoids the `storage/unauthorized` (403) error: uploads are d
 ## 2. Get a service account key
 
 1. In Firebase Console: **Project settings** (gear) → **Service accounts**.
-2. Click **Generate new private key** and save the JSON file (e.g. `serviceAccountKey.json`). Keep it secret and never commit it to the repo.
+2. Click **Generate new private key** and save the JSON file **outside the repo** (e.g. `~/secrets/wise-eat-firebase.json`). Keep it secret and never commit it to Git.
+3. Use `accounts.json.example` at the repo root as a structural reference only.
 
 ## 3. Configure the API
 
@@ -25,21 +26,26 @@ In your `.env` (see `.env.example`), set:
 
 Then **choose one** of these for the service account credential:
 
-**Option A – File path (recommended for local/prod)**
-
-```env
-GOOGLE_APPLICATION_CREDENTIALS=accounts.json
-```
-
-The path is **relative to the project root** (directory from which you start the API). You can also use an absolute path.
-
-**Option B – JSON in env (e.g. Docker / CI)**
+**Option A – JSON in env (recommended for prod / CI / Secret Manager)**
 
 ```env
 AM_FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"...",...}
 ```
 
-Paste the **entire** content of the service account JSON as a single line. Useful when you cannot mount a file.
+Paste the **entire** content of the service account JSON as a single line.
+
+**Option B – Discrete env vars (multi-secret stores)**
+
+```env
+AM_FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL=firebase-adminsdk-...@your-project.iam.gserviceaccount.com
+AM_FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+```
+
+**Option C – File path (local dev only; file must stay outside the repo)**
+
+```env
+AM_FIREBASE_SERVICE_ACCOUNT_PATH=/absolute/path/to/firebase-service-account.json
+```
 
 ## 4. Storage security rules
 
@@ -66,3 +72,7 @@ Only your API (with the service account) can write; clients can only read (e.g. 
 - **Paths**: Profile images use paths like `users/{userId}/profile/...` and `stores/{storeId}/profile/...`.
 
 The app initializes the Firebase Admin app in `SharedModule` and injects it (and the bucket name) into `MediasService`.
+
+## 6. Key rotation
+
+If a service account JSON was ever committed to Git, follow [FIREBASE_KEY_ROTATION.md](./FIREBASE_KEY_ROTATION.md) immediately.

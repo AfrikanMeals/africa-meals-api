@@ -121,7 +121,9 @@ Variables utiles (alignées sur l’existant) :
 | `AM_FIREBASE_PROJECT_ID` | ID projet Firebase / GCP (Admin SDK) |
 | `AM_FIREBASE_STORAGE_BUCKET` | Bucket Storage (sinon `<project_id>.appspot.com`) |
 | `AM_FIREBASE_SERVICE_ACCOUNT_JSON` | JSON compte de service (une ligne) |
-| `AM_FIREBASE_SERVICE_ACCOUNT_PATH` | Chemin vers le fichier JSON (alternative) |
+| `AM_FIREBASE_SERVICE_ACCOUNT_PATH` | Chemin vers le fichier JSON **hors dépôt** |
+| `AM_FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL` | E-mail compte de service (alternative champs discrets) |
+| `AM_FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY` | Clé privée PEM (`\n` échappés) |
 | `BIRD_ACCESS_KEY` | Access Key Bird (SMS + WhatsApp) — **secret** |
 | `BIRD_WORKSPACE_ID` | UUID workspace Bird |
 | `BIRD_SMS_CHANNEL_ID` | UUID canal SMS Bird |

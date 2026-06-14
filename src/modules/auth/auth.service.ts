@@ -26,21 +26,34 @@ import { LoyaltyService } from '@modules/loyalty/loyalty.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import {
   AppleAuthDto,
+  ChangePasswordDto,
   CheckAccountDto,
+  Email2faConfirmDto,
   EmailVerificationDto,
   FacebookAuthDto,
   ForgotPasswordDto,
   GoogleAuthDto,
   LoginDto,
   RegisterDto,
+  Resend2faLoginDto,
   ResetPasswordDto,
   UpdateProfileDto,
+  Verify2faLoginDto,
 } from './dto/auth.dto';
 import { LoginNotificationService } from './login-notification/login-notification.service';
 import {
   type LoginAuthMethod,
   type LoginRequestContext,
 } from './login-notification/login-request-context.util';
+import {
+  buildAuthOtpPlainText,
+  buildAuthOtpWebDeepLink,
+  emailOtpAutofillSnippet,
+  mapOtpVariantToDeepLinkFlow,
+  resolveOtpAutofillDomain,
+  resolveOtpWebBaseUrl,
+  type AuthOtpEmailVariant,
+} from '@modules/mailer/auth-otp-email.util';
 
 @Injectable()
 export class AuthService {
@@ -224,14 +237,24 @@ export class AuthService {
 
   private buildVerificationEmailHtml(
     fullName: string,
+    email: string,
     code: string,
-    variant: 'signup' | 'activation' | 'reset',
+    variant: AuthOtpEmailVariant,
   ): string {
     const safeName = this._emailTpl.escapeHtml(fullName.trim() || 'Bonjour');
+    const domain = resolveOtpAutofillDomain(this._configService);
+    const webDeepLink = buildAuthOtpWebDeepLink({
+      webBaseUrl: resolveOtpWebBaseUrl(this._configService),
+      flow: mapOtpVariantToDeepLinkFlow(variant),
+      email,
+      code,
+    });
     const titles = {
       signup: 'Finalisez votre inscription',
       activation: 'Vérifiez votre courriel',
       reset: 'Réinitialisation de mot de passe',
+      '2fa': 'Activation de la double authentification',
+      '2fa-login': 'Vérification de connexion',
     };
     const intros = {
       signup:
@@ -240,9 +263,15 @@ export class AuthService {
         'Voici votre code de vérification pour activer votre compte.',
       reset:
         'Voici votre code de réinitialisation. Ne le partagez avec personne.',
+      '2fa':
+        'Voici votre code pour activer la double authentification par e-mail sur votre compte.',
+      '2fa-login':
+        'Voici votre code pour finaliser votre connexion. Ne le partagez avec personne.',
     };
     const validity =
-      variant === 'reset'
+      variant === 'reset' ||
+      variant === '2fa' ||
+      variant === '2fa-login'
         ? 'Ce code est valable <strong>15 minutes</strong>.'
         : 'Ce code est valable <strong>30 minutes</strong>.';
     return [
@@ -250,11 +279,34 @@ export class AuthService {
       this._emailTpl.paragraph(`Bonjour <strong>${safeName}</strong>,`),
       this._emailTpl.paragraph(intros[variant]),
       this._emailTpl.codeBox(code),
+      emailOtpAutofillSnippet(domain, code),
+      this._emailTpl.button('Ouvrir dans l’app', webDeepLink),
       this._emailTpl.paragraph(validity),
       this._emailTpl.muted(
         'Si vous n’avez pas demandé ce code, vous pouvez ignorer ce message en toute sécurité.',
       ),
     ].join('\n');
+  }
+
+  private buildVerificationEmailText(
+    email: string,
+    code: string,
+    variant: AuthOtpEmailVariant,
+  ): string {
+    const appName =
+      this._configService.get<string>('APP_NAME') ?? 'African Meals';
+    return buildAuthOtpPlainText({
+      appName,
+      code,
+      variant,
+      domain: resolveOtpAutofillDomain(this._configService),
+      webDeepLink: buildAuthOtpWebDeepLink({
+        webBaseUrl: resolveOtpWebBaseUrl(this._configService),
+        flow: mapOtpVariantToDeepLinkFlow(variant),
+        email,
+        code,
+      }),
+    });
   }
 
   private async _sendSignupVerificationEmail(
@@ -265,8 +317,13 @@ export class AuthService {
     const appName =
       this._configService.get<string>('APP_NAME') ?? 'African Meals';
     const subject = `Vérifiez votre courriel - ${appName}`;
-    const html = this.buildVerificationEmailHtml(fullName, code, 'signup');
-    const text = `Code d’inscription ${appName} : ${code} (30 min).`;
+    const html = this.buildVerificationEmailHtml(
+      fullName,
+      toEmail,
+      code,
+      'signup',
+    );
+    const text = this.buildVerificationEmailText(toEmail, code, 'signup');
     await this._mailer.sendSimple({
       to: toEmail,
       toName: fullName,
@@ -403,10 +460,15 @@ export class AuthService {
           subject,
           html: this.buildVerificationEmailHtml(
             args.fullName,
+            args.email,
             activationCode,
             'activation',
           ),
-          text: `Code d’activation ${appName} : ${activationCode}`,
+          text: this.buildVerificationEmailText(
+            args.email,
+            activationCode,
+            'activation',
+          ),
         });
         this.logger.log(
           `[register] email de vérification envoyé vers ${args.email}`,
@@ -497,9 +559,11 @@ export class AuthService {
           )
           .exec();
       }
-      return {
-        ...this.deliverAuthTokens(user, ctx, 'google'),
-      };
+      return await this.finishAuthenticatedLogin(
+        String(user._id),
+        ctx,
+        'google',
+      );
     }
     user = await this._usersModel.findOne({ email: emailRaw }).exec();
     if (user) {
@@ -513,9 +577,11 @@ export class AuthService {
       await this._usersModel
         .updateOne({ _id: user._id }, { $set: setDoc })
         .exec();
-      return {
-        ...this.deliverAuthTokens(user, ctx, 'google'),
-      };
+      return await this.finishAuthenticatedLogin(
+        String(user._id),
+        ctx,
+        'google',
+      );
     }
     const newUser = await this._usersModel.create({
       email: emailRaw,
@@ -588,9 +654,11 @@ export class AuthService {
           )
           .exec();
       }
-      return {
-        ...this.deliverAuthTokens(user, ctx, 'apple'),
-      };
+      return await this.finishAuthenticatedLogin(
+        String(user._id),
+        ctx,
+        'apple',
+      );
     }
 
     if (emailRaw) {
@@ -606,9 +674,11 @@ export class AuthService {
         await this._usersModel
           .updateOne({ _id: user._id }, { $set: setDoc })
           .exec();
-        return {
-          ...this.deliverAuthTokens(user, ctx, 'apple'),
-        };
+        return await this.finishAuthenticatedLogin(
+          String(user._id),
+          ctx,
+          'apple',
+        );
       }
     }
 
@@ -691,9 +761,11 @@ export class AuthService {
           )
           .exec();
       }
-      return {
-        ...this.deliverAuthTokens(user, ctx, 'facebook'),
-      };
+      return await this.finishAuthenticatedLogin(
+        String(user._id),
+        ctx,
+        'facebook',
+      );
     }
 
     user = await this._usersModel.findOne({ email: emailRaw }).exec();
@@ -708,9 +780,11 @@ export class AuthService {
       await this._usersModel
         .updateOne({ _id: user._id }, { $set: setDoc })
         .exec();
-      return {
-        ...this.deliverAuthTokens(user, ctx, 'facebook'),
-      };
+      return await this.finishAuthenticatedLogin(
+        String(user._id),
+        ctx,
+        'facebook',
+      );
     }
 
     const newUser = await this._usersModel.create({
@@ -751,8 +825,104 @@ export class AuthService {
     }
 
     // TODO add user role(admin, user, etc) claims
+    return await this.finishAuthenticatedLogin(
+      String(user._id),
+      ctx,
+      'email_password',
+    );
+  }
+
+  async verify2faLogin(args: Verify2faLoginDto, ctx?: LoginRequestContext) {
+    const challengeToken = String(args.challengeToken ?? '').trim();
+    if (!challengeToken) {
+      throw new UnauthorizedException('invalid_2fa_challenge');
+    }
+    type ChallengePayload = {
+      sub?: unknown;
+      typ?: unknown;
+      method?: unknown;
+    };
+    let payload: ChallengePayload;
+    try {
+      payload = (await this._jwtService.verifyAsync(
+        challengeToken,
+      )) as ChallengePayload;
+    } catch {
+      throw new UnauthorizedException('invalid_2fa_challenge');
+    }
+    if (payload.typ !== '2fa_login') {
+      throw new UnauthorizedException('invalid_2fa_challenge');
+    }
+    const userId = String(payload.sub ?? '').trim();
+    if (!userId) {
+      throw new UnauthorizedException('invalid_2fa_challenge');
+    }
+    const codeNorm = args.code.trim().toUpperCase();
+    const user = await this._usersModel
+      .findById(userId)
+      .select(['+email2faLoginCode'])
+      .exec();
+    if (!user) {
+      throw new NotFoundException('user_not_found');
+    }
+    if (user.email2faEnabled !== true) {
+      throw new BadRequestException('email_2fa_not_enabled');
+    }
+    if (!user.email2faLoginCode || user.email2faLoginCode !== codeNorm) {
+      throw new BadRequestException('invalid_code');
+    }
+    await this._usersModel
+      .findByIdAndUpdate(userId, { $unset: { email2faLoginCode: '' } })
+      .exec();
+    const methodRaw = String(payload.method ?? 'email_password');
+    const method: LoginAuthMethod =
+      methodRaw === 'google' ||
+      methodRaw === 'apple' ||
+      methodRaw === 'facebook' ||
+      methodRaw === 'email_password'
+        ? methodRaw
+        : 'email_password';
+    return this.deliverAuthTokens(user, ctx, method);
+  }
+
+  async resend2faLogin(args: Resend2faLoginDto) {
+    const challengeToken = String(args.challengeToken ?? '').trim();
+    if (!challengeToken) {
+      throw new UnauthorizedException('invalid_2fa_challenge');
+    }
+    type ChallengePayload = { sub?: unknown; typ?: unknown; method?: unknown };
+    let payload: ChallengePayload;
+    try {
+      payload = (await this._jwtService.verifyAsync(
+        challengeToken,
+      )) as ChallengePayload;
+    } catch {
+      throw new UnauthorizedException('invalid_2fa_challenge');
+    }
+    if (payload.typ !== '2fa_login') {
+      throw new UnauthorizedException('invalid_2fa_challenge');
+    }
+    const userId = String(payload.sub ?? '').trim();
+    const user = await this._usersModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('user_not_found');
+    }
+    if (user.email2faEnabled !== true) {
+      throw new BadRequestException('email_2fa_not_enabled');
+    }
+    const methodRaw = String(payload.method ?? 'email_password');
+    const method: LoginAuthMethod =
+      methodRaw === 'google' ||
+      methodRaw === 'apple' ||
+      methodRaw === 'facebook' ||
+      methodRaw === 'email_password'
+        ? methodRaw
+        : 'email_password';
+    await this.begin2faLoginChallenge(user, method);
     return {
-      ...this.deliverAuthTokens(user, ctx, 'email_password'),
+      ok: true,
+      message:
+        'Un nouveau code de vérification a été envoyé à votre adresse e-mail.',
     };
   }
 
@@ -866,8 +1036,13 @@ export class AuthService {
       to: email,
       toName: user.fullName,
       subject,
-      html: this.buildVerificationEmailHtml(user.fullName, code, 'activation'),
-      text: `Code d’activation ${appName} : ${code}`,
+      html: this.buildVerificationEmailHtml(
+        user.fullName,
+        email,
+        code,
+        'activation',
+      ),
+      text: this.buildVerificationEmailText(email, code, 'activation'),
     });
     return user;
   }
@@ -906,10 +1081,11 @@ export class AuthService {
     const subject = `Réinitialisation de mot de passe - ${appName}`;
     const html = this.buildVerificationEmailHtml(
       user.fullName,
+      email,
       code,
       'reset',
     );
-    const text = `Code de réinitialisation : ${code}. Valide 15 min. - ${appName}`;
+    const text = this.buildVerificationEmailText(email, code, 'reset');
 
     const smtpUser = this._configService.get<string>('SMTP_USER')?.trim();
     const smtpPass =
@@ -1367,6 +1543,125 @@ export class AuthService {
     await this._usersModel.deleteOne({ _id: userId }).exec();
   }
 
+  async getSecuritySettings(userId: string) {
+    const user = await this._usersModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('user_not_found');
+    }
+    const oauthLinked = Boolean(
+      user.googleId?.trim() || user.appleId?.trim() || user.facebookId?.trim(),
+    );
+    return {
+      email2faEnabled: user.email2faEnabled === true,
+      canChangePassword: !oauthLinked,
+      email: user.email,
+    };
+  }
+
+  async changePassword(userId: string, args: ChangePasswordDto) {
+    const user = await this._usersModel
+      .findById(userId)
+      .select(['+password'])
+      .exec();
+    if (!user) {
+      throw new NotFoundException('user_not_found');
+    }
+    if (user.googleId || user.appleId || user.facebookId) {
+      throw new BadRequestException('oauth_account');
+    }
+    if (!(await bcrypt.compare(args.currentPassword, user.password))) {
+      throw new BadRequestException('invalid_current_password');
+    }
+    user.password = args.newPassword;
+    user.set('passwordResetCode', undefined);
+    await user.save();
+    return { ok: true, message: 'Mot de passe mis à jour.' };
+  }
+
+  async requestEmail2faEnable(userId: string) {
+    const user = await this._usersModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('user_not_found');
+    }
+    if (user.email2faEnabled) {
+      throw new BadRequestException('email_2fa_already_enabled');
+    }
+    const code = await this._generateVerificationCode(6);
+    await this._usersModel
+      .findByIdAndUpdate(userId, { $set: { email2faEnableCode: code } })
+      .exec();
+
+    const email = user.email.trim().toLowerCase();
+    const appName =
+      this._configService.get<string>('APP_NAME') ?? 'African Meals';
+    const subject = `Activation 2FA - ${appName}`;
+    const html = this.buildVerificationEmailHtml(
+      user.fullName,
+      email,
+      code,
+      '2fa',
+    );
+    const text = this.buildVerificationEmailText(email, code, '2fa');
+
+    const smtpUser = this._configService.get<string>('SMTP_USER')?.trim();
+    const smtpPass =
+      this._configService.get<string>('SMTP_APP_PASSWORD')?.trim() ||
+      this._configService.get<string>('SMTP_PASS')?.trim();
+    if (!smtpUser || !smtpPass) {
+      if (process.env.NODE_ENV !== 'production') {
+        this.logger.warn(
+          `[email-2fa] SMTP non configuré — code pour ${email} : ${code}`,
+        );
+      } else {
+        throw new ServiceUnavailableException('email_not_configured');
+      }
+    } else {
+      try {
+        await this._mailer.sendSimple({
+          to: email,
+          toName: user.fullName,
+          subject,
+          html,
+          text,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`[email-2fa] échec SMTP : ${msg}`);
+        throw new ServiceUnavailableException('email_send_failed');
+      }
+    }
+
+    return {
+      ok: true,
+      message:
+        'Un code de confirmation a été envoyé à votre adresse e-mail.',
+    };
+  }
+
+  async confirmEmail2faEnable(userId: string, args: Email2faConfirmDto) {
+    const codeNorm = args.code.trim().toUpperCase();
+    const user = await this._usersModel
+      .findById(userId)
+      .select(['+email2faEnableCode'])
+      .exec();
+    if (!user) {
+      throw new NotFoundException('user_not_found');
+    }
+    if (user.email2faEnabled) {
+      throw new BadRequestException('email_2fa_already_enabled');
+    }
+    if (!user.email2faEnableCode || user.email2faEnableCode !== codeNorm) {
+      throw new BadRequestException('invalid_code');
+    }
+    await this._usersModel
+      .findByIdAndUpdate(userId, {
+        $set: { email2faEnabled: true },
+        $unset: { email2faEnableCode: '' },
+      })
+      .exec();
+    return { ok: true, email2faEnabled: true };
+  }
+
   /** Rôles du formulaire d’inscription Dashboard → `UserModel.type` */
   private _mapSignupRoleToUserType(
     role?: RegisterDto['signupRole'],
@@ -1385,6 +1680,105 @@ export class AuthService {
   private _emailMatchExact(email: string) {
     const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`^${escaped}$`, 'i');
+  }
+
+  private async finishAuthenticatedLogin(
+    userId: string,
+    ctx: LoginRequestContext | undefined,
+    method: LoginAuthMethod,
+  ): Promise<
+    | { authToken: string; refreshToken: string }
+    | {
+        requiresTwoFactor: true;
+        challengeToken: string;
+        email: string;
+        message: string;
+      }
+  > {
+    const user = await this._usersModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('user_not_found');
+    }
+    if (user.email2faEnabled !== true) {
+      return this.deliverAuthTokens(user, ctx, method);
+    }
+    return this.begin2faLoginChallenge(user, method);
+  }
+
+  private async begin2faLoginChallenge(
+    user: Pick<UserModel, '_id' | 'email' | 'fullName'>,
+    method: LoginAuthMethod,
+  ): Promise<{
+    requiresTwoFactor: true;
+    challengeToken: string;
+    email: string;
+    message: string;
+  }> {
+    const code = await this._generateVerificationCode(6);
+    await this._usersModel
+      .findByIdAndUpdate(user._id, { $set: { email2faLoginCode: code } })
+      .exec();
+
+    const email = user.email.trim().toLowerCase();
+    await this._send2faLoginEmail(user.fullName, email, code);
+
+    const challengeToken = this._jwtService.sign(
+      { sub: String(user._id), typ: '2fa_login', method },
+      { expiresIn: '15m' },
+    );
+
+    return {
+      requiresTwoFactor: true,
+      challengeToken,
+      email,
+      message:
+        'Un code de vérification a été envoyé à votre adresse e-mail.',
+    };
+  }
+
+  private async _send2faLoginEmail(
+    fullName: string,
+    email: string,
+    code: string,
+  ): Promise<void> {
+    const appName =
+      this._configService.get<string>('APP_NAME') ?? 'African Meals';
+    const subject = `Connexion sécurisée - ${appName}`;
+    const html = this.buildVerificationEmailHtml(
+      fullName,
+      email,
+      code,
+      '2fa-login',
+    );
+    const text = this.buildVerificationEmailText(email, code, '2fa-login');
+
+    const smtpUser = this._configService.get<string>('SMTP_USER')?.trim();
+    const smtpPass =
+      this._configService.get<string>('SMTP_APP_PASSWORD')?.trim() ||
+      this._configService.get<string>('SMTP_PASS')?.trim();
+    if (!smtpUser || !smtpPass) {
+      if (process.env.NODE_ENV !== 'production') {
+        this.logger.warn(
+          `[2fa-login] SMTP non configuré — code pour ${email} : ${code}`,
+        );
+      } else {
+        throw new ServiceUnavailableException('email_not_configured');
+      }
+      return;
+    }
+    try {
+      await this._mailer.sendSimple({
+        to: email,
+        toName: fullName,
+        subject,
+        html,
+        text,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`[2fa-login] échec SMTP : ${msg}`);
+      throw new ServiceUnavailableException('email_send_failed');
+    }
   }
 
   private async _generateVerificationCode(length: number) {

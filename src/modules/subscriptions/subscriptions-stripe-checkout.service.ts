@@ -18,6 +18,9 @@ import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import Stripe = require('stripe');
 import { SubscribeVendorDto } from './dto/subscription-plan.dto';
+import { isFreeSubscriptionPlan } from './subscription-plan.util';
+import { SubscriptionsService } from './subscriptions.service';
+import { VendorSubscriptionEmailService } from './vendor-subscription-email.service';
 
 type StripeClient = InstanceType<typeof Stripe>;
 
@@ -53,6 +56,16 @@ function dollarsToCents(amount: number): number {
   return Math.round(amount * 100);
 }
 
+type PlanSwitchDraft = {
+  storeId: Types.ObjectId;
+  plan: Record<string, unknown> & { _id: Types.ObjectId; name: string };
+  period: VendorSubscriptionBillingPeriod;
+  pricePaid: number;
+  currency: string;
+  unitAmountCents: number;
+  planName: string;
+};
+
 @Injectable()
 export class SubscriptionsStripeCheckoutService {
   private readonly logger = new Logger(SubscriptionsStripeCheckoutService.name);
@@ -65,6 +78,11 @@ export class SubscriptionsStripeCheckoutService {
 
   @InjectModel(VendorSubscriptionModel.name)
   private readonly vendorSubModel: Model<VendorSubscriptionModel>;
+
+  constructor(
+    private readonly subscriptionEmails: VendorSubscriptionEmailService,
+    private readonly subscriptions: SubscriptionsService,
+  ) {}
 
   private stripe(): StripeClient {
     const key = this.config.get<string>('STRIPE_SECRET_KEY')?.trim();
@@ -111,10 +129,10 @@ export class SubscriptionsStripeCheckoutService {
     );
   }
 
-  private async preparePendingSubscription(
+  private async draftVendorPlanSwitch(
     user: UserModel,
     dto: SubscribeVendorDto,
-  ): Promise<PendingSubscriptionContext> {
+  ): Promise<PlanSwitchDraft> {
     if (user.type !== UserTypeEnum.VENDOR) {
       throw new BadRequestException('vendor_only');
     }
@@ -184,46 +202,154 @@ export class SubscriptionsStripeCheckoutService {
       .trim()
       .toUpperCase();
     const unitAmountCents = dollarsToCents(pricePaid);
-    if (unitAmountCents < 50) {
-      throw new BadRequestException({
-        message: 'amount_below_stripe_minimum',
-        pricePaid,
-      });
-    }
-
-    const pending = await this.vendorSubModel.create({
-      store: storeId,
-      owner: user._id,
-      plan: plan._id,
-      billingPeriod: period,
-      status: 'PENDING_PAYMENT' as VendorSubscriptionStatus,
-      startsAt: now,
-      endsAt: new Date(now),
-      pricePaid,
-      currency,
-      planName: String((plan as { name: string }).name ?? ''),
-    });
-
-    const pendingId = String(pending._id);
     const planName = String((plan as { name: string }).name ?? 'Abonnement');
-    const meta: Record<string, string> = {
-      kind: METADATA_KIND,
-      pendingSubId: pendingId,
-      uid: String(user.id ?? user._id),
-      planId: String(plan._id),
-      storeId: String(storeId),
-      billingPeriod: period,
-    };
 
     return {
-      pendingId,
-      planName,
+      storeId,
+      plan: plan as PlanSwitchDraft['plan'],
       period,
       pricePaid,
       currency,
       unitAmountCents,
+      planName,
+    };
+  }
+
+  /** Active une formule gratuite sans passer par Stripe. */
+  async activateVendorFreePlan(
+    user: UserModel,
+    dto: SubscribeVendorDto,
+  ): Promise<{ activated: true; subscriptionId: string }> {
+    const draft = await this.draftVendorPlanSwitch(user, dto);
+    return this.finalizeFreePlanFromDraft(user, draft);
+  }
+
+  private async finalizeFreePlanFromDraft(
+    user: UserModel,
+    draft: PlanSwitchDraft,
+  ): Promise<{ activated: true; subscriptionId: string }> {
+    if (
+      !isFreeSubscriptionPlan({
+        name: draft.planName,
+        priceMonthly: Number(draft.plan.priceMonthly ?? 0),
+        priceYearly: Number(draft.plan.priceYearly ?? 0),
+      })
+    ) {
+      throw new BadRequestException({
+        message: 'amount_below_stripe_minimum',
+        pricePaid: draft.pricePaid,
+      });
+    }
+
+    const now = new Date();
+    const endsAt = new Date(now);
+    endsAt.setFullYear(endsAt.getFullYear() + 50);
+
+    const created = await this.vendorSubModel.create({
+      store: draft.storeId,
+      owner: user._id,
+      plan: draft.plan._id,
+      billingPeriod: draft.period,
+      status: 'ACTIVE' as VendorSubscriptionStatus,
+      startsAt: now,
+      endsAt,
+      pricePaid: 0,
+      currency: draft.currency,
+      planName: draft.planName,
+      isTrial: false,
+      trialEndsAt: null,
+      trialRemindersSent: [],
+    });
+
+    await this.vendorSubModel
+      .updateMany(
+        {
+          store: draft.storeId,
+          status: 'ACTIVE',
+          _id: { $ne: created._id },
+        },
+        {
+          $set: {
+            status: 'EXPIRED' as VendorSubscriptionStatus,
+            endsAt: now,
+          },
+        },
+      )
+      .exec();
+
+    await this.subscriptions.applyAdLimitsDowngradeForStore(
+      String(draft.storeId),
+    );
+
+    return {
+      activated: true,
+      subscriptionId: String(created._id),
+    };
+  }
+
+  private async createPendingFromDraft(
+    user: UserModel,
+    draft: PlanSwitchDraft,
+  ): Promise<PendingSubscriptionContext> {
+    const now = new Date();
+    const pending = await this.vendorSubModel.create({
+      store: draft.storeId,
+      owner: user._id,
+      plan: draft.plan._id,
+      billingPeriod: draft.period,
+      status: 'PENDING_PAYMENT' as VendorSubscriptionStatus,
+      startsAt: now,
+      endsAt: new Date(now),
+      pricePaid: draft.pricePaid,
+      currency: draft.currency,
+      planName: draft.planName,
+    });
+
+    const pendingId = String(pending._id);
+    const meta: Record<string, string> = {
+      kind: METADATA_KIND,
+      pendingSubId: pendingId,
+      uid: String(user.id ?? user._id),
+      planId: String(draft.plan._id),
+      storeId: String(draft.storeId),
+      billingPeriod: draft.period,
+    };
+
+    return {
+      pendingId,
+      planName: draft.planName,
+      period: draft.period,
+      pricePaid: draft.pricePaid,
+      currency: draft.currency,
+      unitAmountCents: draft.unitAmountCents,
       meta,
     };
+  }
+
+  private isDraftFreePlan(draft: PlanSwitchDraft): boolean {
+    return isFreeSubscriptionPlan({
+      name: draft.planName,
+      priceMonthly: Number(draft.plan.priceMonthly ?? 0),
+      priceYearly: Number(draft.plan.priceYearly ?? 0),
+    });
+  }
+
+  private async preparePendingSubscription(
+    user: UserModel,
+    dto: SubscribeVendorDto,
+  ): Promise<PendingSubscriptionContext> {
+    const draft = await this.draftVendorPlanSwitch(user, dto);
+    if (this.isDraftFreePlan(draft)) {
+      throw new BadRequestException('free_plan_use_checkout_activation');
+    }
+    if (draft.unitAmountCents < 50) {
+      throw new BadRequestException({
+        message: 'amount_below_stripe_minimum',
+        pricePaid: draft.pricePaid,
+      });
+    }
+
+    return this.createPendingFromDraft(user, draft);
   }
 
   private async activatePendingSubscription(
@@ -314,6 +440,22 @@ export class SubscriptionsStripeCheckoutService {
       )
       .exec();
 
+    const refreshed = await this.vendorSubModel.findById(existing._id).lean().exec();
+    if (refreshed) {
+      const ctx = await this.subscriptionEmails.buildContextFromSubscription(
+        refreshed as Record<string, unknown>,
+      );
+      if (ctx) {
+        void this.subscriptionEmails.notifyPlanRenewal(ctx).catch((e) => {
+          this.logger.warn(
+            `Renewal email failed sub=${ctx.subscriptionId}: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
+        });
+      }
+    }
+
     return {
       activated: true,
       subscriptionId: String(existing._id),
@@ -324,8 +466,22 @@ export class SubscriptionsStripeCheckoutService {
   async createPaymentIntent(
     user: UserModel,
     dto: SubscribeVendorDto,
-  ): Promise<{ clientSecret: string; paymentIntentId: string }> {
-    const ctx = await this.preparePendingSubscription(user, dto);
+  ): Promise<
+    | { activated: true; subscriptionId: string }
+    | { clientSecret: string; paymentIntentId: string }
+  > {
+    const draft = await this.draftVendorPlanSwitch(user, dto);
+    if (this.isDraftFreePlan(draft)) {
+      return this.finalizeFreePlanFromDraft(user, draft);
+    }
+    if (draft.unitAmountCents < 50) {
+      throw new BadRequestException({
+        message: 'amount_below_stripe_minimum',
+        pricePaid: draft.pricePaid,
+      });
+    }
+
+    const ctx = await this.createPendingFromDraft(user, draft);
     const stripe = this.stripe();
     const pi = await stripe.paymentIntents.create({
       amount: ctx.unitAmountCents,
@@ -436,8 +592,22 @@ export class SubscriptionsStripeCheckoutService {
   async createCheckoutSession(
     user: UserModel,
     dto: SubscribeVendorDto,
-  ): Promise<{ url: string; sessionId: string }> {
-    const ctx = await this.preparePendingSubscription(user, dto);
+  ): Promise<
+    | { activated: true; subscriptionId: string }
+    | { url: string; sessionId: string }
+  > {
+    const draft = await this.draftVendorPlanSwitch(user, dto);
+    if (this.isDraftFreePlan(draft)) {
+      return this.finalizeFreePlanFromDraft(user, draft);
+    }
+    if (draft.unitAmountCents < 50) {
+      throw new BadRequestException({
+        message: 'amount_below_stripe_minimum',
+        pricePaid: draft.pricePaid,
+      });
+    }
+
+    const ctx = await this.createPendingFromDraft(user, draft);
     const periodLabel = ctx.period === 'YEARLY' ? 'annuel' : 'mensuel';
     const stripe = this.stripe();
     const pmcId = this.config

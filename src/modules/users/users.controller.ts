@@ -20,6 +20,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { UsersService } from './users.service';
+import { StoreSubscribersService } from '@modules/store-subscribers/store-subscribers.service';
 
 @ApiTags('users', 'addresses')
 @ApiBearerAuth('bearer')
@@ -27,6 +28,16 @@ import { UsersService } from './users.service';
 export class UsersController {
   @Inject(UsersService)
   private readonly _usersService: UsersService;
+
+  @Inject(StoreSubscribersService)
+  private readonly _storeSubscribers: StoreSubscribersService;
+
+  @Get('me/subscribed-stores')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Boutiques auxquelles le client est abonné' })
+  async listMySubscribedStores(@Req() req: Request) {
+    return this._storeSubscribers.listSubscribedStores(req.user as UserModel);
+  }
 
   /**
    * Clients finaux.

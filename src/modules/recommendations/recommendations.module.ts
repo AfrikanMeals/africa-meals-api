@@ -1,6 +1,9 @@
 import { AuthModule } from '@modules/auth/auth.module';
 import { DrinksModule } from '@modules/drinks/drinks.module';
 import { SearchModule } from '@modules/search/search.module';
+import { SearchSettingsModule } from '@modules/search-settings/search-settings.module';
+import { StoreSubscribersModule } from '@modules/store-subscribers/store-subscribers.module';
+import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { DrinkModel, DrinkSchema } from '@schemas/drink.schema';
@@ -33,6 +36,9 @@ import { RecommendationsService } from './recommendations.service';
     AuthModule,
     DrinksModule,
     SearchModule,
+    SearchSettingsModule,
+    SubscriptionsModule,
+    StoreSubscribersModule,
     MongooseModule.forFeature([
       {
         name: UserRecommendationSignalModel.name,

@@ -225,45 +225,12 @@ export class SupportChatService {
 
   async postAdminReply(admin: UserModel, participantId: string, text: string) {
     this.assertAdmin(admin);
-    await this.assertParticipantThreadTarget(participantId);
-    const threadOwner = new Types.ObjectId(participantId);
-    const author = new Types.ObjectId(uid(admin));
-    const doc = await this._chat.create({
-      threadOwnerId: threadOwner,
-      authorId: author,
-      authorRole: SupportChatAuthorRole.ADMIN,
-      text: text.trim(),
-      messageKind: SupportChatMessageKind.TEXT,
-    });
-    return mapDocMessage(doc);
+    throw new ForbiddenException('admin_read_only');
   }
 
   async postClosureRequest(admin: UserModel, participantId: string) {
     this.assertAdmin(admin);
-    await this.assertParticipantThreadTarget(participantId);
-    const threadOwner = new Types.ObjectId(participantId);
-    const pending = await this._chat
-      .findOne({
-        threadOwnerId: threadOwner,
-        messageKind: SupportChatMessageKind.SATISFACTION_PROMPT,
-        satisfactionOutcome: {
-          $ne: SupportChatSatisfactionOutcome.NO_CONTINUE,
-        },
-      })
-      .exec();
-    if (pending) {
-      throw new BadRequestException('satisfaction_prompt_pending');
-    }
-    const author = new Types.ObjectId(uid(admin));
-    const doc = await this._chat.create({
-      threadOwnerId: threadOwner,
-      authorId: author,
-      authorRole: SupportChatAuthorRole.ADMIN,
-      text: SATISFACTION_QUESTION_FR,
-      messageKind: SupportChatMessageKind.SATISFACTION_PROMPT,
-      satisfactionOutcome: SupportChatSatisfactionOutcome.PENDING,
-    });
-    return mapDocMessage(doc);
+    throw new ForbiddenException('admin_read_only');
   }
 
   async respondSatisfaction(

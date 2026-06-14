@@ -6,6 +6,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { EnvDebugController } from './env-debug.controller';
+import { isEnvDebugControllerEnabled } from './env-debug.util';
 import { AddressesModule } from './modules/addresses/addresses.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { MailerModule } from './modules/mailer/mailer.module';
@@ -43,6 +44,8 @@ import { AdminOpsReportsModule } from './modules/admin-ops-reports/admin-ops-rep
 import { RequestStatsModule } from './modules/request-stats/request-stats.module';
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
 import { AuthSettingsModule } from './modules/auth-settings/auth-settings.module';
+import { MapSettingsModule } from './modules/map-settings/map-settings.module';
+import { SearchSettingsModule } from './modules/search-settings/search-settings.module';
 import { MobileAppSettingsModule } from './modules/mobile-app-settings/mobile-app-settings.module';
 import { PosSettingsModule } from './modules/pos-settings/pos-settings.module';
 import { BusinessTypesModule } from './modules/business-types/business-types.module';
@@ -291,6 +294,8 @@ function redactRedisUrl(url: string): string {
     RequestStatsModule,
     FieldSelectionModule,
     AuthSettingsModule,
+    MapSettingsModule,
+    SearchSettingsModule,
     MobileAppSettingsModule,
     PosSettingsModule,
     BusinessTypesModule,
@@ -301,7 +306,10 @@ function redactRedisUrl(url: string): string {
     PublicSeoModule,
     // SharedModule,
   ],
-  controllers: [AppController, EnvDebugController],
+  controllers: [
+    AppController,
+    ...(isEnvDebugControllerEnabled() ? [EnvDebugController] : []),
+  ],
   providers: [AppService],
   // exports: [ConfigModule],
 })

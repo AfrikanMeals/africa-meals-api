@@ -1,3 +1,4 @@
+import { SearchSettingsService } from '@modules/search-settings/search-settings.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { DRINK_IN_STOCK_FILTER } from '@modules/drinks/drinks.service';
@@ -45,15 +46,15 @@ export class RecommendationTrainingService {
     private readonly _snapshotModel: Model<RecommendationTrainingSnapshotModel>,
     @InjectModel(UserRecommendationDigestModel.name)
     private readonly _digestModel: Model<UserRecommendationDigestModel>,
+    private readonly _searchSettings: SearchSettingsService,
   ) {}
 
   /** Pass complet : snapshot global + digests pour les utilisateurs actifs récents. */
   async runTrainingPass(): Promise<void> {
     const t0 = Date.now();
-    const signalDays =
-      Number(process.env.RECOMMENDATION_SIGNAL_LOOKBACK_DAYS) || 30;
-    const digestDays =
-      Number(process.env.RECOMMENDATION_DIGEST_LOOKBACK_DAYS) || 14;
+    const runtime = await this._searchSettings.getSearchRuntimeConfig();
+    const signalDays = runtime.trainingLookbackDays;
+    const digestDays = runtime.digestLookbackDays;
     const maxDigestUsers =
       Number(process.env.RECOMMENDATION_DIGEST_MAX_USERS) || 800;
     const digestUserMinSignals =

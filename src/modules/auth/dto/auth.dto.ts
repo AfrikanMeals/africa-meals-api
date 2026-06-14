@@ -131,6 +131,48 @@ export class ResetPasswordDto {
   password: string;
 }
 
+/** Changement de mot de passe (compte e-mail / mot de passe). */
+export class ChangePasswordDto {
+  @ApiProperty({ format: 'password', minLength: 6 })
+  @IsNotEmpty()
+  @MinLength(6)
+  currentPassword: string;
+
+  @ApiProperty({ format: 'password', minLength: 6 })
+  @IsNotEmpty()
+  @MinLength(6)
+  newPassword: string;
+}
+
+/** Confirmation activation 2FA par e-mail. */
+export class Email2faConfirmDto {
+  @ApiProperty({ example: '123456' })
+  @IsNotEmpty()
+  @Trim()
+  code: string;
+}
+
+/** Validation 2FA après login / OAuth (étape 2). */
+export class Verify2faLoginDto {
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  challengeToken: string;
+
+  @ApiProperty({ example: '123456' })
+  @IsNotEmpty()
+  @Trim()
+  code: string;
+}
+
+/** Renvoi du code 2FA de connexion. */
+export class Resend2faLoginDto {
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  challengeToken: string;
+}
+
 /** Mise à jour du profil utilisateur (données personnelles) */
 export class UpdateProfileDto {
   @ApiPropertyOptional({ example: 'Jean Dupont' })

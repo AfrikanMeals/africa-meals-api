@@ -67,14 +67,18 @@ Vous pouvez **supprimer** les anciennes variables liées à MailerSend si vous n
 2. Démarrer l’API :  
    `npm run start:dev`
 
-3. Tester l’envoi via l’endpoint de test :
-   - **Swagger** : `POST /mailer/test-email` avec un body `{ "to": "votre@email.com" }`
+3. Tester l’envoi via l’endpoint de test (dev/staging uniquement) :
+   - Activer `ENABLE_MAILER_TEST_EMAIL=true` dans `.env` (jamais en production)
+   - Se connecter avec un compte **ADMIN** et récupérer un JWT (Swagger **Authorize**)
+   - **Swagger** : `POST /mailer/test-email` avec `{ "to": "votre@email.com" }`
    - **cURL** :
      ```bash
-     curl -X POST http://localhost:9000/mailer/test-email \
+     curl -X POST http://localhost:9000/api/mailer/test-email \
        -H "Content-Type: application/json" \
+       -H "Authorization: Bearer <JWT_ADMIN>" \
        -d '{"to": "votre@email.com"}'
      ```
+   - Limite : **5 envois / 15 min** par administrateur
 
 Si la configuration est correcte, vous recevrez un email de test.
 
@@ -103,7 +107,7 @@ Si la configuration est correcte, vous recevrez un email de test.
 | Inscription / vérification | `sendSimple()` | Code OTP + en-tête / pied de page brandés |
 | Mot de passe oublié | `sendSimple()` | Code de réinitialisation (mise en page commune) |
 | Bannières, campagnes, remboursements, etc. | `sendSimple()` | Corps HTML + enveloppe automatique |
-| Test | `sendSimple()` | Email de test via `POST /mailer/test-email` |
+| Test | `sendSimple()` | Email de test via `POST /mailer/test-email` (ADMIN, `ENABLE_MAILER_TEST_EMAIL=true`, hors prod) |
 
 Tous les e-mails `sendSimple()` sont enveloppés par le module `email-layout` (header logo, dégradé marque, footer support). Pour désactiver l’enveloppe sur un envoi ponctuel, préfixer le HTML avec `<!-- email-layout:skip -->`.
 

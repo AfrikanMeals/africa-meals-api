@@ -69,6 +69,15 @@ export const CRON_JOBS_REGISTRY: CronJobDefinition[] = [
     disableEnvKey: 'DISABLE_ACCOUNT_DELETION_CRON',
   },
   {
+    key: 'search_vector_reindex',
+    label: 'Ré-indexation recherche',
+    description:
+      'Prépare l’index texte / vectoriel (plats, boutiques, boissons) pour la recherche sémantique.',
+    defaultSchedule: '0 4 * * *',
+    scheduleEnvKey: 'SEARCH_REINDEX_CRON',
+    disableEnvKey: 'DISABLE_SEARCH_REINDEX_CRON',
+  },
+  {
     key: 'recommendation_training',
     label: 'Entraînement recommandations',
     description: 'Job d’entraînement / rafraîchissement du moteur de recommandations.',

@@ -44,7 +44,11 @@ import { isDemoProductRaterEmail } from '@modules/ratings/demo-product-rating-us
 import { ProductRatingModel } from '@schemas/product_rating.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
-import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
+import {
+  MealPreOrderCatalogScopeEnum,
+  StoreModel,
+  StoreStatusEnum,
+} from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { VendorSubscriptionModel } from '@schemas/vendor-subscription.schema';
 import { Cache } from 'cache-manager';
@@ -262,6 +266,49 @@ export class StoreService {
     );
   }
 
+  private async _mealPreOrderEnabledForStore(storeId: string): Promise<boolean> {
+    return this._subscriptionsService.isMealPreOrderEnabledForStore(storeId);
+  }
+
+  private async _assertMealPreOrdersAllowedForStore(
+    storeId: string,
+    wantsPreOrders: boolean,
+  ): Promise<void> {
+    if (!wantsPreOrders) return;
+    const allowed = await this._mealPreOrderEnabledForStore(storeId);
+    if (!allowed) {
+      throw new ForbiddenException('meal_pre_order_not_in_plan');
+    }
+  }
+
+  private _effectiveAcceptsMealPreOrders(
+    doc: Record<string, unknown>,
+    planAllows: boolean,
+  ): boolean {
+    return planAllows && this._docAcceptsMealPreOrders(doc);
+  }
+
+  private _normalizeMealPreOrderCatalogScope(
+    value?: string | MealPreOrderCatalogScopeEnum | null,
+  ): MealPreOrderCatalogScopeEnum {
+    return String(value ?? '').toUpperCase() ===
+      MealPreOrderCatalogScopeEnum.CATALOG
+      ? MealPreOrderCatalogScopeEnum.CATALOG
+      : MealPreOrderCatalogScopeEnum.DAILY_MENU;
+  }
+
+  private _docMealPreOrderCatalogScope(
+    doc: Record<string, unknown>,
+  ): MealPreOrderCatalogScopeEnum {
+    return this._normalizeMealPreOrderCatalogScope(
+      String(
+        doc.mealPreOrderCatalogScope ??
+          doc.meal_pre_order_catalog_scope ??
+          '',
+      ),
+    );
+  }
+
   @Inject(DashboardAuditService)
   private readonly _dashboardAudit: DashboardAuditService;
 
@@ -416,26 +463,53 @@ export class StoreService {
     const storeOid = new Types.ObjectId(id);
     const doc = await this._storeModel
       .findById(storeOid)
-      .select('bio profileImage name status')
+      .select(
+        'bio profileImage name status email phoneNumber currency supportsShipping acceptsOrders acceptsMealPreOrders mealPreOrderCatalogScope',
+      )
+      .populate({
+        path: 'address',
+        select: 'address city country countryCode zipCode label location',
+      })
       .lean()
       .exec();
     if (doc == null) {
       return null;
     }
-    const { averageRating, reviewCount } =
-      await this.productReviewsAverageForStore(storeOid);
-    const ordersCount = await this._orderModel
-      .countDocuments({
-        store: storeOid,
-        status: { $ne: OrderStatusEnum.CANCELLED },
-      })
-      .exec();
+    const [{ averageRating, reviewCount }, ordersCount, planByStore] =
+      await Promise.all([
+        this.productReviewsAverageForStore(storeOid),
+        this._orderModel
+          .countDocuments({
+            store: storeOid,
+            status: { $ne: OrderStatusEnum.CANCELLED },
+          })
+          .exec(),
+        this._resolveSubscriptionPlanByStoreIds([id]),
+      ]);
+    const planName =
+      String(planByStore.get(id) ?? '').trim() || 'FREE';
+    const storeSubscriptionEnabled =
+      await this._subscriptionsService.isStoreSubscriptionEnabledForPlanName(
+        planName,
+      );
+    const mealPreOrderPlanEnabled =
+      await this._subscriptionsService.isMealPreOrderEnabledForPlanName(
+        planName,
+      );
     const o = doc as unknown as Record<string, unknown>;
     const plain: Record<string, unknown> = {
       ...o,
       averageRating,
       reviewCount,
       ordersCount,
+      subscriptionPlan: planName,
+      storeSubscriptionEnabled,
+      mealPreOrderPlanEnabled,
+      acceptsMealPreOrders: this._effectiveAcceptsMealPreOrders(
+        o,
+        mealPreOrderPlanEnabled,
+      ),
+      mealPreOrderCatalogScope: this._docMealPreOrderCatalogScope(o),
     };
     const oid = o['_id'];
     if (
@@ -480,6 +554,19 @@ export class StoreService {
       throw new ConflictException('store_already_exists');
     }
 
+    const wantsPreOrders = this._normalizeMealPreOrdersFlag(
+      args.acceptsMealPreOrders,
+    );
+    if (wantsPreOrders) {
+      const allowed =
+        await this._subscriptionsService.isMealPreOrderEnabledForPlanName(
+          'FREE',
+        );
+      if (!allowed) {
+        throw new ForbiddenException('meal_pre_order_not_in_plan');
+      }
+    }
+
     const addr = await this._addressesService.create(
       {
         ...address,
@@ -499,8 +586,9 @@ export class StoreService {
       address: addr._id,
       owner: user._id,
       ...this._normalizeVendorDeliveryDriverSettings(args),
-      acceptsMealPreOrders: this._normalizeMealPreOrdersFlag(
-        args.acceptsMealPreOrders,
+      acceptsMealPreOrders: wantsPreOrders,
+      mealPreOrderCatalogScope: this._normalizeMealPreOrderCatalogScope(
+        args.mealPreOrderCatalogScope,
       ),
     });
 
@@ -566,7 +654,7 @@ export class StoreService {
         select: 'address city country zipCode countryCode location',
       })
       .select(
-        'name bio businessType email phoneNumber currency region status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner',
+        'name bio businessType email phoneNumber currency region status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders mealPreOrderCatalogScope',
       )
       .lean()
       .exec();
@@ -613,6 +701,9 @@ export class StoreService {
       acceptsMealPreOrders: this._docAcceptsMealPreOrders(
         doc as Record<string, unknown>,
       ),
+      mealPreOrderCatalogScope: this._docMealPreOrderCatalogScope(
+        doc as Record<string, unknown>,
+      ),
       vendorManagesDeliveryDrivers: !!doc.vendorManagesDeliveryDrivers,
       deliveryAssignmentMode: String(
         doc.deliveryAssignmentMode ?? 'AUTO',
@@ -649,6 +740,8 @@ export class StoreService {
       rawMenu,
       dailyMenuLimit,
     );
+    const mealPreOrderPlanEnabled =
+      await this._mealPreOrderEnabledForStore(targetId);
 
     return {
       store: {
@@ -661,6 +754,7 @@ export class StoreService {
         acceptsMealPreOrders: this._docAcceptsMealPreOrders(
           doc as Record<string, unknown>,
         ),
+        mealPreOrderPlanEnabled,
         vendorManagesDeliveryDrivers: !!doc.vendorManagesDeliveryDrivers,
         deliveryAssignmentMode: String(
           doc.deliveryAssignmentMode ?? 'AUTO',
@@ -769,13 +863,13 @@ export class StoreService {
       .updateOne({ _id: storeId }, { $set: { dailyMenuByWeekday } })
       .exec();
 
-    await this._invalidateCatalogListingAfterDailyMenuChange(storeId);
+    await this._invalidatePublicCatalogCachesForStore(storeId);
 
     return this.findMyStoreSummary(user);
   }
 
-  /** Menu du jour modifié → listing client (recherche, accueil, menu boutique). */
-  private async _invalidateCatalogListingAfterDailyMenuChange(
+  /** Changements menu / commandes / livraison → listing client (recherche, accueil, menu boutique). */
+  private async _invalidatePublicCatalogCachesForStore(
     storeId: string,
   ): Promise<void> {
     try {
@@ -783,9 +877,16 @@ export class StoreService {
       await this._productCategoryService.invalidatePublicListCache();
     } catch (err) {
       this._logger.warn(
-        `catalog cache bust after daily menu update failed: ${(err as Error).message}`,
+        `public catalog cache bust failed for store ${storeId}: ${(err as Error).message}`,
       );
     }
+  }
+
+  /** @deprecated use {@link _invalidatePublicCatalogCachesForStore} */
+  private async _invalidateCatalogListingAfterDailyMenuChange(
+    storeId: string,
+  ): Promise<void> {
+    await this._invalidatePublicCatalogCachesForStore(storeId);
   }
 
   private stringifyIdLike(value: unknown): string {
@@ -1342,6 +1443,13 @@ export class StoreService {
     const deliveryDriverSettings = this._normalizeVendorDeliveryDriverSettings(
       args,
     );
+    const wantsPreOrders = this._normalizeMealPreOrdersFlag(
+      args.acceptsMealPreOrders,
+    );
+    await this._assertMealPreOrdersAllowedForStore(
+      (store._id as { toString(): string }).toString(),
+      wantsPreOrders,
+    );
     const setFields: Record<string, unknown> = {
       name: args.name,
       bio: args.bio,
@@ -1351,8 +1459,9 @@ export class StoreService {
       currency: derivedCurrency,
       supportsShipping: args.supportsShipping,
       shippingZones,
-      acceptsMealPreOrders: this._normalizeMealPreOrdersFlag(
-        args.acceptsMealPreOrders,
+      acceptsMealPreOrders: wantsPreOrders,
+      mealPreOrderCatalogScope: this._normalizeMealPreOrderCatalogScope(
+        args.mealPreOrderCatalogScope,
       ),
       vendorManagesDeliveryDrivers:
         deliveryDriverSettings.vendorManagesDeliveryDrivers,
@@ -1385,6 +1494,10 @@ export class StoreService {
 
     this._wsInboxNotify.notifyUserInboxRefresh(
       (user._id as { toString(): string }).toString(),
+    );
+
+    await this._invalidatePublicCatalogCachesForStore(
+      (store._id as { toString(): string }).toString(),
     );
 
     return this.findMyStoreSummary(user);
@@ -1433,22 +1546,40 @@ export class StoreService {
     const deliveryDriverSettings = this._normalizeVendorDeliveryDriverSettings(
       args,
     );
+    const wantsPreOrders =
+      args.acceptsMealPreOrders !== undefined
+        ? this._normalizeMealPreOrdersFlag(args.acceptsMealPreOrders)
+        : undefined;
+    if (wantsPreOrders === true) {
+      await this._assertMealPreOrdersAllowedForStore(targetId, true);
+    }
+    const updateFields: Record<string, unknown> = {
+      supportsShipping: args.supportsShipping,
+      shippingZones,
+      vendorManagesDeliveryDrivers:
+        deliveryDriverSettings.vendorManagesDeliveryDrivers,
+      deliveryAssignmentMode: deliveryDriverSettings.deliveryAssignmentMode,
+    };
+    if (wantsPreOrders !== undefined) {
+      updateFields.acceptsMealPreOrders = wantsPreOrders;
+    }
+    if (args.mealPreOrderCatalogScope !== undefined) {
+      updateFields.mealPreOrderCatalogScope =
+        this._normalizeMealPreOrderCatalogScope(args.mealPreOrderCatalogScope);
+    }
     await this._storeModel.updateOne(
       { _id: store._id },
-      {
-        supportsShipping: args.supportsShipping,
-        shippingZones,
-        vendorManagesDeliveryDrivers:
-          deliveryDriverSettings.vendorManagesDeliveryDrivers,
-        deliveryAssignmentMode: deliveryDriverSettings.deliveryAssignmentMode,
-      },
+      { $set: updateFields },
     );
     await this._storeModel.updateOne(
       { _id: store._id },
       {
         $push: {
           vendorMessages: {
-            message: 'Préférence de livraison enregistrée.',
+            message:
+              wantsPreOrders !== undefined
+                ? 'Préférences commandes et livraison enregistrées.'
+                : 'Préférence de livraison enregistrée.',
             from: 'SYSTEM',
             createdAt: new Date(),
           },
@@ -1458,6 +1589,7 @@ export class StoreService {
     this._wsInboxNotify.notifyUserInboxRefresh(
       (user._id as { toString(): string }).toString(),
     );
+    await this._invalidatePublicCatalogCachesForStore(targetId);
     return this.findMyStoreSummary(user, targetId);
   }
 
@@ -2456,6 +2588,9 @@ export class StoreService {
       acceptsMealPreOrders: this._docAcceptsMealPreOrders(
         doc as Record<string, unknown>,
       ),
+      mealPreOrderCatalogScope: this._docMealPreOrderCatalogScope(
+        doc as Record<string, unknown>,
+      ),
       vendorManagesDeliveryDrivers: !!doc.vendorManagesDeliveryDrivers,
       deliveryAssignmentMode: String(
         doc.deliveryAssignmentMode ?? 'AUTO',
@@ -2639,6 +2774,13 @@ export class StoreService {
     const deliveryDriverSettings = this._normalizeVendorDeliveryDriverSettings(
       args,
     );
+    const wantsPreOrders = this._normalizeMealPreOrdersFlag(
+      args.acceptsMealPreOrders,
+    );
+    await this._assertMealPreOrdersAllowedForStore(
+      (store._id as { toString(): string }).toString(),
+      wantsPreOrders,
+    );
     const setFields: Record<string, unknown> = {
       name: args.name,
       bio: args.bio,
@@ -2649,8 +2791,9 @@ export class StoreService {
       supportsShipping: args.supportsShipping,
       acceptsOrders: args.acceptsOrders !== false,
       shippingZones,
-      acceptsMealPreOrders: this._normalizeMealPreOrdersFlag(
-        args.acceptsMealPreOrders,
+      acceptsMealPreOrders: wantsPreOrders,
+      mealPreOrderCatalogScope: this._normalizeMealPreOrderCatalogScope(
+        args.mealPreOrderCatalogScope,
       ),
       vendorManagesDeliveryDrivers:
         deliveryDriverSettings.vendorManagesDeliveryDrivers,
@@ -2719,6 +2862,7 @@ export class StoreService {
       },
     });
     this._wsInboxNotify.notifyUserInboxRefresh(ownerId);
+    await this._invalidatePublicCatalogCachesForStore(storeId);
     return this.getVendorStoreDetailForAdmin(storeId, admin);
   }
 

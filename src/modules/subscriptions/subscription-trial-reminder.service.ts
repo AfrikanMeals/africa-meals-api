@@ -7,6 +7,7 @@ import dayjs = require('dayjs');
 import utc = require('dayjs/plugin/utc');
 import timezone = require('dayjs/plugin/timezone');
 import { Model, Types } from 'mongoose';
+import { VendorSubscriptionEmailService } from './vendor-subscription-email.service';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -28,6 +29,7 @@ export class SubscriptionTrialReminderService {
     @InjectModel(SubscriptionPlanModel.name)
     private readonly planModel: Model<SubscriptionPlanModel>,
     private readonly notifications: NotificationsService,
+    private readonly subscriptionEmails: VendorSubscriptionEmailService,
   ) {}
 
   private tz(): string {
@@ -82,6 +84,18 @@ export class SubscriptionTrialReminderService {
       }
 
       if (trialEnd.getTime() <= now.getTime()) {
+        const ctx = await this.subscriptionEmails.buildContextFromSubscription(
+          sub as Record<string, unknown>,
+        );
+        if (ctx) {
+          void this.subscriptionEmails.notifyPlanExpiration(ctx).catch((e) => {
+            this.logger.warn(
+              `Trial expiration email failed sub=${ctx.subscriptionId}: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            );
+          });
+        }
         await this.vendorSubModel
           .updateOne(
             { _id: sub._id },
