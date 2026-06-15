@@ -17,6 +17,14 @@ import {
 } from 'libphonenumber-js';
 import { WsStripeConnectNotifyService } from '@modules/ws-notify/ws-stripe-connect-notify.service';
 import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-email.service';
+import {
+  getPartnerBadgeDefinition,
+  partnerBadgePayoutMethod,
+  partnerBadgePayoutTimingLabelFr,
+  resolveEffectivePartnerBadgeCode,
+  serializePartnerBadge,
+  type PartnerBadgeSnapshot,
+} from '@common/partner-badges/partner-badge.constants';
 import Stripe = require('stripe');
 
 type StripeClient = InstanceType<typeof Stripe>;
@@ -86,6 +94,7 @@ export type StripeConnectBalance = {
 
 export type StripeConnectPayoutEstimate = {
   available: number;
+  pending: number;
   payoutFee: number;
   netPayout: number;
   currency: string;
@@ -93,6 +102,10 @@ export type StripeConnectPayoutEstimate = {
   feePercent: number;
   feeFixed: number;
   canRequestPayout: boolean;
+  partnerBadge: PartnerBadgeSnapshot;
+  payoutDelayDays: number;
+  payoutMethod: 'instant' | 'standard';
+  payoutTimingLabel: string;
 };
 
 type StripeAddressBlock = {
@@ -838,6 +851,13 @@ export class StripeConnectService {
         },
       )
       .exec();
+
+    if (account.payouts_enabled && account.id?.trim()) {
+      const user = await this.userModel.findById(userId).exec();
+      if (user) {
+        await this.ensurePartnerBadgePayoutScheduleForUser(user);
+      }
+    }
   }
 
   /**
@@ -1476,24 +1496,37 @@ export class StripeConnectService {
     this.assertConnectRecipient(user);
     const status = await this.getConnectStatus(user);
     const currency = (status.defaultCurrency ?? 'cad').toLowerCase();
+    const partnerBadgeCode = await this.resolvePartnerBadgeCodeForUser(user);
+    const partnerBadge = serializePartnerBadge(partnerBadgeCode);
+    const payoutMethod = partnerBadgePayoutMethod(partnerBadgeCode);
+    const payoutTimingLabel = partnerBadgePayoutTimingLabelFr(partnerBadgeCode);
+
+    const emptyEstimate = (): StripeConnectPayoutEstimate => ({
+      available: 0,
+      pending: 0,
+      payoutFee: 0,
+      netPayout: 0,
+      currency: currency.toUpperCase(),
+      feeMode: 'fixed',
+      feePercent: 0,
+      feeFixed: 0,
+      canRequestPayout: false,
+      partnerBadge,
+      payoutDelayDays: partnerBadge.payoutDelayDays,
+      payoutMethod,
+      payoutTimingLabel,
+    });
+
     if (
       !status.accountId ||
       !status.payoutsEnabled ||
       !status.onboardingComplete
     ) {
-      return {
-        available: 0,
-        payoutFee: 0,
-        netPayout: 0,
-        currency: currency.toUpperCase(),
-        feeMode: 'fixed',
-        feePercent: 0,
-        feeFixed: 0,
-        canRequestPayout: false,
-      };
+      return emptyEstimate();
     }
 
     let availableCents = 0;
+    let pendingCents = 0;
     let payoutCurrency = currency;
     try {
       const balance = await this.stripe().balance.retrieve(
@@ -1503,17 +1536,10 @@ export class StripeConnectService {
       const row = balanceAvailableRow(balance, currency);
       availableCents = row?.amount ?? 0;
       payoutCurrency = row?.currency ?? currency;
+      const pendingRow = balancePendingRow(balance, currency);
+      pendingCents = pendingRow?.amount ?? 0;
     } catch {
-      return {
-        available: 0,
-        payoutFee: 0,
-        netPayout: 0,
-        currency: currency.toUpperCase(),
-        feeMode: 'fixed',
-        feePercent: 0,
-        feeFixed: 0,
-        canRequestPayout: false,
-      };
+      return emptyEstimate();
     }
 
     const split = await this.platformFees.computePayoutFeeFromSettings(
@@ -1524,6 +1550,7 @@ export class StripeConnectService {
 
     return {
       available: availableCents / 100,
+      pending: pendingCents / 100,
       payoutFee: payoutFeeCents / 100,
       netPayout: netPayoutCents / 100,
       currency: payoutCurrency.toUpperCase(),
@@ -1531,6 +1558,10 @@ export class StripeConnectService {
       feePercent: split.feePercent,
       feeFixed: split.feeFixedCad,
       canRequestPayout: netPayoutCents >= 100,
+      partnerBadge,
+      payoutDelayDays: partnerBadge.payoutDelayDays,
+      payoutMethod,
+      payoutTimingLabel,
     };
   }
 
@@ -1547,6 +1578,9 @@ export class StripeConnectService {
     if (!status.payoutsEnabled || !status.onboardingComplete) {
       throw new BadRequestException('stripe_payouts_not_enabled');
     }
+
+    const partnerBadgeCode = await this.resolvePartnerBadgeCodeForUser(user);
+    await this.ensurePartnerBadgePayoutScheduleForUser(user);
 
     const accountId = status.accountId;
     const currency = (status.defaultCurrency ?? 'cad').toLowerCase();
@@ -1582,23 +1616,42 @@ export class StripeConnectService {
       throw new BadRequestException('stripe_payout_no_balance_after_fee');
     }
 
+    const badge = getPartnerBadgeDefinition(partnerBadgeCode);
+    const useInstantPayout = badge?.payoutDelayDays === 0;
+
     try {
-      const payout = await this.stripe().payouts.create(
-        {
-          amount: payoutCents,
-          currency: payoutCurrency,
-          description: 'Versement demandé depuis Afrika Meals',
-          metadata: {
-            platformPayoutFeeCents: String(payoutFeeCents),
-            platformPayoutFeeMode: payoutSplit.feeMode,
-            platformPayoutFeePercent: String(payoutSplit.feePercent),
-            platformPayoutFeeFixed: String(payoutSplit.feeFixedCad),
-          },
+      const payoutParams: {
+        amount: number;
+        currency: string;
+        description: string;
+        metadata: Record<string, string>;
+        method?: 'instant' | 'standard';
+      } = {
+        amount: payoutCents,
+        currency: payoutCurrency,
+        description: useInstantPayout
+          ? 'Versement instantané (badge Diamond)'
+          : `Versement demandé (badge ${badge?.name ?? 'SILVER'})`,
+        metadata: {
+          platformPayoutFeeCents: String(payoutFeeCents),
+          platformPayoutFeeMode: payoutSplit.feeMode,
+          platformPayoutFeePercent: String(payoutSplit.feePercent),
+          platformPayoutFeeFixed: String(payoutSplit.feeFixedCad),
+          partnerBadgeCode: badge?.code ?? resolveEffectivePartnerBadgeCode(null),
+          partnerBadgePayoutDelayDays: String(badge?.payoutDelayDays ?? 7),
         },
+      };
+      if (useInstantPayout) {
+        payoutParams.method = 'instant';
+      }
+      const payout = await this.stripe().payouts.create(
+        payoutParams,
         { stripeAccount: accountId },
       );
       this.logger.log(
-        `Stripe manual payout ${payout.id} for ${accountId}: gross=${
+        `Stripe payout ${payout.id} for ${accountId} badge=${
+          badge?.code ?? 'SILVER'
+        } method=${useInstantPayout ? 'instant' : 'standard'}: gross=${
           availableCents / 100
         } ${currency}, fee=${payoutFeeCents / 100}, net=${payoutCents / 100}`,
       );
@@ -1645,8 +1698,88 @@ export class StripeConnectService {
       if (/insufficient/i.test(msg)) {
         throw new BadRequestException('stripe_payout_no_balance');
       }
+      if (useInstantPayout && /instant/i.test(msg)) {
+        throw new BadRequestException('stripe_instant_payout_unavailable');
+      }
       throw new BadRequestException('stripe_payout_request_failed');
     }
+  }
+
+  /** Synchronise le calendrier Stripe avec le badge effectif du partenaire. */
+  async ensurePartnerBadgePayoutScheduleForUser(
+    user: UserModel,
+  ): Promise<void> {
+    const accountId = String(user.stripeConnectAccountId ?? '').trim();
+    if (!accountId) return;
+    const badgeCode = await this.resolvePartnerBadgeCodeForUser(user);
+    await this.applyPartnerBadgePayoutSchedule(accountId, badgeCode);
+  }
+
+  /**
+   * Applique le calendrier de versement Stripe selon le badge partenaire.
+   * Diamond → versements manuels + instant à la demande ; Silver/Gold → délai en jours.
+   */
+  async applyPartnerBadgePayoutSchedule(
+    accountId: string,
+    badgeCode: string | null | undefined,
+  ): Promise<void> {
+    const trimmedAccount = String(accountId ?? '').trim();
+    if (!trimmedAccount) return;
+
+    const effectiveCode = resolveEffectivePartnerBadgeCode(badgeCode);
+    const badge = getPartnerBadgeDefinition(effectiveCode)!;
+
+    try {
+      if (badge.payoutDelayDays === 0) {
+        await this.stripe().accounts.update(trimmedAccount, {
+          settings: {
+            payouts: {
+              schedule: { interval: 'manual' },
+            },
+          },
+        });
+        return;
+      }
+
+      await this.stripe().accounts.update(trimmedAccount, {
+        settings: {
+          payouts: {
+            schedule: {
+              interval: 'daily',
+              delay_days: badge.payoutDelayDays,
+            },
+          },
+        },
+      });
+    } catch (e) {
+      this.logger.warn(
+        `Stripe payout schedule update failed for ${trimmedAccount} badge=${effectiveCode}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
+  /** Badge livreur sur l’utilisateur ; badge vendeur sur la boutique active la plus récente. */
+  private async resolvePartnerBadgeCodeForUser(
+    user: UserModel,
+  ): Promise<string> {
+    if (user.type === UserTypeEnum.DELIVERY) {
+      return resolveEffectivePartnerBadgeCode(user.partnerBadgeCode);
+    }
+    if (user.type !== UserTypeEnum.VENDOR) {
+      return resolveEffectivePartnerBadgeCode(user.partnerBadgeCode);
+    }
+    const ownerId = this.userId(user);
+    const store = await this.storeModel
+      .findOne({ owner: ownerId, status: 'ACTIVE' })
+      .sort({ updatedAt: -1 })
+      .select('partnerBadgeCode')
+      .lean()
+      .exec();
+    return resolveEffectivePartnerBadgeCode(
+      store?.partnerBadgeCode ?? user.partnerBadgeCode,
+    );
   }
 }
 
@@ -1658,5 +1791,16 @@ function balanceAvailableRow(
     balance.available?.find((b) => b.currency === currency) ??
     balance.available?.find((b) => b.currency === 'cad') ??
     balance.available?.[0]
+  );
+}
+
+function balancePendingRow(
+  balance: { pending?: { amount?: number; currency?: string }[] },
+  currency: string,
+): { amount?: number; currency?: string } | undefined {
+  return (
+    balance.pending?.find((b) => b.currency === currency) ??
+    balance.pending?.find((b) => b.currency === 'cad') ??
+    balance.pending?.[0]
   );
 }

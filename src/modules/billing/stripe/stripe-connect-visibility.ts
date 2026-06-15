@@ -14,6 +14,59 @@ export type StripeOnboardingCachedUser = {
 };
 
 /** Aligné sur `isConnectFullyActive` (stripe-connect.service). */
+export type StripeOnboardingStatusLabel =
+  | 'COMPLETE'
+  | 'ACTION_REQUIRED'
+  | 'IN_PROGRESS'
+  | 'NOT_STARTED';
+
+/** Statut onboarding Stripe Connect pour affichage admin. */
+export function resolveStripeOnboardingStatusLabel(
+  user: StripeOnboardingCachedUser | Record<string, unknown> | null | undefined,
+): StripeOnboardingStatusLabel {
+  if (!user) return 'NOT_STARTED';
+  const accountId = String(
+    (user as Record<string, unknown>).stripeConnectAccountId ?? '',
+  ).trim();
+  if (!accountId) return 'NOT_STARTED';
+
+  const chargesEnabled = Boolean(
+    (user as Record<string, unknown>).stripeConnectChargesEnabled,
+  );
+  const payoutsEnabled = Boolean(
+    (user as Record<string, unknown>).stripeConnectPayoutsEnabled,
+  );
+  const detailsSubmitted = Boolean(
+    (user as Record<string, unknown>).stripeConnectDetailsSubmitted,
+  );
+  const disabledReason = String(
+    (user as Record<string, unknown>).stripeConnectDisabledReason ?? '',
+  ).trim();
+  const currentlyDue = Array.isArray(
+    (user as Record<string, unknown>).stripeConnectRequirementsDue,
+  )
+    ? ((user as Record<string, unknown>).stripeConnectRequirementsDue as string[])
+    : [];
+  const pastDue = Array.isArray(
+    (user as Record<string, unknown>).stripeConnectRequirementsPastDue,
+  )
+    ? ((user as Record<string, unknown>)
+        .stripeConnectRequirementsPastDue as string[])
+    : [];
+
+  if (disabledReason || pastDue.length > 0) return 'ACTION_REQUIRED';
+  if (
+    chargesEnabled &&
+    payoutsEnabled &&
+    detailsSubmitted &&
+    currentlyDue.length === 0
+  ) {
+    return 'COMPLETE';
+  }
+  if (accountId || detailsSubmitted) return 'IN_PROGRESS';
+  return 'NOT_STARTED';
+}
+
 export function isStripeConnectOnboardingCompleteUser(
   user: StripeOnboardingCachedUser | null | undefined,
 ): boolean {

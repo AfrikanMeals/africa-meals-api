@@ -148,6 +148,7 @@ export class BillingController {
   })
   async stripeGroupedPaymentIntent(
     @Req() req: Request,
+    @Headers('x-idempotency-key') idempotencyKey: string | undefined,
     @Body(
       new ValidationPipe({
         transform: true,
@@ -160,6 +161,7 @@ export class BillingController {
     return this._stripeGroupedCheckout.createGroupedPaymentIntent(
       req.user as UserModel,
       dto,
+      idempotencyKey,
     );
   }
 

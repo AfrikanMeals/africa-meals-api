@@ -23,6 +23,7 @@ import {
 import { PatchDeliveryAgentApplicationDto } from './dto/delivery-agent-application.dto';
 import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
 import { DeliveryAgentService } from './delivery-agent.service';
+import { SetPartnerBadgeDto } from '@common/partner-badges/dto/set-partner-badge.dto';
 
 @ApiTags('delivery-agent')
 @ApiBearerAuth('bearer')
@@ -280,6 +281,25 @@ export class DeliveryAgentController {
     return this._deliveryAgent.reactivateApplicationAdmin(
       req.user as UserModel,
       applicationId,
+    );
+  }
+
+  @Patch('admin/applications/:applicationId/partner-badge')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+  @ApiOperation({
+    summary:
+      'Admin — attribuer un badge partenaire (Silver / Gold / Diamond) à un livreur approuvé.',
+  })
+  async setApplicationPartnerBadgeAdmin(
+    @Req() req: Request,
+    @Param('applicationId') applicationId: string,
+    @Body() body: SetPartnerBadgeDto,
+  ) {
+    return this._deliveryAgent.setApplicationPartnerBadgeForAdmin(
+      req.user as UserModel,
+      applicationId,
+      body.badgeCode ?? null,
     );
   }
 }

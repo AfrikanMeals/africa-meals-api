@@ -936,6 +936,7 @@ export class OrdersService {
         user: uid,
         store: sid,
         status: OrderStatusEnum.CREATED,
+        createdAt: { $gte: new Date(Date.now() - 15 * 60 * 1000) },
       })
       .sort({ createdAt: -1 })
       .select('_id')

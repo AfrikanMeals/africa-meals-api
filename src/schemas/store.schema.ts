@@ -1,4 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { PartnerBadgeCode } from '@common/partner-badges/partner-badge.constants';
 import { Schema as MongooseSchema } from 'mongoose';
 import { AddressModel } from './address.schema';
 import { BaseSchema } from './base.schema';
@@ -280,6 +281,16 @@ export class StoreModel extends BaseSchema {
       };
     }>;
   }>;
+
+  /** Badge partenaire (Silver / Gold / Diamond) — délai de versement Stripe. */
+  @Prop({
+    required: false,
+    name: 'partner_badge_code',
+    trim: true,
+    uppercase: true,
+    default: PartnerBadgeCode.SILVER,
+  })
+  partnerBadgeCode?: string;
 }
 
 export const StoreSchema = SchemaFactory.createForClass(StoreModel);

@@ -11,6 +11,7 @@ import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import {
   BadRequestException,
   Body,
+  ForbiddenException,
   NotFoundException,
   Controller,
   Delete,
@@ -33,7 +34,7 @@ import {
   FileInterceptor,
 } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { UserModel } from '@schemas/user.schema';
+import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Request } from 'express';
 import { memoryStorage } from 'multer';
 import { MultipartToJsonPipe } from './../../pipes/multipart-to-json/multipart-to-json.pipe';
@@ -67,6 +68,8 @@ import {
 } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { StoreService } from './store.service';
+import { SetPartnerBadgeDto } from '@common/partner-badges/dto/set-partner-badge.dto';
+import { PARTNER_BADGE_DEFINITIONS } from '@common/partner-badges/partner-badge.constants';
 import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
 import { StoreSubscribersService } from '@modules/store-subscribers/store-subscribers.service';
 import {
@@ -249,6 +252,38 @@ export class StoreController {
       body.status,
       req.user as UserModel,
     );
+  }
+
+  /** Attribuer un badge partenaire (Silver / Gold / Diamond) — boutique active uniquement. */
+  @Patch('admin/vendors/:storeId/partner-badge')
+  @UseGuards(JwtGuard)
+  async patchVendorStorePartnerBadge(
+    @Param('storeId') storeId: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: SetPartnerBadgeDto,
+    @Req() req: Request,
+  ) {
+    return this._storeService.setVendorStorePartnerBadgeForAdmin(
+      storeId,
+      req.user as UserModel,
+      body.badgeCode ?? null,
+    );
+  }
+
+  /** Catalogue des badges partenaires (admin). */
+  @Get('admin/partner-badges')
+  @UseGuards(JwtGuard)
+  listPartnerBadges(@Req() req: Request) {
+    const user = req.user as UserModel;
+    if (user.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('admin_only');
+    }
+    return PARTNER_BADGE_DEFINITIONS.map((b) => ({
+      code: b.code,
+      name: b.name,
+      icon: b.icon,
+      payoutDelayDays: b.payoutDelayDays,
+    }));
   }
 
   /** Détail fiche onboarding + historique — administrateurs vendeurs. */

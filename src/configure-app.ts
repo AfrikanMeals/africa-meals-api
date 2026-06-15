@@ -106,6 +106,9 @@ export async function configureApplication(
       'x-dashboard-resource-name',
       'x-no-auth-refresh',
       'x-auth-refresh-retry',
+      'x-client-platform',
+      'X-Firebase-AppCheck',
+      'x-firebase-appcheck',
     ],
   });
 

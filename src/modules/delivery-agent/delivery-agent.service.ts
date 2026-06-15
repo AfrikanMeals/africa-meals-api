@@ -28,6 +28,13 @@ import {
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { haversineDistance } from 'src/utils/helpers';
 import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
+import { resolveStripeOnboardingStatusLabel } from '@modules/billing/stripe/stripe-connect-visibility';
+import {
+  isPartnerBadgeCode,
+  PartnerBadgeCode,
+  resolveEffectivePartnerBadgeCode,
+  serializePartnerBadge,
+} from '@common/partner-badges/partner-badge.constants';
 import { PlatformShippingSettingsService } from '@modules/platform-shipping-settings/platform-shipping-settings.service';
 import { PatchDeliveryAgentApplicationDto } from './dto/delivery-agent-application.dto';
 import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
@@ -314,10 +321,20 @@ export class DeliveryAgentService {
       phoneNumber?: string;
       profileImage?: string;
       type?: string;
+      partnerBadgeCode?: string;
+      stripeConnectAccountId?: string;
+      stripeConnectChargesEnabled?: boolean;
+      stripeConnectPayoutsEnabled?: boolean;
+      stripeConnectDetailsSubmitted?: boolean;
+      stripeConnectDisabledReason?: string;
+      stripeConnectRequirementsDue?: string[];
+      stripeConnectRequirementsPastDue?: string[];
     },
   ) {
     const pub = this.toPublic(doc);
     const profile = (user?.profileImage ?? '').trim();
+    const stripeOnboardingStatus = resolveStripeOnboardingStatusLabel(user);
+    const accountId = String(user?.stripeConnectAccountId ?? '').trim();
     return {
       ...pub,
       id: String(doc._id),
@@ -327,6 +344,10 @@ export class DeliveryAgentService {
       userPhone: String(user?.phoneNumber ?? '').trim(),
       userProfileImageUrl: profile.length > 0 ? profile : null,
       userType: String(user?.type ?? ''),
+      partnerBadge: serializePartnerBadge(user?.partnerBadgeCode),
+      stripeOnboardingStatus,
+      stripeConnectLinked: accountId.length > 0,
+      stripeConnectActive: stripeOnboardingStatus === 'COMPLETE',
       createdAt: doc.createdAt ? new Date(doc.createdAt).toISOString() : null,
     };
   }
@@ -358,7 +379,9 @@ export class DeliveryAgentService {
     ];
     const users = await this._users
       .find({ _id: { $in: userIds } })
-      .select('fullName email phoneNumber profileImage type')
+      .select(
+        'fullName email phoneNumber profileImage type partnerBadgeCode stripeConnectAccountId stripeConnectChargesEnabled stripeConnectPayoutsEnabled stripeConnectDetailsSubmitted stripeConnectDisabledReason stripeConnectRequirementsDue stripeConnectRequirementsPastDue',
+      )
       .lean()
       .exec();
     const userById = new Map(
@@ -398,8 +421,23 @@ export class DeliveryAgentService {
     await app.save();
 
     await this._users
-      .updateOne({ _id: app.user }, { $set: { type: UserTypeEnum.DELIVERY } })
+      .updateOne(
+        { _id: app.user },
+        {
+          $set: {
+            type: UserTypeEnum.DELIVERY,
+            partnerBadgeCode: PartnerBadgeCode.SILVER,
+          },
+        },
+      )
       .exec();
+
+    const approvedUser = await this._users.findById(app.user).exec();
+    if (approvedUser?.stripeConnectAccountId?.trim()) {
+      await this._stripeConnect.ensurePartnerBadgePayoutScheduleForUser(
+        approvedUser,
+      );
+    }
 
     void this._notifyApplicationReview({
       userId: String(app.user),
@@ -578,6 +616,65 @@ export class DeliveryAgentService {
         type?: string;
       },
     );
+  }
+
+  private adminUserSelect =
+    'fullName email phoneNumber profileImage type partnerBadgeCode stripeConnectAccountId stripeConnectChargesEnabled stripeConnectPayoutsEnabled stripeConnectDetailsSubmitted stripeConnectDisabledReason stripeConnectRequirementsDue stripeConnectRequirementsPastDue';
+
+  async setApplicationPartnerBadgeForAdmin(
+    user: UserModel,
+    applicationId: string,
+    badgeCode: string | null | undefined,
+  ) {
+    this.assertAdmin(user);
+    if (!Types.ObjectId.isValid(applicationId)) {
+      throw new NotFoundException('delivery_agent_application_not_found');
+    }
+
+    if (badgeCode != null && badgeCode !== '') {
+      const raw = String(badgeCode).trim().toUpperCase();
+      if (!isPartnerBadgeCode(raw)) {
+        throw new BadRequestException('invalid_partner_badge');
+      }
+    }
+    const normalizedBadge = resolveEffectivePartnerBadgeCode(
+      badgeCode == null || badgeCode === '' ? null : badgeCode,
+    );
+
+    const app = await this._applications.findById(applicationId).exec();
+    if (!app) {
+      throw new NotFoundException('delivery_agent_application_not_found');
+    }
+    if (app.status !== DeliveryAgentApplicationStatus.APPROVED) {
+      throw new BadRequestException('delivery_agent_application_not_approved');
+    }
+
+    const agentUser = await this._users.findById(app.user).exec();
+    if (!agentUser) {
+      throw new NotFoundException('user_not_found');
+    }
+
+    agentUser.partnerBadgeCode = normalizedBadge;
+    await agentUser.save();
+
+    const connectAccountId = String(agentUser.stripeConnectAccountId ?? '').trim();
+    if (connectAccountId) {
+      await this._stripeConnect.applyPartnerBadgePayoutSchedule(
+        connectAccountId,
+        normalizedBadge,
+      );
+    }
+
+    const lean = await this._applications
+      .findById(app._id)
+      .lean<LeanAppDoc>()
+      .exec();
+    const u = await this._users
+      .findById(app.user)
+      .select(this.adminUserSelect)
+      .lean()
+      .exec();
+    return this.mapAdminRow(lean!, u as Record<string, unknown>);
   }
 
   private escapeHtml(value: string): string {

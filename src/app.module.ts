@@ -44,6 +44,7 @@ import { AdminOpsReportsModule } from './modules/admin-ops-reports/admin-ops-rep
 import { RequestStatsModule } from './modules/request-stats/request-stats.module';
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
 import { AuthSettingsModule } from './modules/auth-settings/auth-settings.module';
+import { SecuritySettingsModule } from './modules/security-settings/security-settings.module';
 import { MapSettingsModule } from './modules/map-settings/map-settings.module';
 import { SearchSettingsModule } from './modules/search-settings/search-settings.module';
 import { MobileAppSettingsModule } from './modules/mobile-app-settings/mobile-app-settings.module';
@@ -294,6 +295,7 @@ function redactRedisUrl(url: string): string {
     RequestStatsModule,
     FieldSelectionModule,
     AuthSettingsModule,
+    SecuritySettingsModule,
     MapSettingsModule,
     SearchSettingsModule,
     MobileAppSettingsModule,

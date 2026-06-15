@@ -1,4 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { PartnerBadgeCode } from '@common/partner-badges/partner-badge.constants';
 import * as bcrypt from 'bcryptjs';
 import { Type } from 'class-transformer';
 import { Schema as MongooseSchema, Types } from 'mongoose';
@@ -232,6 +233,16 @@ export class UserModel extends BaseSchema {
     default: [],
   })
   stripeConnectRequirementsPastDue?: string[];
+
+  /** Badge partenaire livreur (Silver / Gold / Diamond) — délai de versement Stripe. */
+  @Prop({
+    required: false,
+    name: 'partner_badge_code',
+    trim: true,
+    uppercase: true,
+    default: PartnerBadgeCode.SILVER,
+  })
+  partnerBadgeCode?: string;
 
   // @Prop({
   //   get: (creditCardNumber: string) => {

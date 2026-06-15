@@ -444,6 +444,10 @@ function parseCouponsFromStripeMetadata(
 @Injectable()
 export class StripeGroupedCheckoutService {
   private readonly logger = new Logger(StripeGroupedCheckoutService.name);
+  private readonly fulfillInFlight = new Map<
+    string,
+    Promise<StripeFulfillResult>
+  >();
 
   constructor(
     private readonly config: ConfigService,
@@ -1123,6 +1127,7 @@ export class StripeGroupedCheckoutService {
   async createGroupedPaymentIntent(
     user: UserModel,
     dto: GroupedStripeCheckoutDto,
+    idempotencyKey?: string,
   ): Promise<{ clientSecret: string; paymentIntentId: string }> {
     const built = await this.buildGroupedStripePayload(user, dto);
     await this.recheckBeforeStripe(user, built.coupons);
@@ -1148,14 +1153,18 @@ export class StripeGroupedCheckoutService {
         ? `Afrika Meals · ${nStores} restaurants`
         : `Afrika Meals · ${nStores} restaurant`;
     const stripe = this.stripe();
-    const pi = await stripe.paymentIntents.create({
-      amount: totalCents,
-      currency: built.currency,
-      automatic_payment_methods: { enabled: true },
-      metadata: meta,
-      receipt_email: user.email || undefined,
-      description: piDescription,
-    });
+    const idem = idempotencyKey?.trim().slice(0, 255);
+    const pi = await stripe.paymentIntents.create(
+      {
+        amount: totalCents,
+        currency: built.currency,
+        automatic_payment_methods: { enabled: true },
+        metadata: meta,
+        receipt_email: user.email || undefined,
+        description: piDescription,
+      },
+      idem ? { idempotencyKey: idem } : undefined,
+    );
 
     if (!pi.client_secret) {
       throw new BadRequestException('stripe_missing_payment_intent_secret');
@@ -1217,6 +1226,29 @@ export class StripeGroupedCheckoutService {
   }
 
   private async fulfillOrdersAfterStripePayment(params: {
+    stripePaymentId: string;
+    uid: string;
+    storesCsv: string;
+    shipB64?: string;
+    metadata: Record<string, string | undefined | null>;
+    amountTotalCents?: number;
+    currency?: string;
+    stripeEventKind: 'checkout_session' | 'payment_intent';
+  }): Promise<StripeFulfillResult> {
+    const key = params.stripePaymentId.trim();
+    const inflight = this.fulfillInFlight.get(key);
+    if (inflight) {
+      this.logger.log(`Stripe fulfill: await in-flight ${key}`);
+      return inflight;
+    }
+    const run = this.fulfillOrdersAfterStripePaymentInner(params).finally(() => {
+      this.fulfillInFlight.delete(key);
+    });
+    this.fulfillInFlight.set(key, run);
+    return run;
+  }
+
+  private async fulfillOrdersAfterStripePaymentInner(params: {
     stripePaymentId: string;
     uid: string;
     storesCsv: string;

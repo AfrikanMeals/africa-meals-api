@@ -66,7 +66,16 @@ import {
   maxDrinkOrderQuantity,
 } from '@modules/drinks/drinks.service';
 import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
-import { isStripeConnectOnboardingCompleteUser } from '@modules/billing/stripe/stripe-connect-visibility';
+import {
+  isStripeConnectOnboardingCompleteUser,
+  resolveStripeOnboardingStatusLabel,
+} from '@modules/billing/stripe/stripe-connect-visibility';
+import {
+  isPartnerBadgeCode,
+  PartnerBadgeCode,
+  resolveEffectivePartnerBadgeCode,
+  serializePartnerBadge,
+} from '@common/partner-badges/partner-badge.constants';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { TeamsService } from '@modules/teams/teams.service';
@@ -2308,7 +2317,10 @@ export class StoreService {
         return new Date(raw).toISOString();
       return undefined;
     };
-    const stripeOnboardingStatus = this._resolveStripeOnboardingStatus(owner);
+    const stripeOnboardingStatus = resolveStripeOnboardingStatusLabel(owner);
+    const partnerBadgeCode = String(
+      s.partnerBadgeCode ?? s.partner_badge_code ?? '',
+    ).trim();
 
     return {
       id: String(s._id),
@@ -2324,11 +2336,69 @@ export class StoreService {
       latitude,
       longitude,
       stripeOnboardingStatus,
+      partnerBadge: serializePartnerBadge(partnerBadgeCode || null),
       subscriptionPlan:
         String(options?.subscriptionPlan ?? '').trim() || 'FREE',
       createdAt: toIso(createdRaw),
       updatedAt: toIso(updatedRaw),
     };
+  }
+
+  /** Attribue un badge partenaire à une boutique active (admin). */
+  async setVendorStorePartnerBadgeForAdmin(
+    storeId: string,
+    admin: UserModel,
+    badgeCode: string | null | undefined,
+  ) {
+    if (admin.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('admin_only');
+    }
+    if (!Types.ObjectId.isValid(storeId)) {
+      throw new NotFoundException('store_not_found');
+    }
+
+    if (badgeCode != null && badgeCode !== '') {
+      const raw = String(badgeCode).trim().toUpperCase();
+      if (!isPartnerBadgeCode(raw)) {
+        throw new BadRequestException('invalid_partner_badge');
+      }
+    }
+    const normalizedBadge = resolveEffectivePartnerBadgeCode(
+      badgeCode == null || badgeCode === '' ? null : badgeCode,
+    );
+
+    const store = await this._storeModel
+      .findById(storeId)
+      .populate({
+        path: 'owner',
+        select:
+          'stripeConnectAccountId stripeConnectChargesEnabled stripeConnectPayoutsEnabled stripeConnectDetailsSubmitted stripeConnectDisabledReason stripeConnectRequirementsDue stripeConnectRequirementsPastDue',
+      })
+      .exec();
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+    if (store.status !== StoreStatusEnum.ACTIVE) {
+      throw new BadRequestException('vendor_store_not_active');
+    }
+
+    store.partnerBadgeCode = normalizedBadge;
+    await store.save();
+
+    const owner = store.owner as UserModel | undefined;
+    const connectAccountId = String(owner?.stripeConnectAccountId ?? '').trim();
+    if (connectAccountId) {
+      await this._stripeConnect.applyPartnerBadgePayoutSchedule(
+        connectAccountId,
+        normalizedBadge,
+      );
+    }
+
+    const planByStore = await this._resolveSubscriptionPlanByStoreIds([storeId]);
+    return this._mapStoreToAdminVendorRow(
+      store.toObject() as Record<string, unknown>,
+      { subscriptionPlan: planByStore.get(storeId) },
+    );
   }
 
   private async _resolveSubscriptionPlanByStoreIds(
@@ -2456,6 +2526,9 @@ export class StoreService {
     } else {
       doc.acceptsOrders = true;
       doc.canCreateProducts = true;
+      if (!String(doc.partnerBadgeCode ?? '').trim()) {
+        doc.partnerBadgeCode = PartnerBadgeCode.SILVER;
+      }
     }
 
     if (previousStatus !== status) {
@@ -2510,6 +2583,30 @@ export class StoreService {
       }
     }
     await doc.save();
+
+    if (status === StoreStatusEnum.ACTIVE) {
+      const ownerOid = (() => {
+        const o = doc.owner as unknown;
+        if (o && typeof o === 'object' && '_id' in o) {
+          return String((o as { _id: { toString(): string } })._id);
+        }
+        if (
+          o != null &&
+          typeof (o as { toString?: () => string }).toString === 'function'
+        ) {
+          return String(o);
+        }
+        return '';
+      })();
+      if (ownerOid && Types.ObjectId.isValid(ownerOid)) {
+        const owner = await this._userModel.findById(ownerOid).exec();
+        if (owner?.stripeConnectAccountId?.trim()) {
+          await this._stripeConnect.ensurePartnerBadgePayoutScheduleForUser(
+            owner,
+          );
+        }
+      }
+    }
 
     if (
       status === StoreStatusEnum.ACTIVE &&
