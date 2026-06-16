@@ -230,6 +230,37 @@ export class MediasService {
     }
   }
 
+  /** Upload système (e-mails, assets générés) sans utilisateur JWT. */
+  async uploadSystemBuffer(args: {
+    buffer: Buffer;
+    contentType: string;
+    basePath: string;
+    extension?: string;
+  }): Promise<string> {
+    const settings = await this.storageSettings.getPublicSettings();
+    const maxBytes = settings.maxFileSizeMb * 1024 * 1024;
+    if (args.buffer.length > maxBytes) {
+      throw new BadRequestException('file_too_large');
+    }
+    const engine = this.engineFactory.resolve(settings.storageEngine);
+    const ext =
+      args.extension ??
+      (args.contentType.includes('png')
+        ? '.png'
+        : args.contentType.includes('webp')
+          ? '.webp'
+          : '.jpg');
+    const base = args.basePath.replace(/^\/+|\/+$/g, '');
+    const path = `${base}/${uuid()}${ext}`;
+    const result = await engine.upload({
+      buffer: args.buffer,
+      path,
+      contentType: args.contentType,
+      owner: 'system',
+    });
+    return await this.resolveUploadPublicUrl(result);
+  }
+
   async delete(pathOrUrl: string) {
     try {
       if (pathOrUrl.includes('/medias/public/')) {

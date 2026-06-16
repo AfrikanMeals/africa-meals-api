@@ -1,15 +1,44 @@
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
+import {
+  EmailAiHeroImageService,
+  type OnboardingSectionImageKind,
+} from '@modules/mailer/email-ai-hero-image.service';
 import { MailerService } from '@modules/mailer/mailer.service';
 import { resolveEmailBrand } from '@modules/mailer/email-brand.util';
 import { MobileAppSettingsService } from '@modules/mobile-app-settings/mobile-app-settings.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { randomUUID } from 'crypto';
 
 type OnboardingBlock = {
   title: string;
   paragraphs: string[];
   cta?: { label: string; url: string };
   ctas?: { label: string; url: string }[];
+  imageUrl?: string;
+  imageAlt?: string;
+};
+
+const ONBOARDING_SECTION_IMAGES: Record<
+  string,
+  { kind: OnboardingSectionImageKind; alt: string }
+> = {
+  'Complétez vos informations (KYC)': {
+    kind: 'kyc-vendor',
+    alt: 'Vérification KYC restaurant',
+  },
+  'Votre dossier KYC': {
+    kind: 'kyc-delivery',
+    alt: 'Dossier KYC livreur',
+  },
+  'Configurez Stripe pour encaisser vos paiements': {
+    kind: 'stripe',
+    alt: 'Configuration des paiements en ligne',
+  },
+  "Besoin d'aide ?": {
+    kind: 'help',
+    alt: 'Support Wise Eat',
+  },
 };
 
 @Injectable()
@@ -22,6 +51,8 @@ export class PartnerOnboardingEmailService {
     private readonly emailTpl: EmailTemplateService,
     @Inject(MobileAppSettingsService)
     private readonly mobileAppSettings: MobileAppSettingsService,
+    @Inject(EmailAiHeroImageService)
+    private readonly aiHero: EmailAiHeroImageService,
   ) {}
 
   async notifyVendorOnboardingWelcome(args: {
@@ -79,6 +110,7 @@ export class PartnerOnboardingEmailService {
       subject: `${appName} — Bienvenue, démarrez votre restaurant`,
       blocks,
       logTag: `vendor_onboarding_welcome email=${email}`,
+      heroKind: 'vendor',
     });
   }
 
@@ -136,6 +168,7 @@ export class PartnerOnboardingEmailService {
       subject: `${appName} — Bienvenue livreur, dossier reçu`,
       blocks,
       logTag: `delivery_onboarding_welcome email=${email}`,
+      heroKind: 'delivery',
     });
   }
 
@@ -145,8 +178,28 @@ export class PartnerOnboardingEmailService {
     subject: string;
     blocks: OnboardingBlock[];
     logTag: string;
+    heroKind: 'vendor' | 'delivery';
   }): Promise<void> {
-    const { html, text } = this.renderBlocks(args.blocks);
+    const sessionId = `${args.heroKind}-${args.to}-${randomUUID()}`;
+    const blocks = args.blocks.map((block) => {
+      const rule = ONBOARDING_SECTION_IMAGES[block.title];
+      if (!rule) return block;
+      const imageUrl = this.aiHero.resolveSectionImageUrl(
+        rule.kind,
+        `${sessionId}-${rule.kind}`,
+      );
+      if (!imageUrl) return block;
+      return { ...block, imageUrl, imageAlt: rule.alt };
+    });
+    const { html, text } = this.renderBlocks(blocks);
+    const heroImageUrl = await this.aiHero.generateForOnboarding(
+      args.heroKind,
+      sessionId,
+    );
+    const heroAlt =
+      args.heroKind === 'vendor'
+        ? 'Bienvenue restaurant Wise Eat'
+        : 'Bienvenue livreur Wise Eat';
     try {
       await this.mailer.sendSimple({
         to: args.to,
@@ -154,6 +207,8 @@ export class PartnerOnboardingEmailService {
         subject: args.subject,
         html,
         text,
+        heroImageUrl: heroImageUrl ?? undefined,
+        heroImageAlt: heroAlt,
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -172,6 +227,14 @@ export class PartnerOnboardingEmailService {
       const block = blocks[i];
       htmlParts.push(this.emailTpl.heading(block.title));
       textParts.push(block.title);
+      if (block.imageUrl) {
+        htmlParts.push(
+          this.emailTpl.sectionImage(
+            block.imageUrl,
+            block.imageAlt ?? block.title,
+          ),
+        );
+      }
       for (const paragraph of block.paragraphs) {
         htmlParts.push(this.emailTpl.paragraph(paragraph));
         textParts.push(this.stripHtml(paragraph));

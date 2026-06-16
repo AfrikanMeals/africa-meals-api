@@ -13,6 +13,8 @@ import {
   emailMutedParagraph,
   emailDivider,
   emailPrimaryButton,
+  emailHeroBanner,
+  emailSectionImage,
   emailCodeBox,
   emailInfoPanel,
   emailKeyValueRows,
@@ -26,6 +28,8 @@ export {
   emailMutedParagraph,
   emailDivider,
   emailPrimaryButton,
+  emailHeroBanner,
+  emailSectionImage,
   emailCodeBox,
   emailInfoPanel,
   emailKeyValueRows,
@@ -56,6 +60,8 @@ export class EmailTemplateService {
   muted = emailMutedParagraph;
   divider = emailDivider;
   button = emailPrimaryButton;
+  heroBanner = emailHeroBanner;
+  sectionImage = emailSectionImage;
   codeBox = emailCodeBox;
   infoPanel = emailInfoPanel;
   keyValues = emailKeyValueRows;

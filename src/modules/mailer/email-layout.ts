@@ -9,6 +9,9 @@ export type WrapEmailOptions = {
   preheader?: string;
   /** Titre document HTML. */
   title?: string;
+  /** Bannière hero sous l'en-tête (ex. illustration IA onboarding). */
+  heroImageUrl?: string;
+  heroImageAlt?: string;
   /**
    * Données structurées Schema.org (JSON-LD) injectées dans le `<head>`.
    * Gmail/Google les lisent pour afficher une carte (ex. reçu d'achat « Order »).
@@ -96,6 +99,36 @@ export function emailPrimaryButton(label: string, href: string): string {
         style="display:inline-block;padding:14px 28px;font-size:16px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:10px;">
         ${safeLabel}
       </a>
+    </td>
+  </tr>
+</table>`.trim();
+}
+
+/** Bannière illustration (hero onboarding, style POS coming soon). */
+export function emailHeroBanner(imageUrl: string, alt: string): string {
+  const safeUrl = imageUrl.replace(/"/g, '&quot;');
+  const safeAlt = escapeEmailHtml(alt);
+  return `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+  <tr>
+    <td style="padding:0;line-height:0;font-size:0;">
+      <img src="${safeUrl}" alt="${safeAlt}" width="600"
+        style="display:block;width:100%;max-width:600px;height:auto;border:0;" />
+    </td>
+  </tr>
+</table>`.trim();
+}
+
+/** Illustration inline dans une section (ex. bloc aide onboarding). */
+export function emailSectionImage(imageUrl: string, alt: string): string {
+  const safeUrl = imageUrl.replace(/"/g, '&quot;');
+  const safeAlt = escapeEmailHtml(alt);
+  return `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 16px;">
+  <tr>
+    <td align="center" style="padding:0;line-height:0;font-size:0;">
+      <img src="${safeUrl}" alt="${safeAlt}" width="544"
+        style="display:block;width:100%;max-width:544px;height:auto;border:0;border-radius:12px;" />
     </td>
   </tr>
 </table>`.trim();
@@ -209,6 +242,19 @@ export function wrapEmailHtml(
     ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:${colors.background};">${preheader}</div>`
     : '';
 
+  const heroBlock =
+    options?.heroImageUrl?.trim()
+      ? `
+          <tr>
+            <td style="padding:0;background-color:${colors.card};">
+              ${emailHeroBanner(
+                options.heroImageUrl.trim(),
+                options.heroImageAlt?.trim() || brand.appName,
+              )}
+            </td>
+          </tr>`
+      : '';
+
   const jsonLdBlock = options?.jsonLd
     ? renderJsonLdBlocks(options.jsonLd)
     : '';
@@ -231,6 +277,7 @@ export function wrapEmailHtml(
       <td align="center" style="padding:28px 16px;">
         <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:${colors.card};border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(57,40,0,0.08);">
           ${buildEmailHeader(brand)}
+          ${heroBlock}
           <tr>
             <td style="padding:32px 28px 28px;font-family:${EMAIL_FONT_FAMILY};">
               ${bodyHtml.trim()}

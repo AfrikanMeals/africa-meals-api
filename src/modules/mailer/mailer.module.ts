@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { MediasModule } from '@modules/medias/medias.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { MailerSend } from 'mailersend';
 import {
@@ -13,6 +14,7 @@ import {
 import { ContactController } from './contact.controller';
 import { NewsletterController } from './newsletter.controller';
 import { ContactSubmissionService } from './contact-submission.service';
+import { EmailAiHeroImageService } from './email-ai-hero-image.service';
 import { EmailTemplateService } from './email-template.service';
 import { MailerService } from './mailer.service';
 import { NewsletterSubscriptionService } from './newsletter-subscription.service';
@@ -20,6 +22,7 @@ import { RecaptchaEnterpriseService } from './recaptcha-enterprise.service';
 
 @Module({
   imports: [
+    MediasModule,
     MongooseModule.forFeature([
       {
         name: SiteContactRequestModel.name,
@@ -42,6 +45,7 @@ import { RecaptchaEnterpriseService } from './recaptcha-enterprise.service';
         }),
     },
     EmailTemplateService,
+    EmailAiHeroImageService,
     MailerService,
     ContactSubmissionService,
     NewsletterSubscriptionService,
@@ -50,6 +54,7 @@ import { RecaptchaEnterpriseService } from './recaptcha-enterprise.service';
   exports: [
     MailerService,
     EmailTemplateService,
+    EmailAiHeroImageService,
     ContactSubmissionService,
     NewsletterSubscriptionService,
     RecaptchaEnterpriseService,

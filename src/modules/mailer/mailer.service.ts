@@ -29,6 +29,9 @@ export type SendSimpleMailDto = {
   attachments?: MailAttachment[];
   /** Préfixe de logs (ex. vendor-ops-report-manual). */
   logContext?: string;
+  /** Bannière hero sous l'en-tête (illustration IA onboarding, etc.). */
+  heroImageUrl?: string;
+  heroImageAlt?: string;
 };
 
 /** Profil SMTP dédié (ex. notifications publicitaires `AD_SMTP_*`). */
@@ -52,13 +55,15 @@ export class MailerService {
     private readonly _emailTemplate: EmailTemplateService,
   ) {}
 
-  private prepareHtml(html: string, subject: string): string {
+  private prepareHtml(html: string, subject: string, args?: Pick<SendSimpleMailDto, 'heroImageUrl' | 'heroImageAlt'>): string {
     if (!this._emailTemplate.shouldWrap(html)) {
       return html;
     }
     return this._emailTemplate.wrapBody(html, {
       title: subject,
       preheader: subject,
+      heroImageUrl: args?.heroImageUrl,
+      heroImageAlt: args?.heroImageAlt,
     });
   }
 
@@ -193,7 +198,7 @@ export class MailerService {
     }
     const prepared: SendSimpleMailDto = {
       ...args,
-      html: this.prepareHtml(args.html, args.subject),
+      html: this.prepareHtml(args.html, args.subject, args),
       replyTo: args.replyTo ?? profile.from,
       replyToName: args.replyToName ?? profile.fromDisplayName,
     };
@@ -211,7 +216,7 @@ export class MailerService {
     const { logContext, ...mailArgs } = args;
     const prepared: SendSimpleMailDto = {
       ...mailArgs,
-      html: this.prepareHtml(mailArgs.html, mailArgs.subject),
+      html: this.prepareHtml(mailArgs.html, mailArgs.subject, mailArgs),
     };
     const ccList =
       prepared.cc?.map((e) => e.trim()).filter(Boolean) ?? [];
