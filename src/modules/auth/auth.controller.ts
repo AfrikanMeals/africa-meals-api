@@ -203,16 +203,22 @@ export class AuthController {
   }
 
   @Post('verify-email')
-  async verifyEmail(@Body(ValidationPipe) args: EmailVerificationDto) {
+  async verifyEmail(
+    @Body(ValidationPipe) args: EmailVerificationDto,
+    @Req() req: Request,
+  ) {
     this.logger.log(`verify-email body: ${JSON.stringify(args)}`);
-    return this._authService.verifyEmail(args);
+    return this._authService.verifyEmail(args, buildLoginRequestContext(req));
   }
 
   /** Alias pour compatibilité : POST /auth/verify */
   @Post('verify')
-  async verify(@Body(ValidationPipe) args: EmailVerificationDto) {
+  async verify(
+    @Body(ValidationPipe) args: EmailVerificationDto,
+    @Req() req: Request,
+  ) {
     this.logger.log(`verify body: ${JSON.stringify(args)}`);
-    return this._authService.verifyEmail(args);
+    return this._authService.verifyEmail(args, buildLoginRequestContext(req));
   }
 
   @Post('resend-verification-code')

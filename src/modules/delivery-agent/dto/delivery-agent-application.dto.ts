@@ -1,3 +1,5 @@
+import { DELIVERY_AGENT_VEHICLE_TYPES } from '@schemas/delivery-agent-vehicle.constants';
+import type { DeliveryAgentVehicle } from '@schemas/delivery-agent-vehicle.constants';
 import {
   IsBoolean,
   IsIn,
@@ -17,8 +19,8 @@ export class PatchDeliveryAgentApplicationDto {
   onboardingStep?: number;
 
   @IsOptional()
-  @IsIn(['moto', 'velo', 'voiture'])
-  vehicle?: 'moto' | 'velo' | 'voiture';
+  @IsIn([...DELIVERY_AGENT_VEHICLE_TYPES])
+  vehicle?: DeliveryAgentVehicle;
 
   @IsOptional()
   @IsString()

@@ -974,7 +974,10 @@ export class AuthService {
     return user;
   }
 
-  async verifyEmail({ code: activationCode, email }: EmailVerificationDto) {
+  async verifyEmail(
+    { code: activationCode, email }: EmailVerificationDto,
+    ctx?: LoginRequestContext,
+  ) {
     const emailNorm = email.trim().toLowerCase();
     const codeNorm = activationCode.trim();
 
@@ -994,11 +997,13 @@ export class AuthService {
     }
 
     try {
-      const completed = await this.registerComplete({
-        email: emailNorm,
-        code: codeNorm,
-      });
-      return completed.user;
+      return await this.registerComplete(
+        {
+          email: emailNorm,
+          code: codeNorm,
+        },
+        ctx,
+      );
     } catch (err: unknown) {
       if (err instanceof ConflictException) {
         throw err;

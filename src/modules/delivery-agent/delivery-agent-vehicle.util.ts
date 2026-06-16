@@ -1,15 +1,21 @@
-import { DeliveryAgentVehicle } from '@schemas/delivery-agent-application.schema';
-
-export type DeliveryVehicleLabelFr = 'Moto' | 'Vélo' | 'Voiture';
+import { DeliveryAgentVehicle } from '@schemas/delivery-agent-vehicle.constants';
 
 export function deliveryVehicleLabelFr(
   vehicle?: DeliveryAgentVehicle | string | null,
-): DeliveryVehicleLabelFr {
+): string {
   switch (vehicle) {
+    case 'pied':
+      return 'À pied';
     case 'velo':
       return 'Vélo';
+    case 'tricycle':
+      return 'Tricycle';
+    case 'scooter':
+      return 'Scooter';
     case 'voiture':
       return 'Voiture';
+    case 'van':
+      return 'Fourgonnette';
     case 'moto':
     default:
       return 'Moto';
@@ -21,12 +27,17 @@ export function defaultDeliveryCapacity(
   vehicle?: DeliveryAgentVehicle | string | null,
 ): number {
   switch (vehicle) {
+    case 'pied':
     case 'velo':
       return 1;
+    case 'tricycle':
+    case 'scooter':
     case 'moto':
       return 2;
     case 'voiture':
       return 4;
+    case 'van':
+      return 6;
     default:
       return 2;
   }
@@ -37,7 +48,7 @@ export function normalizeVehicleRegistration(
   raw?: string | null,
 ): string | null {
   const t = (raw ?? '').trim();
-  if (vehicle === 'velo') {
+  if (!vehicleRegistrationRequired(vehicle)) {
     return t.length > 0 ? t : null;
   }
   return t.length > 0 ? t : null;
@@ -46,11 +57,16 @@ export function normalizeVehicleRegistration(
 export function vehicleRegistrationRequired(
   vehicle?: DeliveryAgentVehicle | string | null,
 ): boolean {
-  return vehicle === 'moto' || vehicle === 'voiture';
+  return (
+    vehicle === 'scooter' ||
+    vehicle === 'moto' ||
+    vehicle === 'voiture' ||
+    vehicle === 'van'
+  );
 }
 
 export function driverLicenseRequired(
   vehicle?: DeliveryAgentVehicle | string | null,
 ): boolean {
-  return vehicle === 'moto' || vehicle === 'voiture';
+  return vehicleRegistrationRequired(vehicle);
 }

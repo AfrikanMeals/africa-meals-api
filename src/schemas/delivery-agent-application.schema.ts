@@ -12,7 +12,12 @@ export enum DeliveryAgentApplicationStatus {
   SUSPENDED = 'SUSPENDED',
 }
 
-export type DeliveryAgentVehicle = 'moto' | 'velo' | 'voiture';
+import {
+  DELIVERY_AGENT_VEHICLE_TYPES,
+  type DeliveryAgentVehicle,
+} from './delivery-agent-vehicle.constants';
+
+export { DELIVERY_AGENT_VEHICLE_TYPES, type DeliveryAgentVehicle };
 
 @Schema({
   timestamps: true,
