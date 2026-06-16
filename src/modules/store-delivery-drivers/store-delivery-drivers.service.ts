@@ -27,6 +27,8 @@ import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { randomUUID } from 'crypto';
 import { Model, Types } from 'mongoose';
 import type {
+  DeliveryDriverStorePartnerRowDto,
+  DeliveryDriverStorePartnersListResponseDto,
   StoreDeliveryDriverRowDto,
   StoreDeliveryDriversListResponseDto,
 } from './dto/store-delivery-drivers.dto';
@@ -148,6 +150,104 @@ export class StoreDeliveryDriversService {
     return rows
       .map((r) => String((r as { store?: unknown }).store ?? ''))
       .filter((id) => Types.ObjectId.isValid(id));
+  }
+
+  /** Boutiques où le livreur est membre actif de la flotte restaurant. */
+  async listActivePartnersForDriver(
+    userId: string,
+  ): Promise<DeliveryDriverStorePartnersListResponseDto> {
+    if (!Types.ObjectId.isValid(userId)) return { items: [] };
+    const userOid = new Types.ObjectId(userId);
+
+    const memberships = await this._membershipModel
+      .find({
+        user: userOid,
+        status: StoreDeliveryDriverMembershipStatus.ACTIVE,
+      })
+      .sort({ respondedAt: -1, invitedAt: -1 })
+      .lean()
+      .exec();
+    if (!memberships.length) return { items: [] };
+
+    const storeIds = [
+      ...new Set(
+        memberships
+          .map((m) => String((m as { store?: unknown }).store ?? ''))
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ];
+    const stores =
+      storeIds.length > 0
+        ? await this._storeModel
+            .find({
+              _id: { $in: storeIds.map((id) => new Types.ObjectId(id)) },
+              vendorManagesDeliveryDrivers: true,
+            })
+            .select(
+              'name profileImage currency deliveryAssignmentMode vendorManagesDeliveryDrivers',
+            )
+            .lean()
+            .exec()
+        : [];
+    const storeMap = new Map(stores.map((s) => [String(s._id), s]));
+
+    const statsByStore = new Map<
+      string,
+      {
+        total: number;
+        today: number;
+        revenueTotal: number;
+        revenueToday: number;
+      }
+    >();
+    await Promise.all(
+      storeIds.map(async (sid) => {
+        const stats = await this._aggregateDriverStats(sid, [userOid]);
+        statsByStore.set(sid, stats.get(userId) ?? {
+          total: 0,
+          today: 0,
+          revenueTotal: 0,
+          revenueToday: 0,
+        });
+      }),
+    );
+
+    const items: DeliveryDriverStorePartnerRowDto[] = [];
+    for (const m of memberships) {
+      const doc = m as Record<string, unknown>;
+      const sid = String(doc.store ?? '');
+      const store = storeMap.get(sid);
+      if (!store) continue;
+      const stats = statsByStore.get(sid) ?? {
+        total: 0,
+        today: 0,
+        revenueTotal: 0,
+        revenueToday: 0,
+      };
+      items.push({
+        membershipId: String(doc._id),
+        storeId: sid,
+        storeName: String(store.name ?? 'Restaurant'),
+        storeProfileImage: store.profileImage
+          ? String(store.profileImage)
+          : undefined,
+        storeCurrency: store.currency ? String(store.currency) : undefined,
+        deliveryAssignmentMode:
+          store.deliveryAssignmentMode ??
+          StoreDeliveryAssignmentModeEnum.AUTO,
+        joinedAt: doc.respondedAt
+          ? new Date(String(doc.respondedAt)).toISOString()
+          : doc.invitedAt
+            ? new Date(String(doc.invitedAt)).toISOString()
+            : undefined,
+        ordersDelivered: stats.total,
+        ordersDeliveredToday: stats.today,
+        deliveryRevenueTotal: stats.revenueTotal,
+        deliveryRevenueToday: stats.revenueToday,
+      });
+    }
+
+    return { items };
   }
 
   async listForVendor(
@@ -574,6 +674,7 @@ export class StoreDeliveryDriversService {
         invitedAt: doc.invitedAt
           ? new Date(String(doc.invitedAt)).toISOString()
           : undefined,
+        token: doc.inviteToken ? String(doc.inviteToken) : undefined,
       };
     });
   }
@@ -711,7 +812,7 @@ export class StoreDeliveryDriversService {
     token: string;
     recipientName: string;
   }): Promise<void> {
-    const appName = this._config.get<string>('APP_NAME') ?? 'AfrikanEats';
+    const appName = this._config.get<string>('APP_NAME') ?? 'Wise Eat';
     const acceptUrl = this._buildInviteAcceptUrl(args.token);
     const safeStore = this._escapeHtml(args.storeName);
     const safeName = this._escapeHtml(args.recipientName);

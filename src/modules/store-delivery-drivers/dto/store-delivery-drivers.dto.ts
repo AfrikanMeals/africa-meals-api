@@ -38,3 +38,22 @@ export class StoreDeliveryDriversListResponseDto {
   deliveryAssignmentMode: StoreDeliveryAssignmentModeEnum;
   items: StoreDeliveryDriverRowDto[];
 }
+
+/** Boutique partenaire où le livreur est assigné (flotte restaurant). */
+export class DeliveryDriverStorePartnerRowDto {
+  membershipId: string;
+  storeId: string;
+  storeName: string;
+  storeProfileImage?: string;
+  storeCurrency?: string;
+  deliveryAssignmentMode: StoreDeliveryAssignmentModeEnum;
+  joinedAt?: string;
+  ordersDelivered: number;
+  ordersDeliveredToday: number;
+  deliveryRevenueTotal: number;
+  deliveryRevenueToday: number;
+}
+
+export class DeliveryDriverStorePartnersListResponseDto {
+  items: DeliveryDriverStorePartnerRowDto[];
+}

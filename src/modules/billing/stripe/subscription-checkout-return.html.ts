@@ -13,7 +13,7 @@ export function subscriptionCheckoutReturnHtml(sessionId: string): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Abonnement — Afrika Meals</title>
+  <title>Abonnement — Wise Eat</title>
   <style>
     body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:2rem 1.5rem;line-height:1.5;color:#1a1a1a;background:#faf9f7}
     h1{font-size:1.25rem;margin:0 0 .75rem}
@@ -23,7 +23,7 @@ export function subscriptionCheckoutReturnHtml(sessionId: string): string {
 </head>
 <body>
   <h1>Paiement réussi</h1>
-  <p class="muted">Redirection vers l’application Afrika Meals…</p>
+  <p class="muted">Redirection vers l’application Wise Eat…</p>
   <p><a class="btn" id="open-app" href="${escapedDeep}">Ouvrir l’application</a></p>
   <script>
     (function () {

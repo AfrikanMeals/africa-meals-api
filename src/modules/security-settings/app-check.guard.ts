@@ -3,10 +3,20 @@ import {
   ExecutionContext,
   Injectable,
 } from '@nestjs/common';
+import { GqlExecutionContext } from '@nestjs/graphql';
 import type { Request } from 'express';
 import { APP_CHECK_HEADER, AppCheckService } from './app-check.service';
 import { detectAppCheckPlatform } from './app-check-platform.util';
 import { SecuritySettingsService } from './security-settings.service';
+
+function resolveHttpRequest(context: ExecutionContext): Request | undefined {
+  if (context.getType<string>() === 'graphql') {
+    return GqlExecutionContext.create(context).getContext()?.req as
+      | Request
+      | undefined;
+  }
+  return context.switchToHttp().getRequest<Request>();
+}
 
 function normalizePath(url: string): string {
   const raw = url ?? '';
@@ -24,6 +34,8 @@ function isAppCheckExempt(method: string, path: string): boolean {
   if (path.startsWith('/internal/')) return true;
   if (path.includes('/stripe/webhook')) return true;
   if (method === 'GET' && path.startsWith('/platform/')) return true;
+  if (method === 'GET' && path.startsWith('/medias/public/')) return true;
+  if (path === '/auth/refresh') return true;
   return false;
 }
 
@@ -35,8 +47,10 @@ export class AppCheckGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const http = context.switchToHttp();
-    const req = http.getRequest<Request>();
+    const req = resolveHttpRequest(context);
+    if (!req) {
+      return true;
+    }
     const method = String(req.method ?? 'GET').toUpperCase();
     const path = normalizePath(req.url ?? req.path ?? '/');
 

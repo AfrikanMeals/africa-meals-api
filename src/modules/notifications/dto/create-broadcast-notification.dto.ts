@@ -9,7 +9,7 @@ import {
 } from 'class-validator';
 
 export class CreateBroadcastNotificationDto {
-  @ApiProperty({ example: 'Nouveauté African Meals' })
+  @ApiProperty({ example: 'Nouveauté Wise Eat' })
   @IsString()
   @MinLength(1)
   @MaxLength(200)

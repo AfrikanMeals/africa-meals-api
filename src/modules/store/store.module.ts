@@ -14,6 +14,7 @@ import { TeamsModule } from '@modules/teams/teams.module';
 import { UsersModule } from '@modules/users/users.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { BillingModule } from '@modules/billing/billing.module';
+import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { BusinessTypesModule } from '@modules/business-types/business-types.module';
 import { DashboardAuditModule } from '@modules/dashboard-audit/dashboard-audit.module';
@@ -75,6 +76,7 @@ import { StoreSubscribersModule } from '@modules/store-subscribers/store-subscri
     StockItemsModule,
     DrinksModule,
     forwardRef(() => BillingModule),
+    VendorStatusEmailModule,
     StoreDeliveryDriversModule,
     StoreSubscribersModule,
     MongooseModule.forFeature([

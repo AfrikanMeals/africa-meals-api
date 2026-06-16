@@ -54,6 +54,10 @@ export class DeliveryAgentApplicationModel extends BaseSchema {
   @Prop({ required: false, min: 1, max: 6, name: 'max_concurrent_orders' })
   maxConcurrentOrders?: number;
 
+  /** Pays ISO d'exercice (taxes) — distinct du secteur de livraison sur la carte. */
+  @Prop({ required: false, maxlength: 2, uppercase: true, trim: true })
+  region?: string;
+
   @Prop({ required: false, maxlength: 500 })
   serviceZone?: string;
 

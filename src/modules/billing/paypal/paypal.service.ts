@@ -154,7 +154,7 @@ export class PaypalService implements OnModuleInit {
     //       usage_type: 'MERCHANT', // 'PLATFORM',
     //       customer_type: 'CONSUMER',
     //       experience_context: {
-    //         brand_name: 'African Meals',
+    //         brand_name: 'Wise Eat',
     //         shipping_preference: 'NO_SHIPPING',
     //         payment_method_preference: 'IMMEDIATE_PAYMENT_REQUIRED',
     //         // brand_name: 'EXAMPLE INC',
@@ -171,7 +171,7 @@ export class PaypalService implements OnModuleInit {
     //     // card: {
     //     //   number: '371449635398431',
     //     //   expiry: '2029-06',
-    //     //   name: 'African Meals',
+    //     //   name: 'Wise Eat',
     //     //   cvc: '123',
     //     //   billing_address: {
     //     //     address_line_1: '1036 Rue de la Loire',

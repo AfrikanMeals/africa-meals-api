@@ -1,4 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
+import { StorageSettingsService } from '@modules/storage-settings/storage-settings.service';
+import { ImageCompressionService } from './image-compression.service';
+import { StorageEngineFactory } from './storage-engine.factory';
 import { MediasService } from './medias.service';
 
 describe('MediasService', () => {
@@ -8,8 +12,40 @@ describe('MediasService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MediasService,
-        { provide: 'FIREBASE_ADMIN', useValue: {} },
-        { provide: 'FIREBASE_STORAGE_BUCKET', useValue: 'test-bucket' },
+        {
+          provide: StorageSettingsService,
+          useValue: {
+            getPublicSettings: jest.fn().mockResolvedValue({
+              compressionEnabled: false,
+              maxFileSizeMb: 5,
+              storageEngine: 's3',
+              mediaProxyEnabled: false,
+            }),
+            getMaxFileSizeBytes: jest.fn().mockResolvedValue(5 * 1024 * 1024),
+          },
+        },
+        {
+          provide: ImageCompressionService,
+          useValue: { compressIfImage: jest.fn((f) => Promise.resolve(f)) },
+        },
+        {
+          provide: StorageEngineFactory,
+          useValue: {
+            resolve: jest.fn(),
+            resolveForDelete: jest.fn(),
+          },
+        },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string) => {
+              if (key === 'AWS_S3_BUCKET') return 'wise-eat';
+              if (key === 'AWS_REGION') return 'us-east-1';
+              if (key === 'API_PUBLIC_BASE_URL') return 'https://api.wise-eat.com';
+              return undefined;
+            }),
+          },
+        },
       ],
     }).compile();
 
@@ -18,5 +54,27 @@ describe('MediasService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  it('keeps direct S3 URLs when proxy disabled', async () => {
+    const url =
+      'https://wise-eat.s3.amazonaws.com/stores/abc/profile/x.png';
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(url);
+  });
+
+  it('rewrites S3 URLs to proxy when enabled', async () => {
+    const storageSettings = service['storageSettings'] as StorageSettingsService;
+    jest.spyOn(storageSettings, 'getPublicSettings').mockResolvedValue({
+      compressionEnabled: false,
+      maxFileSizeMb: 5,
+      storageEngine: 's3',
+      mediaProxyEnabled: true,
+      updatedAt: null,
+    });
+    const url =
+      'https://wise-eat.s3.amazonaws.com/stores/abc/profile/x.png';
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(
+      'https://api.wise-eat.com/medias/public/stores/abc/profile/x.png',
+    );
   });
 });

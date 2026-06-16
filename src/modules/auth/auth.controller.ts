@@ -414,6 +414,16 @@ export class AuthController {
     );
   }
 
+  @Post('me/email-2fa/disable')
+  @HttpCode(200)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Désactiver la 2FA par e-mail' })
+  @UseGuards(JwtGuard)
+  async disableEmail2fa(@Req() req: Request) {
+    const user = req.user as UserModel;
+    return this._authService.disableEmail2fa(user._id.toString());
+  }
+
   @Post('me/chat-voice')
   @ApiBearerAuth('bearer')
   @UseGuards(JwtGuard)

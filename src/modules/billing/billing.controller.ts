@@ -296,7 +296,7 @@ export class BillingController {
   @Get('stripe/payment-done')
   @Header('Content-Type', 'text/html; charset=utf-8')
   stripePaymentDonePage(): string {
-    return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Paiement</title></head><body style="font-family:system-ui,sans-serif;padding:2rem;line-height:1.5"><p><strong>Paiement enregistré.</strong></p><p>Vous pouvez fermer cette page et retourner dans l’application Afrika Meals.</p></body></html>`;
+    return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Paiement</title></head><body style="font-family:system-ui,sans-serif;padding:2rem;line-height:1.5"><p><strong>Paiement enregistré.</strong></p><p>Vous pouvez fermer cette page et retourner dans l’application Wise Eat.</p></body></html>`;
   }
 
   /**

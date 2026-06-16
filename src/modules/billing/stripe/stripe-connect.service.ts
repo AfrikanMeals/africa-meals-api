@@ -21,10 +21,14 @@ import {
   getPartnerBadgeDefinition,
   partnerBadgePayoutMethod,
   partnerBadgePayoutTimingLabelFr,
+  PartnerBadgeCode,
   resolveEffectivePartnerBadgeCode,
   serializePartnerBadge,
   type PartnerBadgeSnapshot,
 } from '@common/partner-badges/partner-badge.constants';
+import {
+  resolveStorePublicUrl,
+} from '@common/catalog-public-url.util';
 import Stripe = require('stripe');
 
 type StripeClient = InstanceType<typeof Stripe>;
@@ -277,6 +281,46 @@ function resolveCanadianProvinceCode(text: string): string | undefined {
   return undefined;
 }
 
+/** Code postal canadien (A1A 1A1). Retourne undefined si invalide (ex. adresse hors CA). */
+function normalizeCanadianPostalCode(
+  raw: string | undefined | null,
+): string | undefined {
+  if (raw == null || typeof raw !== 'string') return undefined;
+  const compact = raw.trim().replace(/\s+/g, '').toUpperCase();
+  if (
+    !/^[ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z]\d[ABCEGHJ-NPRSTV-Z]\d$/.test(
+      compact,
+    )
+  ) {
+    return undefined;
+  }
+  return `${compact.slice(0, 3)} ${compact.slice(3)}`;
+}
+
+/** Adresse Express Connect (toujours CA) — retire code postal / province invalides. */
+function sanitizeCanadianConnectAddress(
+  block: StripeAddressBlock,
+): StripeAddressBlock | undefined {
+  const line1 = block.line1?.trim();
+  if (!line1) return undefined;
+
+  const postal_code = normalizeCanadianPostalCode(block.postal_code);
+  let state = block.state?.trim().toUpperCase();
+  if (state && !CA_PROVINCE_CODES.has(state)) {
+    state = undefined;
+  }
+
+  return {
+    line1: line1.slice(0, 200),
+    country: STRIPE_CONNECT_ACCOUNT_COUNTRY,
+    ...(block.city?.trim()
+        ? { city: block.city.trim().slice(0, 100) }
+        : {}),
+    ...(postal_code ? { postal_code } : {}),
+    ...(state ? { state } : {}),
+  };
+}
+
 /** URL publique du site (Stripe `business_profile.url`) — doit être https://… */
 function normalizeStripeBusinessUrl(raw: unknown): string | undefined {
   if (raw == null || typeof raw !== 'string') return undefined;
@@ -291,6 +335,7 @@ function buildAddressBlock(
   addr: AddressModel | undefined,
   storeLine?: string,
   countryFallback = 'CA',
+  forceAccountCountry?: string,
 ): StripeAddressBlock | undefined {
   const rawLine =
     (typeof addr?.address === 'string' && addr.address.trim()) ||
@@ -299,7 +344,7 @@ function buildAddressBlock(
   if (!rawLine) return undefined;
 
   const accountCountry = normalizeCountryCode(
-    addr?.countryCode ?? countryFallback,
+    forceAccountCountry ?? addr?.countryCode ?? countryFallback,
   );
   let city = typeof addr?.city === 'string' ? addr.city.trim() : undefined;
   let postal_code = addr?.zipCode?.trim();
@@ -344,6 +389,7 @@ function buildAddressBlock(
     if (!state) {
       state = resolveCanadianProvinceCode(rawLine);
     }
+    postal_code = normalizeCanadianPostalCode(postal_code);
   } else {
     street = rawLine;
   }
@@ -351,14 +397,7 @@ function buildAddressBlock(
   return {
     line1: street.slice(0, 200),
     ...(city ? { city: city.slice(0, 100) } : {}),
-    ...(postal_code
-      ? {
-          postal_code: postal_code
-            .replace(/\s+/g, ' ')
-            .toUpperCase()
-            .slice(0, 20),
-        }
-      : {}),
+    ...(postal_code ? { postal_code } : {}),
     ...(state ? { state } : {}),
     country: accountCountry,
   };
@@ -373,8 +412,8 @@ function buildVendorPrefill(
   const isDelivery = user.type === UserTypeEnum.DELIVERY;
   const businessType = resolveConnectBusinessType(user);
   const businessName = isDelivery
-    ? user.fullName?.trim() || 'Livreur Afrika Meals'
-    : store?.name?.trim() || user.fullName?.trim() || 'Restaurant Afrika Meals';
+    ? user.fullName?.trim() || 'Livreur Wise Eat'
+    : store?.name?.trim() || user.fullName?.trim() || 'Restaurant Wise Eat';
   const accountEmail = user.email?.trim() || '';
   const phoneE164 =
     phoneToE164ForStripeConnect(user.phoneNumber) ||
@@ -384,20 +423,21 @@ function buildVendorPrefill(
     (store?.address as AddressModel | undefined) ?? userAddress ?? undefined,
     undefined,
     STRIPE_CONNECT_ACCOUNT_COUNTRY,
+    STRIPE_CONNECT_ACCOUNT_COUNTRY,
   );
   const addressBlock = addressBlockRaw
-    ? { ...addressBlockRaw, country: STRIPE_CONNECT_ACCOUNT_COUNTRY }
+    ? sanitizeCanadianConnectAddress(addressBlockRaw)
     : undefined;
   const accountCountry = STRIPE_CONNECT_ACCOUNT_COUNTRY;
 
   const productDescription = isDelivery
-    ? 'Livraison de repas pour la plateforme Afrika Meals. Versements liés aux courses effectuées.'
+    ? 'Livraison de repas pour la plateforme Wise Eat. Versements liés aux courses effectuées.'
     : store?.bio?.trim()
-    ? `Restaurant et livraison de repas. ${store.bio.trim()} Les clients sont débités lors du passage de commande sur Afrika Meals.`.slice(
+    ? `Restaurant et livraison de repas. ${store.bio.trim()} Les clients sont débités lors du passage de commande sur Wise Eat.`.slice(
         0,
         1000,
       )
-    : 'Restaurant et livraison de repas sur Afrika Meals. Les clients sont débités lors du passage de commande en ligne.';
+    : 'Restaurant et livraison de repas sur Wise Eat. Les clients sont débités lors du passage de commande en ligne.';
 
   const company: Record<string, unknown> = {
     name: businessName.slice(0, 100),
@@ -598,7 +638,7 @@ export class StripeConnectService {
       company: {
         name: params.businessName.trim() || 'Restaurant',
       },
-      metadata: { platform: 'africa-meals' },
+      metadata: { platform: 'wise-eat' },
     })) as StripeConnectAccountRecord;
     return { id: account.id };
   }
@@ -692,14 +732,44 @@ export class StripeConnectService {
 
   /**
    * Site web affiché sur l’onboarding Stripe (« Business website »).
-   * `DASHBOARD_BASE_URL` (ex. https://wise-eat.com) — même variable que les liens vendeur.
+   * Vendeur : page vitrine publique de la boutique (`PUBLIC_WEB_URL/stores/…`).
+   * Livreur : URL plateforme (fallback env).
    */
-  private resolveConnectBusinessWebsiteUrl(): string | undefined {
+  private resolveConnectBusinessWebsiteUrl(
+    user: UserModel,
+    store: (StoreModel & { address?: AddressModel }) | null,
+  ): string | undefined {
+    if (user.type === UserTypeEnum.VENDOR && store) {
+      const storeId = String(
+        (store as StoreModel & { _id?: Types.ObjectId | string })._id ?? '',
+      ).trim();
+      if (storeId) {
+        return normalizeStripeBusinessUrl(
+          resolveStorePublicUrl(
+            this.resolvePublicWebUrl(),
+            storeId,
+            store.name,
+          ),
+        );
+      }
+    }
+
     const raw =
       this.config.get<string>('DASHBOARD_BASE_URL')?.trim() ||
       this.config.get<string>('STRIPE_CONNECT_BUSINESS_WEBSITE_URL')?.trim() ||
+      this.config.get<string>('PUBLIC_WEB_URL')?.trim() ||
       this.config.get<string>('FRONTEND_URL')?.trim();
     return normalizeStripeBusinessUrl(raw);
+  }
+
+  /** Base vitrine catalogue (ex. https://wise-eat.com). */
+  private resolvePublicWebUrl(): string {
+    const url =
+      this.config.get<string>('PUBLIC_WEB_URL')?.trim() ||
+      this.config.get<string>('DASHBOARD_BASE_URL')?.trim() ||
+      this.config.get<string>('FRONTEND_URL')?.trim() ||
+      'https://wise-eat.com';
+    return url.replace(/\/+$/, '');
   }
 
   private connectReturnUrls(): { returnUrl: string; refreshUrl: string } {
@@ -824,7 +894,7 @@ export class StripeConnectService {
     return buildVendorPrefill(
       user,
       store,
-      this.resolveConnectBusinessWebsiteUrl(),
+      this.resolveConnectBusinessWebsiteUrl(user, store),
       userAddress,
     );
   }
@@ -932,7 +1002,7 @@ export class StripeConnectService {
     const websiteUrl = prefill.business_profile.url as string | undefined;
     if (!websiteUrl) {
       this.logger.warn(
-        'Stripe Connect: set DASHBOARD_BASE_URL in API .env to prefill Business website',
+        'Stripe Connect: configure PUBLIC_WEB_URL (or store landing page) to prefill Business website',
       );
     }
     await this.stripe().accounts.update(
@@ -1034,7 +1104,7 @@ export class StripeConnectService {
     );
   }
 
-  /** Webhook `account.updated` — synchronise le statut vendeur + push WS. */
+  /** Webhook `account.updated` — synchronise le statut vendeur + push WS + e-mail. */
   async handleAccountUpdated(
     account: StripeConnectAccountRecord,
   ): Promise<void> {
@@ -1044,12 +1114,142 @@ export class StripeConnectService {
       .exec();
     if (!user) return;
     const uid = this.userId(user);
+    const previousStatus = this.statusFromAccount(
+      this.cachedConnectAccountFromUser(user, accountId),
+      user,
+    ).status;
     await this.syncAccountFlags(uid, account);
     const status = this.statusFromAccount(account, user);
     this.pushConnectStatusRealtime(uid, status);
     this.logger.log(
       `Stripe Connect account.updated synced for user ${uid} (status=${status.status})`,
     );
+    if (previousStatus !== status.status) {
+      void this.emailConnectStatusChange(
+        user,
+        previousStatus,
+        status,
+        account,
+      ).catch((e) =>
+        this.logger.warn(
+          `stripe connect status email: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        ),
+      );
+    }
+  }
+
+  private cachedConnectAccountFromUser(
+    user: UserModel,
+    accountId: string,
+  ): StripeConnectAccountRecord {
+    return {
+      id: accountId,
+      charges_enabled: user.stripeConnectChargesEnabled,
+      payouts_enabled: user.stripeConnectPayoutsEnabled,
+      details_submitted: user.stripeConnectDetailsSubmitted,
+      requirements: {
+        disabled_reason: user.stripeConnectDisabledReason ?? null,
+        currently_due: user.stripeConnectRequirementsDue ?? [],
+        past_due: user.stripeConnectRequirementsPastDue ?? [],
+      },
+    };
+  }
+
+  private async emailConnectStatusChange(
+    user: UserModel,
+    previousStatus: StripeConnectLifecycleStatus,
+    status: StripeConnectStatus,
+    account: StripeConnectAccountRecord,
+  ): Promise<void> {
+    const action = await this.createConnectEmailActionLink(account);
+    await this.vendorStatusEmail.notifyStripeConnectStatusChange({
+      userId: this.userId(user).toString(),
+      recipientRole:
+        user.type === UserTypeEnum.DELIVERY ? 'delivery' : 'vendor',
+      previousStatus,
+      newStatus: status.status,
+      actionUrl: action?.url ?? null,
+      actionLabel: action?.label ?? null,
+      disabledReason: status.disabledReason,
+    });
+  }
+
+  private async createConnectEmailActionLink(
+    account: StripeConnectAccountRecord,
+  ): Promise<{ url: string; label: string } | null> {
+    const accountId = account.id?.trim();
+    if (!accountId) return null;
+    if (resolveConnectLifecycleStatus(account) === 'rejected') return null;
+
+    const stripe = this.stripe();
+    const { returnUrl, refreshUrl } = this.connectReturnUrls();
+
+    if (isConnectFullyActive(account)) {
+      try {
+        const login = await stripe.accounts.createLoginLink(accountId);
+        if (login.url) {
+          return {
+            url: login.url,
+            label: 'Ouvrir mon tableau de bord Stripe',
+          };
+        }
+      } catch (e) {
+        this.logger.warn(
+          `Stripe Connect email login link failed for ${accountId}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+      return null;
+    }
+
+    const linkType: 'account_onboarding' | 'account_update' =
+      account.details_submitted ? 'account_update' : 'account_onboarding';
+    try {
+      const link = await stripe.accountLinks.create({
+        account: accountId,
+        type: linkType,
+        return_url: returnUrl,
+        refresh_url: refreshUrl,
+        collect: 'eventually_due',
+      });
+      if (!link.url) return null;
+      return {
+        url: link.url,
+        label:
+          linkType === 'account_onboarding'
+            ? 'Configurer mon compte de paiement'
+            : 'Mettre à jour mon compte Stripe',
+      };
+    } catch (linkErr) {
+      if (linkType === 'account_update') {
+        try {
+          const fallback = await stripe.accountLinks.create({
+            account: accountId,
+            type: 'account_onboarding',
+            return_url: returnUrl,
+            refresh_url: refreshUrl,
+            collect: 'eventually_due',
+          });
+          if (fallback.url) {
+            return {
+              url: fallback.url,
+              label: 'Configurer mon compte de paiement',
+            };
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      this.logger.warn(
+        `Stripe Connect email onboarding link failed for ${accountId}: ${
+          linkErr instanceof Error ? linkErr.message : String(linkErr)
+        }`,
+      );
+      return null;
+    }
   }
 
   /** Webhook versement Connect (`payout.*`) — e-mail vendeur / livreur. */
@@ -1192,7 +1392,7 @@ export class StripeConnectService {
             transfers: { requested: true },
           },
           metadata: {
-            platform: 'africa-meals',
+            platform: 'wise-eat',
             userId: uid.toString(),
             recipientRole:
               prefill.businessType === DELIVERY_CONNECT_BUSINESS_TYPE
@@ -1758,6 +1958,43 @@ export class StripeConnectService {
         }`,
       );
     }
+  }
+
+  /**
+   * Recalcule le calendrier Stripe pour tous les comptes Connect dont le badge
+   * effectif correspond au code donné (ex. après modification du délai admin).
+   */
+  async resyncPayoutSchedulesForBadgeCode(
+    badgeCode: PartnerBadgeCode,
+  ): Promise<{ synced: number; skipped: number }> {
+    const users = await this.userModel
+      .find({
+        type: { $in: [UserTypeEnum.DELIVERY, UserTypeEnum.VENDOR] },
+        stripeConnectAccountId: { $exists: true, $nin: [null, ''] },
+      })
+      .exec();
+
+    let synced = 0;
+    const seenAccounts = new Set<string>();
+
+    for (const user of users) {
+      const accountId = String(user.stripeConnectAccountId ?? '').trim();
+      if (!accountId || seenAccounts.has(accountId)) continue;
+
+      const effectiveCode = await this.resolvePartnerBadgeCodeForUser(user);
+      if (effectiveCode !== badgeCode) continue;
+
+      seenAccounts.add(accountId);
+      await this.applyPartnerBadgePayoutSchedule(accountId, effectiveCode);
+      synced += 1;
+    }
+
+    const skipped = users.length - synced;
+
+    this.logger.log(
+      `Partner badge payout resync badge=${badgeCode} synced=${synced} skipped=${skipped}`,
+    );
+    return { synced, skipped };
   }
 
   /** Badge livreur sur l’utilisateur ; badge vendeur sur la boutique active la plus récente. */

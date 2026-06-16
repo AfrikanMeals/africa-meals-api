@@ -489,7 +489,7 @@ export class SubscriptionsStripeCheckoutService {
       automatic_payment_methods: { enabled: true },
       metadata: ctx.meta,
       receipt_email: user.email || undefined,
-      description: `Afrika Meals · Abonnement ${ctx.planName}`,
+      description: `Wise Eat · Abonnement ${ctx.planName}`,
     });
 
     if (!pi.client_secret) {
@@ -626,7 +626,7 @@ export class SubscriptionsStripeCheckoutService {
                 currency: ctx.currency.toLowerCase(),
                 unit_amount: ctx.unitAmountCents,
                 product_data: {
-                  name: `Afrika Meals · ${ctx.planName}`,
+                  name: `Wise Eat · ${ctx.planName}`,
                   description: `Abonnement vendeur (${periodLabel}) — sans frais plateforme`,
                 },
               },
@@ -636,7 +636,7 @@ export class SubscriptionsStripeCheckoutService {
           cancel_url: this.subscriptionCancelUrl(),
           metadata: ctx.meta,
           payment_intent_data: {
-            description: `Afrika Meals · Abonnement ${ctx.planName}`,
+            description: `Wise Eat · Abonnement ${ctx.planName}`,
             metadata: ctx.meta,
           },
           payment_method_configuration: pmcId,
@@ -656,7 +656,7 @@ export class SubscriptionsStripeCheckoutService {
                 currency: ctx.currency.toLowerCase(),
                 unit_amount: ctx.unitAmountCents,
                 product_data: {
-                  name: `Afrika Meals · ${ctx.planName}`,
+                  name: `Wise Eat · ${ctx.planName}`,
                   description: `Abonnement vendeur (${periodLabel}) — sans frais plateforme`,
                 },
               },
@@ -666,7 +666,7 @@ export class SubscriptionsStripeCheckoutService {
           cancel_url: this.subscriptionCancelUrl(),
           metadata: ctx.meta,
           payment_intent_data: {
-            description: `Afrika Meals · Abonnement ${ctx.planName}`,
+            description: `Wise Eat · Abonnement ${ctx.planName}`,
             metadata: ctx.meta,
           },
         });

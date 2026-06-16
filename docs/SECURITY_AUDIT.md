@@ -1,4 +1,4 @@
-# Audit de sécurité — AfrikaMeals / Wise Eat
+# Audit de sécurité — Wise Eat
 
 **Date :** 14 juin 2026  
 **Périmètre :** `africa-meals-api`, `africa-meals-admin`, `africa-meals-mobile`, `africa-meals-web`, `africa-meals-ws`

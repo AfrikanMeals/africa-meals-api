@@ -22,7 +22,7 @@ import { Request } from 'express';
 
 import { JwtGuard } from './guards/jwt.guard';
 
-const DEFAULT_TEST_TITLE = 'Test African Meals';
+const DEFAULT_TEST_TITLE = 'Test Wise Eat';
 const DEFAULT_TEST_BODY =
   'Si vous voyez cette notification, FCM et les jetons enregistrés fonctionnent.';
 

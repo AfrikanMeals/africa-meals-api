@@ -9,7 +9,7 @@ import {
 
 export class FcmTestDto {
   @ApiPropertyOptional({
-    example: 'Test African Meals',
+    example: 'Test Wise Eat',
     description: 'Titre de la notification (défaut si omis)',
   })
   @IsOptional()

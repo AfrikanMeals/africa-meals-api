@@ -184,7 +184,7 @@ export class VendorNotificationStripeBillingService {
             currency,
             unit_amount: unitAmount,
             product_data: {
-              name: `Afrika Meals · Notifications SMS ${charge.billingMonth}`,
+              name: `Wise Eat · Notifications SMS ${charge.billingMonth}`,
               description: `${charge.smsCount} SMS · ${store.name ?? 'Boutique'}`,
             },
           },
@@ -418,7 +418,7 @@ export class VendorNotificationStripeBillingService {
     dueAt: Date;
   }): Promise<void> {
     const appName =
-      this.config.get<string>('APP_NAME')?.trim() || 'Afrika Meals';
+      this.config.get<string>('APP_NAME')?.trim() || 'Wise Eat';
     const dueStr = args.dueAt.toLocaleDateString('fr-CA', {
       year: 'numeric',
       month: 'long',

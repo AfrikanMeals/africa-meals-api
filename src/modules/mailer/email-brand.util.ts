@@ -52,7 +52,7 @@ export function resolveEmailBrand(
 ): EmailBrand {
   const get = (key: string) => config.get(key);
 
-  const appName = get('APP_NAME')?.trim() || 'Afrika Meals';
+  const appName = get('APP_NAME')?.trim() || 'Wise Eat';
   const supportEmail =
     get('SUPPORT_EMAIL')?.trim() ||
     get('SMTP_FROM')?.trim() ||

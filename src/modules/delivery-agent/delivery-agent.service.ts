@@ -28,6 +28,8 @@ import {
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { haversineDistance } from 'src/utils/helpers';
 import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
+import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-email.service';
+import { PartnerOnboardingEmailService } from '@modules/vendor-emails/partner-onboarding-email.service';
 import { resolveStripeOnboardingStatusLabel } from '@modules/billing/stripe/stripe-connect-visibility';
 import {
   isPartnerBadgeCode,
@@ -36,6 +38,7 @@ import {
   serializePartnerBadge,
 } from '@common/partner-badges/partner-badge.constants';
 import { PlatformShippingSettingsService } from '@modules/platform-shipping-settings/platform-shipping-settings.service';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { PatchDeliveryAgentApplicationDto } from './dto/delivery-agent-application.dto';
 import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
 import {
@@ -52,6 +55,7 @@ type LeanApp = {
   vehicleRegistration?: string;
   driverLicense?: string;
   maxConcurrentOrders?: number;
+  region?: string;
   serviceZone?: string;
   termsAccepted: boolean;
   submittedAt?: Date;
@@ -60,7 +64,7 @@ type LeanApp = {
 };
 
 const APPLICATION_PUBLIC_SELECT =
-  'status onboardingStep vehicle vehicleRegistration driverLicense maxConcurrentOrders serviceZone termsAccepted submittedAt rejectionReason updatedAt';
+  'status onboardingStep vehicle vehicleRegistration driverLicense maxConcurrentOrders region serviceZone termsAccepted submittedAt rejectionReason updatedAt';
 
 type LeanAppDoc = LeanApp & {
   _id: Types.ObjectId;
@@ -93,8 +97,14 @@ export class DeliveryAgentService {
     private readonly _config: ConfigService,
     @Inject(PlatformShippingSettingsService)
     private readonly _platformShipping: PlatformShippingSettingsService,
+    @Inject(SupportedCountriesService)
+    private readonly _supportedCountries: SupportedCountriesService,
     @Inject(StripeConnectService)
     private readonly _stripeConnect: StripeConnectService,
+    @Inject(VendorStatusEmailService)
+    private readonly _vendorStatusEmail: VendorStatusEmailService,
+    @Inject(PartnerOnboardingEmailService)
+    private readonly _partnerOnboardingEmail: PartnerOnboardingEmailService,
     @Inject(OrderStatusEventsService)
     private readonly _orderStatusEvents: OrderStatusEventsService,
     @Inject(OrdersService)
@@ -114,6 +124,32 @@ export class DeliveryAgentService {
     }
   }
 
+  private defaultRegionForUser(user: UserModel): string {
+    const raw = (
+      (user as UserModel & { appCountryCode?: string }).appCountryCode ?? 'CA'
+    )
+      .trim()
+      .toUpperCase();
+    return raw.length === 2 ? raw : 'CA';
+  }
+
+  private async assertOperatingRegionSupported(region: string): Promise<void> {
+    const code = region.trim().toUpperCase();
+    if (code.length !== 2) {
+      throw new BadRequestException('delivery_agent_region_required');
+    }
+    const activeCodes = new Set(
+      (await this._supportedCountries.listActive()).map((x) =>
+        x.code.toUpperCase(),
+      ),
+    );
+    if (!activeCodes.has(code)) {
+      throw new BadRequestException(
+        'Ce pays n’est pas encore pris en charge pour les livreurs.',
+      );
+    }
+  }
+
   toPublic(doc: LeanApp | null) {
     if (!doc) {
       return {
@@ -123,6 +159,7 @@ export class DeliveryAgentService {
         vehicleRegistration: null as string | null,
         driverLicense: null as string | null,
         maxConcurrentOrders: null as number | null,
+        region: null as string | null,
         serviceZone: null as string | null,
         termsAccepted: false,
         submittedAt: null as string | null,
@@ -142,6 +179,7 @@ export class DeliveryAgentService {
       vehicleRegistration: doc.vehicleRegistration?.trim() || null,
       driverLicense: doc.driverLicense?.trim() || null,
       maxConcurrentOrders: capacity,
+      region: doc.region?.trim().toUpperCase() || null,
       serviceZone: doc.serviceZone ?? null,
       termsAccepted: Boolean(doc.termsAccepted),
       submittedAt: doc.submittedAt
@@ -161,11 +199,13 @@ export class DeliveryAgentService {
       .lean<LeanApp>()
       .exec();
     if (!doc) {
+      const defaultRegion = this.defaultRegionForUser(user);
       await this._applications.create({
         user: uid,
         status: DeliveryAgentApplicationStatus.DRAFT,
         onboardingStep: 0,
         termsAccepted: false,
+        region: defaultRegion,
       });
       doc = await this._applications
         .findOne({ user: uid })
@@ -173,7 +213,15 @@ export class DeliveryAgentService {
         .lean<LeanApp>()
         .exec();
     }
-    return this.toPublic(doc);
+    const badgeUser = await this._users
+      .findById(uid)
+      .select('partnerBadgeCode')
+      .lean<{ partnerBadgeCode?: string }>()
+      .exec();
+    return {
+      ...this.toPublic(doc),
+      partnerBadge: serializePartnerBadge(badgeUser?.partnerBadgeCode),
+    };
   }
 
   async patchMine(user: UserModel, dto: PatchDeliveryAgentApplicationDto) {
@@ -224,6 +272,11 @@ export class DeliveryAgentService {
     }
     if (dto.maxConcurrentOrders !== undefined) {
       cur.maxConcurrentOrders = dto.maxConcurrentOrders;
+    }
+    if (dto.region !== undefined) {
+      const next = dto.region.trim().toUpperCase();
+      await this.assertOperatingRegionSupported(next);
+      cur.region = next;
     }
     if (dto.serviceZone !== undefined) {
       cur.serviceZone = dto.serviceZone.trim();
@@ -285,6 +338,12 @@ export class DeliveryAgentService {
     ) {
       cur.maxConcurrentOrders = defaultDeliveryCapacity(cur.vehicle);
     }
+    const region = (cur.region ?? '').trim().toUpperCase();
+    if (region.length !== 2) {
+      throw new BadRequestException('delivery_agent_region_required');
+    }
+    await this.assertOperatingRegionSupported(region);
+    cur.region = region;
     const zone = (cur.serviceZone ?? '').trim();
     if (zone.length < 5) {
       throw new BadRequestException('delivery_agent_zone_required');
@@ -305,6 +364,18 @@ export class DeliveryAgentService {
     cur.submittedAt = new Date();
     cur.onboardingStep = Math.max(cur.onboardingStep, 3);
     await cur.save();
+    void this._partnerOnboardingEmail
+      .notifyDeliveryAgentOnboardingWelcome({
+        email: String(user.email ?? '').trim(),
+        name: String(user.fullName ?? '').trim(),
+      })
+      .catch((e) =>
+        this._logger.warn(
+          `delivery onboarding welcome email: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        ),
+      );
     const lean = await this._applications
       .findOne({ user: uid })
       .select(APPLICATION_PUBLIC_SELECT)
@@ -654,6 +725,11 @@ export class DeliveryAgentService {
       throw new NotFoundException('user_not_found');
     }
 
+    const previousBadge = resolveEffectivePartnerBadgeCode(
+      agentUser.partnerBadgeCode,
+    );
+    const userId = String(agentUser._id);
+
     agentUser.partnerBadgeCode = normalizedBadge;
     await agentUser.save();
 
@@ -664,6 +740,21 @@ export class DeliveryAgentService {
         normalizedBadge,
       );
     }
+
+    void this._vendorStatusEmail
+      .notifyPartnerBadgeChanged({
+        recipientRole: 'delivery',
+        userId,
+        previousBadgeCode: previousBadge,
+        newBadgeCode: normalizedBadge,
+      })
+      .catch((e) =>
+        this._logger.warn(
+          `partner_badge_email_failed user=${userId}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        ),
+      );
 
     const lean = await this._applications
       .findById(app._id)
@@ -716,7 +807,7 @@ export class DeliveryAgentService {
     if (!email) return;
 
     const appName =
-      this._config.get<string>('APP_NAME')?.trim() || 'Afrika Meals';
+      this._config.get<string>('APP_NAME')?.trim() || 'Wise Eat';
     const name = String(u?.fullName ?? '').trim() || 'Bonjour';
     const title = approved
       ? 'Candidature livreur acceptée'
@@ -771,6 +862,12 @@ export class DeliveryAgentService {
 
   async listPendingInvites(user: UserModel) {
     return this._storeDeliveryDrivers.listPendingInvitesForUser(user);
+  }
+
+  async listStorePartners(user: UserModel) {
+    this.assertDeliveryAgent(user);
+    const userId = String(user._id ?? user.id);
+    return this._storeDeliveryDrivers.listActivePartnersForDriver(userId);
   }
 
   async acceptStoreDriverInvite(user: UserModel, token: string) {

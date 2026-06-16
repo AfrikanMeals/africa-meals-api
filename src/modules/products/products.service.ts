@@ -222,11 +222,16 @@ export class ProductsService {
     ];
   }
 
-  /** Taille max fichier image avant encodage base64 (5 Mo). */
-  private static readonly MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-
   /** Au plus 2 fichiers en galerie (3 images au total avec la principale). */
   private static readonly MAX_GALLERY_FILES = 2;
+
+  private async assertImageWithinLimit(file: Express.Multer.File): Promise<void> {
+    const maxBytes = await this._mediasService.getMaxFileSizeBytes();
+    const imgBytes = ProductsService.uploadByteLength(file);
+    if (imgBytes > maxBytes) {
+      throw new BadRequestException('image_too_large');
+    }
+  }
 
   private static uploadByteLength(file: Express.Multer.File): number {
     const prepared = prepareIncomingUploadFile(file);
@@ -244,13 +249,7 @@ export class ProductsService {
       return { items, uploadedUrls };
     }
     for (const f of files.slice(0, ProductsService.MAX_GALLERY_FILES)) {
-      const imgBytes = ProductsService.uploadByteLength(f);
-      if (imgBytes > ProductsService.MAX_IMAGE_BYTES) {
-        for (const u of uploadedUrls) {
-          await this._mediasService.delete(u).catch(() => undefined);
-        }
-        throw new BadRequestException('image_too_large');
-      }
+      await this.assertImageWithinLimit(f);
       const url = await this._mediasService.upload(
         f,
         user,
@@ -1018,10 +1017,7 @@ export class ProductsService {
     let profileImage: string | undefined;
     try {
       if (image) {
-        const imgBytes = ProductsService.uploadByteLength(image);
-        if (imgBytes > ProductsService.MAX_IMAGE_BYTES) {
-          throw new BadRequestException('image_too_large');
-        }
+        await this.assertImageWithinLimit(image);
         const url = await this._mediasService.upload(image, user, basePath);
         if (!url) {
           throw new BadRequestException('error_uploading_image');
@@ -1197,10 +1193,7 @@ export class ProductsService {
     }
 
     if (image) {
-      const imgBytes = ProductsService.uploadByteLength(image);
-      if (imgBytes > ProductsService.MAX_IMAGE_BYTES) {
-        throw new BadRequestException('image_too_large');
-      }
+      await this.assertImageWithinLimit(image);
       if (doc.profileImage?.startsWith('http')) {
         await this._mediasService
           .delete(doc.profileImage)

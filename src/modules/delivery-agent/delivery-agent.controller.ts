@@ -105,6 +105,16 @@ export class DeliveryAgentController {
     );
   }
 
+  @Get('store-partners')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Restaurants partenaires où le livreur est assigné (flotte gérée par le restaurant) avec statistiques.',
+  })
+  listStorePartners(@Req() req: Request) {
+    return this._deliveryAgent.listStorePartners(req.user as UserModel);
+  }
+
   @Get('store-driver-invites/pending')
   @UseGuards(JwtGuard)
   @ApiOperation({ summary: 'Invitations livreur en attente (restaurants).' })

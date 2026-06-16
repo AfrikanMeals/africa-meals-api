@@ -1186,7 +1186,7 @@ export class RefundProcessingService {
     const email = args.customer.email?.trim();
     if (!email) return;
 
-    const appName = process.env.APP_NAME?.trim() || 'Afrika Meals';
+    const appName = process.env.APP_NAME?.trim() || 'Wise Eat';
     const safeName = this.emailTpl.escapeHtml(args.customer.fullName);
     const safeBody = this.emailTpl.escapeHtml(body);
     const orderRef = `#AE-${args.orderId.slice(-6).toUpperCase()}`;

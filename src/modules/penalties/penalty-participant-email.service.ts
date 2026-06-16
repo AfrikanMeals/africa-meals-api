@@ -52,7 +52,7 @@ export class PenaltyParticipantEmailService {
     if (!recipients.length) return [];
 
     const appName =
-      this.config.get<string>('APP_NAME')?.trim() || 'Afrika Meals';
+      this.config.get<string>('APP_NAME')?.trim() || 'Wise Eat';
     const amountStr = `${(args.amountCents / 100).toFixed(
       2,
     )} ${args.currency.toUpperCase()}`;

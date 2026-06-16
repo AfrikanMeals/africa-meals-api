@@ -10,7 +10,7 @@ import {
 
 export class CreateBusinessReportDto {
   @ApiProperty({
-    description: 'Description du problème (visible par l’équipe Afrika Meals).',
+    description: 'Description du problème (visible par l’équipe Wise Eat).',
     minLength: 10,
     maxLength: 8000,
   })

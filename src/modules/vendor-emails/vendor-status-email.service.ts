@@ -1,5 +1,11 @@
 import { MailerService } from '@modules/mailer/mailer.service';
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
+import {
+  partnerBadgeChangeDirection,
+  partnerBadgePayoutTimingLabelFr,
+  resolveEffectivePartnerBadgeCode,
+  serializePartnerBadge,
+} from '@common/partner-badges/partner-badge.constants';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import {
   VendorNotificationDispatchService,
@@ -272,6 +278,61 @@ export class VendorStatusEmailService {
     });
   }
 
+  async notifyStripeConnectStatusChange(args: {
+    userId: string;
+    recipientRole: 'vendor' | 'delivery';
+    previousStatus: string;
+    newStatus: string;
+    actionUrl?: string | null;
+    actionLabel?: string | null;
+    disabledReason?: string | null;
+  }): Promise<void> {
+    const previous = (args.previousStatus ?? '').trim().toLowerCase();
+    const next = (args.newStatus ?? '').trim().toLowerCase();
+    if (!next || previous === next) return;
+
+    const recipient = await this.userRecipient(args.userId);
+    if (!recipient) return;
+
+    const prevLabel = this.connectStatusLabelFr(previous);
+    const nextLabel = this.connectStatusLabelFr(next);
+    const roleLabel =
+      args.recipientRole === 'delivery' ? 'livreur' : 'restaurant';
+    const { subject, heading, body } = this.connectStatusCopy(
+      next,
+      roleLabel,
+      prevLabel,
+      nextLabel,
+      args.disabledReason,
+    );
+
+    const infoRows: Array<{ label: string; value: string }> = [
+      { label: 'Ancien statut', value: prevLabel },
+      { label: 'Nouveau statut', value: nextLabel },
+    ];
+    if (args.disabledReason?.trim()) {
+      infoRows.push({ label: 'Motif', value: args.disabledReason.trim() });
+    }
+
+    const actionUrl = args.actionUrl?.trim() || null;
+    const actionLabel =
+      args.actionLabel?.trim() ||
+      (next === 'active'
+        ? 'Ouvrir mon tableau de bord Stripe'
+        : 'Configurer mon compte de paiement');
+
+    await this.sendToRecipient({
+      recipient,
+      subject,
+      heading,
+      body,
+      infoRows,
+      ctaUrl: actionUrl,
+      ctaLabel: actionUrl ? actionLabel : undefined,
+      logTag: `stripe_connect_status role=${args.recipientRole} user=${args.userId} ${previous}->${next}`,
+    });
+  }
+
   async notifyPayoutStatusChange(args: {
     userId: string;
     payoutId: string;
@@ -306,6 +367,87 @@ export class VendorStatusEmailService {
       body,
       infoRows: rows,
       logTag: `payout_status user=${args.userId} payout=${args.payoutId} status=${status}`,
+    });
+  }
+
+  /** E-mail vendeur (équipe boutique) ou livreur lors d’un changement de badge partenaire. */
+  async notifyPartnerBadgeChanged(args: {
+    recipientRole: 'vendor' | 'delivery';
+    userId: string;
+    storeId?: string;
+    storeName?: string;
+    previousBadgeCode?: string | null;
+    newBadgeCode: string;
+  }): Promise<void> {
+    const previous = resolveEffectivePartnerBadgeCode(args.previousBadgeCode);
+    const next = resolveEffectivePartnerBadgeCode(args.newBadgeCode);
+    const direction = partnerBadgeChangeDirection(previous, next);
+    if (direction === 'unchanged') return;
+
+    const prevBadge = serializePartnerBadge(previous);
+    const nextBadge = serializePartnerBadge(next);
+    const prevTiming = partnerBadgePayoutTimingLabelFr(previous);
+    const nextTiming = partnerBadgePayoutTimingLabelFr(next);
+
+    const isUpgrade = direction === 'upgrade';
+    const subject = isUpgrade
+      ? 'Badge partenaire amélioré'
+      : 'Badge partenaire rétrogradé';
+    const heading = isUpgrade ? 'Badge amélioré' : 'Badge rétrogradé';
+    const roleLabel =
+      args.recipientRole === 'vendor' ? 'restaurant' : 'livreur';
+    const storePart =
+      args.recipientRole === 'vendor' && args.storeName?.trim()
+        ? ` pour ${args.storeName.trim()}`
+        : '';
+    const body = isUpgrade
+      ? `Votre badge partenaire ${roleLabel}${storePart} a été amélioré : ${prevBadge.icon} ${prevBadge.name} → ${nextBadge.icon} ${nextBadge.name}. Vos versements Stripe suivent désormais un délai de ${nextTiming}.`
+      : `Votre badge partenaire ${roleLabel}${storePart} a été rétrogradé : ${prevBadge.icon} ${prevBadge.name} → ${nextBadge.icon} ${nextBadge.name}. Le délai de versement passe de ${prevTiming} à ${nextTiming}.`;
+
+    const infoRows: Array<{ label: string; value: string }> = [
+      {
+        label: 'Ancien badge',
+        value: `${prevBadge.icon} ${prevBadge.name} (${prevTiming})`,
+      },
+      {
+        label: 'Nouveau badge',
+        value: `${nextBadge.icon} ${nextBadge.name} (${nextTiming})`,
+      },
+    ];
+    if (args.storeName?.trim()) {
+      infoRows.unshift({ label: 'Restaurant', value: args.storeName.trim() });
+    }
+
+    const logTag = `partner_badge_${direction} role=${args.recipientRole} user=${args.userId}${args.storeId ? ` store=${args.storeId}` : ''}`;
+
+    if (args.recipientRole === 'vendor' && args.storeId?.trim()) {
+      await this.sendToStoreRecipients({
+        storeId: args.storeId.trim(),
+        category: 'payout',
+        subject,
+        heading,
+        body,
+        infoRows,
+        pushTitle: subject,
+        metadata: {
+          previousBadge: previous,
+          newBadge: next,
+          direction,
+        },
+        logTag,
+      });
+      return;
+    }
+
+    const recipient = await this.userRecipient(args.userId);
+    if (!recipient) return;
+    await this.sendToRecipient({
+      recipient,
+      subject,
+      heading,
+      body,
+      infoRows,
+      logTag,
     });
   }
 
@@ -413,6 +555,81 @@ export class VendorStatusEmailService {
           heading: 'Commande terminée',
           body: `La commande ${args.orderRef} pour ${args.storeName} est terminée.`,
           statusLabel: args.statusLabel ?? 'Terminée',
+        };
+    }
+  }
+
+  private connectStatusLabelFr(status: string): string {
+    switch (status) {
+      case 'not_created':
+        return 'Non configuré';
+      case 'incomplete':
+        return 'Configuration en cours';
+      case 'pending_verification':
+        return 'Vérification en cours';
+      case 'active':
+        return 'Actif';
+      case 'restricted':
+        return 'Restreint';
+      case 'rejected':
+        return 'Refusé';
+      default:
+        return status;
+    }
+  }
+
+  private connectStatusCopy(
+    status: string,
+    roleLabel: string,
+    prevLabel: string,
+    nextLabel: string,
+    disabledReason?: string | null,
+  ): { subject: string; heading: string; body: string } {
+    const transition = `Le statut de votre compte de paiement ${roleLabel} est passé de « ${prevLabel} » à « ${nextLabel} ».`;
+    switch (status) {
+      case 'active':
+        return {
+          subject: 'Compte de paiement activé',
+          heading: 'Compte Stripe Connect',
+          body: `${transition} Vous pouvez désormais recevoir vos versements.`,
+        };
+      case 'pending_verification':
+        return {
+          subject: 'Vérification du compte de paiement en cours',
+          heading: 'Compte Stripe Connect',
+          body: `${transition} Stripe vérifie vos informations. Vous serez notifié dès que le compte sera actif.`,
+        };
+      case 'restricted':
+        return {
+          subject: 'Action requise sur votre compte de paiement',
+          heading: 'Compte Stripe Connect',
+          body: `${transition}${
+            disabledReason?.trim()
+              ? ` Motif indiqué par Stripe : ${disabledReason.trim()}.`
+              : ''
+          } Utilisez le lien ci-dessous pour compléter ou corriger vos informations.`,
+        };
+      case 'rejected':
+        return {
+          subject: 'Compte de paiement refusé',
+          heading: 'Compte Stripe Connect',
+          body: `${transition}${
+            disabledReason?.trim()
+              ? ` Motif : ${disabledReason.trim()}.`
+              : ''
+          } Contactez le support si vous pensez qu'il s'agit d'une erreur.`,
+        };
+      case 'incomplete':
+        return {
+          subject: 'Finalisez votre compte de paiement',
+          heading: 'Compte Stripe Connect',
+          body: `${transition} Utilisez le lien ci-dessous pour terminer la configuration Stripe.`,
+        };
+      default:
+        return {
+          subject: 'Mise à jour du compte de paiement',
+          heading: 'Compte Stripe Connect',
+          body: transition,
         };
     }
   }
@@ -596,26 +813,37 @@ export class VendorStatusEmailService {
     body: string;
     infoRows: Array<{ label: string; value: string }>;
     logTag: string;
+    ctaUrl?: string | null;
+    ctaLabel?: string | null;
   }): Promise<void> {
     const appName =
-      this.config.get<string>('APP_NAME')?.trim() || 'Afrika Meals';
+      this.config.get<string>('APP_NAME')?.trim() || 'Wise Eat';
     const safeName = this.emailTpl.escapeHtml(args.recipient.name);
     const safeBody = this.emailTpl.escapeHtml(args.body);
-    const html = [
+    const ctaUrl = args.ctaUrl?.trim() || null;
+    const ctaLabel = args.ctaLabel?.trim() || null;
+    const htmlParts = [
       this.emailTpl.heading(args.heading),
       this.emailTpl.paragraph(`Bonjour <strong>${safeName}</strong>,`),
       this.emailTpl.paragraph(safeBody),
       this.emailTpl.infoPanel(this.emailTpl.keyValues(args.infoRows)),
+    ];
+    if (ctaUrl && ctaLabel) {
+      htmlParts.push(this.emailTpl.button(ctaLabel, ctaUrl));
+    }
+    htmlParts.push(
       this.emailTpl.muted(
         'Pour toute question, contactez le support via les coordonnées en bas de ce message.',
       ),
-    ].join('\n');
+    );
+    const html = htmlParts.join('\n');
     const text = [
       `Bonjour ${args.recipient.name},`,
       '',
       args.body,
       '',
       ...args.infoRows.map((r) => `${r.label} : ${r.value}`),
+      ...(ctaUrl && ctaLabel ? ['', `${ctaLabel} : ${ctaUrl}`] : []),
       '',
       `— L'équipe ${appName}`,
     ].join('\n');

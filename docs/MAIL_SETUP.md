@@ -30,7 +30,7 @@ SMTP_PORT=587
 SMTP_USER=votre-adresse@gmail.com
 SMTP_APP_PASSWORD=xxxx xxxx xxxx xxxx
 SMTP_FROM=votre-adresse@gmail.com
-APP_NAME=African Meals
+APP_NAME=Wise Eat
 SUPPORT_EMAIL=support@votredomaine.com
 ```
 
@@ -41,7 +41,7 @@ SUPPORT_EMAIL=support@votredomaine.com
 | `SMTP_USER` | Votre adresse Gmail complète | `monapp@gmail.com` |
 | `SMTP_APP_PASSWORD` | Mot de passe d’application (16 caractères) | `abcd efgh ijkl mnop` |
 | `SMTP_FROM` | Adresse affichée comme expéditeur (souvent = SMTP_USER) | `monapp@gmail.com` |
-| `APP_NAME` | Nom de l’application (utilisé dans les e-mails) | `African Meals` |
+| `APP_NAME` | Nom de l’application (utilisé dans les e-mails) | `Wise Eat` |
 | `SUPPORT_EMAIL` | Email de support (affiché en bas des e-mails) | `support@...` |
 | `EMAIL_LOGO_URL` | URL absolue du logo (header) | `https://…/logo.png` |
 | `EMAIL_WEBSITE_URL` ou `PUBLIC_WEB_URL` | Lien « Visiter le site » (footer) | `https://…` |

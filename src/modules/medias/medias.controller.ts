@@ -1,6 +1,6 @@
 import { Controller } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 
-@ApiTags('default')
+@ApiTags('medias')
 @Controller('medias')
 export class MediasController {}

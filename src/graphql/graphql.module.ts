@@ -21,6 +21,7 @@ import { StoreMenuResolver } from './store-menu.resolver';
       autoSchemaFile: true,
       useGlobalPrefix: true,
       path: 'graphql',
+      bodyParserConfig: false,
       context: ({ req, res }) => ({ req, res }),
       playground: process.env.DISABLE_GRAPHQL_PLAYGROUND !== 'true',
       introspection: process.env.DISABLE_GRAPHQL_PLAYGROUND !== 'true',

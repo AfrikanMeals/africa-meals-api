@@ -238,7 +238,7 @@ export class VendorNotificationDispatchService {
     );
     const seen = new Set<string>();
     const appName =
-      this.config.get<string>('APP_NAME')?.trim() || 'Afrika Meals';
+      this.config.get<string>('APP_NAME')?.trim() || 'Wise Eat';
 
     for (const userId of userIds) {
       if (!Types.ObjectId.isValid(userId)) continue;

@@ -1011,7 +1011,7 @@ export class NotificationsService implements OnModuleInit {
       data.storeName = sname;
     }
 
-    const displayTitle = sname || args.title?.trim() || 'African Meals';
+    const displayTitle = sname || args.title?.trim() || 'Wise Eat';
 
     await this.appNotificationModel.insertMany(
       valid.map((uid) => ({
@@ -1054,7 +1054,7 @@ export class NotificationsService implements OnModuleInit {
       data.storeName = args.storeName.trim();
     }
     const displayTitle =
-      args.storeName?.trim() || args.title?.trim() || 'African Meals';
+      args.storeName?.trim() || args.title?.trim() || 'Wise Eat';
     const r = await this.sendMulticastNotification({
       recipientUserIds: args.recipientUserIds,
       title: displayTitle,

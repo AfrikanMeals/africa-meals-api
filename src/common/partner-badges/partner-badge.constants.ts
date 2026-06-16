@@ -1,3 +1,5 @@
+import { getPartnerBadgeDefinitionsCache } from './partner-badge.cache';
+
 export enum PartnerBadgeCode {
   SILVER = 'SILVER',
   GOLD = 'GOLD',
@@ -13,28 +15,38 @@ export type PartnerBadgeDefinition = {
   icon: string;
   /** Délai Stripe avant versement (0 = instantané via `method=instant`). */
   payoutDelayDays: number;
+  sortOrder?: number;
 };
 
+/** Valeurs par défaut (seed) si la base est vide. */
 export const PARTNER_BADGE_DEFINITIONS: PartnerBadgeDefinition[] = [
   {
     code: PartnerBadgeCode.SILVER,
     name: 'SILVER',
     icon: '🥈',
     payoutDelayDays: 7,
+    sortOrder: 1,
   },
   {
     code: PartnerBadgeCode.GOLD,
     name: 'GOLD',
     icon: '⚜️',
     payoutDelayDays: 3,
+    sortOrder: 2,
   },
   {
     code: PartnerBadgeCode.DIAMOND,
     name: 'DIAMOND',
     icon: '💎',
     payoutDelayDays: 0,
+    sortOrder: 3,
   },
 ];
+
+function activePartnerBadgeDefinitions(): PartnerBadgeDefinition[] {
+  const cached = getPartnerBadgeDefinitionsCache();
+  return cached.length > 0 ? cached : PARTNER_BADGE_DEFINITIONS;
+}
 
 export type PartnerBadgeSnapshot = {
   code: PartnerBadgeCode;
@@ -69,7 +81,12 @@ export function getPartnerBadgeDefinition(
   raw: string | null | undefined,
 ): PartnerBadgeDefinition | null {
   const code = resolveEffectivePartnerBadgeCode(raw);
-  return PARTNER_BADGE_DEFINITIONS.find((b) => b.code === code) ?? null;
+  return activePartnerBadgeDefinitions().find((b) => b.code === code) ?? null;
+}
+
+/** Liste catalogue (admin / assignation). */
+export function listPartnerBadgeDefinitions(): PartnerBadgeDefinition[] {
+  return activePartnerBadgeDefinitions();
 }
 
 export function serializePartnerBadge(
@@ -100,4 +117,21 @@ export function partnerBadgePayoutTimingLabelFr(
   if (def.payoutDelayDays === 1) return '1 jour ouvré';
   if (def.payoutDelayDays === 7) return '1 semaine';
   return `${def.payoutDelayDays} jours ouvrés`;
+}
+
+export type PartnerBadgeChangeDirection = 'upgrade' | 'downgrade' | 'unchanged';
+
+/** Compare les délais de versement (Diamond > Gold > Silver). */
+export function partnerBadgeChangeDirection(
+  previousCode: string | null | undefined,
+  nextCode: string | null | undefined,
+): PartnerBadgeChangeDirection {
+  const previous = resolveEffectivePartnerBadgeCode(previousCode);
+  const next = resolveEffectivePartnerBadgeCode(nextCode);
+  if (previous === next) return 'unchanged';
+  const prevDays = getPartnerBadgeDefinition(previous)!.payoutDelayDays;
+  const nextDays = getPartnerBadgeDefinition(next)!.payoutDelayDays;
+  if (nextDays < prevDays) return 'upgrade';
+  if (nextDays > prevDays) return 'downgrade';
+  return 'unchanged';
 }

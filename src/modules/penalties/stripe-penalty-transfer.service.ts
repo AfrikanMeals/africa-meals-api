@@ -428,7 +428,7 @@ export class StripePenaltyTransferService {
     step: string,
   ): Record<string, string> {
     return {
-      platform: 'africa-meals',
+      platform: 'wise-eat',
       transferKind: 'penalty',
       penaltyId: args.penaltyId,
       penaltyRoute: args.route,

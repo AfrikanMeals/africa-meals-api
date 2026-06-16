@@ -56,7 +56,7 @@ export class StripeRefundService {
       reason: 'requested_by_customer',
       metadata: {
         orderId: args.orderId,
-        platform: 'africa-meals',
+        platform: 'wise-eat',
         ...(args.refundGrossCents != null
           ? { refundGrossCents: String(args.refundGrossCents) }
           : {}),

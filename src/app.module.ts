@@ -30,6 +30,7 @@ import { GraphqlApiModule } from './graphql/graphql.module';
 import { RecommendationsModule } from './modules/recommendations/recommendations.module';
 import { PlatformFeesModule } from './modules/platform-fees/platform-fees.module';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
+import { PartnerBadgesModule } from './modules/partner-badges/partner-badges.module';
 import { TeamsModule } from './modules/teams/teams.module';
 import { RefundsModule } from './modules/refunds/refunds.module';
 import { PenaltiesModule } from './modules/penalties/penalties.module';
@@ -45,6 +46,7 @@ import { RequestStatsModule } from './modules/request-stats/request-stats.module
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
 import { AuthSettingsModule } from './modules/auth-settings/auth-settings.module';
 import { SecuritySettingsModule } from './modules/security-settings/security-settings.module';
+import { StorageSettingsModule } from './modules/storage-settings/storage-settings.module';
 import { MapSettingsModule } from './modules/map-settings/map-settings.module';
 import { SearchSettingsModule } from './modules/search-settings/search-settings.module';
 import { MobileAppSettingsModule } from './modules/mobile-app-settings/mobile-app-settings.module';
@@ -284,6 +286,7 @@ function redactRedisUrl(url: string): string {
     PlatformShippingSettingsModule,
     PlatformFeesModule,
     SubscriptionsModule,
+    PartnerBadgesModule,
     TeamsModule,
     RefundsModule,
     PenaltiesModule,
@@ -296,6 +299,7 @@ function redactRedisUrl(url: string): string {
     FieldSelectionModule,
     AuthSettingsModule,
     SecuritySettingsModule,
+    StorageSettingsModule,
     MapSettingsModule,
     SearchSettingsModule,
     MobileAppSettingsModule,

@@ -3148,7 +3148,7 @@ export class AdsService implements OnModuleInit {
             currency: 'cad',
             unit_amount: unitAmount,
             product_data: {
-              name: 'Afrika Meals · Règlement crédit Ads',
+              name: 'Wise Eat · Règlement crédit Ads',
               description: `Règlement du crédit Ads vendeur (solde: ${outstanding.toFixed(
                 2,
               )} CAD)`,
@@ -3160,7 +3160,7 @@ export class AdsService implements OnModuleInit {
       cancel_url: this.adCreditCancelUrl(),
       metadata: meta,
       payment_intent_data: {
-        description: 'Afrika Meals · Paiement crédit Ads',
+        description: 'Wise Eat · Paiement crédit Ads',
         metadata: meta,
       },
     });
@@ -3277,7 +3277,7 @@ export class AdsService implements OnModuleInit {
     if (!buffer.length) {
       throw new BadRequestException('empty_image');
     }
-    const max = 5 * 1024 * 1024;
+    const max = await this._mediasService.getMaxFileSizeBytes();
     if (buffer.length > max) {
       throw new BadRequestException('file_too_large');
     }

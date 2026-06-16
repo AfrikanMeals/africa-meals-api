@@ -1,4 +1,4 @@
-# Inventaire des services — Wise Eat / Afrika Meals
+# Inventaire des services — Wise Eat / Wise Eat
 
 Synthèse des prestataires externes utilisés par les 5 applications du monorepo, pour évaluer la facturation.
 

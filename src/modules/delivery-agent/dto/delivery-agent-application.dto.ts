@@ -38,6 +38,11 @@ export class PatchDeliveryAgentApplicationDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(2)
+  region?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(500)
   serviceZone?: string;
 

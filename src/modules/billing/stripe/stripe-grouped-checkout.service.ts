@@ -354,7 +354,7 @@ function checkoutPlatformPaymentFeeLine(params: {
           'Frais de traitement du paiement (passerelle, carte, etc.)',
         metadata: stripeProductMetadata({
           storeId: 'platform',
-          storeName: 'Afrika Meals',
+          storeName: 'Wise Eat',
           lineKind: 'payment_fee',
           line,
         }),
@@ -1086,8 +1086,8 @@ export class StripeGroupedCheckoutService {
     const nStores = Object.keys(built.payoutByStore).length;
     const piDescription =
       nStores > 1
-        ? `Afrika Meals · ${nStores} restaurants`
-        : `Afrika Meals · ${nStores} restaurant`;
+        ? `Wise Eat · ${nStores} restaurants`
+        : `Wise Eat · ${nStores} restaurant`;
     const stripe = this.stripe();
     const pmcId = this.config
       .get<string>('STRIPE_PAYMENT_METHOD_CONFIGURATION')
@@ -1150,8 +1150,8 @@ export class StripeGroupedCheckoutService {
     const nStores = Object.keys(built.payoutByStore).length;
     const piDescription =
       nStores > 1
-        ? `Afrika Meals · ${nStores} restaurants`
-        : `Afrika Meals · ${nStores} restaurant`;
+        ? `Wise Eat · ${nStores} restaurants`
+        : `Wise Eat · ${nStores} restaurant`;
     const stripe = this.stripe();
     const idem = idempotencyKey?.trim().slice(0, 255);
     const pi = await stripe.paymentIntents.create(
@@ -1745,7 +1745,7 @@ export class StripeGroupedCheckoutService {
         currency: cur,
         store: {
           _id: storeBlock._id,
-          name: storeBlock.name ?? 'Afrika Meals',
+          name: storeBlock.name ?? 'Wise Eat',
           profileImage: storeBlock.profileImage,
           currency: storeBlock.currency || cur,
         },

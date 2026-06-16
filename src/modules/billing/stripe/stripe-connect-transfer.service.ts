@@ -315,7 +315,7 @@ export class StripeConnectTransferService {
           metadata: {
             orderId: args.orderId,
             storeId: args.storeId,
-            platform: 'africa-meals',
+            platform: 'wise-eat',
             transferKind: 'vendor_goods',
             platformFeeCents: String(platformFeeOnGoods),
             stripeProcessingFeeCents: String(stripeProcessingFeeShareCents),
@@ -535,7 +535,7 @@ export class StripeConnectTransferService {
           metadata: {
             orderId: args.orderId,
             agentUserId: agentId,
-            platform: 'africa-meals',
+            platform: 'wise-eat',
             transferKind: 'delivery_shipping',
             stripeProcessingFeeCents: String(stripeProcessingFeeShareCents),
             grossShipCents: String(shipCents),
@@ -699,7 +699,7 @@ export class StripeConnectTransferService {
           amount: reversalCents,
           metadata: {
             orderId: args.orderId,
-            platform: 'africa-meals',
+            platform: 'wise-eat',
             reason: 'refund',
             transferKind: args.idempotencySuffix,
           },

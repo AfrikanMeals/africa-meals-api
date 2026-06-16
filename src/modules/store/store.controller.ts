@@ -69,20 +69,24 @@ import {
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { StoreService } from './store.service';
 import { SetPartnerBadgeDto } from '@common/partner-badges/dto/set-partner-badge.dto';
-import { PARTNER_BADGE_DEFINITIONS } from '@common/partner-badges/partner-badge.constants';
+import { listPartnerBadgeDefinitions } from '@common/partner-badges/partner-badge.constants';
 import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
 import { StoreSubscribersService } from '@modules/store-subscribers/store-subscribers.service';
+import { MediasService } from '@modules/medias/medias.service';
 import {
   AcceptStoreDeliveryDriverInviteDto,
   InviteStoreDeliveryDriverDto,
 } from '@modules/store-delivery-drivers/dto/store-delivery-drivers.dto';
 
-const VENDOR_PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const DEFAULT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+/** Plafond multer (au-delà de la limite admin configurée). */
+const MULTER_HARD_MAX_BYTES = 50 * 1024 * 1024;
 
 function multerFileFromVendorProductBase64(
   imageBase64: string | undefined,
   filename: string | undefined,
   fieldname: 'image' | 'gallery',
+  maxBytes = DEFAULT_IMAGE_MAX_BYTES,
 ): Express.Multer.File | undefined {
   if (imageBase64 == null || String(imageBase64).trim() === '') {
     return undefined;
@@ -99,7 +103,7 @@ function multerFileFromVendorProductBase64(
   if (!buffer.length) {
     throw new BadRequestException('empty_image');
   }
-  if (buffer.length > VENDOR_PRODUCT_IMAGE_MAX_BYTES) {
+  if (buffer.length > maxBytes) {
     throw new BadRequestException('image_too_large');
   }
   const name = (filename || 'photo.jpg').trim() || 'photo.jpg';
@@ -124,6 +128,7 @@ function multerFileFromVendorProductBase64(
 function galleryMulterFilesFromJson(
   galleryBase64: string[] | undefined,
   galleryFilenames: string[] | undefined,
+  maxBytes = DEFAULT_IMAGE_MAX_BYTES,
 ): Express.Multer.File[] | undefined {
   if (!galleryBase64?.length) {
     return undefined;
@@ -135,6 +140,7 @@ function galleryMulterFilesFromJson(
       galleryBase64[i],
       galleryFilenames?.[i],
       'gallery',
+      maxBytes,
     );
     if (f) {
       out.push(f);
@@ -143,12 +149,10 @@ function galleryMulterFilesFromJson(
   return out.length ? out : undefined;
 }
 
-const DRINK_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
-
-/** Image boisson depuis JSON (WebP autorisé, comme le multipart boissons). */
 function multerFileFromDrinkImageJson(
   imageBase64: string | undefined,
   filename: string | undefined,
+  maxBytes = DEFAULT_IMAGE_MAX_BYTES,
 ): Express.Multer.File | undefined {
   if (imageBase64 == null || String(imageBase64).trim() === '') {
     return undefined;
@@ -165,7 +169,7 @@ function multerFileFromDrinkImageJson(
   if (!buffer.length) {
     throw new BadRequestException('empty_image');
   }
-  if (buffer.length > DRINK_IMAGE_MAX_BYTES) {
+  if (buffer.length > maxBytes) {
     throw new BadRequestException('file_too_large');
   }
   const name = (filename || 'drink.jpg').trim() || 'drink.jpg';
@@ -210,6 +214,9 @@ export class StoreController {
 
   @Inject(StoreSubscribersService)
   private readonly _storeSubscribers: StoreSubscribersService;
+
+  @Inject(MediasService)
+  private readonly _mediasService: MediasService;
 
   /** Résumé vendeur (évite la collision avec GET :id = "my-store"). */
   @Get('vendor/summary')
@@ -278,7 +285,7 @@ export class StoreController {
     if (user.type !== UserTypeEnum.ADMIN) {
       throw new ForbiddenException('admin_only');
     }
-    return PARTNER_BADGE_DEFINITIONS.map((b) => ({
+    return listPartnerBadgeDefinitions().map((b) => ({
       code: b.code,
       name: b.name,
       icon: b.icon,
@@ -523,8 +530,9 @@ export class StoreController {
     body: CreateDrinkJsonDto,
     @Req() req: Request,
   ) {
+    const maxBytes = await this._mediasService.getMaxFileSizeBytes();
     const { imageBase64, filename, ...createDto } = body;
-    const file = multerFileFromDrinkImageJson(imageBase64, filename);
+    const file = multerFileFromDrinkImageJson(imageBase64, filename, maxBytes);
     return this._drinksService.createForStore(
       id,
       createDto as CreateDrinkDto,
@@ -542,8 +550,9 @@ export class StoreController {
     body: PatchDrinkJsonDto,
     @Req() req: Request,
   ) {
+    const maxBytes = await this._mediasService.getMaxFileSizeBytes();
     const { imageBase64, filename, ...patch } = body;
-    const file = multerFileFromDrinkImageJson(imageBase64, filename);
+    const file = multerFileFromDrinkImageJson(imageBase64, filename, maxBytes);
     return this._drinksService.updateForStore(
       id,
       drinkId,
@@ -558,7 +567,7 @@ export class StoreController {
   @UseInterceptors(
     FileInterceptor('image', {
       storage: memoryStorage(),
-      limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+      limits: { fileSize: MULTER_HARD_MAX_BYTES, files: 1 },
       fileFilter: (req, file, cb) => {
         if (!file.originalname.match(/\.(jpg|jpeg|png|webp)$/i)) {
           return cb(new Error('invalid_file_type'), false);
@@ -590,7 +599,7 @@ export class StoreController {
   @UseInterceptors(
     FileInterceptor('image', {
       storage: memoryStorage(),
-      limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+      limits: { fileSize: MULTER_HARD_MAX_BYTES, files: 1 },
       fileFilter: (req, file, cb) => {
         if (!file.originalname.match(/\.(jpg|jpeg|png|webp)$/i)) {
           return cb(new Error('invalid_file_type'), false);
@@ -644,7 +653,7 @@ export class StoreController {
       ],
       {
         storage: memoryStorage(),
-        limits: { fileSize: 5 * 1024 * 1024 },
+        limits: { fileSize: MULTER_HARD_MAX_BYTES },
         fileFilter: (req, file, cb) => {
           if (!file.originalname.match(/\.(jpg|jpeg|png)$/)) {
             return cb(new Error('invalid_file_type'), false);
@@ -914,7 +923,7 @@ export class StoreController {
       ],
       {
         storage: memoryStorage(),
-        limits: { fileSize: 5 * 1024 * 1024 },
+        limits: { fileSize: MULTER_HARD_MAX_BYTES },
         fileFilter: (req, file, cb) => {
           if (!file.originalname.match(/\.(jpg|jpeg|png)$/)) {
             return cb(new Error('invalid_file_type'), false);
@@ -963,14 +972,17 @@ export class StoreController {
       currency: body.currency,
       status: body.status,
     };
+    const maxBytes = await this._mediasService.getMaxFileSizeBytes();
     const imageFile = multerFileFromVendorProductBase64(
       body.imageBase64,
       body.imageFilename,
       'image',
+      maxBytes,
     );
     const galleryFiles = galleryMulterFilesFromJson(
       body.galleryBase64,
       body.galleryFilenames,
+      maxBytes,
     );
     return this._storeService.createProduct(
       id,
@@ -991,14 +1003,17 @@ export class StoreController {
     body: PatchProductJsonDto,
     @Req() req: Request,
   ) {
+    const maxBytes = await this._mediasService.getMaxFileSizeBytes();
     const imageFile = multerFileFromVendorProductBase64(
       body.imageBase64,
       body.imageFilename,
       'image',
+      maxBytes,
     );
     const galleryFiles = galleryMulterFilesFromJson(
       body.galleryBase64,
       body.galleryFilenames,
+      maxBytes,
     );
     const patch = { ...body } as PatchProductJsonDto & Record<string, unknown>;
     delete patch.imageBase64;

@@ -63,7 +63,7 @@ service firebase.storage {
 }
 ```
 
-Only your API (with the service account) can write; clients can only read (e.g. via the download URLs returned by the API).
+Only your API (with the service account) can write; clients read via public GCS URLs (`https://storage.googleapis.com/{bucket}/…`) once the bucket allows public access (`allUsers: Storage Object Viewer` and public access prevention disabled), or via Firebase download URLs when using the Firebase engine.
 
 ## 5. How the API uses Storage
 

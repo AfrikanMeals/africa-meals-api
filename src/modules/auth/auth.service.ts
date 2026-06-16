@@ -54,6 +54,7 @@ import {
   resolveOtpWebBaseUrl,
   type AuthOtpEmailVariant,
 } from '@modules/mailer/auth-otp-email.util';
+import { PartnerOnboardingEmailService } from '@modules/vendor-emails/partner-onboarding-email.service';
 
 @Injectable()
 export class AuthService {
@@ -96,6 +97,9 @@ export class AuthService {
 
   @Inject(LoginNotificationService)
   private readonly _loginNotification: LoginNotificationService;
+
+  @Inject(PartnerOnboardingEmailService)
+  private readonly _partnerOnboardingEmail: PartnerOnboardingEmailService;
 
   /**
    * Inscription en deux temps : aucune ligne dans `users` tant que le code e-mail
@@ -211,6 +215,7 @@ export class AuthService {
 
     await this._pendingSignupModel.deleteOne({ _id: pending._id }).exec();
     const user = await this.findUserById(newUser._id.toString());
+    this.queueVendorOnboardingWelcome(user);
     return { ...this.deliverAuthTokens(newUser, ctx, 'register'), user };
   }
 
@@ -294,7 +299,7 @@ export class AuthService {
     variant: AuthOtpEmailVariant,
   ): string {
     const appName =
-      this._configService.get<string>('APP_NAME') ?? 'African Meals';
+      this._configService.get<string>('APP_NAME') ?? 'Wise Eat';
     return buildAuthOtpPlainText({
       appName,
       code,
@@ -315,7 +320,7 @@ export class AuthService {
     code: string,
   ) {
     const appName =
-      this._configService.get<string>('APP_NAME') ?? 'African Meals';
+      this._configService.get<string>('APP_NAME') ?? 'Wise Eat';
     const subject = `Vérifiez votre courriel - ${appName}`;
     const html = this.buildVerificationEmailHtml(
       fullName,
@@ -452,7 +457,7 @@ export class AuthService {
     if (!verifyImmediately && activationCode) {
       try {
         const appName =
-          this._configService.get<string>('APP_NAME') ?? 'African Meals';
+          this._configService.get<string>('APP_NAME') ?? 'Wise Eat';
         const subject = `Bienvenue sur ${appName}`;
         await this._mailer.sendSimple({
           to: args.email,
@@ -495,6 +500,7 @@ export class AuthService {
     }
 
     this.logger.log(`[register] terminé id=${newUser._id.toString()}`);
+    this.queueVendorOnboardingWelcome(newUser);
     return this.findUserById(newUser._id.toString());
   }
 
@@ -592,6 +598,7 @@ export class AuthService {
       emailVerifiedAt: new Date(),
       ...(pictureFromGoogle ? { profileImage: pictureFromGoogle } : {}),
     });
+    this.queueVendorOnboardingWelcome(newUser);
     return {
       ...this.deliverAuthTokens(newUser, ctx, 'google'),
     };
@@ -695,6 +702,7 @@ export class AuthService {
       emailVerifiedAt: new Date(),
       ...(pictureFromApple ? { profileImage: pictureFromApple } : {}),
     });
+    this.queueVendorOnboardingWelcome(newUser);
     return {
       ...this.deliverAuthTokens(newUser, ctx, 'apple'),
     };
@@ -796,6 +804,7 @@ export class AuthService {
       emailVerifiedAt: new Date(),
       ...(pictureFromFacebook ? { profileImage: pictureFromFacebook } : {}),
     });
+    this.queueVendorOnboardingWelcome(newUser);
     return {
       ...this.deliverAuthTokens(newUser, ctx, 'facebook'),
     };
@@ -1030,7 +1039,7 @@ export class AuthService {
       throw new NotFoundException(`user_not_found`);
     }
     const appName =
-      this._configService.get<string>('APP_NAME') ?? 'African Meals';
+      this._configService.get<string>('APP_NAME') ?? 'Wise Eat';
     const subject = `Bienvenue sur ${appName}`;
     await this._mailer.sendSimple({
       to: email,
@@ -1077,7 +1086,7 @@ export class AuthService {
       .exec();
 
     const appName =
-      this._configService.get<string>('APP_NAME') ?? 'African Meals';
+      this._configService.get<string>('APP_NAME') ?? 'Wise Eat';
     const subject = `Réinitialisation de mot de passe - ${appName}`;
     const html = this.buildVerificationEmailHtml(
       user.fullName,
@@ -1593,7 +1602,7 @@ export class AuthService {
 
     const email = user.email.trim().toLowerCase();
     const appName =
-      this._configService.get<string>('APP_NAME') ?? 'African Meals';
+      this._configService.get<string>('APP_NAME') ?? 'Wise Eat';
     const subject = `Activation 2FA - ${appName}`;
     const html = this.buildVerificationEmailHtml(
       user.fullName,
@@ -1662,7 +1671,52 @@ export class AuthService {
     return { ok: true, email2faEnabled: true };
   }
 
+  async disableEmail2fa(userId: string) {
+    const user = await this._usersModel.findById(userId).exec();
+    if (!user) {
+      throw new NotFoundException('user_not_found');
+    }
+    if (user.email2faEnabled !== true) {
+      throw new BadRequestException('email_2fa_not_enabled');
+    }
+    await this._usersModel
+      .findByIdAndUpdate(userId, {
+        $set: { email2faEnabled: false },
+        $unset: { email2faEnableCode: '', email2faLoginCode: '' },
+      })
+      .exec();
+    return {
+      ok: true,
+      email2faEnabled: false,
+      message: 'Double authentification par e-mail désactivée.',
+    };
+  }
+
   /** Rôles du formulaire d’inscription Dashboard → `UserModel.type` */
+  private queueVendorOnboardingWelcome(user: {
+    type?: UserTypeEnum;
+    email?: string;
+    fullName?: string;
+  }): void {
+    if (user.type !== UserTypeEnum.VENDOR) return;
+    const email = String(user.email ?? '')
+      .trim()
+      .toLowerCase();
+    if (!email) return;
+    void this._partnerOnboardingEmail
+      .notifyVendorOnboardingWelcome({
+        email,
+        name: String(user.fullName ?? '').trim() || email,
+      })
+      .catch((e) =>
+        this.logger.warn(
+          `vendor onboarding welcome email: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        ),
+      );
+  }
+
   private _mapSignupRoleToUserType(
     role?: RegisterDto['signupRole'],
   ): UserTypeEnum {
@@ -1742,7 +1796,7 @@ export class AuthService {
     code: string,
   ): Promise<void> {
     const appName =
-      this._configService.get<string>('APP_NAME') ?? 'African Meals';
+      this._configService.get<string>('APP_NAME') ?? 'Wise Eat';
     const subject = `Connexion sécurisée - ${appName}`;
     const html = this.buildVerificationEmailHtml(
       fullName,

@@ -1,144 +1,274 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { UserModel } from '@schemas/user.schema';
-import { App } from 'firebase-admin/app';
-import { getDownloadURL, getStorage } from 'firebase-admin/storage';
+import { StorageSettingsService } from '@modules/storage-settings/storage-settings.service';
 import { prepareIncomingUploadFile } from 'src/incoming-upload-file';
 import { extname } from 'path';
 import { v4 as uuid } from 'uuid';
+import { ImageCompressionService } from './image-compression.service';
+import { StorageEngineFactory } from './storage-engine.factory';
+import {
+  extractObjectPath,
+  isStorageObjectNotFoundError,
+  StorageEngineId,
+  StorageObjectStream,
+  StorageUploadResult,
+} from './storage-engine.types';
+import { StorageEngineMode } from '@schemas/storage-settings.schema';
 
 /**
- * Firebase Storage service for image and file uploads.
- * Uses Firebase Admin SDK (service account) so uploads are not blocked by Storage security rules.
- * Requires AM_FIREBASE_STORAGE_BUCKET (ou bucket dérivé du project id) et
- * GOOGLE_APPLICATION_CREDENTIALS ou AM_FIREBASE_SERVICE_ACCOUNT_JSON.
+ * Service de stockage multi-moteur (Firebase, GCS, S3) avec compression et limites admin.
  */
 @Injectable()
 export class MediasService {
-  @Inject('FIREBASE_ADMIN') private readonly _firebaseAdmin: App;
-  @Inject('FIREBASE_STORAGE_BUCKET') private readonly _bucketName: string;
+  constructor(
+    private readonly storageSettings: StorageSettingsService,
+    private readonly compression: ImageCompressionService,
+    private readonly engineFactory: StorageEngineFactory,
+    private readonly config: ConfigService,
+  ) {}
 
-  private get bucket() {
-    return getStorage(this._firebaseAdmin).bucket(this._bucketName);
+  private apiPublicBaseUrl(): string {
+    const raw = this.config.get<string>('API_PUBLIC_BASE_URL')?.trim() || '';
+    if (!raw) return '';
+    try {
+      const u = new URL(raw.startsWith('http') ? raw : `https://${raw}`);
+      let pathname = u.pathname.replace(/\/+$/, '');
+      const isLocal =
+        u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+      const nestPrefix =
+        this.config.get<string>('NEST_GLOBAL_PREFIX')?.trim() ?? 'api';
+      if (isLocal && nestPrefix === 'api' && !pathname.endsWith('/api')) {
+        pathname = pathname ? `${pathname}/api` : '/api';
+      }
+      return `${u.origin}${pathname}`.replace(/\/+$/, '');
+    } catch {
+      return raw.replace(/\/+$/, '');
+    }
   }
 
-  /**
-   * Upload a file to Firebase Storage.
-   * @param file Multer file from request
-   * @param user Current user (stored in metadata)
-   * @param basePath Folder path in bucket (e.g. 'users/123/profile')
-   * @returns Public download URL
-   */
+  buildProxyPublicUrl(objectPath: string): string {
+    const base = this.apiPublicBaseUrl();
+    const normalized = objectPath.replace(/^\/+/, '');
+    if (!base) {
+      return normalized;
+    }
+    return `${base.replace(/\/+$/, '')}/medias/public/${this.encodeObjectPath(normalized)}`;
+  }
+
+  private encodeObjectPath(path: string): string {
+    return path
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/');
+  }
+
+  private isDirectGcsOrS3Url(url: string): boolean {
+    return (
+      url.includes('storage.googleapis.com') ||
+      url.includes('.s3.') ||
+      url.includes('s3.amazonaws.com')
+    );
+  }
+
+  private isProxyUrl(url: string): boolean {
+    return url.includes('/medias/public/');
+  }
+
+  private directUrlForObjectPath(
+    objectPath: string,
+    engine: StorageEngineId,
+  ): string {
+    const encoded = this.encodeObjectPath(objectPath);
+    if (engine === 's3') {
+      const bucket = this.config.get<string>('AWS_S3_BUCKET')?.trim() || '';
+      const region = this.config.get<string>('AWS_REGION')?.trim() || 'us-east-1';
+      const customBase = this.config.get<string>('AWS_S3_PUBLIC_BASE_URL')?.trim();
+      if (customBase) {
+        return `${customBase.replace(/\/+$/, '')}/${encoded}`;
+      }
+      if (region === 'us-east-1') {
+        return `https://${bucket}.s3.amazonaws.com/${encoded}`;
+      }
+      return `https://${bucket}.s3.${region}.amazonaws.com/${encoded}`;
+    }
+    const bucket =
+      this.config.get<string>('GCS_BUCKET')?.trim() ||
+      this.config.get<string>('GOOGLE_CLOUD_STORAGE_BUCKET')?.trim() ||
+      '';
+    return `https://storage.googleapis.com/${bucket}/${encoded}`;
+  }
+
+  private async isMediaProxyEnabled(): Promise<boolean> {
+    const settings = await this.storageSettings.getPublicSettings();
+    return settings.mediaProxyEnabled === true;
+  }
+
+  /** Normalise les URLs médias selon le réglage admin (proxy ou direct GCS/S3). */
+  async resolvePublicMediaUrl(
+    url: string | null | undefined,
+  ): Promise<string | undefined> {
+    if (!url?.trim()) return undefined;
+    const raw = url.trim();
+    const useProxy = await this.isMediaProxyEnabled();
+
+    if (useProxy) {
+      if (this.isProxyUrl(raw)) return raw;
+      if (this.isDirectGcsOrS3Url(raw)) {
+        return this.buildProxyPublicUrl(extractObjectPath(raw));
+      }
+      return raw;
+    }
+
+    if (this.isProxyUrl(raw)) {
+      const objectPath = extractObjectPath(raw);
+      const settings = await this.storageSettings.getPublicSettings();
+      let engine: StorageEngineMode = settings.storageEngine;
+      if (engine === 'auto') {
+        if (this.config.get<string>('AWS_S3_BUCKET')?.trim()) {
+          engine = 's3';
+        } else if (
+          this.config.get<string>('GCS_BUCKET')?.trim() ||
+          this.config.get<string>('GOOGLE_CLOUD_STORAGE_BUCKET')?.trim()
+        ) {
+          engine = 'gcs';
+        } else {
+          engine = 'firebase';
+        }
+      }
+      if (engine === 'gcs' || engine === 's3') {
+        return this.directUrlForObjectPath(objectPath, engine);
+      }
+    }
+
+    return raw;
+  }
+
+  private async resolveUploadPublicUrl(
+    result: StorageUploadResult,
+  ): Promise<string> {
+    const useProxy = await this.isMediaProxyEnabled();
+    if (
+      useProxy &&
+      (result.engine === 'gcs' || result.engine === 's3')
+    ) {
+      return this.buildProxyPublicUrl(result.path);
+    }
+    return result.url;
+  }
+
+  async streamPublicObject(objectPath: string): Promise<StorageObjectStream> {
+    const normalized = objectPath.replace(/^\/+/, '').trim();
+    if (!normalized || normalized.includes('..')) {
+      throw new BadRequestException('invalid_media_path');
+    }
+    const settings = await this.storageSettings.getPublicSettings();
+    const engines = this.engineFactory.enginesToTryForRead(
+      settings.storageEngine,
+    );
+
+    for (const engine of engines) {
+      try {
+        return await engine.readObject(normalized);
+      } catch (err) {
+        if (isStorageObjectNotFoundError(err)) {
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    throw new NotFoundException('media_not_found');
+  }
+
+  async getMaxFileSizeBytes(): Promise<number> {
+    return this.storageSettings.getMaxFileSizeBytes();
+  }
+
+  private async prepareForUpload(
+    file: Express.Multer.File,
+  ): Promise<Express.Multer.File> {
+    const settings = await this.storageSettings.getPublicSettings();
+    const maxBytes = settings.maxFileSizeMb * 1024 * 1024;
+    let prepared = prepareIncomingUploadFile(file);
+    if ((prepared.buffer?.length ?? prepared.size ?? 0) > maxBytes) {
+      throw new BadRequestException('file_too_large');
+    }
+    if (settings.compressionEnabled) {
+      prepared = await this.compression.compressIfImage(prepared);
+      if ((prepared.buffer?.length ?? prepared.size ?? 0) > maxBytes) {
+        throw new BadRequestException('file_too_large');
+      }
+    }
+    return prepared;
+  }
+
   async upload(file: Express.Multer.File, user: UserModel, basePath = '') {
     try {
-      const prepared = prepareIncomingUploadFile(file);
+      const prepared = await this.prepareForUpload(file);
+      const settings = await this.storageSettings.getPublicSettings();
+      const engine = this.engineFactory.resolve(settings.storageEngine);
       const path =
         basePath.length > 0
           ? `${basePath}/${uuid()}${extname(prepared.originalname)}`
           : `${uuid()}${extname(prepared.originalname)}`;
-      const fileRef = this.bucket.file(path);
-      await fileRef.save(prepared.buffer, {
-        metadata: {
-          contentType: prepared.mimetype,
-          metadata: {
-            owner: user._id.toString(),
-          },
-        },
+      const result = await engine.upload({
+        buffer: prepared.buffer,
+        path,
+        contentType: prepared.mimetype,
+        owner: user._id.toString(),
       });
-      return await getDownloadURL(fileRef);
+      return await this.resolveUploadPublicUrl(result);
     } catch (e) {
+      if (e instanceof BadRequestException) throw e;
       console.error('MediasService.upload', e);
       throw e;
     }
   }
 
-  /**
-   * Delete a file from Firebase Storage.
-   * @param pathOrUrl Either the object path in the bucket (e.g. 'users/123/profile/abc.jpg')
-   *                  or a full Firebase Storage download URL (path will be extracted).
-   */
   async delete(pathOrUrl: string) {
     try {
-      const path = this.extractPathFromUrl(pathOrUrl);
-      const fileRef = this.bucket.file(path);
-      return await fileRef.delete();
+      if (pathOrUrl.includes('/medias/public/')) {
+        const objectPath = extractObjectPath(pathOrUrl);
+        const settings = await this.storageSettings.getPublicSettings();
+        const engines = this.engineFactory.enginesToTryForRead(
+          settings.storageEngine,
+        );
+        for (const engine of engines) {
+          try {
+            await engine.delete(objectPath);
+            return;
+          } catch (err) {
+            if (isStorageObjectNotFoundError(err)) continue;
+            throw err;
+          }
+        }
+        return;
+      }
+      const engine = this.engineFactory.resolveForDelete(pathOrUrl);
+      await engine.delete(pathOrUrl);
     } catch (e) {
       console.error('MediasService.delete', e);
       throw e;
     }
   }
 
-  /**
-   * Supprime tous les objets sous un préfixe (ex. dossier profil utilisateur).
-   * N’émet pas d’erreur (logs seulement) — utile au delete compte / nettoyage.
-   */
   async deleteFilesWithPrefix(prefix: string): Promise<void> {
-    const normalized = prefix.endsWith('/') ? prefix : `${prefix}/`;
-    try {
-      const [files] = await this.bucket.getFiles({ prefix: normalized });
-      await Promise.all(
-        files.map((f) =>
-          f.delete().catch((err: Error) => {
-            console.warn(
-              `MediasService.deleteFilesWithPrefix skip ${f.name}: ${err?.message}`,
-            );
-          }),
-        ),
-      );
-    } catch (e) {
-      console.error('MediasService.deleteFilesWithPrefix', e);
-    }
+    const settings = await this.storageSettings.getPublicSettings();
+    const engine = this.engineFactory.resolve(settings.storageEngine);
+    await engine.deleteFilesWithPrefix(prefix);
   }
 
-  /**
-   * Supprime tous les fichiers du préfixe sauf `keepPathOrUrl` (chemin objet ou URL de téléchargement).
-   * Permet de retirer d’anciennes photos après un nouvel upload si delete(URL) a échoué.
-   */
   async deleteFilesWithPrefixExcept(
     prefix: string,
     keepPathOrUrl: string,
   ): Promise<void> {
-    const keepPath = this.extractPathFromUrl(keepPathOrUrl);
-    const normalized = prefix.endsWith('/') ? prefix : `${prefix}/`;
-    try {
-      const [files] = await this.bucket.getFiles({ prefix: normalized });
-      await Promise.all(
-        files
-          .filter((f) => f.name !== keepPath)
-          .map((f) =>
-            f.delete().catch((err: Error) => {
-              console.warn(
-                `MediasService.deleteFilesWithPrefixExcept skip ${f.name}: ${err?.message}`,
-              );
-            }),
-          ),
-      );
-    } catch (e) {
-      console.error('MediasService.deleteFilesWithPrefixExcept', e);
-    }
-  }
-
-  /**
-   * If the value is a Firebase Storage download URL, extract the object path; otherwise return as-is.
-   */
-  private extractPathFromUrl(pathOrUrl: string): string {
-    try {
-      const url = pathOrUrl.trim();
-      if (!url.startsWith('http')) return url;
-      // https://firebasestorage.googleapis.com/v0/b/<bucket>/o/<encodedPath>?alt=media&token=...
-      const firebaseMatch = url.match(/\/o\/([^?]+)/);
-      if (firebaseMatch) {
-        return decodeURIComponent(firebaseMatch[1].replace(/\+/g, ' '));
-      }
-      // https://storage.googleapis.com/<bucket>/<path>
-      const gcsMatch = url.match(
-        /storage\.googleapis\.com\/[^/]+\/(.+?)(?:\?|$)/,
-      );
-      if (gcsMatch) {
-        return decodeURIComponent(gcsMatch[1].replace(/\+/g, ' '));
-      }
-    } catch (_) {
-      // ignore
-    }
-    return pathOrUrl;
+    const settings = await this.storageSettings.getPublicSettings();
+    const engine = this.engineFactory.resolve(settings.storageEngine);
+    await engine.deleteFilesWithPrefixExcept(prefix, keepPathOrUrl);
   }
 }

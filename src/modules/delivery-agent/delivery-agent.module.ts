@@ -1,9 +1,11 @@
 import { AuthModule } from '@modules/auth/auth.module';
 import { BillingModule } from '@modules/billing/billing.module';
+import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
 import { OrdersModule } from '@modules/orders/orders.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { PlatformShippingSettingsModule } from '@modules/platform-shipping-settings/platform-shipping-settings.module';
+import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/store-delivery-drivers.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -23,8 +25,10 @@ import { DeliveryAgentService } from './delivery-agent.service';
     MailerModule,
     NotificationsModule,
     BillingModule,
+    VendorStatusEmailModule,
     OrdersModule,
     PlatformShippingSettingsModule,
+    SupportedCountriesModule,
     StoreDeliveryDriversModule,
     MongooseModule.forFeature([
       {

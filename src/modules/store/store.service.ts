@@ -66,6 +66,7 @@ import {
   maxDrinkOrderQuantity,
 } from '@modules/drinks/drinks.service';
 import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
+import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-email.service';
 import {
   isStripeConnectOnboardingCompleteUser,
   resolveStripeOnboardingStatusLabel,
@@ -235,6 +236,9 @@ export class StoreService {
 
   @Inject(StripeConnectService)
   private readonly _stripeConnect: StripeConnectService;
+
+  @Inject(VendorStatusEmailService)
+  private readonly _vendorStatusEmail: VendorStatusEmailService;
 
   @Inject(SubscriptionsService)
   private readonly _subscriptionsService: SubscriptionsService;
@@ -663,7 +667,7 @@ export class StoreService {
         select: 'address city country zipCode countryCode location',
       })
       .select(
-        'name bio businessType email phoneNumber currency region status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders mealPreOrderCatalogScope',
+        'name bio businessType email phoneNumber currency region status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders mealPreOrderCatalogScope partnerBadgeCode',
       )
       .lean()
       .exec();
@@ -733,10 +737,9 @@ export class StoreService {
       },
     };
 
-    const profileImage =
-      typeof doc.profileImage === 'string' && doc.profileImage
-        ? doc.profileImage
-        : undefined;
+    const profileImage = await this._mediasService.resolvePublicMediaUrl(
+      typeof doc.profileImage === 'string' ? doc.profileImage : undefined,
+    );
 
     const rawMenu =
       (doc.dailyMenuByWeekday as Array<Record<string, unknown>> | undefined) ??
@@ -781,6 +784,9 @@ export class StoreService {
         })),
         profileImage,
         dailyMenuByWeekday,
+        partnerBadge: serializePartnerBadge(
+          String(doc.partnerBadgeCode ?? '').trim() || null,
+        ),
       },
     };
   }
@@ -2382,6 +2388,14 @@ export class StoreService {
       throw new BadRequestException('vendor_store_not_active');
     }
 
+    const previousBadge = resolveEffectivePartnerBadgeCode(store.partnerBadgeCode);
+    const ownerId = (() => {
+      const o = store.owner as UserModel | undefined;
+      if (o?._id) return String(o._id);
+      if (store.owner) return String(store.owner);
+      return '';
+    })();
+
     store.partnerBadgeCode = normalizedBadge;
     await store.save();
 
@@ -2392,6 +2406,25 @@ export class StoreService {
         connectAccountId,
         normalizedBadge,
       );
+    }
+
+    if (ownerId) {
+      void this._vendorStatusEmail
+        .notifyPartnerBadgeChanged({
+          recipientRole: 'vendor',
+          userId: ownerId,
+          storeId,
+          storeName: String(store.name ?? '').trim(),
+          previousBadgeCode: previousBadge,
+          newBadgeCode: normalizedBadge,
+        })
+        .catch((e) =>
+          this._logger.warn(
+            `partner_badge_email_failed store=${storeId}: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          ),
+        );
     }
 
     const planByStore = await this._resolveSubscriptionPlanByStoreIds([storeId]);
@@ -3074,7 +3107,7 @@ export class StoreService {
     if (!emailTo) return;
     const ownerName = String(owner?.fullName ?? '').trim();
     const appName =
-      this._configService.get<string>('APP_NAME') ?? 'AfrikanEats';
+      this._configService.get<string>('APP_NAME') ?? 'Wise Eat';
     const statusLabel = status === StoreStatusEnum.ACTIVE ? 'Actif' : 'Inactif';
     const safeStore = this._escapeHtml(
       String(store.name ?? 'Votre restaurant'),
@@ -3157,7 +3190,7 @@ export class StoreService {
     }
     const signupUrl = this._buildVendorSignupUrl();
     const appName =
-      this._configService.get<string>('APP_NAME') ?? 'AfrikanEats';
+      this._configService.get<string>('APP_NAME') ?? 'Wise Eat';
     const nom = dto.nom.trim();
     const prenom = dto.prenom.trim();
     const phone = dto.phoneNumber.trim();
