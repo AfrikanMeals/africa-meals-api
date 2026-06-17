@@ -1,14 +1,17 @@
 import { Logger } from '@nestjs/common';
 import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
+import { isCorsOriginAllowed } from './cors-origin-match.util';
 
 /** Origines locales par défaut en dev si `CORS_ORIGIN` est absent (H-01). */
 const DEFAULT_DEV_ORIGINS = [
   'http://localhost:3000',
   'http://localhost:3001',
   'http://localhost:5000',
+  'http://localhost:5002',
   'http://127.0.0.1:3000',
   'http://127.0.0.1:3001',
   'http://127.0.0.1:5000',
+  'http://127.0.0.1:5002',
 ] as const;
 
 const CORS_ALLOWED_HEADERS = [
@@ -45,7 +48,8 @@ function isProductionEnv(): boolean {
 
 /**
  * Allowlist CORS (H-01) — remplace `origin: true`.
- * - `CORS_ORIGIN` : liste séparée par des virgules (admin, web, previews).
+ * - `CORS_ORIGIN` : liste séparée par des virgules ; supporte `https://*.wise-eat.com`.
+ * - Toujours autorisé : sous-domaines `*.wise-eat.com` (http/https).
  * - Clients sans en-tête `Origin` (app mobile native, serveur) : autorisés.
  * - Dev sans `CORS_ORIGIN` : localhost uniquement (pas toutes les origines).
  */
@@ -73,7 +77,7 @@ export function buildApiCorsOptions(): CorsOptions {
         return;
       }
       const normalized = normalizeCorsOrigin(origin);
-      if (allowed.has(normalized)) {
+      if (isCorsOriginAllowed(normalized, allowed)) {
         callback(null, true);
         return;
       }
