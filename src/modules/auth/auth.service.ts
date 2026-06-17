@@ -1276,12 +1276,16 @@ export class AuthService {
   }
 
   async findUserById(id: string) {
-    return this._usersModel
+    const user = await this._usersModel
       .findOne({ _id: id })
       .populate('addresses')
       .populate('stores')
       .populate('paymentMethods')
       .exec();
+    if (user?.accountDisabledAt) {
+      throw new UnauthorizedException('account_disabled');
+    }
+    return user;
   }
 
   /** Score fidélité, catalogue actif et historique (config admin synchronisée). */
@@ -1898,6 +1902,9 @@ export class AuthService {
     const user = await this._usersModel.findById(userId).exec();
     if (!user) {
       throw new NotFoundException('user_not_found');
+    }
+    if (user.accountDisabledAt) {
+      throw new ForbiddenException('account_disabled');
     }
     if (user.email2faEnabled !== true) {
       return await this.deliverAuthTokens(user, ctx, method);

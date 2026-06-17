@@ -198,6 +198,15 @@ export class UserModel extends BaseSchema {
   })
   accountDeletionScheduledFor?: Date | null;
 
+  /** Compte désactivé par un admin — connexion et JWT refusés. */
+  @Prop({
+    required: false,
+    default: null,
+    type: 'date',
+    name: 'account_disabled_at',
+  })
+  accountDisabledAt?: Date | null;
+
   /**
    * Jetons FCM (mobile / web) pour les notifications push — plusieurs appareils par utilisateur.
    */

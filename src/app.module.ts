@@ -39,6 +39,7 @@ import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
 import { AppPoliciesModule } from './modules/app-policies/app-policies.module';
 import { DocumentationModule } from './modules/documentation/documentation.module';
 import { BlogModule } from './modules/blog/blog.module';
+import { AdminUsersModule } from './modules/admin-users/admin-users.module';
 import { CronMonitorModule } from './modules/cron-monitor/cron-monitor.module';
 import { DbMaintenanceModule } from './modules/db-maintenance/db-maintenance.module';
 import { AdminOpsReportsModule } from './modules/admin-ops-reports/admin-ops-reports.module';
@@ -250,6 +251,7 @@ function redactRedisUrl(url: string): string {
     }),
     ScheduleModule.forRoot(),
     CronMonitorModule,
+    AdminUsersModule,
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
