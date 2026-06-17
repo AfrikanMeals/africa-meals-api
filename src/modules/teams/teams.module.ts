@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
   PlatformRoleModel,
@@ -18,7 +18,7 @@ import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module
 
 @Module({
   imports: [
-    SubscriptionsModule,
+    forwardRef(() => SubscriptionsModule),
     MongooseModule.forFeature([
       { name: StoreModel.name, schema: StoreSchema },
       { name: StoreRoleModel.name, schema: StoreRoleSchema },

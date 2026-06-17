@@ -1,3 +1,6 @@
+import { DomainEventHandlersService } from '@modules/domain-event-handlers/domain-event-handlers.service';
+import { isDomainEventsEnabled } from '@modules/domain-event-handlers/domain-event-handlers.util';
+import { domainEventIdFromStripeWebhook } from '../../../common/domain-events/domain-event-id.util';
 import { SubscriptionsStripeCheckoutService } from '@modules/subscriptions/subscriptions-stripe-checkout.service';
 import { CartService } from '@modules/cart/cart.service';
 import {
@@ -474,6 +477,9 @@ export class StripeGroupedCheckoutService {
     @Inject(forwardRef(() => VendorNotificationStripeBillingService))
     @Optional()
     private readonly vendorSmsBilling?: VendorNotificationStripeBillingService,
+    @Inject(forwardRef(() => DomainEventHandlersService))
+    @Optional()
+    private readonly domainEvents?: DomainEventHandlersService,
   ) {}
 
   private async settleAdCreditFromCheckoutSession(session: {
@@ -1225,6 +1231,19 @@ export class StripeGroupedCheckoutService {
     return msg.includes('cart_is_empty');
   }
 
+  async fulfillFromDomainEvent(params: {
+    stripePaymentId: string;
+    uid: string;
+    storesCsv: string;
+    shipB64?: string;
+    metadata: Record<string, string | undefined | null>;
+    amountTotalCents?: number;
+    currency?: string;
+    stripeEventKind: 'checkout_session' | 'payment_intent';
+  }): Promise<StripeFulfillResult> {
+    return this.fulfillOrdersAfterStripePayment(params);
+  }
+
   private async fulfillOrdersAfterStripePayment(params: {
     stripePaymentId: string;
     uid: string;
@@ -1861,6 +1880,23 @@ export class StripeGroupedCheckoutService {
         payment_intent?: string | { id?: string | null } | null;
       };
       if (session.metadata?.kind === 'vendor_subscription') {
+        const subUid = session.metadata?.uid?.trim();
+        if (isDomainEventsEnabled(this.config) && this.domainEvents && subUid) {
+          await this.domainEvents.emit({
+            id: domainEventIdFromStripeWebhook(event.id),
+            type: 'subscription.checkout.completed',
+            payload: {
+              sessionId: session.id,
+              userId: subUid,
+              storeId: session.metadata?.storeId?.trim() || undefined,
+            },
+            metadata: {
+              source: 'stripe-webhook',
+              correlationId: event.id,
+            },
+          });
+          return { received: true };
+        }
         await this.subscriptionStripeCheckout.fulfillFromCheckoutSessionObject(
           session,
         );
@@ -1894,6 +1930,32 @@ export class StripeGroupedCheckoutService {
         session.amount_total != null ? session.amount_total : undefined;
       const currency =
         session.currency != null ? String(session.currency) : undefined;
+      if (isDomainEventsEnabled(this.config) && this.domainEvents) {
+        await this.domainEvents.emit({
+          id: domainEventIdFromStripeWebhook(event.id),
+          type: 'payment.checkout.completed',
+          payload: {
+            sessionId: session.id,
+            userId: uid,
+            kind: metadata.kind,
+          },
+          metadata: {
+            source: 'stripe-webhook',
+            correlationId: event.id,
+            stripeFulfillment: {
+              stripePaymentId: session.id,
+              uid,
+              storesCsv,
+              shipB64,
+              metadata,
+              amountTotalCents,
+              currency,
+              stripeEventKind: 'checkout_session',
+            },
+          },
+        });
+        return { received: true };
+      }
       const sessionResult = await this.fulfillOrdersAfterStripePayment({
         stripePaymentId: session.id,
         uid,
@@ -1922,6 +1984,39 @@ export class StripeGroupedCheckoutService {
         currency?: string | null;
       };
       if (pi.metadata?.kind === 'vendor_subscription') {
+        if (isDomainEventsEnabled(this.config) && this.domainEvents) {
+          const amountCents =
+            pi.amount_received != null
+              ? pi.amount_received
+              : pi.amount != null
+              ? pi.amount
+              : 0;
+          const currency =
+            pi.currency != null ? String(pi.currency) : 'eur';
+          await this.domainEvents.emit({
+            id: domainEventIdFromStripeWebhook(event.id),
+            type: 'payment.intent.succeeded',
+            payload: {
+              paymentIntentId: pi.id,
+              amountCents,
+              currency,
+              userId: pi.metadata?.uid?.trim() || undefined,
+            },
+            metadata: {
+              source: 'stripe-webhook',
+              correlationId: event.id,
+              stripeSubscriptionIntent: {
+                id: pi.id,
+                status: 'succeeded',
+                metadata: pi.metadata ?? {},
+                amount: pi.amount,
+                amount_received: pi.amount_received,
+                currency: pi.currency,
+              },
+            },
+          });
+          return { received: true };
+        }
         await this.subscriptionStripeCheckout.fulfillFromPaymentIntentObject({
           ...pi,
           status: 'succeeded',
@@ -1946,6 +2041,33 @@ export class StripeGroupedCheckoutService {
           ? pi.amount
           : undefined;
       const currency = pi.currency != null ? String(pi.currency) : undefined;
+      if (isDomainEventsEnabled(this.config) && this.domainEvents) {
+        await this.domainEvents.emit({
+          id: domainEventIdFromStripeWebhook(event.id),
+          type: 'payment.intent.succeeded',
+          payload: {
+            paymentIntentId: pi.id,
+            amountCents: amountTotalCents ?? 0,
+            currency: currency ?? 'eur',
+            userId: uid,
+          },
+          metadata: {
+            source: 'stripe-webhook',
+            correlationId: event.id,
+            stripeFulfillment: {
+              stripePaymentId: pi.id,
+              uid,
+              storesCsv,
+              shipB64,
+              metadata,
+              amountTotalCents,
+              currency,
+              stripeEventKind: 'payment_intent',
+            },
+          },
+        });
+        return { received: true };
+      }
       const piResult = await this.fulfillOrdersAfterStripePayment({
         stripePaymentId: pi.id,
         uid,
@@ -1963,19 +2085,33 @@ export class StripeGroupedCheckoutService {
     }
 
     if (event.type === 'account.updated') {
-      await this.stripeConnect.handleAccountUpdated(
-        event.data.object as {
-          id: string;
-          charges_enabled?: boolean;
-          payouts_enabled?: boolean;
-          details_submitted?: boolean;
-          requirements?: {
-            disabled_reason?: string | null;
-            currently_due?: string[] | null;
-            past_due?: string[] | null;
-          } | null;
-        },
-      );
+      const account = event.data.object as {
+        id: string;
+        charges_enabled?: boolean;
+        payouts_enabled?: boolean;
+        details_submitted?: boolean;
+        requirements?: {
+          disabled_reason?: string | null;
+          currently_due?: string[] | null;
+          past_due?: string[] | null;
+        } | null;
+      };
+      if (isDomainEventsEnabled(this.config) && this.domainEvents) {
+        await this.domainEvents.emit({
+          id: domainEventIdFromStripeWebhook(event.id),
+          type: 'payment.connect.account.updated',
+          payload: {
+            accountId: account.id,
+          },
+          metadata: {
+            source: 'stripe-webhook',
+            correlationId: event.id,
+            stripeConnectAccount: account,
+          },
+        });
+        return { received: true };
+      }
+      await this.stripeConnect.handleAccountUpdated(account);
       return { received: true };
     }
 

@@ -4,6 +4,8 @@ import {
   Inject,
   Injectable,
   Logger,
+  Optional,
+  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
@@ -65,6 +67,9 @@ import { orderInvoiceRef } from '@modules/orders/order-invoice.util';
 import { InjectModel } from '@nestjs/mongoose';
 import { SendOrderEmailDebugDto } from './dto/send-order-email-debug.dto';
 import Stripe = require('stripe');
+import { randomUUID } from 'crypto';
+import { AdminJobProgressService } from '@modules/admin-jobs/admin-job-progress.service';
+import { OrderDomainBridgeService } from '@modules/domain-event-handlers/order-domain-bridge.service';
 import {
   DB_CLEARABLE_TABLES,
   DbClearableTableCategory,
@@ -295,6 +300,12 @@ export class DbMaintenanceService {
     private readonly firebaseApp: App,
     private readonly wsNotifyDispatchQueue: WsNotifyDispatchQueueService,
     private readonly orderPaidInvoiceEmail: OrderPaidInvoiceEmailService,
+    @Inject(forwardRef(() => OrderDomainBridgeService))
+    @Optional()
+    private readonly domainBridge?: OrderDomainBridgeService,
+    @Inject(forwardRef(() => AdminJobProgressService))
+    @Optional()
+    private readonly adminJobProgress?: AdminJobProgressService,
   ) {}
 
   private assertMaintenanceEnabled(): void {
@@ -383,6 +394,119 @@ export class DbMaintenanceService {
     }
 
     return { cleared };
+  }
+
+  async clearTablesAsync(
+    user: UserModel,
+    keys: string[],
+  ): Promise<{ jobId: string }> {
+    await this.assertAdminMaintainer(user);
+    const unique = [...new Set(keys.map((k) => k.trim()).filter(Boolean))];
+    if (!unique.length) {
+      throw new BadRequestException('no_tables_selected');
+    }
+    for (const key of unique) {
+      if (!isClearableTableKey(key)) {
+        throw new BadRequestException(`unknown_table:${key}`);
+      }
+    }
+    const jobId = randomUUID();
+    void this.runClearTablesJob(user, unique, jobId).catch((error) => {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`clearTablesAsync job ${jobId} failed: ${msg}`);
+      void this.emitAdminJob({
+        type: 'job.failed',
+        payload: { jobId, error: msg },
+      });
+    });
+    return { jobId };
+  }
+
+  private async runClearTablesJob(
+    user: UserModel,
+    keys: string[],
+    jobId: string,
+  ): Promise<void> {
+    const db = this.connection.db;
+    if (!db) {
+      await this.emitAdminJob({
+        type: 'job.failed',
+        payload: { jobId, error: 'database_unavailable' },
+      });
+      return;
+    }
+
+    const total = keys.length;
+    const cleared: ClearDbTablesResult['cleared'] = [];
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i]!;
+      const def = getClearableTable(key)!;
+      await this.emitAdminJob({
+        type: 'job.progress',
+        payload: {
+          jobId,
+          pct: Math.round((i / total) * 100),
+          label: def.labelFr,
+          phase: key,
+        },
+      });
+      const res = await db.collection(def.collection).deleteMany({});
+      const deletedCount = res.deletedCount ?? 0;
+      cleared.push({
+        key: def.key,
+        collection: def.collection,
+        deletedCount,
+      });
+      this.logger.warn(
+        `DB maintenance async: ${user.id} cleared ${def.collection} (${deletedCount} doc(s))`,
+      );
+    }
+
+    await this.emitAdminJob({
+      type: 'job.completed',
+      payload: { jobId, result: { cleared } },
+    });
+  }
+
+  private async emitAdminJob(
+    event:
+      | {
+          type: 'job.progress';
+          payload: {
+            jobId: string;
+            pct: number;
+            label: string;
+            phase?: string;
+          };
+        }
+      | {
+          type: 'job.completed';
+          payload: { jobId: string; result?: Record<string, unknown> };
+        }
+      | { type: 'job.failed'; payload: { jobId: string; error: string } },
+  ): Promise<void> {
+    if (this.domainBridge?.enabled()) {
+      await this.domainBridge.emit(event);
+      return;
+    }
+    const jobId = String(event.payload.jobId ?? '');
+    if (!jobId || !this.adminJobProgress) return;
+    if (event.type === 'job.progress') {
+      this.adminJobProgress.emitProgress(
+        event.payload as {
+          jobId: string;
+          pct: number;
+          label: string;
+          phase?: string;
+        },
+      );
+    } else if (event.type === 'job.completed') {
+      this.adminJobProgress.emitCompleted(event.payload);
+    } else {
+      this.adminJobProgress.emitFailed(
+        event.payload as { jobId: string; error: string },
+      );
+    }
   }
 
   async listIntegrityTests(
@@ -520,6 +644,11 @@ export class DbMaintenanceService {
 
   async getInfraMqttStatus(user: UserModel): Promise<InfraMqttStatusResponse> {
     await this.assertAdminSettingsPermission(user);
+    return this.getInfraMqttStatusInternal();
+  }
+
+  /** Usage interne (flux SSE admin authentifié). */
+  async getInfraMqttStatusInternal(): Promise<InfraMqttStatusResponse> {
     const apiPublisher = this.wsNotifyDispatchQueue.getMqttStatus();
     const wsSubscriber = await this.fetchWsMqttStatus();
     return {
@@ -527,6 +656,12 @@ export class DbMaintenanceService {
       wsSubscriber,
       checkedAt: new Date().toISOString(),
     };
+  }
+
+  /** Usage interne (flux SSE admin authentifié). */
+  async getInfraRuntimeSettingsInternal(): Promise<InfraRuntimeSettingsResponse> {
+    const doc = await this.ensureInfraRuntimeSettings();
+    return this.toInfraRuntimeSettingsResponse(doc);
   }
 
   private async ensureInfraRuntimeSettings(): Promise<InfraRuntimeSettingsModel> {

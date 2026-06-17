@@ -4,12 +4,14 @@ import {
   ForbiddenException,
   Get,
   Header,
+  Logger,
   Post,
   Put,
   Req,
   UseGuards,
   UsePipes,
   ValidationPipe,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
@@ -24,6 +26,8 @@ import {
 @ApiTags('search-settings')
 @Controller('platform/search-settings')
 export class SearchSettingsController {
+  private readonly _logger = new Logger(SearchSettingsController.name);
+
   constructor(
     private readonly _settings: SearchSettingsService,
     private readonly _reindex: SearchVectorReindexService,
@@ -51,7 +55,14 @@ export class SearchSettingsController {
     if (user.type !== UserTypeEnum.ADMIN) {
       throw new ForbiddenException('admin_only');
     }
-    return this._reindex.runReindex({ forceEmbeddings: true });
+    if (this._reindex.isRunning()) {
+      throw new BadRequestException('reindex_already_running');
+    }
+    void this._reindex.runReindex({ forceEmbeddings: true }).catch((error) => {
+      const msg = error instanceof Error ? error.message : String(error);
+      this._logger.warn(`Background reindex failed: ${msg}`);
+    });
+    return { started: true as const };
   }
 
   @ApiBearerAuth('bearer')

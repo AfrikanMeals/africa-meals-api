@@ -37,6 +37,7 @@ import {
   VendorStatusEmailService,
 } from '@modules/vendor-emails/vendor-status-email.service';
 import { WsAdManagerNotifyService } from '@modules/ws-notify/ws-ad-manager-notify.service';
+import { OrderDomainBridgeService } from '@modules/domain-event-handlers/order-domain-bridge.service';
 import {
   AppCacheKeys,
   apiPublicCacheTtlMs,
@@ -51,6 +52,8 @@ import {
   Injectable,
   NotFoundException,
   OnModuleInit,
+  Optional,
+  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -463,6 +466,10 @@ export class AdsService implements OnModuleInit {
   @Inject(WsAdManagerNotifyService)
   private readonly _wsAdManager: WsAdManagerNotifyService;
 
+  @Inject(forwardRef(() => OrderDomainBridgeService))
+  @Optional()
+  private readonly _domainBridge?: OrderDomainBridgeService;
+
   @Inject(CACHE_MANAGER)
   private readonly _cache: Cache;
 
@@ -472,6 +479,72 @@ export class AdsService implements OnModuleInit {
 
   private invalidateListCache() {
     void bustCacheKey(this._cache, AppCacheKeys.adsPublic);
+  }
+
+  private async emitAdEngagement(
+    type: 'ad.impression' | 'ad.click',
+    payload: {
+      adId: string;
+      storeId?: string;
+      customerUserId?: string;
+      clientInstallId?: string;
+      adScope?: 'BANNER' | 'CAMPAIGN';
+    },
+  ): Promise<void> {
+    const eventPayload = {
+      adId: payload.adId,
+      storeId: payload.storeId,
+      customerUserId: payload.customerUserId,
+      clientInstallId: payload.clientInstallId,
+    };
+    if (this._domainBridge?.enabled()) {
+      await this._domainBridge.emit({
+        type,
+        payload: eventPayload,
+        metadata: {
+          source: 'ads',
+          orderContext: { adScope: payload.adScope ?? 'BANNER' },
+        },
+      });
+      return;
+    }
+    this._wsAdManager.broadcastAdEvent({
+      scope: payload.adScope ?? 'BANNER',
+      eventType: type === 'ad.impression' ? 'impression' : 'click',
+      entityId: payload.adId,
+      storeId: payload.storeId,
+    });
+  }
+
+  private async emitAdConversion(payload: {
+    adId: string;
+    storeId?: string;
+    orderId?: string;
+    customerUserId?: string;
+    adScope?: 'BANNER' | 'CAMPAIGN';
+  }): Promise<void> {
+    if (this._domainBridge?.enabled()) {
+      await this._domainBridge.emit({
+        type: 'ad.conversion',
+        payload: {
+          adId: payload.adId,
+          storeId: payload.storeId,
+          orderId: payload.orderId,
+          customerUserId: payload.customerUserId,
+        },
+        metadata: {
+          source: 'ads',
+          orderContext: { adScope: payload.adScope ?? 'BANNER' },
+        },
+      });
+      return;
+    }
+    this._wsAdManager.broadcastAdEvent({
+      scope: payload.adScope ?? 'BANNER',
+      eventType: 'conversion',
+      entityId: payload.adId,
+      storeId: payload.storeId,
+    });
   }
 
   private _queueCampaignStatusEmail(args: {
@@ -2244,13 +2317,29 @@ export class AdsService implements OnModuleInit {
       itemId,
       clientInstallId: dto.clientInstallId?.trim() || undefined,
     });
-    this._wsAdManager.broadcastAdEvent({
-      scope: 'CAMPAIGN',
-      eventType: dto.eventType,
-      entityId: campaignId,
-      storeId: String((campaign as { store?: unknown }).store ?? '') || null,
-      itemType,
-    });
+    const storeId =
+      String((campaign as { store?: unknown }).store ?? '') || undefined;
+    const uid =
+      user && (user as UserModel)._id
+        ? String((user as UserModel)._id)
+        : undefined;
+    if (
+      dto.eventType === AdCampaignEventTypeEnum.IMPRESSION ||
+      dto.eventType === AdCampaignEventTypeEnum.CLICK
+    ) {
+      await this.emitAdEngagement(
+        dto.eventType === AdCampaignEventTypeEnum.IMPRESSION
+          ? 'ad.impression'
+          : 'ad.click',
+        {
+          adId: campaignId,
+          storeId,
+          customerUserId: uid,
+          clientInstallId: dto.clientInstallId?.trim(),
+          adScope: 'CAMPAIGN',
+        },
+      );
+    }
 
     return { ok: true };
   }
@@ -2491,6 +2580,13 @@ export class AdsService implements OnModuleInit {
           conversionSource,
         });
         bannerConversions = 1;
+        void this.emitAdConversion({
+          adId,
+          storeId: storeOid.toHexString(),
+          orderId,
+          customerUserId: userId,
+          adScope: 'BANNER',
+        });
         break;
       }
     }
@@ -4196,11 +4292,17 @@ export class AdsService implements OnModuleInit {
       eventType: dto.eventType,
       ...(install ? { clientInstallId: install } : {}),
     });
-    this._wsAdManager.broadcastAdEvent({
-      scope: 'BANNER',
-      eventType: dto.eventType,
-      entityId: dto.adId,
-    });
+    await this.emitAdEngagement(
+      dto.eventType === AdEventTypeEnum.IMPRESSION
+        ? 'ad.impression'
+        : 'ad.click',
+      {
+        adId: dto.adId,
+        customerUserId: uid ? String(uid) : undefined,
+        clientInstallId: install,
+        adScope: 'BANNER',
+      },
+    );
     return { ok: true };
   }
 

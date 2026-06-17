@@ -7,7 +7,9 @@ import { NotificationsModule } from '@modules/notifications/notifications.module
 import { PlatformShippingSettingsModule } from '@modules/platform-shipping-settings/platform-shipping-settings.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/store-delivery-drivers.module';
-import { Module } from '@nestjs/common';
+import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
+import { Module, forwardRef } from '@nestjs/common';
+import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
   DeliveryAgentApplicationModel,
@@ -26,10 +28,12 @@ import { DeliveryAgentService } from './delivery-agent.service';
     NotificationsModule,
     BillingModule,
     VendorStatusEmailModule,
-    OrdersModule,
+    forwardRef(() => OrdersModule),
     PlatformShippingSettingsModule,
     SupportedCountriesModule,
     StoreDeliveryDriversModule,
+    forwardRef(() => DomainEventHandlersModule),
+    WsNotifyModule,
     MongooseModule.forFeature([
       {
         name: DeliveryAgentApplicationModel.name,

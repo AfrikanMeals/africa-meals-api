@@ -57,6 +57,20 @@ export class DbMaintenanceAdminController {
     return this._dbMaintenance.clearTables(req.user as UserModel, dto.tables);
   }
 
+  @Post('admin/clear-async')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+  @ApiOperation({
+    summary:
+      'Supprime les collections sélectionnées en arrière-plan (jobId + SSE progression)',
+  })
+  async clearTablesAsync(@Req() req: Request, @Body() dto: ClearDbTablesDto) {
+    return this._dbMaintenance.clearTablesAsync(
+      req.user as UserModel,
+      dto.tables,
+    );
+  }
+
   @Get('admin/integrity-tests')
   @UseGuards(JwtGuard)
   @ApiOperation({

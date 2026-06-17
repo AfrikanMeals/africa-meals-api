@@ -22,6 +22,11 @@ import {
 } from './dto/admin-review-delivery-agent.dto';
 import { PatchDeliveryAgentApplicationDto } from './dto/delivery-agent-application.dto';
 import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
+import { PatchDeliveryAgentPresenceDto } from './dto/patch-delivery-agent-presence.dto';
+import {
+  ConfirmDeliveryHandoffDto,
+  PreviewDeliveryHandoffDto,
+} from './dto/confirm-delivery-handoff.dto';
 import { DeliveryAgentService } from './delivery-agent.service';
 import { SetPartnerBadgeDto } from '@common/partner-badges/dto/set-partner-badge.dto';
 
@@ -73,10 +78,31 @@ export class DeliveryAgentController {
   @UseGuards(JwtGuard)
   @ApiOperation({
     summary:
-      'Commande livraison en cours assignée au livreur connecté (statut expédié).',
+      'Commandes livraison en cours assignées au livreur connecté (statut expédié).',
   })
   async getActiveOrder(@Req() req: Request) {
     return this._deliveryAgent.getActiveOrder(req.user as UserModel);
+  }
+
+  @Get('presence')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Présence livreur : disponible, occupé (course en cours) ou hors ligne.',
+  })
+  getPresence(@Req() req: Request) {
+    return this._deliveryAgent.getPresence(req.user as UserModel);
+  }
+
+  @Patch('presence')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+  @ApiOperation({
+    summary:
+      'Basculer disponible / hors ligne (occupé est automatique si course assignée).',
+  })
+  setPresence(@Req() req: Request, @Body() body: PatchDeliveryAgentPresenceDto) {
+    return this._deliveryAgent.setPresence(req.user as UserModel, body);
   }
 
   @Post('location')
@@ -102,6 +128,43 @@ export class DeliveryAgentController {
     return this._deliveryAgent.assignSelfToOrder(
       req.user as UserModel,
       orderId,
+    );
+  }
+
+  @Post('orders/preview-handoff-code')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+  @ApiOperation({
+    summary:
+      'Aperçu commande assignée correspondant au code retrait / livraison scanné.',
+  })
+  previewHandoffByCode(
+    @Req() req: Request,
+    @Body() body: PreviewDeliveryHandoffDto,
+  ) {
+    return this._deliveryAgent.previewHandoffByCode(
+      req.user as UserModel,
+      body.code,
+      body.orderId,
+    );
+  }
+
+  @Post('orders/:orderId/confirm-handoff')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+  @ApiOperation({
+    summary:
+      'Valide le code retrait / livraison pour une commande assignée au livreur.',
+  })
+  confirmHandoffByCode(
+    @Req() req: Request,
+    @Param('orderId') orderId: string,
+    @Body() body: ConfirmDeliveryHandoffDto,
+  ) {
+    return this._deliveryAgent.confirmHandoffByCode(
+      req.user as UserModel,
+      orderId,
+      body.code,
     );
   }
 

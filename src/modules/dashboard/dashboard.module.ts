@@ -1,5 +1,7 @@
+import { DeliveryAgentModule } from '@modules/delivery-agent/delivery-agent.module';
+import { DeliveryAgentService } from '@modules/delivery-agent/delivery-agent.service';
 import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/store-delivery-drivers.module';
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
@@ -67,6 +69,7 @@ import { OrdersModule } from '@modules/orders/orders.module';
 import { TeamsModule } from '@modules/teams/teams.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
+import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
 
 @Module({
   imports: [
@@ -75,7 +78,9 @@ import { MailerModule } from '@modules/mailer/mailer.module';
     OrdersModule,
     TeamsModule,
     MailerModule,
+    DomainEventHandlersModule,
     StoreDeliveryDriversModule,
+    forwardRef(() => DeliveryAgentModule),
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       { name: StoreRatingModel.name, schema: StoreRatingSchema },

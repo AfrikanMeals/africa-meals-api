@@ -1,4 +1,3 @@
-import { CronMonitorModule } from '@modules/cron-monitor/cron-monitor.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -17,11 +16,11 @@ import {
   SearchSettingsService,
   SearchVectorReindexService,
 } from './search-settings.service';
+import { SearchReindexProgressService } from './search-reindex-progress.service';
 import { SearchVectorReindexCron } from './search-vector-reindex.cron';
 
 @Module({
   imports: [
-    CronMonitorModule,
     MongooseModule.forFeature([
       { name: SearchSettingsModel.name, schema: SearchSettingsSchema },
       { name: SearchIndexEntryModel.name, schema: SearchIndexEntrySchema },
@@ -34,8 +33,13 @@ import { SearchVectorReindexCron } from './search-vector-reindex.cron';
   providers: [
     SearchSettingsService,
     SearchVectorReindexService,
+    SearchReindexProgressService,
     SearchVectorReindexCron,
   ],
-  exports: [SearchSettingsService, SearchVectorReindexService],
+  exports: [
+    SearchSettingsService,
+    SearchVectorReindexService,
+    SearchReindexProgressService,
+  ],
 })
 export class SearchSettingsModule {}

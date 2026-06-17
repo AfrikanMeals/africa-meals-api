@@ -10,6 +10,7 @@ import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module
 import { UsersModule } from '@modules/users/users.module';
 import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
 import { VendorNotificationModule } from '@modules/vendor-notifications/vendor-notification.module';
+import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { StripeConnectTransferModule } from './stripe/stripe-connect-transfer.module';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -57,6 +58,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
     SupportedCountriesModule,
     VendorStatusEmailModule,
     forwardRef(() => VendorNotificationModule),
+    forwardRef(() => DomainEventHandlersModule),
     MongooseModule.forFeature([
       { name: PaymentMethodModel.name, schema: PaymentMethodSchema },
       { name: StoreModel.name, schema: StoreSchema },
@@ -74,6 +76,11 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
       { name: AddressModel.name, schema: AddressSchema },
     ]),
   ],
-  exports: [BillingService, StripeConnectService, StripeConnectTransferModule],
+  exports: [
+    BillingService,
+    StripeConnectService,
+    StripeGroupedCheckoutService,
+    StripeConnectTransferModule,
+  ],
 })
 export class BillingModule {}

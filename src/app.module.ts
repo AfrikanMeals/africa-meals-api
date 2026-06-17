@@ -44,11 +44,13 @@ import { DbMaintenanceModule } from './modules/db-maintenance/db-maintenance.mod
 import { AdminOpsReportsModule } from './modules/admin-ops-reports/admin-ops-reports.module';
 import { RequestStatsModule } from './modules/request-stats/request-stats.module';
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
+import { DomainEventsModule } from './common/domain-events/domain-events.module';
 import { AuthSettingsModule } from './modules/auth-settings/auth-settings.module';
 import { SecuritySettingsModule } from './modules/security-settings/security-settings.module';
 import { StorageSettingsModule } from './modules/storage-settings/storage-settings.module';
 import { MapSettingsModule } from './modules/map-settings/map-settings.module';
 import { SearchSettingsModule } from './modules/search-settings/search-settings.module';
+import { SecretManagerModule } from './modules/secret-manager/secret-manager.module';
 import { MobileAppSettingsModule } from './modules/mobile-app-settings/mobile-app-settings.module';
 import { PosSettingsModule } from './modules/pos-settings/pos-settings.module';
 import { BusinessTypesModule } from './modules/business-types/business-types.module';
@@ -57,6 +59,8 @@ import { VendorNotificationModule } from './modules/vendor-notifications/vendor-
 import { DashboardAuditModule } from './modules/dashboard-audit/dashboard-audit.module';
 import { GoogleMerchantModule } from './modules/google-merchant/google-merchant.module';
 import { PublicSeoModule } from './modules/public-seo/public-seo.module';
+import { SseStreamModule } from './modules/sse-stream/sse-stream.module';
+import { DomainEventHandlersModule } from './modules/domain-event-handlers/domain-event-handlers.module';
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
@@ -297,11 +301,13 @@ function redactRedisUrl(url: string): string {
     AdminOpsReportsModule,
     RequestStatsModule,
     FieldSelectionModule,
+    DomainEventsModule,
     AuthSettingsModule,
     SecuritySettingsModule,
     StorageSettingsModule,
     MapSettingsModule,
     SearchSettingsModule,
+    SecretManagerModule,
     MobileAppSettingsModule,
     PosSettingsModule,
     BusinessTypesModule,
@@ -310,6 +316,8 @@ function redactRedisUrl(url: string): string {
     DashboardAuditModule,
     GoogleMerchantModule,
     PublicSeoModule,
+    SseStreamModule,
+    DomainEventHandlersModule,
     // SharedModule,
   ],
   controllers: [

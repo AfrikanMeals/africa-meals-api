@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 /** dayjs est en CJS ; sans `esModuleInterop`, `import dayjs from 'dayjs'` vaut `undefined` au runtime. */
@@ -75,7 +76,8 @@ import {
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { OrderStatusEventsService } from '@modules/orders/order-status-events.service';
 import { OrdersService } from '@modules/orders/orders.service';
-import { WsOrderNotifyService } from '@modules/ws-notify/ws-order-notify.service';
+import { DeliveryAgentService } from '@modules/delivery-agent/delivery-agent.service';
+import { FleetSnapshotService } from '@modules/fleet/fleet-snapshot.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { ContactSubmissionService } from '@modules/mailer/contact-submission.service';
 import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
@@ -89,7 +91,12 @@ import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema'
 import {
   defaultDeliveryCapacity,
   deliveryVehicleLabelFr,
+  type DeliveryVehicleLabelFr,
 } from '@modules/delivery-agent/delivery-agent-vehicle.util';
+import {
+  agentHasDeliveryCapacity,
+  countActiveShippedOrdersForAgent,
+} from '@modules/delivery-agent/delivery-agent-capacity.util';
 import { resolveDashboardLivreurAvatar } from './dashboard-livreur-avatar.util';
 
 dayjs.extend(utc);
@@ -321,7 +328,7 @@ export type DashboardLivreurRow = {
   tel: string;
   statut: 'disponible' | 'en_livraison' | 'hors_ligne';
   zone: string;
-  vehicule: 'Moto' | 'Vélo' | 'Voiture';
+  vehicule: DeliveryVehicleLabelFr;
   immat: string;
   note: number;
   livraisons_jour: number;
@@ -609,8 +616,9 @@ export class DashboardService {
     private readonly orderStatusEvents: OrderStatusEventsService,
     @Inject(OrdersService)
     private readonly ordersService: OrdersService,
-    @Inject(WsOrderNotifyService)
-    private readonly wsOrderNotify: WsOrderNotifyService,
+    @Inject(forwardRef(() => DeliveryAgentService))
+    private readonly deliveryAgentService: DeliveryAgentService,
+    private readonly fleetSnapshot: FleetSnapshotService,
     private readonly storeAccess: StoreAccessService,
     private readonly contactSubmissionService: ContactSubmissionService,
     private readonly storeDeliveryDrivers: StoreDeliveryDriversService,
@@ -3174,7 +3182,7 @@ export class DashboardService {
         .exec();
       if (managedStores.length > 0) {
         const rows = await this.listStoreManagedLivreurs(managedStores);
-        return this.enrichLivreurRows(rows);
+        return this.seedFleetAndReturn(await this.enrichLivreurRows(rows));
       }
       const storePoints = await this.loadVendorStoreGeoPoints(ids);
       const rows = await this.listApprovedDeliveryUsersForDashboard(
@@ -3182,7 +3190,7 @@ export class DashboardService {
         REGION_DELIVERY_USERS_RADIUS_KM,
         false,
       );
-      return this.enrichLivreurRows(rows);
+      return this.seedFleetAndReturn(await this.enrichLivreurRows(rows));
     }
     if (user.type === UserTypeEnum.ADMIN) {
       const storePoints = await this.loadAllStoreGeoPoints();
@@ -3191,9 +3199,32 @@ export class DashboardService {
         REGION_DELIVERY_USERS_RADIUS_KM,
         true,
       );
-      return this.enrichLivreurRows(rows);
+      return this.seedFleetAndReturn(await this.enrichLivreurRows(rows));
     }
     throw new ForbiddenException('livreurs_access_denied');
+  }
+
+  private seedFleetAndReturn(rows: DashboardLivreurRow[]): DashboardLivreurRow[] {
+    this.fleetSnapshot.seedAgents(
+      rows
+        .map((row) => {
+          const agentUserId = this.parseDeliveryUserId(row.id);
+          if (!agentUserId) return null;
+          return {
+            agentUserId,
+            presence: row.statut,
+            availability:
+              row.statut === 'hors_ligne' ? 'hors_ligne' : 'disponible',
+            activeOrderCount: row.commande_en_cours ? 1 : 0,
+            maxConcurrentOrders: row.capacite,
+            latitude: row.latitude,
+            longitude: row.longitude,
+            updatedAt: new Date().toISOString(),
+          };
+        })
+        .filter((row): row is NonNullable<typeof row> => row != null),
+    );
+    return rows;
   }
 
   async createDashboardLivreur(
@@ -3266,17 +3297,13 @@ export class DashboardService {
       throw new BadRequestException('livreur_not_available');
     }
 
-    const activeForAgent = await this.orderModel
-      .findOne({
-        assignedDeliveryUser: agentOid,
-        shouldShip: true,
-        status: OrderStatusEnum.SHIPPED,
-      })
-      .select('_id')
-      .lean()
-      .exec();
-    if (activeForAgent && String(activeForAgent._id) !== orderId) {
-      throw new BadRequestException('livreur_not_available');
+    const capacityCheck = await agentHasDeliveryCapacity(
+      this.orderModel,
+      application,
+      agentOid,
+    );
+    if (!capacityCheck.allowed) {
+      throw new BadRequestException('livreur_capacity_full');
     }
 
     const orderDoc = await this.orderModel
@@ -3344,7 +3371,7 @@ export class DashboardService {
     const agentName = deliveryUser.fullName?.trim() || 'Livreur app';
 
     if (prevOrderStatus !== OrderStatusEnum.SHIPPED) {
-      await this.orderStatusEvents.record({
+      await this.ordersService.recordOrderStatusChangeIfLegacy({
         orderId: orderDoc._id.toString(),
         storeId: orderStoreId,
         customerUserId: customerId ?? undefined,
@@ -3375,10 +3402,13 @@ export class DashboardService {
             }`,
           );
         });
-      this.ordersService.notifyPartiesOrderRealtimeFromDoc(
-        orderDoc,
-        OrderStatusEnum.SHIPPED,
-      );
+      this.ordersService.emitOrderShippedFromDoc(orderDoc, {
+        prevStatus: prevOrderStatus,
+        assignedDeliveryUserId: deliveryUserId,
+        actorUserId: String(actor.id),
+        source: OrderStatusChangeSourceEnum.DASHBOARD,
+        courier: agentName,
+      });
     }
 
     if (orderStoreId && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
@@ -3392,6 +3422,11 @@ export class DashboardService {
         } : commande prise en charge par ${agentName}.`,
       });
     }
+
+    void this.deliveryAgentService.publishPresenceWs(
+      deliveryUserId,
+      'order_assigned',
+    );
 
     const rows = await this.listDashboardLivreurs(actor);
     const row = rows.find((r) => r.id === deliveryUserId);
@@ -3426,16 +3461,11 @@ export class DashboardService {
     }
 
     if (statut === 'hors_ligne') {
-      const active = await this.orderModel
-        .findOne({
-          assignedDeliveryUser: agentOid,
-          shouldShip: true,
-          status: OrderStatusEnum.SHIPPED,
-        })
-        .select('_id')
-        .lean()
-        .exec();
-      if (active) {
+      const activeCount = await countActiveShippedOrdersForAgent(
+        this.orderModel,
+        agentOid,
+      );
+      if (activeCount > 0) {
         throw new BadRequestException('livreur_has_active_order');
       }
       application.dashboardAvailability = 'hors_ligne';
@@ -3446,6 +3476,11 @@ export class DashboardService {
       application.dashboardAvailability = 'disponible';
     }
     await application.save();
+
+    void this.deliveryAgentService.publishPresenceWs(
+      deliveryUserId,
+      'admin_toggle',
+    );
 
     const rows = await this.listDashboardLivreurs(user);
     const row = rows.find((r) => r.id === deliveryUserId);
@@ -3961,9 +3996,7 @@ export class DashboardService {
       u.fullName,
       u.profileImage,
     );
-    const vehiculeLabel = deliveryVehicleLabelFr(
-      app?.vehicle as 'moto' | 'velo' | 'voiture' | undefined,
-    );
+    const vehiculeLabel = deliveryVehicleLabelFr(app?.vehicle);
     const immat = app?.vehicleRegistration?.trim() || '—';
     const capacite =
       typeof app?.maxConcurrentOrders === 'number' &&

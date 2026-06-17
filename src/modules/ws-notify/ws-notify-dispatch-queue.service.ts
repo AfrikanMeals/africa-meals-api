@@ -15,6 +15,7 @@ import {
   type MqttClient,
 } from 'mqtt';
 import { Model } from 'mongoose';
+import { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
 
 type WsNotifyQueueJob = {
   pathSuffix: string;
@@ -37,6 +38,7 @@ const WS_NOTIFY_SUFFIX_TO_TOPIC = {
   'ads-targeting/event': 'ads-targeting/event',
   'ad-manager/event': 'ad-manager/event',
   'chat/archive-order-delivery': 'chat/archive-order-delivery',
+  'delivery-agent/presence': 'delivery-agent/presence',
 } as const;
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -73,6 +75,7 @@ export class WsNotifyDispatchQueueService
 
   constructor(
     private readonly config: ConfigService,
+    private readonly secrets: SecretManagerService,
     @InjectModel(InfraRuntimeSettingsModel.name)
     private readonly infraRuntimeSettingsModel: Model<InfraRuntimeSettingsModel>,
   ) {}
@@ -254,7 +257,7 @@ export class WsNotifyDispatchQueueService
   ): Promise<void> {
     const raw = this.config.get<string>('AFRICA_MEALS_WS_INTERNAL_URL')?.trim();
     const secret =
-      this.config.get<string>('INTERNAL_NOTIFY_SECRET')?.trim() ||
+      (await this.secrets.resolveString('api', 'INTERNAL_NOTIFY_SECRET')) ||
       this.config.get<string>('INTERNAL_WS_NOTIFY_SECRET')?.trim();
     if (!raw || !secret) {
       return;

@@ -1,4 +1,4 @@
-import { Global, Module } from '@nestjs/common';
+import { forwardRef, Global, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
   InfraCronJobStateModel,
@@ -11,7 +11,7 @@ import { CronMonitorService } from './cron-monitor.service';
 @Global()
 @Module({
   imports: [
-    TeamsModule,
+    forwardRef(() => TeamsModule),
     MongooseModule.forFeature([
       { name: InfraCronJobStateModel.name, schema: InfraCronJobStateSchema },
     ]),

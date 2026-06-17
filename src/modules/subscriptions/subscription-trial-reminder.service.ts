@@ -1,8 +1,12 @@
 import { NotificationsService } from '@modules/notifications/notifications.service';
-import { Injectable, Logger } from '@nestjs/common';
+import { DomainEventPublisherService } from '../../common/domain-events/domain-event-publisher.service';
+import { isDomainEventsEnabled } from '@modules/domain-event-handlers/domain-event-handlers.util';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { SubscriptionPlanModel } from '@schemas/subscription-plan.schema';
 import { VendorSubscriptionModel } from '@schemas/vendor-subscription.schema';
+import { SubscriptionTrialEndingPayload } from '../../common/domain-events/payloads/subscription-domain-event.payloads';
 import dayjs = require('dayjs');
 import utc = require('dayjs/plugin/utc');
 import timezone = require('dayjs/plugin/timezone');
@@ -30,6 +34,9 @@ export class SubscriptionTrialReminderService {
     private readonly planModel: Model<SubscriptionPlanModel>,
     private readonly notifications: NotificationsService,
     private readonly subscriptionEmails: VendorSubscriptionEmailService,
+    private readonly config: ConfigService,
+    @Optional()
+    private readonly domainPublisher?: DomainEventPublisherService,
   ) {}
 
   private tz(): string {
@@ -148,21 +155,33 @@ export class SubscriptionTrialReminderService {
           'Abonnement',
       );
 
-      await this.notifications.notifyVendorSubscriptionTrialEnding({
-        recipientUserId: ownerId,
+      if (isDomainEventsEnabled(this.config) && this.domainPublisher) {
+        await this.domainPublisher.publish({
+          type: 'subscription.trial.ending',
+          payload: {
+            userId: ownerId,
+            subscriptionId: String(sub._id),
+            storeId: String((sub as { store?: Types.ObjectId }).store ?? '')
+              .trim() || undefined,
+            planName,
+            daysRemaining: daysLeft,
+            trialEndsAt: trialEnd.toISOString(),
+          },
+          metadata: { source: 'subscription-trial-cron' },
+        });
+        result.reminded++;
+        continue;
+      }
+
+      await this.processTrialEndingReminder({
+        userId: ownerId,
         subscriptionId: String(sub._id),
-        storeId: String((sub as { store?: Types.ObjectId }).store ?? ''),
+        storeId: String((sub as { store?: Types.ObjectId }).store ?? '')
+          .trim() || undefined,
         planName,
         daysRemaining: daysLeft,
         trialEndsAt: trialEnd.toISOString(),
       });
-
-      await this.vendorSubModel
-        .updateOne(
-          { _id: sub._id },
-          { $addToSet: { trialRemindersSent: daysLeft } },
-        )
-        .exec();
       result.reminded++;
     }
 
@@ -174,5 +193,51 @@ export class SubscriptionTrialReminderService {
     }
 
     return result;
+  }
+
+  /** EDA-009 : envoi unitaire déclenché par événement domaine. */
+  async sendTrialEndingReminder(payload: {
+    userId: string;
+    storeId?: string;
+    trialEndsAt: string;
+  }): Promise<void> {
+    await this.processTrialEndingReminder({
+      userId: payload.userId,
+      subscriptionId: '',
+      storeId: payload.storeId,
+      planName: 'Abonnement',
+      daysRemaining: 1,
+      trialEndsAt: payload.trialEndsAt,
+    });
+  }
+
+  async processTrialEndingReminder(
+    payload: SubscriptionTrialEndingPayload,
+  ): Promise<void> {
+    const subId = payload.subscriptionId?.trim();
+    if (!subId || !Types.ObjectId.isValid(subId)) return;
+
+    const sub = await this.vendorSubModel.findById(subId).lean().exec();
+    if (!sub) return;
+
+    const sent =
+      (sub as { trialRemindersSent?: number[] }).trialRemindersSent ?? [];
+    if (sent.includes(payload.daysRemaining)) return;
+
+    await this.notifications.notifyVendorSubscriptionTrialEnding({
+      recipientUserId: payload.userId,
+      subscriptionId: subId,
+      storeId: payload.storeId ?? '',
+      planName: payload.planName,
+      daysRemaining: payload.daysRemaining,
+      trialEndsAt: payload.trialEndsAt,
+    });
+
+    await this.vendorSubModel
+      .updateOne(
+        { _id: subId },
+        { $addToSet: { trialRemindersSent: payload.daysRemaining } },
+      )
+      .exec();
   }
 }

@@ -11,6 +11,7 @@ import { MailerService } from '@modules/mailer/mailer.service';
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { OrdersService } from '@modules/orders/orders.service';
+import { WsOrderNotifyHandler } from '@modules/domain-event-handlers/handlers/ws-order-notify.handler';
 import { StripeChargeFeeService } from '@modules/billing/stripe/stripe-charge-fee.service';
 import { effectiveStripeProcessingFeeCents } from '@modules/billing/stripe/stripe-processing-fee.util';
 import { StripeConnectTransferService } from '@modules/billing/stripe/stripe-connect-transfer.service';
@@ -184,6 +185,7 @@ export class RefundProcessingService {
     private readonly emailTpl: EmailTemplateService,
     @Inject(OrdersService)
     private readonly ordersService: OrdersService,
+    private readonly wsOrderNotify: WsOrderNotifyHandler,
     private readonly platformFeesService: PlatformFeesService,
     private readonly stripeFees: StripeChargeFeeService,
     private readonly stripeTransfers: StripeConnectTransferService,
@@ -1059,8 +1061,8 @@ export class RefundProcessingService {
       stripeRefundId,
     });
 
-    void this.ordersService
-      .notifyPartiesOrderRealtimeByOrderId(args.orderId, order.status)
+    void this.wsOrderNotify
+      .notifyPartiesByOrderId(args.orderId, order.status)
       .catch((err) =>
         this.logger.warn(
           `WS after refund: ${
@@ -1074,6 +1076,22 @@ export class RefundProcessingService {
       status: OrderRefundRequestEntryStatusEnum.COMPLETED,
       stripeRefundId,
     };
+  }
+
+  /** EDA-009 : traitement immédiat après `order.cancelled` (sans attendre le cron). */
+  async enqueueRefundForCancelledOrder(orderId: string): Promise<void> {
+    const oid = orderId.trim();
+    if (!oid) return;
+    try {
+      await this.processRefundForOrder({
+        orderId: oid,
+        processedBy: 'cron',
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes('refund_not_processable')) return;
+      throw error;
+    }
   }
 
   /** Passe cron : traite les demandes `pending` éligibles. */

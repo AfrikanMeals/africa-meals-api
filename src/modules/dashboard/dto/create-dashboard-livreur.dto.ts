@@ -33,8 +33,23 @@ export class CreateDashboardLivreurDto {
   @MaxLength(200)
   zone: string;
 
-  @IsIn(['Moto', 'Vélo', 'Voiture'])
-  vehicule: 'Moto' | 'Vélo' | 'Voiture';
+  @IsIn([
+    'À pied',
+    'Vélo',
+    'Tricycle',
+    'Scooter',
+    'Moto',
+    'Voiture',
+    'Fourgonnette',
+  ])
+  vehicule:
+    | 'À pied'
+    | 'Vélo'
+    | 'Tricycle'
+    | 'Scooter'
+    | 'Moto'
+    | 'Voiture'
+    | 'Fourgonnette';
 
   @IsOptional()
   @IsString()

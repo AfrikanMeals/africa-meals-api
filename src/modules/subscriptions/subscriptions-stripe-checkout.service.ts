@@ -751,4 +751,16 @@ export class SubscriptionsStripeCheckoutService {
     }
     return this.fulfillFromCheckoutSessionId(sid, String(user.id ?? user._id));
   }
+
+  async confirmCheckoutForUserBySessionId(
+    userId: string,
+    sessionId: string,
+  ): Promise<{ activated: boolean }> {
+    const sid = sessionId?.trim();
+    const uid = userId?.trim();
+    if (!sid || !uid) {
+      throw new BadRequestException('missing_session_or_user');
+    }
+    return this.fulfillFromCheckoutSessionId(sid, uid);
+  }
 }

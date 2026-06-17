@@ -1,3 +1,5 @@
+import { MailerModule } from '@modules/mailer/mailer.module';
+import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AdModel, AdSchema } from '@schemas/ad.schema';
@@ -13,8 +15,6 @@ import {
   VendorSubscriptionModel,
   VendorSubscriptionSchema,
 } from '@schemas/vendor-subscription.schema';
-import { MailerModule } from '@modules/mailer/mailer.module';
-import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import { PlatformSubscriptionPlansController } from './platform-subscription-plans.controller';
 import { SubscriptionsController } from './subscriptions.controller';
@@ -56,6 +56,7 @@ import { VendorSubscriptionEmailService } from './vendor-subscription-email.serv
     SubscriptionsService,
     SubscriptionsStripeCheckoutService,
     VendorSubscriptionEmailService,
+    SubscriptionTrialReminderService,
   ],
 })
 export class SubscriptionsModule {}

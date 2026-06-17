@@ -4,14 +4,14 @@ import {
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
 
 @Injectable()
 export class InternalSecretGuard implements CanActivate {
-  constructor(private readonly config: ConfigService) {}
+  constructor(private readonly secrets: SecretManagerService) {}
 
-  canActivate(context: ExecutionContext): boolean {
-    const secret = this.config.get<string>('INTERNAL_NOTIFY_SECRET')?.trim();
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const secret = await this.secrets.resolveString('api', 'INTERNAL_NOTIFY_SECRET');
     if (!secret) {
       throw new ForbiddenException('internal_notify_disabled');
     }
@@ -21,8 +21,8 @@ export class InternalSecretGuard implements CanActivate {
       typeof header === 'string'
         ? header
         : Array.isArray(header)
-        ? header[0]
-        : '';
+          ? header[0]
+          : '';
     if (provided !== secret) {
       throw new ForbiddenException('invalid_internal_secret');
     }

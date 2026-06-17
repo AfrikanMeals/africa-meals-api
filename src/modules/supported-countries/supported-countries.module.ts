@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
   SupportedCountryModel,
@@ -10,7 +10,7 @@ import { SupportedCountriesService } from './supported-countries.service';
 
 @Module({
   imports: [
-    TeamsModule,
+    forwardRef(() => TeamsModule),
     MongooseModule.forFeature([
       { name: SupportedCountryModel.name, schema: SupportedCountrySchema },
     ]),

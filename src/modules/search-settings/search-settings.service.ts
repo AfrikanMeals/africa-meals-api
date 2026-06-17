@@ -21,6 +21,7 @@ import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
+import { SearchReindexProgressService } from './search-reindex-progress.service';
 
 const SETTINGS_KEY = 'default';
 const CACHE_TTL_MS = 45_000;
@@ -607,7 +608,31 @@ export class SearchVectorReindexService {
     @InjectModel(DrinkModel.name)
     private readonly _drinkModel: Model<DrinkModel>,
     private readonly _settings: SearchSettingsService,
+    private readonly _progress: SearchReindexProgressService,
   ) {}
+
+  private _emitProgress(
+    phase: 'stores' | 'products' | 'drinks' | 'complete' | 'error',
+    current: number,
+    total: number,
+    label: string,
+    opts?: { message?: string; running?: boolean },
+  ): void {
+    const pct =
+      total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
+    const running =
+      opts?.running ??
+      (phase !== 'complete' && phase !== 'error');
+    this._progress.emit({
+      phase,
+      current,
+      total,
+      pct,
+      label,
+      message: opts?.message,
+      running,
+    });
+  }
 
   isRunning(): boolean {
     return this._running;
@@ -625,6 +650,7 @@ export class SearchVectorReindexService {
     }
     this._running = true;
     await this._settings.markReindexRunning();
+    this._emitProgress('stores', 0, 0, 'Préparation…', { running: true });
 
     let products = 0;
     let stores = 0;
@@ -643,7 +669,10 @@ export class SearchVectorReindexService {
         .select('name bio about')
         .lean()
         .exec();
+      this._emitProgress('stores', 0, storeRows.length, 'Boutiques');
+      let storeIndex = 0;
       for (const row of storeRows as Record<string, unknown>[]) {
+        storeIndex += 1;
         const entityId = new Types.ObjectId(String(row._id));
         const title = String(row.name ?? '');
         const searchText = normalizeSearchText([
@@ -688,6 +717,7 @@ export class SearchVectorReindexService {
           { upsert: true },
         );
         stores += 1;
+        this._emitProgress('stores', storeIndex, storeRows.length, 'Boutiques');
       }
 
       const productRows = await this._productModel
@@ -696,7 +726,10 @@ export class SearchVectorReindexService {
         .select('title bio about store category')
         .lean()
         .exec();
+      this._emitProgress('products', 0, productRows.length, 'Plats');
+      let productIndex = 0;
       for (const row of productRows as Record<string, unknown>[]) {
+        productIndex += 1;
         const entityId = new Types.ObjectId(String(row._id));
         const store = row.store as Record<string, unknown> | null;
         const storeId = store?._id
@@ -746,6 +779,14 @@ export class SearchVectorReindexService {
           { upsert: true },
         );
         products += 1;
+        if (productIndex % 10 === 0 || productIndex === productRows.length) {
+          this._emitProgress(
+            'products',
+            productIndex,
+            productRows.length,
+            'Plats',
+          );
+        }
       }
 
       const drinkRows = await this._drinkModel
@@ -754,7 +795,10 @@ export class SearchVectorReindexService {
         .select('name description store')
         .lean()
         .exec();
+      this._emitProgress('drinks', 0, drinkRows.length, 'Boissons');
+      let drinkIndex = 0;
       for (const row of drinkRows as Record<string, unknown>[]) {
+        drinkIndex += 1;
         const entityId = new Types.ObjectId(String(row._id));
         const store = row.store as Record<string, unknown> | null;
         const storeId = store?._id
@@ -782,6 +826,14 @@ export class SearchVectorReindexService {
           { upsert: true },
         );
         drinks += 1;
+        if (drinkIndex % 20 === 0 || drinkIndex === drinkRows.length) {
+          this._emitProgress(
+            'drinks',
+            drinkIndex,
+            drinkRows.length,
+            'Boissons',
+          );
+        }
       }
 
       const providerLabel =
@@ -801,6 +853,11 @@ export class SearchVectorReindexService {
         embeddings,
       });
 
+      this._emitProgress('complete', 1, 1, 'Terminé', {
+        message: msg,
+        running: false,
+      });
+
       return { products, stores, drinks, embeddings, message: msg };
     } catch (e) {
       const message =
@@ -812,6 +869,10 @@ export class SearchVectorReindexService {
         stores,
         drinks,
         embeddings,
+      });
+      this._emitProgress('error', 0, 0, 'Erreur', {
+        message,
+        running: false,
       });
       throw e;
     } finally {

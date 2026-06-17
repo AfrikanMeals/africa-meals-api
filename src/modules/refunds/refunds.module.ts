@@ -4,7 +4,8 @@ import { MailerModule } from '@modules/mailer/mailer.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { OrdersModule } from '@modules/orders/orders.module';
 import { PlatformFeesModule } from '@modules/platform-fees/platform-fees.module';
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import {
@@ -26,7 +27,8 @@ import { StripeRefundService } from './stripe-refund.service';
   imports: [
     MailerModule,
     NotificationsModule,
-    OrdersModule,
+    forwardRef(() => OrdersModule),
+    forwardRef(() => DomainEventHandlersModule),
     PlatformFeesModule,
     StripeConnectTransferModule,
     VendorStatusEmailModule,

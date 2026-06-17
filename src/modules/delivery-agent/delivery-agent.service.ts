@@ -10,6 +10,8 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
+  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -47,6 +49,29 @@ import {
   normalizeVehicleRegistration,
   vehicleRegistrationRequired,
 } from './delivery-agent-vehicle.util';
+import {
+  agentHasDeliveryCapacity,
+  countActiveShippedOrdersForAgent,
+  maxConcurrentOrdersFromApplication,
+} from './delivery-agent-capacity.util';
+import { PatchDeliveryAgentPresenceDto } from './dto/patch-delivery-agent-presence.dto';
+import {
+  ConfirmDeliveryHandoffDto,
+  PreviewDeliveryHandoffDto,
+} from './dto/confirm-delivery-handoff.dto';
+import { normalizePickupCodeInput } from 'src/utils/pickup-code';
+import { mongoIdsEqual } from 'src/utils/mongoose-ref.util';
+import { WsDeliveryAgentNotifyService } from '@modules/ws-notify/ws-delivery-agent-notify.service';
+import { OrderDomainBridgeService } from '@modules/domain-event-handlers/order-domain-bridge.service';
+import {
+  AGENT_LOCATION_EMIT_THROTTLE_MS,
+  mapDeliveryPresenceToDomain,
+} from './delivery-agent-domain.util';
+
+export type DeliveryAgentPresence =
+  | 'disponible'
+  | 'en_livraison'
+  | 'hors_ligne';
 
 type LeanApp = {
   status: DeliveryAgentApplicationStatus;
@@ -75,6 +100,7 @@ type LeanAppDoc = LeanApp & {
 @Injectable()
 export class DeliveryAgentService {
   private readonly _logger = new Logger(DeliveryAgentService.name);
+  private readonly locationEmitLastMs = new Map<string, number>();
 
   @InjectModel(DeliveryAgentApplicationModel.name)
   private readonly _applications: Model<DeliveryAgentApplicationModel>;
@@ -107,9 +133,13 @@ export class DeliveryAgentService {
     private readonly _partnerOnboardingEmail: PartnerOnboardingEmailService,
     @Inject(OrderStatusEventsService)
     private readonly _orderStatusEvents: OrderStatusEventsService,
-    @Inject(OrdersService)
+    @Inject(forwardRef(() => OrdersService))
     private readonly _ordersService: OrdersService,
     private readonly _storeDeliveryDrivers: StoreDeliveryDriversService,
+    private readonly _wsDeliveryAgent: WsDeliveryAgentNotifyService,
+    @Inject(forwardRef(() => OrderDomainBridgeService))
+    @Optional()
+    private readonly _domainBridge?: OrderDomainBridgeService,
   ) {}
 
   private assertAdmin(user: UserModel) {
@@ -955,16 +985,27 @@ export class DeliveryAgentService {
     return { items, maxDeliveryRadiusKm };
   }
 
-  /** Commande expédiée assignée au livreur connecté (carte + suivi). */
+  /** Commandes expédiées assignées au livreur connecté (carte + suivi). */
   async getActiveOrder(user: UserModel) {
     this.assertDeliveryAgent(user);
     const agentId = new Types.ObjectId(String(user._id ?? user.id));
-    const row = await this._orders
+    const app = await this._applications
       .findOne({
+        user: agentId,
+        status: DeliveryAgentApplicationStatus.APPROVED,
+      })
+      .select('vehicle maxConcurrentOrders')
+      .lean()
+      .exec();
+    const capacity = maxConcurrentOrdersFromApplication(app);
+    const rows = await this._orders
+      .find({
         assigned_delivery_user: agentId,
         shouldShip: true,
         status: OrderStatusEnum.SHIPPED,
       })
+      .sort({ updatedAt: -1 })
+      .limit(Math.max(capacity, 1))
       .populate({
         path: 'store',
         select: 'name address',
@@ -983,12 +1024,230 @@ export class DeliveryAgentService {
       })
       .lean()
       .exec();
-    if (!row) {
-      return { item: null };
-    }
+    const items = rows.map((row) =>
+      this.mapOrderRowForAgent(row as Record<string, unknown>),
+    );
     return {
-      item: this.mapOrderRowForAgent(row as Record<string, unknown>),
+      items,
+      count: items.length,
+      maxConcurrentOrders: capacity,
+      item: items[0] ?? null,
     };
+  }
+
+  async getPresence(user: UserModel) {
+    this.assertDeliveryAgent(user);
+    const agentId = new Types.ObjectId(String(user._id ?? user.id));
+    const [app, activeCount] = await Promise.all([
+      this._applications
+        .findOne({
+          user: agentId,
+          status: DeliveryAgentApplicationStatus.APPROVED,
+        })
+        .select('dashboardAvailability vehicle maxConcurrentOrders')
+        .lean()
+        .exec(),
+      countActiveShippedOrdersForAgent(this._orders, agentId),
+    ]);
+    if (!app) {
+      throw new NotFoundException('delivery_agent_application_not_found');
+    }
+    const availability =
+      app.dashboardAvailability === 'hors_ligne' ? 'hors_ligne' : 'disponible';
+    const presence = this.resolvePresence(availability, activeCount);
+    return {
+      availability,
+      presence,
+      activeOrderCount: activeCount,
+      maxConcurrentOrders: maxConcurrentOrdersFromApplication(app),
+    };
+  }
+
+  async setPresence(user: UserModel, dto: PatchDeliveryAgentPresenceDto) {
+    this.assertDeliveryAgent(user);
+    const agentId = new Types.ObjectId(String(user._id ?? user.id));
+    const [app, activeCount] = await Promise.all([
+      this.assertAgentApprovedApplication(agentId),
+      countActiveShippedOrdersForAgent(this._orders, agentId),
+    ]);
+
+    if (dto.availability === 'hors_ligne' && activeCount > 0) {
+      throw new BadRequestException('delivery_agent_has_active_orders');
+    }
+
+    const availability: 'disponible' | 'hors_ligne' =
+      dto.availability === 'hors_ligne' ? 'hors_ligne' : 'disponible';
+
+    await this._applications
+      .updateOne(
+        {
+          user: agentId,
+          status: DeliveryAgentApplicationStatus.APPROVED,
+        },
+        { $set: { dashboardAvailability: availability } },
+      )
+      .exec();
+
+    const presence = this.resolvePresence(availability, activeCount);
+    const maxConcurrentOrders = maxConcurrentOrdersFromApplication(app);
+    const result = {
+      availability,
+      presence,
+      activeOrderCount: activeCount,
+      maxConcurrentOrders,
+    };
+
+    await this.emitAgentPresenceChanged({
+      agentUserId: String(agentId),
+      ...result,
+      reason: 'manual_toggle',
+    });
+
+    return result;
+  }
+
+  /** Diffuse la présence livreur (bus domaine ou WS legacy). */
+  async publishPresenceWs(
+    agentUserId: string,
+    reason:
+      | 'manual_toggle'
+      | 'order_assigned'
+      | 'order_completed'
+      | 'admin_toggle' = 'manual_toggle',
+  ): Promise<void> {
+    const uid = agentUserId?.trim();
+    if (!uid || !Types.ObjectId.isValid(uid)) return;
+    const agentId = new Types.ObjectId(uid);
+    const app = await this._applications
+      .findOne({
+        user: agentId,
+        status: DeliveryAgentApplicationStatus.APPROVED,
+      })
+      .select('dashboardAvailability vehicle maxConcurrentOrders')
+      .lean()
+      .exec();
+    if (!app) return;
+    const activeCount = await countActiveShippedOrdersForAgent(
+      this._orders,
+      agentId,
+    );
+    const availability =
+      app.dashboardAvailability === 'hors_ligne' ? 'hors_ligne' : 'disponible';
+    await this.emitAgentPresenceChanged({
+      agentUserId: uid,
+      availability,
+      presence: this.resolvePresence(availability, activeCount),
+      activeOrderCount: activeCount,
+      maxConcurrentOrders: maxConcurrentOrdersFromApplication(app),
+      reason,
+    });
+  }
+
+  private async emitAgentPresenceChanged(params: {
+    agentUserId: string;
+    availability: 'disponible' | 'hors_ligne';
+    presence: DeliveryAgentPresence;
+    activeOrderCount: number;
+    maxConcurrentOrders: number;
+    reason:
+      | 'manual_toggle'
+      | 'order_assigned'
+      | 'order_completed'
+      | 'admin_toggle';
+  }): Promise<void> {
+    if (this._domainBridge?.enabled()) {
+      await this._domainBridge.emit({
+        type: 'agent.presence.changed',
+        payload: {
+          agentUserId: params.agentUserId,
+          presence: mapDeliveryPresenceToDomain(params.presence),
+          activeOrderCount: params.activeOrderCount,
+        },
+        metadata: {
+          source: 'delivery-agent',
+          orderContext: {
+            maxConcurrentOrders: params.maxConcurrentOrders,
+            reason: params.reason,
+            availability: params.availability,
+          },
+        },
+      });
+      return;
+    }
+    this._wsDeliveryAgent.notifyPresence({
+      agentUserId: params.agentUserId,
+      availability: params.availability,
+      presence: params.presence,
+      activeOrderCount: params.activeOrderCount,
+      maxConcurrentOrders: params.maxConcurrentOrders,
+      reason: params.reason,
+    });
+  }
+
+  private async emitAgentLocationUpdated(params: {
+    agentUserId: string;
+    latitude: number;
+    longitude: number;
+    orderId?: string;
+  }): Promise<void> {
+    const agentUserId = params.agentUserId.trim();
+    if (!agentUserId) return;
+    const now = Date.now();
+    const last = this.locationEmitLastMs.get(agentUserId) ?? 0;
+    if (now - last < AGENT_LOCATION_EMIT_THROTTLE_MS) return;
+    this.locationEmitLastMs.set(agentUserId, now);
+
+    if (this._domainBridge?.enabled()) {
+      await this._domainBridge.emit({
+        type: 'agent.location.updated',
+        payload: {
+          agentUserId,
+          latitude: params.latitude,
+          longitude: params.longitude,
+          orderId: params.orderId,
+        },
+        metadata: { source: 'delivery-agent' },
+      });
+    }
+  }
+
+  async emitAgentCapacityChanged(
+    agentUserId: string,
+    maxConcurrentOrders: number,
+  ): Promise<void> {
+    const uid = agentUserId.trim();
+    if (!uid || maxConcurrentOrders < 1) return;
+    if (this._domainBridge?.enabled()) {
+      await this._domainBridge.emit({
+        type: 'agent.capacity.changed',
+        payload: { agentUserId: uid, maxConcurrentOrders },
+        metadata: { source: 'delivery-agent' },
+      });
+    }
+  }
+
+  private resolvePresence(
+    availability: 'disponible' | 'hors_ligne',
+    activeOrderCount: number,
+  ): DeliveryAgentPresence {
+    if (availability === 'hors_ligne') return 'hors_ligne';
+    if (activeOrderCount > 0) return 'en_livraison';
+    return 'disponible';
+  }
+
+  private async assertAgentApprovedApplication(agentId: Types.ObjectId) {
+    const app = await this._applications
+      .findOne({
+        user: agentId,
+        status: DeliveryAgentApplicationStatus.APPROVED,
+      })
+      .select('dashboardAvailability vehicle maxConcurrentOrders')
+      .lean()
+      .exec();
+    if (!app) {
+      throw new BadRequestException('delivery_agent_not_approved');
+    }
+    return app;
   }
 
   /** Met à jour la position GPS et notifie le suivi temps réel de la course active. */
@@ -1013,8 +1272,8 @@ export class DeliveryAgentService {
       )
       .exec();
 
-    const active = await this._orders
-      .findOne({
+    const activeOrders = await this._orders
+      .find({
         assigned_delivery_user: agentId,
         shouldShip: true,
         status: OrderStatusEnum.SHIPPED,
@@ -1022,14 +1281,134 @@ export class DeliveryAgentService {
       .select('_id')
       .lean()
       .exec();
-    if (active?._id) {
-      await this._ordersService.publishCourierPosition(
-        String(active._id),
-        lat,
-        lng,
-      );
+    for (const active of activeOrders) {
+      if (active?._id) {
+        await this._ordersService.publishCourierPosition(
+          String(active._id),
+          lat,
+          lng,
+        );
+      }
     }
+    const primaryOrderId = activeOrders[0]?._id
+      ? String(activeOrders[0]._id)
+      : undefined;
+    await this.emitAgentLocationUpdated({
+      agentUserId: String(agentId),
+      latitude: lat,
+      longitude: lng,
+      orderId: primaryOrderId,
+    });
     return { ok: true };
+  }
+
+  async previewHandoffByCode(
+    user: UserModel,
+    rawCode: string,
+    orderId?: string,
+  ) {
+    this.assertDeliveryAgent(user);
+    const order = await this.findAssignedOrderByHandoffCode(
+      user,
+      rawCode,
+      orderId,
+    );
+    if (!order) {
+      throw new NotFoundException('handoff_code_not_found');
+    }
+    const mapped = this.mapOrderRowForAgent(
+      order as unknown as Record<string, unknown>,
+    );
+    const isDelivery = order.shouldShip === true;
+    return {
+      ...mapped,
+      pickupCode: String(order.pickupCode ?? '').trim().toUpperCase() || null,
+      shouldShip: isDelivery,
+      handoffType: isDelivery ? 'delivery' : 'pickup',
+    };
+  }
+
+  async confirmHandoffByCode(
+    user: UserModel,
+    orderId: string,
+    rawCode: string,
+  ) {
+    this.assertDeliveryAgent(user);
+    return this._ordersService.confirmHandoffByDeliveryAgent(orderId, user, {
+      code: rawCode,
+    });
+  }
+
+  private async findAssignedOrderByHandoffCode(
+    user: UserModel,
+    rawCode: string,
+    orderId?: string,
+  ): Promise<OrderModel | null> {
+    const agentId = new Types.ObjectId(String(user._id ?? user.id));
+    const provided = normalizePickupCodeInput(rawCode);
+    if (!provided) return null;
+
+    const oid = orderId?.trim();
+    if (oid && Types.ObjectId.isValid(oid)) {
+      const row = await this._orders
+        .findById(new Types.ObjectId(oid))
+        .populate('store', 'name address')
+        .populate({
+          path: 'user',
+          select: 'fullName addresses',
+          populate: {
+            path: 'addresses',
+            select: 'isDefault address city zipCode location label',
+          },
+        })
+        .exec();
+      if (!row) return null;
+
+      const assignee =
+        row.assignedDeliveryUser ??
+        (row as unknown as Record<string, unknown>).assigned_delivery_user;
+      if (!mongoIdsEqual(assignee, agentId)) {
+        throw new ForbiddenException('order_not_assigned_to_agent');
+      }
+
+      const st = row.status as OrderStatusEnum;
+      if (
+        st !== OrderStatusEnum.SHIPPED &&
+        st !== OrderStatusEnum.APPROVED
+      ) {
+        return null;
+      }
+
+      const expected = normalizePickupCodeInput(String(row.pickupCode ?? ''));
+      return expected && expected === provided ? row : null;
+    }
+
+    const rows = await this._orders
+      .find({
+        assigned_delivery_user: agentId,
+        status: {
+          $in: [OrderStatusEnum.SHIPPED, OrderStatusEnum.APPROVED],
+        },
+      })
+      .populate('store', 'name address')
+      .populate({
+        path: 'user',
+        select: 'fullName addresses',
+        populate: {
+          path: 'addresses',
+          select: 'isDefault address city zipCode location label',
+        },
+      })
+      .limit(20)
+      .exec();
+
+    for (const row of rows) {
+      const expected = normalizePickupCodeInput(String(row.pickupCode ?? ''));
+      if (expected && expected === provided) {
+        return row;
+      }
+    }
+    return null;
   }
 
   async assignSelfToOrder(user: UserModel, orderId: string) {
@@ -1040,17 +1419,18 @@ export class DeliveryAgentService {
     const agentId = new Types.ObjectId(String(user._id ?? user.id));
     const oid = new Types.ObjectId(orderId);
 
-    const activeOrder = await this._orders
-      .findOne({
-        assigned_delivery_user: agentId,
-        shouldShip: true,
-        status: OrderStatusEnum.SHIPPED,
-      })
-      .select('_id')
-      .lean()
-      .exec();
-    if (activeOrder && String(activeOrder._id) !== orderId) {
-      throw new BadRequestException('delivery_agent_active_order');
+    const app = await this.assertAgentApprovedApplication(agentId);
+    if (app.dashboardAvailability === 'hors_ligne') {
+      throw new BadRequestException('delivery_agent_offline');
+    }
+
+    const capacityCheck = await agentHasDeliveryCapacity(
+      this._orders,
+      app,
+      agentId,
+    );
+    if (!capacityCheck.allowed) {
+      throw new BadRequestException('delivery_agent_capacity_full');
     }
 
     const orderDoc = await this._orders
@@ -1119,7 +1499,7 @@ export class DeliveryAgentService {
     const orderRef = `#AE-${tail}`;
 
     if (prevOrderStatus !== OrderStatusEnum.SHIPPED) {
-      await this._orderStatusEvents.record({
+      await this._ordersService.recordOrderStatusChangeIfLegacy({
         orderId: orderDoc._id.toString(),
         storeId: orderStoreId ?? undefined,
         customerUserId: customerId ?? undefined,
@@ -1152,10 +1532,12 @@ export class DeliveryAgentService {
         });
     }
 
-    this._ordersService.notifyPartiesOrderRealtimeFromDoc(
-      orderDoc,
-      OrderStatusEnum.SHIPPED,
-    );
+    this._ordersService.emitOrderShippedFromDoc(orderDoc, {
+      prevStatus: prevOrderStatus,
+      assignedDeliveryUserId: String(agentId),
+      actorUserId: String(agentId),
+      source: OrderStatusChangeSourceEnum.DELIVERY_AGENT,
+    });
 
     if (orderStoreId && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
       const sname = this.storeNameFromPopulatedOrder(orderDoc);
@@ -1186,6 +1568,8 @@ export class DeliveryAgentService {
         appLoc.lastLongitude,
       );
     }
+
+    void this.publishPresenceWs(String(agentId), 'order_assigned');
 
     return { ok: true, orderId: orderDoc._id.toString(), orderRef };
   }
@@ -1360,6 +1744,10 @@ export class DeliveryAgentService {
         return name || null;
       })(),
       eta: distanceKm != null ? this.etaLabelFromKm(distanceKm) : null,
+      pickupCode: String(row.pickupCode ?? row.pickup_code ?? '')
+        .trim()
+        .toUpperCase() || null,
+      shouldShip: row.shouldShip === true,
     };
   }
 

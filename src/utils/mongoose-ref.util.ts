@@ -17,3 +17,11 @@ export function objectIdStringFromRef(raw: unknown): string | undefined {
   const s = String(raw).trim();
   return Types.ObjectId.isValid(s) ? s : undefined;
 }
+
+/** Compare deux refs Mongo (ObjectId, string, document peuplé). */
+export function mongoIdsEqual(a: unknown, b: unknown): boolean {
+  const sa = objectIdStringFromRef(a);
+  const sb = objectIdStringFromRef(b);
+  if (!sa || !sb) return false;
+  return sa === sb;
+}

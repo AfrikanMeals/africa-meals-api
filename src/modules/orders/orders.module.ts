@@ -3,7 +3,7 @@ import { LoyaltyModule } from '@modules/loyalty/loyalty.module';
 import { ProductsModule } from '@modules/products/products.module';
 import { AdsModule } from '@modules/ads/ads.module';
 import { StripeConnectTransferModule } from '@modules/billing/stripe/stripe-connect-transfer.module';
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AddressModel, AddressSchema } from '@schemas/address.schema';
 import {
@@ -38,13 +38,15 @@ import { OrdersService } from './orders.service';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { TeamsModule } from '@modules/teams/teams.module';
 import { BusinessReportsModule } from '@modules/business-reports/business-reports.module';
-import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { OrderInvoicePdfService } from './order-invoice-pdf.service';
 import { OrderPaidInvoiceEmailService } from './order-paid-invoice-email.service';
 import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
 import { VendorNotificationModule } from '@modules/vendor-notifications/vendor-notification.module';
+import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
+import { DeliveryAgentModule } from '@modules/delivery-agent/delivery-agent.module';
+import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
 
 @Module({
   controllers: [OrdersController],
@@ -63,18 +65,20 @@ import { VendorNotificationModule } from '@modules/vendor-notifications/vendor-n
   ],
   imports: [
     NotificationsModule,
-    TeamsModule,
     WsNotifyModule,
+    forwardRef(() => TeamsModule),
     MailerModule,
-    SupportedCountriesModule,
+    forwardRef(() => SupportedCountriesModule),
     VendorStatusEmailModule,
-    VendorNotificationModule,
+    forwardRef(() => VendorNotificationModule),
     BusinessReportsModule,
     CartModule,
     AdsModule,
     LoyaltyModule,
     ProductsModule,
     StripeConnectTransferModule,
+    forwardRef(() => DeliveryAgentModule),
+    forwardRef(() => DomainEventHandlersModule),
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       {

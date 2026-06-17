@@ -1,8 +1,17 @@
 import { DeliveryAgentVehicle } from '@schemas/delivery-agent-vehicle.constants';
 
+export type DeliveryVehicleLabelFr =
+  | 'À pied'
+  | 'Vélo'
+  | 'Tricycle'
+  | 'Scooter'
+  | 'Moto'
+  | 'Voiture'
+  | 'Fourgonnette';
+
 export function deliveryVehicleLabelFr(
   vehicle?: DeliveryAgentVehicle | string | null,
-): string {
+): DeliveryVehicleLabelFr {
   switch (vehicle) {
     case 'pied':
       return 'À pied';

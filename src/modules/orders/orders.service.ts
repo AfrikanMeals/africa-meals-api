@@ -11,7 +11,11 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
+  forwardRef,
 } from '@nestjs/common';
+import { OrderDomainBridgeService } from '@modules/domain-event-handlers/order-domain-bridge.service';
+import { WsOrderNotifyHandler } from '@modules/domain-event-handlers/handlers/ws-order-notify.handler';
 import { InjectModel } from '@nestjs/mongoose';
 import { AddressModel } from '@schemas/address.schema';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
@@ -33,7 +37,7 @@ import {
   generatePickupCode,
   normalizePickupCodeInput,
 } from 'src/utils/pickup-code';
-import { objectIdStringFromRef } from 'src/utils/mongoose-ref.util';
+import { objectIdStringFromRef, mongoIdsEqual } from 'src/utils/mongoose-ref.util';
 import {
   ConfirmPickupDto,
   CreateRefundRequestDto,
@@ -44,15 +48,13 @@ import {
   assertOrderCancelReasonPayload,
   resolveOrderCancelReasonDisplay,
 } from './order-cancel-reasons';
-import { OrderStatusEventsService } from './order-status-events.service';
+import { OrderStatusEventsService, RecordOrderStatusChangeParams } from './order-status-events.service';
 import { WsChatNotifyService } from '@modules/ws-notify/ws-chat-notify.service';
-import {
-  WsOrderNotifyService,
-  type OrderWsTrackingPayload,
-} from '@modules/ws-notify/ws-order-notify.service';
+import { type OrderWsTrackingPayload } from '@modules/ws-notify/ws-order-notify.service';
 import { LoyaltyService } from '@modules/loyalty/loyalty.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
+import { DeliveryAgentService } from '@modules/delivery-agent/delivery-agent.service';
 import {
   buildVendorOrderCreatedInboxMessage,
   buildVendorOrderPaidInboxMessage,
@@ -114,8 +116,9 @@ export class OrdersService {
   @Inject(OrderStatusEventsService)
   private readonly _orderStatusEvents: OrderStatusEventsService;
 
-  @Inject(WsOrderNotifyService)
-  private readonly _wsOrderNotify: WsOrderNotifyService;
+  @Inject(forwardRef(() => WsOrderNotifyHandler))
+  @Optional()
+  private readonly _wsOrderNotifyHandler?: WsOrderNotifyHandler;
 
   @Inject(WsChatNotifyService)
   private readonly _wsChatNotify: WsChatNotifyService;
@@ -135,6 +138,9 @@ export class OrdersService {
   @Inject(WsInboxNotifyService)
   private readonly _wsInboxNotify: WsInboxNotifyService;
 
+  @Inject(forwardRef(() => DeliveryAgentService))
+  private readonly _deliveryAgentService: DeliveryAgentService;
+
   @Inject(OrderPaidInvoiceEmailService)
   private readonly _orderPaidInvoiceEmail: OrderPaidInvoiceEmailService;
 
@@ -146,6 +152,10 @@ export class OrdersService {
 
   @Inject(VendorNotificationDispatchService)
   private readonly _vendorNotificationDispatch: VendorNotificationDispatchService;
+
+  @Inject(forwardRef(() => OrderDomainBridgeService))
+  @Optional()
+  private readonly _orderDomainBridge?: OrderDomainBridgeService;
 
   /** Expose l’adresse de livraison figée au paiement dans `user.addresses`. */
   static enrichOrdersWithDeliveryAddress(
@@ -814,8 +824,9 @@ export class OrdersService {
       shippingPrice: 0,
     });
 
-    await this._orderStatusEvents.record({
-      orderId: order._id.toString(),
+    const orderIdStr = order._id.toString();
+    await this.recordOrderStatusChangeIfLegacy({
+      orderId: orderIdStr,
       storeId: String(storeId),
       customerUserId: String(user.id),
       toStatus: OrderStatusEnum.CREATED,
@@ -827,21 +838,25 @@ export class OrdersService {
     // chez une autre boutique échouait avec order_not_found après création.
     const created = await this._orderModel
       .findById(order._id)
-      .populate({ path: 'store', select: 'name owner' })
+      .populate({
+        path: 'store',
+        populate: [{ path: 'address' }],
+      })
+      .populate(OrdersService.orderUserWithAddressesPopulate)
       .exec();
     if (!created) {
       throw new NotFoundException('order_not_found');
     }
+    this.emitOrderCreatedFromDoc(created);
     const storePop = created.store as { name?: string } | null | undefined;
     await this._notificationsService.pushCustomerOrderCreated({
       userId: String(user.id),
-      orderId: created._id.toString(),
+      orderId: orderIdStr,
       storeName: storePop?.name?.trim() || undefined,
       storeId: String(storeId),
     });
 
     const sname = storePop?.name?.trim() || 'Boutique';
-    const orderIdStr = created._id.toString();
     const msgArgs = {
       orderId: orderIdStr,
       items: items as OrdeLineItem[],
@@ -1368,97 +1383,9 @@ export class OrdersService {
       .exec();
 
     if (prevStatus !== OrderStatusEnum.PAIED) {
-      let storeIdForEvent: string | undefined;
-      const rawStoreEv = o.store as unknown;
-      if (rawStoreEv instanceof Types.ObjectId) {
-        storeIdForEvent = rawStoreEv.toHexString();
-      } else if (
-        rawStoreEv &&
-        typeof rawStoreEv === 'object' &&
-        '_id' in rawStoreEv
-      ) {
-        const sid = (rawStoreEv as { _id: unknown })._id;
-        storeIdForEvent =
-          sid instanceof Types.ObjectId ? sid.toHexString() : String(sid);
-      }
-      let customerIdForEvent: string | undefined;
-      const rawUserEv = o.user as unknown;
-      if (rawUserEv instanceof Types.ObjectId) {
-        customerIdForEvent = rawUserEv.toHexString();
-      } else if (
-        rawUserEv &&
-        typeof rawUserEv === 'object' &&
-        '_id' in rawUserEv
-      ) {
-        const uid = (rawUserEv as { _id: unknown })._id;
-        customerIdForEvent =
-          uid instanceof Types.ObjectId ? uid.toHexString() : String(uid);
-      }
-      await this._orderStatusEvents.record({
-        orderId,
-        storeId: storeIdForEvent,
-        customerUserId: customerIdForEvent,
-        fromStatus: prevStatus || undefined,
-        toStatus: OrderStatusEnum.PAIED,
-        source: OrderStatusChangeSourceEnum.STRIPE,
-      });
-    }
-
-    if (prevStatus !== OrderStatusEnum.PAIED) {
-      const uid = objectIdStringFromRef(o.user);
-      let storeName: string | undefined;
-      const rawStore = o.store as unknown;
-      if (rawStore && typeof rawStore === 'object' && 'name' in rawStore) {
-        const nm = (rawStore as { name?: unknown }).name;
-        if (typeof nm === 'string' && nm.trim()) {
-          storeName = nm.trim();
-        }
-      }
-      const storeIdForCustomer = objectIdStringFromRef(o.store);
-      if (uid && Types.ObjectId.isValid(uid)) {
-        void this._notificationsService
-          .pushCustomerOrderStatusChanged({
-            userId: uid,
-            orderId,
-            storeName,
-            storeId: storeIdForCustomer,
-            previousStatus: prevStatus,
-            newStatus: OrderStatusEnum.PAIED,
-          })
-          .catch((err) =>
-            this.logger.warn(
-              `FCM order paid: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            ),
-          );
-      }
-      void this.notifyPartiesOrderRealtimeByOrderId(
-        orderId,
-        OrderStatusEnum.PAIED,
-      );
-
-      void this._orderPaidInvoiceEmail
-        .sendForPaidOrder(orderId)
-        .catch((err) =>
-          this.logger.warn(
-            `order paid invoice email order=${orderId}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          ),
-        );
-
-      // Fidélité : crédit dès encaissement confirmé (respecte éligibilité + réglages admin).
-      void this._loyaltyService
-        .creditOrderCompletion(orderId)
-        .catch((err) =>
-          this.logger.warn(
-            `Loyalty credit on paid order=${orderId}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          ),
-        );
-
+      const storeIdForEvent = objectIdStringFromRef(o.store);
+      const customerIdForEvent = objectIdStringFromRef(o.user);
+      const uid = customerIdForEvent;
       const paidItemRefs = (o.items as OrdeLineItem[])
         .map((item) => ({
           itemType: String(item.itemType ?? ''),
@@ -1470,32 +1397,139 @@ export class OrdersService {
               item.itemType === CartItemTypeEnum.DRINK) &&
             Types.ObjectId.isValid(item.entityId),
         );
-      const storeIdForAds = objectIdStringFromRef(o.store);
-      if (uid && storeIdForAds && paidItemRefs.length > 0) {
-        void this._adsService
-          .trackOrderConversions({
-            orderId,
-            userId: uid,
-            storeId: storeIdForAds,
-            items: paidItemRefs,
-          })
+      const amountCents =
+        gC != null && sC != null && tC != null
+          ? gC + sC + tC
+          : Math.round((subtotalBeforeTax + taxTotal) * 100);
+      const currency = opts?.currency?.trim()?.toUpperCase() || 'CAD';
+
+      const legacyPaidSideEffects = async (): Promise<void> => {
+        await this._orderStatusEvents.record({
+          orderId,
+          storeId: storeIdForEvent,
+          customerUserId: customerIdForEvent,
+          fromStatus: prevStatus || undefined,
+          toStatus: OrderStatusEnum.PAIED,
+          source: OrderStatusChangeSourceEnum.STRIPE,
+        });
+        let storeName: string | undefined;
+        const rawStore = o.store as unknown;
+        if (rawStore && typeof rawStore === 'object' && 'name' in rawStore) {
+          const nm = (rawStore as { name?: unknown }).name;
+          if (typeof nm === 'string' && nm.trim()) {
+            storeName = nm.trim();
+          }
+        }
+        const storeIdForCustomer = storeIdForEvent;
+        if (uid && Types.ObjectId.isValid(uid)) {
+          void this._notificationsService
+            .pushCustomerOrderStatusChanged({
+              userId: uid,
+              orderId,
+              storeName,
+              storeId: storeIdForCustomer,
+              previousStatus: prevStatus,
+              newStatus: OrderStatusEnum.PAIED,
+            })
+            .catch((err) =>
+              this.logger.warn(
+                `FCM order paid: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              ),
+            );
+        }
+        void this._wsOrderNotifyHandler?.notifyPartiesByOrderId(
+          orderId,
+          OrderStatusEnum.PAIED,
+        );
+        void this._orderPaidInvoiceEmail
+          .sendForPaidOrder(orderId)
           .catch((err) =>
             this.logger.warn(
-              `Ads conversion tracking failed for order=${orderId}: ${
+              `order paid invoice email order=${orderId}: ${
                 err instanceof Error ? err.message : String(err)
               }`,
             ),
           );
-      }
-    }
+        void this._loyaltyService
+          .creditOrderCompletion(orderId)
+          .catch((err) =>
+            this.logger.warn(
+              `Loyalty credit on paid order=${orderId}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            ),
+          );
+        const storeIdForAds = storeIdForEvent;
+        if (uid && storeIdForAds && paidItemRefs.length > 0) {
+          void this._adsService
+            .trackOrderConversions({
+              orderId,
+              userId: uid,
+              storeId: storeIdForAds,
+              items: paidItemRefs,
+            })
+            .catch((err) =>
+              this.logger.warn(
+                `Ads conversion tracking failed for order=${orderId}: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              ),
+            );
+        }
+        void this.ensureVendorPaidOrderNotifications(orderId).catch((err) =>
+          this.logger.warn(
+            `vendor paid notify order=${orderId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
+      };
 
-    void this.ensureVendorPaidOrderNotifications(orderId).catch((err) =>
-      this.logger.warn(
-        `vendor paid notify order=${orderId}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      ),
-    );
+      if (this._orderDomainBridge && storeIdForEvent && customerIdForEvent) {
+        void (async () => {
+          const wsDispatch =
+            await this.buildOrderDomainDispatchContextByOrderId(
+              orderId,
+              OrderStatusEnum.PAIED,
+            );
+          await this._orderDomainBridge!.emitOrLegacy(
+            {
+              type: 'order.paid',
+              payload: {
+                orderId,
+                storeId: storeIdForEvent,
+                customerUserId: customerIdForEvent,
+                amountCents,
+                currency,
+              },
+              metadata: {
+                source: 'orders',
+                orderContext: {
+                  fromStatus: prevStatus,
+                  paidItemRefs,
+                  storeId: storeIdForEvent,
+                  customerUserId: customerIdForEvent,
+                  ...(wsDispatch ?? {}),
+                },
+              },
+            },
+            legacyPaidSideEffects,
+          );
+        })();
+      } else {
+        void legacyPaidSideEffects();
+      }
+    } else {
+      void this.ensureVendorPaidOrderNotifications(orderId).catch((err) =>
+        this.logger.warn(
+          `vendor paid notify order=${orderId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
+    }
   }
 
   /**
@@ -1799,7 +1833,7 @@ export class OrdersService {
 
     const storeId = this.storeIdFromOrderDoc(order);
     const customerId = this.userIdFromOrderDoc(order);
-    await this._orderStatusEvents.record({
+    await this.recordOrderStatusChangeIfLegacy({
       orderId: oid,
       storeId,
       customerUserId: customerId,
@@ -1835,7 +1869,28 @@ export class OrdersService {
     }
 
     await this.ensurePickupCodeForOrderDoc(order);
-    this.notifyPartiesOrderRealtimeFromDoc(order, OrderStatusEnum.APPROVED);
+    if (this._orderDomainBridge?.enabled()) {
+      void this._orderDomainBridge.emit({
+        type: 'order.approved',
+        payload: { orderId: oid, actorUserId: String(user.id) },
+        metadata: {
+          actorUserId: String(user.id),
+          orderContext: {
+            fromStatus: prevStatus,
+            source: OrderStatusChangeSourceEnum.VENDOR,
+            ...this.buildOrderDomainDispatchContext(
+              order,
+              OrderStatusEnum.APPROVED,
+            ),
+          },
+        },
+      });
+    } else {
+      this._wsOrderNotifyHandler?.notifyPartiesFromDoc(
+        order,
+        OrderStatusEnum.APPROVED,
+      );
+    }
     this.notifyStoreVendorsForOrderStatusChange(order, {
       reason: 'order_ready',
       status: OrderStatusEnum.APPROVED,
@@ -1918,7 +1973,7 @@ export class OrdersService {
     const vendorName = user.fullName?.trim() || 'Restaurant';
 
     if (prevStatus !== OrderStatusEnum.SHIPPED) {
-      await this._orderStatusEvents.record({
+      await this.recordOrderStatusChangeIfLegacy({
         orderId: oid,
         storeId,
         customerUserId: customerId,
@@ -1951,7 +2006,13 @@ export class OrdersService {
         );
     }
 
-    this.notifyPartiesOrderRealtimeFromDoc(order, OrderStatusEnum.SHIPPED);
+    this.emitOrderShippedFromDoc(order, {
+      prevStatus,
+      assignedDeliveryUserId: String(vendorId),
+      actorUserId: String(vendorId),
+      source: OrderStatusChangeSourceEnum.VENDOR,
+      courier: vendorName,
+    });
 
     if (storeId && prevStatus !== OrderStatusEnum.SHIPPED) {
       const sname = this.storeNameFromPopulated(order.store);
@@ -2135,7 +2196,7 @@ export class OrdersService {
 
     const storeId = this.storeIdFromOrderDoc(order);
     const customerId = this.userIdFromOrderDoc(order);
-    await this._orderStatusEvents.record({
+    await this.recordOrderStatusChangeIfLegacy({
       orderId: oid,
       storeId,
       customerUserId: customerId,
@@ -2169,10 +2230,35 @@ export class OrdersService {
         );
     }
 
-    void this.notifyPartiesOrderRealtimeByOrderId(
-      oid,
-      OrderStatusEnum.CANCELLED,
-    );
+    if (this._orderDomainBridge?.enabled()) {
+      void this._orderDomainBridge.emit({
+        type: 'order.cancelled',
+        payload: {
+          orderId: oid,
+          reason: resolved.details,
+          source: source === 'admin' ? 'admin' : 'vendor',
+        },
+        metadata: {
+          actorUserId: String(user.id),
+          orderContext: {
+            fromStatus: prevStatus,
+            source:
+              source === 'admin'
+                ? OrderStatusChangeSourceEnum.DASHBOARD
+                : OrderStatusChangeSourceEnum.VENDOR,
+            ...this.buildOrderDomainDispatchContext(
+              order,
+              OrderStatusEnum.CANCELLED,
+            ),
+          },
+        },
+      });
+    } else {
+      void this._wsOrderNotifyHandler?.notifyPartiesByOrderId(
+        oid,
+        OrderStatusEnum.CANCELLED,
+      );
+    }
     this.notifyStoreVendorsForOrderStatusChange(order, {
       reason: 'order_cancelled',
       status: OrderStatusEnum.CANCELLED,
@@ -2379,27 +2465,24 @@ export class OrdersService {
     return line || fallback.trim();
   }
 
-  private notifyCustomerOrderRealtime(
-    customerId: string | undefined,
-    tracking: OrderWsTrackingPayload,
-  ): void {
-    if (!customerId) return;
-    this._wsOrderNotify.notifyCustomerOrderUpdate(customerId, tracking);
-    this._wsOrderNotify.notifyCustomerOrderTracking(customerId, tracking);
-  }
-
   /**
-   * WS temps réel : client, vendeur propriétaire de la boutique, admins plateforme.
+   * Contexte WS pour le bus domaine (EDA-003) : parties + snapshot tracking.
    */
-  notifyPartiesOrderRealtimeFromDoc(
+  buildOrderDomainDispatchContext(
     order: OrderModel | Record<string, unknown>,
     status: OrderStatusEnum,
     extra?: Partial<OrderWsTrackingPayload>,
-  ): void {
+  ): {
+    customerUserId?: string;
+    vendorUserId?: string;
+    deliveryAgentId?: string;
+    storeId?: string;
+    wsTracking: OrderWsTrackingPayload;
+  } {
     const delivery = this.clientDeliveryAgentFlags(
       order as Record<string, unknown>,
     );
-    const tracking: OrderWsTrackingPayload = {
+    const wsTracking: OrderWsTrackingPayload = {
       ...this.buildOrderTrackingPayload(order, status),
       ...extra,
       ...(delivery.assignedDeliveryUserId
@@ -2408,39 +2491,26 @@ export class OrdersService {
       canMessageDeliveryAgent: delivery.canMessageDeliveryAgent,
       deliveryChatArchived: delivery.deliveryChatArchived,
     };
-    const customerId = this.userIdFromOrderDoc(order as OrderModel);
-    if (customerId) {
-      this.notifyCustomerOrderRealtime(customerId, tracking);
-    }
-    const vendorId = this.storeOwnerUserIdFromLean(
-      (order as { store?: unknown }).store,
-    );
-    if (vendorId && vendorId !== customerId) {
-      this._wsOrderNotify.notifyCustomerOrderUpdate(vendorId, tracking);
-      this._wsOrderNotify.notifyCustomerOrderTracking(vendorId, tracking);
-    }
-    const deliveryAgentId = this.assignedDeliveryUserIdFromOrderDoc(order);
-    if (
-      deliveryAgentId &&
-      deliveryAgentId !== customerId &&
-      deliveryAgentId !== vendorId
-    ) {
-      this._wsOrderNotify.notifyCustomerOrderUpdate(deliveryAgentId, tracking);
-      this._wsOrderNotify.notifyCustomerOrderTracking(
-        deliveryAgentId,
-        tracking,
-      );
-    }
-    this._wsOrderNotify.notifyStaffOrderBroadcast(tracking);
+    return {
+      customerUserId:
+        this.userIdFromOrderDoc(order as OrderModel) ?? undefined,
+      vendorUserId:
+        this.storeOwnerUserIdFromLean((order as { store?: unknown }).store) ??
+        undefined,
+      deliveryAgentId:
+        this.assignedDeliveryUserIdFromOrderDoc(order) ?? undefined,
+      storeId: this.storeIdFromOrderDoc(order as OrderModel) ?? undefined,
+      wsTracking,
+    };
   }
 
-  async notifyPartiesOrderRealtimeByOrderId(
+  async buildOrderDomainDispatchContextByOrderId(
     orderId: string,
     status: OrderStatusEnum,
     extra?: Partial<OrderWsTrackingPayload>,
-  ): Promise<void> {
+  ): Promise<ReturnType<OrdersService['buildOrderDomainDispatchContext']> | null> {
     const oid = orderId.trim();
-    if (!Types.ObjectId.isValid(oid)) return;
+    if (!Types.ObjectId.isValid(oid)) return null;
     const order = await this._orderModel
       .findById(new Types.ObjectId(oid))
       .populate({
@@ -2449,8 +2519,128 @@ export class OrdersService {
       })
       .populate(OrdersService.orderUserWithAddressesPopulate)
       .exec();
-    if (!order) return;
-    this.notifyPartiesOrderRealtimeFromDoc(order, status, extra);
+    if (!order) return null;
+    return this.buildOrderDomainDispatchContext(order, status, extra);
+  }
+
+  /** True si le bus domaine remplace l’audit inline (`order_status_events`). */
+  domainEventsEnabled(): boolean {
+    return this._orderDomainBridge?.enabled() ?? false;
+  }
+
+  /** Audit synchrone uniquement hors bus domaine (évite double enregistrement EDA-004). */
+  async recordOrderStatusChangeIfLegacy(
+    params: RecordOrderStatusChangeParams,
+  ): Promise<void> {
+    if (this.domainEventsEnabled()) return;
+    await this._orderStatusEvents.record(params);
+  }
+
+  /** Émet `order.created` sur le bus (audit via `OrderDomainEventHandler`). */
+  emitOrderCreatedFromDoc(order: OrderModel | Record<string, unknown>): void {
+    if (!this._orderDomainBridge?.enabled()) return;
+    const orderId =
+      (order as { _id?: Types.ObjectId })._id?.toString() ??
+      String((order as { id?: string }).id ?? '');
+    const storeId = this.storeIdFromOrderDoc(order as OrderModel);
+    const customerUserId = this.userIdFromOrderDoc(order as OrderModel);
+    if (!orderId || !storeId || !customerUserId) return;
+    void this._orderDomainBridge.emit({
+      type: 'order.created',
+      payload: {
+        orderId,
+        storeId,
+        customerUserId,
+        status: OrderStatusEnum.CREATED,
+      },
+      metadata: {
+        actorUserId: customerUserId,
+        source: 'orders',
+        orderContext: {
+          source: OrderStatusChangeSourceEnum.CHECKOUT,
+          ...this.buildOrderDomainDispatchContext(order, OrderStatusEnum.CREATED),
+        },
+      },
+    });
+  }
+
+  /** Expédition : bus domaine ou WS legacy selon flags. */
+  emitOrderShippedFromDoc(
+    order: OrderModel | Record<string, unknown>,
+    opts: {
+      prevStatus: OrderStatusEnum;
+      assignedDeliveryUserId: string;
+      actorUserId: string;
+      source: OrderStatusChangeSourceEnum;
+      courier?: string;
+    },
+  ): void {
+    const orderId =
+      (order as { _id?: Types.ObjectId })._id?.toString() ??
+      String((order as { id?: string }).id ?? '');
+    if (!orderId) return;
+    if (this._orderDomainBridge?.enabled()) {
+      void this._orderDomainBridge.emit({
+        type: 'order.shipped',
+        payload: {
+          orderId,
+          assignedDeliveryUserId: opts.assignedDeliveryUserId,
+          ...(opts.courier ? { courier: opts.courier } : {}),
+        },
+        metadata: {
+          actorUserId: opts.actorUserId,
+          orderContext: {
+            fromStatus: opts.prevStatus,
+            source: opts.source,
+            ...this.buildOrderDomainDispatchContext(
+              order,
+              OrderStatusEnum.SHIPPED,
+            ),
+          },
+        },
+      });
+      return;
+    }
+    this._wsOrderNotifyHandler?.notifyPartiesFromDoc(order, OrderStatusEnum.SHIPPED);
+  }
+
+  /** Charge une commande peuplée pour dispatch WS (EDA-005). */
+  async findOrderForWsNotify(orderId: string): Promise<OrderModel | null> {
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) return null;
+    return this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .populate({
+        path: 'store',
+        populate: [{ path: 'address' }],
+      })
+      .populate(OrdersService.orderUserWithAddressesPopulate)
+      .exec();
+  }
+
+  /** Prépare le snapshot tracking GPS sans publier d’événement domaine. */
+  async prepareCourierPositionNotify(
+    orderId: string,
+    courierLat: number,
+    courierLng: number,
+  ): Promise<{
+    order: OrderModel;
+    status: OrderStatusEnum;
+    extra: Partial<OrderWsTrackingPayload>;
+  } | null> {
+    const order = await this.findOrderForWsNotify(orderId);
+    if (!order) return null;
+    const plain = order.toObject() as Record<string, unknown>;
+    const status = String(plain.status ?? '') as OrderStatusEnum;
+    if (status !== OrderStatusEnum.SHIPPED) return null;
+    const extra = this.buildShippedCourierTrackingExtra(
+      plain,
+      courierLat,
+      courierLng,
+      status,
+    );
+    if (!extra) return null;
+    return { order, status, extra };
   }
 
   /**
@@ -2502,7 +2692,7 @@ export class OrdersService {
       )
       .exec();
 
-    void this.notifyPartiesOrderRealtimeByOrderId(
+    void this._wsOrderNotifyHandler?.notifyPartiesByOrderId(
       oid,
       order.status as OrderStatusEnum,
       { pickupCode: code },
@@ -2579,7 +2769,7 @@ export class OrdersService {
 
     const storeId = this.storeIdFromOrderDoc(order);
     const customerId = this.userIdFromOrderDoc(order);
-    await this._orderStatusEvents.record({
+    await this.recordOrderStatusChangeIfLegacy({
       orderId: oid,
       storeId,
       customerUserId: customerId,
@@ -2619,10 +2809,28 @@ export class OrdersService {
       })
       .populate(OrdersService.orderUserWithAddressesPopulate)
       .exec();
-    this.notifyPartiesOrderRealtimeFromDoc(
-      populated ?? order,
-      OrderStatusEnum.COMPLETED,
-    );
+    if (this._orderDomainBridge?.enabled()) {
+      void this._orderDomainBridge.emit({
+        type: 'order.delivered',
+        payload: { orderId: oid },
+        metadata: {
+          actorUserId: String(user.id),
+          orderContext: {
+            fromStatus: prevStatus,
+            source: OrderStatusChangeSourceEnum.VENDOR,
+            ...this.buildOrderDomainDispatchContext(
+              populated ?? order,
+              OrderStatusEnum.COMPLETED,
+            ),
+          },
+        },
+      });
+    } else {
+      this._wsOrderNotifyHandler?.notifyPartiesFromDoc(
+        populated ?? order,
+        OrderStatusEnum.COMPLETED,
+      );
+    }
     this.notifyStoreVendorsForOrderStatusChange(order, {
       reason: 'order_completed',
       status: OrderStatusEnum.COMPLETED,
@@ -2644,6 +2852,200 @@ export class OrdersService {
       oid,
       isPickup ? 'order_pickup_completed' : 'order_delivered',
     );
+
+    const deliveryAgentId = this.assignedDeliveryUserIdFromOrderDoc(order);
+    if (deliveryAgentId && !isPickup) {
+      void this._deliveryAgentService.publishPresenceWs(
+        deliveryAgentId,
+        'order_completed',
+      );
+    }
+
+    if (!isPickup && order.shouldShip === true) {
+      void this._stripeTransfers
+        .transferDeliveryShareForCompletedOrder({ orderId: oid })
+        .then((tr) => {
+          if (!tr.transferred && tr.skippedReason) {
+            this.logger.warn(
+              `Delivery Connect transfer skipped order=${oid}: ${tr.skippedReason}`,
+            );
+          }
+        })
+        .catch((err) => {
+          this.logger.warn(
+            `Delivery Connect transfer error order=${oid}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
+    }
+
+    return {
+      orderId: oid,
+      status: OrderStatusEnum.COMPLETED,
+      pickedUpAt,
+    };
+  }
+
+  /**
+   * Livreur assigné : valide le code retrait / livraison → `completed`.
+   */
+  async confirmHandoffByDeliveryAgent(
+    orderId: string,
+    user: UserModel,
+    dto: ConfirmPickupDto,
+  ): Promise<{
+    orderId: string;
+    status: OrderStatusEnum;
+    pickedUpAt: Date;
+  }> {
+    if (user.type !== UserTypeEnum.DELIVERY) {
+      throw new ForbiddenException('delivery_agent_only');
+    }
+
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const agentId = objectIdStringFromRef(user._id ?? user.id);
+    if (!agentId) {
+      throw new ForbiddenException('delivery_agent_only');
+    }
+    const order = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .populate('store', 'name owner')
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const assignee =
+      order.assignedDeliveryUser ??
+      (order as unknown as Record<string, unknown>).assigned_delivery_user;
+    if (!mongoIdsEqual(assignee, agentId)) {
+      throw new ForbiddenException('order_not_assigned_to_agent');
+    }
+
+    const isPickup = this.isPickupOrder(order);
+    const st = order.status as OrderStatusEnum;
+    if (st === OrderStatusEnum.COMPLETED) {
+      throw new BadRequestException('pickup_already_completed');
+    }
+    if (st === OrderStatusEnum.CREATED) {
+      throw new BadRequestException('pickup_order_not_paid');
+    }
+    if (st === OrderStatusEnum.CANCELLED) {
+      throw new BadRequestException('pickup_order_cancelled');
+    }
+    if (isPickup) {
+      if (st === OrderStatusEnum.SHIPPED) {
+        throw new BadRequestException('pickup_not_applicable_shipped_status');
+      }
+    } else if (st !== OrderStatusEnum.SHIPPED) {
+      throw new BadRequestException('delivery_confirm_invalid_status');
+    }
+
+    await this.ensurePickupCodeForOrderDoc(order);
+    const expected = normalizePickupCodeInput(String(order.pickupCode ?? ''));
+    const provided = normalizePickupCodeInput(dto.code);
+    if (!expected || expected !== provided) {
+      throw new BadRequestException('pickup_code_invalid');
+    }
+
+    const prevStatus = st;
+    const pickedUpAt = new Date();
+    order.status = OrderStatusEnum.COMPLETED;
+    order.pickedUpAt = pickedUpAt;
+    await order.save();
+
+    const storeId = this.storeIdFromOrderDoc(order);
+    const customerId = this.userIdFromOrderDoc(order);
+    await this.recordOrderStatusChangeIfLegacy({
+      orderId: oid,
+      storeId,
+      customerUserId: customerId,
+      fromStatus: prevStatus,
+      toStatus: OrderStatusEnum.COMPLETED,
+      source: OrderStatusChangeSourceEnum.DELIVERY_AGENT,
+      actorUserId: agentId,
+      note: isPickup
+        ? 'Retrait confirmé par le livreur (code validé)'
+        : 'Livraison confirmée par le livreur (code validé)',
+    });
+
+    if (customerId) {
+      void this._notificationsService
+        .pushCustomerOrderStatusChanged({
+          userId: customerId,
+          orderId: oid,
+          storeName: this.storeNameFromPopulated(order.store),
+          storeId: storeId ?? undefined,
+          previousStatus: prevStatus,
+          newStatus: OrderStatusEnum.COMPLETED,
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `FCM order completed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
+    }
+
+    const populated = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .populate({
+        path: 'store',
+        populate: [{ path: 'address' }],
+      })
+      .populate(OrdersService.orderUserWithAddressesPopulate)
+      .exec();
+    if (this._orderDomainBridge?.enabled()) {
+      void this._orderDomainBridge.emit({
+        type: 'order.delivered',
+        payload: { orderId: oid },
+        metadata: {
+          actorUserId: String(user.id),
+          orderContext: {
+            fromStatus: prevStatus,
+            source: OrderStatusChangeSourceEnum.DELIVERY_AGENT,
+            ...this.buildOrderDomainDispatchContext(
+              populated ?? order,
+              OrderStatusEnum.COMPLETED,
+            ),
+          },
+        },
+      });
+    } else {
+      this._wsOrderNotifyHandler?.notifyPartiesFromDoc(
+        populated ?? order,
+        OrderStatusEnum.COMPLETED,
+      );
+    }
+    this.notifyStoreVendorsForOrderStatusChange(order, {
+      reason: 'order_completed',
+      status: OrderStatusEnum.COMPLETED,
+      isPickup,
+      note: isPickup ? 'Retrait confirmé' : 'Livraison confirmée',
+    });
+
+    void this._loyaltyService
+      .creditOrderCompletion(oid)
+      .catch((err) =>
+        this.logger.warn(
+          `Loyalty credit order=${oid}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
+
+    void this._wsChatNotify.archiveOrderChats(
+      oid,
+      isPickup ? 'order_pickup_completed' : 'order_delivered',
+    );
+
+    void this._deliveryAgentService.publishPresenceWs(agentId, 'order_completed');
 
     if (!isPickup && order.shouldShip === true) {
       void this._stripeTransfers
@@ -2861,7 +3263,7 @@ export class OrdersService {
         ),
       );
 
-    void this.notifyPartiesOrderRealtimeByOrderId(
+    void this._wsOrderNotifyHandler?.notifyPartiesByOrderId(
       oid,
       OrderStatusEnum.CANCELLED,
     );
@@ -3056,31 +3458,33 @@ export class OrdersService {
     courierLat: number,
     courierLng: number,
   ): Promise<void> {
-    const oid = orderId.trim();
-    if (!Types.ObjectId.isValid(oid)) return;
-
-    const order = await this._orderModel
-      .findById(new Types.ObjectId(oid))
-      .populate({
-        path: 'store',
-        populate: [{ path: 'address' }],
-      })
-      .populate(OrdersService.orderUserWithAddressesPopulate)
-      .exec();
-    if (!order) return;
-
-    const plain = order.toObject() as Record<string, unknown>;
-    const status = String(plain.status ?? '') as OrderStatusEnum;
-    if (status !== OrderStatusEnum.SHIPPED) return;
-
-    const extra = this.buildShippedCourierTrackingExtra(
-      plain,
+    const prepared = await this.prepareCourierPositionNotify(
+      orderId,
       courierLat,
       courierLng,
-      status,
     );
-    if (!extra) return;
-    this.notifyPartiesOrderRealtimeFromDoc(order, status, extra);
+    if (!prepared) return;
+    const { order, status, extra } = prepared;
+    const oid = orderId.trim();
+    if (this._orderDomainBridge?.enabled()) {
+      void this._orderDomainBridge.emit({
+        type: 'order.tracking.updated',
+        payload: {
+          orderId: oid,
+          latitude: courierLat,
+          longitude: courierLng,
+        },
+        metadata: {
+          orderContext: this.buildOrderDomainDispatchContext(
+            order,
+            status,
+            extra,
+          ),
+        },
+      });
+    } else {
+      this._wsOrderNotifyHandler?.notifyPartiesFromDoc(order, status, extra);
+    }
   }
 
   private buildShippedCourierTrackingExtra(

@@ -1,8 +1,7 @@
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { TeamsModule } from '@modules/teams/teams.module';
-import { CronMonitorModule } from '@modules/cron-monitor/cron-monitor.module';
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
   VendorNotificationDeliveryModel,
@@ -35,8 +34,7 @@ import { VendorNotificationStripeBillingService } from './vendor-notification-st
   imports: [
     MailerModule,
     NotificationsModule,
-    TeamsModule,
-    CronMonitorModule,
+    forwardRef(() => TeamsModule),
     MongooseModule.forFeature([
       {
         name: VendorNotificationPreferencesModel.name,

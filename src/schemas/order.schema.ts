@@ -421,4 +421,11 @@ export class OrderModel extends BaseSchema {
 
 export const OrderSchema = SchemaFactory.createForClass(OrderModel);
 
+/** Comptage rapide des courses actives par livreur. */
+OrderSchema.index({
+  assigned_delivery_user: 1,
+  status: 1,
+  should_ship: 1,
+});
+
 export type OrderModelDocument = OrderModel & Document;
