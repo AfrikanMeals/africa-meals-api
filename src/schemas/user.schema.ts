@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { PartnerBadgeCode } from '@common/partner-badges/partner-badge.constants';
-import * as bcrypt from 'bcryptjs';
+import { hashPassword } from '@common/crypto/password-hash.util';
 import { Type } from 'class-transformer';
 import { Schema as MongooseSchema, Types } from 'mongoose';
 import { AddressModel } from './address.schema';
@@ -306,7 +306,7 @@ UserSchema.pre('save', async function (next) {
     ) {
       return next();
     }
-    const hashed = await bcrypt.hash(pwd, 10);
+    const hashed = await hashPassword(pwd);
     this['password'] = hashed;
     return next();
   } catch (error) {

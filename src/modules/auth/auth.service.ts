@@ -17,7 +17,10 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import { PendingSignupModel } from '@schemas/pending-signup.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
-import * as bcrypt from 'bcryptjs';
+import {
+  comparePassword,
+  hashPassword,
+} from '@common/crypto/password-hash.util';
 import { Model } from 'mongoose';
 import { App } from 'firebase-admin/app';
 import { DecodedIdToken, getAuth } from 'firebase-admin/auth';
@@ -213,7 +216,7 @@ export class AuthService {
       6,
       AuthService.OTP_TTL_MINUTES.signup,
     );
-    const passwordHash = await bcrypt.hash(args.password, 10);
+    const passwordHash = await hashPassword(args.password);
     const userType = this._mapSignupRoleToUserType(args.signupRole);
 
     await this._pendingSignupModel.create({
@@ -892,7 +895,7 @@ export class AuthService {
       throw new NotFoundException(`user_not_found`);
     }
 
-    if (!(await bcrypt.compare(rest.password, user.password))) {
+    if (!(await comparePassword(rest.password, user.password))) {
       throw new NotFoundException(`user_not_found`);
     }
 
@@ -1702,7 +1705,7 @@ export class AuthService {
     if (user.googleId || user.appleId || user.facebookId) {
       throw new BadRequestException('oauth_account');
     }
-    if (!(await bcrypt.compare(args.currentPassword, user.password))) {
+    if (!(await comparePassword(args.currentPassword, user.password))) {
       throw new BadRequestException('invalid_current_password');
     }
     user.password = args.newPassword;

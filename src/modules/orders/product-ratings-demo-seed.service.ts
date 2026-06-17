@@ -1,4 +1,4 @@
-import { DEMO_PRODUCT_RATER_EMAIL_RE } from '@modules/ratings/demo-product-rating-users';
+import { isDemoSeedEnvEnabled } from '@common/security/demo-seed.util';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';

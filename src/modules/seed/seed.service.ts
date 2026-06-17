@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import * as bcrypt from 'bcryptjs';
+import { hashPassword } from '@common/crypto/password-hash.util';
+import { isCatalogSeedEnabled, getDemoSeedPassword } from '@common/security/demo-seed.util';
 import { Model } from 'mongoose';
 import { AddressModel } from '@schemas/address.schema';
 import { ProductCategoryModel } from '@schemas/product-category.schema';
@@ -37,6 +38,9 @@ export class SeedService implements OnModuleInit {
   private readonly categoryModel: Model<ProductCategoryModel>;
 
   async onModuleInit() {
+    if (!isCatalogSeedEnabled()) {
+      return;
+    }
     await this.seedStoresAndProducts();
   }
 
@@ -55,7 +59,7 @@ export class SeedService implements OnModuleInit {
     }
 
     const mockUsers = getMockUsers();
-    const hashedPassword = await bcrypt.hash(mockUsers[0].password, 10);
+    const hashedPassword = await hashPassword(getDemoSeedPassword());
     const users = await this.userModel.insertMany(
       mockUsers.map((u) => ({
         ...u,

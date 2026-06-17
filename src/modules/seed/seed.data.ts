@@ -2,6 +2,7 @@ import { AddressTypeEnum } from '@schemas/address.schema';
 import { StoreStatusEnum } from '@schemas/store.schema';
 import { ProductStatusEnum } from '@schemas/product.schema';
 import { UserTypeEnum } from '@schemas/user.schema';
+import { getDemoSeedPassword } from '@common/security/demo-seed.util';
 
 /** Villes du Saguenay–Lac-Saint-Jean (adresses de démo Canada / CAD). */
 const CITIES = [
@@ -154,7 +155,7 @@ export function getMockUsers(): MockUser[] {
     fullName: `Vendor ${i + 1}`,
     email: `vendor${i + 1}@seed.africameals.com`,
     phoneNumber: `+1416555${String(1000 + i).padStart(4, '0')}`,
-    password: 'SeedPassword123!',
+    password: getDemoSeedPassword(),
   }));
 }
 

@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { isDemoSeedEnvEnabled } from '@common/security/demo-seed.util';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { AddressModel, AddressTypeEnum } from '@schemas/address.schema';
@@ -159,7 +159,7 @@ export class OrdersDemoSeedService implements OnModuleInit {
   }
 
   private async seedDemoOrdersIfNeeded() {
-    if (process.env.SEED_DEMO_ORDERS !== 'true') {
+    if (!isDemoSeedEnvEnabled('SEED_DEMO_ORDERS')) {
       return;
     }
 

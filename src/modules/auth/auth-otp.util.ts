@@ -1,8 +1,10 @@
+import {
+  compareOtpBcrypt,
+  hashOtpBcrypt,
+} from '@common/crypto/password-hash.util';
 import { randomBytes } from 'crypto';
-import * as bcrypt from 'bcryptjs';
 
 const OTP_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-const OTP_BCRYPT_ROUNDS = 10;
 
 export function generateOtpCode(length = 6): string {
   const bytes = randomBytes(length);
@@ -22,7 +24,7 @@ export function isBcryptHash(value: string): boolean {
 }
 
 export async function hashOtpCode(code: string): Promise<string> {
-  return bcrypt.hash(normalizeOtpCode(code), OTP_BCRYPT_ROUNDS);
+  return hashOtpBcrypt(normalizeOtpCode(code));
 }
 
 export async function verifyOtpCode(
@@ -32,7 +34,7 @@ export async function verifyOtpCode(
   if (!stored) return false;
   const normalized = normalizeOtpCode(code);
   if (isBcryptHash(stored)) {
-    return bcrypt.compare(normalized, stored);
+    return compareOtpBcrypt(normalized, stored);
   }
   return normalizeOtpCode(stored) === normalized;
 }
