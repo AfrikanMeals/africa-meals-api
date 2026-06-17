@@ -65,6 +65,7 @@ import {
 } from '@modules/orders/order-paid-invoice-email.service';
 import { orderInvoiceRef } from '@modules/orders/order-invoice.util';
 import { InjectModel } from '@nestjs/mongoose';
+import { SendOrderEmailDebugDto } from './dto/send-order-email-debug.dto';
 import { buildSystemExchangeResponse } from './system-exchange.builder';
 import type { SystemExchangeResponse } from './system-exchange.types';
 import Stripe = require('stripe');
@@ -1588,6 +1589,32 @@ export class DbMaintenanceService {
     }
   }
 
+  private adNotificationProcessEnv(): NodeJS.ProcessEnv {
+    const keys = [
+      'AD_SMTP_USER',
+      'AD_SMTP_APP_PASSWORD',
+      'AD_SMTP_PASS',
+      'REDIS_URL',
+      'BULLMQ_REDIS_URL',
+      'REDIS_CONNECTION_URL',
+      'AD_NOTIFICATION_SMS_ENABLED',
+      'AD_NOTIFICATION_WHATSAPP_ENABLED',
+      'BIRD_ACCESS_KEY',
+      'BIRD_WORKSPACE_ID',
+      'BIRD_SMS_CHANNEL_ID',
+      'BIRD_WHATSAPP_CHANNEL_ID',
+      'DISABLE_AD_NOTIFICATION_DISPATCH_CRON',
+    ] as const;
+    const merged = { ...process.env } as NodeJS.ProcessEnv;
+    for (const key of keys) {
+      const value = this.config.get<string>(key);
+      if (value != null && String(value).trim() !== '') {
+        merged[key] = String(value).trim();
+      }
+    }
+    return merged;
+  }
+
   private async isWsHealthReachable(): Promise<boolean> {
     const base =
       String(
@@ -3001,10 +3028,9 @@ export class DbMaintenanceService {
     const availability = parseAvailableChannelsFromDoc(
       pricingDoc as Record<string, unknown> | null | undefined,
     );
-    const env = process.env;
     const evaluation = evaluateAdNotificationChannelHealth({
       availability,
-      env,
+      env: this.adNotificationProcessEnv(),
       firebaseMessagingOk,
       wsReachable,
       pricingDocFound: pricingDoc != null,
