@@ -39,11 +39,14 @@ const CHANNEL_META: Array<{ key: AdNotificationChannelKey; label: string }> = [
   { key: 'whatsapp', label: 'WhatsApp' },
 ];
 
-function smtpConfigured(env: NodeJS.ProcessEnv): boolean {
-  const host = env.SMTP_HOST?.trim() ?? env.MAILER_HOST?.trim() ?? '';
-  const user = env.SMTP_USER?.trim() ?? env.MAILER_USER?.trim() ?? '';
-  const pass = env.SMTP_PASS?.trim() ?? env.MAILER_PASS?.trim() ?? '';
-  return Boolean(host && user && pass);
+/** Aligné sur `MailerService.readAdNotificationSmtpProfile()` (canal e-mail ads). */
+function adNotificationSmtpConfigured(env: NodeJS.ProcessEnv): boolean {
+  const user = env.AD_SMTP_USER?.trim() ?? '';
+  const passRaw =
+    env.AD_SMTP_APP_PASSWORD?.trim() ||
+    env.AD_SMTP_PASS?.trim() ||
+    '';
+  return Boolean(user && passRaw.replace(/\s/g, ''));
 }
 
 function redisConfigured(env: NodeJS.ProcessEnv): boolean {
@@ -73,7 +76,7 @@ export function evaluateAdNotificationChannelHealth(input: {
   const waRuntime =
     isAdNotificationWhatsAppEnabled(env) &&
     readBirdWhatsAppConfig(env) != null;
-  const emailRuntime = smtpConfigured(env);
+  const emailRuntime = adNotificationSmtpConfigured(env);
   const pushRuntime = input.firebaseMessagingOk;
   const inAppRuntime = input.wsReachable;
 
@@ -87,8 +90,8 @@ export function evaluateAdNotificationChannelHealth(input: {
 
   const detailsByChannel: Record<AdNotificationChannelKey, string> = {
     email: emailRuntime
-      ? 'SMTP configuré'
-      : 'SMTP manquant (SMTP_HOST/USER/PASS ou MAILER_*)',
+      ? 'Profil AD_SMTP configuré (expéditeur marketing)'
+      : 'AD_SMTP_USER et AD_SMTP_APP_PASSWORD requis (distinct du SMTP transactionnel)',
     push: pushRuntime
       ? 'Firebase Messaging initialisé'
       : 'Firebase Messaging indisponible',

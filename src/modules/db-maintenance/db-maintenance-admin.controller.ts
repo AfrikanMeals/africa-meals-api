@@ -145,6 +145,16 @@ export class DbMaintenanceAdminController {
     return this._dbMaintenance.getInfraMqttStatus(req.user as UserModel);
   }
 
+  @Get('admin/system-exchange')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Cartographie plateformes & liens de communication (MQTT, SSE, Redis, DB, API, WS, clients)',
+  })
+  async getSystemExchange(@Req() req: Request) {
+    return this._dbMaintenance.getSystemExchangeStatus(req.user as UserModel);
+  }
+
   @Get('admin/alert-system/audience-count')
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))

@@ -121,7 +121,23 @@ function birdChannelUrl(config: BirdConfig, channelId: string): string {
 type BirdErrorBody = {
   message?: string;
   code?: string;
+  details?: Record<string, unknown>;
 };
+
+const BIRD_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isBirdUuid(value: string): boolean {
+  return BIRD_UUID_RE.test(value.trim());
+}
+
+function formatBirdProbeError(data: BirdErrorBody, httpStatus: number): string {
+  const base = data.message ?? `Bird HTTP ${httpStatus}`;
+  if (data.code === 'MalformedRequest' || /malformed/i.test(base)) {
+    return `${base} — vérifiez BIRD_WORKSPACE_ID et l’ID canal (UUID Bird, pas un SID Twilio)`;
+  }
+  return base;
+}
 
 async function parseBirdResponse(res: Response): Promise<unknown> {
   return res.json().catch(() => ({}));
@@ -132,11 +148,26 @@ export async function probeBirdChannelApi(args: {
   config: BirdConfig;
   channelId: string;
 }): Promise<BirdChannelProbeResult> {
-  const url = birdChannelUrl(args.config, args.channelId);
+  const workspaceId = args.config.workspaceId.trim();
+  const channelId = args.channelId.trim();
+  if (!isBirdUuid(workspaceId)) {
+    return {
+      ok: false,
+      error: `BIRD_WORKSPACE_ID invalide (${workspaceId || 'vide'}) — UUID requis`,
+    };
+  }
+  if (!isBirdUuid(channelId)) {
+    return {
+      ok: false,
+      error: `ID canal Bird invalide (${channelId || 'vide'}) — UUID requis`,
+    };
+  }
+
+  const url = birdChannelUrl(args.config, channelId);
   try {
     const res = await fetch(url, {
       method: 'GET',
-      headers: birdAuthHeaders(args.config.accessKey),
+      headers: { Authorization: `AccessKey ${args.config.accessKey}` },
       signal: AbortSignal.timeout(8000),
     });
     const data = (await parseBirdResponse(res)) as BirdErrorBody & {
@@ -147,7 +178,7 @@ export async function probeBirdChannelApi(args: {
     if (!res.ok) {
       return {
         ok: false,
-        error: data.message ?? `Bird HTTP ${res.status}`,
+        error: formatBirdProbeError(data, res.status),
       };
     }
     return {

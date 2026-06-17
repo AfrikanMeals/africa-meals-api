@@ -1,6 +1,7 @@
 import {
   birdTemplateUrlButtonSuffix,
   phoneToBirdE164,
+  probeBirdChannelApi,
   readBirdSmsConfig,
   readBirdWhatsAppConfig,
 } from './bird-channels.util';
@@ -45,5 +46,19 @@ describe('bird-channels.util', () => {
         env,
       ),
     ).toBe('abc-123');
+  });
+
+  it('rejette un workspaceId non UUID avant appel réseau', async () => {
+    const cfg = readBirdSmsConfig({
+      BIRD_ACCESS_KEY: 'key',
+      BIRD_WORKSPACE_ID: 'ws-legacy',
+      BIRD_SMS_CHANNEL_ID: '550e8400-e29b-41d4-a716-446655440000',
+    })!;
+    const probe = await probeBirdChannelApi({
+      config: cfg,
+      channelId: cfg.smsChannelId!,
+    });
+    expect(probe.ok).toBe(false);
+    expect(probe.error).toMatch(/WORKSPACE_ID invalide/);
   });
 });

@@ -65,7 +65,8 @@ import {
 } from '@modules/orders/order-paid-invoice-email.service';
 import { orderInvoiceRef } from '@modules/orders/order-invoice.util';
 import { InjectModel } from '@nestjs/mongoose';
-import { SendOrderEmailDebugDto } from './dto/send-order-email-debug.dto';
+import { buildSystemExchangeResponse } from './system-exchange.builder';
+import type { SystemExchangeResponse } from './system-exchange.types';
 import Stripe = require('stripe');
 import { randomUUID } from 'crypto';
 import { AdminJobEmitterService } from '@modules/admin-jobs/admin-job-emitter.service';
@@ -620,6 +621,26 @@ export class DbMaintenanceService {
       wsSubscriber,
       checkedAt: new Date().toISOString(),
     };
+  }
+
+  async getSystemExchangeStatus(
+    user: UserModel,
+  ): Promise<SystemExchangeResponse> {
+    await this.assertAdminSettingsPermission(user);
+    const [mqtt, runtime, firebaseMessagingOk] = await Promise.all([
+      this.getInfraMqttStatusInternal(),
+      this.ensureInfraRuntimeSettings().then((doc) =>
+        this.toInfraRuntimeSettingsResponse(doc),
+      ),
+      this.isFirebaseMessagingReady(),
+    ]);
+    return buildSystemExchangeResponse({
+      config: this.config,
+      connection: this.connection,
+      mqtt,
+      runtime,
+      firebaseMessagingOk,
+    });
   }
 
   /** Usage interne (flux SSE admin authentifié). */
@@ -2881,8 +2902,10 @@ export class DbMaintenanceService {
         key,
         label,
         startedAtMs,
-        status: 'down',
-        details: `SMS API KO: ${probe.error ?? 'unknown'}`,
+        status: smsEnabled ? 'down' : 'degraded',
+        details: smsEnabled
+          ? `SMS API KO: ${probe.error ?? 'unknown'}`
+          : `Canal SMS ads désactivé — probe Bird: ${probe.error ?? 'unknown'}`,
       });
     }
 
@@ -2935,8 +2958,10 @@ export class DbMaintenanceService {
         key,
         label,
         startedAtMs,
-        status: 'down',
-        details: `WhatsApp API KO: ${probe.error ?? 'unknown'}`,
+        status: waEnabled ? 'down' : 'degraded',
+        details: waEnabled
+          ? `WhatsApp API KO: ${probe.error ?? 'unknown'}`
+          : `Canal WhatsApp ads désactivé — probe Bird: ${probe.error ?? 'unknown'}`,
       });
     }
 
