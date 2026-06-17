@@ -29,6 +29,9 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { MailerTestEmailController } from '@modules/mailer/mailer-test-email.controller';
 import { MailerTestEmailRateLimitGuard } from '@modules/mailer/guards/mailer-test-email-rate-limit.guard';
 import { isMailerTestEmailEnabled } from '@modules/mailer/mailer-test-email.util';
+import { RedisSharedModule } from '../../common/redis/redis-shared.module';
+import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard';
+import { RefreshTokenStore } from './refresh-token.store';
 
 @Module({
   controllers: [
@@ -44,11 +47,14 @@ import { isMailerTestEmailEnabled } from '@modules/mailer/mailer-test-email.util
     OptionalAuthGuard,
     AdminGuard,
     MailerTestEmailRateLimitGuard,
+    AuthRateLimitGuard,
+    RefreshTokenStore,
     AccountDeletionCron,
   ],
   imports: [
     PassportModule,
     SharedModule,
+    RedisSharedModule,
     MailerModule,
     MediasModule,
     NotificationsModule,
@@ -62,7 +68,9 @@ import { isMailerTestEmailEnabled } from '@modules/mailer/mailer-test-email.util
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: config.get<string>('JWT_EXPIRATION') },
+        signOptions: {
+          expiresIn: config.get<string>('JWT_EXPIRATION') ?? '30m',
+        },
         global: true,
       }),
     }),

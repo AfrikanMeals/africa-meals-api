@@ -141,8 +141,18 @@ export class UserModel extends BaseSchema {
   @Prop({ required: false, name: 'activation_code', select: false })
   activationCode?: string;
 
+  @Prop({ required: false, name: 'activation_code_expires_at', select: false })
+  activationCodeExpiresAt?: Date;
+
   @Prop({ required: false, name: 'password_reset_code', select: false })
   passwordResetCode?: string;
+
+  @Prop({
+    required: false,
+    name: 'password_reset_code_expires_at',
+    select: false,
+  })
+  passwordResetCodeExpiresAt?: Date;
 
   /** Double authentification par code e-mail à la connexion. */
   @Prop({ default: false, name: 'email_2fa_enabled' })
@@ -152,9 +162,23 @@ export class UserModel extends BaseSchema {
   @Prop({ required: false, name: 'email_2fa_enable_code', select: false })
   email2faEnableCode?: string;
 
+  @Prop({
+    required: false,
+    name: 'email_2fa_enable_code_expires_at',
+    select: false,
+  })
+  email2faEnableCodeExpiresAt?: Date;
+
   /** Code à la connexion lorsque la 2FA e-mail est active. */
   @Prop({ required: false, name: 'email_2fa_login_code', select: false })
   email2faLoginCode?: string;
+
+  @Prop({
+    required: false,
+    name: 'email_2fa_login_code_expires_at',
+    select: false,
+  })
+  email2faLoginCodeExpiresAt?: Date;
 
   /** Demande de suppression de compte (soft delete), exécution différée. */
   @Prop({

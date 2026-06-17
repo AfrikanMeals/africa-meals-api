@@ -48,9 +48,12 @@ import {
   Verify2faLoginDto,
 } from './dto/auth.dto';
 import { JwtGuard } from './guards/jwt.guard';
+import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard';
+import { AuthRateLimit } from './decorators/auth-rate-limit.decorator';
 import { buildLoginRequestContext } from './login-notification/login-request-context.util';
 
 @ApiTags('auth')
+@UseGuards(AuthRateLimitGuard)
 @Controller('auth')
 export class AuthController {
   private readonly logger = new Logger(AuthController.name);
@@ -65,6 +68,7 @@ export class AuthController {
   private readonly _teamsService: TeamsService;
 
   @Post('register')
+  @AuthRateLimit('register')
   async register(@Body(ValidationPipe) args: RegisterDto, @Req() req: Request) {
     this.logger.log(
       `[POST /auth/register] corps validé email=${args.email} fullName=${
@@ -76,6 +80,7 @@ export class AuthController {
 
   /** Étape 1 : envoi du code — pas encore de ligne dans `users` (sauf mode sans SMTP / compte test). */
   @Post('register/start')
+  @AuthRateLimit('register')
   async registerStart(@Body(ValidationPipe) args: RegisterDto, @Req() req: Request) {
     this.logger.log(
       `[POST /auth/register/start] email=${args.email} fullName=${args.fullName}`,
@@ -85,6 +90,7 @@ export class AuthController {
 
   /** Étape 2 : validation du code et création du compte. */
   @Post('register/complete')
+  @AuthRateLimit('otp')
   async registerComplete(
     @Body(ValidationPipe) args: EmailVerificationDto,
     @Req() req: Request,
@@ -93,17 +99,20 @@ export class AuthController {
   }
 
   @Post('register/resend-code')
+  @AuthRateLimit('register')
   async resendPendingSignup(@Body(ValidationPipe) args: ForgotPasswordDto) {
     return this._authService.resendPendingSignupCode(args.email);
   }
 
   @Post('login')
+  @AuthRateLimit('login')
   async login(@Body(ValidationPipe) args: LoginDto, @Req() req: Request) {
-    this.logger.log(`login body: ${JSON.stringify(args)}`);
+    this.logger.log(`[POST /auth/login] source=${args.source}`)
     return this._authService.login(args, buildLoginRequestContext(req));
   }
 
   @Post('login/verify-2fa')
+  @AuthRateLimit('otp')
   async verify2faLogin(
     @Body(ValidationPipe) args: Verify2faLoginDto,
     @Req() req: Request,
@@ -112,16 +121,19 @@ export class AuthController {
   }
 
   @Post('login/resend-2fa')
+  @AuthRateLimit('otp')
   async resend2faLogin(@Body(ValidationPipe) args: Resend2faLoginDto) {
     return this._authService.resend2faLogin(args);
   }
 
   @Post('refresh')
+  @AuthRateLimit('refresh')
   async refresh(@Body(ValidationPipe) args: RefreshTokenDto) {
     return this._authService.refreshSession(args.refreshToken);
   }
 
   @Post('google')
+  @AuthRateLimit('login')
   async authWithGoogle(
     @Body(ValidationPipe) args: GoogleAuthDto,
     @Req() req: Request,
@@ -133,6 +145,7 @@ export class AuthController {
   }
 
   @Post('admin/google')
+  @AuthRateLimit('login')
   async authWithGoogleAdmin(
     @Body(ValidationPipe) args: GoogleAuthDto,
     @Req() req: Request,
@@ -149,6 +162,7 @@ export class AuthController {
   }
 
   @Post('apple')
+  @AuthRateLimit('login')
   async authWithApple(
     @Body(ValidationPipe) args: AppleAuthDto,
     @Req() req: Request,
@@ -160,6 +174,7 @@ export class AuthController {
   }
 
   @Post('admin/apple')
+  @AuthRateLimit('login')
   async authWithAppleAdmin(
     @Body(ValidationPipe) args: AppleAuthDto,
     @Req() req: Request,
@@ -176,6 +191,7 @@ export class AuthController {
   }
 
   @Post('facebook')
+  @AuthRateLimit('login')
   async authWithFacebook(
     @Body(ValidationPipe) args: FacebookAuthDto,
     @Req() req: Request,
@@ -187,6 +203,7 @@ export class AuthController {
   }
 
   @Post('admin/facebook')
+  @AuthRateLimit('login')
   async authWithFacebookAdmin(
     @Body(ValidationPipe) args: FacebookAuthDto,
     @Req() req: Request,
@@ -203,43 +220,49 @@ export class AuthController {
   }
 
   @Post('verify-email')
+  @AuthRateLimit('otp')
   async verifyEmail(
     @Body(ValidationPipe) args: EmailVerificationDto,
     @Req() req: Request,
   ) {
-    this.logger.log(`verify-email body: ${JSON.stringify(args)}`);
+    this.logger.log(`[POST /auth/verify-email] email=${args.email}`)
     return this._authService.verifyEmail(args, buildLoginRequestContext(req));
   }
 
   /** Alias pour compatibilité : POST /auth/verify */
   @Post('verify')
+  @AuthRateLimit('otp')
   async verify(
     @Body(ValidationPipe) args: EmailVerificationDto,
     @Req() req: Request,
   ) {
-    this.logger.log(`verify body: ${JSON.stringify(args)}`);
+    this.logger.log(`[POST /auth/verify] email=${args.email}`)
     return this._authService.verifyEmail(args, buildLoginRequestContext(req));
   }
 
   @Post('resend-verification-code')
+  @AuthRateLimit('register')
   async resendVerificationCode(@Body('email', ValidationPipe) email: string) {
     this.logger.log(`resend-verification-code body: { email: ${email} }`);
     return this._authService.resendVerificationCode(email);
   }
 
   @Post('forgot-password')
+  @AuthRateLimit('password')
   async forgotPassword(@Body(ValidationPipe) args: ForgotPasswordDto) {
     this.logger.log(`forgot-password email=${args.email}`);
     return this._authService.forgotPassword(args);
   }
 
   @Post('reset-password')
+  @AuthRateLimit('password')
   async resetPassword(@Body(ValidationPipe) args: ResetPasswordDto) {
-    this.logger.log(`reset-password body: ${JSON.stringify(args)}`);
+    this.logger.log(`[POST /auth/reset-password] email=${args.email}`)
     return this._authService.resetPassword(args);
   }
 
   @Post('check-account')
+  @AuthRateLimit('login')
   async checkAccount(@Body(ValidationPipe) args: CheckAccountDto) {
     return this._authService.checkAccount(args);
   }

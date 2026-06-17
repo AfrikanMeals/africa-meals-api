@@ -1,4 +1,6 @@
 import { fieldSelectionMiddleware } from './common/field-selection/field-selection.middleware';
+import { buildApiCorsOptions } from './common/cors/cors-options';
+import { redactSensitiveJsonForLog } from './common/logging/redact-sensitive.util';
 import { INestApplication } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import type { NextFunction, Request, Response } from 'express';
@@ -74,7 +76,7 @@ export async function configureApplication(
       const body = isMultipart
         ? '(multipart)'
         : req.body
-        ? JSON.stringify(req.body)
+        ? redactSensitiveJsonForLog(req.body)
         : '(no body)';
       console.warn(`[REQ] ${req.method} ${req.originalUrl} body: ${body}`);
       next();
@@ -92,25 +94,7 @@ export async function configureApplication(
   /** Query `includeFields` / `excludeField(s)` → filtre JSON (intercepteur global). */
   app.use(fieldSelectionMiddleware());
 
-  app.enableCors({
-    origin: true,
-    credentials: true,
-    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'Accept',
-      'ngrok-skip-browser-warning',
-      'x-dashboard-client',
-      'x-dashboard-path',
-      'x-dashboard-resource-name',
-      'x-no-auth-refresh',
-      'x-auth-refresh-retry',
-      'x-client-platform',
-      'X-Firebase-AppCheck',
-      'x-firebase-appcheck',
-    ],
-  });
+  app.enableCors(buildApiCorsOptions());
 
   if (process.env.DISABLE_SWAGGER === 'true') {
     return;

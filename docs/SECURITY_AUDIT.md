@@ -5,11 +5,11 @@
 
 ---
 
-## Score global : **73 / 100**
+## Score global : **76 / 100**
 
 | Composant | Score | Niveau |
 |-----------|-------|--------|
-| **API (NestJS)** | 74/100 | Acceptable |
+| **API (NestJS)** | 78/100 | Acceptable |
 | **Admin (Next.js)** | 62/100 | Moyen |
 | **Mobile (Flutter)** | 55/100 | Moyen |
 | **Web (Firebase Hosting)** | 72/100 | Acceptable |
@@ -24,7 +24,7 @@
 | Sévérité | Nombre | ❌ NOT YET | ⚠️ PENDING | ✅ DONE | Action |
 |----------|--------|------------|------------|---------|--------|
 | Critique | 4 | 1 | 0 | 3 | Corriger immédiatement |
-| Élevée | 12 | 12 | 0 | 0 | Corriger sous 1–2 semaines |
+| Élevée | 12 | 9 | 0 | 3 | Corriger sous 1–2 semaines |
 | Moyenne | 18 | 18 | 0 | 0 | Planifier sprint sécurité |
 | Faible | 10 | 8 | 0 | 2 | Amélioration continue |
 | Positif | 8 | — | — | — | Maintenir |
@@ -65,9 +65,9 @@
 
 | ID | App | Action | Statut | Issue | Recommandation |
 |----|-----|--------|--------|-------|----------------|
-| **H-01** | API | Fix | ❌ NOT YET | CORS `origin: true` + `credentials: true` — toute origine acceptée | Allowlist stricte (`CORS_ORIGIN`) : admin, web, app |
-| **H-02** | API | Add | ❌ NOT YET | Aucun rate limiting sur auth/OTP (`/login`, `/verify-2fa`, `/forgot-password`) | `@nestjs/throttler` ou `express-rate-limit` sur routes sensibles |
-| **H-03** | API | Improve | ❌ NOT YET | JWT expiration 1 an, claims minimaux (`sub` seul), pas de rotation refresh | Réduire TTL (15–60 min access), refresh rotation, claims `type`/`jti` |
+| **H-01** | API | Fix | ✅ DONE | ~~CORS `origin: true` + `credentials: true` — toute origine acceptée~~ | Allowlist `CORS_ORIGIN` via `buildApiCorsOptions()` ; dev = localhost seulement ; prod = liste explicite ; apps natives sans `Origin` OK |
+| **H-02** | API | Add | ✅ DONE | ~~Aucun rate limiting sur auth/OTP~~ | `AuthRateLimitGuard` + profils login/otp/password/refresh/register sur routes `/auth/*` |
+| **H-03** | API | Improve | ✅ DONE | ~~JWT 1 an, `sub` seul, pas de rotation refresh~~ | `JWT_EXPIRATION=30m`, claims `typ`/`type`/`jti`, rotation refresh via Redis `RefreshTokenStore` |
 | **H-04** | API | Fix | ❌ NOT YET | OTP générés via `Math.random()`, stockés en clair en DB | `crypto.randomBytes`, hash bcrypt des codes, expiration courte |
 | **H-05** | API | Fix | ❌ NOT YET | Logs de mots de passe et codes OTP dans `auth.controller.ts` | Supprimer/redacter ; audit des logs HTTP |
 | **H-06** | API | Fix | ❌ NOT YET | `checkAccount` public — énumération + fuite PII (FCM, Stripe, etc.) | Réponse générique ; champs minimaux |
@@ -91,7 +91,7 @@
 | **M-05** | API | Add | ❌ NOT YET | Pas de `ValidationPipe` global avec `whitelist` | Pipe global : `whitelist`, `forbidNonWhitelisted` |
 | **M-06** | API | Improve | ❌ NOT YET | Uploads : MIME côté client, pas de magic bytes | Valider signature fichier ; limiter extensions |
 | **M-07** | API | Improve | ❌ NOT YET | reCAPTCHA en mode monitor (accepte tokens invalides) | `RECAPTCHA_ENTERPRISE_ENFORCE=true` en prod |
-| **M-08** | API | Improve | ❌ NOT YET | Refresh JWT fallback sur `JWT_SECRET` si absent | Secrets distincts obligatoires |
+| **M-08** | API | Improve | ⚠️ PENDING | Refresh JWT fallback sur `JWT_SECRET` si absent | `JWT_REFRESH_SECRET` documenté + warning prod si absent ou identique à access |
 | **M-09** | Admin | Add | ❌ NOT YET | Pas de CSP, HSTS, X-Frame-Options | Headers sécurité dans `next.config.js` |
 | **M-10** | Admin | Improve | ❌ NOT YET | Cookie `ae_has_session=1` forgeable (hint UI) | Valider JWT côté middleware serveur |
 | **M-11** | Admin | Fix | ❌ NOT YET | `dangerouslySetInnerHTML` sur mails inbox | DOMPurify ou rendu texte |
@@ -148,8 +148,9 @@ gantt
     section P0 Critique
     Sécuriser OAuth admin vendor              :crit, 2026-06-14, 3d
     section P1 Élevé
-    Rate limiting auth/OTP                    :2026-06-20, 5d
-    CORS allowlist API + WS                   :2026-06-20, 3d
+    Rate limiting auth/OTP                    :done, 2026-06-20, 5d
+    JWT court + rotation refresh              :done, 2026-06-20, 3d
+    CORS allowlist API + WS                   :done, 2026-06-20, 3d
     Keychain mobile + logs debug only         :2026-06-20, 5d
     Refonte liens OTP                         :2026-06-25, 7d
     section P2 Moyen
@@ -163,14 +164,14 @@ gantt
 
 | Thème | État | Statut global | Priorité |
 |-------|------|---------------|----------|
-| Authentification | Bonne base, JWT trop long, OTP faibles | ❌ NOT YET | P1 |
+| Authentification | JWT court + refresh rotatif ; OTP faibles restants | ⚠️ PENDING | P1 |
 | Autorisation | Guards OK, failles OAuth admin + ADMIN sans rôles | ❌ NOT YET | P0–P2 |
 | Secrets | Dump env + accounts.json corrigés (C-01, C-02) ; rotation clé ops | ⚠️ PENDING | P0 |
 | Stockage tokens | Faible (localStorage, SharedPreferences) | ❌ NOT YET | P1 |
 | Transport | HTTPS OK, pas de pinning | ❌ NOT YET | P3 |
 | Input validation | Partielle, regex à durcir | ❌ NOT YET | P2 |
-| Rate limiting | Absent | ❌ NOT YET | P1 |
-| CORS | Trop permissif | ❌ NOT YET | P1 |
+| Rate limiting | Auth routes limitées (H-02) | ✅ DONE | — |
+| CORS | Trop permissif (API corrigée H-01) | ⚠️ PENDING | P1 |
 | Logs | Fuites passwords/OTP | ❌ NOT YET | P1 |
 | Paiements (Stripe) | Webhooks OK | ✅ DONE | — |
 | Deep links | OTP exposés, validation hôte faible | ❌ NOT YET | P1 |
@@ -181,12 +182,12 @@ gantt
 
 ## Conclusion
 
-**73/100** — Le produit n’est **pas prêt pour une posture « sécurité production »** sans corriger le **dernier finding critique (C-04)**. Une fois P0 et P1 traités (estimation : 2–3 semaines), le score devrait monter vers **75–80/100**.
+**76/100** — Le produit n’est **pas prêt pour une posture « sécurité production »** sans corriger le **dernier finding critique (C-04)**. Une fois P0 et P1 traités (estimation : 2–3 semaines), le score devrait monter vers **78–82/100**.
 
 Les corrections les plus impactantes :
 
 1. ~~Sécuriser `POST /mailer/test-email`~~ (C-03 ✅ DONE)
 2. ~~Retirer `accounts.json` du dépôt~~ (C-02 ✅ DONE) — **révoquer la clé exposée** (`FIREBASE_KEY_ROTATION.md`)
 3. Protéger la création VENDOR OAuth (C-04)
-4. Rate limiting + CORS restrictif + OTP cryptographiques
+4. ~~Rate limiting auth~~ (H-02 ✅) + ~~JWT court / refresh rotatif~~ (H-03 ✅) + ~~CORS restrictif API~~ (H-01 ✅) + OTP cryptographiques
 5. Keychain mobile + logs debug-only + refonte liens OTP

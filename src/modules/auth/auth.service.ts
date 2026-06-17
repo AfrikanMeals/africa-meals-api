@@ -55,12 +55,30 @@ import {
   type AuthOtpEmailVariant,
 } from '@modules/mailer/auth-otp-email.util';
 import { PartnerOnboardingEmailService } from '@modules/vendor-emails/partner-onboarding-email.service';
+import { randomUUID } from 'crypto';
+import { RefreshTokenStore } from './refresh-token.store';
+import {
+  issueOtpCode,
+  isOtpExpired,
+  verifyOtpCode,
+} from './auth-otp.util';
+import {
+  isProductionNodeEnv,
+  parseJwtDurationToSeconds,
+} from './jwt-token.util';
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly defaultRefreshExpiration = '30d';
   private static readonly ACCOUNT_DELETION_DELAY_DAYS = 30;
+  private static readonly OTP_TTL_MINUTES = {
+    signup: 30,
+    activation: 30,
+    passwordReset: 15,
+    email2faEnable: 15,
+    email2faLogin: 15,
+  } as const;
 
   @InjectModel(UserModel.name)
   private readonly _usersModel: Model<UserModel>;
@@ -101,6 +119,9 @@ export class AuthService {
   @Inject(PartnerOnboardingEmailService)
   private readonly _partnerOnboardingEmail: PartnerOnboardingEmailService;
 
+  @Inject(RefreshTokenStore)
+  private readonly _refreshTokenStore: RefreshTokenStore;
+
   /**
    * Inscription en deux temps : aucune ligne dans `users` tant que le code e-mail
    * n’est pas validé (`register/complete`), sauf si SMTP désactivé / compte test.
@@ -124,7 +145,7 @@ export class AuthService {
 
     if (skipEmailVerification || isTestAccount) {
       const user = await this.registerCreateUserDirectly(args);
-      const tokens = this.deliverAuthTokens(user, ctx, 'register');
+      const tokens = await this.deliverAuthTokens(user, ctx, 'register');
       return {
         step: 'done' as const,
         ...tokens,
@@ -142,25 +163,27 @@ export class AuthService {
 
     await this._pendingSignupModel.deleteMany({ email }).exec();
 
-    const code = await this._generateVerificationCode(6);
+    const issued = await issueOtpCode(
+      6,
+      AuthService.OTP_TTL_MINUTES.signup,
+    );
     const passwordHash = await bcrypt.hash(args.password, 10);
     const userType = this._mapSignupRoleToUserType(args.signupRole);
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
 
     await this._pendingSignupModel.create({
       email,
       passwordHash,
       fullName: args.fullName.trim(),
       userType,
-      verificationCode: code,
-      expiresAt,
+      verificationCode: issued.hash,
+      expiresAt: issued.expiresAt,
     });
 
     try {
       await this._sendSignupVerificationEmail(
         email,
         args.fullName.trim(),
-        code,
+        issued.code,
       );
     } catch (err: unknown) {
       await this._pendingSignupModel.deleteMany({ email }).exec();
@@ -187,11 +210,11 @@ export class AuthService {
     if (!pending) {
       throw new NotFoundException('invalid_or_expired_signup_code');
     }
-    if (pending.expiresAt.getTime() < Date.now()) {
+    if (isOtpExpired(pending.expiresAt)) {
       await this._pendingSignupModel.deleteOne({ _id: pending._id }).exec();
       throw new BadRequestException('signup_code_expired');
     }
-    if (pending.verificationCode !== code.trim()) {
+    if (!(await verifyOtpCode(code, pending.verificationCode))) {
       throw new BadRequestException('invalid_or_expired_signup_code');
     }
 
@@ -216,7 +239,7 @@ export class AuthService {
     await this._pendingSignupModel.deleteOne({ _id: pending._id }).exec();
     const user = await this.findUserById(newUser._id.toString());
     this.queueVendorOnboardingWelcome(user);
-    return { ...this.deliverAuthTokens(newUser, ctx, 'register'), user };
+    return { ...(await this.deliverAuthTokens(newUser, ctx, 'register')), user };
   }
 
   async resendPendingSignupCode(emailRaw: string) {
@@ -225,15 +248,18 @@ export class AuthService {
     if (!pending) {
       throw new NotFoundException('pending_signup_not_found');
     }
-    if (pending.expiresAt.getTime() < Date.now()) {
+    if (isOtpExpired(pending.expiresAt)) {
       await this._pendingSignupModel.deleteOne({ _id: pending._id }).exec();
       throw new BadRequestException('signup_code_expired');
     }
-    const code = await this._generateVerificationCode(6);
-    pending.verificationCode = code;
-    pending.expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    const issued = await issueOtpCode(
+      6,
+      AuthService.OTP_TTL_MINUTES.signup,
+    );
+    pending.verificationCode = issued.hash;
+    pending.expiresAt = issued.expiresAt;
     await pending.save();
-    await this._sendSignupVerificationEmail(email, pending.fullName, code);
+    await this._sendSignupVerificationEmail(email, pending.fullName, issued.code);
     return {
       ok: true as const,
       message: 'Un nouveau code a été envoyé.',
@@ -389,9 +415,9 @@ export class AuthService {
     /** Compte vérifié tout de suite : pas d’SMTP / pas d’email à envoyer */
     const verifyImmediately = skipEmailVerification || isTestAccount;
 
-    const activationCode = verifyImmediately
-      ? undefined
-      : await this._generateVerificationCode(6);
+    const activationIssued = verifyImmediately
+      ? null
+      : await issueOtpCode(6, AuthService.OTP_TTL_MINUTES.activation);
 
     this.logger.log(
       `[register] options skipEmailVerification=${skipEmailVerification} isTestAccount=${isTestAccount} verifyImmediately=${verifyImmediately} smtpConfigured=${smtpConfigured}`,
@@ -409,7 +435,10 @@ export class AuthService {
       type: userType,
       ...(verifyImmediately
         ? { emailVerifiedAt: new Date() }
-        : { activationCode }),
+        : {
+            activationCode: activationIssued?.hash,
+            activationCodeExpiresAt: activationIssued?.expiresAt,
+          }),
     };
     this.logger.log(
       `[register] payload insert (mdp masqué) ${JSON.stringify({
@@ -454,7 +483,7 @@ export class AuthService {
       }`,
     );
 
-    if (!verifyImmediately && activationCode) {
+    if (!verifyImmediately && activationIssued) {
       try {
         const appName =
           this._configService.get<string>('APP_NAME') ?? 'Wise Eat';
@@ -466,12 +495,12 @@ export class AuthService {
           html: this.buildVerificationEmailHtml(
             args.fullName,
             args.email,
-            activationCode,
+            activationIssued.code,
             'activation',
           ),
           text: this.buildVerificationEmailText(
             args.email,
-            activationCode,
+            activationIssued.code,
             'activation',
           ),
         });
@@ -490,7 +519,10 @@ export class AuthService {
         if (process.env.NODE_ENV !== 'production') {
           await this._usersModel.findByIdAndUpdate(newUser._id, {
             $set: { emailVerifiedAt: new Date() },
-            $unset: { activationCode: '' },
+            $unset: {
+              activationCode: '',
+              activationCodeExpiresAt: '',
+            },
           });
           this.logger.log(
             `[register] compte auto-vérifié (non-production) id=${newUser._id.toString()}`,
@@ -600,7 +632,7 @@ export class AuthService {
     });
     this.queueVendorOnboardingWelcome(newUser);
     return {
-      ...this.deliverAuthTokens(newUser, ctx, 'google'),
+      ...(await this.deliverAuthTokens(newUser, ctx, 'google')),
     };
   }
 
@@ -704,7 +736,7 @@ export class AuthService {
     });
     this.queueVendorOnboardingWelcome(newUser);
     return {
-      ...this.deliverAuthTokens(newUser, ctx, 'apple'),
+      ...(await this.deliverAuthTokens(newUser, ctx, 'apple')),
     };
   }
 
@@ -806,7 +838,7 @@ export class AuthService {
     });
     this.queueVendorOnboardingWelcome(newUser);
     return {
-      ...this.deliverAuthTokens(newUser, ctx, 'facebook'),
+      ...(await this.deliverAuthTokens(newUser, ctx, 'facebook')),
     };
   }
 
@@ -869,7 +901,10 @@ export class AuthService {
     const codeNorm = args.code.trim().toUpperCase();
     const user = await this._usersModel
       .findById(userId)
-      .select(['+email2faLoginCode'])
+      .select([
+        '+email2faLoginCode',
+        '+email2faLoginCodeExpiresAt',
+      ])
       .exec();
     if (!user) {
       throw new NotFoundException('user_not_found');
@@ -877,11 +912,20 @@ export class AuthService {
     if (user.email2faEnabled !== true) {
       throw new BadRequestException('email_2fa_not_enabled');
     }
-    if (!user.email2faLoginCode || user.email2faLoginCode !== codeNorm) {
+    if (
+      !user.email2faLoginCode ||
+      isOtpExpired(user.email2faLoginCodeExpiresAt) ||
+      !(await verifyOtpCode(codeNorm, user.email2faLoginCode))
+    ) {
       throw new BadRequestException('invalid_code');
     }
     await this._usersModel
-      .findByIdAndUpdate(userId, { $unset: { email2faLoginCode: '' } })
+      .findByIdAndUpdate(userId, {
+        $unset: {
+          email2faLoginCode: '',
+          email2faLoginCodeExpiresAt: '',
+        },
+      })
       .exec();
     const methodRaw = String(payload.method ?? 'email_password');
     const method: LoginAuthMethod =
@@ -891,7 +935,7 @@ export class AuthService {
       methodRaw === 'email_password'
         ? methodRaw
         : 'email_password';
-    return this.deliverAuthTokens(user, ctx, method);
+    return await this.deliverAuthTokens(user, ctx, method);
   }
 
   async resend2faLogin(args: Resend2faLoginDto) {
@@ -941,7 +985,7 @@ export class AuthService {
       throw new UnauthorizedException('invalid_refresh_token');
     }
     const secret = this.getRefreshTokenSecret();
-    type RefreshPayload = { sub?: unknown; typ?: unknown };
+    type RefreshPayload = { sub?: unknown; typ?: unknown; jti?: unknown };
     let payload: RefreshPayload;
     try {
       payload = (await this._jwtService.verifyAsync(refreshToken, {
@@ -961,17 +1005,34 @@ export class AuthService {
     if (!user) {
       throw new UnauthorizedException('invalid_refresh_token');
     }
-    return this.issueAuthTokens(userId);
+    const jti = String(payload?.jti ?? '').trim();
+    if (jti) {
+      const ok = await this._refreshTokenStore.consume(jti, userId);
+      if (!ok) {
+        throw new UnauthorizedException('invalid_refresh_token');
+      }
+    }
+    return this.issueAuthTokens(user);
   }
 
   async checkAccount(args: CheckAccountDto) {
+    const filter =
+      args.source === 'email'
+        ? { email: this._emailMatchExact(args.email.trim().toLowerCase()) }
+        : { [args.source]: args[args.source] };
     const user = await this._usersModel
-      .findOne({ [args.source]: args[args.source] })
+      .findOne(filter)
+      .select(['email', 'type', 'emailVerifiedAt'])
+      .lean()
       .exec();
     if (!user) {
-      throw new NotFoundException(`user_not_found`);
+      return { exists: false as const };
     }
-    return user;
+    return {
+      exists: true as const,
+      emailVerified: Boolean(user.emailVerifiedAt),
+      type: user.type ?? null,
+    };
   }
 
   async verifyEmail(
@@ -981,19 +1042,26 @@ export class AuthService {
     const emailNorm = email.trim().toLowerCase();
     const codeNorm = activationCode.trim();
 
-    const user = await this._usersModel
-      .findOneAndUpdate(
-        {
-          activationCode: codeNorm,
-          email: this._emailMatchExact(emailNorm),
-          emailVerifiedAt: null,
-        },
-        { activationCode: null, emailVerifiedAt: new Date() },
-        { new: true },
-      )
+    const pendingUser = await this._usersModel
+      .findOne({
+        email: this._emailMatchExact(emailNorm),
+        emailVerifiedAt: null,
+      })
+      .select(['+activationCode', '+activationCodeExpiresAt'])
       .exec();
-    if (user) {
-      return user;
+
+    if (pendingUser) {
+      if (isOtpExpired(pendingUser.activationCodeExpiresAt)) {
+        throw new NotFoundException(`user_not_found`);
+      }
+      if (!(await verifyOtpCode(codeNorm, pendingUser.activationCode))) {
+        throw new NotFoundException(`user_not_found`);
+      }
+      pendingUser.activationCode = undefined;
+      pendingUser.activationCodeExpiresAt = undefined;
+      pendingUser.emailVerifiedAt = new Date();
+      await pendingUser.save();
+      return pendingUser;
     }
 
     try {
@@ -1026,7 +1094,7 @@ export class AuthService {
       return this.resendPendingSignupCode(email);
     }
 
-    const code = await this._generateVerificationCode(6);
+    const issued = await issueOtpCode(6, AuthService.OTP_TTL_MINUTES.activation);
     const user = await this._usersModel
       .findOneAndUpdate(
         {
@@ -1035,7 +1103,8 @@ export class AuthService {
         },
         {
           emailVerifiedAt: null,
-          activationCode: code,
+          activationCode: issued.hash,
+          activationCodeExpiresAt: issued.expiresAt,
         },
         { new: true },
       )
@@ -1053,12 +1122,12 @@ export class AuthService {
       html: this.buildVerificationEmailHtml(
         user.fullName,
         email,
-        code,
+        issued.code,
         'activation',
       ),
-      text: this.buildVerificationEmailText(email, code, 'activation'),
+      text: this.buildVerificationEmailText(email, issued.code, 'activation'),
     });
-    return user;
+    return { ok: true as const };
   }
 
   /**
@@ -1081,11 +1150,19 @@ export class AuthService {
       return generic;
     }
 
-    const code = await this._generateVerificationCode(6);
+    const issued = await issueOtpCode(
+      6,
+      AuthService.OTP_TTL_MINUTES.passwordReset,
+    );
     await this._usersModel
       .findOneAndUpdate(
         { _id: user._id },
-        { $set: { passwordResetCode: code } },
+        {
+          $set: {
+            passwordResetCode: issued.hash,
+            passwordResetCodeExpiresAt: issued.expiresAt,
+          },
+        },
         { new: true },
       )
       .exec();
@@ -1096,10 +1173,10 @@ export class AuthService {
     const html = this.buildVerificationEmailHtml(
       user.fullName,
       email,
-      code,
+      issued.code,
       'reset',
     );
-    const text = this.buildVerificationEmailText(email, code, 'reset');
+    const text = this.buildVerificationEmailText(email, issued.code, 'reset');
 
     const smtpUser = this._configService.get<string>('SMTP_USER')?.trim();
     const smtpPass =
@@ -1108,7 +1185,7 @@ export class AuthService {
     if (!smtpUser || !smtpPass) {
       if (process.env.NODE_ENV !== 'production') {
         this.logger.warn(
-          `[forgot-password] SMTP non configuré — code pour ${email} : ${code}`,
+          `[forgot-password] SMTP non configuré — code non journalisé pour ${email}`,
         );
       } else {
         this.logger.warn(`[forgot-password] SMTP non configuré pour ${email}`);
@@ -1140,15 +1217,20 @@ export class AuthService {
     const email = emailRaw.trim().toLowerCase();
     const user = await this._usersModel
       .findOne({ email: this._emailMatchExact(email) })
-      .select('+passwordResetCode')
+      .select(['+passwordResetCode', '+passwordResetCodeExpiresAt'])
       .exec();
 
-    if (!user?.passwordResetCode || user.passwordResetCode !== code.trim()) {
+    if (
+      !user?.passwordResetCode ||
+      isOtpExpired(user.passwordResetCodeExpiresAt) ||
+      !(await verifyOtpCode(code, user.passwordResetCode))
+    ) {
       throw new BadRequestException('invalid_reset_code');
     }
 
     user.password = password;
     user.set('passwordResetCode', undefined);
+    user.set('passwordResetCodeExpiresAt', undefined);
     await user.save();
 
     return { ok: true as const, message: 'Mot de passe mis à jour.' };
@@ -1588,6 +1670,7 @@ export class AuthService {
     }
     user.password = args.newPassword;
     user.set('passwordResetCode', undefined);
+    user.set('passwordResetCodeExpiresAt', undefined);
     await user.save();
     return { ok: true, message: 'Mot de passe mis à jour.' };
   }
@@ -1600,9 +1683,17 @@ export class AuthService {
     if (user.email2faEnabled) {
       throw new BadRequestException('email_2fa_already_enabled');
     }
-    const code = await this._generateVerificationCode(6);
+    const issued = await issueOtpCode(
+      6,
+      AuthService.OTP_TTL_MINUTES.email2faEnable,
+    );
     await this._usersModel
-      .findByIdAndUpdate(userId, { $set: { email2faEnableCode: code } })
+      .findByIdAndUpdate(userId, {
+        $set: {
+          email2faEnableCode: issued.hash,
+          email2faEnableCodeExpiresAt: issued.expiresAt,
+        },
+      })
       .exec();
 
     const email = user.email.trim().toLowerCase();
@@ -1612,10 +1703,10 @@ export class AuthService {
     const html = this.buildVerificationEmailHtml(
       user.fullName,
       email,
-      code,
+      issued.code,
       '2fa',
     );
-    const text = this.buildVerificationEmailText(email, code, '2fa');
+    const text = this.buildVerificationEmailText(email, issued.code, '2fa');
 
     const smtpUser = this._configService.get<string>('SMTP_USER')?.trim();
     const smtpPass =
@@ -1624,7 +1715,7 @@ export class AuthService {
     if (!smtpUser || !smtpPass) {
       if (process.env.NODE_ENV !== 'production') {
         this.logger.warn(
-          `[email-2fa] SMTP non configuré — code pour ${email} : ${code}`,
+          `[email-2fa] SMTP non configuré — code non journalisé pour ${email}`,
         );
       } else {
         throw new ServiceUnavailableException('email_not_configured');
@@ -1656,7 +1747,7 @@ export class AuthService {
     const codeNorm = args.code.trim().toUpperCase();
     const user = await this._usersModel
       .findById(userId)
-      .select(['+email2faEnableCode'])
+      .select(['+email2faEnableCode', '+email2faEnableCodeExpiresAt'])
       .exec();
     if (!user) {
       throw new NotFoundException('user_not_found');
@@ -1664,13 +1755,20 @@ export class AuthService {
     if (user.email2faEnabled) {
       throw new BadRequestException('email_2fa_already_enabled');
     }
-    if (!user.email2faEnableCode || user.email2faEnableCode !== codeNorm) {
+    if (
+      !user.email2faEnableCode ||
+      isOtpExpired(user.email2faEnableCodeExpiresAt) ||
+      !(await verifyOtpCode(codeNorm, user.email2faEnableCode))
+    ) {
       throw new BadRequestException('invalid_code');
     }
     await this._usersModel
       .findByIdAndUpdate(userId, {
         $set: { email2faEnabled: true },
-        $unset: { email2faEnableCode: '' },
+        $unset: {
+          email2faEnableCode: '',
+          email2faEnableCodeExpiresAt: '',
+        },
       })
       .exec();
     return { ok: true, email2faEnabled: true };
@@ -1687,7 +1785,12 @@ export class AuthService {
     await this._usersModel
       .findByIdAndUpdate(userId, {
         $set: { email2faEnabled: false },
-        $unset: { email2faEnableCode: '', email2faLoginCode: '' },
+        $unset: {
+          email2faEnableCode: '',
+          email2faEnableCodeExpiresAt: '',
+          email2faLoginCode: '',
+          email2faLoginCodeExpiresAt: '',
+        },
       })
       .exec();
     return {
@@ -1759,7 +1862,7 @@ export class AuthService {
       throw new NotFoundException('user_not_found');
     }
     if (user.email2faEnabled !== true) {
-      return this.deliverAuthTokens(user, ctx, method);
+      return await this.deliverAuthTokens(user, ctx, method);
     }
     return this.begin2faLoginChallenge(user, method);
   }
@@ -1773,13 +1876,21 @@ export class AuthService {
     email: string;
     message: string;
   }> {
-    const code = await this._generateVerificationCode(6);
+    const issued = await issueOtpCode(
+      6,
+      AuthService.OTP_TTL_MINUTES.email2faLogin,
+    );
     await this._usersModel
-      .findByIdAndUpdate(user._id, { $set: { email2faLoginCode: code } })
+      .findByIdAndUpdate(user._id, {
+        $set: {
+          email2faLoginCode: issued.hash,
+          email2faLoginCodeExpiresAt: issued.expiresAt,
+        },
+      })
       .exec();
 
     const email = user.email.trim().toLowerCase();
-    await this._send2faLoginEmail(user.fullName, email, code);
+    await this._send2faLoginEmail(user.fullName, email, issued.code);
 
     const challengeToken = this._jwtService.sign(
       { sub: String(user._id), typ: '2fa_login', method },
@@ -1818,7 +1929,7 @@ export class AuthService {
     if (!smtpUser || !smtpPass) {
       if (process.env.NODE_ENV !== 'production') {
         this.logger.warn(
-          `[2fa-login] SMTP non configuré — code pour ${email} : ${code}`,
+          `[2fa-login] SMTP non configuré — code non journalisé pour ${email}`,
         );
       } else {
         throw new ServiceUnavailableException('email_not_configured');
@@ -1840,51 +1951,76 @@ export class AuthService {
     }
   }
 
-  private async _generateVerificationCode(length: number) {
-    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let result = '';
-    const charactersLength = characters.length;
-    for (let i = 0; i < length; i++) {
-      result += characters.charAt(Math.floor(Math.random() * charactersLength));
-    }
-    return result;
-  }
-
-  private deliverAuthTokens(
+  private async deliverAuthTokens(
     user: Pick<UserModel, '_id' | 'email' | 'fullName' | 'type'>,
     ctx: LoginRequestContext | undefined,
     method: LoginAuthMethod,
-  ): { authToken: string; refreshToken: string } {
-    const tokens = this.issueAuthTokens(String(user._id));
+  ): Promise<{ authToken: string; refreshToken: string }> {
+    const tokens = await this.issueAuthTokens(user);
     if (ctx) {
       this._loginNotification.maybeNotifyLogin(user, ctx, method);
     }
     return tokens;
   }
 
-  private issueAuthTokens(userId: string): {
+  private async issueAuthTokens(
+    user: Pick<UserModel, '_id' | 'type'>,
+  ): Promise<{
     authToken: string;
     refreshToken: string;
-  } {
-    const authToken = this._jwtService.sign({ sub: userId });
+  }> {
+    const userId = String(user._id);
+    const accessJti = randomUUID();
+    const refreshJti = randomUUID();
+    const refreshExpiresIn = this.getRefreshTokenExpiration();
+    const refreshTtlSec = parseJwtDurationToSeconds(refreshExpiresIn, 30 * 86_400);
+
+    const authToken = this._jwtService.sign(
+      {
+        sub: userId,
+        typ: 'access',
+        type: user.type,
+        jti: accessJti,
+      },
+      { expiresIn: this.getAccessTokenExpiration() },
+    );
     const refreshToken = this._jwtService.sign(
-      { sub: userId, typ: 'refresh' },
+      { sub: userId, typ: 'refresh', jti: refreshJti },
       {
         secret: this.getRefreshTokenSecret(),
-        expiresIn: this.getRefreshTokenExpiration(),
+        expiresIn: refreshExpiresIn,
       },
     );
+    await this._refreshTokenStore.register(refreshJti, userId, refreshTtlSec);
     return { authToken, refreshToken };
+  }
+
+  private getAccessTokenExpiration(): string {
+    const explicit = String(
+      this._configService.get<string>('JWT_EXPIRATION') ?? '',
+    ).trim();
+    return explicit || '30m';
   }
 
   private getRefreshTokenSecret(): string {
     const explicit = String(
       this._configService.get<string>('JWT_REFRESH_SECRET') ?? '',
     ).trim();
-    if (explicit) return explicit;
     const accessSecret = String(
       this._configService.get<string>('JWT_SECRET') ?? '',
     ).trim();
+    if (isProductionNodeEnv()) {
+      if (!explicit) {
+        this.logger.warn(
+          'JWT_REFRESH_SECRET missing in production — set a distinct secret (H-03 / M-08)',
+        );
+      } else if (explicit === accessSecret) {
+        this.logger.warn(
+          'JWT_REFRESH_SECRET must differ from JWT_SECRET in production',
+        );
+      }
+    }
+    if (explicit) return explicit;
     if (accessSecret) return accessSecret;
     throw new UnauthorizedException('jwt_secret_not_configured');
   }
