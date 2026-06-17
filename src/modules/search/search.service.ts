@@ -30,6 +30,10 @@ import {
   SortOrder,
 } from './dto/search.dto';
 import { escapeMongoRegex } from '@common/mongo/escape-regex.util';
+import {
+  buildDailyMenuTodayForProduct,
+  parseDailyMenuAddonsAvailability,
+} from '@utils/daily-menu-today-product.util';
 import { mapInChunks } from '@utils/map-in-chunks';
 import { productDailyMenuListingPipelineStages } from '@utils/product-daily-menu-listing.pipeline';
 import { storeArticlesAvailabilityPipelineStages } from '@utils/store-articles-availability.pipeline';

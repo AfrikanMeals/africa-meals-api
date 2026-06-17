@@ -17,6 +17,7 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import { PendingSignupModel } from '@schemas/pending-signup.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
+import { buildCaseInsensitiveExactRegex } from '@common/mongo/escape-regex.util';
 import {
   comparePassword,
   hashPassword,
@@ -66,10 +67,8 @@ import {
   isOtpExpired,
   verifyOtpCode,
 } from './auth-otp.util';
-import {
-  isProductionNodeEnv,
-  parseJwtDurationToSeconds,
-} from './jwt-token.util';
+import { parseJwtDurationToSeconds } from './jwt-token.util';
+import { resolveRefreshTokenSecret } from './jwt-secrets.util';
 
 @Injectable()
 export class AuthService {
@@ -2042,26 +2041,7 @@ export class AuthService {
   }
 
   private getRefreshTokenSecret(): string {
-    const explicit = String(
-      this._configService.get<string>('JWT_REFRESH_SECRET') ?? '',
-    ).trim();
-    const accessSecret = String(
-      this._configService.get<string>('JWT_SECRET') ?? '',
-    ).trim();
-    if (isProductionNodeEnv()) {
-      if (!explicit) {
-        this.logger.warn(
-          'JWT_REFRESH_SECRET missing in production — set a distinct secret (H-03 / M-08)',
-        );
-      } else if (explicit === accessSecret) {
-        this.logger.warn(
-          'JWT_REFRESH_SECRET must differ from JWT_SECRET in production',
-        );
-      }
-    }
-    if (explicit) return explicit;
-    if (accessSecret) return accessSecret;
-    throw new UnauthorizedException('jwt_secret_not_configured');
+    return resolveRefreshTokenSecret(this._configService);
   }
 
   private getRefreshTokenExpiration(): string {

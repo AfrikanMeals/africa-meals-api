@@ -1,3 +1,4 @@
+import { escapeMongoRegex } from '@common/mongo/escape-regex.util';
 import {
   isStripeConnectOnboardingCompleteUser,
   productEmbeddedStoreOwnerStripeOnboardedStages,

@@ -25,7 +25,7 @@
 |----------|--------|------------|------------|---------|--------|
 | Critique | 4 | 1 | 0 | 3 | Corriger immédiatement |
 | Élevée | 12 | 0 | 0 | 12 | Corriger sous 1–2 semaines |
-| Moyenne | 18 | 17 | 0 | 1 | Planifier sprint sécurité |
+| Moyenne | 18 | 9 | 0 | 9 | Planifier sprint sécurité |
 | Faible | 10 | 0 | 0 | 10 | Amélioration continue |
 | Positif | 8 | — | — | — | Maintenir |
 
@@ -86,14 +86,14 @@
 |----|-----|--------|--------|-------|----------------|
 | **M-01** | API | Improve | ❌ NOT YET | ADMIN sans rôles = toutes permissions | Exiger `platformRoleIds` ou rôle par défaut minimal |
 | **M-02** | API | Add | ✅ DONE | ~~Swagger / GraphQL playground actifs par défaut~~ | Désactivés en prod ; `DISABLE_*` / `ENABLE_*_IN_PROD` |
-| **M-03** | API | Improve | ❌ NOT YET | Body parser 60 MB — vecteur DoS | Réduire à 1–5 MB sauf routes upload dédiées |
-| **M-04** | API | Fix | ❌ NOT YET | Regex Mongo non échappées (ReDoS / injection) | `_escapeRegex()` sur toutes entrées `$regex` |
-| **M-05** | API | Add | ❌ NOT YET | Pas de `ValidationPipe` global avec `whitelist` | Pipe global : `whitelist`, `forbidNonWhitelisted` |
-| **M-06** | API | Improve | ❌ NOT YET | Uploads : MIME côté client, pas de magic bytes | Valider signature fichier ; limiter extensions |
-| **M-07** | API | Improve | ❌ NOT YET | reCAPTCHA en mode monitor (accepte tokens invalides) | `RECAPTCHA_ENTERPRISE_ENFORCE=true` en prod |
-| **M-08** | API | Improve | ⚠️ PENDING | Refresh JWT fallback sur `JWT_SECRET` si absent | `JWT_REFRESH_SECRET` documenté + warning prod si absent ou identique à access |
-| **M-09** | Admin | Add | ❌ NOT YET | Pas de CSP, HSTS, X-Frame-Options | Headers sécurité dans `next.config.js` |
-| **M-10** | Admin | Improve | ⚠️ PENDING | Cookie `ae_has_session=1` forgeable (hint UI) | Middleware vérifie aussi cookies session `ae_at`/`ae_rt` |
+| **M-03** | API | Improve | ✅ DONE | ~~Body parser 60 MB — vecteur DoS~~ | JSON 5 MB par défaut ; 25 MB routes upload JSON dédiées |
+| **M-04** | API | Fix | ✅ DONE | ~~Regex Mongo non échappées (ReDoS / injection)~~ | `escapeMongoRegex` centralisé sur toutes entrées `$regex` |
+| **M-05** | API | Add | ✅ DONE | ~~Pas de `ValidationPipe` global avec `whitelist`~~ | Pipe global `whitelist` + `forbidNonWhitelisted` + `transform` |
+| **M-06** | API | Improve | ✅ DONE | ~~Uploads : MIME côté client, pas de magic bytes~~ | `assertUploadFileSignature` (magic bytes + extensions) dans `MediasService` |
+| **M-07** | API | Improve | ✅ DONE | ~~reCAPTCHA en mode monitor (accepte tokens invalides)~~ | Appliqué en prod par défaut ; opt-out `RECAPTCHA_ENTERPRISE_ENFORCE=false` |
+| **M-08** | API | Improve | ✅ DONE | ~~Refresh JWT fallback sur `JWT_SECRET` si absent~~ | Boot + runtime : `JWT_REFRESH_SECRET` distinct obligatoire en prod |
+| **M-09** | Admin | Add | ✅ DONE | ~~Pas de CSP, HSTS, X-Frame-Options~~ | Headers sécurité dans `next.config.js` (CSP, HSTS, frame deny) |
+| **M-10** | Admin | Improve | ✅ DONE | ~~Cookie `ae_has_session=1` forgeable (hint UI)~~ | `proxy.ts` exige `ae_at` ou `ae_rt` httpOnly |
 | **M-11** | Admin | Fix | ❌ NOT YET | `dangerouslySetInnerHTML` sur mails inbox | DOMPurify ou rendu texte |
 | **M-12** | Mobile | Add | ❌ NOT YET | Pas de refresh token / renouvellement auto | Intercepteur 401 → refresh ou re-auth |
 | **M-13** | Mobile | Improve | ❌ NOT YET | `.env` embarqué dans APK/IPA | Secrets serveur interdits ; restrictions bundle/domaine sur clés publiques |
@@ -171,13 +171,13 @@ gantt
 | Secrets | Dump env + accounts.json corrigés (C-01, C-02) ; rotation clé ops | ⚠️ PENDING | P0 |
 | Stockage tokens | Admin refresh httpOnly ; mobile JWT en Keychain | ⚠️ PENDING | P1 |
 | Transport | HTTPS + pinning TLS optionnel mobile (L-07) | ✅ DONE | — |
-| Input validation | Partielle, regex à durcir | ❌ NOT YET | P2 |
+| Input validation | ValidationPipe global + regex échappées | ⚠️ PENDING | P2 |
 | Rate limiting | Auth routes limitées (H-02) | ✅ DONE | — |
 | CORS | Trop permissif (API corrigée H-01) | ⚠️ PENDING | P1 |
 | Logs | Auth API redactée ; mobile release sans logs HTTP sensibles | ✅ DONE | — |
 | Paiements (Stripe) | Webhooks OK | ✅ DONE | — |
 | Deep links | OTP via token opaque ; validation hôte stricte | ✅ DONE | — |
-| Headers HTTP | Manquants admin/web | ❌ NOT YET | P2 |
+| Headers HTTP | Admin CSP/HSTS ; web partiel | ⚠️ PENDING | P2 |
 | Dépendances | Audit CI + Dependabot (L-09) ; upgrade Nest planifié (L-10) | ⚠️ PENDING | P3 |
 
 ---

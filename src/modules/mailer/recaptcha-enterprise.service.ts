@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GoogleAuth } from 'google-auth-library';
+import { isRecaptchaEnterpriseEnforced } from './recaptcha-enterprise-enforce.util';
 
 @Injectable()
 export class RecaptchaEnterpriseService {
@@ -25,10 +26,7 @@ export class RecaptchaEnterpriseService {
     const siteKey =
       this.configService.get<string>('RECAPTCHA_ENTERPRISE_SITE_KEY')?.trim() ||
       '';
-    const enforce =
-      String(
-        this.configService.get<string>('RECAPTCHA_ENTERPRISE_ENFORCE') ?? '',
-      ).toLowerCase() === 'true';
+    const enforce = isRecaptchaEnterpriseEnforced();
 
     if (!projectId || !siteKey) {
       if (enforce) {

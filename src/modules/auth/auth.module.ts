@@ -33,6 +33,7 @@ import { RedisSharedModule } from '../../common/redis/redis-shared.module';
 import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard';
 import { RefreshTokenStore } from './refresh-token.store';
 import { OtpLinkTokenStore } from './otp-link-token.store';
+import { JwtSecretsBootstrapService } from './jwt-secrets-bootstrap.service';
 
 @Module({
   controllers: [
@@ -51,6 +52,7 @@ import { OtpLinkTokenStore } from './otp-link-token.store';
     AuthRateLimitGuard,
     RefreshTokenStore,
     OtpLinkTokenStore,
+    JwtSecretsBootstrapService,
     AccountDeletionCron,
   ],
   imports: [

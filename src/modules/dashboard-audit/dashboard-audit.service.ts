@@ -1,3 +1,4 @@
+import { escapeMongoRegex } from '@common/mongo/escape-regex.util';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import {
   BadRequestException,

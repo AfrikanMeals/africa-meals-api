@@ -1,3 +1,4 @@
+import { buildCaseInsensitiveExactRegex } from '@common/mongo/escape-regex.util';
 import {
   BadRequestException,
   ConflictException,

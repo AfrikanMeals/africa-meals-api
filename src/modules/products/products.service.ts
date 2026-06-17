@@ -1,5 +1,6 @@
 import { buildCaseInsensitiveExactRegex, escapeMongoRegex } from '@common/mongo/escape-regex.util';
 import { MediasService } from '@modules/medias/medias.service';
+import { prepareIncomingUploadFile } from 'src/incoming-upload-file';
 import {
   AppCacheKeys,
   apiPublicCacheTtlMs,

@@ -1,3 +1,4 @@
+import { escapeMongoRegex } from '@common/mongo/escape-regex.util';
 import { ProductsService } from '@modules/products/products.service';
 import { SearchResultDto } from '@modules/search/dto/search.dto';
 import {
