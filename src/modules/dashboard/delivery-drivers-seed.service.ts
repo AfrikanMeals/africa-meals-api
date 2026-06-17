@@ -30,7 +30,7 @@ export class DeliveryDriversSeedService implements OnApplicationBootstrap {
    * Désactivé par défaut. Activer explicitement : `SEED_DEMO_DELIVERY_DRIVERS=true`.
    */
   async onApplicationBootstrap(): Promise<void> {
-    if (process.env.SEED_DEMO_DELIVERY_DRIVERS !== 'true') {
+    if (!isDemoSeedEnvEnabled('SEED_DEMO_DELIVERY_DRIVERS')) {
       return;
     }
 

@@ -1,5 +1,6 @@
 import { fieldSelectionMiddleware } from './common/field-selection/field-selection.middleware';
 import { buildApiCorsOptions } from './common/cors/cors-options';
+import { GlobalHttpExceptionFilter } from './common/filters/global-http-exception.filter';
 import { redactSensitiveJsonForLog } from './common/logging/redact-sensitive.util';
 import { INestApplication } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -61,6 +62,19 @@ function legacyUnprefixedPathRewrite(globalPrefix: string) {
   };
 }
 
+function isHttpBodyLoggingEnabled(): boolean {
+  if (process.env.LOG_HTTP_BODIES !== 'true') {
+    return false;
+  }
+  if (
+    process.env.NODE_ENV === 'production' &&
+    process.env.LOG_HTTP_BODIES_IN_PROD !== 'true'
+  ) {
+    return false;
+  }
+  return true;
+}
+
 /**
  * Configuration HTTP partagée : préfixe global, CORS, Swagger (sauf si DISABLE_SWAGGER=true).
  */
@@ -68,7 +82,9 @@ export async function configureApplication(
   app: INestApplication,
   options?: ConfigureAppOptions,
 ): Promise<void> {
-  if (process.env.LOG_HTTP_BODIES === 'true') {
+  app.useGlobalFilters(new GlobalHttpExceptionFilter());
+
+  if (isHttpBodyLoggingEnabled()) {
     app.use((req: any, _res, next) => {
       const ct = req.headers['content-type'];
       const isMultipart =

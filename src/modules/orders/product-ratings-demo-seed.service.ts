@@ -1,4 +1,5 @@
 import { isDemoSeedEnvEnabled } from '@common/security/demo-seed.util';
+import { DEMO_PRODUCT_RATER_EMAIL_RE } from '@modules/ratings/demo-product-rating-users';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -80,7 +81,7 @@ export class ProductRatingsDemoSeedService implements OnModuleInit {
    * Désactivé par défaut au démarrage. Activer explicitement : `SEED_DEMO_PRODUCT_RATINGS=true`.
    */
   private async seedDemoProductRatingsIfNeeded() {
-    if (process.env.SEED_DEMO_PRODUCT_RATINGS !== 'true') {
+    if (!isDemoSeedEnvEnabled('SEED_DEMO_PRODUCT_RATINGS')) {
       return;
     }
 

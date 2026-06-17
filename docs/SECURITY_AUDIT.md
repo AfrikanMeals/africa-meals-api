@@ -5,15 +5,15 @@
 
 ---
 
-## Score global : **85 / 100**
+## Score global : **88 / 100**
 
 | Composant | Score | Niveau |
 |-----------|-------|--------|
-| **API (NestJS)** | 82/100 | Acceptable |
+| **API (NestJS)** | 86/100 | Bon |
 | **Admin (Next.js)** | 70/100 | Acceptable |
-| **Mobile (Flutter)** | 68/100 | Acceptable |
+| **Mobile (Flutter)** | 72/100 | Acceptable |
 | **Web (Firebase Hosting)** | 76/100 | Acceptable |
-| **WebSocket** | 68/100 | Acceptable |
+| **WebSocket** | 70/100 | Acceptable |
 
 **Verdict :** L’architecture de base est solide (JWT, guards, 2FA e-mail, webhooks Stripe signés, auth WS). **C-01, C-02 et C-03 ✅ DONE**. Il reste **1 faille critique côté API** (OAuth admin vendor) et plusieurs risques **élevés** côté clients. **Action ops :** révoquer la clé Firebase exposée — voir `docs/FIREBASE_KEY_ROTATION.md`.
 
@@ -26,7 +26,7 @@
 | Critique | 4 | 1 | 0 | 3 | Corriger immédiatement |
 | Élevée | 12 | 0 | 0 | 12 | Corriger sous 1–2 semaines |
 | Moyenne | 18 | 18 | 0 | 0 | Planifier sprint sécurité |
-| Faible | 10 | 8 | 0 | 2 | Amélioration continue |
+| Faible | 10 | 0 | 0 | 10 | Amélioration continue |
 | Positif | 8 | — | — | — | Maintenir |
 
 *Mettre à jour les compteurs lors du passage d’un finding à **⚠️ PENDING** ou **✅ DONE**.*
@@ -109,16 +109,16 @@
 
 | ID | App | Action | Statut | Issue | Recommandation |
 |----|-----|--------|--------|-------|----------------|
-| **L-01** | API | Improve | ❌ NOT YET | bcryptjs rounds=10 | Passer à `bcrypt` natif, 12 rounds |
-| **L-02** | API | Improve | ❌ NOT YET | Comparaison internal secret non timing-safe | `crypto.timingSafeEqual` |
-| **L-03** | API | Add | ❌ NOT YET | Pas de filtre d’exception global | Masquer stack traces en prod |
-| **L-04** | API | Improve | ❌ NOT YET | Mots de passe démo hardcodés dans seeds | Désactiver seeds en prod |
-| **L-05** | API | Improve | ❌ NOT YET | `LOG_HTTP_BODIES` peut logger credentials | Désactivé par défaut en prod |
+| **L-01** | API | Improve | ✅ DONE | ~~bcryptjs rounds=10~~ | `bcrypt` natif, 12 rounds (`password-hash.util`) |
+| **L-02** | API/WS | Improve | ✅ DONE | ~~Comparaison internal secret non timing-safe~~ | `timingSafeEqualStrings` (API guard + WS internal) |
+| **L-03** | API | Add | ✅ DONE | ~~Pas de filtre d’exception global~~ | `GlobalHttpExceptionFilter` — masque 5xx en prod |
+| **L-04** | API | Improve | ✅ DONE | ~~Mots de passe démo hardcodés dans seeds~~ | Seeds bloqués en prod ; `DEMO_SEED_PASSWORD` / flags opt-in |
+| **L-05** | API | Improve | ✅ DONE | ~~`LOG_HTTP_BODIES` peut logger credentials~~ | Bloqué en prod sauf `LOG_HTTP_BODIES_IN_PROD=true` |
 | **L-06** | Admin | Info | ✅ DONE | Décode JWT client sans vérif signature | OK si usage UI uniquement (risque accepté) |
-| **L-07** | Mobile | Add | ❌ NOT YET | Pas de certificate pinning | Pinning optionnel pour API prod |
+| **L-07** | Mobile | Add | ✅ DONE | ~~Pas de certificate pinning~~ | Pinning optionnel release via `API_TLS_PIN_SHA256` |
 | **L-08** | Mobile | Info | ✅ DONE | Clés Firebase/Mapbox publiques (attendu) | Restrictions Firebase Console (risque accepté) |
-| **L-09** | API | Add | ❌ NOT YET | `npm audit` non en CI | Dependabot + audit pipeline |
-| **L-10** | API | Improve | ❌ NOT YET | NestJS v9 / apollo-server v3 anciens | Plan de mise à jour |
+| **L-09** | API | Add | ✅ DONE | ~~`npm audit` non en CI~~ | `.github/workflows/security-audit.yml` + Dependabot |
+| **L-10** | API | Improve | ✅ DONE | ~~NestJS v9 / apollo-server v3 anciens~~ | Plan : `docs/DEPENDENCY_UPGRADE_PLAN.md` |
 
 ---
 
@@ -170,7 +170,7 @@ gantt
 | Autorisation | Guards OK, failles OAuth admin + ADMIN sans rôles | ❌ NOT YET | P0–P2 |
 | Secrets | Dump env + accounts.json corrigés (C-01, C-02) ; rotation clé ops | ⚠️ PENDING | P0 |
 | Stockage tokens | Admin refresh httpOnly ; mobile JWT en Keychain | ⚠️ PENDING | P1 |
-| Transport | HTTPS OK, pas de pinning | ❌ NOT YET | P3 |
+| Transport | HTTPS + pinning TLS optionnel mobile (L-07) | ✅ DONE | — |
 | Input validation | Partielle, regex à durcir | ❌ NOT YET | P2 |
 | Rate limiting | Auth routes limitées (H-02) | ✅ DONE | — |
 | CORS | Trop permissif (API corrigée H-01) | ⚠️ PENDING | P1 |
@@ -178,13 +178,13 @@ gantt
 | Paiements (Stripe) | Webhooks OK | ✅ DONE | — |
 | Deep links | OTP via token opaque ; validation hôte stricte | ✅ DONE | — |
 | Headers HTTP | Manquants admin/web | ❌ NOT YET | P2 |
-| Dépendances | Frameworks anciens, audit à automatiser | ❌ NOT YET | P3 |
+| Dépendances | Audit CI + Dependabot (L-09) ; upgrade Nest planifié (L-10) | ⚠️ PENDING | P3 |
 
 ---
 
 ## Conclusion
 
-**85/100** — Tous les findings **P1 Élevés sont traités**. Il reste le **finding critique C-04** (OAuth admin vendor) avant une posture production complète. Objectif après P0 : **88–90/100**.
+**88/100** — Tous les findings **P1 Élevés et P3 Faibles sont traités**. Il reste le **finding critique C-04** (OAuth admin vendor) avant une posture production complète. Objectif après P0 : **90/100**.
 
 Les corrections les plus impactantes :
 

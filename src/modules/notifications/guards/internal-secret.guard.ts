@@ -1,10 +1,11 @@
+import { timingSafeEqualStrings } from '@common/security/timing-safe-equal.util';
+import { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
 import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
-import { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
 
 @Injectable()
 export class InternalSecretGuard implements CanActivate {
@@ -23,7 +24,7 @@ export class InternalSecretGuard implements CanActivate {
         : Array.isArray(header)
           ? header[0]
           : '';
-    if (provided !== secret) {
+    if (!timingSafeEqualStrings(provided, secret)) {
       throw new ForbiddenException('invalid_internal_secret');
     }
     return true;
