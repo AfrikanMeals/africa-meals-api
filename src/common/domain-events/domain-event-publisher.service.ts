@@ -205,6 +205,7 @@ export class DomainEventPublisherService
   async publishEnvelope(
     envelope: DomainEventEnvelope,
   ): Promise<DomainEventPublishResult> {
+    const started = performance.now();
     const validated = this.registry.validateEnvelope(envelope);
     const topic = this.topicFor(validated.type);
 
@@ -223,9 +224,25 @@ export class DomainEventPublisherService
       return this.result(validated, 'duplicate', true, 'duplicate_event_id');
     }
 
-    await this.scheduleInProcessHandler(validated);
-
     const infra = await this.readInfraSettings();
+    const handlersAsync = isHandlersAsyncEnabled(this.config);
+
+    if (handlersAsync) {
+      void this.scheduleInProcessHandler(validated, infra);
+    } else {
+      await this.scheduleInProcessHandler(validated, infra);
+    }
+
+    const busResult = await this.dispatchEnvelopeToBus(validated, topic, infra);
+    this.logPublishDuration(validated, started, handlersAsync);
+    return busResult;
+  }
+
+  private async dispatchEnvelopeToBus(
+    envelope: DomainEventEnvelope,
+    topic: string,
+    infra: { redisManagerEnabled: boolean; mqBrokerEnabled: boolean },
+  ): Promise<DomainEventPublishResult> {
     const canQueue =
       infra.redisManagerEnabled && this.queueEnabled && this.queue != null;
     const canMqtt =
@@ -235,44 +252,62 @@ export class DomainEventPublisherService
 
     if (!canQueue && !canMqtt) {
       this.logger.warn(
-        `Domain event handlers ran; bus unavailable type=${validated.type} id=${validated.id}`,
+        `Domain event handlers scheduled; bus unavailable type=${envelope.type} id=${envelope.id}`,
       );
-      return this.result(validated, 'skipped', true, 'no_broker_available');
+      return this.result(envelope, 'skipped', true, 'no_broker_available');
     }
 
     if (canQueue) {
       try {
-        await this.enqueue(validated, topic);
-        return this.result(validated, 'queued', true);
+        await this.enqueue(envelope, topic);
+        return this.result(envelope, 'queued', true);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         this.logger.warn(
-          `domain-events enqueue failed id=${validated.id}: ${msg}`,
+          `domain-events enqueue failed id=${envelope.id}: ${msg}`,
         );
         if (!canMqtt) {
-          return this.result(validated, 'skipped', false, 'enqueue_failed');
+          return this.result(envelope, 'skipped', false, 'enqueue_failed');
         }
       }
     }
 
     if (canMqtt) {
       try {
-        await this.publishEnvelopeToMqtt(validated, topic, 'direct');
-        return this.result(validated, 'mqtt', true);
+        await this.publishEnvelopeToMqtt(envelope, topic, 'direct');
+        return this.result(envelope, 'mqtt', true);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         this.logger.warn(
-          `domain-events MQTT direct failed id=${validated.id}: ${msg}`,
+          `domain-events MQTT direct failed id=${envelope.id}: ${msg}`,
         );
-        return this.result(validated, 'skipped', false, 'mqtt_publish_failed');
+        return this.result(envelope, 'skipped', false, 'mqtt_publish_failed');
       }
     }
 
-    return this.result(validated, 'skipped', false, 'dispatch_failed');
+    return this.result(envelope, 'skipped', false, 'dispatch_failed');
+  }
+
+  private logPublishDuration(
+    envelope: DomainEventEnvelope,
+    started: number,
+    handlersAsync: boolean,
+  ): void {
+    const ms = Math.round(performance.now() - started);
+    if (ms > 50) {
+      this.logger.warn(
+        `Domain event publish slow type=${envelope.type} id=${envelope.id} latencyMs=${ms} handlersAsync=${handlersAsync}`,
+      );
+      return;
+    }
+    this.logger.debug(
+      `Domain event publish type=${envelope.type} id=${envelope.id} latencyMs=${ms} handlersAsync=${handlersAsync}`,
+    );
   }
 
   private async scheduleInProcessHandler(
     envelope: DomainEventEnvelope,
+    infra: { redisManagerEnabled: boolean; mqBrokerEnabled: boolean },
   ): Promise<void> {
     if (!this.inProcessHandler) return;
 
@@ -281,7 +316,6 @@ export class DomainEventPublisherService
       return;
     }
 
-    const infra = await this.readInfraSettings();
     const canHandlersQueue =
       infra.redisManagerEnabled &&
       this.handlersQueueEnabled &&

@@ -8,9 +8,10 @@ import { OrdersModule } from '@modules/orders/orders.module';
 import { RefundsModule } from '@modules/refunds/refunds.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
+import { FleetModule } from '@modules/fleet/fleet.module';
 import { AdminJobProgressService } from '@modules/admin-jobs/admin-job-progress.service';
-import { FleetSnapshotService } from '@modules/fleet/fleet-snapshot.service';
-import { CheckoutSessionSseService } from '@modules/sse-stream/checkout-session-sse.service';
+import { AdminJobEmitterService } from '@modules/admin-jobs/admin-job-emitter.service';
+import { CheckoutSessionSseModule } from '@modules/sse-stream/checkout-session-sse.module';
 import { DomainEventHandlersService } from './domain-event-handlers.service';
 import { DomainEventHandlersBootstrapService } from './domain-event-handlers-bootstrap.service';
 import { AdDomainEventHandler } from './handlers/ad-domain-event.handler';
@@ -26,6 +27,7 @@ import { OrderDomainBridgeService } from './order-domain-bridge.service';
 @Module({
   imports: [
     ConfigModule,
+    FleetModule,
     WsNotifyModule,
     NotificationsModule,
     LoyaltyModule,
@@ -34,6 +36,7 @@ import { OrderDomainBridgeService } from './order-domain-bridge.service';
     forwardRef(() => RefundsModule),
     forwardRef(() => SubscriptionsModule),
     forwardRef(() => AdsModule),
+    CheckoutSessionSseModule,
   ],
   providers: [
     DomainEventHandlersService,
@@ -48,16 +51,14 @@ import { OrderDomainBridgeService } from './order-domain-bridge.service';
     JobDomainEventHandler,
     SubscriptionDomainEventHandler,
     AdminJobProgressService,
-    FleetSnapshotService,
-    CheckoutSessionSseService,
+    AdminJobEmitterService,
   ],
   exports: [
     DomainEventHandlersService,
     OrderDomainBridgeService,
     WsOrderNotifyHandler,
     AdminJobProgressService,
-    FleetSnapshotService,
-    CheckoutSessionSseService,
+    AdminJobEmitterService,
   ],
 })
 export class DomainEventHandlersModule {}

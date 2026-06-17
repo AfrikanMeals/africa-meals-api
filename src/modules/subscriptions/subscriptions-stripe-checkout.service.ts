@@ -109,6 +109,13 @@ export class SubscriptionsStripeCheckoutService {
       this.config.get<string>('STRIPE_SUBSCRIPTION_SUCCESS_URL')?.trim() || '';
     const raw = configured || adminSubscriptionUrl;
     if (raw.startsWith('wise-eat://')) {
+      const publicWeb = this.config
+        .get<string>('PUBLIC_WEB_URL')
+        ?.trim()
+        .replace(/\/$/, '');
+      if (publicWeb) {
+        return `${publicWeb}/checkout-success?session_id={CHECKOUT_SESSION_ID}&mobile_return=vendor_subscription`;
+      }
       return `${server}/api/billing/stripe/subscription-return?session_id={CHECKOUT_SESSION_ID}`;
     }
     return raw.includes('{CHECKOUT_SESSION_ID}')

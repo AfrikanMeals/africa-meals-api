@@ -44,13 +44,21 @@ export class WsOrderNotifyService {
     this.postInternal('order/tracking', userId, payload);
   }
 
+  /** Un seul dispatch MQTT/BullMQ — WS émet update + tracking (OPT-005). */
+  notifyCustomerOrderChanged(
+    userId: string,
+    payload: OrderWsTrackingPayload,
+  ): void {
+    this.postInternal('order/changed', userId, payload);
+  }
+
   /** Salon `orders:admin` — comptes ADMIN connectés sur l’app admin. */
   notifyStaffOrderBroadcast(payload: OrderWsTrackingPayload): void {
     this.postInternalStaff('order/staff-broadcast', payload);
   }
 
   private postInternal(
-    pathSuffix: 'order/update' | 'order/tracking',
+    pathSuffix: 'order/update' | 'order/tracking' | 'order/changed',
     userId: string,
     payload: OrderWsTrackingPayload,
   ): void {

@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { DomainEventIdempotencyStore } from './domain-event-idempotency.store';
+import { SharedRedisService } from '../redis/shared-redis.service';
 
 describe('DomainEventIdempotencyStore', () => {
   function createStore(): DomainEventIdempotencyStore {
@@ -9,12 +10,14 @@ describe('DomainEventIdempotencyStore', () => {
         return undefined;
       },
     } as unknown as ConfigService;
-    return new DomainEventIdempotencyStore(config);
+    const sharedRedis = {
+      getClient: () => null,
+    } as unknown as SharedRedisService;
+    return new DomainEventIdempotencyStore(config, sharedRedis);
   }
 
   it('claims a new event id once (in-memory fallback)', async () => {
     const store = createStore();
-    store.onModuleInit();
 
     await expect(store.tryClaim('11111111-1111-4111-8111-111111111111')).resolves.toBe(
       true,
@@ -22,7 +25,5 @@ describe('DomainEventIdempotencyStore', () => {
     await expect(store.tryClaim('11111111-1111-4111-8111-111111111111')).resolves.toBe(
       false,
     );
-
-    await store.onModuleDestroy();
   });
 });

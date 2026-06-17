@@ -1,17 +1,16 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { DomainEventPublisherService } from '../../common/domain-events/domain-event-publisher.service';
 import { DomainEventHandlersService } from './domain-event-handlers.service';
 
+/** Enregistre le handler avant `onModuleInit` du publisher (évite course worker / handler null). */
 @Injectable()
-export class DomainEventHandlersBootstrapService implements OnModuleInit {
+export class DomainEventHandlersBootstrapService {
   constructor(
-    private readonly publisher: DomainEventPublisherService,
-    private readonly handlers: DomainEventHandlersService,
-  ) {}
-
-  onModuleInit(): void {
-    this.publisher.registerInProcessHandler((envelope) =>
-      this.handlers.dispatch(envelope),
+    publisher: DomainEventPublisherService,
+    handlers: DomainEventHandlersService,
+  ) {
+    publisher.registerInProcessHandler((envelope) =>
+      handlers.dispatch(envelope),
     );
   }
 }

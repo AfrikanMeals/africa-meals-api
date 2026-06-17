@@ -1,6 +1,11 @@
-import { DomainEventHandlersService } from '@modules/domain-event-handlers/domain-event-handlers.service';
 import { isDomainEventsEnabled } from '@modules/domain-event-handlers/domain-event-handlers.util';
+import { DomainEventPublisherService } from '../../../common/domain-events/domain-event-publisher.service';
+import { DomainEventDraft } from '../../../common/domain-events/domain-event.types';
+import { DomainEventType } from '../../../common/domain-events/domain-event-types';
 import { domainEventIdFromStripeWebhook } from '../../../common/domain-events/domain-event-id.util';
+import { StripeWebhookMetricsService } from './stripe-webhook-metrics.service';
+import { resolveStripeCheckoutSuccessUrl } from './stripe-checkout-return-url.util';
+import { CheckoutSessionSseService } from '@modules/sse-stream/checkout-session-sse.service';
 import { SubscriptionsStripeCheckoutService } from '@modules/subscriptions/subscriptions-stripe-checkout.service';
 import { CartService } from '@modules/cart/cart.service';
 import {
@@ -474,13 +479,45 @@ export class StripeGroupedCheckoutService {
     private readonly adCreditPaymentModel: Model<AdCreditPaymentModel>,
     @Inject(SubscriptionsStripeCheckoutService)
     private readonly subscriptionStripeCheckout: SubscriptionsStripeCheckoutService,
+    private readonly webhookMetrics: StripeWebhookMetricsService,
     @Inject(forwardRef(() => VendorNotificationStripeBillingService))
     @Optional()
     private readonly vendorSmsBilling?: VendorNotificationStripeBillingService,
-    @Inject(forwardRef(() => DomainEventHandlersService))
     @Optional()
-    private readonly domainEvents?: DomainEventHandlersService,
+    private readonly domainPublisher?: DomainEventPublisherService,
+    @Optional()
+    private readonly checkoutSse?: CheckoutSessionSseService,
   ) {}
+
+  private notifyCheckoutSse(
+    sessionId: string,
+    type: 'checkout_completed' | 'subscription_completed',
+    orderIds?: string[],
+  ): void {
+    const sid = sessionId.trim();
+    if (!sid || !this.checkoutSse) return;
+    this.checkoutSse.emit(sid, {
+      type,
+      sessionId: sid,
+      orderIds,
+      complete: true,
+    });
+  }
+
+  private async publishStripeDomainEvent<T extends DomainEventType>(
+    draft: DomainEventDraft<T>,
+  ): Promise<boolean> {
+    if (!isDomainEventsEnabled(this.config) || !this.domainPublisher) {
+      return false;
+    }
+    const result = await this.domainPublisher.publish(draft);
+    if (!result.ok && result.mode !== 'duplicate') {
+      this.logger.warn(
+        `Stripe domain event publish skipped type=${draft.type} reason=${result.reason ?? result.mode}`,
+      );
+    }
+    return true;
+  }
 
   private async settleAdCreditFromCheckoutSession(session: {
     id: string;
@@ -1074,18 +1111,12 @@ export class StripeGroupedCheckoutService {
     const server =
       this.config.get<string>('SERVER_URL')?.replace(/\/$/, '') ??
       'http://localhost:9000';
-    const rawSuccess =
-      this.config.get<string>('STRIPE_CHECKOUT_SUCCESS_URL') ??
-      `${server}/api/billing/stripe/payment-done`;
+    const rawSuccess = resolveStripeCheckoutSuccessUrl(this.config);
     const rawCancel =
       this.config.get<string>('STRIPE_CHECKOUT_CANCEL_URL') ??
       `${server}/api/billing/stripe/payment-cancel`;
 
-    const successUrl = rawSuccess.includes('{CHECKOUT_SESSION_ID}')
-      ? rawSuccess
-      : `${rawSuccess}${
-          rawSuccess.includes('?') ? '&' : '?'
-        }session_id={CHECKOUT_SESSION_ID}`;
+    const successUrl = rawSuccess;
     const cancelUrl = rawCancel;
 
     const meta = this.groupedMetadata(user, built);
@@ -1244,6 +1275,224 @@ export class StripeGroupedCheckoutService {
     return this.fulfillOrdersAfterStripePayment(params);
   }
 
+  /** Fulfillment d'une boutique dans un checkout groupé (OPT-008 — parallélisable). */
+  private async fulfillStripeGroupedStore(params: {
+    storeId: string;
+    priorByStore: Map<string, StripePerStoreBreakdownRow>;
+    payoutMap: Map<string, { goodsCents: number; shipCents: number }>;
+    couponByStore: Map<string, string>;
+    shipCentsByStore: Record<string, number>;
+    stripePaymentId: string;
+    uid: string;
+    user: UserModel;
+    amountTotalCents?: number;
+    currency?: string;
+    stripeEventKind: 'checkout_session' | 'payment_intent';
+    checkoutAddressId: string;
+  }): Promise<{
+    breakdown: StripePerStoreBreakdownRow;
+    orderId?: string;
+    error?: { storeId: string; error: string };
+  }> {
+    const {
+      storeId,
+      priorByStore,
+      payoutMap,
+      couponByStore,
+      shipCentsByStore,
+      stripePaymentId,
+      uid,
+      user,
+      amountTotalCents,
+      currency,
+      checkoutAddressId,
+    } = params;
+
+    const prior = priorByStore.get(storeId);
+    if (prior?.orderId && !prior.error) {
+      const alreadyPaid = await this.ordersService.isOrderPaidForStripePayment(
+        prior.orderId,
+        stripePaymentId,
+      );
+      if (alreadyPaid) {
+        void this.ordersService
+          .ensureVendorPaidOrderNotifications(prior.orderId)
+          .catch((err) =>
+            this.logger.warn(
+              `vendor paid notify retry order=${prior.orderId}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            ),
+          );
+        const g = prior.goodsCents ?? 0;
+        const s = prior.shipCents ?? 0;
+        let transferId = prior.transferId;
+        let transferCents = prior.transferCents;
+        let platformFeeCents = prior.platformFeeCents;
+        let transferSkippedReason = prior.transferSkippedReason;
+        try {
+          const tr = await this.stripeTransfers.transferForPaidOrder({
+            orderId: prior.orderId,
+            storeId,
+            goodsCents: g,
+            shipCents: s,
+            stripeParentPaymentId: stripePaymentId,
+            paymentTotalCents: amountTotalCents,
+          });
+          transferId = tr.transferId ?? transferId;
+          transferCents = tr.transferCents;
+          platformFeeCents = tr.platformFeeCents;
+          transferSkippedReason = tr.skippedReason;
+        } catch {
+          /* garde les valeurs prior */
+        }
+        return {
+          breakdown: {
+            ...prior,
+            transferId,
+            transferCents,
+            platformFeeCents,
+            transferSkippedReason,
+          },
+          orderId: prior.orderId,
+        };
+      }
+    }
+
+    const payoutRow = payoutMap.get(storeId);
+    const shipCents =
+      payoutRow != null
+        ? Math.max(0, payoutRow.shipCents)
+        : Math.max(0, Math.round(shipCentsByStore[storeId] ?? 0));
+    const goodsCents =
+      payoutRow != null ? Math.max(0, payoutRow.goodsCents) : undefined;
+    const couponCode = couponByStore.get(storeId);
+
+    const baseRow: StripePerStoreBreakdownRow = {
+      storeId,
+      goodsCents: goodsCents ?? 0,
+      shipCents,
+      couponCode,
+    };
+
+    try {
+      let oid = await this.ordersService.findRecoverableOrderIdForStorePayment(
+        uid,
+        storeId,
+        stripePaymentId,
+      );
+
+      if (!oid) {
+        try {
+          const order = await this.storeService.createOrderFromCart(
+            storeId,
+            user,
+          );
+          oid =
+            (order as { _id?: Types.ObjectId })?._id?.toString() ??
+            (order as { id?: string })?.id ??
+            null;
+        } catch (createErr) {
+          if (this.isCartEmptyFulfillError(createErr)) {
+            oid = await this.ordersService.findRecoverableOrderIdForStorePayment(
+              uid,
+              storeId,
+              stripePaymentId,
+            );
+          }
+          if (!oid) {
+            throw createErr;
+          }
+        }
+      }
+
+      if (!oid) {
+        throw new Error('order_id_missing_after_create');
+      }
+
+      const useStripeCents = payoutRow != null;
+      await this.ordersService.markOrderPaidWithShipping(oid, shipCents / 100, {
+        stripeParentPaymentId: stripePaymentId,
+        couponCode,
+        chargedGoodsCents: useStripeCents ? goodsCents : undefined,
+        chargedShipCents: useStripeCents ? shipCents : undefined,
+        subtotalBeforeTax:
+          goodsCents != null && shipCents != null
+            ? (goodsCents + shipCents) / 100
+            : undefined,
+        deliveryAddressId:
+          shipCents > 0 && checkoutAddressId ? checkoutAddressId : undefined,
+        currency: currency ? currency.trim().toUpperCase() : undefined,
+      });
+      const paidOk = await this.ordersService.isOrderPaidForStripePayment(
+        oid,
+        stripePaymentId,
+      );
+      if (!paidOk) {
+        throw new Error('order_not_marked_paid');
+      }
+      if (couponCode) {
+        await this.couponsService.recordUsageAfterSuccessfulPayment(
+          storeId,
+          couponCode,
+        );
+      }
+
+      let transferId: string | undefined;
+      let transferCents: number | undefined;
+      let platformFeeCents: number | undefined;
+      let transferSkippedReason: string | undefined;
+      try {
+        const tr = await this.stripeTransfers.transferForPaidOrder({
+          orderId: oid,
+          storeId,
+          goodsCents: goodsCents ?? 0,
+          shipCents,
+          stripeParentPaymentId: stripePaymentId,
+          paymentTotalCents: amountTotalCents,
+        });
+        transferCents = tr.transferCents;
+        platformFeeCents = tr.platformFeeCents;
+        transferId = tr.transferId;
+        transferSkippedReason = tr.skippedReason;
+        if (!tr.transferred && tr.skippedReason) {
+          this.logger.warn(
+            `Connect transfer skipped store=${storeId} order=${oid}: ${tr.skippedReason}`,
+          );
+        }
+      } catch (trErr) {
+        transferSkippedReason =
+          trErr instanceof Error ? trErr.message : String(trErr);
+        this.logger.error(
+          `Connect transfer error store=${storeId} order=${oid}: ${transferSkippedReason}`,
+        );
+      }
+
+      return {
+        breakdown: {
+          ...baseRow,
+          orderId: oid,
+          goodsCents: goodsCents ?? baseRow.goodsCents,
+          shipCents,
+          transferId,
+          transferCents,
+          platformFeeCents,
+          transferSkippedReason,
+        },
+        orderId: oid,
+      };
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      this.logger.error(
+        `Stripe fulfill: order failed for store ${storeId}: ${e}`,
+      );
+      return {
+        breakdown: { ...baseRow, error: errMsg },
+        error: { storeId, error: errMsg },
+      };
+    }
+  }
+
   private async fulfillOrdersAfterStripePayment(params: {
     stripePaymentId: string;
     uid: string;
@@ -1399,200 +1648,31 @@ export class StripeGroupedCheckoutService {
     const perStoreBreakdown: StripePerStoreBreakdownRow[] = [];
     const fulfillErrors: Array<{ storeId: string; error: string }> = [];
 
-    for (const storeId of storeIds) {
-      const prior = priorByStore.get(storeId);
-      if (prior?.orderId && !prior.error) {
-        const alreadyPaid =
-          await this.ordersService.isOrderPaidForStripePayment(
-            prior.orderId,
-            stripePaymentId,
-          );
-        if (alreadyPaid) {
-          void this.ordersService
-            .ensureVendorPaidOrderNotifications(prior.orderId)
-            .catch((err) =>
-              this.logger.warn(
-                `vendor paid notify retry order=${prior.orderId}: ${
-                  err instanceof Error ? err.message : String(err)
-                }`,
-              ),
-            );
-          const g = prior.goodsCents ?? 0;
-          const s = prior.shipCents ?? 0;
-          let transferId = prior.transferId;
-          let transferCents = prior.transferCents;
-          let platformFeeCents = prior.platformFeeCents;
-          let transferSkippedReason = prior.transferSkippedReason;
-          try {
-            const tr = await this.stripeTransfers.transferForPaidOrder({
-              orderId: prior.orderId,
-              storeId,
-              goodsCents: g,
-              shipCents: s,
-              stripeParentPaymentId: stripePaymentId,
-              paymentTotalCents: amountTotalCents,
-            });
-            transferId = tr.transferId ?? transferId;
-            transferCents = tr.transferCents;
-            platformFeeCents = tr.platformFeeCents;
-            transferSkippedReason = tr.skippedReason;
-          } catch {
-            /* garde les valeurs prior */
-          }
-          perStoreBreakdown.push({
-            ...prior,
-            transferId,
-            transferCents,
-            platformFeeCents,
-            transferSkippedReason,
-          });
-          if (!orderIds.includes(prior.orderId)) {
-            orderIds.push(prior.orderId);
-          }
-          continue;
-        }
-      }
-
-      const payoutRow = payoutMap.get(storeId);
-      const shipCents =
-        payoutRow != null
-          ? Math.max(0, payoutRow.shipCents)
-          : Math.max(0, Math.round(shipCentsByStore[storeId] ?? 0));
-      const goodsCents =
-        payoutRow != null ? Math.max(0, payoutRow.goodsCents) : undefined;
-      const couponCode = couponByStore.get(storeId);
-
-      const baseRow: StripePerStoreBreakdownRow = {
-        storeId,
-        goodsCents: goodsCents ?? 0,
-        shipCents,
-        couponCode,
-      };
-
-      try {
-        let oid =
-          await this.ordersService.findRecoverableOrderIdForStorePayment(
-            uid,
-            storeId,
-            stripePaymentId,
-          );
-
-        if (!oid) {
-          try {
-            const order = await this.storeService.createOrderFromCart(
-              storeId,
-              user,
-            );
-            oid =
-              (order as { _id?: Types.ObjectId })?._id?.toString() ??
-              (order as { id?: string })?.id ??
-              null;
-          } catch (createErr) {
-            if (this.isCartEmptyFulfillError(createErr)) {
-              oid =
-                await this.ordersService.findRecoverableOrderIdForStorePayment(
-                  uid,
-                  storeId,
-                  stripePaymentId,
-                );
-            }
-            if (!oid) {
-              throw createErr;
-            }
-          }
-        }
-
-        if (!oid) {
-          throw new Error('order_id_missing_after_create');
-        }
-
-        if (!orderIds.includes(oid)) {
-          orderIds.push(oid);
-        }
-        const useStripeCents = payoutRow != null;
-        await this.ordersService.markOrderPaidWithShipping(
-          oid,
-          shipCents / 100,
-          {
-            stripeParentPaymentId: stripePaymentId,
-            couponCode,
-            chargedGoodsCents: useStripeCents ? goodsCents : undefined,
-            chargedShipCents: useStripeCents ? shipCents : undefined,
-            subtotalBeforeTax:
-              goodsCents != null && shipCents != null
-                ? (goodsCents + shipCents) / 100
-                : undefined,
-            deliveryAddressId:
-              shipCents > 0 && checkoutAddressId
-                ? checkoutAddressId
-                : undefined,
-            currency: currency ? currency.trim().toUpperCase() : undefined,
-          },
-        );
-        const paidOk = await this.ordersService.isOrderPaidForStripePayment(
-          oid,
+    const storeSlots = await Promise.all(
+      storeIds.map((storeId) =>
+        this.fulfillStripeGroupedStore({
+          storeId,
+          priorByStore,
+          payoutMap,
+          couponByStore,
+          shipCentsByStore,
           stripePaymentId,
-        );
-        if (!paidOk) {
-          throw new Error('order_not_marked_paid');
-        }
-        if (couponCode) {
-          await this.couponsService.recordUsageAfterSuccessfulPayment(
-            storeId,
-            couponCode,
-          );
-        }
-
-        let transferId: string | undefined;
-        let transferCents: number | undefined;
-        let platformFeeCents: number | undefined;
-        let transferSkippedReason: string | undefined;
-        try {
-          const tr = await this.stripeTransfers.transferForPaidOrder({
-            orderId: oid,
-            storeId,
-            goodsCents: goodsCents ?? 0,
-            shipCents,
-            stripeParentPaymentId: stripePaymentId,
-            paymentTotalCents: amountTotalCents,
-          });
-          transferCents = tr.transferCents;
-          platformFeeCents = tr.platformFeeCents;
-          transferId = tr.transferId;
-          transferSkippedReason = tr.skippedReason;
-          if (!tr.transferred && tr.skippedReason) {
-            this.logger.warn(
-              `Connect transfer skipped store=${storeId} order=${oid}: ${tr.skippedReason}`,
-            );
-          }
-        } catch (trErr) {
-          transferSkippedReason =
-            trErr instanceof Error ? trErr.message : String(trErr);
-          this.logger.error(
-            `Connect transfer error store=${storeId} order=${oid}: ${transferSkippedReason}`,
-          );
-        }
-
-        perStoreBreakdown.push({
-          ...baseRow,
-          orderId: oid,
-          goodsCents: goodsCents ?? baseRow.goodsCents,
-          shipCents,
-          transferId,
-          transferCents,
-          platformFeeCents,
-          transferSkippedReason,
-        });
-      } catch (e) {
-        const errMsg = e instanceof Error ? e.message : String(e);
-        this.logger.error(
-          `Stripe fulfill: order failed for store ${storeId}: ${e}`,
-        );
-        fulfillErrors.push({ storeId, error: errMsg });
-        perStoreBreakdown.push({
-          ...baseRow,
-          error: errMsg,
-        });
+          uid,
+          user,
+          amountTotalCents,
+          currency,
+          stripeEventKind,
+          checkoutAddressId,
+        }),
+      ),
+    );
+    for (const slot of storeSlots) {
+      perStoreBreakdown.push(slot.breakdown);
+      if (slot.orderId && !orderIds.includes(slot.orderId)) {
+        orderIds.push(slot.orderId);
+      }
+      if (slot.error) {
+        fulfillErrors.push(slot.error);
       }
     }
 
@@ -1843,6 +1923,9 @@ export class StripeGroupedCheckoutService {
     signature: string | undefined,
     rawBody: Buffer | undefined,
   ): Promise<{ received: boolean }> {
+    const started = performance.now();
+    let eventType = 'unparsed';
+    try {
     const webhookSecrets = this.getStripeWebhookSecrets();
     if (!webhookSecrets.length || !signature || !rawBody?.length) {
       this.logger.warn('Stripe webhook: missing secret, signature or body');
@@ -1869,6 +1952,8 @@ export class StripeGroupedCheckoutService {
       throw new BadRequestException('stripe_invalid_signature');
     }
 
+    eventType = event!.type;
+
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object as unknown as {
         id: string;
@@ -1881,25 +1966,25 @@ export class StripeGroupedCheckoutService {
       };
       if (session.metadata?.kind === 'vendor_subscription') {
         const subUid = session.metadata?.uid?.trim();
-        if (isDomainEventsEnabled(this.config) && this.domainEvents && subUid) {
-          await this.domainEvents.emit({
-            id: domainEventIdFromStripeWebhook(event.id),
-            type: 'subscription.checkout.completed',
-            payload: {
-              sessionId: session.id,
-              userId: subUid,
-              storeId: session.metadata?.storeId?.trim() || undefined,
-            },
-            metadata: {
-              source: 'stripe-webhook',
-              correlationId: event.id,
-            },
-          });
+        if (subUid && (await this.publishStripeDomainEvent({
+          id: domainEventIdFromStripeWebhook(event.id),
+          type: 'subscription.checkout.completed',
+          payload: {
+            sessionId: session.id,
+            userId: subUid,
+            storeId: session.metadata?.storeId?.trim() || undefined,
+          },
+          metadata: {
+            source: 'stripe-webhook',
+            correlationId: event.id,
+          },
+        }))) {
           return { received: true };
         }
         await this.subscriptionStripeCheckout.fulfillFromCheckoutSessionObject(
           session,
         );
+        this.notifyCheckoutSse(session.id, 'subscription_completed');
         return { received: true };
       }
       const adCreditSettled = await this.settleAdCreditFromCheckoutSession(
@@ -1930,30 +2015,29 @@ export class StripeGroupedCheckoutService {
         session.amount_total != null ? session.amount_total : undefined;
       const currency =
         session.currency != null ? String(session.currency) : undefined;
-      if (isDomainEventsEnabled(this.config) && this.domainEvents) {
-        await this.domainEvents.emit({
-          id: domainEventIdFromStripeWebhook(event.id),
-          type: 'payment.checkout.completed',
-          payload: {
-            sessionId: session.id,
-            userId: uid,
-            kind: metadata.kind,
+      if (await this.publishStripeDomainEvent({
+        id: domainEventIdFromStripeWebhook(event.id),
+        type: 'payment.checkout.completed',
+        payload: {
+          sessionId: session.id,
+          userId: uid,
+          kind: metadata.kind,
+        },
+        metadata: {
+          source: 'stripe-webhook',
+          correlationId: event.id,
+          stripeFulfillment: {
+            stripePaymentId: session.id,
+            uid,
+            storesCsv,
+            shipB64,
+            metadata,
+            amountTotalCents,
+            currency,
+            stripeEventKind: 'checkout_session',
           },
-          metadata: {
-            source: 'stripe-webhook',
-            correlationId: event.id,
-            stripeFulfillment: {
-              stripePaymentId: session.id,
-              uid,
-              storesCsv,
-              shipB64,
-              metadata,
-              amountTotalCents,
-              currency,
-              stripeEventKind: 'checkout_session',
-            },
-          },
-        });
+        },
+      })) {
         return { received: true };
       }
       const sessionResult = await this.fulfillOrdersAfterStripePayment({
@@ -1970,6 +2054,8 @@ export class StripeGroupedCheckoutService {
         this.logger.warn(
           `Stripe webhook: incomplete checkout.session ${session.id}`,
         );
+      } else {
+        this.notifyCheckoutSse(session.id, 'checkout_completed', sessionResult.orderIds);
       }
       return { received: true };
     }
@@ -1984,37 +2070,33 @@ export class StripeGroupedCheckoutService {
         currency?: string | null;
       };
       if (pi.metadata?.kind === 'vendor_subscription') {
-        if (isDomainEventsEnabled(this.config) && this.domainEvents) {
-          const amountCents =
-            pi.amount_received != null
-              ? pi.amount_received
-              : pi.amount != null
-              ? pi.amount
-              : 0;
-          const currency =
-            pi.currency != null ? String(pi.currency) : 'eur';
-          await this.domainEvents.emit({
-            id: domainEventIdFromStripeWebhook(event.id),
-            type: 'payment.intent.succeeded',
-            payload: {
-              paymentIntentId: pi.id,
-              amountCents,
-              currency,
-              userId: pi.metadata?.uid?.trim() || undefined,
+        if (await this.publishStripeDomainEvent({
+          id: domainEventIdFromStripeWebhook(event.id),
+          type: 'payment.intent.succeeded',
+          payload: {
+            paymentIntentId: pi.id,
+            amountCents:
+              pi.amount_received != null
+                ? pi.amount_received
+                : pi.amount != null
+                ? pi.amount
+                : 0,
+            currency: pi.currency != null ? String(pi.currency) : 'eur',
+            userId: pi.metadata?.uid?.trim() || undefined,
+          },
+          metadata: {
+            source: 'stripe-webhook',
+            correlationId: event.id,
+            stripeSubscriptionIntent: {
+              id: pi.id,
+              status: 'succeeded',
+              metadata: pi.metadata ?? {},
+              amount: pi.amount,
+              amount_received: pi.amount_received,
+              currency: pi.currency,
             },
-            metadata: {
-              source: 'stripe-webhook',
-              correlationId: event.id,
-              stripeSubscriptionIntent: {
-                id: pi.id,
-                status: 'succeeded',
-                metadata: pi.metadata ?? {},
-                amount: pi.amount,
-                amount_received: pi.amount_received,
-                currency: pi.currency,
-              },
-            },
-          });
+          },
+        })) {
           return { received: true };
         }
         await this.subscriptionStripeCheckout.fulfillFromPaymentIntentObject({
@@ -2041,31 +2123,30 @@ export class StripeGroupedCheckoutService {
           ? pi.amount
           : undefined;
       const currency = pi.currency != null ? String(pi.currency) : undefined;
-      if (isDomainEventsEnabled(this.config) && this.domainEvents) {
-        await this.domainEvents.emit({
-          id: domainEventIdFromStripeWebhook(event.id),
-          type: 'payment.intent.succeeded',
-          payload: {
-            paymentIntentId: pi.id,
-            amountCents: amountTotalCents ?? 0,
-            currency: currency ?? 'eur',
-            userId: uid,
+      if (await this.publishStripeDomainEvent({
+        id: domainEventIdFromStripeWebhook(event.id),
+        type: 'payment.intent.succeeded',
+        payload: {
+          paymentIntentId: pi.id,
+          amountCents: amountTotalCents ?? 0,
+          currency: currency ?? 'eur',
+          userId: uid,
+        },
+        metadata: {
+          source: 'stripe-webhook',
+          correlationId: event.id,
+          stripeFulfillment: {
+            stripePaymentId: pi.id,
+            uid,
+            storesCsv,
+            shipB64,
+            metadata,
+            amountTotalCents,
+            currency,
+            stripeEventKind: 'payment_intent',
           },
-          metadata: {
-            source: 'stripe-webhook',
-            correlationId: event.id,
-            stripeFulfillment: {
-              stripePaymentId: pi.id,
-              uid,
-              storesCsv,
-              shipB64,
-              metadata,
-              amountTotalCents,
-              currency,
-              stripeEventKind: 'payment_intent',
-            },
-          },
-        });
+        },
+      })) {
         return { received: true };
       }
       const piResult = await this.fulfillOrdersAfterStripePayment({
@@ -2096,19 +2177,18 @@ export class StripeGroupedCheckoutService {
           past_due?: string[] | null;
         } | null;
       };
-      if (isDomainEventsEnabled(this.config) && this.domainEvents) {
-        await this.domainEvents.emit({
-          id: domainEventIdFromStripeWebhook(event.id),
-          type: 'payment.connect.account.updated',
-          payload: {
-            accountId: account.id,
-          },
-          metadata: {
-            source: 'stripe-webhook',
-            correlationId: event.id,
-            stripeConnectAccount: account,
-          },
-        });
+      if (await this.publishStripeDomainEvent({
+        id: domainEventIdFromStripeWebhook(event.id),
+        type: 'payment.connect.account.updated',
+        payload: {
+          accountId: account.id,
+        },
+        metadata: {
+          source: 'stripe-webhook',
+          correlationId: event.id,
+          stripeConnectAccount: account,
+        },
+      })) {
         return { received: true };
       }
       await this.stripeConnect.handleAccountUpdated(account);
@@ -2141,6 +2221,9 @@ export class StripeGroupedCheckoutService {
     }
 
     return { received: true };
+    } finally {
+      this.webhookMetrics.record(performance.now() - started, eventType);
+    }
   }
 
   private getStripeWebhookSecrets(): string[] {

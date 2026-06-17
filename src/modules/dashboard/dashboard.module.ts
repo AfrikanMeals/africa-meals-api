@@ -69,6 +69,7 @@ import { OrdersModule } from '@modules/orders/orders.module';
 import { TeamsModule } from '@modules/teams/teams.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
+import { FleetModule } from '@modules/fleet/fleet.module';
 import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
 
 @Module({
@@ -78,6 +79,7 @@ import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain
     OrdersModule,
     TeamsModule,
     MailerModule,
+    FleetModule,
     DomainEventHandlersModule,
     StoreDeliveryDriversModule,
     forwardRef(() => DeliveryAgentModule),

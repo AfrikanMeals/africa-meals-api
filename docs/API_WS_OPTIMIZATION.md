@@ -99,7 +99,7 @@ OrdersService
   → OrderDomainBridgeService.emit({ type: 'order.*' })
   → DomainEventPublisher.publish()
       → idempotency Redis (tryClaim)
-      → await runInProcessHandler()     ← BLOQUANT
+      → scheduleInProcessHandler() (fire-and-forget si async)     ← non bloquant
       → BullMQ domain-events OU MQTT direct
   → DomainEventSubscriber (WS)
       → DomainEventWsRouterService.route()
@@ -168,20 +168,17 @@ POST /delivery-agent/location (~1 req / 12 s / agent)
 
 #### P0-1 — Handlers in-process bloquants
 
-**Où :** `domain-event-publisher.service.ts` L177
+**Où :** `domain-event-publisher.service.ts` — `publishEnvelope()`
 
-```typescript
-await this.runInProcessHandler(validated);
-// ... puis enqueue MQTT / BullMQ
-```
+**Avant (problème) :** `await runInProcessHandler()` bloquait webhooks Stripe 2–15 s.
 
-**Problème :** FCM, fulfillment Stripe, audit, refunds s’exécutent **avant** la réponse webhook et **avant** la publication bus.
+**Implémenté (OPT-001) :**
 
-**Optimisation (sans retirer de feature) :**
-
-- Exécuter handlers via worker BullMQ dédié `domain-events-side-effects`.
-- Ou `void this.runInProcessHandler(validated)` + queue avec retry/backoff.
-- Webhook répond `{ received: true }` immédiatement ; fulfillment reste idempotent.
+- Queue BullMQ dédiée `domain-events-handlers` (`DOMAIN_EVENTS_HANDLERS_ASYNC=true` par défaut).
+- `publish()` n’attend plus l’exécution des handlers : `void scheduleInProcessHandler()` + enqueue Redis.
+- Rollback : `DOMAIN_EVENTS_HANDLERS_ASYNC=false` → handlers synchrones (comportement legacy).
+- Fallback sans Redis : `void runInProcessHandler()` (même process, hors chemin await).
+- Log `latencyMs` si publish &gt; 50 ms.
 
 **Gain :** p95 webhook −80 %.
 
@@ -189,16 +186,16 @@ await this.runInProcessHandler(validated);
 
 #### P0-2 — GPS N× populate Mongo
 
-**Où :** `publishCourierPosition` + boucle dans `delivery-agent.service.ts`
+**Où :** `publishCourierPosition` + `delivery-agent.service.ts` — **OPT-002 ✅**
 
-**Problème :** Chaque tick GPS relance `findById` + double populate pour **chaque** commande SHIPPED.
+**Avant :** chaque tick GPS relançait `findById` + double populate pour chaque commande SHIPPED.
 
-**Optimisation :**
+**Implémenté :**
 
-1. **Throttle** : max 1 `order.tracking.updated` / 2–5 s / (agent, orderId).
-2. **Projection minimale** : `.select('_id status assigned_delivery_user store')` sans populate user complet.
-3. **Batch** : une requête `find({ assigned_delivery_user, status: SHIPPED })` puis emit groupé.
-4. **Idempotence GPS** : clé `agentId:orderId:roundedLatLng:window` au lieu d’UUID par tick.
+1. **Throttle** : max 1 `order.tracking.updated` / `COURIER_GPS_THROTTLE_MS` (défaut 3 s) / (agent, orderId).
+2. **Projection minimale** : `.select()` + populate store.address / user.addresses uniquement (`.lean()`).
+3. **Batch** : `publishCourierPositionsForAgent()` — une requête Mongo pour toutes les courses SHIPPED.
+4. **Idempotence GPS** : `domainEventIdFromCourierTracking()` — clé `agentId:orderId:lat:lng:window`.
 
 **Gain :** −90 % charge Mongo/MQTT sous fleet actif.
 
@@ -403,6 +400,9 @@ Compte par changement statut :
 DOMAIN_EVENTS_ENABLED=true
 DOMAIN_EVENTS_WS_VIA_BUS=true          # après fix routage WS client (P0-3)
 DOMAIN_EVENTS_MQTT_TOPIC_PREFIX=africameals/domain
+DOMAIN_EVENTS_HANDLERS_ASYNC=true
+DOMAIN_EVENTS_HANDLERS_QUEUE_NAME=domain-events-handlers
+DOMAIN_EVENTS_HANDLERS_QUEUE_CONCURRENCY=5
 
 # --- Infra cache ---
 INFRA_RUNTIME_SETTINGS_CACHE_MS=30000
@@ -450,8 +450,8 @@ DOMAIN_EVENTS_ENABLED=false
 
 | # | Tâche | Ticket ref |
 |---|-------|------------|
-| A1 | Throttle + projection minimale GPS | — |
-| A2 | Handlers domaine async (decouple webhook) | EDA-004 |
+| A1 | Throttle + projection minimale GPS | OPT-002 ✅ |
+| A2 | Handlers domaine async (decouple webhook) | OPT-001 ✅ |
 | A3 | Guard `wsViaBus` ads | EDA-008 |
 | A4 | Dédupliquer audit / loyalty / archive | EDA-004 |
 | A5 | Infra settings cache 30 s + singleton | — |
@@ -537,21 +537,21 @@ DOMAIN_EVENTS_ENABLED=false
 
 | ID | Optimisation | Priorité | Statut |
 |----|--------------|----------|--------|
-| OPT-001 | Handlers domaine async | P0 | ❌ NOT YET |
-| OPT-002 | Throttle + batch GPS | P0 | ❌ NOT YET |
-| OPT-003 | Routage WS client domaine | P0 | ❌ NOT YET |
-| OPT-004 | Redis adapter Socket.IO | P0 | ❌ NOT YET |
-| OPT-005 | Fusion dispatches WS commande | P1 | ❌ NOT YET |
-| OPT-006 | Client MQTT unique | P1 | ❌ NOT YET |
-| OPT-007 | Pool Redis partagé | P1 | ❌ NOT YET |
-| OPT-008 | Fulfillment parallèle multi-store | P1 | ❌ NOT YET |
-| OPT-009 | Guard ads wsViaBus | P1 | ❌ NOT YET |
-| OPT-010 | Émission agent.* API | P1 | ❌ NOT YET |
-| OPT-011 | Dedup audit/loyalty/archive | P2 | ❌ NOT YET |
-| OPT-012 | SSE health Promise.all + hash | P2 | ❌ NOT YET |
-| OPT-013 | Archive chat async WS | P2 | ❌ NOT YET |
-| OPT-014 | Cleanup Subjects SSE | P3 | ❌ NOT YET |
-| OPT-015 | Limite SSE distribuée | P3 | ❌ NOT YET |
+| OPT-001 | Handlers domaine async | P0 | ✅ DONE |
+| OPT-002 | Throttle + batch GPS | P0 | ✅ DONE |
+| OPT-003 | Routage WS client domaine | P0 | ✅ DONE |
+| OPT-004 | Redis adapter Socket.IO | P0 | ✅ DONE |
+| OPT-005 | Fusion dispatches WS commande | P1 | ✅ DONE |
+| OPT-006 | Client MQTT unique | P1 | ✅ DONE |
+| OPT-007 | Pool Redis partagé | P1 | ✅ DONE |
+| OPT-008 | Fulfillment parallèle multi-store | P1 | ✅ DONE |
+| OPT-009 | Guard ads wsViaBus | P1 | ✅ DONE |
+| OPT-010 | Émission agent.* API | P1 | ✅ DONE |
+| OPT-011 | Dedup audit/loyalty/archive | P2 | ✅ DONE |
+| OPT-012 | SSE health Promise.all + hash | P2 | ✅ DONE |
+| OPT-013 | Archive chat async WS | P2 | ✅ DONE |
+| OPT-014 | Cleanup Subjects SSE | P3 | ✅ DONE |
+| OPT-015 | Limite SSE distribuée | P3 | ✅ DONE |
 
 ### Légende statut
 

@@ -37,7 +37,10 @@ import {
   VendorStatusEmailService,
 } from '@modules/vendor-emails/vendor-status-email.service';
 import { WsAdManagerNotifyService } from '@modules/ws-notify/ws-ad-manager-notify.service';
-import { OrderDomainBridgeService } from '@modules/domain-event-handlers/order-domain-bridge.service';
+import { DomainEventPublisherService } from '../../common/domain-events/domain-event-publisher.service';
+import { DomainEventDraft } from '../../common/domain-events/domain-event.types';
+import { DomainEventType } from '../../common/domain-events/domain-event-types';
+import { shouldEmitLegacyAdWsFromApi, isDomainEventsEnabled } from '@modules/domain-event-handlers/domain-event-handlers.util';
 import {
   AppCacheKeys,
   apiPublicCacheTtlMs,
@@ -53,7 +56,6 @@ import {
   NotFoundException,
   OnModuleInit,
   Optional,
-  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -466,9 +468,8 @@ export class AdsService implements OnModuleInit {
   @Inject(WsAdManagerNotifyService)
   private readonly _wsAdManager: WsAdManagerNotifyService;
 
-  @Inject(forwardRef(() => OrderDomainBridgeService))
   @Optional()
-  private readonly _domainBridge?: OrderDomainBridgeService;
+  private readonly _domainPublisher?: DomainEventPublisherService;
 
   @Inject(CACHE_MANAGER)
   private readonly _cache: Cache;
@@ -481,7 +482,21 @@ export class AdsService implements OnModuleInit {
     void bustCacheKey(this._cache, AppCacheKeys.adsPublic);
   }
 
-  private async emitAdEngagement(
+  private async publishAdDomainEvent<T extends DomainEventType>(
+    draft: DomainEventDraft<T>,
+  ): Promise<boolean> {
+    if (!isDomainEventsEnabled(this._config) || !this._domainPublisher) {
+      return false;
+    }
+    const result = await this._domainPublisher.publish(draft);
+    if (!result.ok && result.mode !== 'duplicate') {
+      // Logger not on every skip — ads volume can be high
+    }
+    return true;
+  }
+
+  /** EDA-008 — impression / clic bannière ou campagne. */
+  async publishAdEngagement(
     type: 'ad.impression' | 'ad.click',
     payload: {
       adId: string;
@@ -497,17 +512,18 @@ export class AdsService implements OnModuleInit {
       customerUserId: payload.customerUserId,
       clientInstallId: payload.clientInstallId,
     };
-    if (this._domainBridge?.enabled()) {
-      await this._domainBridge.emit({
-        type,
-        payload: eventPayload,
-        metadata: {
-          source: 'ads',
-          orderContext: { adScope: payload.adScope ?? 'BANNER' },
-        },
-      });
-      return;
-    }
+    const published = await this.publishAdDomainEvent({
+      type,
+      payload: eventPayload,
+      metadata: {
+        source: 'ads',
+        orderContext: { adScope: payload.adScope ?? 'BANNER' },
+      },
+    });
+    if (published) return;
+
+    if (!shouldEmitLegacyAdWsFromApi(this._config)) return;
+
     this._wsAdManager.broadcastAdEvent({
       scope: payload.adScope ?? 'BANNER',
       eventType: type === 'ad.impression' ? 'impression' : 'click',
@@ -516,29 +532,31 @@ export class AdsService implements OnModuleInit {
     });
   }
 
-  private async emitAdConversion(payload: {
+  /** EDA-008 — conversion post-achat. */
+  async publishAdConversion(payload: {
     adId: string;
     storeId?: string;
     orderId?: string;
     customerUserId?: string;
     adScope?: 'BANNER' | 'CAMPAIGN';
   }): Promise<void> {
-    if (this._domainBridge?.enabled()) {
-      await this._domainBridge.emit({
-        type: 'ad.conversion',
-        payload: {
-          adId: payload.adId,
-          storeId: payload.storeId,
-          orderId: payload.orderId,
-          customerUserId: payload.customerUserId,
-        },
-        metadata: {
-          source: 'ads',
-          orderContext: { adScope: payload.adScope ?? 'BANNER' },
-        },
-      });
-      return;
-    }
+    const published = await this.publishAdDomainEvent({
+      type: 'ad.conversion',
+      payload: {
+        adId: payload.adId,
+        storeId: payload.storeId,
+        orderId: payload.orderId,
+        customerUserId: payload.customerUserId,
+      },
+      metadata: {
+        source: 'ads',
+        orderContext: { adScope: payload.adScope ?? 'BANNER' },
+      },
+    });
+    if (published) return;
+
+    if (!shouldEmitLegacyAdWsFromApi(this._config)) return;
+
     this._wsAdManager.broadcastAdEvent({
       scope: payload.adScope ?? 'BANNER',
       eventType: 'conversion',
@@ -2327,7 +2345,7 @@ export class AdsService implements OnModuleInit {
       dto.eventType === AdCampaignEventTypeEnum.IMPRESSION ||
       dto.eventType === AdCampaignEventTypeEnum.CLICK
     ) {
-      await this.emitAdEngagement(
+      await this.publishAdEngagement(
         dto.eventType === AdCampaignEventTypeEnum.IMPRESSION
           ? 'ad.impression'
           : 'ad.click',
@@ -2580,7 +2598,7 @@ export class AdsService implements OnModuleInit {
           conversionSource,
         });
         bannerConversions = 1;
-        void this.emitAdConversion({
+        void this.publishAdConversion({
           adId,
           storeId: storeOid.toHexString(),
           orderId,
@@ -4292,7 +4310,7 @@ export class AdsService implements OnModuleInit {
       eventType: dto.eventType,
       ...(install ? { clientInstallId: install } : {}),
     });
-    await this.emitAdEngagement(
+    await this.publishAdEngagement(
       dto.eventType === AdEventTypeEnum.IMPRESSION
         ? 'ad.impression'
         : 'ad.click',

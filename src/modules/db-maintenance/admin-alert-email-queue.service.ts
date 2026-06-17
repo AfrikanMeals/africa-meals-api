@@ -14,6 +14,7 @@ import {
 import { randomUUID } from 'crypto';
 import { JobsOptions, Queue, Worker } from 'bullmq';
 import { AdminAlertEmailService } from './admin-alert-email.service';
+import { AdminJobEmitterService } from '@modules/admin-jobs/admin-job-emitter.service';
 import type { AdminAlertEmailBatchJob } from './admin-alert-email.types';
 
 const JOB_BATCH = 'recipient-batch';
@@ -31,6 +32,8 @@ export class AdminAlertEmailQueueService
     private readonly config: ConfigService,
     @Inject(forwardRef(() => AdminAlertEmailService))
     private readonly alertEmail: AdminAlertEmailService,
+    @Inject(forwardRef(() => AdminJobEmitterService))
+    private readonly jobEmitter: AdminJobEmitterService,
   ) {}
 
   isEnabled(): boolean {
@@ -59,15 +62,24 @@ export class AdminAlertEmailQueueService
       queueName,
       async (job) => {
         if (job.name !== JOB_BATCH) return;
-        await this.alertEmail.processBatchJob(job.data);
+        const data = job.data;
+        await this.alertEmail.processBatchJob(data);
+        await this.emitBatchProgress(data);
       },
       { connection, concurrency },
     );
 
-    const onFailed = (job: { id?: string } | undefined, err: Error) => {
+    const onFailed = (
+      job: { id?: string; data?: AdminAlertEmailBatchJob } | undefined,
+      err: Error,
+    ) => {
       this.logger.warn(
         `admin-alert-email batch failed id=${job?.id ?? '?'}: ${err.message}`,
       );
+      const campaignId = job?.data?.campaignId?.trim();
+      if (campaignId) {
+        void this.jobEmitter.emitFailed({ jobId: campaignId, error: err.message });
+      }
     };
     this.worker.on('failed', onFailed);
     const onRedisError = (err: Error) => {
@@ -105,6 +117,7 @@ export class AdminAlertEmailQueueService
     if (!this.queue) {
       for (const batch of batches) {
         await this.alertEmail.processBatchJob(batch);
+        await this.emitBatchProgress(batch);
       }
       return { queued: false, batchCount: batches.length };
     }
@@ -118,5 +131,26 @@ export class AdminAlertEmailQueueService
       i += 1;
     }
     return { queued: true, batchCount: batches.length };
+  }
+
+  private async emitBatchProgress(batch: AdminAlertEmailBatchJob): Promise<void> {
+    const batchTotal = Math.max(1, batch.batchTotal);
+    const done = Math.min(batchTotal, batch.batchIndex + 1);
+    const pct = Math.round((done / batchTotal) * 100);
+    await this.jobEmitter.emitProgress({
+      jobId: batch.campaignId,
+      pct,
+      label: `Lot ${done}/${batchTotal}`,
+      phase: 'sending',
+    });
+    if (done >= batchTotal) {
+      await this.jobEmitter.emitCompleted({
+        jobId: batch.campaignId,
+        result: {
+          campaignId: batch.campaignId,
+          batchCount: batchTotal,
+        },
+      });
+    }
   }
 }

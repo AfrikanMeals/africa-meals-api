@@ -5,6 +5,7 @@ import {
   InfraRuntimeSettingsModel,
   InfraRuntimeSettingsSchema,
 } from '@schemas/infra-runtime-settings.schema';
+import { RedisSharedModule } from '../redis/redis-shared.module';
 import { DomainEventIdempotencyStore } from './domain-event-idempotency.store';
 import { DomainEventPublisherService } from './domain-event-publisher.service';
 import { DomainEventRegistryService } from './domain-event-registry.service';
@@ -13,6 +14,7 @@ import { DomainEventRegistryService } from './domain-event-registry.service';
 @Module({
   imports: [
     ConfigModule,
+    RedisSharedModule,
     MongooseModule.forFeature([
       {
         name: InfraRuntimeSettingsModel.name,

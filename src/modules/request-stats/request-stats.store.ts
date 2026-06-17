@@ -5,6 +5,7 @@ import {
   RequestStatsKind,
   RequestStatsQuery,
 } from './request-stats.types';
+import { applyRequestStatsFilters } from './request-stats-slow.util';
 
 export type PushRequestStatsInput = Omit<
   RequestStatsEntry,
@@ -55,25 +56,18 @@ export class RequestStatsStore {
   }
 
   query(q: RequestStatsQuery): RequestStatsEntry[] {
-    let list = [...this.entries];
-    const storeId = q.storeId?.trim();
-    if (storeId) {
-      list = list.filter((e) => e.storeId === storeId);
-    }
-    const kind = q.kind ?? 'all';
-    if (kind !== 'all') {
-      list = list.filter((e) => e.kind === kind);
-    }
-    const method = q.method?.trim().toUpperCase();
-    if (method) {
-      list = list.filter((e) => e.method.toUpperCase() === method);
-    }
-    const routeContains = q.routeContains?.trim().toLowerCase();
-    if (routeContains) {
-      list = list.filter((e) => e.route.toLowerCase().includes(routeContains));
-    }
+    let list = applyRequestStatsFilters(this.entries, q);
     const limit = Math.min(Math.max(q.limit ?? 200, 1), 500);
+    const sortBy = q.sortBy ?? 'at';
+    if (sortBy === 'duration') {
+      list.sort((a, b) => b.durationMs - a.durationMs);
+      return list.slice(0, limit);
+    }
     return list.slice(-limit).reverse();
+  }
+
+  filtered(q: RequestStatsQuery): RequestStatsEntry[] {
+    return applyRequestStatsFilters(this.entries, q);
   }
 
   summaryFor(list: RequestStatsEntry[]): {

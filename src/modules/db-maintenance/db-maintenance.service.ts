@@ -68,8 +68,8 @@ import { InjectModel } from '@nestjs/mongoose';
 import { SendOrderEmailDebugDto } from './dto/send-order-email-debug.dto';
 import Stripe = require('stripe');
 import { randomUUID } from 'crypto';
-import { AdminJobProgressService } from '@modules/admin-jobs/admin-job-progress.service';
-import { OrderDomainBridgeService } from '@modules/domain-event-handlers/order-domain-bridge.service';
+import { AdminJobEmitterService } from '@modules/admin-jobs/admin-job-emitter.service';
+import { StripeWebhookMetricsService } from '@modules/billing/stripe/stripe-webhook-metrics.service';
 import {
   DB_CLEARABLE_TABLES,
   DbClearableTableCategory,
@@ -234,6 +234,12 @@ export class DbMaintenanceService {
         'Vérifie la dernière activité de traitement Stripe et son ancienneté.',
     },
     {
+      key: 'stripe-webhook-latency',
+      label: 'Webhook Stripe latency (p95)',
+      description:
+        'Mesure p95 du temps de réponse HTTP ack webhook Stripe (fenêtre glissante in-process).',
+    },
+    {
       key: 'map-engine-status',
       label: 'Map Engine Status',
       description: 'Vérifie la disponibilité Mapbox geocoding.',
@@ -300,12 +306,12 @@ export class DbMaintenanceService {
     private readonly firebaseApp: App,
     private readonly wsNotifyDispatchQueue: WsNotifyDispatchQueueService,
     private readonly orderPaidInvoiceEmail: OrderPaidInvoiceEmailService,
-    @Inject(forwardRef(() => OrderDomainBridgeService))
+    @Inject(forwardRef(() => AdminJobEmitterService))
     @Optional()
-    private readonly domainBridge?: OrderDomainBridgeService,
-    @Inject(forwardRef(() => AdminJobProgressService))
+    private readonly adminJobEmitter?: AdminJobEmitterService,
+    @Inject(forwardRef(() => StripeWebhookMetricsService))
     @Optional()
-    private readonly adminJobProgress?: AdminJobProgressService,
+    private readonly stripeWebhookMetrics?: StripeWebhookMetricsService,
   ) {}
 
   private assertMaintenanceEnabled(): void {
@@ -414,9 +420,9 @@ export class DbMaintenanceService {
     void this.runClearTablesJob(user, unique, jobId).catch((error) => {
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.warn(`clearTablesAsync job ${jobId} failed: ${msg}`);
-      void this.emitAdminJob({
-        type: 'job.failed',
-        payload: { jobId, error: msg },
+      void this.adminJobEmitter?.emitFailed({
+        jobId,
+        error: msg,
       });
     });
     return { jobId };
@@ -429,9 +435,9 @@ export class DbMaintenanceService {
   ): Promise<void> {
     const db = this.connection.db;
     if (!db) {
-      await this.emitAdminJob({
-        type: 'job.failed',
-        payload: { jobId, error: 'database_unavailable' },
+      await this.adminJobEmitter?.emitFailed({
+        jobId,
+        error: 'database_unavailable',
       });
       return;
     }
@@ -441,14 +447,11 @@ export class DbMaintenanceService {
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i]!;
       const def = getClearableTable(key)!;
-      await this.emitAdminJob({
-        type: 'job.progress',
-        payload: {
-          jobId,
-          pct: Math.round((i / total) * 100),
-          label: def.labelFr,
-          phase: key,
-        },
+      await this.adminJobEmitter?.emitProgress({
+        jobId,
+        pct: Math.round((i / total) * 100),
+        label: def.labelFr,
+        phase: key,
       });
       const res = await db.collection(def.collection).deleteMany({});
       const deletedCount = res.deletedCount ?? 0;
@@ -462,51 +465,10 @@ export class DbMaintenanceService {
       );
     }
 
-    await this.emitAdminJob({
-      type: 'job.completed',
-      payload: { jobId, result: { cleared } },
+    await this.adminJobEmitter?.emitCompleted({
+      jobId,
+      result: { cleared },
     });
-  }
-
-  private async emitAdminJob(
-    event:
-      | {
-          type: 'job.progress';
-          payload: {
-            jobId: string;
-            pct: number;
-            label: string;
-            phase?: string;
-          };
-        }
-      | {
-          type: 'job.completed';
-          payload: { jobId: string; result?: Record<string, unknown> };
-        }
-      | { type: 'job.failed'; payload: { jobId: string; error: string } },
-  ): Promise<void> {
-    if (this.domainBridge?.enabled()) {
-      await this.domainBridge.emit(event);
-      return;
-    }
-    const jobId = String(event.payload.jobId ?? '');
-    if (!jobId || !this.adminJobProgress) return;
-    if (event.type === 'job.progress') {
-      this.adminJobProgress.emitProgress(
-        event.payload as {
-          jobId: string;
-          pct: number;
-          label: string;
-          phase?: string;
-        },
-      );
-    } else if (event.type === 'job.completed') {
-      this.adminJobProgress.emitCompleted(event.payload);
-    } else {
-      this.adminJobProgress.emitFailed(
-        event.payload as { jobId: string; error: string },
-      );
-    }
   }
 
   async listIntegrityTests(
@@ -560,11 +522,11 @@ export class DbMaintenanceService {
   }
 
   async runAllSystemHealthChecksInternal(): Promise<SystemHealthCheckResult[]> {
-    const results: SystemHealthCheckResult[] = [];
-    for (const def of this.systemHealthChecks) {
-      results.push(await this.runSystemHealthCheckInternal(def.key));
-    }
-    return results;
+    return Promise.all(
+      this.systemHealthChecks.map((def) =>
+        this.runSystemHealthCheckInternal(def.key),
+      ),
+    );
   }
 
   private async runSystemHealthCheckInternal(
@@ -584,6 +546,8 @@ export class DbMaintenanceService {
         return this.runStripeHealthCheck();
       case 'stripe-webhook-last-activity':
         return this.runStripeWebhookLastActivityHealthCheck();
+      case 'stripe-webhook-latency':
+        return this.runStripeWebhookLatencyHealthCheck();
       case 'map-engine-status':
         return this.runMapEngineHealthCheck();
       case 'mail-health-status':
@@ -2602,6 +2566,56 @@ export class DbMaintenanceService {
         }`,
       });
     }
+  }
+
+  private async runStripeWebhookLatencyHealthCheck(): Promise<SystemHealthCheckResult> {
+    const startedAtMs = Date.now();
+    const key = 'stripe-webhook-latency';
+    const label = 'Webhook Stripe latency (p95)';
+
+    if (!this.stripeWebhookMetrics) {
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: 'degraded',
+        details: 'Service métriques webhook indisponible.',
+      });
+    }
+
+    const snap = this.stripeWebhookMetrics.snapshot();
+    const targetP95 = this.stripeWebhookMetrics.p95TargetMs();
+
+    if (snap.count < 1) {
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: 'degraded',
+        details:
+          `Aucun échantillon webhook sur cette instance (cible p95 < ${targetP95} ms).`,
+      });
+    }
+
+    const status: SystemHealthCheckResult['status'] =
+      snap.p95Ms <= targetP95
+        ? 'healthy'
+        : snap.p95Ms <= targetP95 * 2
+        ? 'degraded'
+        : 'down';
+
+    return this.normalizeHealthResult({
+      key,
+      label,
+      startedAtMs,
+      status,
+      details:
+        `n=${snap.count} p50=${snap.p50Ms}ms p95=${snap.p95Ms}ms max=${snap.maxMs}ms ` +
+        `avg=${snap.avgMs}ms cible<${targetP95}ms` +
+        (snap.lastEventType
+          ? ` — dernier=${snap.lastEventType} (${snap.lastMs}ms)`
+          : ''),
+    });
   }
 
   private async runMapEngineHealthCheck(): Promise<SystemHealthCheckResult> {

@@ -14,6 +14,8 @@ const SKIP_PATH_PREFIXES = [
   '/request-stats/store-engagement',
   '/request-stats/products',
   '/request-stats/drinks',
+  // Connexions SSE longue durée (si SSE_HTTP_ON_API=true en dev).
+  '/sse',
 ];
 
 export function isRequestStatsEnabled(raw: string | undefined): boolean {
@@ -32,6 +34,7 @@ export function requestStatsMaxEntries(raw: string | undefined): number {
 export function shouldSkipRequestStatsPath(path: string): boolean {
   const p = path.split('?')[0] ?? path;
   if (p === '/') return true;
+  if (/\/sse(?:\/|$)/i.test(p)) return true;
   return SKIP_PATH_PREFIXES.some(
     (prefix) => p === prefix || p.startsWith(`${prefix}/`),
   );

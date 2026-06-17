@@ -17,6 +17,7 @@ import {
 } from './dto/send-admin-alert-email.dto';
 import { DbMaintenanceService } from './db-maintenance.service';
 import { AdminAlertEmailQueueService } from './admin-alert-email-queue.service';
+import { AdminJobEmitterService } from '@modules/admin-jobs/admin-job-emitter.service';
 import type {
   AdminAlertEmailBatchJob,
   AdminAlertRecipient,
@@ -38,6 +39,8 @@ export class AdminAlertEmailService {
     private readonly emailTpl: EmailTemplateService,
     @Inject(forwardRef(() => AdminAlertEmailQueueService))
     private readonly queue: AdminAlertEmailQueueService,
+    @Inject(forwardRef(() => AdminJobEmitterService))
+    private readonly jobEmitter: AdminJobEmitterService,
     @InjectModel(UserModel.name)
     private readonly userModel: Model<UserModel>,
   ) {}
@@ -55,6 +58,7 @@ export class AdminAlertEmailService {
     user: UserModel,
     dto: SendAdminAlertEmailDto,
   ): Promise<{
+    jobId: string;
     campaignId: string;
     audience: AdminAlertAudience;
     recipientCount: number;
@@ -86,11 +90,19 @@ export class AdminAlertEmailService {
 
     const { queued, batchCount } = await this.queue.enqueueBatches(batches);
 
+    await this.jobEmitter.emitProgress({
+      jobId: campaignId,
+      pct: 0,
+      label: queued ? 'Mise en file…' : 'Envoi…',
+      phase: 'start',
+    });
+
     this.logger.log(
       `Admin alert email campaign=${campaignId} audience=${dto.audience} recipients=${recipients.length} batches=${batchCount} queued=${queued} by=${user.id}`,
     );
 
     return {
+      jobId: campaignId,
       campaignId,
       audience: dto.audience,
       recipientCount: recipients.length,
@@ -129,14 +141,17 @@ export class AdminAlertEmailService {
   }
 
   private splitBatches(
-    base: Omit<AdminAlertEmailBatchJob, 'recipients'> & {
+    base: Omit<AdminAlertEmailBatchJob, 'recipients' | 'batchIndex' | 'batchTotal'> & {
       recipients: AdminAlertRecipient[];
     },
   ): AdminAlertEmailBatchJob[] {
     const out: AdminAlertEmailBatchJob[] = [];
+    const batchTotal = Math.max(1, Math.ceil(base.recipients.length / BATCH_SIZE));
     for (let i = 0; i < base.recipients.length; i += BATCH_SIZE) {
       out.push({
         ...base,
+        batchIndex: out.length,
+        batchTotal,
         recipients: base.recipients.slice(i, i + BATCH_SIZE),
       });
     }

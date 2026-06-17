@@ -78,10 +78,18 @@ import {
   resolveStoreTaxCountryCode,
   resolveTaxCountryCode,
 } from '@modules/supported-countries/region-tax.util';
+import {
+  CourierGpsThrottle,
+  readCourierGpsThrottleConfig,
+} from './courier-gps-throttle';
+import { domainEventIdFromCourierTracking } from '../../common/domain-events/domain-event-id.util';
 
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
+  private readonly courierGpsThrottle = new CourierGpsThrottle(
+    readCourierGpsThrottleConfig(),
+  );
 
   @InjectModel(OrderModel.name)
   private readonly _orderModel: Model<OrderModel>;
@@ -254,6 +262,33 @@ export class OrdersService {
     select: 'fullName email profileImage addresses',
     populate: { path: 'addresses' },
   } as const;
+
+  /** Projection minimale GPS livreur (OPT-002) — store + adresses sans populate lourd. */
+  private static readonly orderTrackingCourierPopulate: {
+    path: string;
+    select?: string;
+    populate?: { path: string; select?: string };
+  }[] = [
+    {
+      path: 'store',
+      select: 'owner name',
+      populate: {
+        path: 'address',
+        select: 'address city zipCode location coordinates',
+      },
+    },
+    {
+      path: 'user',
+      select: 'addresses',
+      populate: {
+        path: 'addresses',
+        select: 'address city zipCode location coordinates isDefault',
+      },
+    },
+  ];
+
+  private static readonly orderTrackingCourierSelect =
+    '_id status shouldShip shippingPrice assigned_delivery_user deliveryAddressSnapshot delivery_address_snapshot';
 
   private storeOwnerUserIdFromLean(store: unknown): string | null {
     if (!store || typeof store !== 'object' || !('owner' in store)) {
@@ -2618,19 +2653,79 @@ export class OrdersService {
       .exec();
   }
 
+  /** Projection minimale pour ticks GPS (OPT-002). */
+  private async findOrderForCourierTracking(
+    orderId: string,
+  ): Promise<Record<string, unknown> | null> {
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) return null;
+    const doc = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .select(OrdersService.orderTrackingCourierSelect)
+      .populate(OrdersService.orderTrackingCourierPopulate)
+      .lean()
+      .exec();
+    return doc as Record<string, unknown> | null;
+  }
+
+  /** Commandes SHIPPED actives d’un livreur — une requête batch (OPT-002). */
+  async findShippedOrdersForCourierTracking(
+    agentUserId: string,
+  ): Promise<Record<string, unknown>[]> {
+    const agentId = agentUserId.trim();
+    if (!Types.ObjectId.isValid(agentId)) return [];
+    const docs = await this._orderModel
+      .find({
+        assigned_delivery_user: new Types.ObjectId(agentId),
+        shouldShip: true,
+        status: OrderStatusEnum.SHIPPED,
+      })
+      .select(OrdersService.orderTrackingCourierSelect)
+      .populate(OrdersService.orderTrackingCourierPopulate)
+      .lean()
+      .exec();
+    return docs as Record<string, unknown>[];
+  }
+
+  /**
+   * Pousse la position GPS pour toutes les courses SHIPPED d’un livreur (batch OPT-002).
+   * Retourne les ids commande traités (pour émission `agent.location.updated`).
+   */
+  async publishCourierPositionsForAgent(
+    agentUserId: string,
+    courierLat: number,
+    courierLng: number,
+  ): Promise<string[]> {
+    const orders = await this.findShippedOrdersForCourierTracking(agentUserId);
+    const orderIds: string[] = [];
+    for (const order of orders) {
+      const oid =
+        (order._id as Types.ObjectId | undefined)?.toString?.() ??
+        String(order._id ?? '').trim();
+      if (!oid) continue;
+      orderIds.push(oid);
+      this.emitCourierPositionFromOrderDoc(
+        order,
+        courierLat,
+        courierLng,
+        agentUserId,
+      );
+    }
+    return orderIds;
+  }
+
   /** Prépare le snapshot tracking GPS sans publier d’événement domaine. */
   async prepareCourierPositionNotify(
     orderId: string,
     courierLat: number,
     courierLng: number,
   ): Promise<{
-    order: OrderModel;
+    order: OrderModel | Record<string, unknown>;
     status: OrderStatusEnum;
     extra: Partial<OrderWsTrackingPayload>;
   } | null> {
-    const order = await this.findOrderForWsNotify(orderId);
-    if (!order) return null;
-    const plain = order.toObject() as Record<string, unknown>;
+    const plain = await this.findOrderForCourierTracking(orderId);
+    if (!plain) return null;
     const status = String(plain.status ?? '') as OrderStatusEnum;
     if (status !== OrderStatusEnum.SHIPPED) return null;
     const extra = this.buildShippedCourierTrackingExtra(
@@ -2640,7 +2735,7 @@ export class OrdersService {
       status,
     );
     if (!extra) return null;
-    return { order, status, extra };
+    return { order: plain, status, extra };
   }
 
   /**
@@ -2838,20 +2933,22 @@ export class OrdersService {
       note: isPickup ? 'Retrait confirmé' : 'Livraison confirmée',
     });
 
-    void this._loyaltyService
-      .creditOrderCompletion(oid)
-      .catch((err) =>
-        this.logger.warn(
-          `Loyalty credit order=${oid}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        ),
-      );
+    if (!this.domainEventsEnabled()) {
+      void this._loyaltyService
+        .creditOrderCompletion(oid)
+        .catch((err) =>
+          this.logger.warn(
+            `Loyalty credit order=${oid}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
 
-    void this._wsChatNotify.archiveOrderChats(
-      oid,
-      isPickup ? 'order_pickup_completed' : 'order_delivered',
-    );
+      void this._wsChatNotify.archiveOrderChats(
+        oid,
+        isPickup ? 'order_pickup_completed' : 'order_delivered',
+      );
+    }
 
     const deliveryAgentId = this.assignedDeliveryUserIdFromOrderDoc(order);
     if (deliveryAgentId && !isPickup) {
@@ -3030,20 +3127,22 @@ export class OrdersService {
       note: isPickup ? 'Retrait confirmé' : 'Livraison confirmée',
     });
 
-    void this._loyaltyService
-      .creditOrderCompletion(oid)
-      .catch((err) =>
-        this.logger.warn(
-          `Loyalty credit order=${oid}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        ),
-      );
+    if (!this.domainEventsEnabled()) {
+      void this._loyaltyService
+        .creditOrderCompletion(oid)
+        .catch((err) =>
+          this.logger.warn(
+            `Loyalty credit order=${oid}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
 
-    void this._wsChatNotify.archiveOrderChats(
-      oid,
-      isPickup ? 'order_pickup_completed' : 'order_delivered',
-    );
+      void this._wsChatNotify.archiveOrderChats(
+        oid,
+        isPickup ? 'order_pickup_completed' : 'order_delivered',
+      );
+    }
 
     void this._deliveryAgentService.publishPresenceWs(agentId, 'order_completed');
 
@@ -3458,16 +3557,62 @@ export class OrdersService {
     courierLat: number,
     courierLng: number,
   ): Promise<void> {
-    const prepared = await this.prepareCourierPositionNotify(
-      orderId,
+    const plain = await this.findOrderForCourierTracking(orderId);
+    if (!plain) return;
+    const agentId =
+      this.assignedDeliveryUserIdFromOrderDoc(plain) ??
+      '';
+    this.emitCourierPositionFromOrderDoc(
+      plain,
       courierLat,
       courierLng,
+      agentId,
     );
-    if (!prepared) return;
-    const { order, status, extra } = prepared;
-    const oid = orderId.trim();
+  }
+
+  private emitCourierPositionFromOrderDoc(
+    plain: Record<string, unknown>,
+    courierLat: number,
+    courierLng: number,
+    agentUserId: string,
+  ): void {
+    const oid =
+      (plain._id as Types.ObjectId | undefined)?.toString?.() ??
+      String(plain._id ?? '').trim();
+    if (!oid) return;
+
+    const status = String(plain.status ?? '') as OrderStatusEnum;
+    if (status !== OrderStatusEnum.SHIPPED) return;
+
+    if (
+      !this.courierGpsThrottle.shouldPublish(
+        agentUserId,
+        oid,
+        courierLat,
+        courierLng,
+      )
+    ) {
+      return;
+    }
+
+    const extra = this.buildShippedCourierTrackingExtra(
+      plain,
+      courierLat,
+      courierLng,
+      status,
+    );
+    if (!extra) return;
+
     if (this._orderDomainBridge?.enabled()) {
       void this._orderDomainBridge.emit({
+        id: domainEventIdFromCourierTracking(
+          agentUserId,
+          oid,
+          courierLat,
+          courierLng,
+          this.courierGpsThrottle.throttleMs(),
+          this.courierGpsThrottle.coordPrecision(),
+        ),
         type: 'order.tracking.updated',
         payload: {
           orderId: oid,
@@ -3476,15 +3621,16 @@ export class OrdersService {
         },
         metadata: {
           orderContext: this.buildOrderDomainDispatchContext(
-            order,
+            plain,
             status,
             extra,
           ),
         },
       });
-    } else {
-      this._wsOrderNotifyHandler?.notifyPartiesFromDoc(order, status, extra);
+      return;
     }
+
+    this._wsOrderNotifyHandler?.notifyPartiesFromDoc(plain, status, extra);
   }
 
   private buildShippedCourierTrackingExtra(

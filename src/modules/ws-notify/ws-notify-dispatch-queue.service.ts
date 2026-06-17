@@ -33,6 +33,7 @@ const WS_NOTIFY_SUFFIX_TO_TOPIC = {
   'inbox/refresh': 'inbox/refresh',
   'order/update': 'order/update',
   'order/tracking': 'order/tracking',
+  'order/changed': 'order/changed',
   'order/staff-broadcast': 'order/staff-broadcast',
   'stripe/connect-status': 'stripe/connect-status',
   'ads-targeting/event': 'ads-targeting/event',

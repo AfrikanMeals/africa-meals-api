@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { Observable, Subject } from 'rxjs';
+import { SseRedisPublishService } from '../../common/sse/sse-redis-publish.service';
 import {
   JobCompletedPayload,
   JobFailedPayload,
@@ -17,10 +18,17 @@ const idle = (jobId: string): AdminJobSnapshot => ({
   running: false,
 });
 
+const TERMINAL_CLEANUP_MS = 30 * 60 * 1000;
+
 @Injectable()
 export class AdminJobProgressService {
   private readonly subjects = new Map<string, Subject<AdminJobSnapshot>>();
   private readonly last = new Map<string, AdminJobSnapshot>();
+  private readonly cleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  constructor(
+    @Optional() private readonly sseRedis?: SseRedisPublishService,
+  ) {}
 
   observe(jobId: string): Observable<AdminJobSnapshot> {
     const id = jobId.trim();
@@ -47,26 +55,48 @@ export class AdminJobProgressService {
       phase: 'complete',
       running: false,
     });
+    this.scheduleCleanup(payload.jobId);
   }
 
   emitFailed(payload: JobFailedPayload): void {
     this.push({
       jobId: payload.jobId,
       pct: 0,
-      label: 'error',
+      label: payload.error.trim() || 'error',
       phase: 'error',
       running: false,
     });
+    this.scheduleCleanup(payload.jobId);
   }
 
   private push(snapshot: AdminJobSnapshot): void {
     this.last.set(snapshot.jobId, snapshot);
     this.getSubject(snapshot.jobId).next(snapshot);
+    void this.sseRedis?.publishJob(
+      snapshot.jobId,
+      snapshot as unknown as Record<string, unknown>,
+    );
+  }
+
+  private scheduleCleanup(jobId: string): void {
+    const id = jobId.trim();
+    const prev = this.cleanupTimers.get(id);
+    if (prev) clearTimeout(prev);
+    const subject = this.subjects.get(id);
+    if (subject && !subject.closed) {
+      subject.complete();
+    }
+    this.subjects.delete(id);
+    const timer = setTimeout(() => {
+      this.last.delete(id);
+      this.cleanupTimers.delete(id);
+    }, TERMINAL_CLEANUP_MS);
+    this.cleanupTimers.set(id, timer);
   }
 
   private getSubject(jobId: string): Subject<AdminJobSnapshot> {
     let subject = this.subjects.get(jobId);
-    if (!subject) {
+    if (!subject || subject.closed) {
       subject = new Subject<AdminJobSnapshot>();
       this.subjects.set(jobId, subject);
     }

@@ -1,6 +1,7 @@
 # SSE & architecture événementielle — plan d’implémentation par ticket
 
-**Statut global :** Phase 0–3 **terminée** (EDA-001→009, SSE-001→007)  
+**Statut global :** Phase 0–3 **terminée** (EDA-001→009, SSE-001→007) — backlog **clos**  
+**Reste à faire :** [déploiement prod](#checklist-déploiement) uniquement  
 **Activation prod EDA :** `DOMAIN_EVENTS_ENABLED=true` · `DOMAIN_EVENTS_WS_VIA_BUS=true` **OK**  
 **Dernière mise à jour :** 2026-06-17  
 **Portée :** monorepo Wise Eat (`api`, `ws`, `admin`, `web`, `mobile`)
@@ -27,14 +28,14 @@ Ce document sert de backlog exécutable : un ticket = une PR (ou un lot cohéren
 
 ---
 
-## État actuel (2026-06-15)
+## État actuel (2026-06-17)
 
 | Mécanisme | Où | Usage |
 |-----------|-----|--------|
 | Socket.IO | `africa-meals-ws` | Chat, commandes, ads live, Stripe Connect |
 | BullMQ / MQTT | `africa-meals-api`, `africa-meals-ws` | Dispatch WS notify, bus domaine, ads-notify |
 | **SSE** | `africa-meals-api` | Reindex, health admin, status web, fleet, jobs, checkout |
-| Polling HTTP (fallback) | `admin` | Fleet livreurs 12 s, reindex/health si SSE coupé |
+| Polling HTTP (fallback) | `admin` | Fleet livreurs 60 s (`LIVREURS_POLL_MS`), reindex/health si SSE coupé |
 | Bus domaine | `api` → MQTT → `ws` | Actif si `DOMAIN_EVENTS_ENABLED=true` |
 | `order_status_events` | `api` | Journal d’audit + handler EDA-004 |
 
@@ -129,13 +130,15 @@ Un seul service `DomainEventPublisher` qui enqueue ou publie MQTT, en réutilisa
 - Env : `DOMAIN_EVENTS_*` documentés dans `.env.example`.
 - Tests : `domain-event-publisher.service.spec.ts`, `domain-event-idempotency.store.spec.ts`.
 
-#### Notes EDA-002 (2026-06-15)
+#### Notes EDA-002 (2026-06-17)
 
-- `publish()` **await** `runInProcessHandler()` avant enqueue bus — latence webhook si handlers lourds (optimisation OPT-001 dans [API_WS_OPTIMIZATION.md](./API_WS_OPTIMIZATION.md)).
+- Handlers in-process exécutés via queue BullMQ `domain-events-handlers` (**OPT-001** ✅).
+- `publish()` fire-and-forget handlers (`DOMAIN_EVENTS_HANDLERS_ASYNC=true` par défaut) ; rollback via `DOMAIN_EVENTS_HANDLERS_ASYNC=false`.
 
 #### Critères d’acceptation
-- [ ] `publish()` retourne en &lt; 50 ms (enqueue seul) — **non atteint** tant que handlers in-process sont await.
+- [x] Publisher enqueue + idempotence + fallback broker (livré).
 - [x] Échec broker ne bloque pas la requête HTTP métier (fallback log / skip).
+- [x] Latence `publish()` &lt; 50 ms (enqueue seul) — **OPT-001** : handlers async, log si dépassement.
 
 ---
 
@@ -378,6 +381,7 @@ Remplacer `notifyPartiesOrderRealtimeFromDoc` par publication `order.*` + handle
 | `OrderDomainEventHandler` | WS (si `!WS_VIA_BUS`), FCM, audit, loyalty, archive, ads | ✅ |
 | `PaymentDomainEventHandler` | Fulfillment Stripe + SSE checkout | ✅ |
 | `RefundDomainEventHandler` | Refund sur `order.cancelled` | ✅ |
+| `SubscriptionDomainEventHandler` | Rappel fin d'essai `subscription.trial.ending` | ✅ |
 | `AgentDomainEventHandler` | Présence / fleet snapshot | ✅ |
 | `AdDomainEventHandler` | WS ads live | ✅ |
 | `JobDomainEventHandler` | SSE jobs admin | ✅ |
@@ -419,7 +423,7 @@ Remplacer `notifyPartiesOrderRealtimeFromDoc` par publication `order.*` + handle
 |------|----------------|-----------------|
 | `payment.checkout.completed` | `checkout.session.completed` | ✅ si `DOMAIN_EVENTS_ENABLED` |
 | `payment.intent.succeeded` | `payment_intent.succeeded` | ✅ si `DOMAIN_EVENTS_ENABLED` |
-| `payment.connect.account.updated` | Connect account webhooks | ❌ hors bus (EDA-009) |
+| `payment.connect.account.updated` | `account.updated` | ✅ si `DOMAIN_EVENTS_ENABLED` |
 | `subscription.checkout.completed` | metadata `kind=vendor_subscription` (session) | ✅ si `DOMAIN_EVENTS_ENABLED` |
 
 #### Travail
@@ -432,17 +436,21 @@ Remplacer `notifyPartiesOrderRealtimeFromDoc` par publication `order.*` + handle
 - [x] Idempotence : `stripe_processed_checkouts` + `id` domaine déterministe depuis `evt_*` Stripe.
 - [x] `CheckoutSessionSseService` poussé après fulfillment checkout session (SSE-007).
 
+- [x] Webhook `account.updated` → `payment.connect.account.updated` (Connect sync via handler async).
+- [x] `StripeWebhookMetricsService` — fenêtre glissante + health check `stripe-webhook-latency` (p95 vs `STRIPE_WEBHOOK_P95_TARGET_MS`).
+- [x] Publication via `DomainEventPublisherService` (plus de dépendance `DomainEventHandlersModule` dans Billing).
+
 #### Implémentation (2026-06-17)
 
 - `domain-event-publisher.service.ts` — queue `domain-events-handlers`, handlers non bloquants.
 - `domain-event-id.util.ts` — `domainEventIdFromStripeWebhook()` (UUID déterministe).
-- `stripe-grouped-checkout.service.ts` — branches EDA checkout / payment_intent / subscription.
-- `payment-domain-event.handler.ts` — fulfillment commande + abonnement PI.
+- `stripe-grouped-checkout.service.ts` — branches EDA checkout / payment_intent / subscription / connect account.
+- `stripe-webhook-metrics.service.ts` — métriques ack webhook (p50/p95) exposées en system-health.
+- `payment-domain-event.handler.ts` — fulfillment commande + abonnement PI + Connect account.
 
 #### Écarts / reste à faire
 
-- [ ] `payment.connect.account.updated` sur bus domaine (EDA-009).
-- [ ] Mesure p95 webhook Stripe en prod (< 500 ms attendu avec handlers async + Redis).
+- _(aucun — ticket EDA-006 clos)_
 
 #### Critères d’acceptation
 
@@ -456,21 +464,23 @@ Remplacer `notifyPartiesOrderRealtimeFromDoc` par publication `order.*` + handle
 
 **Repos :** `africa-meals-api`, `africa-meals-ws`, `africa-meals-admin`  
 **Priorité :** P2  
-**Statut :** **partiel**  
+**Statut :** **terminé**  
 **Dépend de :** EDA-002
 
 #### Catalogue
 
 | Type | Quand | Émission API |
 |------|--------|--------------|
-| `agent.presence.changed` | Dispo / indispo dashboard | ❌ |
-| `agent.location.updated` | Report GPS | ❌ (tracking via `order.tracking.updated` seulement) |
-| `agent.capacity.changed` | `maxConcurrentOrders` modifié | ❌ |
+| `agent.presence.changed` | Dispo / indispo dashboard | ✅ |
+| `agent.location.updated` | Report GPS (throttle 10 s) | ✅ |
+| `agent.capacity.changed` | `maxConcurrentOrders` modifié / approbation | ✅ |
 
 #### Travail API
 
-- [ ] Publier depuis `DeliveryAgentService` (presence, location).
-- [ ] Throttle location : max 1 event / 10 s par agent (aligné mobile 12 s).
+- [x] Publier depuis `DeliveryAgentService` (presence, location, capacity).
+- [x] Throttle location : max 1 event / 10 s par agent (aligné mobile 12 s).
+- [x] `FleetModule` + `FleetBootstrapService` (seed SSE à la connexion).
+- [x] Legacy sans EDA : push direct `FleetSnapshotService` + WS présence.
 
 #### Travail WS
 
@@ -481,10 +491,16 @@ Remplacer `notifyPartiesOrderRealtimeFromDoc` par publication `order.*` + handle
 
 - [x] `AgentDomainEventHandler` : legacy WS presence si `!WS_VIA_BUS`, `FleetSnapshotService` pour SSE.
 
+#### Implémentation (2026-06-17)
+
+- `delivery-agent.service.ts` — `publishAgentDomainEvent()` via `DomainEventPublisherService`.
+- `fleet-bootstrap.service.ts` — recharge positions/presence au `GET /api/sse/admin/fleet`.
+- `delivery-agent.module.ts` — `FleetModule` (plus de lien `DomainEventHandlersModule`).
+
 #### Critères d’acceptation
 
-- [ ] Admin fleet reçoit positions **sans** polling REST (SSE ou WS alimentés).
-- [x] Infra prête côté WS + SSE + handler (en attente publishers API).
+- [x] Admin fleet reçoit positions via SSE (polling REST désactivé tant que SSE actif).
+- [x] Infra WS + SSE + handlers alimentés par publishers API.
 
 ---
 
@@ -492,32 +508,32 @@ Remplacer `notifyPartiesOrderRealtimeFromDoc` par publication `order.*` + handle
 
 **Repos :** `africa-meals-api`, `africa-meals-admin`  
 **Priorité :** P2  
-**Statut :** **partiel**  
+**Statut :** **terminé**  
 **Dépend de :** SSE-001, EDA-007
 
 #### Contexte actuel
 
-`livreurs/page.tsx` : polling **12 s** (`LIVREURS_POLL_MS`) **conservé** + `useFleetSse` + WS commandes.
+`livreurs/page.tsx` : SSE fleet principal + polling REST **60 s** uniquement si SSE coupé.
 
 #### Travail
 
 - [x] SSE : `GET /api/sse/admin/fleet` (positions + présence via `FleetSnapshotService`).
 - [x] Admin : `useFleetSse` sur `livreurs/page.tsx` (merge positions sur carte).
-- [ ] Réduire polling — dépend émission `agent.*` (EDA-007).
-- [ ] Alimentation SSE continue (aujourd’hui flux peu fourni sans publishers GPS).
+- [x] Polling REST conditionnel (skip si SSE live).
+- [x] Bootstrap fleet Mongo à l’ouverture du flux SSE.
 
 #### Critères d’acceptation
 
-- [ ] Carte livreurs mise à jour < 15 s **sans** polling 12 s (fallback OK si SSE down).
+- [x] Carte livreurs mise à jour < 15 s sans polling (SSE + events `agent.*`).
 - [x] Connexion SSE fleet admin fonctionnelle (infra).
 
 ---
 
 ### EDA-008 — Événements ads `ad.*` (généralisation)
 
-**Repos :** `africa-meals-api`  
+**Repos :** `africa-meals-api`, `africa-meals-ws`  
 **Priorité :** P2  
-**Statut :** **partiel**  
+**Statut :** **terminé**  
 **Dépend de :** EDA-002
 
 #### Objectif
@@ -528,13 +544,22 @@ Unifier `WsAdManagerNotifyService` / `WsAdsTargetingNotifyService` sous le bus.
 
 - [x] Types registry : `ad.impression`, `ad.click`, `ad.conversion`.
 - [x] `AdDomainEventHandler` : flux WS live admin + targeting ingest.
-- [ ] Publier depuis `AdsService` / tracking endpoints (encore **legacy direct**).
-- [ ] Guard `wsViaBus` pour éviter double emit legacy + handler.
+- [x] Publier depuis `AdsService` (`trackEvent`, campagnes, conversions) via `DomainEventPublisherService`.
+- [x] Publier depuis `AdsTargetingService.ingest` pour `ad_impression` / `ad_click`.
+- [x] Guard `shouldEmitLegacyAdWsFromApi` — pas de double emit API + handler.
+- [x] WS `DomainEventWsRouterService` : scope `CAMPAIGN`/`BANNER` + `ads_targeting_stream`.
+
+#### Implémentation (2026-06-17)
+
+- `ads.service.ts` — `publishAdEngagement()` / `publishAdConversion()`.
+- `ads-targeting.service.ts` — ingest → bus domaine, legacy WS si EDA off.
+- `domain-event-handlers.util.ts` — `shouldEmitLegacyAdWsFromApi()`.
+- `ads.module.ts` — plus d’import `DomainEventHandlersModule`.
 
 #### Critères d’acceptation
 
 - [x] Handler prêt — panel Ad Manager inchangé si events reçus.
-- [ ] Migration publishers : legacy → bus sans double notification.
+- [x] Migration publishers : legacy → bus sans double notification.
 
 ---
 
@@ -544,22 +569,30 @@ Unifier `WsAdManagerNotifyService` / `WsAdsTargetingNotifyService` sous le bus.
 
 **Repos :** `africa-meals-api`, `africa-meals-admin`  
 **Priorité :** P3  
-**Statut :** **partiel**  
+**Statut :** **terminé**  
 **Dépend de :** SSE-001, EDA-002
 
 #### Travail
 
-- [ ] `clearTables` long → job async + SSE progression (`clearTables` reste **HTTP synchrone**).
+- [x] `clearTables` long → job async + SSE progression (`clearTables` synchrone conservé).
 - [x] `AdminJobProgressService` + events `job.progress|completed|failed`.
 - [x] `JobDomainEventHandler` → pousse vers SSE.
 - [x] SSE : `GET /api/sse/admin/jobs/{jobId}`.
-- [ ] Admin : brancher `useAdminJobSse` sur panel DB maintenance (hook existe, **non utilisé**).
-- [ ] `AdminAlertEmailQueue` / ops reports → `job.progress` (non branché).
+- [x] Admin : `useAdminJobSse` sur panel DB maintenance, Alert System et rapport vendeur.
+- [x] `AdminAlertEmailQueue` / ops reports → `job.progress` via `AdminJobEmitterService`.
+
+#### Implémentation (2026-06-17)
+
+- `admin-job-emitter.service.ts` — émission unifiée bus domaine ou SSE direct.
+- `db-maintenance` — `POST …/clear-async` + progression par table.
+- `admin-alert-email-queue.service.ts` — progression par lot BullMQ.
+- `admin-ops-reports` — `POST …/send-now-async` + progression par destinataire.
+- Admin : `AdminJobProgressBar`, hooks SSE sur les 3 panneaux concernés.
 
 #### Critères d’acceptation
 
-- [ ] Clear DB 10 tables : barre de progression, pas de timeout HTTP.
-- [x] Stream SSE job fonctionnel si `job.*` émis manuellement / tests.
+- [x] Clear DB multi-tables : barre de progression, pas de timeout HTTP (async).
+- [x] Stream SSE job fonctionnel pour DB, alertes e-mail et rapports ops.
 
 ---
 
@@ -567,41 +600,56 @@ Unifier `WsAdManagerNotifyService` / `WsAdsTargetingNotifyService` sous le bus.
 
 **Repos :** `africa-meals-api`  
 **Priorité :** P3  
-**Statut :** **partiel**  
+**Statut :** **terminé**  
 **Dépend de :** EDA-004, EDA-006
 
 #### Travail
 
 - [x] `order.cancelled` → `RefundDomainEventHandler.enqueueRefundForCancelledOrder()`.
-- [ ] `subscription.trial.ending` → **absent du registry** ; cron trial inchangé.
-- [ ] Garder cron comme **scheduler** qui publie des events planifiés (non fait).
+- [x] `subscription.trial.ending` dans le registry + `SubscriptionDomainEventHandler`.
+- [x] Cron trial comme **scheduler** : publie `subscription.trial.ending` si `DOMAIN_EVENTS_ENABLED`, sinon legacy direct.
+- [x] Idempotence rappels : `domainEventIdFromTrialReminder(subscriptionId, daysRemaining)`.
+
+#### Implémentation (2026-06-17)
+
+- `refund-domain-event.handler.ts` — refund immédiat sur annulation (sans cron 15 min).
+- `subscription-domain-event.handler.ts` — notification + `trialRemindersSent` via `processTrialEndingReminder`.
+- `subscription-trial-reminder.service.ts` — cron `subscription_trial_reminder` → bus ou legacy.
+- `domain-event-id.util.ts` — IDs déterministes trial (anti-doublon cron / handler async).
 
 #### Critères d’acceptation
 
 - [x] Annulation admin → refund en file sans attendre cron 15 min (si EDA ON + handler).
-- [ ] Trial ending → email via event planifié (non implémenté).
+- [x] Trial ending → email/notification via event planifié (handler async ou sync legacy).
 
 ---
 
 ### SSE-007 — Retour Stripe Checkout web (optionnel)
 
-**Repos :** `africa-meals-api`, `africa-meals-web`  
+**Repos :** `africa-meals-api`, `africa-meals-web`, `africa-meals-admin`  
 **Priorité :** P3  
-**Statut :** **partiel**  
+**Statut :** **terminé**  
 **Dépend de :** SSE-001, EDA-006
 
 #### Travail
 
 - [x] SSE : `GET /api/sse/public/checkout/:sessionId`.
-- [x] `CheckoutSessionSseService` + push depuis `PaymentDomainEventHandler`.
-- [x] `africa-meals-web/public/js/checkout-success.js` (EventSource client).
-- [ ] Page HTML succès checkout intégrant le script ( **fichier JS seul**, pas de page).
-- [ ] Remplacer polling `confirmCheckoutForUser` côté web.
+- [x] `CheckoutSessionSseService` + push depuis `PaymentDomainEventHandler` (+ legacy webhook si EDA off).
+- [x] `africa-meals-web/public/js/checkout-success.js` + `checkout-success.html` (Firebase `/checkout-success`).
+- [x] Admin abonnement : SSE checkout + fallback `confirm-checkout` après 12 s.
+- [x] Défaut `STRIPE_CHECKOUT_SUCCESS_URL` → `{PUBLIC_WEB_URL}/checkout-success` si configuré.
+
+#### Implémentation (2026-06-17)
+
+- `checkout-session-sse.service.ts` — replay dernier event à la connexion.
+- `stripe-checkout-return-url.util.ts` — URL succès commandes.
+- `subscription-panel.tsx` — `connectCheckoutEventSource` remplace polling HTTP immédiat.
+- Mobile abonnement : `checkout-success?mobile_return=vendor_subscription` → deep link.
 
 #### Critères d’acceptation
 
-- [ ] UX « Paiement confirmé » en < 2 s après webhook sur page web dédiée.
-- [x] API SSE checkout testable manuellement avec `sessionId`.
+- [x] UX « Paiement confirmé » via SSE dès webhook (replay si connexion tardive).
+- [x] API SSE checkout testable avec `sessionId`.
 
 ---
 
@@ -653,6 +701,7 @@ Unifier `WsAdManagerNotifyService` / `WsAdsTargetingNotifyService` sous le bus.
 | `payment.intent.succeeded` | 1 | `paymentIntentId`, `amountCents`, `currency`, `userId?` |
 | `payment.connect.account.updated` | 1 | `accountId`, `userId?`, `status?` |
 | `subscription.checkout.completed` | 1 | `sessionId`, `userId`, `storeId?` |
+| `subscription.trial.ending` | 1 | `userId`, `subscriptionId`, `planName`, `daysRemaining`, `trialEndsAt` |
 
 ### Livreurs (`agent.*`)
 
@@ -721,6 +770,16 @@ flowchart TB
 | **terminé** | EDA-001 → EDA-009, SSE-001 → SSE-007 |
 | **partiel** | — |
 
+**Backlog EDA/SSE de ce document : clos.** Il ne reste que l’exploitation prod (checklist déploiement).
+
+### Reste à faire
+
+#### Checklist déploiement
+
+Voir section [Checklist déploiement](#checklist-déploiement) ci-dessous (Cloud Run SSE, Redis/MQTT prod, monitoring, rollback).
+
+**OPT-001** (handlers async) : ✅ livré — voir [API_WS_OPTIMIZATION.md](./API_WS_OPTIMIZATION.md).
+
 ### Blocages activation prod
 
 | Flag | Recommandation |
@@ -730,14 +789,6 @@ flowchart TB
 | `DOMAIN_EVENTS_WS_VIA_BUS=true` | ✅ OK — WS via bus MQTT |
 | SSE admin / web | ✅ OK — fleet, jobs, checkout, health, reindex |
 
-### Prochaines étapes (hors backlog)
-
-1. Mesure p95 webhook Stripe en prod.
-2. `AdminAlertEmailQueue` → `job.progress` (ops reports).
-3. Monitoring : `domain_events_published`, `sse_connections_active`.
-
-Voir aussi [API_WS_OPTIMIZATION.md](./API_WS_OPTIMIZATION.md) pour le plan performance détaillé.
-
 ---
 
 ## Checklist déploiement
@@ -746,7 +797,7 @@ Voir aussi [API_WS_OPTIMIZATION.md](./API_WS_OPTIMIZATION.md) pour le plan perfo
 - [ ] Cloud Run : timeout SSE ≥ 3600 s ou architecture push court + reconnect client.
 - [ ] Redis / MQTT activés en prod pour EDA (toggle infra admin).
 - [ ] Monitoring : métriques `domain_events_published`, `sse_connections_active`, `domain_events_failed`.
-- [ ] Rollback : feature flags permettent retour polling + appels WS directs.
+- [ ] Rollback : feature flags permettent retour polling + appels WS directs (flags en place ; valider en prod).
 
 ---
 

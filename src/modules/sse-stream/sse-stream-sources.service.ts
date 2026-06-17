@@ -7,10 +7,12 @@ import { ForbiddenException, Injectable } from '@nestjs/common';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Observable, interval, from, merge } from 'rxjs';
 import { switchMap, startWith, map, distinctUntilChanged } from 'rxjs/operators';
+import { sseHealthDedupKey } from './sse-health-dedup.util';
 import { PublicStatusProbeService, PublicStatusSnapshot } from './public-status-probe.service';
 import { SseStreamService } from './sse-stream.service';
 import { MessageEvent } from '@nestjs/common';
 import { AdminJobProgressService } from '@modules/admin-jobs/admin-job-progress.service';
+import { FleetBootstrapService } from '@modules/fleet/fleet-bootstrap.service';
 import { FleetSnapshotService } from '@modules/fleet/fleet-snapshot.service';
 import { CheckoutSessionSseService } from './checkout-session-sse.service';
 
@@ -22,6 +24,7 @@ export class SseStreamSourcesService {
     private readonly dbMaintenance: DbMaintenanceService,
     private readonly statusProbes: PublicStatusProbeService,
     private readonly fleetSnapshot: FleetSnapshotService,
+    private readonly fleetBootstrap: FleetBootstrapService,
     private readonly adminJobs: AdminJobProgressService,
     private readonly checkoutSse: CheckoutSessionSseService,
   ) {}
@@ -63,7 +66,9 @@ export class SseStreamSourcesService {
     );
 
     const poll$ = merge(mqtt$, checks$).pipe(
-      distinctUntilChanged((a, b) => JSON.stringify(a) === JSON.stringify(b)),
+      distinctUntilChanged(
+        (a, b) => sseHealthDedupKey(a) === sseHealthDedupKey(b),
+      ),
     );
 
     return this.sse.stream({
@@ -101,6 +106,7 @@ export class SseStreamSourcesService {
 
   fleetStream(user: UserModel): Observable<MessageEvent> {
     this.assertAdmin(user);
+    void this.fleetBootstrap.refreshFromDatabase();
     const userId = String((user as { _id?: unknown; id?: unknown })._id ?? user.id);
     return this.sse.stream({
       userId,
@@ -134,7 +140,9 @@ export class SseStreamSourcesService {
       source$: this.checkoutSse.observe(id).pipe(
         map((event) => event as unknown as Record<string, unknown>),
       ),
-      completeWhen: () => true,
+      completeWhen: (p) =>
+        p.type === 'checkout_completed' ||
+        p.type === 'subscription_completed',
     });
   }
 }

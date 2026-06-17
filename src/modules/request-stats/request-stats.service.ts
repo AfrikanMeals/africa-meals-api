@@ -27,6 +27,10 @@ import {
   isRequestStatsEnabled,
   requestStatsMaxEntries,
 } from './request-stats.util';
+import {
+  buildSlowInsights,
+  DEFAULT_SLOW_THRESHOLD_MS,
+} from './request-stats-slow.util';
 
 type VendorAnalyticsTopViewedItemRow = {
   itemId: string;
@@ -142,13 +146,21 @@ export class RequestStatsService {
 
   async list(user: UserModel, query: RequestStatsQuery) {
     await this.assertViewer(user);
+    const scoped = this.store.filtered({
+      storeId: query.storeId,
+      kind: query.kind,
+      method: query.method,
+      routeContains: query.routeContains,
+    });
     const all = this.store.query({ ...query, limit: 500 });
     const entries = this.store.query(query);
+    const thresholdMs = query.minDurationMs ?? DEFAULT_SLOW_THRESHOLD_MS;
     return {
       enabled: this.isEnabled(),
       maxEntries: this.getMaxEntries(),
       bufferSize: this.store.size(),
       summary: this.store.summaryFor(all),
+      slowInsights: buildSlowInsights(scoped, thresholdMs, 'api'),
       entries,
       source: 'api' as const,
     };

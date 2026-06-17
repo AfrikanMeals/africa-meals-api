@@ -19,5 +19,27 @@ export type RequestStatsQuery = {
   kind?: RequestStatsKind | 'all';
   method?: string;
   routeContains?: string;
+  minDurationMs?: number;
+  sortBy?: 'at' | 'duration';
   limit?: number;
+};
+
+export type RequestStatsSlowRouteRow = {
+  route: string;
+  method: string;
+  count: number;
+  avgMs: number;
+  maxMs: number;
+};
+
+export type RequestStatsSlowInsights = {
+  thresholdMs: number;
+  slowCount: number;
+  totalInScope: number;
+  slowRatePct: number;
+  maxMs: number;
+  p95Ms: number;
+  avgSlowMs: number;
+  bySource: { api: number; ws: number };
+  byRoute: RequestStatsSlowRouteRow[];
 };

@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { Observable, Subject } from 'rxjs';
+import { SseRedisPublishService } from '../../common/sse/sse-redis-publish.service';
 
 export type FleetAgentSnapshot = {
   agentUserId: string;
@@ -23,6 +24,10 @@ export type FleetSnapshot = {
 export class FleetSnapshotService {
   private readonly agents = new Map<string, FleetAgentSnapshot>();
   private readonly subject = new Subject<FleetSnapshot>();
+
+  constructor(
+    @Optional() private readonly sseRedis?: SseRedisPublishService,
+  ) {}
 
   observe(): Observable<FleetSnapshot> {
     return new Observable((subscriber) => {
@@ -51,7 +56,7 @@ export class FleetSnapshotService {
       ...partial,
     };
     this.agents.set(id, next);
-    this.subject.next(this.snapshot());
+    this.broadcastSnapshot();
   }
 
   /** Charge l'état initial depuis la base (dashboard livreurs). */
@@ -63,6 +68,14 @@ export class FleetSnapshotService {
         updatedAt: row.updatedAt ?? new Date().toISOString(),
       });
     }
-    this.subject.next(this.snapshot());
+    this.broadcastSnapshot();
+  }
+
+  private broadcastSnapshot(): void {
+    const snapshot = this.snapshot();
+    this.subject.next(snapshot);
+    void this.sseRedis?.publishFleet(
+      snapshot as unknown as Record<string, unknown>,
+    );
   }
 }

@@ -1,24 +1,58 @@
 import { AuthModule } from '@modules/auth/auth.module';
 import { DbMaintenanceModule } from '@modules/db-maintenance/db-maintenance.module';
 import { SearchSettingsModule } from '@modules/search-settings/search-settings.module';
+import { FleetModule } from '@modules/fleet/fleet.module';
+import { RequestStatsModule } from '@modules/request-stats/request-stats.module';
 import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
-import { Module } from '@nestjs/common';
+import { DynamicModule, Module } from '@nestjs/common';
 import { AppService } from '../../app.service';
+import { isSseHttpOnApi } from '../../common/sse/sse-redis.channels';
 import { SseJwtAuthGuard } from './guards/sse-jwt-auth.guard';
 import { PublicStatusProbeService } from './public-status-probe.service';
+import { SseBackgroundPublisherService } from './sse-background-publisher.service';
 import { SseStreamController } from './sse-stream.controller';
 import { SseStreamSourcesService } from './sse-stream-sources.service';
+import { CheckoutSessionSseModule } from './checkout-session-sse.module';
 import { SseStreamService } from './sse-stream.service';
 
+const sseProviders = [
+  SseStreamService,
+  SseStreamSourcesService,
+  PublicStatusProbeService,
+  SseBackgroundPublisherService,
+  SseJwtAuthGuard,
+  AppService,
+];
+
 @Module({
-  imports: [AuthModule, SearchSettingsModule, DbMaintenanceModule, DomainEventHandlersModule],
-  controllers: [SseStreamController],
-  providers: [
-    SseStreamService,
-    SseStreamSourcesService,
-    PublicStatusProbeService,
-    SseJwtAuthGuard,
-    AppService,
+  imports: [
+    AuthModule,
+    SearchSettingsModule,
+    DbMaintenanceModule,
+    FleetModule,
+    DomainEventHandlersModule,
+    CheckoutSessionSseModule,
   ],
+  providers: sseProviders,
+  exports: [SseStreamService, SseStreamSourcesService, CheckoutSessionSseModule],
 })
-export class SseStreamModule {}
+export class SseStreamModule {
+  static register(): DynamicModule {
+    const httpEnabled = isSseHttpOnApi();
+    return {
+      module: SseStreamModule,
+      imports: [
+        AuthModule,
+        SearchSettingsModule,
+        DbMaintenanceModule,
+        FleetModule,
+        RequestStatsModule,
+        DomainEventHandlersModule,
+        CheckoutSessionSseModule,
+      ],
+      controllers: httpEnabled ? [SseStreamController] : [],
+      providers: sseProviders,
+      exports: [SseStreamService, SseStreamSourcesService, CheckoutSessionSseModule],
+    };
+  }
+}

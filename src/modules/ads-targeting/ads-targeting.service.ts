@@ -7,8 +7,10 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { AdsService } from '@modules/ads/ads.service';
+import { shouldEmitLegacyAdWsFromApi } from '@modules/domain-event-handlers/domain-event-handlers.util';
 import { CronMonitorService } from '@modules/cron-monitor/cron-monitor.service';
 import {
   CreateAdCampaignDto,
@@ -73,6 +75,7 @@ export class AdsTargetingService {
     @Inject(AdsService) private readonly adsService: AdsService,
     @Inject(WsAdsTargetingNotifyService)
     private readonly wsAdsTargetingNotify: WsAdsTargetingNotifyService,
+    private readonly config: ConfigService,
     private readonly cronMonitor: CronMonitorService,
   ) {}
 
@@ -130,6 +133,31 @@ export class AdsTargetingService {
   private ensureAdmin(requester: UserModel | null | undefined): void {
     if (!requester || requester.type !== UserTypeEnum.ADMIN) {
       throw new ForbiddenException('admin_only');
+    }
+  }
+
+  private publishTargetingAdEngagementEvents(
+    events: AdsTargetingEventDto[],
+  ): void {
+    if (shouldEmitLegacyAdWsFromApi(this.config)) return;
+    for (const event of events) {
+      const adId = String(event.adId ?? '').trim();
+      if (!adId) continue;
+      if (event.eventType === AdsTargetingEventTypeEnum.AD_IMPRESSION) {
+        void this.adsService.publishAdEngagement('ad.impression', {
+          adId,
+          customerUserId: event.userId?.trim(),
+          clientInstallId: event.deviceId?.trim(),
+          adScope: 'BANNER',
+        });
+      } else if (event.eventType === AdsTargetingEventTypeEnum.AD_CLICK) {
+        void this.adsService.publishAdEngagement('ad.click', {
+          adId,
+          customerUserId: event.userId?.trim(),
+          clientInstallId: event.deviceId?.trim(),
+          adScope: 'BANNER',
+        });
+      }
     }
   }
 
@@ -407,12 +435,15 @@ export class AdsTargetingService {
     }));
     this.queue.push(...normalized);
     this.triggerQueueProcessing();
-    this.wsAdsTargetingNotify.broadcastEventIngested({
-      received,
-      queued: normalized.length,
-      eventType: normalized[0]?.eventType ?? 'unknown',
-      placement: normalized[0]?.placement ?? null,
-    });
+    this.publishTargetingAdEngagementEvents(normalized);
+    if (shouldEmitLegacyAdWsFromApi(this.config)) {
+      this.wsAdsTargetingNotify.broadcastEventIngested({
+        received,
+        queued: normalized.length,
+        eventType: normalized[0]?.eventType ?? 'unknown',
+        placement: normalized[0]?.placement ?? null,
+      });
+    }
     await this.logAccess({
       action: 'events_ingest',
       actorKey: this.actorKey(requester),

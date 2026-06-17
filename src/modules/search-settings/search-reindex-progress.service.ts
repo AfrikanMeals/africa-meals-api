@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { Observable, Subject } from 'rxjs';
+import { SseRedisPublishService } from '../../common/sse/sse-redis-publish.service';
 
 export type SearchReindexPhase = 'stores' | 'products' | 'drinks' | 'complete' | 'error';
 
@@ -27,6 +28,10 @@ export class SearchReindexProgressService {
   private readonly subject = new Subject<SearchReindexProgressEvent>();
   private last: SearchReindexProgressEvent = IDLE;
 
+  constructor(
+    @Optional() private readonly sseRedis?: SseRedisPublishService,
+  ) {}
+
   observe(): Observable<SearchReindexProgressEvent> {
     return new Observable((subscriber) => {
       subscriber.next(this.last);
@@ -42,6 +47,9 @@ export class SearchReindexProgressService {
   emit(event: SearchReindexProgressEvent): void {
     this.last = event;
     this.subject.next(event);
+    void this.sseRedis?.publishReindex(
+      event as unknown as Record<string, unknown>,
+    );
   }
 
   resetIdle(): void {

@@ -15,3 +15,8 @@ export function isDomainEventsWsViaBus(config: ConfigService): boolean {
     .toLowerCase();
   return raw !== '0' && raw !== 'false' && raw !== 'no' && raw !== 'off';
 }
+
+/** EDA-008 : l’API ne doit pas appeler les notifiers WS si le bus domaine est actif. */
+export function shouldEmitLegacyAdWsFromApi(config: ConfigService): boolean {
+  return !isDomainEventsEnabled(config);
+}

@@ -8,8 +8,8 @@ import { PlatformShippingSettingsModule } from '@modules/platform-shipping-setti
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/store-delivery-drivers.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
+import { FleetModule } from '@modules/fleet/fleet.module';
 import { Module, forwardRef } from '@nestjs/common';
-import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
   DeliveryAgentApplicationModel,
@@ -32,7 +32,7 @@ import { DeliveryAgentService } from './delivery-agent.service';
     PlatformShippingSettingsModule,
     SupportedCountriesModule,
     StoreDeliveryDriversModule,
-    forwardRef(() => DomainEventHandlersModule),
+    FleetModule,
     WsNotifyModule,
     MongooseModule.forFeature([
       {

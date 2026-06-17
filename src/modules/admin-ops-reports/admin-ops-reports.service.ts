@@ -1,7 +1,9 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   Logger,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { MailerService } from '@modules/mailer/mailer.service';
@@ -25,6 +27,8 @@ import { StoreModel } from '@schemas/store.schema';
 import { VendorOpsReportDeliveryModel } from '@schemas/vendor-ops-report-delivery.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
+import { randomUUID } from 'crypto';
+import { AdminJobEmitterService } from '@modules/admin-jobs/admin-job-emitter.service';
 
 const SETTINGS_KEY = 'default';
 
@@ -80,6 +84,8 @@ export class AdminOpsReportsService {
     private readonly storeAccess: StoreAccessService,
     private readonly builder: AdminOpsReportBuilderService,
     private readonly mailer: MailerService,
+    @Inject(forwardRef(() => AdminJobEmitterService))
+    private readonly jobEmitter: AdminJobEmitterService,
   ) {}
 
   private async assertAdminSettings(user: UserModel): Promise<void> {
@@ -225,6 +231,53 @@ export class AdminOpsReportsService {
     return result;
   }
 
+  async sendReportNowAsync(user: UserModel): Promise<{ jobId: string }> {
+    await this.assertAdminSettings(user);
+    const jobId = randomUUID();
+    void this.runSendReportNowJob(user, jobId).catch((error) => {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`sendReportNowAsync job ${jobId} failed: ${msg}`);
+      void this.jobEmitter.emitFailed({ jobId, error: msg });
+    });
+    return { jobId };
+  }
+
+  private async runSendReportNowJob(
+    user: UserModel,
+    jobId: string,
+  ): Promise<void> {
+    await this.jobEmitter.emitProgress({
+      jobId,
+      pct: 0,
+      label: 'Préparation…',
+      phase: 'start',
+    });
+    const doc = await this.ensureSettings();
+    const tz =
+      String(doc.timezone ?? 'America/Toronto').trim() || 'America/Toronto';
+    const period = doc.period ?? AdminOpsReportPeriodEnum.WEEKLY;
+    const bounds = resolveCompletedOpsReportPeriod(period, tz);
+    const adminEmail = String(user.email ?? '').trim() || '(sans e-mail)';
+    this.logger.log(
+      `[vendor-ops-report-manual] déclenché par admin=${String(user._id)} (${adminEmail}) période=${bounds.periodKey}`,
+    );
+    const result = await this.dispatchToVendors(bounds, {
+      force: true,
+      manual: true,
+      jobId,
+    });
+    this.logger.log(
+      `[vendor-ops-report-manual] terminé période=${bounds.periodKey} sent=${result.sent} skipped=${result.skipped} failed=${result.failed}`,
+    );
+    if (result.sent > 0) {
+      await this.markGlobalSent(bounds.periodKey);
+    }
+    await this.jobEmitter.emitCompleted({
+      jobId,
+      result: result as unknown as Record<string, unknown>,
+    });
+  }
+
   async runScheduledPass(): Promise<VendorOpsReportDispatchResult & { ran: boolean }> {
     const doc = await this.ensureSettings();
     const decision = shouldSendOpsReportNow({
@@ -306,7 +359,7 @@ export class AdminOpsReportsService {
 
   private async dispatchToVendors(
     bounds: ReturnType<typeof resolveCompletedOpsReportPeriod>,
-    opts: { force: boolean; manual?: boolean },
+    opts: { force: boolean; manual?: boolean; jobId?: string },
   ): Promise<VendorOpsReportDispatchResult> {
     const logTag = opts.manual
       ? 'vendor-ops-report-manual'
@@ -328,8 +381,18 @@ export class AdminOpsReportsService {
     let failed = 0;
     const errors: Array<{ ownerId: string; message: string }> = [];
     const recipientLogs: VendorOpsReportRecipientLog[] = [];
+    const total = recipients.length;
 
-    for (const recipient of recipients) {
+    for (let i = 0; i < recipients.length; i++) {
+      const recipient = recipients[i]!;
+      if (opts.jobId) {
+        await this.jobEmitter.emitProgress({
+          jobId: opts.jobId,
+          pct: Math.round((i / Math.max(1, total)) * 100),
+          label: recipient.email,
+          phase: 'sending',
+        });
+      }
       const ownerKey = recipient.ownerId.toString();
       const baseLog: VendorOpsReportRecipientLog = {
         ownerId: ownerKey,

@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
 import {
   AdminOpsReportSettingsModel,
   AdminOpsReportSettingsSchema,
@@ -31,6 +32,7 @@ import { AdminOpsReportsService } from './admin-ops-reports.service';
     TeamsModule,
     MailerModule,
     DashboardModule,
+    forwardRef(() => DomainEventHandlersModule),
     MongooseModule.forFeature([
       {
         name: AdminOpsReportSettingsModel.name,

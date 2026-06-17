@@ -1,5 +1,6 @@
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { DomainEventPublisherService } from '../../common/domain-events/domain-event-publisher.service';
+import { domainEventIdFromTrialReminder } from '../../common/domain-events/domain-event-id.util';
 import { isDomainEventsEnabled } from '@modules/domain-event-handlers/domain-event-handlers.util';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -154,13 +155,15 @@ export class SubscriptionTrialReminderService {
           (plan as { name?: string } | undefined)?.name ??
           'Abonnement',
       );
+      const subId = String(sub._id);
 
       if (isDomainEventsEnabled(this.config) && this.domainPublisher) {
-        await this.domainPublisher.publish({
+        const publishResult = await this.domainPublisher.publish({
+          id: domainEventIdFromTrialReminder(subId, daysLeft),
           type: 'subscription.trial.ending',
           payload: {
             userId: ownerId,
-            subscriptionId: String(sub._id),
+            subscriptionId: subId,
             storeId: String((sub as { store?: Types.ObjectId }).store ?? '')
               .trim() || undefined,
             planName,
@@ -169,13 +172,24 @@ export class SubscriptionTrialReminderService {
           },
           metadata: { source: 'subscription-trial-cron' },
         });
+        if (publishResult.mode === 'duplicate') {
+          result.skipped++;
+          continue;
+        }
+        if (!publishResult.ok) {
+          this.logger.warn(
+            `Trial reminder publish skipped sub=${subId} days=${daysLeft} mode=${publishResult.mode}`,
+          );
+          result.skipped++;
+          continue;
+        }
         result.reminded++;
         continue;
       }
 
       await this.processTrialEndingReminder({
         userId: ownerId,
-        subscriptionId: String(sub._id),
+        subscriptionId: subId,
         storeId: String((sub as { store?: Types.ObjectId }).store ?? '')
           .trim() || undefined,
         planName,

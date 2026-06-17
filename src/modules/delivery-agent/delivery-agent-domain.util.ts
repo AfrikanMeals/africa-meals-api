@@ -14,3 +14,12 @@ export function mapDeliveryPresenceToDomain(
   if (presence === 'hors_ligne') return 'offline';
   return 'available';
 }
+
+export function resolveDeliveryAgentPresence(
+  availability: 'disponible' | 'hors_ligne',
+  activeOrderCount: number,
+): DeliveryAgentPresenceLabel {
+  if (availability === 'hors_ligne') return 'hors_ligne';
+  if (activeOrderCount > 0) return 'en_livraison';
+  return 'disponible';
+}

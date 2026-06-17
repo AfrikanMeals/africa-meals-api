@@ -10,7 +10,6 @@ import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module
 import { UsersModule } from '@modules/users/users.module';
 import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
 import { VendorNotificationModule } from '@modules/vendor-notifications/vendor-notification.module';
-import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { StripeConnectTransferModule } from './stripe/stripe-connect-transfer.module';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -34,6 +33,8 @@ import { AddressModel, AddressSchema } from '@schemas/address.schema';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import { StripeConnectService } from './stripe/stripe-connect.service';
 import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.service';
+import { StripeWebhookMetricsService } from './stripe/stripe-webhook-metrics.service';
+import { CheckoutSessionSseModule } from '@modules/sse-stream/checkout-session-sse.module';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 
 @Module({
@@ -42,6 +43,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
     BillingService,
     StripeGroupedCheckoutService,
     StripeConnectService,
+    StripeWebhookMetricsService,
   ],
   imports: [
     WsNotifyModule,
@@ -58,7 +60,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
     SupportedCountriesModule,
     VendorStatusEmailModule,
     forwardRef(() => VendorNotificationModule),
-    forwardRef(() => DomainEventHandlersModule),
+    CheckoutSessionSseModule,
     MongooseModule.forFeature([
       { name: PaymentMethodModel.name, schema: PaymentMethodSchema },
       { name: StoreModel.name, schema: StoreSchema },
@@ -80,6 +82,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
     BillingService,
     StripeConnectService,
     StripeGroupedCheckoutService,
+    StripeWebhookMetricsService,
     StripeConnectTransferModule,
   ],
 })

@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
+import { BillingModule } from '../billing/billing.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AdModel, AdSchema } from '@schemas/ad.schema';
 import { AdCampaignModel, AdCampaignSchema } from '@schemas/ad-campaign.schema';
@@ -47,6 +48,7 @@ import { DbMaintenanceService } from './db-maintenance.service';
     WsNotifyModule,
     MailerModule,
     OrdersModule,
+    forwardRef(() => BillingModule),
     DomainEventHandlersModule,
     MongooseModule.forFeature([
       { name: UserModel.name, schema: UserSchema },

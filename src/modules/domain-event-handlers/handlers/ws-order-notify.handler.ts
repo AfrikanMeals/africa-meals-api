@@ -67,13 +67,11 @@ export class WsOrderNotifyHandler {
   ): void {
     const customerId = parties.customerUserId?.trim();
     if (customerId) {
-      this.wsOrderNotify.notifyCustomerOrderUpdate(customerId, tracking);
-      this.wsOrderNotify.notifyCustomerOrderTracking(customerId, tracking);
+      this.wsOrderNotify.notifyCustomerOrderChanged(customerId, tracking);
     }
     const vendorId = parties.vendorUserId?.trim();
     if (vendorId && vendorId !== customerId) {
-      this.wsOrderNotify.notifyCustomerOrderUpdate(vendorId, tracking);
-      this.wsOrderNotify.notifyCustomerOrderTracking(vendorId, tracking);
+      this.wsOrderNotify.notifyCustomerOrderChanged(vendorId, tracking);
     }
     const deliveryAgentId = parties.deliveryAgentId?.trim();
     if (
@@ -81,8 +79,7 @@ export class WsOrderNotifyHandler {
       deliveryAgentId !== customerId &&
       deliveryAgentId !== vendorId
     ) {
-      this.wsOrderNotify.notifyCustomerOrderUpdate(deliveryAgentId, tracking);
-      this.wsOrderNotify.notifyCustomerOrderTracking(deliveryAgentId, tracking);
+      this.wsOrderNotify.notifyCustomerOrderChanged(deliveryAgentId, tracking);
     }
     this.wsOrderNotify.notifyStaffOrderBroadcast(tracking);
   }

@@ -31,6 +31,15 @@ export class AdminOpsReportsAdminController {
     return this.reports.updateSettings(req.user as UserModel, dto);
   }
 
+  @Post('send-now-async')
+  @ApiOperation({
+    summary:
+      'Envoie le rapport en arrière-plan (jobId + SSE progression)',
+  })
+  sendNowAsync(@Req() req: Request) {
+    return this.reports.sendReportNowAsync(req.user as UserModel);
+  }
+
   @Post('send-now')
   @ApiOperation({
     summary:

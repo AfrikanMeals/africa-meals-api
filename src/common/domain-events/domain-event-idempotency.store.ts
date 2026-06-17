@@ -1,67 +1,24 @@
 import {
   Injectable,
   Logger,
-  OnModuleDestroy,
-  OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import Redis from 'ioredis';
-import {
-  parsePositiveInt,
-  readBullmqRedisConnectionFromConfig,
-} from '../bullmq-redis-connection';
+import { parsePositiveInt } from '../bullmq-redis-connection';
+import { SharedRedisService } from '../redis/shared-redis.service';
 
 const REDIS_KEY_PREFIX = 'domain-event:idempotency:';
 
 type MemoryEntry = { expiresAtMs: number };
 
 @Injectable()
-export class DomainEventIdempotencyStore
-  implements OnModuleInit, OnModuleDestroy
-{
+export class DomainEventIdempotencyStore {
   private readonly logger = new Logger(DomainEventIdempotencyStore.name);
-  private redis: Redis | null = null;
   private readonly memory = new Map<string, MemoryEntry>();
 
-  constructor(private readonly config: ConfigService) {}
-
-  onModuleInit(): void {
-    const connection = readBullmqRedisConnectionFromConfig(this.config);
-    if (!connection) {
-      this.logger.log(
-        'Domain event idempotency: in-memory fallback (REDIS_* absent)',
-      );
-      return;
-    }
-    this.redis = new Redis({
-      host: connection.host,
-      port: connection.port,
-      username: connection.username,
-      password: connection.password,
-      tls: connection.tls,
-      maxRetriesPerRequest: 1,
-      enableReadyCheck: true,
-      lazyConnect: true,
-    });
-    this.redis.on('error', (err) => {
-      this.logger.warn(`Domain event idempotency Redis error: ${err.message}`);
-    });
-    void this.redis.connect().catch((err: Error) => {
-      this.logger.warn(
-        `Domain event idempotency Redis connect failed: ${err.message}`,
-      );
-      this.redis?.disconnect();
-      this.redis = null;
-    });
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    if (this.redis) {
-      await this.redis.quit().catch(() => undefined);
-      this.redis = null;
-    }
-    this.memory.clear();
-  }
+  constructor(
+    private readonly config: ConfigService,
+    private readonly sharedRedis: SharedRedisService,
+  ) {}
 
   private ttlSec(): number {
     return parsePositiveInt(
@@ -87,10 +44,11 @@ export class DomainEventIdempotencyStore
     const id = eventId.trim();
     if (!id) return false;
 
-    if (this.redis) {
+    const redis = this.sharedRedis.getClient();
+    if (redis) {
       try {
         const key = `${REDIS_KEY_PREFIX}${id}`;
-        const result = await this.redis.set(key, '1', 'EX', this.ttlSec(), 'NX');
+        const result = await redis.set(key, '1', 'EX', this.ttlSec(), 'NX');
         return result === 'OK';
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);

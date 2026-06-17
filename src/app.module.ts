@@ -45,6 +45,8 @@ import { AdminOpsReportsModule } from './modules/admin-ops-reports/admin-ops-rep
 import { RequestStatsModule } from './modules/request-stats/request-stats.module';
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
 import { DomainEventsModule } from './common/domain-events/domain-events.module';
+import { RedisSharedModule } from './common/redis/redis-shared.module';
+import { SseRedisModule } from './common/sse/sse-redis.module';
 import { AuthSettingsModule } from './modules/auth-settings/auth-settings.module';
 import { SecuritySettingsModule } from './modules/security-settings/security-settings.module';
 import { StorageSettingsModule } from './modules/storage-settings/storage-settings.module';
@@ -179,6 +181,8 @@ function redactRedisUrl(url: string): string {
       envFilePath: ['.env.local', '.env', '../.env'],
       isGlobal: true,
     }),
+    RedisSharedModule,
+    SseRedisModule,
     CacheModule.registerAsync({
       isGlobal: true,
       imports: [ConfigModule],
@@ -316,7 +320,7 @@ function redactRedisUrl(url: string): string {
     DashboardAuditModule,
     GoogleMerchantModule,
     PublicSeoModule,
-    SseStreamModule,
+    SseStreamModule.register(),
     DomainEventHandlersModule,
     // SharedModule,
   ],

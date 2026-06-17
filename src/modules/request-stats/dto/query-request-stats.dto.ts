@@ -24,4 +24,15 @@ export class QueryRequestStatsDto {
   @Min(1)
   @Max(500)
   limit?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(600_000)
+  minDurationMs?: number;
+
+  @IsOptional()
+  @IsIn(['at', 'duration'])
+  sortBy?: 'at' | 'duration';
 }

@@ -5,6 +5,8 @@ export type AdminAlertRecipient = {
 
 export type AdminAlertEmailBatchJob = {
   campaignId: string;
+  batchIndex: number;
+  batchTotal: number;
   subject: string;
   htmlBody: string;
   recipients: AdminAlertRecipient[];

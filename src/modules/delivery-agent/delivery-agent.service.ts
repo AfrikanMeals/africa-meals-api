@@ -62,10 +62,15 @@ import {
 import { normalizePickupCodeInput } from 'src/utils/pickup-code';
 import { mongoIdsEqual } from 'src/utils/mongoose-ref.util';
 import { WsDeliveryAgentNotifyService } from '@modules/ws-notify/ws-delivery-agent-notify.service';
-import { OrderDomainBridgeService } from '@modules/domain-event-handlers/order-domain-bridge.service';
+import { DomainEventPublisherService } from '../../common/domain-events/domain-event-publisher.service';
+import { DomainEventDraft } from '../../common/domain-events/domain-event.types';
+import { DomainEventType } from '../../common/domain-events/domain-event-types';
+import { isDomainEventsEnabled } from '@modules/domain-event-handlers/domain-event-handlers.util';
+import { FleetSnapshotService } from '@modules/fleet/fleet-snapshot.service';
 import {
   AGENT_LOCATION_EMIT_THROTTLE_MS,
   mapDeliveryPresenceToDomain,
+  resolveDeliveryAgentPresence,
 } from './delivery-agent-domain.util';
 
 export type DeliveryAgentPresence =
@@ -137,10 +142,22 @@ export class DeliveryAgentService {
     private readonly _ordersService: OrdersService,
     private readonly _storeDeliveryDrivers: StoreDeliveryDriversService,
     private readonly _wsDeliveryAgent: WsDeliveryAgentNotifyService,
-    @Inject(forwardRef(() => OrderDomainBridgeService))
+    private readonly _fleet: FleetSnapshotService,
     @Optional()
-    private readonly _domainBridge?: OrderDomainBridgeService,
+    private readonly _domainPublisher?: DomainEventPublisherService,
   ) {}
+
+  private async publishAgentDomainEvent<T extends DomainEventType>(
+    draft: DomainEventDraft<T>,
+  ): Promise<void> {
+    if (!isDomainEventsEnabled(this._config) || !this._domainPublisher) return;
+    const result = await this._domainPublisher.publish(draft);
+    if (!result.ok && result.mode !== 'duplicate') {
+      this._logger.warn(
+        `Agent domain event publish skipped type=${draft.type} reason=${result.reason ?? result.mode}`,
+      );
+    }
+  }
 
   private assertAdmin(user: UserModel) {
     if (user.type !== UserTypeEnum.ADMIN) {
@@ -545,6 +562,11 @@ export class DeliveryAgentService {
       applicationId: String(app._id),
       status: 'APPROVED',
     });
+
+    void this.emitAgentCapacityChanged(
+      String(app.user),
+      maxConcurrentOrdersFromApplication(app),
+    );
 
     const lean = await this._applications
       .findById(app._id)
@@ -1054,7 +1076,7 @@ export class DeliveryAgentService {
     }
     const availability =
       app.dashboardAvailability === 'hors_ligne' ? 'hors_ligne' : 'disponible';
-    const presence = this.resolvePresence(availability, activeCount);
+    const presence = resolveDeliveryAgentPresence(availability, activeCount);
     return {
       availability,
       presence,
@@ -1088,7 +1110,7 @@ export class DeliveryAgentService {
       )
       .exec();
 
-    const presence = this.resolvePresence(availability, activeCount);
+    const presence = resolveDeliveryAgentPresence(availability, activeCount);
     const maxConcurrentOrders = maxConcurrentOrdersFromApplication(app);
     const result = {
       availability,
@@ -1136,7 +1158,7 @@ export class DeliveryAgentService {
     await this.emitAgentPresenceChanged({
       agentUserId: uid,
       availability,
-      presence: this.resolvePresence(availability, activeCount),
+      presence: resolveDeliveryAgentPresence(availability, activeCount),
       activeOrderCount: activeCount,
       maxConcurrentOrders: maxConcurrentOrdersFromApplication(app),
       reason,
@@ -1155,32 +1177,42 @@ export class DeliveryAgentService {
       | 'order_completed'
       | 'admin_toggle';
   }): Promise<void> {
-    if (this._domainBridge?.enabled()) {
-      await this._domainBridge.emit({
-        type: 'agent.presence.changed',
-        payload: {
-          agentUserId: params.agentUserId,
-          presence: mapDeliveryPresenceToDomain(params.presence),
-          activeOrderCount: params.activeOrderCount,
-        },
-        metadata: {
-          source: 'delivery-agent',
-          orderContext: {
-            maxConcurrentOrders: params.maxConcurrentOrders,
-            reason: params.reason,
-            availability: params.availability,
-          },
-        },
+    const eda = isDomainEventsEnabled(this._config);
+
+    if (!eda) {
+      this._fleet.pushAgentUpdate({
+        agentUserId: params.agentUserId,
+        presence: params.presence,
+        availability: params.availability,
+        activeOrderCount: params.activeOrderCount,
+        maxConcurrentOrders: params.maxConcurrentOrders,
+      });
+      this._wsDeliveryAgent.notifyPresence({
+        agentUserId: params.agentUserId,
+        availability: params.availability,
+        presence: params.presence,
+        activeOrderCount: params.activeOrderCount,
+        maxConcurrentOrders: params.maxConcurrentOrders,
+        reason: params.reason,
       });
       return;
     }
-    this._wsDeliveryAgent.notifyPresence({
-      agentUserId: params.agentUserId,
-      availability: params.availability,
-      presence: params.presence,
-      activeOrderCount: params.activeOrderCount,
-      maxConcurrentOrders: params.maxConcurrentOrders,
-      reason: params.reason,
+
+    await this.publishAgentDomainEvent({
+      type: 'agent.presence.changed',
+      payload: {
+        agentUserId: params.agentUserId,
+        presence: mapDeliveryPresenceToDomain(params.presence),
+        activeOrderCount: params.activeOrderCount,
+      },
+      metadata: {
+        source: 'delivery-agent',
+        orderContext: {
+          maxConcurrentOrders: params.maxConcurrentOrders,
+          reason: params.reason,
+          availability: params.availability,
+        },
+      },
     });
   }
 
@@ -1197,18 +1229,26 @@ export class DeliveryAgentService {
     if (now - last < AGENT_LOCATION_EMIT_THROTTLE_MS) return;
     this.locationEmitLastMs.set(agentUserId, now);
 
-    if (this._domainBridge?.enabled()) {
-      await this._domainBridge.emit({
-        type: 'agent.location.updated',
-        payload: {
-          agentUserId,
-          latitude: params.latitude,
-          longitude: params.longitude,
-          orderId: params.orderId,
-        },
-        metadata: { source: 'delivery-agent' },
+    if (!isDomainEventsEnabled(this._config)) {
+      this._fleet.pushAgentUpdate({
+        agentUserId,
+        latitude: params.latitude,
+        longitude: params.longitude,
+        orderId: params.orderId,
       });
+      return;
     }
+
+    await this.publishAgentDomainEvent({
+      type: 'agent.location.updated',
+      payload: {
+        agentUserId,
+        latitude: params.latitude,
+        longitude: params.longitude,
+        orderId: params.orderId,
+      },
+      metadata: { source: 'delivery-agent' },
+    });
   }
 
   async emitAgentCapacityChanged(
@@ -1217,22 +1257,20 @@ export class DeliveryAgentService {
   ): Promise<void> {
     const uid = agentUserId.trim();
     if (!uid || maxConcurrentOrders < 1) return;
-    if (this._domainBridge?.enabled()) {
-      await this._domainBridge.emit({
-        type: 'agent.capacity.changed',
-        payload: { agentUserId: uid, maxConcurrentOrders },
-        metadata: { source: 'delivery-agent' },
-      });
-    }
-  }
 
-  private resolvePresence(
-    availability: 'disponible' | 'hors_ligne',
-    activeOrderCount: number,
-  ): DeliveryAgentPresence {
-    if (availability === 'hors_ligne') return 'hors_ligne';
-    if (activeOrderCount > 0) return 'en_livraison';
-    return 'disponible';
+    if (!isDomainEventsEnabled(this._config)) {
+      this._fleet.pushAgentUpdate({
+        agentUserId: uid,
+        maxConcurrentOrders,
+      });
+      return;
+    }
+
+    await this.publishAgentDomainEvent({
+      type: 'agent.capacity.changed',
+      payload: { agentUserId: uid, maxConcurrentOrders },
+      metadata: { source: 'delivery-agent' },
+    });
   }
 
   private async assertAgentApprovedApplication(agentId: Types.ObjectId) {
@@ -1272,27 +1310,12 @@ export class DeliveryAgentService {
       )
       .exec();
 
-    const activeOrders = await this._orders
-      .find({
-        assigned_delivery_user: agentId,
-        shouldShip: true,
-        status: OrderStatusEnum.SHIPPED,
-      })
-      .select('_id')
-      .lean()
-      .exec();
-    for (const active of activeOrders) {
-      if (active?._id) {
-        await this._ordersService.publishCourierPosition(
-          String(active._id),
-          lat,
-          lng,
-        );
-      }
-    }
-    const primaryOrderId = activeOrders[0]?._id
-      ? String(activeOrders[0]._id)
-      : undefined;
+    const activeOrderIds = await this._ordersService.publishCourierPositionsForAgent(
+      String(agentId),
+      lat,
+      lng,
+    );
+    const primaryOrderId = activeOrderIds[0];
     await this.emitAgentLocationUpdated({
       agentUserId: String(agentId),
       latitude: lat,
