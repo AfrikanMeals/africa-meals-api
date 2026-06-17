@@ -173,6 +173,15 @@ export class Resend2faLoginDto {
   challengeToken: string;
 }
 
+/** Résolution d’un lien OTP opaque (H-10). */
+export class ResolveOtpLinkDto {
+  @ApiProperty()
+  @IsNotEmpty()
+  @IsString()
+  @Trim()
+  token: string;
+}
+
 /** Mise à jour du profil utilisateur (données personnelles) */
 export class UpdateProfileDto {
   @ApiPropertyOptional({ example: 'Jean Dupont' })

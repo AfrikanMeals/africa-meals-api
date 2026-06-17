@@ -73,31 +73,19 @@ export function buildAppleOtpAutofillLine(
 
 export function buildAuthOtpWebDeepLink(args: {
   webBaseUrl: string;
-  flow: AuthOtpDeepLinkFlow;
-  email: string;
-  code: string;
+  token: string;
 }): string {
   const base = args.webBaseUrl.replace(/\/+$/, '');
-  const q = new URLSearchParams({
-    flow: args.flow,
-    email: args.email.trim().toLowerCase(),
-    code: args.code.trim().toUpperCase(),
-  });
+  const q = new URLSearchParams({ t: args.token.trim() });
   return `${base}/auth/otp?${q.toString()}`;
 }
 
 export function buildAuthOtpAppDeepLink(args: {
   appScheme: string;
-  flow: AuthOtpDeepLinkFlow;
-  email: string;
-  code: string;
+  token: string;
 }): string {
   const scheme = args.appScheme.replace(/:\/\//, '');
-  const q = new URLSearchParams({
-    flow: args.flow,
-    email: args.email.trim().toLowerCase(),
-    code: args.code.trim().toUpperCase(),
-  });
+  const q = new URLSearchParams({ t: args.token.trim() });
   return `${scheme}://auth/otp?${q.toString()}`;
 }
 

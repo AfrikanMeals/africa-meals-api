@@ -32,6 +32,7 @@ import { isMailerTestEmailEnabled } from '@modules/mailer/mailer-test-email.util
 import { RedisSharedModule } from '../../common/redis/redis-shared.module';
 import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard';
 import { RefreshTokenStore } from './refresh-token.store';
+import { OtpLinkTokenStore } from './otp-link-token.store';
 
 @Module({
   controllers: [
@@ -49,6 +50,7 @@ import { RefreshTokenStore } from './refresh-token.store';
     MailerTestEmailRateLimitGuard,
     AuthRateLimitGuard,
     RefreshTokenStore,
+    OtpLinkTokenStore,
     AccountDeletionCron,
   ],
   imports: [

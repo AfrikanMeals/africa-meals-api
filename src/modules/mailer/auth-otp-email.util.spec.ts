@@ -19,26 +19,18 @@ describe('auth-otp-email.util', () => {
     expect(mapOtpVariantToDeepLinkFlow('signup')).toBe('verify');
   });
 
-  it('builds web and app deep links', () => {
+  it('builds opaque web and app deep links', () => {
     const web = buildAuthOtpWebDeepLink({
       webBaseUrl: 'https://wise-eat.com',
-      flow: 'verify',
-      email: 'User@Test.com',
-      code: 'ab12cd',
+      token: 'opaque-token-123',
     });
-    expect(web).toBe(
-      'https://wise-eat.com/auth/otp?flow=verify&email=user%40test.com&code=AB12CD',
-    );
+    expect(web).toBe('https://wise-eat.com/auth/otp?t=opaque-token-123');
 
     const app = buildAuthOtpAppDeepLink({
       appScheme: 'wise-eat',
-      flow: 'reset',
-      email: 'a@b.c',
-      code: 'XY9Z01',
+      token: 'opaque-token-123',
     });
-    expect(app).toBe(
-      'wise-eat://auth/otp?flow=reset&email=a%40b.c&code=XY9Z01',
-    );
+    expect(app).toBe('wise-eat://auth/otp?t=opaque-token-123');
   });
 
   it('includes autofill line in plain text body', () => {

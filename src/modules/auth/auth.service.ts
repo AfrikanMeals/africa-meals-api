@@ -57,6 +57,7 @@ import {
 import { PartnerOnboardingEmailService } from '@modules/vendor-emails/partner-onboarding-email.service';
 import { randomUUID } from 'crypto';
 import { RefreshTokenStore } from './refresh-token.store';
+import { OtpLinkTokenStore } from './otp-link-token.store';
 import {
   issueOtpCode,
   isOtpExpired,
@@ -121,6 +122,51 @@ export class AuthService {
 
   @Inject(RefreshTokenStore)
   private readonly _refreshTokenStore: RefreshTokenStore;
+
+  @Inject(OtpLinkTokenStore)
+  private readonly _otpLinkTokenStore: OtpLinkTokenStore;
+
+  private otpLinkTtlSeconds(variant: AuthOtpEmailVariant): number {
+    const minutes =
+      variant === 'reset' || variant === '2fa' || variant === '2fa-login'
+        ? AuthService.OTP_TTL_MINUTES.passwordReset
+        : variant === 'signup' || variant === 'activation'
+          ? AuthService.OTP_TTL_MINUTES.signup
+          : AuthService.OTP_TTL_MINUTES.activation;
+    return minutes * 60;
+  }
+
+  private async createOtpEmailDeepLink(
+    email: string,
+    code: string,
+    variant: AuthOtpEmailVariant,
+  ): Promise<string> {
+    const flow = mapOtpVariantToDeepLinkFlow(variant);
+    const token = await this._otpLinkTokenStore.issue(
+      {
+        email: email.trim().toLowerCase(),
+        code: code.trim().toUpperCase(),
+        flow,
+      },
+      this.otpLinkTtlSeconds(variant),
+    );
+    return buildAuthOtpWebDeepLink({
+      webBaseUrl: resolveOtpWebBaseUrl(this._configService),
+      token,
+    });
+  }
+
+  async resolveOtpLink(tokenRaw: string) {
+    const payload = await this._otpLinkTokenStore.consume(tokenRaw);
+    if (!payload) {
+      throw new NotFoundException('invalid_otp_link');
+    }
+    return {
+      email: payload.email,
+      code: payload.code,
+      flow: payload.flow,
+    };
+  }
 
   /**
    * Inscription en deux temps : aucune ligne dans `users` tant que le code e-mail
@@ -266,20 +312,15 @@ export class AuthService {
     };
   }
 
-  private buildVerificationEmailHtml(
+  private async buildVerificationEmailHtml(
     fullName: string,
     email: string,
     code: string,
     variant: AuthOtpEmailVariant,
-  ): string {
+  ): Promise<string> {
     const safeName = this._emailTpl.escapeHtml(fullName.trim() || 'Bonjour');
     const domain = resolveOtpAutofillDomain(this._configService);
-    const webDeepLink = buildAuthOtpWebDeepLink({
-      webBaseUrl: resolveOtpWebBaseUrl(this._configService),
-      flow: mapOtpVariantToDeepLinkFlow(variant),
-      email,
-      code,
-    });
+    const webDeepLink = await this.createOtpEmailDeepLink(email, code, variant);
     const titles = {
       signup: 'Finalisez votre inscription',
       activation: 'Vérifiez votre courriel',
@@ -319,24 +360,20 @@ export class AuthService {
     ].join('\n');
   }
 
-  private buildVerificationEmailText(
+  private async buildVerificationEmailText(
     email: string,
     code: string,
     variant: AuthOtpEmailVariant,
-  ): string {
+  ): Promise<string> {
     const appName =
       this._configService.get<string>('APP_NAME') ?? 'Wise Eat';
+    const webDeepLink = await this.createOtpEmailDeepLink(email, code, variant);
     return buildAuthOtpPlainText({
       appName,
       code,
       variant,
       domain: resolveOtpAutofillDomain(this._configService),
-      webDeepLink: buildAuthOtpWebDeepLink({
-        webBaseUrl: resolveOtpWebBaseUrl(this._configService),
-        flow: mapOtpVariantToDeepLinkFlow(variant),
-        email,
-        code,
-      }),
+      webDeepLink,
     });
   }
 
@@ -348,13 +385,13 @@ export class AuthService {
     const appName =
       this._configService.get<string>('APP_NAME') ?? 'Wise Eat';
     const subject = `Vérifiez votre courriel - ${appName}`;
-    const html = this.buildVerificationEmailHtml(
+    const html = await this.buildVerificationEmailHtml(
       fullName,
       toEmail,
       code,
       'signup',
     );
-    const text = this.buildVerificationEmailText(toEmail, code, 'signup');
+    const text = await this.buildVerificationEmailText(toEmail, code, 'signup');
     await this._mailer.sendSimple({
       to: toEmail,
       toName: fullName,
@@ -492,13 +529,13 @@ export class AuthService {
           to: args.email,
           toName: args.fullName,
           subject,
-          html: this.buildVerificationEmailHtml(
+          html: await this.buildVerificationEmailHtml(
             args.fullName,
             args.email,
             activationIssued.code,
             'activation',
           ),
-          text: this.buildVerificationEmailText(
+          text: await this.buildVerificationEmailText(
             args.email,
             activationIssued.code,
             'activation',
@@ -1119,13 +1156,13 @@ export class AuthService {
       to: email,
       toName: user.fullName,
       subject,
-      html: this.buildVerificationEmailHtml(
+      html: await this.buildVerificationEmailHtml(
         user.fullName,
         email,
         issued.code,
         'activation',
       ),
-      text: this.buildVerificationEmailText(email, issued.code, 'activation'),
+      text: await this.buildVerificationEmailText(email, issued.code, 'activation'),
     });
     return { ok: true as const };
   }
@@ -1170,13 +1207,13 @@ export class AuthService {
     const appName =
       this._configService.get<string>('APP_NAME') ?? 'Wise Eat';
     const subject = `Réinitialisation de mot de passe - ${appName}`;
-    const html = this.buildVerificationEmailHtml(
+    const html = await this.buildVerificationEmailHtml(
       user.fullName,
       email,
       issued.code,
       'reset',
     );
-    const text = this.buildVerificationEmailText(email, issued.code, 'reset');
+    const text = await this.buildVerificationEmailText(email, issued.code, 'reset');
 
     const smtpUser = this._configService.get<string>('SMTP_USER')?.trim();
     const smtpPass =
@@ -1700,13 +1737,13 @@ export class AuthService {
     const appName =
       this._configService.get<string>('APP_NAME') ?? 'Wise Eat';
     const subject = `Activation 2FA - ${appName}`;
-    const html = this.buildVerificationEmailHtml(
+    const html = await this.buildVerificationEmailHtml(
       user.fullName,
       email,
       issued.code,
       '2fa',
     );
-    const text = this.buildVerificationEmailText(email, issued.code, '2fa');
+    const text = await this.buildVerificationEmailText(email, issued.code, '2fa');
 
     const smtpUser = this._configService.get<string>('SMTP_USER')?.trim();
     const smtpPass =
@@ -1914,13 +1951,13 @@ export class AuthService {
     const appName =
       this._configService.get<string>('APP_NAME') ?? 'Wise Eat';
     const subject = `Connexion sécurisée - ${appName}`;
-    const html = this.buildVerificationEmailHtml(
+    const html = await this.buildVerificationEmailHtml(
       fullName,
       email,
       code,
       '2fa-login',
     );
-    const text = this.buildVerificationEmailText(email, code, '2fa-login');
+    const text = await this.buildVerificationEmailText(email, code, '2fa-login');
 
     const smtpUser = this._configService.get<string>('SMTP_USER')?.trim();
     const smtpPass =

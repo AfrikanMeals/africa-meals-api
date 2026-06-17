@@ -5,12 +5,12 @@
 
 ---
 
-## Score global : **76 / 100**
+## Score global : **80 / 100**
 
 | Composant | Score | Niveau |
 |-----------|-------|--------|
-| **API (NestJS)** | 78/100 | Acceptable |
-| **Admin (Next.js)** | 62/100 | Moyen |
+| **API (NestJS)** | 82/100 | Acceptable |
+| **Admin (Next.js)** | 68/100 | Acceptable |
 | **Mobile (Flutter)** | 55/100 | Moyen |
 | **Web (Firebase Hosting)** | 72/100 | Acceptable |
 | **WebSocket** | 68/100 | Acceptable |
@@ -24,7 +24,7 @@
 | Sévérité | Nombre | ❌ NOT YET | ⚠️ PENDING | ✅ DONE | Action |
 |----------|--------|------------|------------|---------|--------|
 | Critique | 4 | 1 | 0 | 3 | Corriger immédiatement |
-| Élevée | 12 | 9 | 0 | 3 | Corriger sous 1–2 semaines |
+| Élevée | 12 | 5 | 0 | 7 | Corriger sous 1–2 semaines |
 | Moyenne | 18 | 18 | 0 | 0 | Planifier sprint sécurité |
 | Faible | 10 | 8 | 0 | 2 | Amélioration continue |
 | Positif | 8 | — | — | — | Maintenir |
@@ -68,10 +68,10 @@
 | **H-01** | API | Fix | ✅ DONE | ~~CORS `origin: true` + `credentials: true` — toute origine acceptée~~ | Allowlist `CORS_ORIGIN` via `buildApiCorsOptions()` ; dev = localhost seulement ; prod = liste explicite ; apps natives sans `Origin` OK |
 | **H-02** | API | Add | ✅ DONE | ~~Aucun rate limiting sur auth/OTP~~ | `AuthRateLimitGuard` + profils login/otp/password/refresh/register sur routes `/auth/*` |
 | **H-03** | API | Improve | ✅ DONE | ~~JWT 1 an, `sub` seul, pas de rotation refresh~~ | `JWT_EXPIRATION=30m`, claims `typ`/`type`/`jti`, rotation refresh via Redis `RefreshTokenStore` |
-| **H-04** | API | Fix | ❌ NOT YET | OTP générés via `Math.random()`, stockés en clair en DB | `crypto.randomBytes`, hash bcrypt des codes, expiration courte |
-| **H-05** | API | Fix | ❌ NOT YET | Logs de mots de passe et codes OTP dans `auth.controller.ts` | Supprimer/redacter ; audit des logs HTTP |
-| **H-06** | API | Fix | ❌ NOT YET | `checkAccount` public — énumération + fuite PII (FCM, Stripe, etc.) | Réponse générique ; champs minimaux |
-| **H-07** | Admin | Improve | ❌ NOT YET | JWT + refresh en `localStorage` — vol XSS = session complète | Session httpOnly via BFF Next.js ou cookies Secure |
+| **H-04** | API | Fix | ✅ DONE | ~~OTP `Math.random()`, stockage clair~~ | `auth-otp.util` (`crypto.randomBytes` + bcrypt), TTL 15–30 min |
+| **H-05** | API | Fix | ✅ DONE | ~~Logs mots de passe / OTP~~ | Logs auth redactés ; `LOG_HTTP_BODIES` masque champs sensibles |
+| **H-06** | API | Fix | ✅ DONE | ~~`checkAccount` fuite PII~~ | Réponse `{ exists, emailVerified?, type? }` sans document utilisateur |
+| **H-07** | Admin | Improve | ✅ DONE | ~~JWT + refresh en `localStorage`~~ | Cookies httpOnly `ae_at`/`ae_rt` via BFF `/api/auth/session` ; access en mémoire |
 | **H-08** | Mobile | Fix | ❌ NOT YET | JWT en `SharedPreferences` non chiffré | `flutter_secure_storage` (Keychain / Keystore) |
 | **H-09** | Mobile | Fix | ❌ NOT YET | `NetworkLogInterceptor` actif en **release** — mots de passe logués | `if (kDebugMode)` uniquement ; redacter `password`, `code` |
 | **H-10** | Web + Mobile | Fix | ❌ NOT YET | Codes OTP dans URLs deep link (`?email=&code=`) | Token opaque à usage unique ; éviter le code dans l’URL |
@@ -93,7 +93,7 @@
 | **M-07** | API | Improve | ❌ NOT YET | reCAPTCHA en mode monitor (accepte tokens invalides) | `RECAPTCHA_ENTERPRISE_ENFORCE=true` en prod |
 | **M-08** | API | Improve | ⚠️ PENDING | Refresh JWT fallback sur `JWT_SECRET` si absent | `JWT_REFRESH_SECRET` documenté + warning prod si absent ou identique à access |
 | **M-09** | Admin | Add | ❌ NOT YET | Pas de CSP, HSTS, X-Frame-Options | Headers sécurité dans `next.config.js` |
-| **M-10** | Admin | Improve | ❌ NOT YET | Cookie `ae_has_session=1` forgeable (hint UI) | Valider JWT côté middleware serveur |
+| **M-10** | Admin | Improve | ⚠️ PENDING | Cookie `ae_has_session=1` forgeable (hint UI) | Middleware vérifie aussi cookies session `ae_at`/`ae_rt` |
 | **M-11** | Admin | Fix | ❌ NOT YET | `dangerouslySetInnerHTML` sur mails inbox | DOMPurify ou rendu texte |
 | **M-12** | Mobile | Add | ❌ NOT YET | Pas de refresh token / renouvellement auto | Intercepteur 401 → refresh ou re-auth |
 | **M-13** | Mobile | Improve | ❌ NOT YET | `.env` embarqué dans APK/IPA | Secrets serveur interdits ; restrictions bundle/domaine sur clés publiques |
@@ -151,7 +151,8 @@ gantt
     Rate limiting auth/OTP                    :done, 2026-06-20, 5d
     JWT court + rotation refresh              :done, 2026-06-20, 3d
     CORS allowlist API + WS                   :done, 2026-06-20, 3d
-    Keychain mobile + logs debug only         :2026-06-20, 5d
+    OTP bcrypt + logs auth redactés           :done, 2026-06-20, 4d
+    Session admin httpOnly (BFF)              :done, 2026-06-20, 3d
     Refonte liens OTP                         :2026-06-25, 7d
     section P2 Moyen
     Headers sécurité admin/web                :2026-07-01, 5d
@@ -164,15 +165,15 @@ gantt
 
 | Thème | État | Statut global | Priorité |
 |-------|------|---------------|----------|
-| Authentification | JWT court + refresh rotatif ; OTP faibles restants | ⚠️ PENDING | P1 |
+| Authentification | OTP bcrypt + TTL ; JWT court + refresh rotatif | ✅ DONE | — |
 | Autorisation | Guards OK, failles OAuth admin + ADMIN sans rôles | ❌ NOT YET | P0–P2 |
 | Secrets | Dump env + accounts.json corrigés (C-01, C-02) ; rotation clé ops | ⚠️ PENDING | P0 |
-| Stockage tokens | Faible (localStorage, SharedPreferences) | ❌ NOT YET | P1 |
+| Stockage tokens | Admin : refresh httpOnly ; access mémoire (mobile encore faible) | ⚠️ PENDING | P1 |
 | Transport | HTTPS OK, pas de pinning | ❌ NOT YET | P3 |
 | Input validation | Partielle, regex à durcir | ❌ NOT YET | P2 |
 | Rate limiting | Auth routes limitées (H-02) | ✅ DONE | — |
 | CORS | Trop permissif (API corrigée H-01) | ⚠️ PENDING | P1 |
-| Logs | Fuites passwords/OTP | ❌ NOT YET | P1 |
+| Logs | Auth API redactée ; mobile release à durcir | ⚠️ PENDING | P1 |
 | Paiements (Stripe) | Webhooks OK | ✅ DONE | — |
 | Deep links | OTP exposés, validation hôte faible | ❌ NOT YET | P1 |
 | Headers HTTP | Manquants admin/web | ❌ NOT YET | P2 |
@@ -182,12 +183,13 @@ gantt
 
 ## Conclusion
 
-**76/100** — Le produit n’est **pas prêt pour une posture « sécurité production »** sans corriger le **dernier finding critique (C-04)**. Une fois P0 et P1 traités (estimation : 2–3 semaines), le score devrait monter vers **78–82/100**.
+**80/100** — Le produit n’est **pas prêt pour une posture « sécurité production »** sans corriger le **dernier finding critique (C-04)**. Une fois P0 et P1 restants traités (estimation : 1–2 semaines), le score devrait monter vers **82–85/100**.
 
 Les corrections les plus impactantes :
 
 1. ~~Sécuriser `POST /mailer/test-email`~~ (C-03 ✅ DONE)
 2. ~~Retirer `accounts.json` du dépôt~~ (C-02 ✅ DONE) — **révoquer la clé exposée** (`FIREBASE_KEY_ROTATION.md`)
 3. Protéger la création VENDOR OAuth (C-04)
-4. ~~Rate limiting auth~~ (H-02 ✅) + ~~JWT court / refresh rotatif~~ (H-03 ✅) + ~~CORS restrictif API~~ (H-01 ✅) + OTP cryptographiques
+4. ~~Rate limiting auth~~ (H-02 ✅) + ~~JWT court / refresh rotatif~~ (H-03 ✅) + ~~OTP cryptographiques~~ (H-04 ✅) + ~~CORS restrictif API~~ (H-01 ✅)
 5. Keychain mobile + logs debug-only + refonte liens OTP
+6. ~~Session admin httpOnly~~ (H-07 ✅)

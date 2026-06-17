@@ -44,6 +44,7 @@ import {
   RemoveFcmTokenDto,
   Resend2faLoginDto,
   ResetPasswordDto,
+  ResolveOtpLinkDto,
   UpdateProfileDto,
   Verify2faLoginDto,
 } from './dto/auth.dto';
@@ -265,6 +266,12 @@ export class AuthController {
   @AuthRateLimit('login')
   async checkAccount(@Body(ValidationPipe) args: CheckAccountDto) {
     return this._authService.checkAccount(args);
+  }
+
+  @Post('otp-link/resolve')
+  @AuthRateLimit('otp')
+  async resolveOtpLink(@Body(ValidationPipe) args: ResolveOtpLinkDto) {
+    return this._authService.resolveOtpLink(args.token);
   }
 
   @Get('me/rewards')
