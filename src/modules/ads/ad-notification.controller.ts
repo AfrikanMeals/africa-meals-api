@@ -1,5 +1,6 @@
 import { TrackAdNotificationEventDto } from '@modules/ads/dto/ad-notification-tracking.dto';
 import { AdNotificationService } from '@modules/ads/ad-notification.service';
+import { AdNotificationTrackRateLimitGuard } from '@modules/ads/guards/ad-notification-track-rate-limit.guard';
 import {
   Body,
   Controller,
@@ -8,6 +9,7 @@ import {
   Param,
   Post,
   Res,
+  UseGuards,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
@@ -20,6 +22,7 @@ export class AdNotificationController {
   constructor(private readonly adNotifications: AdNotificationService) {}
 
   @Post('track')
+  @UseGuards(AdNotificationTrackRateLimitGuard)
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   @ApiOperation({
     summary: 'Enregistre interaction ou conversion (app / web)',

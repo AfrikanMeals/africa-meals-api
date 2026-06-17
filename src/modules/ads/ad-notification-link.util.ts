@@ -11,6 +11,7 @@ export type AdNotificationLinkParams = {
   storeId: string;
   webBaseUrl: string;
   appScheme?: string;
+  trackToken?: string;
 } & AdNotificationTargetLinkParams;
 
 function applyTargetQuery(
@@ -34,6 +35,9 @@ export function buildAdNotificationWebOpenUrl(
     storeId: params.storeId,
   });
   applyTargetQuery(q, params);
+  if (params.trackToken?.trim()) {
+    q.set('t', params.trackToken.trim());
+  }
   return `${base}/ads/open?${q.toString()}`;
 }
 

@@ -41,6 +41,7 @@ import {
   AdsTargetingProfileSchema,
 } from '@schemas/ads-targeting-profile.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
+import { AdNotificationTrackRateLimitGuard } from './guards/ad-notification-track-rate-limit.guard';
 import { AdNotificationAdminController } from './ad-notification-admin.controller';
 import { AdNotificationController } from './ad-notification.controller';
 import { AdNotificationDispatchCron } from './ad-notification-dispatch.cron';
@@ -64,6 +65,7 @@ import { AdsService } from './ads.service';
     AdNotificationService,
     AdNotificationDispatchQueueService,
     AdNotificationDispatchCron,
+    AdNotificationTrackRateLimitGuard,
   ],
   imports: [
     AuthModule,

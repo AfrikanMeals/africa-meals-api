@@ -19,6 +19,13 @@ export class TrackAdNotificationEventDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  @MaxLength(64)
+  @MaxLength(128)
   installId?: string;
+
+  @ApiProperty({
+    description: 'Jeton HMAC signé (paramètre `t` du lien web /ads/open)',
+  })
+  @IsString()
+  @MaxLength(256)
+  trackToken: string;
 }

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   forwardRef,
   Inject,
   Injectable,
@@ -61,6 +62,11 @@ import {
   buildAdNotificationAppDeepLink,
   buildAdNotificationWebOpenUrl,
 } from '@modules/ads/ad-notification-link.util';
+import {
+  issueAdNotificationTrackToken,
+  resolveAdTrackSigningSecret,
+  verifyAdNotificationTrackToken,
+} from '@modules/ads/ad-notification-track-token.util';
 import {
   trySendAdSms,
   trySendAdWhatsApp,
@@ -254,7 +260,16 @@ export class AdNotificationService {
       itemType: params.itemType,
       productId: params.productId,
       drinkId: params.drinkId,
+      trackToken: this.issueTrackTokenForDelivery(params.deliveryId),
     });
+  }
+
+  private issueTrackTokenForDelivery(deliveryId: string): string | undefined {
+    const secret = resolveAdTrackSigningSecret(this.config);
+    if (!secret) {
+      return undefined;
+    }
+    return issueAdNotificationTrackToken(deliveryId, secret);
   }
 
   private targetLinkFromEvent(
@@ -1416,6 +1431,13 @@ export class AdNotificationService {
 
   async trackEvent(dto: TrackAdNotificationEventDto): Promise<{ ok: true }> {
     const deliveryId = dto.deliveryId.trim();
+    const secret = resolveAdTrackSigningSecret(this.config);
+    if (
+      !secret ||
+      !verifyAdNotificationTrackToken(deliveryId, dto.trackToken, secret)
+    ) {
+      throw new ForbiddenException('invalid_track_token');
+    }
     const doc = await this.eventModel.findOne({ deliveryId }).exec();
     if (!doc) {
       throw new NotFoundException('delivery_not_found');
@@ -1470,6 +1492,7 @@ export class AdNotificationService {
       webBaseUrl: this.webBaseUrl(),
       appScheme: this.appScheme(),
       ...targetLink,
+      trackToken: this.issueTrackTokenForDelivery(doc.deliveryId),
     });
     return { deepLink, webFallback };
   }

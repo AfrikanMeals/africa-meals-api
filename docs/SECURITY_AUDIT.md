@@ -5,15 +5,15 @@
 
 ---
 
-## Score global : **88 / 100**
+## Score global : **91 / 100**
 
 | Composant | Score | Niveau |
 |-----------|-------|--------|
 | **API (NestJS)** | 86/100 | Bon |
-| **Admin (Next.js)** | 70/100 | Acceptable |
-| **Mobile (Flutter)** | 72/100 | Acceptable |
-| **Web (Firebase Hosting)** | 76/100 | Acceptable |
-| **WebSocket** | 70/100 | Acceptable |
+| **Admin (Next.js)** | 78/100 | Acceptable |
+| **Mobile (Flutter)** | 78/100 | Acceptable |
+| **Web (Firebase Hosting)** | 84/100 | Bon |
+| **WebSocket** | 82/100 | Bon |
 
 **Verdict :** L’architecture de base est solide (JWT, guards, 2FA e-mail, webhooks Stripe signés, auth WS). **C-01, C-02 et C-03 ✅ DONE**. Il reste **1 faille critique côté API** (OAuth admin vendor) et plusieurs risques **élevés** côté clients. **Action ops :** révoquer la clé Firebase exposée — voir `docs/FIREBASE_KEY_ROTATION.md`.
 
@@ -25,7 +25,7 @@
 |----------|--------|------------|------------|---------|--------|
 | Critique | 4 | 1 | 0 | 3 | Corriger immédiatement |
 | Élevée | 12 | 0 | 0 | 12 | Corriger sous 1–2 semaines |
-| Moyenne | 18 | 9 | 0 | 9 | Planifier sprint sécurité |
+| Moyenne | 18 | 3 | 0 | 15 | Planifier sprint sécurité |
 | Faible | 10 | 0 | 0 | 10 | Amélioration continue |
 | Positif | 8 | — | — | — | Maintenir |
 
@@ -94,14 +94,14 @@
 | **M-08** | API | Improve | ✅ DONE | ~~Refresh JWT fallback sur `JWT_SECRET` si absent~~ | Boot + runtime : `JWT_REFRESH_SECRET` distinct obligatoire en prod |
 | **M-09** | Admin | Add | ✅ DONE | ~~Pas de CSP, HSTS, X-Frame-Options~~ | Headers sécurité dans `next.config.js` (CSP, HSTS, frame deny) |
 | **M-10** | Admin | Improve | ✅ DONE | ~~Cookie `ae_has_session=1` forgeable (hint UI)~~ | `proxy.ts` exige `ae_at` ou `ae_rt` httpOnly |
-| **M-11** | Admin | Fix | ❌ NOT YET | `dangerouslySetInnerHTML` sur mails inbox | DOMPurify ou rendu texte |
-| **M-12** | Mobile | Add | ❌ NOT YET | Pas de refresh token / renouvellement auto | Intercepteur 401 → refresh ou re-auth |
+| **M-11** | Admin | Fix | ✅ DONE | ~~`dangerouslySetInnerHTML` sur mails inbox~~ | `sanitizeMailHtml` (DOMPurify) avant injection DOM |
+| **M-12** | Mobile | Add | ✅ DONE | ~~Pas de refresh token / renouvellement auto~~ | `TokenRefreshInterceptor` + stockage refresh sécurisé |
 | **M-13** | Mobile | Improve | ❌ NOT YET | `.env` embarqué dans APK/IPA | Secrets serveur interdits ; restrictions bundle/domaine sur clés publiques |
 | **M-14** | Mobile | Improve | ❌ NOT YET | Schéma `wise-eat://` hijackable (Android) | App Links HTTPS vérifiés en priorité |
-| **M-15** | WS | Fix | ❌ NOT YET | JWT accepté en query string (`?token=`) | Uniquement `handshake.auth.token` |
-| **M-16** | WS | Improve | ❌ NOT YET | CORS `origin: true` | Allowlist origines |
-| **M-17** | Web | Add | ❌ NOT YET | Headers sécurité partiels (nosniff seul) | CSP, HSTS, frame-ancestors |
-| **M-18** | Web | Improve | ❌ NOT YET | Tracking pub sans auth | Token signé, rate limit API |
+| **M-15** | WS | Fix | ✅ DONE | ~~JWT accepté en query string (`?token=`)~~ | Uniquement `handshake.auth.token` |
+| **M-16** | WS | Improve | ✅ DONE | ~~CORS `origin: true`~~ | `buildWsCorsOptions()` — allowlist `CORS_ORIGIN` |
+| **M-17** | Web | Add | ✅ DONE | ~~Headers sécurité partiels (nosniff seul)~~ | CSP, HSTS, X-Frame-Options, Referrer-Policy (`firebase.json`) |
+| **M-18** | Web | Improve | ✅ DONE | ~~Tracking pub sans auth~~ | Token HMAC signé (`trackToken`) + rate limit sur `POST /ads/notifications/track` |
 
 ---
 
