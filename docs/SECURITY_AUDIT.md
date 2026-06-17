@@ -5,14 +5,14 @@
 
 ---
 
-## Score global : **80 / 100**
+## Score global : **85 / 100**
 
 | Composant | Score | Niveau |
 |-----------|-------|--------|
 | **API (NestJS)** | 82/100 | Acceptable |
-| **Admin (Next.js)** | 68/100 | Acceptable |
-| **Mobile (Flutter)** | 55/100 | Moyen |
-| **Web (Firebase Hosting)** | 72/100 | Acceptable |
+| **Admin (Next.js)** | 70/100 | Acceptable |
+| **Mobile (Flutter)** | 68/100 | Acceptable |
+| **Web (Firebase Hosting)** | 76/100 | Acceptable |
 | **WebSocket** | 68/100 | Acceptable |
 
 **Verdict :** L’architecture de base est solide (JWT, guards, 2FA e-mail, webhooks Stripe signés, auth WS). **C-01, C-02 et C-03 ✅ DONE**. Il reste **1 faille critique côté API** (OAuth admin vendor) et plusieurs risques **élevés** côté clients. **Action ops :** révoquer la clé Firebase exposée — voir `docs/FIREBASE_KEY_ROTATION.md`.
@@ -24,7 +24,7 @@
 | Sévérité | Nombre | ❌ NOT YET | ⚠️ PENDING | ✅ DONE | Action |
 |----------|--------|------------|------------|---------|--------|
 | Critique | 4 | 1 | 0 | 3 | Corriger immédiatement |
-| Élevée | 12 | 5 | 0 | 7 | Corriger sous 1–2 semaines |
+| Élevée | 12 | 0 | 0 | 12 | Corriger sous 1–2 semaines |
 | Moyenne | 18 | 18 | 0 | 0 | Planifier sprint sécurité |
 | Faible | 10 | 8 | 0 | 2 | Amélioration continue |
 | Positif | 8 | — | — | — | Maintenir |
@@ -72,11 +72,11 @@
 | **H-05** | API | Fix | ✅ DONE | ~~Logs mots de passe / OTP~~ | Logs auth redactés ; `LOG_HTTP_BODIES` masque champs sensibles |
 | **H-06** | API | Fix | ✅ DONE | ~~`checkAccount` fuite PII~~ | Réponse `{ exists, emailVerified?, type? }` sans document utilisateur |
 | **H-07** | Admin | Improve | ✅ DONE | ~~JWT + refresh en `localStorage`~~ | Cookies httpOnly `ae_at`/`ae_rt` via BFF `/api/auth/session` ; access en mémoire |
-| **H-08** | Mobile | Fix | ❌ NOT YET | JWT en `SharedPreferences` non chiffré | `flutter_secure_storage` (Keychain / Keystore) |
-| **H-09** | Mobile | Fix | ❌ NOT YET | `NetworkLogInterceptor` actif en **release** — mots de passe logués | `if (kDebugMode)` uniquement ; redacter `password`, `code` |
-| **H-10** | Web + Mobile | Fix | ❌ NOT YET | Codes OTP dans URLs deep link (`?email=&code=`) | Token opaque à usage unique ; éviter le code dans l’URL |
-| **H-11** | Mobile | Fix | ❌ NOT YET | Validation hôte `host.contains('wise-eat.com')` — accepte `evil-wise-eat.com` | Allowlist : `host == 'wise-eat.com' \|\| host.endsWith('.wise-eat.com')` |
-| **H-12** | Admin | Fix | ❌ NOT YET | `.env` non ignoré par Git (seul `.env*.local`) | Ajouter `.env` au `.gitignore` |
+| **H-08** | Mobile | Fix | ✅ DONE | ~~JWT en `SharedPreferences` non chiffré~~ | `flutter_secure_storage` (Keychain/Keystore) + migration depuis prefs |
+| **H-09** | Mobile | Fix | ✅ DONE | ~~`NetworkLogInterceptor` actif en release~~ | Logs HTTP uniquement en `kDebugMode` + redaction password/code/token |
+| **H-10** | Web + Mobile | Fix | ✅ DONE | ~~Codes OTP dans URLs deep link~~ | Liens `?t=<token opaque>` + `POST /auth/otp-link/resolve` (usage unique) |
+| **H-11** | Mobile | Fix | ✅ DONE | ~~`host.contains('wise-eat.com')` trop permissif~~ | `isWiseEatTrustedHost()` — égalité ou suffixe `.wise-eat.com` |
+| **H-12** | Admin | Fix | ✅ DONE | ~~`.env` non ignoré par Git~~ | `.env` ajouté au `.gitignore` |
 
 ---
 
@@ -153,7 +153,8 @@ gantt
     CORS allowlist API + WS                   :done, 2026-06-20, 3d
     OTP bcrypt + logs auth redactés           :done, 2026-06-20, 4d
     Session admin httpOnly (BFF)              :done, 2026-06-20, 3d
-    Refonte liens OTP                         :2026-06-25, 7d
+    Keychain mobile + logs debug only         :done, 2026-06-20, 5d
+    Refonte liens OTP                         :done, 2026-06-25, 7d
     section P2 Moyen
     Headers sécurité admin/web                :2026-07-01, 5d
     ValidationPipe global + regex escape      :2026-07-01, 7d
@@ -168,14 +169,14 @@ gantt
 | Authentification | OTP bcrypt + TTL ; JWT court + refresh rotatif | ✅ DONE | — |
 | Autorisation | Guards OK, failles OAuth admin + ADMIN sans rôles | ❌ NOT YET | P0–P2 |
 | Secrets | Dump env + accounts.json corrigés (C-01, C-02) ; rotation clé ops | ⚠️ PENDING | P0 |
-| Stockage tokens | Admin : refresh httpOnly ; access mémoire (mobile encore faible) | ⚠️ PENDING | P1 |
+| Stockage tokens | Admin refresh httpOnly ; mobile JWT en Keychain | ⚠️ PENDING | P1 |
 | Transport | HTTPS OK, pas de pinning | ❌ NOT YET | P3 |
 | Input validation | Partielle, regex à durcir | ❌ NOT YET | P2 |
 | Rate limiting | Auth routes limitées (H-02) | ✅ DONE | — |
 | CORS | Trop permissif (API corrigée H-01) | ⚠️ PENDING | P1 |
-| Logs | Auth API redactée ; mobile release à durcir | ⚠️ PENDING | P1 |
+| Logs | Auth API redactée ; mobile release sans logs HTTP sensibles | ✅ DONE | — |
 | Paiements (Stripe) | Webhooks OK | ✅ DONE | — |
-| Deep links | OTP exposés, validation hôte faible | ❌ NOT YET | P1 |
+| Deep links | OTP via token opaque ; validation hôte stricte | ✅ DONE | — |
 | Headers HTTP | Manquants admin/web | ❌ NOT YET | P2 |
 | Dépendances | Frameworks anciens, audit à automatiser | ❌ NOT YET | P3 |
 
@@ -183,7 +184,7 @@ gantt
 
 ## Conclusion
 
-**80/100** — Le produit n’est **pas prêt pour une posture « sécurité production »** sans corriger le **dernier finding critique (C-04)**. Une fois P0 et P1 restants traités (estimation : 1–2 semaines), le score devrait monter vers **82–85/100**.
+**85/100** — Tous les findings **P1 Élevés sont traités**. Il reste le **finding critique C-04** (OAuth admin vendor) avant une posture production complète. Objectif après P0 : **88–90/100**.
 
 Les corrections les plus impactantes :
 
@@ -191,5 +192,5 @@ Les corrections les plus impactantes :
 2. ~~Retirer `accounts.json` du dépôt~~ (C-02 ✅ DONE) — **révoquer la clé exposée** (`FIREBASE_KEY_ROTATION.md`)
 3. Protéger la création VENDOR OAuth (C-04)
 4. ~~Rate limiting auth~~ (H-02 ✅) + ~~JWT court / refresh rotatif~~ (H-03 ✅) + ~~OTP cryptographiques~~ (H-04 ✅) + ~~CORS restrictif API~~ (H-01 ✅)
-5. Keychain mobile + logs debug-only + refonte liens OTP
+5. ~~Keychain mobile + logs debug-only + refonte liens OTP~~ (H-08, H-09, H-10, H-11 ✅)
 6. ~~Session admin httpOnly~~ (H-07 ✅)
