@@ -975,10 +975,10 @@ export class SubscriptionsService implements OnModuleInit {
   ): Promise<boolean> {
     const name = String(planName ?? '').trim();
     if (!name) return false;
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escaped = buildCaseInsensitiveExactRegex(name);
     const doc = await this.planModel
       .findOne({
-        name: { $regex: new RegExp(`^${escaped}$`, 'i') },
+        name: { $regex: escaped },
         active: { $ne: false },
       })
       .select('storeSubscriptionEnabled')
@@ -993,10 +993,10 @@ export class SubscriptionsService implements OnModuleInit {
   async isMealPreOrderEnabledForPlanName(planName: string): Promise<boolean> {
     const name = String(planName ?? '').trim();
     if (!name) return false;
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escaped = buildCaseInsensitiveExactRegex(name);
     const doc = await this.planModel
       .findOne({
-        name: { $regex: new RegExp(`^${escaped}$`, 'i') },
+        name: { $regex: escaped },
         active: { $ne: false },
       })
       .select('mealPreOrderEnabled')

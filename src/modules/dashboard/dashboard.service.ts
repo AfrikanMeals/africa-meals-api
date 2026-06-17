@@ -2064,7 +2064,7 @@ export class DashboardService {
     const where: Record<string, unknown> = {};
     if (status) where.status = status;
     if (qRaw) {
-      where.email = { $regex: qRaw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
+      where.email = { $regex: escapeMongoRegex(qRaw), $options: 'i' };
     }
     if (fromDate || toDate) {
       const createdAtWhere: Record<string, Date> = {};

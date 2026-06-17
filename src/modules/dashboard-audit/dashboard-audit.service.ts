@@ -226,7 +226,10 @@ export class DashboardAuditService {
       filter.category = query.category.trim();
     }
     if (query.path?.trim()) {
-      filter.path = { $regex: query.path.trim(), $options: 'i' };
+      filter.path = {
+        $regex: escapeMongoRegex(query.path.trim()),
+        $options: 'i',
+      };
     }
     if (query.actorType?.trim()) {
       filter.actorType = query.actorType.trim().toUpperCase();

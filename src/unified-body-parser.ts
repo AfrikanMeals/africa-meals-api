@@ -14,7 +14,7 @@ export function unifiedJsonBodyParser(options?: {
   limit?: string;
   preserveRawBody?: boolean;
 }): express.RequestHandler {
-  const limit = options?.limit ?? '60mb';
+  const limit = options?.limit ?? '5mb';
   const preserveRawBody = options?.preserveRawBody ?? true;
 
   const jsonParser = express.json({

@@ -2,7 +2,8 @@ import { fieldSelectionMiddleware } from './common/field-selection/field-selecti
 import { buildApiCorsOptions } from './common/cors/cors-options';
 import { GlobalHttpExceptionFilter } from './common/filters/global-http-exception.filter';
 import { redactSensitiveJsonForLog } from './common/logging/redact-sensitive.util';
-import { INestApplication } from '@nestjs/common';
+import { isSwaggerEnabled } from './common/security/api-docs-exposure.util';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import type { NextFunction, Request, Response } from 'express';
 
@@ -76,13 +77,21 @@ function isHttpBodyLoggingEnabled(): boolean {
 }
 
 /**
- * Configuration HTTP partagée : préfixe global, CORS, Swagger (sauf si DISABLE_SWAGGER=true).
+ * Configuration HTTP partagée : préfixe global, CORS, Swagger (désactivé en prod — M-02).
  */
 export async function configureApplication(
   app: INestApplication,
   options?: ConfigureAppOptions,
 ): Promise<void> {
   app.useGlobalFilters(new GlobalHttpExceptionFilter());
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
 
   if (isHttpBodyLoggingEnabled()) {
     app.use((req: any, _res, next) => {
@@ -112,7 +121,7 @@ export async function configureApplication(
 
   app.enableCors(buildApiCorsOptions());
 
-  if (process.env.DISABLE_SWAGGER === 'true') {
+  if (!isSwaggerEnabled()) {
     return;
   }
 

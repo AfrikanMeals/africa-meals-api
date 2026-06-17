@@ -179,7 +179,7 @@ export class OffersService {
           _id: store.id,
           owner: { _id: user.id },
         },
-        title: { $regex: args.title, $options: 'i' },
+        title: { $regex: escapeMongoRegex(args.title), $options: 'i' },
       })
       .exec();
 

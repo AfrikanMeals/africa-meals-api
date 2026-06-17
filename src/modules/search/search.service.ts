@@ -29,21 +29,13 @@ import {
   SortBy,
   SortOrder,
 } from './dto/search.dto';
-import {
-  buildDailyMenuTodayForProduct,
-  parseDailyMenuAddonsAvailability,
-} from '@utils/daily-menu-today-product.util';
+import { escapeMongoRegex } from '@common/mongo/escape-regex.util';
 import { mapInChunks } from '@utils/map-in-chunks';
 import { productDailyMenuListingPipelineStages } from '@utils/product-daily-menu-listing.pipeline';
 import { storeArticlesAvailabilityPipelineStages } from '@utils/store-articles-availability.pipeline';
 
 @Injectable()
 export class SearchService {
-  /** Évite qu’un caractère spécial dans la requête casse le regex Mongo. */
-  private _escapeRegex(s: string): string {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
-
   /**
    * `req.user` peut ne pas exposer le virtual `id` selon le contexte ; `_id` est fiable.
    * Sinon `new ObjectId(undefined)` lève et produit un 500 (ex. search avec Bearer, sans user en navigateur).
@@ -766,6 +758,7 @@ export class SearchService {
 
   private async _filterOffers(args: SearchDto, user?: UserModel) {
     const ownerOid = this._userObjectId(user);
+    const queryEsc = escapeMongoRegex(args.query ?? '');
     const pipeline = [
       {
         $match: {
@@ -781,9 +774,9 @@ export class SearchService {
             },
             {
               $or: [
-                { title: { $regex: args.query ?? '', $options: 'i' } },
-                { bio: { $regex: args.query ?? '', $options: 'i' } },
-                { about: { $regex: args.query ?? '', $options: 'i' } },
+                { title: { $regex: queryEsc, $options: 'i' } },
+                { bio: { $regex: queryEsc, $options: 'i' } },
+                { about: { $regex: queryEsc, $options: 'i' } },
               ],
             },
           ].filter(Boolean),
@@ -837,6 +830,7 @@ export class SearchService {
     args: SearchDto,
     user?: UserModel,
   ): Promise<SearchResultDto<ProductModel>> {
+    const queryEsc = escapeMongoRegex(args.query ?? '');
     const pipeline = [
       {
         $lookup: {
@@ -865,9 +859,9 @@ export class SearchService {
             },
             {
               $or: [
-                { title: { $regex: args.query ?? '', $options: 'i' } },
-                { bio: { $regex: args.query ?? '', $options: 'i' } },
-                { about: { $regex: args.query ?? '', $options: 'i' } },
+                { title: { $regex: queryEsc, $options: 'i' } },
+                { bio: { $regex: queryEsc, $options: 'i' } },
+                { about: { $regex: queryEsc, $options: 'i' } },
               ],
             },
             args.storeId && {
@@ -1663,9 +1657,9 @@ export class SearchService {
     const textClause = q
       ? {
           $or: [
-            { title: { $regex: this._escapeRegex(q), $options: 'i' } },
-            { bio: { $regex: this._escapeRegex(q), $options: 'i' } },
-            { about: { $regex: this._escapeRegex(q), $options: 'i' } },
+            { title: { $regex: escapeMongoRegex(q), $options: 'i' } },
+            { bio: { $regex: escapeMongoRegex(q), $options: 'i' } },
+            { about: { $regex: escapeMongoRegex(q), $options: 'i' } },
           ],
         }
       : {
@@ -1749,7 +1743,7 @@ export class SearchService {
       { acceptsOrders: { $ne: false } },
     ];
     if (q) {
-      const esc = this._escapeRegex(q);
+      const esc = escapeMongoRegex(q);
       andParts.push({
         $or: [
           { name: { $regex: esc, $options: 'i' } },

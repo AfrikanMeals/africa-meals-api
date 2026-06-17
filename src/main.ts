@@ -1,6 +1,7 @@
 import './setup-dns-resolver';
 import { compressionMiddleware } from './compression-middleware';
-import { unifiedJsonBodyParser } from './unified-body-parser';
+import { DEFAULT_URLENCODED_BODY_LIMIT } from '@common/http/body-parser-limits.util';
+import { createRouteAwareJsonBodyParser } from './route-aware-body-parser';
 import {
   applyHttpServerTimeouts,
   httpRequestTimeoutMiddleware,
@@ -18,8 +19,13 @@ async function bootstrap() {
   app.enableShutdownHooks();
   app.use(httpRequestTimeoutMiddleware());
   app.use(compressionMiddleware({ threshold: 1024 }));
-  app.use(unifiedJsonBodyParser({ limit: '60mb', preserveRawBody: true }));
-  app.use(express.urlencoded({ extended: true, limit: '60mb' }));
+  app.use(createRouteAwareJsonBodyParser({ preserveRawBody: true }));
+  app.use(
+    express.urlencoded({
+      extended: true,
+      limit: DEFAULT_URLENCODED_BODY_LIMIT,
+    }),
+  );
   app.use('/robots.txt', (_req, res) => {
     res.type('text/plain').send('User-agent: *\nDisallow: /\n');
   });

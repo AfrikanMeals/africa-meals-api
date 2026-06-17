@@ -1880,8 +1880,7 @@ export class AuthService {
   }
 
   private _emailMatchExact(email: string) {
-    const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`^${escaped}$`, 'i');
+    return buildCaseInsensitiveExactRegex(email);
   }
 
   private async finishAuthenticatedLogin(

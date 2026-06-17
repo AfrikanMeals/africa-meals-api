@@ -6,6 +6,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { UserModel } from '@schemas/user.schema';
 import { StorageSettingsService } from '@modules/storage-settings/storage-settings.service';
+import { assertUploadFileSignature } from '@common/uploads/upload-file-signature.util';
 import { prepareIncomingUploadFile } from 'src/incoming-upload-file';
 import { extname } from 'path';
 import { v4 as uuid } from 'uuid';
@@ -195,6 +196,7 @@ export class MediasService {
     const settings = await this.storageSettings.getPublicSettings();
     const maxBytes = settings.maxFileSizeMb * 1024 * 1024;
     let prepared = prepareIncomingUploadFile(file);
+    assertUploadFileSignature(prepared);
     if ((prepared.buffer?.length ?? prepared.size ?? 0) > maxBytes) {
       throw new BadRequestException('file_too_large');
     }

@@ -1,3 +1,4 @@
+import { isGraphqlPlaygroundEnabled } from '@common/security/api-docs-exposure.util';
 import { AuthModule } from '@modules/auth/auth.module';
 import { ProductsModule } from '@modules/products/products.module';
 import { RecommendationsModule } from '@modules/recommendations/recommendations.module';
@@ -23,8 +24,8 @@ import { StoreMenuResolver } from './store-menu.resolver';
       path: 'graphql',
       bodyParserConfig: false,
       context: ({ req, res }) => ({ req, res }),
-      playground: process.env.DISABLE_GRAPHQL_PLAYGROUND !== 'true',
-      introspection: process.env.DISABLE_GRAPHQL_PLAYGROUND !== 'true',
+      playground: isGraphqlPlaygroundEnabled(),
+      introspection: isGraphqlPlaygroundEnabled(),
     }),
     AuthModule,
     ProductsModule,

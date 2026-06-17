@@ -107,7 +107,7 @@ function mapDrinkDoc(doc: Record<string, unknown>) {
 @Injectable()
 export class DrinksService {
   private _escapeRegex(s: string): string {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return escapeMongoRegex(s);
   }
 
   @InjectModel(DrinkModel.name)

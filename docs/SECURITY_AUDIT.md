@@ -25,7 +25,7 @@
 |----------|--------|------------|------------|---------|--------|
 | Critique | 4 | 1 | 0 | 3 | Corriger immédiatement |
 | Élevée | 12 | 0 | 0 | 12 | Corriger sous 1–2 semaines |
-| Moyenne | 18 | 18 | 0 | 0 | Planifier sprint sécurité |
+| Moyenne | 18 | 17 | 0 | 1 | Planifier sprint sécurité |
 | Faible | 10 | 0 | 0 | 10 | Amélioration continue |
 | Positif | 8 | — | — | — | Maintenir |
 
@@ -85,7 +85,7 @@
 | ID | App | Action | Statut | Issue | Recommandation |
 |----|-----|--------|--------|-------|----------------|
 | **M-01** | API | Improve | ❌ NOT YET | ADMIN sans rôles = toutes permissions | Exiger `platformRoleIds` ou rôle par défaut minimal |
-| **M-02** | API | Add | ❌ NOT YET | Swagger / GraphQL playground actifs par défaut | `DISABLE_SWAGGER=true`, `DISABLE_GRAPHQL_PLAYGROUND=true` en prod |
+| **M-02** | API | Add | ✅ DONE | ~~Swagger / GraphQL playground actifs par défaut~~ | Désactivés en prod ; `DISABLE_*` / `ENABLE_*_IN_PROD` |
 | **M-03** | API | Improve | ❌ NOT YET | Body parser 60 MB — vecteur DoS | Réduire à 1–5 MB sauf routes upload dédiées |
 | **M-04** | API | Fix | ❌ NOT YET | Regex Mongo non échappées (ReDoS / injection) | `_escapeRegex()` sur toutes entrées `$regex` |
 | **M-05** | API | Add | ❌ NOT YET | Pas de `ValidationPipe` global avec `whitelist` | Pipe global : `whitelist`, `forbidNonWhitelisted` |

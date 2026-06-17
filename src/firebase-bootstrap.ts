@@ -1,6 +1,7 @@
 import './setup-dns-resolver';
 import { compressionMiddleware } from './compression-middleware';
-import { unifiedJsonBodyParser } from './unified-body-parser';
+import { DEFAULT_URLENCODED_BODY_LIMIT } from '@common/http/body-parser-limits.util';
+import { createRouteAwareJsonBodyParser } from './route-aware-body-parser';
 import { httpRequestTimeoutMiddleware } from './http-request-timeout';
 import { NestFactory } from '@nestjs/core';
 import { ExpressAdapter } from '@nestjs/platform-express';
@@ -20,10 +21,13 @@ export async function getExpressServer(): Promise<express.Express> {
   const expressApp = express();
   expressApp.use(httpRequestTimeoutMiddleware());
   expressApp.use(compressionMiddleware({ threshold: 1024 }));
+  expressApp.use(createRouteAwareJsonBodyParser({ preserveRawBody: false }));
   expressApp.use(
-    unifiedJsonBodyParser({ limit: '60mb', preserveRawBody: false }),
+    express.urlencoded({
+      extended: true,
+      limit: DEFAULT_URLENCODED_BODY_LIMIT,
+    }),
   );
-  expressApp.use(express.urlencoded({ extended: true, limit: '60mb' }));
   const adapter = new ExpressAdapter(expressApp);
   const nestApp = await NestFactory.create(AppModule, adapter, {
     bodyParser: false,

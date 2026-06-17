@@ -1,4 +1,4 @@
-import { prepareIncomingUploadFile } from 'src/incoming-upload-file';
+import { buildCaseInsensitiveExactRegex, escapeMongoRegex } from '@common/mongo/escape-regex.util';
 import { MediasService } from '@modules/medias/medias.service';
 import {
   AppCacheKeys,
@@ -410,7 +410,7 @@ export class ProductsService {
   }
 
   private _escapeRegex(s: string): string {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return escapeMongoRegex(s);
   }
 
   private normalizeFieldsets(raw: unknown): string[] {
@@ -1265,7 +1265,9 @@ export class ProductsService {
         _id: product._id,
         store: { _id: store._id },
         extras: {
-          $elemMatch: { title: { $regex: new RegExp(`^${args.title}$`, 'i') } },
+          $elemMatch: {
+            title: { $regex: buildCaseInsensitiveExactRegex(args.title) },
+          },
         },
       })
       .exec();
