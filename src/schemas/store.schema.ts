@@ -3,8 +3,8 @@ import { PartnerBadgeCode } from '@common/partner-badges/partner-badge.constants
 import { Schema as MongooseSchema } from 'mongoose';
 import { AddressModel } from './address.schema';
 import { BaseSchema } from './base.schema';
-import { StoreRatingModel } from './store_rating.schema';
-import { UserModel } from './user.schema';
+import type { StoreRatingModel } from './store_rating.schema';
+import type { UserModel } from './user.schema';
 
 export enum StoreStatusEnum {
   PENDING = 'PENDING',
@@ -170,7 +170,7 @@ export class StoreModel extends BaseSchema {
   @Prop({
     required: true,
     name: 'ratings',
-    ref: StoreRatingModel.name,
+    ref: 'StoreRatingModel',
     type: [MongooseSchema.Types.ObjectId],
     select: false,
     default: [],

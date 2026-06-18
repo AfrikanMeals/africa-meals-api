@@ -3,6 +3,15 @@ import { ConfigService } from '@nestjs/config';
 import { AppService, HealthPayload } from '../../app.service';
 import { parsePositiveInt } from '../../common/bullmq-redis-connection';
 
+import { PublicInfraStatusService, PublicInfraProbe } from './public-infra-status.service';
+import {
+  resolveAdminProbeEndpointUrl,
+  resolveAdminProbeHealthUrl,
+  resolveWebProbeEndpointUrl,
+  resolveWsProbeEndpointUrl,
+  resolveWsProbeFetchUrl,
+} from './status-probe-urls.util';
+
 export type PublicStatusServiceProbe = {
   id: 'web' | 'api' | 'ws' | 'admin';
   name: string;
@@ -16,6 +25,7 @@ export type PublicStatusSnapshot = {
   checkedAt: string;
   summary: 'ok' | 'partial' | 'down' | 'checking';
   services: PublicStatusServiceProbe[];
+  infra: PublicInfraProbe[];
 };
 
 @Injectable()
@@ -23,22 +33,22 @@ export class PublicStatusProbeService {
   constructor(
     private readonly config: ConfigService,
     private readonly app: AppService,
+    private readonly publicInfra: PublicInfraStatusService,
   ) {}
 
   async probeAll(): Promise<PublicStatusSnapshot> {
     const checkedAt = new Date().toISOString();
-    const webUrl =
-      this.config.get<string>('STATUS_PROBE_WEB_URL')?.trim() ||
-      'https://wise-eat.com/';
-    const adminUrl =
-      this.config.get<string>('STATUS_PROBE_ADMIN_URL')?.trim() ||
-      'https://admin.wise-eat.com/';
-    const wsBase = this.resolveWsPublicBase();
+    const webEndpoint = resolveWebProbeEndpointUrl(this.config);
+    const wsFetchUrl = resolveWsProbeFetchUrl(this.config);
+    const wsEndpoint = resolveWsProbeEndpointUrl(this.config);
+    const adminFetchUrl = resolveAdminProbeHealthUrl(this.config);
+    const adminEndpoint = resolveAdminProbeEndpointUrl(this.config);
 
-    const [api, ws, admin] = await Promise.all([
+    const [api, ws, admin, infraSnapshot] = await Promise.all([
       this.probeApiHealth(),
-      this.probeJsonHealth(`${wsBase}/api/health`, 'ws'),
-      this.probeHead(adminUrl, 'admin'),
+      this.probeJsonHealth(wsFetchUrl, 'ws', wsEndpoint),
+      this.probeJsonHealth(adminFetchUrl, 'admin', adminEndpoint),
+      this.publicInfra.probeAll(),
     ]);
 
     const services: PublicStatusServiceProbe[] = [
@@ -48,32 +58,29 @@ export class PublicStatusProbeService {
         state: 'ok',
         latencyMs: 0,
         details: 'Site vitrine accessible.',
-        endpoint: webUrl,
+        endpoint: webEndpoint,
       },
       api,
       ws,
       admin,
     ];
 
-    const states = services.map((s) => s.state);
+    const states = [
+      ...services.map((s) => s.state),
+      ...infraSnapshot.components.map((c) => c.state),
+    ];
     let summary: PublicStatusSnapshot['summary'] = 'ok';
     if (states.includes('down')) summary = 'down';
     else if (states.includes('degraded') || states.includes('unknown')) {
       summary = 'partial';
     }
 
-    return { checkedAt, summary, services };
-  }
-
-  private resolveWsPublicBase(): string {
-    const direct = this.config.get<string>('WS_BASE_URL')?.trim();
-    if (direct) return direct.replace(/\/+$/, '');
-    const internal = this.config
-      .get<string>('AFRICA_MEALS_WS_INTERNAL_URL')
-      ?.trim()
-      ?.replace(/\/+$/, '');
-    if (internal) return internal;
-    return 'https://ws.wise-eat.com';
+    return {
+      checkedAt,
+      summary,
+      services,
+      infra: infraSnapshot.components,
+    };
   }
 
   private async probeApiHealth(): Promise<PublicStatusServiceProbe> {
@@ -104,12 +111,14 @@ export class PublicStatusProbeService {
 
   private async probeJsonHealth(
     url: string,
-    id: 'ws',
+    id: 'ws' | 'admin',
+    endpoint?: string,
   ): Promise<PublicStatusServiceProbe> {
+    const displayEndpoint = endpoint ?? url;
     const started = performance.now();
     const timeoutMs = parsePositiveInt(
       this.config.get<string>('STATUS_PROBE_TIMEOUT_MS'),
-      8000,
+      4000,
     );
     try {
       const res = await fetch(url, {
@@ -134,56 +143,20 @@ export class PublicStatusProbeService {
       }
       return {
         id,
-        name: 'Temps réel',
+        name: id === 'admin' ? 'Administration' : 'Temps réel',
         state,
         latencyMs,
         details: this.formatRemoteHealth(body, res.status),
-        endpoint: url,
+        endpoint: displayEndpoint,
       };
     } catch (error) {
       return {
         id,
-        name: 'Temps réel',
-        state: 'down',
+        name: id === 'admin' ? 'Administration' : 'Temps réel',
+        state: id === 'admin' ? 'unknown' : 'down',
         latencyMs: null,
         details: error instanceof Error ? error.message : 'probe_failed',
-        endpoint: url,
-      };
-    }
-  }
-
-  private async probeHead(
-    url: string,
-    id: 'admin',
-  ): Promise<PublicStatusServiceProbe> {
-    const started = performance.now();
-    const timeoutMs = parsePositiveInt(
-      this.config.get<string>('STATUS_PROBE_TIMEOUT_MS'),
-      8000,
-    );
-    try {
-      const res = await fetch(url, {
-        method: 'HEAD',
-        cache: 'no-store',
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      const latencyMs = Math.round(performance.now() - started);
-      return {
-        id,
-        name: 'Administration',
-        state: res.ok ? 'ok' : 'down',
-        latencyMs,
-        details: `HTTP ${res.status}`,
-        endpoint: url,
-      };
-    } catch (error) {
-      return {
-        id,
-        name: 'Administration',
-        state: 'unknown',
-        latencyMs: null,
-        details: error instanceof Error ? error.message : 'probe_failed',
-        endpoint: url,
+        endpoint: displayEndpoint,
       };
     }
   }

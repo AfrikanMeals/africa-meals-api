@@ -55,6 +55,7 @@ import { App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getMessaging } from 'firebase-admin/messaging';
 import { getStorage } from 'firebase-admin/storage';
+import { loadFirebaseServiceAccount } from 'src/config/firebase-env';
 import { Connection, Model, Types } from 'mongoose';
 import * as nodemailer from 'nodemailer';
 import { StoreAccessService } from '../teams/store-access.service';
@@ -244,7 +245,8 @@ export class DbMaintenanceService {
     {
       key: 'map-engine-status',
       label: 'Map Engine Status',
-      description: 'Vérifie la disponibilité Mapbox geocoding.',
+      description:
+        'Vérifie la disponibilité des moteurs cartographiques (Mapbox, Google Maps).',
     },
     {
       key: 'mail-health-status',
@@ -531,6 +533,13 @@ export class DbMaintenanceService {
     );
   }
 
+  /** Sondes infra exposées sur la page statut publique (sans auth). */
+  async runPublicSystemHealthCheck(
+    key: string,
+  ): Promise<SystemHealthCheckResult> {
+    return this.runSystemHealthCheckInternal(key);
+  }
+
   private async runSystemHealthCheckInternal(
     key: string,
   ): Promise<SystemHealthCheckResult> {
@@ -552,6 +561,8 @@ export class DbMaintenanceService {
         return this.runStripeWebhookLatencyHealthCheck();
       case 'map-engine-status':
         return this.runMapEngineHealthCheck();
+      case 'file-storage-engines-status':
+        return this.runFileStorageEnginesHealthCheck();
       case 'mail-health-status':
         return this.runMailHealthCheck();
       case 'firebase-services-status':
@@ -2670,54 +2681,269 @@ export class DbMaintenanceService {
     const startedAtMs = Date.now();
     const key = 'map-engine-status';
     const label = 'Map Engine Status';
-    const apiUrl = String(
+
+    const engines: Array<{
+      name: string;
+      configured: boolean;
+      ok: boolean;
+      detail: string;
+    }> = [];
+
+    const mapboxUrl = String(
       this.config.get<string>('MAP_BOX_API_URL') ?? '',
     ).trim();
-    const token = String(
+    const mapboxToken = String(
       this.config.get<string>('MAPBOX_ACCESS_TOKEN') ?? '',
     ).trim();
-    if (!apiUrl || !token) {
-      return this.normalizeHealthResult({
-        key,
-        label,
-        startedAtMs,
-        status: 'down',
-        details: 'Mapbox URL/token non configurés.',
-      });
-    }
-    try {
-      const url = new URL(apiUrl);
-      url.searchParams.set('q', 'Montreal');
-      url.searchParams.set('limit', '1');
-      url.searchParams.set('access_token', token);
-      const res = await this.fetchWithTimeout(url.toString(), 7000);
-      if (!res.ok) {
-        return this.normalizeHealthResult({
-          key,
-          label,
-          startedAtMs,
-          status: 'down',
-          details: `Map engine HTTP ${res.status}`,
+    if (mapboxUrl && mapboxToken) {
+      try {
+        const url = new URL(mapboxUrl);
+        url.searchParams.set('q', 'Montreal');
+        url.searchParams.set('limit', '1');
+        url.searchParams.set('access_token', mapboxToken);
+        const res = await this.fetchWithTimeout(url.toString(), 7000);
+        engines.push({
+          name: 'Mapbox',
+          configured: true,
+          ok: res.ok,
+          detail: res.ok ? 'joignable' : `HTTP ${res.status}`,
+        });
+      } catch (e) {
+        engines.push({
+          name: 'Mapbox',
+          configured: true,
+          ok: false,
+          detail: e instanceof Error ? e.message : String(e),
         });
       }
-      return this.normalizeHealthResult({
-        key,
-        label,
-        startedAtMs,
-        status: 'healthy',
-        details: 'Map engine reachable.',
-      });
-    } catch (e) {
-      return this.normalizeHealthResult({
-        key,
-        label,
-        startedAtMs,
-        status: 'down',
-        details: `Map engine error: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
+    } else {
+      engines.push({
+        name: 'Mapbox',
+        configured: false,
+        ok: false,
+        detail: 'non configuré',
       });
     }
+
+    const googleKey = String(
+      this.config.get<string>('GOOGLE_MAPS_API_KEY') ??
+        this.config.get<string>('NEXT_PUBLIC_GOOGLE_MAPS_API_KEY') ??
+        '',
+    ).trim();
+    if (googleKey) {
+      try {
+        const url = new URL('https://maps.googleapis.com/maps/api/geocode/json');
+        url.searchParams.set('address', 'Montreal');
+        url.searchParams.set('key', googleKey);
+        const res = await this.fetchWithTimeout(url.toString(), 7000);
+        const body = (await res.json().catch(() => ({}))) as {
+          status?: string;
+        };
+        engines.push({
+          name: 'Google Maps',
+          configured: true,
+          ok:
+            res.ok &&
+            (body.status === 'OK' || body.status === 'ZERO_RESULTS'),
+          detail:
+            body.status === 'OK' || body.status === 'ZERO_RESULTS'
+              ? 'joignable'
+              : body.status
+                ? String(body.status).toLowerCase()
+                : `HTTP ${res.status}`,
+        });
+      } catch (e) {
+        engines.push({
+          name: 'Google Maps',
+          configured: true,
+          ok: false,
+          detail: e instanceof Error ? e.message : String(e),
+        });
+      }
+    } else {
+      engines.push({
+        name: 'Google Maps',
+        configured: false,
+        ok: false,
+        detail: 'non configuré',
+      });
+    }
+
+    const configured = engines.filter((e) => e.configured);
+    const okCount = configured.filter((e) => e.ok).length;
+    let status: SystemHealthCheckResult['status'] = 'down';
+    if (configured.length === 0) {
+      status = 'down';
+    } else if (okCount === configured.length) {
+      status = 'healthy';
+    } else if (okCount > 0) {
+      status = 'degraded';
+    } else {
+      status = 'down';
+    }
+
+    const details = engines
+      .map((e) => `${e.name} : ${e.configured ? e.detail : 'non configuré'}`)
+      .join(' · ');
+
+    return this.normalizeHealthResult({
+      key,
+      label,
+      startedAtMs,
+      status,
+      details,
+    });
+  }
+
+  private async runFileStorageEnginesHealthCheck(): Promise<SystemHealthCheckResult> {
+    const startedAtMs = Date.now();
+    const key = 'file-storage-engines-status';
+    const label = 'File storage engines status';
+
+    const engines: Array<{
+      name: string;
+      configured: boolean;
+      ok: boolean;
+      detail: string;
+    }> = [];
+
+    const firebaseBucket =
+      String(this.config.get<string>('AM_FIREBASE_STORAGE_BUCKET') ?? '').trim() ||
+      String(this.firebaseApp?.options?.storageBucket ?? '').trim();
+    if (firebaseBucket) {
+      try {
+        const [exists] = await getStorage(this.firebaseApp)
+          .bucket(firebaseBucket)
+          .exists();
+        engines.push({
+          name: 'Firebase Storage',
+          configured: true,
+          ok: Boolean(exists),
+          detail: exists ? 'joignable' : 'bucket introuvable',
+        });
+      } catch (e) {
+        engines.push({
+          name: 'Firebase Storage',
+          configured: true,
+          ok: false,
+          detail: e instanceof Error ? e.message : String(e),
+        });
+      }
+    } else {
+      engines.push({
+        name: 'Firebase Storage',
+        configured: false,
+        ok: false,
+        detail: 'non configuré',
+      });
+    }
+
+    const gcsBucket =
+      String(this.config.get<string>('GCS_BUCKET') ?? '').trim() ||
+      String(this.config.get<string>('GOOGLE_CLOUD_STORAGE_BUCKET') ?? '').trim();
+    if (gcsBucket) {
+      try {
+        const { Storage } = await import('@google-cloud/storage');
+        const sa = loadFirebaseServiceAccount(this.config);
+        const clientEmail = String(sa?.client_email ?? '').trim();
+        const privateKey = String(sa?.private_key ?? '').trim();
+        const projectId = String(sa?.project_id ?? '').trim();
+        const storage =
+          clientEmail && privateKey
+            ? new Storage({
+                ...(projectId ? { projectId } : {}),
+                credentials: {
+                  client_email: clientEmail,
+                  private_key: privateKey.replace(/\\n/g, '\n'),
+                },
+              })
+            : new Storage();
+        const [exists] = await storage.bucket(gcsBucket).exists();
+        engines.push({
+          name: 'Google Cloud Storage',
+          configured: true,
+          ok: Boolean(exists),
+          detail: exists ? 'joignable' : 'bucket introuvable',
+        });
+      } catch (e) {
+        engines.push({
+          name: 'Google Cloud Storage',
+          configured: true,
+          ok: false,
+          detail: e instanceof Error ? e.message : String(e),
+        });
+      }
+    } else {
+      engines.push({
+        name: 'Google Cloud Storage',
+        configured: false,
+        ok: false,
+        detail: 'non configuré',
+      });
+    }
+
+    const s3Bucket = String(this.config.get<string>('AWS_S3_BUCKET') ?? '').trim();
+    const s3Key = String(this.config.get<string>('AWS_ACCESS_KEY_ID') ?? '').trim();
+    const s3Secret = String(
+      this.config.get<string>('AWS_SECRET_ACCESS_KEY') ?? '',
+    ).trim();
+    if (s3Bucket && s3Key && s3Secret) {
+      try {
+        const { HeadBucketCommand, S3Client } = await import('@aws-sdk/client-s3');
+        const region =
+          String(this.config.get<string>('AWS_REGION') ?? '').trim() || 'us-east-1';
+        const client = new S3Client({
+          region,
+          credentials: { accessKeyId: s3Key, secretAccessKey: s3Secret },
+        });
+        await client.send(new HeadBucketCommand({ Bucket: s3Bucket }));
+        engines.push({
+          name: 'Amazon S3',
+          configured: true,
+          ok: true,
+          detail: 'joignable',
+        });
+      } catch (e) {
+        engines.push({
+          name: 'Amazon S3',
+          configured: true,
+          ok: false,
+          detail: e instanceof Error ? e.message : String(e),
+        });
+      }
+    } else {
+      engines.push({
+        name: 'Amazon S3',
+        configured: false,
+        ok: false,
+        detail: 'non configuré',
+      });
+    }
+
+    const configured = engines.filter((e) => e.configured);
+    const okCount = configured.filter((e) => e.ok).length;
+    let status: SystemHealthCheckResult['status'] = 'down';
+    if (configured.length === 0) {
+      status = 'down';
+    } else if (okCount === configured.length) {
+      status = 'healthy';
+    } else if (okCount > 0) {
+      status = 'degraded';
+    } else {
+      status = 'down';
+    }
+
+    const details = engines
+      .map((e) => `${e.name} : ${e.configured ? e.detail : 'non configuré'}`)
+      .join(' · ');
+
+    return this.normalizeHealthResult({
+      key,
+      label,
+      startedAtMs,
+      status,
+      details,
+    });
   }
 
   private async runMailHealthCheck(): Promise<SystemHealthCheckResult> {

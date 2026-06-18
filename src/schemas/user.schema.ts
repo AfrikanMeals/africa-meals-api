@@ -6,7 +6,7 @@ import { Schema as MongooseSchema, Types } from 'mongoose';
 import { AddressModel } from './address.schema';
 import { BaseSchema } from './base.schema';
 import { PaymentMethodModel } from './payment-method.schema';
-import { StoreModel } from './store.schema';
+import type { StoreModel } from './store.schema';
 import { PlatformRoleModel } from './platform-role.schema';
 
 export enum UserTypeEnum {
@@ -97,10 +97,9 @@ export class UserModel extends BaseSchema {
     required: false,
     name: 'stores',
     type: [MongooseSchema.Types.ObjectId],
-    ref: StoreModel.name,
+    ref: 'StoreModel',
     default: [],
   })
-  @Type(() => Array<StoreModel>)
   stores?: StoreModel[];
 
   @Prop({

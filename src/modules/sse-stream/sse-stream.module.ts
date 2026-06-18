@@ -8,6 +8,7 @@ import { DynamicModule, Module } from '@nestjs/common';
 import { AppService } from '../../app.service';
 import { isSseHttpOnApi } from '../../common/sse/sse-redis.channels';
 import { SseJwtAuthGuard } from './guards/sse-jwt-auth.guard';
+import { PublicInfraStatusService } from './public-infra-status.service';
 import { PublicStatusProbeService } from './public-status-probe.service';
 import { SseBackgroundPublisherService } from './sse-background-publisher.service';
 import { SseStreamController } from './sse-stream.controller';
@@ -19,6 +20,7 @@ const sseProviders = [
   SseStreamService,
   SseStreamSourcesService,
   PublicStatusProbeService,
+  PublicInfraStatusService,
   SseBackgroundPublisherService,
   SseJwtAuthGuard,
   AppService,
@@ -34,7 +36,12 @@ const sseProviders = [
     CheckoutSessionSseModule,
   ],
   providers: sseProviders,
-  exports: [SseStreamService, SseStreamSourcesService, CheckoutSessionSseModule],
+  exports: [
+    SseStreamService,
+    SseStreamSourcesService,
+    CheckoutSessionSseModule,
+    PublicInfraStatusService,
+  ],
 })
 export class SseStreamModule {
   static register(): DynamicModule {
@@ -52,7 +59,12 @@ export class SseStreamModule {
       ],
       controllers: httpEnabled ? [SseStreamController] : [],
       providers: sseProviders,
-      exports: [SseStreamService, SseStreamSourcesService, CheckoutSessionSseModule],
+      exports: [
+    SseStreamService,
+    SseStreamSourcesService,
+    CheckoutSessionSseModule,
+    PublicInfraStatusService,
+  ],
     };
   }
 }
