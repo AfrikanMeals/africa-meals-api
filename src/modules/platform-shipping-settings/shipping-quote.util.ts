@@ -57,9 +57,28 @@ export function snapDistanceForShippingBillingKm(distanceKm: number): number {
   return distanceKm;
 }
 
+/** Tranche [minKm, maxKm) ; 0 si aucune tranche correspond (repli sur base + km). */
+export function findPlatformRangeFlat(
+  ranges: { minKm: number; maxKm: number; fee: number }[],
+  distanceKm: number,
+): number {
+  if (!ranges?.length) {
+    return 0;
+  }
+  for (const r of ranges) {
+    const minKm = Number(r.minKm);
+    const maxKm = Number(r.maxKm);
+    if (distanceKm >= minKm && distanceKm < maxKm) {
+      return Number(r.fee) || 0;
+    }
+  }
+  return 0;
+}
+
 /**
- * Frais plateforme : **total = deliveryBasePrice + distance × perKmRate** (dans le rayon max).
- * Les tranches `ranges` ne modulent plus le montant (compat : `rangeFlat` reste 0).
+ * Frais plateforme (dans le rayon max) :
+ * **total = deliveryBasePrice + forfait tranche [min, max) + distance × perKmRate**.
+ * Sans tranche correspondante : deliveryBasePrice + distance × perKmRate.
  */
 export function computePlatformShippingFeeFromDistance(
   settings: PlatformShippingSettingsForQuote,
@@ -92,16 +111,19 @@ export function computePlatformShippingFeeFromDistance(
   }
   const perKmRate = Number(settings.perKmRate) || 0;
   const deliveryBasePrice = Number(settings.deliveryBasePrice) || 0;
+  const rangeFlat = findPlatformRangeFlat(settings.ranges ?? [], d);
   const perKmComponent = d * perKmRate;
-  const rawTotal = deliveryBasePrice + perKmComponent;
+  const rawTotal = deliveryBasePrice + rangeFlat + perKmComponent;
   const total = Math.round((rawTotal + Number.EPSILON) * 100) / 100;
   const perKmRounded =
     Math.round((perKmComponent + Number.EPSILON) * 100) / 100;
   const baseRounded =
     Math.round((deliveryBasePrice + Number.EPSILON) * 100) / 100;
+  const rangeFlatRounded =
+    Math.round((rangeFlat + Number.EPSILON) * 100) / 100;
   return {
     deliverable: true,
-    rangeFlat: 0,
+    rangeFlat: rangeFlatRounded,
     deliveryBasePrice: baseRounded,
     perKmComponent: perKmRounded,
     total,
