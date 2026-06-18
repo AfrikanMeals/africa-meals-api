@@ -39,6 +39,7 @@ export function extractLatLonFromGeoPoint(
 
 export type PlatformShippingSettingsForQuote = {
   perKmRate: number;
+  deliveryBasePrice: number;
   maxDeliveryRadiusKm: number;
   ranges: { minKm: number; maxKm: number; fee: number }[];
 };
@@ -57,7 +58,7 @@ export function snapDistanceForShippingBillingKm(distanceKm: number): number {
 }
 
 /**
- * Frais plateforme : **total = distance × perKmRate** (dans le rayon max).
+ * Frais plateforme : **total = deliveryBasePrice + distance × perKmRate** (dans le rayon max).
  * Les tranches `ranges` ne modulent plus le montant (compat : `rangeFlat` reste 0).
  */
 export function computePlatformShippingFeeFromDistance(
@@ -66,24 +67,42 @@ export function computePlatformShippingFeeFromDistance(
 ): {
   deliverable: boolean;
   rangeFlat: number;
+  deliveryBasePrice: number;
   perKmComponent: number;
   total: number;
 } {
   if (!Number.isFinite(distanceKm) || distanceKm < 0) {
-    return { deliverable: false, rangeFlat: 0, perKmComponent: 0, total: 0 };
+    return {
+      deliverable: false,
+      rangeFlat: 0,
+      deliveryBasePrice: 0,
+      perKmComponent: 0,
+      total: 0,
+    };
   }
   const d = snapDistanceForShippingBillingKm(distanceKm);
   if (d > settings.maxDeliveryRadiusKm + 1e-9) {
-    return { deliverable: false, rangeFlat: 0, perKmComponent: 0, total: 0 };
+    return {
+      deliverable: false,
+      rangeFlat: 0,
+      deliveryBasePrice: 0,
+      perKmComponent: 0,
+      total: 0,
+    };
   }
   const perKmRate = Number(settings.perKmRate) || 0;
+  const deliveryBasePrice = Number(settings.deliveryBasePrice) || 0;
   const perKmComponent = d * perKmRate;
-  const total = Math.round((perKmComponent + Number.EPSILON) * 100) / 100;
+  const rawTotal = deliveryBasePrice + perKmComponent;
+  const total = Math.round((rawTotal + Number.EPSILON) * 100) / 100;
   const perKmRounded =
     Math.round((perKmComponent + Number.EPSILON) * 100) / 100;
+  const baseRounded =
+    Math.round((deliveryBasePrice + Number.EPSILON) * 100) / 100;
   return {
     deliverable: true,
     rangeFlat: 0,
+    deliveryBasePrice: baseRounded,
     perKmComponent: perKmRounded,
     total,
   };

@@ -18,12 +18,17 @@ const SETTINGS_KEY = 'default';
 
 const DEFAULTS = {
   perKmRate: 0,
+  deliveryBasePrice: 0,
   maxDeliveryRadiusKm: 25,
   currency: 'CAD',
   ranges: [] as { minKm: number; maxKm: number; fee: number }[],
   deliveryWithheldFeeMode: 'percent' as PlatformFeeMode,
   deliveryWithheldFeeFixed: 0,
   deliveryWithheldFeePercent: 0,
+  deliveryTipEnabled: false,
+  deliveryTipMode: 'fixed' as PlatformFeeMode,
+  deliveryTipFixed: 0,
+  deliveryTipPercent: 0,
 };
 
 function assertAdmin(user: UserModel) {
@@ -48,6 +53,17 @@ function inferWithheldMode(
   if (percent > 0 && fixed <= 0) return 'percent';
   if (fixed > 0 && percent <= 0) return 'fixed';
   return DEFAULTS.deliveryWithheldFeeMode;
+}
+
+function inferTipMode(
+  stored: string | undefined,
+  fixed: number,
+  percent: number,
+): PlatformFeeMode {
+  if (stored === 'percent' || stored === 'fixed') return stored;
+  if (percent > 0 && fixed <= 0) return 'percent';
+  if (fixed > 0 && percent <= 0) return 'fixed';
+  return DEFAULTS.deliveryTipMode;
 }
 
 function normalizeRanges(
@@ -109,8 +125,14 @@ export class PlatformShippingSettingsService {
       doc.deliveryWithheldFeeFixed ?? 0,
       doc.deliveryWithheldFeePercent ?? 0,
     );
+    const deliveryTipMode = inferTipMode(
+      doc.deliveryTipMode,
+      doc.deliveryTipFixed ?? 0,
+      doc.deliveryTipPercent ?? 0,
+    );
     return {
       perKmRate: doc.perKmRate,
+      deliveryBasePrice: doc.deliveryBasePrice ?? 0,
       maxDeliveryRadiusKm: doc.maxDeliveryRadiusKm,
       currency: await this._resolveCurrency(doc.currency),
       ranges: (doc.ranges ?? []).map((r) => ({
@@ -121,6 +143,10 @@ export class PlatformShippingSettingsService {
       deliveryWithheldFeeMode,
       deliveryWithheldFeeFixed: doc.deliveryWithheldFeeFixed ?? 0,
       deliveryWithheldFeePercent: doc.deliveryWithheldFeePercent ?? 0,
+      deliveryTipEnabled: doc.deliveryTipEnabled ?? false,
+      deliveryTipMode,
+      deliveryTipFixed: doc.deliveryTipFixed ?? 0,
+      deliveryTipPercent: doc.deliveryTipPercent ?? 0,
       updatedAt:
         (doc as unknown as { updatedAt?: Date }).updatedAt?.toISOString?.() ??
         null,
@@ -165,6 +191,14 @@ export class PlatformShippingSettingsService {
       dto.deliveryWithheldFeeFixed ?? current.deliveryWithheldFeeFixed;
     const withheldPercent =
       dto.deliveryWithheldFeePercent ?? current.deliveryWithheldFeePercent;
+    const deliveryTipEnabled =
+      dto.deliveryTipEnabled ?? current.deliveryTipEnabled;
+    const deliveryTipMode = normalizeMode(
+      dto.deliveryTipMode,
+      current.deliveryTipMode,
+    );
+    const tipFixed = dto.deliveryTipFixed ?? current.deliveryTipFixed;
+    const tipPercent = dto.deliveryTipPercent ?? current.deliveryTipPercent;
     const currency = String(dto.currency ?? current.currency)
       .trim()
       .toUpperCase();
@@ -176,6 +210,7 @@ export class PlatformShippingSettingsService {
         {
           $set: {
             perKmRate: dto.perKmRate,
+            deliveryBasePrice: dto.deliveryBasePrice,
             maxDeliveryRadiusKm: dto.maxDeliveryRadiusKm,
             currency,
             ranges,
@@ -184,6 +219,12 @@ export class PlatformShippingSettingsService {
               deliveryWithheldFeeMode === 'fixed' ? withheldFixed : 0,
             deliveryWithheldFeePercent:
               deliveryWithheldFeeMode === 'percent' ? withheldPercent : 0,
+            deliveryTipEnabled,
+            deliveryTipMode,
+            deliveryTipFixed:
+              deliveryTipMode === 'fixed' ? tipFixed : 0,
+            deliveryTipPercent:
+              deliveryTipMode === 'percent' ? tipPercent : 0,
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },

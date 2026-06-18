@@ -99,6 +99,7 @@ export class PlatformShippingQuoteService {
       fee: computed.deliverable ? computed.total : null,
       breakdown: {
         rangeFlat: computed.rangeFlat,
+        deliveryBasePrice: computed.deliveryBasePrice,
         perKmRate: settings.perKmRate,
         perKmComponent: computed.perKmComponent,
         total: computed.deliverable ? computed.total : null,

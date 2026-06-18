@@ -4,6 +4,7 @@ import { Type } from 'class-transformer';
 import { Trim } from 'class-sanitizer';
 import {
   IsArray,
+  IsBoolean,
   IsIn,
   IsNumber,
   IsOptional,
@@ -51,6 +52,16 @@ export class UpdatePlatformShippingSettingsDto {
   @IsNumber()
   @Min(0)
   perKmRate: number;
+
+  @ApiProperty({
+    example: 3.5,
+    description:
+      'Forfait de base ajouté aux frais livraison (en plus de distance × perKmRate)',
+  })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  deliveryBasePrice: number;
 
   @ApiProperty({
     example: 'CAD',
@@ -106,4 +117,40 @@ export class UpdatePlatformShippingSettingsDto {
   @Min(0)
   @Max(100)
   deliveryWithheldFeePercent?: number;
+
+  @ApiPropertyOptional({
+    description: 'Proposer un pourboire livreur au client',
+  })
+  @IsOptional()
+  @IsBoolean()
+  deliveryTipEnabled?: boolean;
+
+  @ApiPropertyOptional({
+    enum: PLATFORM_FEE_MODES,
+    description: 'Mode du pourboire suggéré (montant fixe ou % commande)',
+  })
+  @IsOptional()
+  @IsIn(PLATFORM_FEE_MODES)
+  deliveryTipMode?: (typeof PLATFORM_FEE_MODES)[number];
+
+  @ApiPropertyOptional({
+    example: 3,
+    description: 'Montant fixe de pourboire suggéré ($)',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  deliveryTipFixed?: number;
+
+  @ApiPropertyOptional({
+    example: 10,
+    description: '% de la valeur commande pour le pourboire suggéré',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  deliveryTipPercent?: number;
 }

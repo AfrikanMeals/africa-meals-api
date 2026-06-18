@@ -20,6 +20,10 @@ export class PlatformShippingSettingsModel {
   @Prop({ type: Number, default: 0 })
   perKmRate: number;
 
+  /** Forfait de base ajouté aux frais distance (km × perKmRate). */
+  @Prop({ type: Number, default: 0 })
+  deliveryBasePrice: number;
+
   /** Distance maximale (km) : au-delà, livraison refusée côté plateforme. */
   @Prop({ type: Number, default: 25 })
   maxDeliveryRadiusKm: number;
@@ -50,6 +54,20 @@ export class PlatformShippingSettingsModel {
   /** % du frais de livraison facturé (ex. 15 = 15 %). */
   @Prop({ type: Number, default: 0 })
   deliveryWithheldFeePercent: number;
+
+  /** Pourboire livreur proposé au client (config admin ; intégration mobile séparée). */
+  @Prop({ type: Boolean, default: false })
+  deliveryTipEnabled: boolean;
+
+  @Prop({ type: String, enum: PLATFORM_FEE_MODES, default: 'fixed' })
+  deliveryTipMode: PlatformFeeMode;
+
+  @Prop({ type: Number, default: 0 })
+  deliveryTipFixed: number;
+
+  /** % de la valeur commande (ex. 10 = 10 %). */
+  @Prop({ type: Number, default: 0 })
+  deliveryTipPercent: number;
 }
 
 export type PlatformShippingSettingsDocument =
