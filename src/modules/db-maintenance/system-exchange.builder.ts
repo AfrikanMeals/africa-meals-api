@@ -12,6 +12,8 @@ import {
   probeHttpHealth,
   probeMongoDb,
   probeRedis,
+  probeSseStream,
+  resolveApiHealthProbeUrl,
   type ProbeResult,
 } from './system-exchange.probes';
 
@@ -119,7 +121,7 @@ export async function buildSystemExchangeResponse(
 
   const wsHealthUrl = `${wsInternal.replace(/\/$/, '')}/api/health`;
   const wsSsePublicUrl = `${wsInternal.replace(/\/$/, '')}/api/sse/public/status`;
-  const apiHealthUrl = `${apiPublic.replace(/\/$/, '')}/health`;
+  const apiHealthUrl = resolveApiHealthProbeUrl(apiPublic);
 
   const [
     mongoProbe,
@@ -133,9 +135,19 @@ export async function buildSystemExchangeResponse(
     probeRedis(input.config),
     probeHttpHealth(apiHealthUrl),
     probeHttpHealth(wsHealthUrl),
-    probeHttpHealth(wsSsePublicUrl),
+    probeSseStream(wsSsePublicUrl, 12000),
     probeHttpHealth(webPublic, 5000),
   ]);
+
+  const sseResolved: ProbeResult =
+    sseProbe.status !== 'down' || wsProbe.status !== 'healthy'
+      ? sseProbe
+      : {
+          status: 'healthy',
+          latencyMs: wsProbe.latencyMs,
+          details:
+            'Instance WS OK — flux SSE lent au démarrage (première sonde interne).',
+        };
 
   const apiMqtt = input.mqtt.apiPublisher;
   const wsMqtt = input.mqtt.wsSubscriber;
@@ -188,7 +200,7 @@ export async function buildSystemExchangeResponse(
       'SSE (WS)',
       'service',
       'Flux admin (health, fleet, jobs) via Redis pub/sub',
-      sseProbe,
+      sseResolved,
       wsSsePublicUrl,
     ),
     platform(
@@ -246,6 +258,7 @@ export async function buildSystemExchangeResponse(
   const byId = Object.fromEntries(
     platforms.map((p) => [p.id, p.status]),
   ) as Record<string, SystemExchangeStatus>;
+  byId.sse = sseResolved.status;
 
   const links: SystemExchangeLink[] = [
     communication(
@@ -268,7 +281,7 @@ export async function buildSystemExchangeResponse(
       'unknown',
       byId.sse,
       'JWT query token — health, fleet, jobs',
-      sseProbe.latencyMs,
+      sseResolved.latencyMs,
     ),
     communication(
       'admin-ws',
@@ -397,7 +410,7 @@ export async function buildSystemExchangeResponse(
       redisRuntimeStatus,
       byId.sse,
       'Abonnement WS aux canaux SSE',
-      sseProbe.latencyMs,
+      sseResolved.latencyMs,
     ),
     communication(
       'ws-clients',

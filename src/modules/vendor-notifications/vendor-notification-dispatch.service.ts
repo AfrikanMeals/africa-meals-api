@@ -90,7 +90,14 @@ export class VendorNotificationDispatchService {
         ? allVendorIds.filter((id) => id !== customerId)
         : allVendorIds;
 
-    if (args.onInbox) {
+    const pushEnabled = await this.prefs.isChannelEnabled(
+      sid,
+      args.category,
+      'push',
+    );
+
+    /** Fil inbox admin + refresh WS — même préférence « Push » que FCM (catégorie Commandes, etc.). */
+    if (args.onInbox && pushEnabled) {
       const inboxNotifyIds =
         allVendorIds.length > 0
           ? allVendorIds
@@ -105,12 +112,6 @@ export class VendorNotificationDispatchService {
         ),
       );
     }
-
-    const pushEnabled = await this.prefs.isChannelEnabled(
-      sid,
-      args.category,
-      'push',
-    );
     if (args.push && pushEnabled && pushIds.length > 0) {
       void this.notifications
         .pushVendorOrderNotify({

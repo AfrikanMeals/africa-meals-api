@@ -155,7 +155,8 @@ export class WsNotifyDispatchQueueService
     if (!suffix) return;
     const normalizedPayload = { ...payload };
     const infraSettings = await this.readInfraSettings();
-    const mirrorOrderEventsOverHttp =
+    const mirrorNotifyEventsOverHttp =
+      suffix === 'inbox/refresh' ||
       suffix === 'order/staff-broadcast' ||
       suffix === 'order/changed' ||
       suffix === 'order/update' ||
@@ -166,7 +167,7 @@ export class WsNotifyDispatchQueueService
         suffix,
         normalizedPayload,
       );
-      if (mqttPublished && !mirrorOrderEventsOverHttp) return;
+      if (mqttPublished && !mirrorNotifyEventsOverHttp) return;
     }
     if (
       !infraSettings.redisManagerEnabled ||

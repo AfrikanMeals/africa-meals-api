@@ -35,6 +35,76 @@ export function mqttToExchange(state?: MqttRuntimeStatus['state']): SystemExchan
   }
 }
 
+/** Nest local : `/api/health` — hôtes API dédiés (Cloud Run / api.*) : `/health`. */
+export function resolveApiHealthProbeUrl(serverUrl: string): string {
+  const raw = serverUrl.trim().replace(/\/+$/, '').replace(/\/api\/health$/, '');
+  if (!raw) return 'http://localhost:9000/api/health';
+  try {
+    const url = new URL(raw.startsWith('http') ? raw : `http://${raw}`);
+    const host = url.hostname.toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1') {
+      return `${url.origin}/api/health`;
+    }
+    if (
+      /^api(-[a-z0-9-]+)?\.wise-eat\.com$/i.test(host) ||
+      host.endsWith('.cloudfunctions.net') ||
+      host.endsWith('.run.app')
+    ) {
+      return `${url.origin}/health`;
+    }
+    return `${url.origin}/api/health`;
+  } catch {
+    return `${raw}/api/health`;
+  }
+}
+
+/** SSE = flux long ; on vérifie seulement les en-têtes HTTP (pas le corps). */
+export async function probeSseStream(
+  url: string,
+  timeoutMs = 8000,
+): Promise<ProbeResult> {
+  const started = performance.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'text/event-stream' },
+      signal: controller.signal,
+    });
+    const latencyMs = Math.round(performance.now() - started);
+    const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
+    void res.body?.cancel().catch(() => undefined);
+    if (!res.ok) {
+      return {
+        status: 'down',
+        latencyMs,
+        details: `HTTP ${res.status}`,
+      };
+    }
+    if (!contentType.includes('text/event-stream')) {
+      return {
+        status: 'degraded',
+        latencyMs,
+        details: `Content-Type inattendu: ${contentType || '—'}`,
+      };
+    }
+    return {
+      status: 'healthy',
+      latencyMs,
+      details: 'Flux SSE — en-têtes OK.',
+    };
+  } catch (e) {
+    return {
+      status: 'down',
+      latencyMs: Math.round(performance.now() - started),
+      details: e instanceof Error ? e.message : String(e),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function probeMongoDb(connection: Connection): Promise<ProbeResult> {
   const started = performance.now();
   const db = connection.db;

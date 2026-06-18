@@ -521,6 +521,9 @@ export class DrinksService {
         ...mapDrinkDoc(row),
         ...(storeId ? { storeId } : {}),
         ...(storeName ? { storeName } : {}),
+        ...(store?.currency != null
+            ? { storeCurrency: String(store.currency) }
+            : {}),
       };
     });
     return { items, total, page, limit: take };

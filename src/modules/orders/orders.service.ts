@@ -883,6 +883,7 @@ export class OrdersService {
       throw new NotFoundException('order_not_found');
     }
     this.emitOrderCreatedFromDoc(created);
+    this.notifyOrderPartiesRealtime(created, OrderStatusEnum.CREATED);
     const storePop = created.store as { name?: string } | null | undefined;
     await this._notificationsService.pushCustomerOrderCreated({
       userId: String(user.id),
@@ -1024,7 +1025,8 @@ export class OrdersService {
   }
 
   /**
-   * Notifie la boutique : message inbox toujours enregistré ; push FCM sauf pour le client commandeur.
+   * Notifie la boutique selon les préférences canal (Commandes → push / e-mail / SMS).
+   * Inbox admin + FCM push partagent le toggle « Push » ; le client commandeur est exclu du push.
    */
   private async notifyStoreVendorsForOrder(args: {
     storeId: string;
