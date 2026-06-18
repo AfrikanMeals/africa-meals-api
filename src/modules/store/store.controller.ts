@@ -51,6 +51,10 @@ import {
 } from '@modules/drinks/dto/drink.dto';
 import { DrinksService } from '@modules/drinks/drinks.service';
 import {
+  clientPlatformFromRequest,
+  resolveMongoIdFromPublicParam,
+} from '@common/catalog-public-id.util';
+import {
   VendorCatalogDrinksQueryDto,
   VendorCatalogProductsQueryDto,
 } from './dto/vendor-catalog-query.dto';
@@ -704,8 +708,11 @@ export class StoreController {
    * Doit rester avant `GET /:id` pour que le segment `menu-meta` soit résolu correctement.
    */
   @Get(':id/menu-meta')
-  async getStoreMenuMeta(@Param('id') id: string) {
-    const meta = await this._storeService.findPublicStoreMenuMeta(id);
+  async getStoreMenuMeta(@Param('id') id: string, @Req() req: Request) {
+    const storeId = resolveMongoIdFromPublicParam(id) ?? id;
+    const meta = await this._storeService.findPublicStoreMenuMeta(storeId, {
+      clientPlatform: clientPlatformFromRequest(req),
+    });
     if (meta == null) {
       throw new NotFoundException('store_not_found');
     }
@@ -714,15 +721,30 @@ export class StoreController {
 
   /** Boissons (`drinks`) visibles client — sans auth (même source que l’admin, filtrées stock > 0). */
   @Get(':id/drinks-catalog')
-  async listDrinksCatalog(@Param('id') id: string, @Query('q') q?: string) {
-    return this._drinksService.findByStoreForCatalog(id, q);
+  async listDrinksCatalog(
+    @Param('id') id: string,
+    @Query('q') q?: string,
+    @Req() req: Request,
+  ) {
+    const storeId = resolveMongoIdFromPublicParam(id) ?? id;
+    return this._drinksService.findByStoreForCatalog(
+      storeId,
+      q,
+      clientPlatformFromRequest(req),
+    );
   }
 
   @Get('/:id')
-  async findOneById(@Param('id') id: string) {
-    return this._storeService.findOneById(id, {
+  async findOneById(@Param('id') id: string, @Req() req: Request) {
+    const storeId = resolveMongoIdFromPublicParam(id) ?? id;
+    const store = await this._storeService.findOneById(storeId, {
       requireMobileVisibility: true,
+      clientPlatform: clientPlatformFromRequest(req),
     });
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+    return store;
   }
 
   @Post('')

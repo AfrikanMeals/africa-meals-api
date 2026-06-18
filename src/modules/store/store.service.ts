@@ -332,6 +332,19 @@ export class StoreService {
     return this._storeModel;
   }
 
+  /** Boutique ACTIVE — vitrine web publique (sans exiger Stripe Connect). */
+  async isStoreVisibleOnPublicCatalog(storeId: string): Promise<boolean> {
+    if (!Types.ObjectId.isValid(storeId)) {
+      return false;
+    }
+    const store = await this._storeModel
+      .findById(storeId)
+      .select('status')
+      .lean()
+      .exec();
+    return store?.status === StoreStatusEnum.ACTIVE;
+  }
+
   /**
    * Boutique visible dans l’app mobile client : ACTIVE + onboarding Stripe Connect du vendeur terminé.
    */
@@ -354,7 +367,6 @@ export class StoreService {
       store.owner instanceof Types.ObjectId
         ? store.owner
         : new Types.ObjectId(String(store.owner));
-    await this._stripeConnect.refreshUserConnectFlagsFromStripe(ownerOid);
     const owner = await this._userModel
       .findById(ownerOid)
       .select(
@@ -365,6 +377,16 @@ export class StoreService {
     return isStripeConnectOnboardingCompleteUser(owner);
   }
 
+  async isStoreVisibleForClient(
+    storeId: string,
+    clientPlatform?: string,
+  ): Promise<boolean> {
+    if (clientPlatform === 'web') {
+      return this.isStoreVisibleOnPublicCatalog(storeId);
+    }
+    return this.isStoreVisibleOnMobileApp(storeId);
+  }
+
   async assertStoreVisibleOnMobileApp(storeId: string): Promise<void> {
     const ok = await this.isStoreVisibleOnMobileApp(storeId);
     if (!ok) {
@@ -372,12 +394,25 @@ export class StoreService {
     }
   }
 
+  async assertStoreVisibleForClient(
+    storeId: string,
+    clientPlatform?: string,
+  ): Promise<void> {
+    const ok = await this.isStoreVisibleForClient(storeId, clientPlatform);
+    if (!ok) {
+      throw new NotFoundException('store_not_found');
+    }
+  }
+
   async findOneById(
     id: string,
-    options?: { requireMobileVisibility?: boolean },
+    options?: {
+      requireMobileVisibility?: boolean;
+      clientPlatform?: string;
+    },
   ) {
     if (options?.requireMobileVisibility) {
-      await this.assertStoreVisibleOnMobileApp(id);
+      await this.assertStoreVisibleForClient(id, options.clientPlatform);
     }
     const store = await this._storeModel
       .findOne({ _id: id })
@@ -455,11 +490,12 @@ export class StoreService {
    */
   async findPublicStoreMenuMeta(
     id: string,
+    options?: { clientPlatform?: string },
   ): Promise<Record<string, unknown> | null> {
     if (!Types.ObjectId.isValid(id)) {
       return null;
     }
-    if (!(await this.isStoreVisibleOnMobileApp(id))) {
+    if (!(await this.isStoreVisibleForClient(id, options?.clientPlatform))) {
       return null;
     }
     return getOrSetCache(

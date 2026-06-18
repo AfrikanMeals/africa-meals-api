@@ -142,6 +142,18 @@ export class DrinksService {
     await this._productCategoryService.invalidatePublicListCache();
   }
 
+  private async isStoreActiveForCatalog(storeId: string): Promise<boolean> {
+    if (!Types.ObjectId.isValid(storeId)) {
+      return false;
+    }
+    const store = await this._storeModel
+      .findById(storeId)
+      .select('status')
+      .lean()
+      .exec();
+    return store?.status === StoreStatusEnum.ACTIVE;
+  }
+
   private async isStoreVisibleOnMobileApp(storeId: string): Promise<boolean> {
     if (!Types.ObjectId.isValid(storeId)) {
       return false;
@@ -354,11 +366,19 @@ export class DrinksService {
    * Liste catalogue client (sans JWT) : boutique existante + boissons encore en stock.
    * @param searchQuery — optionnel : filtre insensible à la casse sur `name` / `description` (regex échappée).
    */
-  async findByStoreForCatalog(storeId: string, searchQuery?: string) {
+  async findByStoreForCatalog(
+    storeId: string,
+    searchQuery?: string,
+    clientPlatform?: string,
+  ) {
     if (!Types.ObjectId.isValid(storeId)) {
       return [];
     }
-    if (!(await this.isStoreVisibleOnMobileApp(storeId))) {
+    const visible =
+      clientPlatform === 'web'
+        ? await this.isStoreActiveForCatalog(storeId)
+        : await this.isStoreVisibleOnMobileApp(storeId);
+    if (!visible) {
       return [];
     }
     const baseFilter: Record<string, unknown> = {

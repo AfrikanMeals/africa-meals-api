@@ -1,5 +1,9 @@
 import { OptionalAuthGuard } from '@modules/auth/guards/optional.auth.guard';
 import {
+  clientPlatformFromRequest,
+  resolveMongoIdFromPublicParam,
+} from '@common/catalog-public-id.util';
+import {
   Controller,
   Get,
   Inject,
@@ -32,12 +36,15 @@ export class SearchController {
     @Query('take') takeRaw?: string,
     @Query('q') q?: string,
   ) {
-    const sid = (storeId ?? '').trim();
+    const sid =
+      resolveMongoIdFromPublicParam((storeId ?? '').trim()) ??
+      (storeId ?? '').trim();
     const page = Math.max(1, parseInt(pageRaw ?? '1', 10) || 1);
     const take = Math.min(
       120,
       Math.max(8, parseInt(takeRaw ?? '24', 10) || 24),
     );
+    const clientPlatform = clientPlatformFromRequest(req);
     const { items, total } =
       await this._searchService.storeMenuProductsLeanPage(
         sid,
@@ -45,6 +52,7 @@ export class SearchController {
         take,
         req.user as UserModel,
         q,
+        clientPlatform,
       );
     return {
       products: {

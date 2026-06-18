@@ -1605,18 +1605,21 @@ export class SearchService {
     take: number,
     user?: UserModel,
     query?: string,
+    clientPlatform?: string,
   ): Promise<{ items: Record<string, unknown>[]; total: number }> {
     if (!Types.ObjectId.isValid(storeId)) {
       return { items: [], total: 0 };
     }
-    if (!(await this._storeService.isStoreVisibleOnMobileApp(storeId))) {
+    if (!(await this._storeService.isStoreVisibleForClient(storeId, clientPlatform))) {
       return { items: [], total: 0 };
     }
     const q = query?.trim();
     if (!q) {
       const safeTake = Math.min(120, Math.max(1, Math.floor(take)));
       const safePage = Math.max(1, Math.floor(page));
-      const scope = cacheUserScope(user);
+      const scope =
+        cacheUserScope(user) +
+        (clientPlatform === 'web' ? ':web-catalog' : ':client-catalog');
       return getOrSetCache(
         this._cache,
         AppCacheKeys.storeMenuPage(storeId, safePage, safeTake, scope),
@@ -1627,6 +1630,8 @@ export class SearchService {
             safePage,
             safeTake,
             user,
+            undefined,
+            clientPlatform,
           ),
       );
     }
@@ -1636,6 +1641,7 @@ export class SearchService {
       take,
       user,
       query,
+      clientPlatform,
     );
   }
 
@@ -1645,11 +1651,12 @@ export class SearchService {
     take: number,
     user?: UserModel,
     query?: string,
+    clientPlatform?: string,
   ): Promise<{ items: Record<string, unknown>[]; total: number }> {
     if (!Types.ObjectId.isValid(storeId)) {
       return { items: [], total: 0 };
     }
-    if (!(await this._storeService.isStoreVisibleOnMobileApp(storeId))) {
+    if (!(await this._storeService.isStoreVisibleForClient(storeId, clientPlatform))) {
       return { items: [], total: 0 };
     }
     const storeOid = new Types.ObjectId(storeId);
