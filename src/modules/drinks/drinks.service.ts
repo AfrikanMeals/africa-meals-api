@@ -25,7 +25,12 @@ import { UserModel } from '@schemas/user.schema';
 import { Model, PipelineStage, Types } from 'mongoose';
 import { CreateDrinkDto, PatchDrinkDto } from './dto/drink.dto';
 import { SearchDto } from '@modules/search/dto/search.dto';
-import { embeddedStoreRegionMatch } from '@modules/supported-countries/client-market-region.util';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
+import {
+  embeddedStoreRegionMatch,
+  normalizeCountryCode,
+  storeDirectRegionMatch,
+} from '@modules/supported-countries/client-market-region.util';
 
 function computeStatut(quantite: number, seuil: number): DrinkStatutEnum {
   return quantite <= seuil ? DrinkStatutEnum.ALERTE : DrinkStatutEnum.OK;
@@ -138,6 +143,9 @@ export class DrinksService {
 
   @Inject(ProductCategoryService)
   private readonly _productCategoryService: ProductCategoryService;
+
+  @Inject(SupportedCountriesService)
+  private readonly _supportedCountries: SupportedCountriesService;
 
   private async _invalidateCategoryCountsCache(): Promise<void> {
     await this._productCategoryService.invalidatePublicListCache();
@@ -371,8 +379,27 @@ export class DrinksService {
     storeId: string,
     searchQuery?: string,
     clientPlatform?: string,
+    countryCode?: string,
+    user?: UserModel,
   ) {
     if (!Types.ObjectId.isValid(storeId)) {
+      return [];
+    }
+    const clientRegion =
+      await this._supportedCountries.resolveClientCatalogRegion(
+        user,
+        countryCode,
+      );
+    const storeLean = await this._storeModel
+      .findById(storeId)
+      .select('status region')
+      .lean()
+      .exec();
+    if (
+      !storeLean ||
+      normalizeCountryCode(storeLean.region) !==
+        normalizeCountryCode(clientRegion)
+    ) {
       return [];
     }
     const visible =
@@ -537,16 +564,32 @@ export class DrinksService {
   async findByStoresForCatalog(
     storeIds: string[],
     maxItems: number,
+    clientRegion?: string,
   ): Promise<Array<ReturnType<typeof mapDrinkDoc> & { storeId: string }>> {
     const candidateOids = storeIds
       .filter((id) => Types.ObjectId.isValid(id))
       .map((id) => new Types.ObjectId(id));
     if (!candidateOids.length) return [];
+
+    let oids = candidateOids;
+    if (clientRegion && normalizeCountryCode(clientRegion)) {
+      const regionRows = await this._storeModel
+        .find({
+          _id: { $in: candidateOids },
+          ...storeDirectRegionMatch(clientRegion),
+        })
+        .select('_id')
+        .lean()
+        .exec();
+      oids = regionRows.map((s) => s._id as Types.ObjectId);
+      if (!oids.length) return [];
+    }
+
     const visible = await resolveStoreIdsVisibleOnMobileApp(
       this._storeModel,
-      candidateOids,
+      oids,
     );
-    const oids = candidateOids.filter((id) => visible.has(id.toString()));
+    oids = oids.filter((id) => visible.has(id.toString()));
     if (!oids.length) return [];
     const limit = Math.min(120, Math.max(1, Math.floor(maxItems)));
     const rows = await this._drinkModel

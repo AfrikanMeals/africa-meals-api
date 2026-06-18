@@ -447,10 +447,21 @@ export class StoreService {
     options?: {
       requireMobileVisibility?: boolean;
       clientPlatform?: string;
+      countryCode?: string;
+      user?: UserModel;
     },
   ) {
     if (options?.requireMobileVisibility) {
-      await this.assertStoreVisibleForClient(id, options.clientPlatform);
+      const clientRegion =
+        await this._supportedCountries.resolveClientCatalogRegion(
+          options.user,
+          options.countryCode,
+        );
+      await this.assertStoreVisibleForClient(
+        id,
+        options.clientPlatform,
+        clientRegion,
+      );
     }
     const store = await this._storeModel
       .findOne({ _id: id })
@@ -528,12 +539,23 @@ export class StoreService {
    */
   async findPublicStoreMenuMeta(
     id: string,
-    options?: { clientPlatform?: string },
+    options?: { clientPlatform?: string; countryCode?: string; user?: UserModel },
   ): Promise<Record<string, unknown> | null> {
     if (!Types.ObjectId.isValid(id)) {
       return null;
     }
-    if (!(await this.isStoreVisibleForClient(id, options?.clientPlatform))) {
+    const clientRegion =
+      await this._supportedCountries.resolveClientCatalogRegion(
+        options?.user,
+        options?.countryCode,
+      );
+    if (
+      !(await this.isStoreVisibleForClient(
+        id,
+        options?.clientPlatform,
+        clientRegion,
+      ))
+    ) {
       return null;
     }
     return getOrSetCache(

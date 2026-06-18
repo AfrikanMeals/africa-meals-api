@@ -63,6 +63,7 @@ export class AdsTargetingController {
       placement: query.placement,
       slot: query.slot,
       limit: query.limit,
+      countryCode: query.countryCode,
     });
   }
 

@@ -149,6 +149,12 @@ export class AdsTargetingRecommendQueryDto {
   @Min(1)
   @Max(10)
   limit?: number;
+
+  @ApiPropertyOptional({ description: 'Pays ISO2 du catalogue client.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2)
+  countryCode?: string;
 }
 
 export class CreateTargetingCampaignDto extends CreateAdCampaignDto {}

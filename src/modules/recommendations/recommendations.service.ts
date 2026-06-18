@@ -396,7 +396,7 @@ export class RecommendationsService {
       ]),
     ].slice(0, 24);
 
-    let drinks = await this._drinksForStores(drinkStorePool, 18);
+    let drinks = await this._drinksForStores(drinkStorePool, 18, clientRegion);
     const trendDrinkOrder = (snapshot?.trendDrinkIds ?? []).map((x) =>
       String(x),
     );
@@ -554,10 +554,12 @@ export class RecommendationsService {
   private async _drinksForStores(
     storeIds: string[],
     maxItems: number,
+    clientRegion?: string,
   ): Promise<Record<string, unknown>[]> {
     const drinks = await this._drinksService.findByStoresForCatalog(
       storeIds,
       maxItems,
+      clientRegion,
     );
     if (!drinks.length) return [];
 

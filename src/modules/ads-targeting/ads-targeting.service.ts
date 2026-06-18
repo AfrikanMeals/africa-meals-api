@@ -656,11 +656,17 @@ export class AdsTargetingService {
       placement?: string;
       slot?: number;
       limit?: number;
+      countryCode?: string;
     },
   ): Promise<{ ads: RecommendResult[] }> {
     const fallbackUserId = requester?._id ? String(requester._id) : '';
     const userKey = String(query.userId ?? '').trim() || fallbackUserId;
     if (!userKey) return { ads: [] };
+
+    const clientRegion = await this.adsService.resolvePublicClientRegion(
+      requester ?? undefined,
+      query.countryCode,
+    );
 
     await this.rebuildProfile(userKey);
     const profile = await this.profileModel.findOne({ userKey }).lean().exec();
@@ -686,6 +692,7 @@ export class AdsTargetingService {
         endsAt: { $gte: now },
         archivedAt: { $exists: false },
       })
+      .populate('store', 'name status region')
       .populate('items.product', 'title profileImage')
       .populate('items.drink', 'name imageUrl')
       .lean()
@@ -720,6 +727,17 @@ export class AdsTargetingService {
     for (const campaign of campaigns as Array<Record<string, unknown>>) {
       const campaignId = String(campaign._id ?? '').trim();
       if (!campaignId) continue;
+      const storeRaw = campaign.store;
+      if (storeRaw && typeof storeRaw === 'object') {
+        const storeRegion = String(
+          (storeRaw as Record<string, unknown>).region ?? '',
+        )
+          .trim()
+          .toUpperCase();
+        if (storeRegion && storeRegion !== clientRegion) {
+          continue;
+        }
+      }
       const rules = (campaign.targetingRules ?? {}) as Record<string, unknown>;
       if (!matchesPlacementRules(rules, placement)) {
         continue;

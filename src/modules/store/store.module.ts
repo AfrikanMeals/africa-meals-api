@@ -17,6 +17,7 @@ import { BillingModule } from '@modules/billing/billing.module';
 import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { BusinessTypesModule } from '@modules/business-types/business-types.module';
+import { AuthModule } from '@modules/auth/auth.module';
 import { DashboardAuditModule } from '@modules/dashboard-audit/dashboard-audit.module';
 import { PublicSeoModule } from '@modules/public-seo/public-seo.module';
 import { Module, forwardRef } from '@nestjs/common';
@@ -58,6 +59,7 @@ import { StoreSubscribersModule } from '@modules/store-subscribers/store-subscri
     StoreRegionBackfillService,
   ],
   imports: [
+    AuthModule,
     NotificationsModule,
     WsNotifyModule,
     MailerModule,

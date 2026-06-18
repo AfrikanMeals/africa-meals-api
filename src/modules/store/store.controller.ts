@@ -1,4 +1,5 @@
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
+import { OptionalAuthGuard } from '@modules/auth/guards/optional.auth.guard';
 import { AddItemToCartDto } from '@modules/cart/dto/cart.dto';
 import { CreateOfferDto } from '@modules/offers/dto/offers.dto';
 import {
@@ -708,10 +709,17 @@ export class StoreController {
    * Doit rester avant `GET /:id` pour que le segment `menu-meta` soit résolu correctement.
    */
   @Get(':id/menu-meta')
-  async getStoreMenuMeta(@Param('id') id: string, @Req() req: Request) {
+  @UseGuards(OptionalAuthGuard)
+  async getStoreMenuMeta(
+    @Param('id') id: string,
+    @Req() req: Request,
+    @Query('countryCode') countryCode?: string,
+  ) {
     const storeId = resolveMongoIdFromPublicParam(id) ?? id;
     const meta = await this._storeService.findPublicStoreMenuMeta(storeId, {
       clientPlatform: clientPlatformFromRequest(req),
+      countryCode,
+      user: req.user as UserModel | undefined,
     });
     if (meta == null) {
       throw new NotFoundException('store_not_found');
@@ -721,25 +729,36 @@ export class StoreController {
 
   /** Boissons (`drinks`) visibles client — sans auth (même source que l’admin, filtrées stock > 0). */
   @Get(':id/drinks-catalog')
+  @UseGuards(OptionalAuthGuard)
   async listDrinksCatalog(
     @Param('id') id: string,
     @Req() req: Request,
     @Query('q') q?: string,
+    @Query('countryCode') countryCode?: string,
   ) {
     const storeId = resolveMongoIdFromPublicParam(id) ?? id;
     return this._drinksService.findByStoreForCatalog(
       storeId,
       q,
       clientPlatformFromRequest(req),
+      countryCode,
+      req.user as UserModel | undefined,
     );
   }
 
   @Get('/:id')
-  async findOneById(@Param('id') id: string, @Req() req: Request) {
+  @UseGuards(OptionalAuthGuard)
+  async findOneById(
+    @Param('id') id: string,
+    @Req() req: Request,
+    @Query('countryCode') countryCode?: string,
+  ) {
     const storeId = resolveMongoIdFromPublicParam(id) ?? id;
     const store = await this._storeService.findOneById(storeId, {
       requireMobileVisibility: true,
       clientPlatform: clientPlatformFromRequest(req),
+      countryCode,
+      user: req.user as UserModel | undefined,
     });
     if (!store) {
       throw new NotFoundException('store_not_found');
