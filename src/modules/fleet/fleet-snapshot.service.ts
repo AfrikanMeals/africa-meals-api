@@ -11,6 +11,7 @@ export type FleetAgentSnapshot = {
   latitude?: number;
   longitude?: number;
   orderId?: string;
+  notifyStoreIds?: string[];
   updatedAt: string;
 };
 

@@ -305,6 +305,10 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'coupon_code' })
   couponCode?: string;
 
+  /** Horodatage d’envoi du reçu/facture client (idempotence e-mail post-paiement). */
+  @Prop({ required: false, name: 'paid_receipt_emailed_at' })
+  paidReceiptEmailedAt?: Date;
+
   /** Montant articles encaissé via Stripe (centimes), pour alignement avec le paiement groupé. */
   @Prop({ required: false, name: 'stripe_charged_goods_cents' })
   stripeChargedGoodsCents?: number;

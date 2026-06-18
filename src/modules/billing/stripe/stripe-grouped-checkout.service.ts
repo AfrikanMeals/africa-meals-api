@@ -1315,6 +1315,7 @@ export class StripeGroupedCheckoutService {
         stripePaymentId,
       );
       if (alreadyPaid) {
+        this.ordersService.ensurePaidReceiptEmail(prior.orderId);
         void this.ordersService
           .ensureVendorPaidOrderNotifications(prior.orderId)
           .catch((err) =>
@@ -1575,6 +1576,9 @@ export class StripeGroupedCheckoutService {
       this.logger.log(
         `Stripe fulfill: already complete for ${stripePaymentId}`,
       );
+      for (const oid of processed.orderIds ?? []) {
+        this.ordersService.ensurePaidReceiptEmail(oid);
+      }
       return {
         complete: true,
         orderIds: processed.orderIds ?? [],
@@ -1607,6 +1611,9 @@ export class StripeGroupedCheckoutService {
               stripePaymentId,
             ))
           ) {
+            for (const oid of processed.orderIds ?? []) {
+              this.ordersService.ensurePaidReceiptEmail(oid);
+            }
             return {
               complete: true,
               orderIds: processed.orderIds ?? [],

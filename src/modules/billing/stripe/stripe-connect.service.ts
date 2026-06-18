@@ -20,9 +20,9 @@ import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-e
 import {
   getPartnerBadgeDefinition,
   partnerBadgePayoutMethod,
-  partnerBadgePayoutTimingLabelFr,
   PartnerBadgeCode,
   resolveEffectivePartnerBadgeCode,
+  resolvePartnerBadgePayoutPresentation,
   serializePartnerBadge,
   type PartnerBadgeSnapshot,
 } from '@common/partner-badges/partner-badge.constants';
@@ -110,6 +110,8 @@ export type StripeConnectPayoutEstimate = {
   payoutDelayDays: number;
   payoutMethod: 'instant' | 'standard';
   payoutTimingLabel: string;
+  /** Présent si badge Diamond : Stripe autorise-t-il `method=instant` sur le compte bancaire ? */
+  instantPayoutAvailable?: boolean;
 };
 
 type StripeAddressBlock = {
@@ -575,6 +577,17 @@ function isConnectFullyActive(account: {
     account.charges_enabled &&
     !r?.disabled_reason &&
     noBlockingDue
+  );
+}
+
+/** Stripe refuse souvent `method=instant` sur comptes bancaires CAD / Express. */
+function isInstantPayoutUnsupportedError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (!/instant/i.test(msg)) return false;
+  return (
+    /not supported/i.test(msg) ||
+    /unavailable/i.test(msg) ||
+    /does not support/i.test(msg)
   );
 }
 
@@ -1690,6 +1703,56 @@ export class StripeConnectService {
     }
   }
 
+  private async connectInstantPayoutAvailable(
+    accountId: string,
+  ): Promise<boolean> {
+    try {
+      const list = await this.stripe().accounts.listExternalAccounts(
+        accountId,
+        { object: 'bank_account', limit: 10 },
+      );
+      return list.data.some((ext) => {
+        if (ext.object !== 'bank_account') return false;
+        const methods = (
+          ext as { available_payout_methods?: string[] }
+        ).available_payout_methods;
+        return Array.isArray(methods) && methods.includes('instant');
+      });
+    } catch (e) {
+      this.logger.warn(
+        `connectInstantPayoutAvailable ${accountId}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return false;
+    }
+  }
+
+  private async resolvePayoutPresentationForUser(
+    partnerBadgeCode: string,
+    accountId: string | null | undefined,
+  ): Promise<{
+    payoutMethod: 'instant' | 'standard';
+    payoutTimingLabel: string;
+    instantPayoutAvailable?: boolean;
+  }> {
+    const badgeMethod = partnerBadgePayoutMethod(partnerBadgeCode);
+    if (badgeMethod !== 'instant' || !accountId?.trim()) {
+      return resolvePartnerBadgePayoutPresentation({
+        badgeCode: partnerBadgeCode,
+        instantPayoutAvailable: true,
+      });
+    }
+
+    const instantPayoutAvailable = await this.connectInstantPayoutAvailable(
+      accountId.trim(),
+    );
+    return resolvePartnerBadgePayoutPresentation({
+      badgeCode: partnerBadgeCode,
+      instantPayoutAvailable,
+    });
+  }
+
   async getPayoutEstimate(
     user: UserModel,
   ): Promise<StripeConnectPayoutEstimate> {
@@ -1698,8 +1761,10 @@ export class StripeConnectService {
     const currency = (status.defaultCurrency ?? 'cad').toLowerCase();
     const partnerBadgeCode = await this.resolvePartnerBadgeCodeForUser(user);
     const partnerBadge = serializePartnerBadge(partnerBadgeCode);
-    const payoutMethod = partnerBadgePayoutMethod(partnerBadgeCode);
-    const payoutTimingLabel = partnerBadgePayoutTimingLabelFr(partnerBadgeCode);
+    const payoutPresentation = await this.resolvePayoutPresentationForUser(
+      partnerBadgeCode,
+      status.accountId,
+    );
 
     const emptyEstimate = (): StripeConnectPayoutEstimate => ({
       available: 0,
@@ -1713,8 +1778,9 @@ export class StripeConnectService {
       canRequestPayout: false,
       partnerBadge,
       payoutDelayDays: partnerBadge.payoutDelayDays,
-      payoutMethod,
-      payoutTimingLabel,
+      payoutMethod: payoutPresentation.payoutMethod,
+      payoutTimingLabel: payoutPresentation.payoutTimingLabel,
+      instantPayoutAvailable: payoutPresentation.instantPayoutAvailable,
     });
 
     if (
@@ -1760,8 +1826,9 @@ export class StripeConnectService {
       canRequestPayout: netPayoutCents >= 100,
       partnerBadge,
       payoutDelayDays: partnerBadge.payoutDelayDays,
-      payoutMethod,
-      payoutTimingLabel,
+      payoutMethod: payoutPresentation.payoutMethod,
+      payoutTimingLabel: payoutPresentation.payoutTimingLabel,
+      instantPayoutAvailable: payoutPresentation.instantPayoutAvailable,
     };
   }
 
@@ -1819,39 +1886,57 @@ export class StripeConnectService {
     const badge = getPartnerBadgeDefinition(partnerBadgeCode);
     const useInstantPayout = badge?.payoutDelayDays === 0;
 
+    const payoutBase = {
+      amount: payoutCents,
+      currency: payoutCurrency,
+      description: useInstantPayout
+        ? 'Versement instantané (badge Diamond)'
+        : `Versement demandé (badge ${badge?.name ?? 'SILVER'})`,
+      metadata: {
+        platformPayoutFeeCents: String(payoutFeeCents),
+        platformPayoutFeeMode: payoutSplit.feeMode,
+        platformPayoutFeePercent: String(payoutSplit.feePercent),
+        platformPayoutFeeFixed: String(payoutSplit.feeFixedCad),
+        partnerBadgeCode: badge?.code ?? resolveEffectivePartnerBadgeCode(null),
+        partnerBadgePayoutDelayDays: String(badge?.payoutDelayDays ?? 7),
+      },
+    };
+
     try {
-      const payoutParams: {
-        amount: number;
-        currency: string;
-        description: string;
-        metadata: Record<string, string>;
-        method?: 'instant' | 'standard';
-      } = {
-        amount: payoutCents,
-        currency: payoutCurrency,
-        description: useInstantPayout
-          ? 'Versement instantané (badge Diamond)'
-          : `Versement demandé (badge ${badge?.name ?? 'SILVER'})`,
-        metadata: {
-          platformPayoutFeeCents: String(payoutFeeCents),
-          platformPayoutFeeMode: payoutSplit.feeMode,
-          platformPayoutFeePercent: String(payoutSplit.feePercent),
-          platformPayoutFeeFixed: String(payoutSplit.feeFixedCad),
-          partnerBadgeCode: badge?.code ?? resolveEffectivePartnerBadgeCode(null),
-          partnerBadgePayoutDelayDays: String(badge?.payoutDelayDays ?? 7),
-        },
-      };
+      let payout;
+      let methodUsed: 'instant' | 'standard' =
+        useInstantPayout ? 'instant' : 'standard';
+
       if (useInstantPayout) {
-        payoutParams.method = 'instant';
+        try {
+          payout = await this.stripe().payouts.create(
+            { ...payoutBase, method: 'instant' },
+            { stripeAccount: accountId },
+          );
+        } catch (instantErr) {
+          if (!isInstantPayoutUnsupportedError(instantErr)) {
+            throw instantErr;
+          }
+          this.logger.warn(
+            `Instant payout unavailable for ${accountId}, falling back to standard: ${
+              instantErr instanceof Error ? instantErr.message : String(instantErr)
+            }`,
+          );
+          methodUsed = 'standard';
+          payout = await this.stripe().payouts.create(payoutBase, {
+            stripeAccount: accountId,
+          });
+        }
+      } else {
+        payout = await this.stripe().payouts.create(payoutBase, {
+          stripeAccount: accountId,
+        });
       }
-      const payout = await this.stripe().payouts.create(
-        payoutParams,
-        { stripeAccount: accountId },
-      );
+
       this.logger.log(
         `Stripe payout ${payout.id} for ${accountId} badge=${
           badge?.code ?? 'SILVER'
-        } method=${useInstantPayout ? 'instant' : 'standard'}: gross=${
+        } method=${methodUsed}: gross=${
           availableCents / 100
         } ${currency}, fee=${payoutFeeCents / 100}, net=${payoutCents / 100}`,
       );
@@ -1897,9 +1982,6 @@ export class StripeConnectService {
       const msg = e instanceof Error ? e.message : String(e);
       if (/insufficient/i.test(msg)) {
         throw new BadRequestException('stripe_payout_no_balance');
-      }
-      if (useInstantPayout && /instant/i.test(msg)) {
-        throw new BadRequestException('stripe_instant_payout_unavailable');
       }
       throw new BadRequestException('stripe_payout_request_failed');
     }

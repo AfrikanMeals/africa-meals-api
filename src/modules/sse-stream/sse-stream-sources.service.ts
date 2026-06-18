@@ -105,16 +105,54 @@ export class SseStreamSourcesService {
   }
 
   fleetStream(user: UserModel): Observable<MessageEvent> {
-    this.assertAdmin(user);
-    void this.fleetBootstrap.refreshFromDatabase();
     const userId = String((user as { _id?: unknown; id?: unknown })._id ?? user.id);
-    return this.sse.stream({
-      userId,
-      eventName: 'fleet',
-      source$: this.fleetSnapshot.observe().pipe(
-        map((snapshot) => snapshot as unknown as Record<string, unknown>),
-      ),
-    });
+
+    if (user.type === UserTypeEnum.ADMIN) {
+      void this.fleetBootstrap.refreshFromDatabase();
+      return this.sse.stream({
+        userId,
+        eventName: 'fleet',
+        source$: this.fleetSnapshot.observe().pipe(
+          map((snapshot) => snapshot as unknown as Record<string, unknown>),
+        ),
+      });
+    }
+
+    if (user.type === UserTypeEnum.VENDOR) {
+      const vendorStoreIds = new Set(
+        (user.stores ?? [])
+          .map((s) => {
+            if (typeof s === 'object' && s !== null && '_id' in s) {
+              return String((s as { _id: unknown })._id ?? '').trim();
+            }
+            return String(s ?? '').trim();
+          })
+          .filter((id) => id.length > 0),
+      );
+      return this.sse.stream({
+        userId,
+        eventName: 'fleet',
+        source$: this.fleetSnapshot.observe().pipe(
+          map((snapshot) => {
+            const agents = snapshot.agents.filter((agent) => {
+              const audience = agent.notifyStoreIds ?? [];
+              if (
+                audience.some((storeId) => vendorStoreIds.has(String(storeId)))
+              ) {
+                return true;
+              }
+              return false;
+            });
+            return {
+              ...snapshot,
+              agents,
+            } as unknown as Record<string, unknown>;
+          }),
+        ),
+      });
+    }
+
+    throw new ForbiddenException('admin_only');
   }
 
   adminJobStream(user: UserModel, jobId: string): Observable<MessageEvent> {

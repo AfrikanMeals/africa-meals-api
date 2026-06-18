@@ -723,8 +723,8 @@ export class StoreController {
   @Get(':id/drinks-catalog')
   async listDrinksCatalog(
     @Param('id') id: string,
-    @Query('q') q?: string,
     @Req() req: Request,
+    @Query('q') q?: string,
   ) {
     const storeId = resolveMongoIdFromPublicParam(id) ?? id;
     return this._drinksService.findByStoreForCatalog(

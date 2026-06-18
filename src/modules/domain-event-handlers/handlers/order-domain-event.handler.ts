@@ -1,5 +1,4 @@
 import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { DomainEventEnvelope } from '../../../common/domain-events/domain-event.types';
 import {
   OrderApprovedPayload,
@@ -21,15 +20,12 @@ import { OrderStatusEnum } from '@schemas/order.schema';
 import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema';
 import { CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { Types } from 'mongoose';
-import { isDomainEventsWsViaBus } from '../domain-event-handlers.util';
-import { WsOrderNotifyHandler } from './ws-order-notify.handler';
 
 @Injectable()
 export class OrderDomainEventHandler {
   private readonly logger = new Logger(OrderDomainEventHandler.name);
 
   constructor(
-    private readonly config: ConfigService,
     @Inject(forwardRef(() => OrdersService))
     private readonly orders: OrdersService,
     private readonly orderStatusEvents: OrderStatusEventsService,
@@ -38,7 +34,6 @@ export class OrderDomainEventHandler {
     private readonly loyalty: LoyaltyService,
     private readonly ads: AdsService,
     private readonly wsChat: WsChatNotifyService,
-    private readonly wsOrderNotify: WsOrderNotifyHandler,
   ) {}
 
   async handle(envelope: DomainEventEnvelope): Promise<void> {
@@ -89,10 +84,6 @@ export class OrderDomainEventHandler {
     }
   }
 
-  private wsViaBus(): boolean {
-    return isDomainEventsWsViaBus(this.config);
-  }
-
   private async onCreated(
     payload: OrderCreatedPayload,
     metadata?: DomainEventEnvelope['metadata'],
@@ -131,15 +122,6 @@ export class OrderDomainEventHandler {
           newStatus: OrderStatusEnum.PAIED,
         })
         .catch((err) => this.logWarn('FCM order paid', err));
-      if (!this.wsViaBus()) {
-        void this.wsOrderNotify.notifyPartiesByOrderId(
-          payload.orderId,
-          OrderStatusEnum.PAIED,
-        );
-      }
-      void this.invoiceEmail
-        .sendForPaidOrder(payload.orderId)
-        .catch((err) => this.logWarn('invoice email', err));
       void this.loyalty
         .creditOrderCompletion(payload.orderId)
         .catch((err) => this.logWarn('loyalty credit', err));
@@ -165,6 +147,9 @@ export class OrderDomainEventHandler {
     void this.orders
       .ensureVendorPaidOrderNotifications(payload.orderId)
       .catch((err) => this.logWarn('vendor paid notify', err));
+    void this.invoiceEmail
+      .ensurePaidReceiptEmail(payload.orderId)
+      .catch((err) => this.logWarn('invoice email', err));
   }
 
   private async onApproved(
@@ -172,12 +157,6 @@ export class OrderDomainEventHandler {
     metadata?: DomainEventEnvelope['metadata'],
   ): Promise<void> {
     await this.recordTransition(payload.orderId, OrderStatusEnum.APPROVED, metadata);
-    if (!this.wsViaBus()) {
-      void this.wsOrderNotify.notifyPartiesByOrderId(
-        payload.orderId,
-        OrderStatusEnum.APPROVED,
-      );
-    }
   }
 
   private async onShipped(
@@ -185,12 +164,6 @@ export class OrderDomainEventHandler {
     metadata?: DomainEventEnvelope['metadata'],
   ): Promise<void> {
     await this.recordTransition(payload.orderId, OrderStatusEnum.SHIPPED, metadata);
-    if (!this.wsViaBus()) {
-      void this.wsOrderNotify.notifyPartiesByOrderId(
-        payload.orderId,
-        OrderStatusEnum.SHIPPED,
-      );
-    }
   }
 
   private async onDelivered(
@@ -198,12 +171,6 @@ export class OrderDomainEventHandler {
     metadata?: DomainEventEnvelope['metadata'],
   ): Promise<void> {
     await this.recordTransition(payload.orderId, OrderStatusEnum.COMPLETED, metadata);
-    if (!this.wsViaBus()) {
-      void this.wsOrderNotify.notifyPartiesByOrderId(
-        payload.orderId,
-        OrderStatusEnum.COMPLETED,
-      );
-    }
     void this.wsChat.archiveOrderChats(payload.orderId, 'order_completed');
     void this.loyalty
       .creditOrderCompletion(payload.orderId)
@@ -215,24 +182,13 @@ export class OrderDomainEventHandler {
     metadata?: DomainEventEnvelope['metadata'],
   ): Promise<void> {
     await this.recordTransition(payload.orderId, OrderStatusEnum.CANCELLED, metadata);
-    if (!this.wsViaBus()) {
-      void this.wsOrderNotify.notifyPartiesByOrderId(
-        payload.orderId,
-        OrderStatusEnum.CANCELLED,
-      );
-    }
     void this.wsChat.archiveOrderChats(payload.orderId, 'order_cancelled');
   }
 
   private async onTrackingUpdated(
-    payload: OrderTrackingUpdatedPayload,
+    _payload: OrderTrackingUpdatedPayload,
   ): Promise<void> {
-    if (this.wsViaBus()) return;
-    await this.wsOrderNotify.notifyCourierTracking(
-      payload.orderId,
-      payload.latitude,
-      payload.longitude,
-    );
+    // WS GPS : dispatch synchrone depuis OrdersService.publishCourierPosition.
   }
 
   private async recordTransition(

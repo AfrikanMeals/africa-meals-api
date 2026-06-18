@@ -72,6 +72,20 @@ describe('cors-options (H-01)', () => {
     });
   });
 
+  it('allows any *.wise-eat.com subdomain in production without CORS_ORIGIN', (done) => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.CORS_ORIGIN;
+    const opts = buildApiCorsOptions();
+    const originFn = opts.origin as (
+      origin: string,
+      cb: (err: Error | null, ok?: boolean) => void,
+    ) => void;
+    originFn('https://dashboard.wise-eat.com', (_err, ok) => {
+      expect(ok).toBe(true);
+      done();
+    });
+  });
+
   it('allows Cache-Control header (admin bootstrap fetch)', () => {
     const opts = buildApiCorsOptions();
     expect(opts.allowedHeaders).toContain('Cache-Control');

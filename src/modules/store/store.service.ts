@@ -1441,6 +1441,15 @@ export class StoreService {
     return { items };
   }
 
+  /** Fil notifications vendeur pour un userId (appels internes WS → push temps réel). */
+  async findNotificationFeedByUserId(userId: string) {
+    const uid = userId?.trim();
+    if (!uid) return { items: [] };
+    const user = await this._usersService.findById(uid);
+    if (!user) return { items: [] };
+    return this.findMyNotificationFeed(user);
+  }
+
   /** Mise à jour fiche vendeur (dossier en PENDING ou REVISION). */
   async updateVendorApplication(user: UserModel, args: CreateStoreDto) {
     await this._businessTypesService.assertActiveSlug(args.businessType);

@@ -40,6 +40,8 @@ import {
 } from '@schemas/vendor-subscription.schema';
 import { DailyMenuReminderCron } from './daily-menu-reminder.cron';
 import { DailyMenuReminderService } from './daily-menu-reminder.service';
+import { InternalSecretGuard } from '@modules/notifications/guards/internal-secret.guard';
+import { InternalInboxController } from './internal-inbox.controller';
 import { StoreController } from './store.controller';
 import { StoreRegionBackfillService } from './store-region-backfill.service';
 import { StoreService } from './store.service';
@@ -47,8 +49,9 @@ import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/stor
 import { StoreSubscribersModule } from '@modules/store-subscribers/store-subscribers.module';
 
 @Module({
-  controllers: [StoreController],
+  controllers: [StoreController, InternalInboxController],
   providers: [
+    InternalSecretGuard,
     StoreService,
     DailyMenuReminderService,
     DailyMenuReminderCron,

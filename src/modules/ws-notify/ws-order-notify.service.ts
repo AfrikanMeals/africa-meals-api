@@ -19,6 +19,8 @@ export type OrderWsTrackingPayload = {
   canMessageDeliveryAgent?: boolean;
   /** Fil client↔livreur archivé (commande livrée) — messagerie toujours ouverte. */
   deliveryChatArchived?: boolean;
+  /** Boutique concernée — salon WS `store:{storeId}` (équipe vendeur). */
+  storeId?: string;
 };
 
 /**

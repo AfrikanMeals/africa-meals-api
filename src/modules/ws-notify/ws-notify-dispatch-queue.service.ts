@@ -155,12 +155,18 @@ export class WsNotifyDispatchQueueService
     if (!suffix) return;
     const normalizedPayload = { ...payload };
     const infraSettings = await this.readInfraSettings();
+    const mirrorOrderEventsOverHttp =
+      suffix === 'order/staff-broadcast' ||
+      suffix === 'order/changed' ||
+      suffix === 'order/update' ||
+      suffix === 'order/tracking';
+    let mqttPublished = false;
     if (infraSettings.mqBrokerEnabled) {
-      const mqttPublished = await this.publishViaMqtt(
+      mqttPublished = await this.publishViaMqtt(
         suffix,
         normalizedPayload,
       );
-      if (mqttPublished) return;
+      if (mqttPublished && !mirrorOrderEventsOverHttp) return;
     }
     if (
       !infraSettings.redisManagerEnabled ||

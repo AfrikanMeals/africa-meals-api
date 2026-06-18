@@ -746,9 +746,13 @@ export class DbMaintenanceService {
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      const hint =
+        msg === 'fetch failed'
+          ? `ws_status_unreachable (${raw}) — vérifiez que we-ws-dev écoute sur ce port`
+          : msg;
       return {
         ...fallback,
-        lastError: msg,
+        lastError: hint,
       };
     }
   }

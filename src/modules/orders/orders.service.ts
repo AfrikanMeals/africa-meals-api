@@ -1438,6 +1438,17 @@ export class OrdersService {
           : Math.round((subtotalBeforeTax + taxTotal) * 100);
       const currency = opts?.currency?.trim()?.toUpperCase() || 'CAD';
 
+      /** Reçu client : envoi idempotent (retry webhook / sync mobile). */
+      void this._orderPaidInvoiceEmail
+        .ensurePaidReceiptEmail(orderId)
+        .catch((err) =>
+          this.logger.warn(
+            `order paid invoice email order=${orderId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
+
       const legacyPaidSideEffects = async (): Promise<void> => {
         await this._orderStatusEvents.record({
           orderId,
@@ -1478,15 +1489,6 @@ export class OrdersService {
           orderId,
           OrderStatusEnum.PAIED,
         );
-        void this._orderPaidInvoiceEmail
-          .sendForPaidOrder(orderId)
-          .catch((err) =>
-            this.logger.warn(
-              `order paid invoice email order=${orderId}: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            ),
-          );
         void this._loyaltyService
           .creditOrderCompletion(orderId)
           .catch((err) =>
@@ -1552,11 +1554,24 @@ export class OrdersService {
             },
             legacyPaidSideEffects,
           );
+          void this._wsOrderNotifyHandler?.notifyPartiesByOrderId(
+            orderId,
+            OrderStatusEnum.PAIED,
+          );
         })();
       } else {
         void legacyPaidSideEffects();
       }
     } else {
+      void this._orderPaidInvoiceEmail
+        .ensurePaidReceiptEmail(orderId)
+        .catch((err) =>
+          this.logger.warn(
+            `order paid invoice email retry order=${orderId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
       void this.ensureVendorPaidOrderNotifications(orderId).catch((err) =>
         this.logger.warn(
           `vendor paid notify order=${orderId}: ${
@@ -1565,6 +1580,21 @@ export class OrdersService {
         ),
       );
     }
+  }
+
+  /**
+   * Reçu/facture client post-paiement (idempotent — safe sur retry webhook/sync).
+   */
+  ensurePaidReceiptEmail(orderId: string): void {
+    void this._orderPaidInvoiceEmail
+      .ensurePaidReceiptEmail(orderId)
+      .catch((err) =>
+        this.logger.warn(
+          `order paid invoice email order=${orderId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
   }
 
   /**
@@ -1920,12 +1950,8 @@ export class OrdersService {
           },
         },
       });
-    } else {
-      this._wsOrderNotifyHandler?.notifyPartiesFromDoc(
-        order,
-        OrderStatusEnum.APPROVED,
-      );
     }
+    this.notifyOrderPartiesRealtime(order, OrderStatusEnum.APPROVED);
     this.notifyStoreVendorsForOrderStatusChange(order, {
       reason: 'order_ready',
       status: OrderStatusEnum.APPROVED,
@@ -2288,12 +2314,8 @@ export class OrdersService {
           },
         },
       });
-    } else {
-      void this._wsOrderNotifyHandler?.notifyPartiesByOrderId(
-        oid,
-        OrderStatusEnum.CANCELLED,
-      );
     }
+    this.notifyOrderPartiesRealtime(oid, OrderStatusEnum.CANCELLED);
     this.notifyStoreVendorsForOrderStatusChange(order, {
       reason: 'order_cancelled',
       status: OrderStatusEnum.CANCELLED,
@@ -2331,6 +2353,7 @@ export class OrdersService {
       progress,
       destinationLine,
       originLine,
+      storeId: this.storeIdFromOrderDoc(order as OrderModel) ?? undefined,
     };
   }
 
@@ -2563,6 +2586,24 @@ export class OrdersService {
     return this._orderDomainBridge?.enabled() ?? false;
   }
 
+  /** WS temps réel immédiat (mobile / admin / vendeur), indépendamment du bus domaine async. */
+  private notifyOrderPartiesRealtime(
+    orderOrId: OrderModel | Record<string, unknown> | string,
+    status: OrderStatusEnum,
+    extra?: Partial<OrderWsTrackingPayload>,
+  ): void {
+    if (!this._wsOrderNotifyHandler) return;
+    if (typeof orderOrId === 'string') {
+      void this._wsOrderNotifyHandler.notifyPartiesByOrderId(
+        orderOrId,
+        status,
+        extra,
+      );
+      return;
+    }
+    this._wsOrderNotifyHandler.notifyPartiesFromDoc(orderOrId, status, extra);
+  }
+
   /** Audit synchrone uniquement hors bus domaine (évite double enregistrement EDA-004). */
   async recordOrderStatusChangeIfLegacy(
     params: RecordOrderStatusChangeParams,
@@ -2634,9 +2675,8 @@ export class OrdersService {
           },
         },
       });
-      return;
     }
-    this._wsOrderNotifyHandler?.notifyPartiesFromDoc(order, OrderStatusEnum.SHIPPED);
+    this.notifyOrderPartiesRealtime(order, OrderStatusEnum.SHIPPED);
   }
 
   /** Charge une commande peuplée pour dispatch WS (EDA-005). */
@@ -2920,12 +2960,11 @@ export class OrdersService {
           },
         },
       });
-    } else {
-      this._wsOrderNotifyHandler?.notifyPartiesFromDoc(
-        populated ?? order,
-        OrderStatusEnum.COMPLETED,
-      );
     }
+    this.notifyOrderPartiesRealtime(
+      populated ?? order,
+      OrderStatusEnum.COMPLETED,
+    );
     this.notifyStoreVendorsForOrderStatusChange(order, {
       reason: 'order_completed',
       status: OrderStatusEnum.COMPLETED,
@@ -3114,12 +3153,11 @@ export class OrdersService {
           },
         },
       });
-    } else {
-      this._wsOrderNotifyHandler?.notifyPartiesFromDoc(
-        populated ?? order,
-        OrderStatusEnum.COMPLETED,
-      );
     }
+    this.notifyOrderPartiesRealtime(
+      populated ?? order,
+      OrderStatusEnum.COMPLETED,
+    );
     this.notifyStoreVendorsForOrderStatusChange(order, {
       reason: 'order_completed',
       status: OrderStatusEnum.COMPLETED,
@@ -3627,10 +3665,8 @@ export class OrdersService {
           ),
         },
       });
-      return;
     }
-
-    this._wsOrderNotifyHandler?.notifyPartiesFromDoc(plain, status, extra);
+    this.notifyOrderPartiesRealtime(plain, status, extra);
   }
 
   private buildShippedCourierTrackingExtra(

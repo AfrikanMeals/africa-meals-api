@@ -7,6 +7,7 @@ export type DeliveryAgentPresenceWsPayload = {
   presence: 'disponible' | 'en_livraison' | 'hors_ligne';
   activeOrderCount: number;
   maxConcurrentOrders: number;
+  storeIds?: string[];
   reason?:
     | 'manual_toggle'
     | 'order_assigned'
@@ -36,6 +37,7 @@ export class WsDeliveryAgentNotifyService {
         activeOrderCount: payload.activeOrderCount,
         maxConcurrentOrders: payload.maxConcurrentOrders,
         reason: payload.reason ?? 'manual_toggle',
+        ...(payload.storeIds?.length ? { storeIds: payload.storeIds } : {}),
       });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);

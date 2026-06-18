@@ -78,6 +78,7 @@ import { NotificationsService } from '@modules/notifications/notifications.servi
 import { OrderStatusEventsService } from '@modules/orders/order-status-events.service';
 import { OrdersService } from '@modules/orders/orders.service';
 import { DeliveryAgentService } from '@modules/delivery-agent/delivery-agent.service';
+import { FleetAudienceService } from '@modules/fleet/fleet-audience.service';
 import { FleetSnapshotService } from '@modules/fleet/fleet-snapshot.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { ContactSubmissionService } from '@modules/mailer/contact-submission.service';
@@ -620,6 +621,7 @@ export class DashboardService {
     @Inject(forwardRef(() => DeliveryAgentService))
     private readonly deliveryAgentService: DeliveryAgentService,
     private readonly fleetSnapshot: FleetSnapshotService,
+    private readonly fleetAudience: FleetAudienceService,
     private readonly storeAccess: StoreAccessService,
     private readonly contactSubmissionService: ContactSubmissionService,
     private readonly storeDeliveryDrivers: StoreDeliveryDriversService,
@@ -3205,12 +3207,16 @@ export class DashboardService {
     throw new ForbiddenException('livreurs_access_denied');
   }
 
-  private seedFleetAndReturn(rows: DashboardLivreurRow[]): DashboardLivreurRow[] {
-    this.fleetSnapshot.seedAgents(
-      rows
-        .map((row) => {
+  private async seedFleetAndReturn(
+    rows: DashboardLivreurRow[],
+  ): Promise<DashboardLivreurRow[]> {
+    const agents = (
+      await Promise.all(
+        rows.map(async (row) => {
           const agentUserId = this.parseDeliveryUserId(row.id);
           if (!agentUserId) return null;
+          const notifyStoreIds =
+            await this.fleetAudience.resolveNotifyStoreIds(agentUserId);
           return {
             agentUserId,
             presence: row.statut,
@@ -3220,11 +3226,13 @@ export class DashboardService {
             maxConcurrentOrders: row.capacite,
             latitude: row.latitude,
             longitude: row.longitude,
+            notifyStoreIds,
             updatedAt: new Date().toISOString(),
           };
-        })
-        .filter((row): row is NonNullable<typeof row> => row != null),
-    );
+        }),
+      )
+    ).filter((row): row is NonNullable<typeof row> => row != null);
+    this.fleetSnapshot.seedAgents(agents);
     return rows;
   }
 

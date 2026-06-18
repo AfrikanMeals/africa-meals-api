@@ -1,6 +1,7 @@
 import { fieldSelectionMiddleware } from './common/field-selection/field-selection.middleware';
 import { buildApiCorsOptions } from './common/cors/cors-options';
-import { GlobalHttpExceptionFilter } from './common/filters/global-http-exception.filter';
+import { wiseEatCorsEarlyMiddleware } from './common/cors/wise-eat-cors.middleware';
+import { CorsAwareHttpExceptionFilter } from './common/filters/cors-aware-http-exception.filter';
 import { redactSensitiveJsonForLog } from './common/logging/redact-sensitive.util';
 import { isSwaggerEnabled } from './common/security/api-docs-exposure.util';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
@@ -83,7 +84,10 @@ export async function configureApplication(
   app: INestApplication,
   options?: ConfigureAppOptions,
 ): Promise<void> {
-  app.useGlobalFilters(new GlobalHttpExceptionFilter());
+  app.use(wiseEatCorsEarlyMiddleware());
+  app.enableCors(buildApiCorsOptions());
+
+  app.useGlobalFilters(new CorsAwareHttpExceptionFilter());
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -118,8 +122,6 @@ export async function configureApplication(
 
   /** Query `includeFields` / `excludeField(s)` → filtre JSON (intercepteur global). */
   app.use(fieldSelectionMiddleware());
-
-  app.enableCors(buildApiCorsOptions());
 
   if (!isSwaggerEnabled()) {
     return;

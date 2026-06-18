@@ -66,6 +66,7 @@ import { DomainEventPublisherService } from '../../common/domain-events/domain-e
 import { DomainEventDraft } from '../../common/domain-events/domain-event.types';
 import { DomainEventType } from '../../common/domain-events/domain-event-types';
 import { isDomainEventsEnabled } from '@modules/domain-event-handlers/domain-event-handlers.util';
+import { FleetAudienceService } from '@modules/fleet/fleet-audience.service';
 import { FleetSnapshotService } from '@modules/fleet/fleet-snapshot.service';
 import {
   AGENT_LOCATION_EMIT_THROTTLE_MS,
@@ -143,6 +144,7 @@ export class DeliveryAgentService {
     private readonly _storeDeliveryDrivers: StoreDeliveryDriversService,
     private readonly _wsDeliveryAgent: WsDeliveryAgentNotifyService,
     private readonly _fleet: FleetSnapshotService,
+    private readonly _fleetAudience: FleetAudienceService,
     @Optional()
     private readonly _domainPublisher?: DomainEventPublisherService,
   ) {}
@@ -1177,24 +1179,29 @@ export class DeliveryAgentService {
       | 'order_completed'
       | 'admin_toggle';
   }): Promise<void> {
-    const eda = isDomainEventsEnabled(this._config);
+    const storeIds = await this._fleetAudience.resolveNotifyStoreIds(
+      params.agentUserId,
+    );
 
-    if (!eda) {
-      this._fleet.pushAgentUpdate({
-        agentUserId: params.agentUserId,
-        presence: params.presence,
-        availability: params.availability,
-        activeOrderCount: params.activeOrderCount,
-        maxConcurrentOrders: params.maxConcurrentOrders,
-      });
-      this._wsDeliveryAgent.notifyPresence({
-        agentUserId: params.agentUserId,
-        availability: params.availability,
-        presence: params.presence,
-        activeOrderCount: params.activeOrderCount,
-        maxConcurrentOrders: params.maxConcurrentOrders,
-        reason: params.reason,
-      });
+    this._fleet.pushAgentUpdate({
+      agentUserId: params.agentUserId,
+      presence: params.presence,
+      availability: params.availability,
+      activeOrderCount: params.activeOrderCount,
+      maxConcurrentOrders: params.maxConcurrentOrders,
+      notifyStoreIds: storeIds,
+    });
+    this._wsDeliveryAgent.notifyPresence({
+      agentUserId: params.agentUserId,
+      availability: params.availability,
+      presence: params.presence,
+      activeOrderCount: params.activeOrderCount,
+      maxConcurrentOrders: params.maxConcurrentOrders,
+      reason: params.reason,
+      storeIds,
+    });
+
+    if (!isDomainEventsEnabled(this._config)) {
       return;
     }
 
@@ -1211,6 +1218,7 @@ export class DeliveryAgentService {
           maxConcurrentOrders: params.maxConcurrentOrders,
           reason: params.reason,
           availability: params.availability,
+          storeIds,
         },
       },
     });
@@ -1229,13 +1237,15 @@ export class DeliveryAgentService {
     if (now - last < AGENT_LOCATION_EMIT_THROTTLE_MS) return;
     this.locationEmitLastMs.set(agentUserId, now);
 
+    this._fleet.pushAgentUpdate({
+      agentUserId,
+      latitude: params.latitude,
+      longitude: params.longitude,
+      orderId: params.orderId,
+      notifyStoreIds: await this._fleetAudience.resolveNotifyStoreIds(agentUserId),
+    });
+
     if (!isDomainEventsEnabled(this._config)) {
-      this._fleet.pushAgentUpdate({
-        agentUserId,
-        latitude: params.latitude,
-        longitude: params.longitude,
-        orderId: params.orderId,
-      });
       return;
     }
 
@@ -1312,9 +1322,9 @@ export class DeliveryAgentService {
 
     const activeOrderIds = await this._ordersService.publishCourierPositionsForAgent(
       String(agentId),
-      lat,
-      lng,
-    );
+          lat,
+          lng,
+        );
     const primaryOrderId = activeOrderIds[0];
     await this.emitAgentLocationUpdated({
       agentUserId: String(agentId),

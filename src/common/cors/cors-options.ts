@@ -67,11 +67,28 @@ export function buildApiCorsOptions(): CorsOptions {
 
   if (isProd && configured.size === 0) {
     Logger.warn(
-      'CORS_ORIGIN is empty in production — browser cross-origin requests will be rejected (H-01)',
+      'CORS_ORIGIN is empty in production — seuls les sous-domaines *.wise-eat.com (http/https) et les apps sans Origin sont autorisés (H-01)',
       'CorsOptions',
     );
   }
 
+  return buildCorsOptionsFromAllowlist(allowed);
+}
+
+/** Vérifie si une origine navigateur est autorisée (allowlist + `*.wise-eat.com`). */
+export function isBrowserCorsOriginAllowed(origin: string): boolean {
+  const configured = parseCorsOrigins(process.env.CORS_ORIGIN);
+  const isProd = isProductionEnv();
+  const allowed =
+    configured.size > 0
+      ? configured
+      : isProd
+        ? configured
+        : new Set<string>(DEFAULT_DEV_ORIGINS);
+  return isCorsOriginAllowed(normalizeCorsOrigin(origin), allowed);
+}
+
+function buildCorsOptionsFromAllowlist(allowed: Set<string>): CorsOptions {
   return {
     origin: (origin, callback) => {
       if (!origin) {

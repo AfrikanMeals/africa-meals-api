@@ -28,6 +28,35 @@ export class WsOrderNotifyHandler {
     this.dispatchToParties(ctx.wsTracking, ctx);
   }
 
+  notifyPartiesFromOrderContext(
+    orderId: string,
+    status: OrderStatusEnum,
+    metadata?: {
+      orderContext?: Record<string, unknown>;
+    },
+  ): void {
+    const ctx = (metadata?.orderContext ?? {}) as Record<string, unknown>;
+    const wsTracking = ctx.wsTracking;
+    if (
+      wsTracking &&
+      typeof wsTracking === 'object' &&
+      typeof (wsTracking as OrderWsTrackingPayload).orderId === 'string'
+    ) {
+      this.dispatchToParties(wsTracking as OrderWsTrackingPayload, {
+        customerUserId:
+          typeof ctx.customerUserId === 'string' ? ctx.customerUserId : undefined,
+        vendorUserId:
+          typeof ctx.vendorUserId === 'string' ? ctx.vendorUserId : undefined,
+        deliveryAgentId:
+          typeof ctx.deliveryAgentId === 'string'
+            ? ctx.deliveryAgentId
+            : undefined,
+      });
+      return;
+    }
+    void this.notifyPartiesByOrderId(orderId, status);
+  }
+
   async notifyPartiesByOrderId(
     orderId: string,
     status: OrderStatusEnum,

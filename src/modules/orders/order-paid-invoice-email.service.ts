@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
-import { OrderModel } from '@schemas/order.schema';
+import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { Model, Types } from 'mongoose';
 import { OrderInvoicePdfService } from './order-invoice-pdf.service';
 import { buildOrderReceiptEmailBodyHtml } from './order-receipt-email-html.util';
@@ -87,8 +87,80 @@ export class OrderPaidInvoiceEmailService {
 
   /** E-mail de reçu (paiement confirmé) + PDF + balisage achat Schema.org. */
   async sendForPaidOrder(orderId: string): Promise<void> {
+    await this.ensurePaidReceiptEmail(orderId);
+  }
+
+  /**
+   * Envoie le reçu/facture au plus une fois par commande payée.
+   * Réessaie si un envoi précédent a échoué (`paidReceiptEmailedAt` absent).
+   */
+  async ensurePaidReceiptEmail(orderId: string): Promise<void> {
     if (!this.isEnabled()) return;
-    await this.sendOrderEmail(orderId, 'paid');
+    const oid = orderId?.trim();
+    if (!oid || !Types.ObjectId.isValid(oid)) return;
+
+    const claim = await this.orderModel
+      .findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(oid),
+          paidReceiptEmailedAt: { $exists: false },
+          status: { $ne: OrderStatusEnum.CREATED },
+        },
+        { $set: { paidReceiptEmailedAt: new Date() } },
+      )
+      .select('_id paidReceiptEmailedAt')
+      .lean()
+      .exec();
+
+    if (!claim) return;
+
+    try {
+      const composed = await this.composeOrderEmail(oid, 'paid');
+      if (!composed) {
+        await this.unclaimPaidReceiptEmail(oid, claim.paidReceiptEmailedAt);
+        this.logger.warn(
+          `ensurePaidReceiptEmail: e-mail client indisponible order=${oid}`,
+        );
+        return;
+      }
+
+      const ref = orderInvoiceRef(composed.snapshot.orderId);
+      await this.mailer.sendSimple({
+        to: composed.clientEmail,
+        toName: composed.snapshot.clientName,
+        subject: composed.subject,
+        html: composed.wrappedHtml,
+        text: composed.text,
+        logContext: 'order-paid-invoice',
+        attachments: composed.pdf
+          ? [
+              {
+                filename: `facture-${ref}.pdf`,
+                content: composed.pdf,
+                contentType: 'application/pdf',
+              },
+            ]
+          : undefined,
+      });
+    } catch (err) {
+      await this.unclaimPaidReceiptEmail(oid, claim.paidReceiptEmailedAt);
+      throw err;
+    }
+  }
+
+  private async unclaimPaidReceiptEmail(
+    orderId: string,
+    emailedAt?: Date,
+  ): Promise<void> {
+    await this.orderModel
+      .updateOne(
+        {
+          _id: new Types.ObjectId(orderId),
+          ...(emailedAt ? { paidReceiptEmailedAt: emailedAt } : {}),
+        },
+        { $unset: { paidReceiptEmailedAt: '' } },
+      )
+      .exec();
   }
 
   /** Renvoi manuel du reçu client (dashboard vendeur / admin). */

@@ -119,6 +119,44 @@ export function partnerBadgePayoutTimingLabelFr(
   return `${def.payoutDelayDays} jours ouvrés`;
 }
 
+/** Libellé affiché quand le badge prévoit l’instantané mais Stripe ne le supporte pas. */
+export function partnerBadgeStandardFallbackTimingLabelFr(): string {
+  return 'Standard (2–3 jours ouvrés)';
+}
+
+export function resolvePartnerBadgePayoutPresentation(params: {
+  badgeCode: string | null | undefined;
+  instantPayoutAvailable: boolean;
+}): {
+  payoutMethod: PartnerBadgePayoutMethod;
+  payoutTimingLabel: string;
+  instantPayoutAvailable?: boolean;
+} {
+  const badgeMethod = partnerBadgePayoutMethod(params.badgeCode);
+  const badgeTiming = partnerBadgePayoutTimingLabelFr(params.badgeCode);
+
+  if (badgeMethod !== 'instant') {
+    return {
+      payoutMethod: badgeMethod,
+      payoutTimingLabel: badgeTiming,
+    };
+  }
+
+  if (!params.instantPayoutAvailable) {
+    return {
+      payoutMethod: 'standard',
+      payoutTimingLabel: partnerBadgeStandardFallbackTimingLabelFr(),
+      instantPayoutAvailable: false,
+    };
+  }
+
+  return {
+    payoutMethod: 'instant',
+    payoutTimingLabel: badgeTiming,
+    instantPayoutAvailable: true,
+  };
+}
+
 export type PartnerBadgeChangeDirection = 'upgrade' | 'downgrade' | 'unchanged';
 
 /** Compare les délais de versement (Diamond > Gold > Silver). */

@@ -1,4 +1,3 @@
-import { Trim } from 'class-sanitizer';
 import { Transform } from 'class-transformer';
 import {
   IsArray,
@@ -9,6 +8,11 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import {
+  normalizeSearchContentQuery,
+  parseOptionalQueryNumber,
+  trimOptionalQueryString,
+} from './search-query.util';
 
 export enum SortBy {
   PRICE = 'price',
@@ -34,35 +38,30 @@ export enum SearchContent {
 export class SearchDto {
   @IsNotEmpty()
   @IsArray()
-  @Transform(({ value }) =>
-    value
-      ?.trim()
-      .split(',')
-      ?.map((i) => i.trim()),
-  )
+  @Transform(({ value }) => normalizeSearchContentQuery(value))
   @IsEnum(SearchContent, { each: true })
   searchContent: SearchContent[];
 
   @IsOptional()
-  @Trim()
+  @Transform(({ value }) => trimOptionalQueryString(value))
   query?: string;
 
   @IsOptional()
-  @Trim()
+  @Transform(({ value }) => trimOptionalQueryString(value))
   storeId?: string;
 
   @IsOptional()
-  @Trim()
+  @Transform(({ value }) => trimOptionalQueryString(value))
   categoryId?: string;
 
   @IsOptional()
-  @Transform(({ value }) => (value ? +value : undefined))
+  @Transform(({ value }) => parseOptionalQueryNumber(value))
   @IsNumber()
   @Min(0)
   minPrice?: number;
 
   @IsOptional()
-  @Transform(({ value }) => (value ? +value : undefined))
+  @Transform(({ value }) => parseOptionalQueryNumber(value))
   @IsNumber()
   @Min(0)
   maxPrice?: number;
@@ -76,42 +75,26 @@ export class SearchDto {
   sortDirection?: SortOrder;
 
   @IsOptional()
-  @Transform(({ value }) => {
-    if (value === undefined || value === '' || value === null) return undefined;
-    const n = Number(value);
-    return Number.isFinite(n) ? n : undefined;
-  })
+  @Transform(({ value }) => parseOptionalQueryNumber(value))
   @IsNumber()
   @Min(1)
   page?: number;
 
   @IsOptional()
-  @Transform(({ value }) => {
-    if (value === undefined || value === '' || value === null) return undefined;
-    const n = Number(value);
-    return Number.isFinite(n) ? n : undefined;
-  })
+  @Transform(({ value }) => parseOptionalQueryNumber(value))
   @IsNumber()
   @Min(1)
   take?: number;
 
   @IsOptional()
-  @Transform(({ value }) => {
-    if (value === undefined || value === '' || value === null) return undefined;
-    const n = Number(value);
-    return Number.isFinite(n) ? n : undefined;
-  })
+  @Transform(({ value }) => parseOptionalQueryNumber(value))
   @IsNumber()
   @Min(0)
   skip?: number;
 
   /** Latitude client (degrés). Avec [longitude], active filtre distance + tri par défaut. */
   @IsOptional()
-  @Transform(({ value }) => {
-    if (value === undefined || value === '' || value === null) return undefined;
-    const n = Number(value);
-    return Number.isFinite(n) ? n : undefined;
-  })
+  @Transform(({ value }) => parseOptionalQueryNumber(value))
   @IsNumber()
   @Min(-90)
   @Max(90)
@@ -119,11 +102,7 @@ export class SearchDto {
 
   /** Longitude client (degrés). */
   @IsOptional()
-  @Transform(({ value }) => {
-    if (value === undefined || value === '' || value === null) return undefined;
-    const n = Number(value);
-    return Number.isFinite(n) ? n : undefined;
-  })
+  @Transform(({ value }) => parseOptionalQueryNumber(value))
   @IsNumber()
   @Min(-180)
   @Max(180)
@@ -131,11 +110,7 @@ export class SearchDto {
 
   /** Rayon max en km (défaut 30 si lat/lng fournis). */
   @IsOptional()
-  @Transform(({ value }) => {
-    if (value === undefined || value === '' || value === null) return undefined;
-    const n = Number(value);
-    return Number.isFinite(n) ? n : undefined;
-  })
+  @Transform(({ value }) => parseOptionalQueryNumber(value))
   @IsNumber()
   @Min(1)
   @Max(100)
