@@ -25,6 +25,7 @@ import { UserModel } from '@schemas/user.schema';
 import { Model, PipelineStage, Types } from 'mongoose';
 import { CreateDrinkDto, PatchDrinkDto } from './dto/drink.dto';
 import { SearchDto } from '@modules/search/dto/search.dto';
+import { embeddedStoreRegionMatch } from '@modules/supported-countries/client-market-region.util';
 
 function computeStatut(quantite: number, seuil: number): DrinkStatutEnum {
   return quantite <= seuil ? DrinkStatutEnum.ALERTE : DrinkStatutEnum.OK;
@@ -433,7 +434,7 @@ export class DrinksService {
    * Catalogue marketplace : boissons en stock, boutiques visibles client.
    * Pas de filtre géo (aligné sur le filtre catégorie côté mobile).
    */
-  async filterMarketplaceCatalog(args: SearchDto) {
+  async filterMarketplaceCatalog(args: SearchDto, clientRegion?: string) {
     const page = Math.max(1, Math.floor(args.page ?? 1));
     const take = Math.min(80, Math.max(1, Math.floor(args.take ?? 40)));
     const match: Record<string, unknown> = { ...DRINK_IN_STOCK_FILTER };
@@ -469,6 +470,7 @@ export class DrinksService {
         $match: {
           'store.status': StoreStatusEnum.ACTIVE,
           'store.acceptsOrders': true,
+          ...(clientRegion ? embeddedStoreRegionMatch(clientRegion) : {}),
         },
       },
       ...productEmbeddedStoreOwnerStripeOnboardedStages(),

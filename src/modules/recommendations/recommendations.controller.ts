@@ -27,12 +27,13 @@ export class RecommendationsController {
   async feed(
     @Req() req: Request,
     @Query('take') take?: string,
+    @Query('countryCode') countryCode?: string,
   ): Promise<{
     products: Record<string, unknown>[];
     stores: Record<string, unknown>[];
     drinks: Record<string, unknown>[];
   }> {
-    return this._svc.getFeed(req.user as UserModel | undefined, take);
+    return this._svc.getFeed(req.user as UserModel | undefined, take, undefined, countryCode);
   }
 
   @Post('track')

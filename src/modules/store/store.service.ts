@@ -18,6 +18,7 @@ import { RatingsService } from '@modules/ratings/ratings.service';
 import { MailerService } from '@modules/mailer/mailer.service';
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
+import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
 import { UsersService } from '@modules/users/users.service';
 import {
   AppCacheKeys,
@@ -377,28 +378,65 @@ export class StoreService {
     return isStripeConnectOnboardingCompleteUser(owner);
   }
 
+  async matchesClientCatalogRegion(
+    storeId: string,
+    clientRegion: string,
+  ): Promise<boolean> {
+    if (!Types.ObjectId.isValid(storeId)) {
+      return false;
+    }
+    const target = normalizeCountryCode(clientRegion);
+    if (!target) {
+      return true;
+    }
+    const store = await this._storeModel
+      .findById(storeId)
+      .select('region address')
+      .lean()
+      .exec();
+    if (!store) {
+      return false;
+    }
+    let code = normalizeCountryCode(store.region);
+    if (!code && store.address) {
+      const addr = await this._addressModel
+        .findById(store.address)
+        .select('countryCode')
+        .lean()
+        .exec();
+      code = normalizeCountryCode(addr?.countryCode);
+    }
+    return code === target;
+  }
+
   async isStoreVisibleForClient(
     storeId: string,
     clientPlatform?: string,
+    clientRegion?: string,
   ): Promise<boolean> {
-    if (clientPlatform === 'web') {
-      return this.isStoreVisibleOnPublicCatalog(storeId);
+    const base =
+      clientPlatform === 'web'
+        ? await this.isStoreVisibleOnPublicCatalog(storeId)
+        : await this.isStoreVisibleOnMobileApp(storeId);
+    if (!base) {
+      return false;
     }
-    return this.isStoreVisibleOnMobileApp(storeId);
-  }
-
-  async assertStoreVisibleOnMobileApp(storeId: string): Promise<void> {
-    const ok = await this.isStoreVisibleOnMobileApp(storeId);
-    if (!ok) {
-      throw new NotFoundException('store_not_found');
+    if (clientRegion) {
+      return this.matchesClientCatalogRegion(storeId, clientRegion);
     }
+    return true;
   }
 
   async assertStoreVisibleForClient(
     storeId: string,
     clientPlatform?: string,
+    clientRegion?: string,
   ): Promise<void> {
-    const ok = await this.isStoreVisibleForClient(storeId, clientPlatform);
+    const ok = await this.isStoreVisibleForClient(
+      storeId,
+      clientPlatform,
+      clientRegion,
+    );
     if (!ok) {
       throw new NotFoundException('store_not_found');
     }

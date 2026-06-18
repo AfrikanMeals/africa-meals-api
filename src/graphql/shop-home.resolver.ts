@@ -37,14 +37,21 @@ export class ShopHomeResolver {
       description: 'Taille du fil recommandations (4–48).',
     })
     recommendationsTake?: number,
+    @Args('countryCode', {
+      type: () => String,
+      nullable: true,
+      description: 'Pays ISO2 du catalogue (sinon profil JWT ou région primaire).',
+    })
+    countryCode?: string,
   ): Promise<ShopHomePayloadGql> {
     const take = productsTake ?? 48;
     const recTake = recommendationsTake ?? 24;
-    const data = await this._shopHome.load(user, take);
+    const data = await this._shopHome.load(user, take, countryCode);
     const rec = await this._recommendations.getFeed(
       user,
       String(recTake),
       data.products,
+      countryCode,
     );
     return {
       ...data,

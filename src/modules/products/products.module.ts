@@ -1,6 +1,8 @@
 import { MediasModule } from '@modules/medias/medias.module';
 import { PublicSeoModule } from '@modules/public-seo/public-seo.module';
 import { RatingsModule } from '@modules/ratings/ratings.module';
+import { AuthModule } from '@modules/auth/auth.module';
+import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -19,6 +21,8 @@ import { ProductsService } from './products.service';
 
 @Module({
   imports: [
+    AuthModule,
+    SupportedCountriesModule,
     MediasModule,
     PublicSeoModule,
     RatingsModule,

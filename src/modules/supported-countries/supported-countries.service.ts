@@ -15,6 +15,7 @@ import {
   normalizeRegionTaxRules,
   resolveTaxCountryCode,
 } from './region-tax.util';
+import { normalizeCountryCode } from './client-market-region.util';
 
 export const DEFAULT_SUPPORTED_COUNTRIES: Array<{
   code: string;
@@ -145,6 +146,25 @@ export class SupportedCountriesService implements OnModuleInit {
     const rows = await this.listActive();
     if (!rows.length) return null;
     return rows.find((r) => r.code === 'CA') ?? rows[0];
+  }
+
+  /**
+   * Région catalogue client : query explicite → profil utilisateur → région primaire active.
+   */
+  async resolveClientCatalogRegion(
+    user?: Pick<UserModel, 'appCountryCode'> | null,
+    queryCountryCode?: string | null,
+  ): Promise<string> {
+    const fromQuery = normalizeCountryCode(queryCountryCode);
+    if (fromQuery && (await this.isActiveCode(fromQuery))) {
+      return fromQuery;
+    }
+    const fromUser = normalizeCountryCode(user?.appCountryCode);
+    if (fromUser && (await this.isActiveCode(fromUser))) {
+      return fromUser;
+    }
+    const primary = await this.getPrimaryActiveRegion();
+    return primary?.code ?? 'CA';
   }
 
   /** Résumé public pour la page tarifs (devise, pays actifs, taxes région principale). */
@@ -350,15 +370,11 @@ export class SupportedCountriesService implements OnModuleInit {
             currency,
             active: Boolean(row.active),
           },
-          $setOnInsert: { code },
+          $setOnInsert: { code, taxes: [] },
         },
         { upsert: true },
       );
     }
-    const keepCodes = [...seen.values()];
-    await this._model.deleteMany({
-      code: { $nin: keepCodes },
-    });
     this._listActiveCache = null;
   }
 

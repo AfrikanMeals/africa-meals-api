@@ -1,4 +1,5 @@
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
+import { OptionalAuthGuard } from '@modules/auth/guards/optional.auth.guard';
 import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import {
   Body,
@@ -50,8 +51,17 @@ export class ProductsController {
   }
 
   @Get(':id')
-  async getOneById(@Param('id') id: string) {
-    return this._productsService.getProductDetailForShop(id);
+  @UseGuards(OptionalAuthGuard)
+  async getOneById(
+    @Param('id') id: string,
+    @Req() req: Request,
+    @Query('countryCode') countryCode?: string,
+  ) {
+    return this._productsService.getProductDetailForShop(
+      id,
+      req.user as UserModel | undefined,
+      countryCode,
+    );
   }
 
   @Post(':id/favorite')

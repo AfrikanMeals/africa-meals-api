@@ -10,6 +10,8 @@ import {
 import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import { isDemoProductRaterEmail } from '@modules/ratings/demo-product-rating-users';
 import { RatingsService } from '@modules/ratings/ratings.service';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
+import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import {
   BadRequestException,
@@ -63,6 +65,9 @@ export class ProductsService {
 
   @Inject(SitemapDispatchService)
   private readonly _sitemapDispatch: SitemapDispatchService;
+
+  @Inject(SupportedCountriesService)
+  private readonly _supportedCountries: SupportedCountriesService;
 
   /** Incrémenté à chaque ajout/retrait favori : invalide les clés cache mémoire (TTL + génération). */
   private readonly _favoriteListRevision = new Map<string, number>();
@@ -293,15 +298,24 @@ export class ProductsService {
   }
 
   /** Détail plat boutique — compléments / suppléments normalisés pour l’app mobile. */
-  async getProductDetailForShop(id: string) {
+  async getProductDetailForShop(
+    id: string,
+    user?: UserModel,
+    countryCode?: string,
+  ) {
     if (!Types.ObjectId.isValid(id)) {
       throw new NotFoundException('product_not_found');
     }
+    const clientRegion =
+      await this._supportedCountries.resolveClientCatalogRegion(
+        user,
+        countryCode,
+      );
     return getOrSetCache(
       this._cacheManager,
-      AppCacheKeys.productDetail(id),
+      AppCacheKeys.productDetail(id, clientRegion),
       apiPublicCacheTtlMs(),
-      () => this._loadProductDetailForShop(id),
+      () => this._loadProductDetailForShop(id, clientRegion),
     );
   }
 
@@ -312,7 +326,7 @@ export class ProductsService {
     );
   }
 
-  private async _loadProductDetailForShop(id: string) {
+  private async _loadProductDetailForShop(id: string, clientRegion: string) {
     const doc = await this.findOneById(id);
     if (!doc) {
       throw new NotFoundException('product_not_found');
@@ -331,9 +345,15 @@ export class ProductsService {
     if (storeId && Types.ObjectId.isValid(storeId)) {
       const storeLean = await this._storeModel
         .findById(storeId)
-        .select('dailyMenuByWeekday')
+        .select('region dailyMenuByWeekday')
         .lean()
         .exec();
+      const storeRegion = normalizeCountryCode(
+        (storeLean as { region?: string } | null)?.region,
+      );
+      if (storeRegion && storeRegion !== normalizeCountryCode(clientRegion)) {
+        throw new NotFoundException('product_not_found');
+      }
       dailyMenuRows =
         (storeLean as { dailyMenuByWeekday?: unknown } | null)
           ?.dailyMenuByWeekday ??

@@ -4,6 +4,8 @@ import { SearchService } from '@modules/search/search.service';
 import { StoreSubscribersService } from '@modules/store-subscribers/store-subscribers.service';
 import { SearchSettingsService } from '@modules/search-settings/search-settings.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
+import { storeDirectRegionMatch } from '@modules/supported-countries/client-market-region.util';
 import { BadRequestException, Injectable, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
@@ -45,6 +47,7 @@ export class RecommendationsService {
     private readonly _subscriptions: SubscriptionsService,
     private readonly _storeSubscribers: StoreSubscribersService,
     private readonly _searchSettings: SearchSettingsService,
+    private readonly _supportedCountries: SupportedCountriesService,
     @InjectModel(UserRecommendationSignalModel.name)
     private readonly _signalModel: Model<UserRecommendationSignalModel>,
     @InjectModel(OrderModel.name)
@@ -159,6 +162,7 @@ export class RecommendationsService {
     takeRaw?: string,
     /** Si fourni (ex. bundle `shopHome`), évite un second `homeFeedProducts` identique. */
     productCandidates?: Record<string, unknown>[],
+    countryCode?: string,
   ): Promise<{
     products: Record<string, unknown>[];
     stores: Record<string, unknown>[];
@@ -166,13 +170,18 @@ export class RecommendationsService {
   }> {
     const take = Math.min(48, Math.max(4, parseInt(takeRaw ?? '24', 10) || 24));
     const poolLimit = Math.min(120, Math.max(take * 4, 60));
+    const clientRegion =
+      await this._supportedCountries.resolveClientCatalogRegion(
+        user,
+        countryCode,
+      );
 
     const userOid = this._userOid(user);
 
     const [candidates, snapshot, digestDoc] = await Promise.all([
       productCandidates != null && productCandidates.length > 0
         ? Promise.resolve(productCandidates)
-        : this._search.homeFeedProducts(user, poolLimit),
+        : this._search.homeFeedProducts(user, poolLimit, clientRegion),
       this._trainingSnapshotModel
         .findOne({ docKey: RECOMMENDATION_GLOBAL_SNAPSHOT_KEY })
         .lean()
@@ -377,6 +386,7 @@ export class RecommendationsService {
         planSortWeight: W.vendorPlanSortOrder,
         subscribedWeight: W.subscribedStore,
       },
+      clientRegion,
     );
     const drinkStorePool = [
       ...new Set([
@@ -411,6 +421,7 @@ export class RecommendationsService {
       planSortWeight?: number;
       subscribedWeight?: number;
     },
+    clientRegion?: string,
   ): Promise<Record<string, unknown>[]> {
     const boostOids = boostStoreIds
       .filter((id) => Types.ObjectId.isValid(id))
@@ -425,6 +436,7 @@ export class RecommendationsService {
           $match: {
             status: StoreStatusEnum.ACTIVE,
             acceptsOrders: { $ne: false },
+            ...(clientRegion ? storeDirectRegionMatch(clientRegion) : {}),
           },
         },
         ...storeOwnerStripeOnboardedPipelineStages(),

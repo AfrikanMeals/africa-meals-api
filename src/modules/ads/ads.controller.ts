@@ -60,11 +60,20 @@ export class AdsController {
   }
 
   @Get('campaigns')
+  @UseGuards(OptionalAuthGuard)
+  @ApiBearerAuth('bearer')
   @ApiOperation({
     summary: 'Liste publique des campagnes actives (fenêtre dates automatique)',
   })
-  async listCampaignsPublic() {
-    return this.adsService.listCampaignsPublic();
+  async listCampaignsPublic(
+    @Req() req: Request,
+    @Query('countryCode') countryCode?: string,
+  ) {
+    const region = await this.adsService.resolvePublicClientRegion(
+      req.user as UserModel | undefined,
+      countryCode,
+    );
+    return this.adsService.listCampaignsPublic(region);
   }
 
   @Get('campaigns/manage')
@@ -400,9 +409,18 @@ export class AdsController {
    * Réponse : `storeId` / `storeName` / `storeProfileImageUrl` lorsque la pub est liée boutique.
    */
   @Get()
+  @UseGuards(OptionalAuthGuard)
+  @ApiBearerAuth('bearer')
   @ApiOperation({ summary: 'Liste publique des bannières (GET /ads)' })
-  async list() {
-    const raw = await this.adsService.listPublic();
+  async list(
+    @Req() req: Request,
+    @Query('countryCode') countryCode?: string,
+  ) {
+    const region = await this.adsService.resolvePublicClientRegion(
+      req.user as UserModel | undefined,
+      countryCode,
+    );
+    const raw = await this.adsService.listPublic(region);
     const items = (raw as unknown as Record<string, unknown>[]).map((row) =>
       slimAdForPublicClient(row),
     );

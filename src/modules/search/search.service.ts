@@ -7,6 +7,11 @@ import { DrinksService } from '@modules/drinks/drinks.service';
 import { SearchSettingsService } from '@modules/search-settings/search-settings.service';
 import { ProductsService } from '@modules/products/products.service';
 import { StoreService } from '@modules/store/store.service';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
+import {
+  embeddedStoreRegionMatch,
+  storeDirectRegionMatch,
+} from '@modules/supported-countries/client-market-region.util';
 import {
   AppCacheKeys,
   apiPublicCacheTtlMs,
@@ -670,6 +675,9 @@ export class SearchService {
   @Inject(SearchSettingsService)
   private readonly _searchSettings: SearchSettingsService;
 
+  @Inject(SupportedCountriesService)
+  private readonly _supportedCountries: SupportedCountriesService;
+
   @Inject(CACHE_MANAGER)
   private readonly _cache: Cache;
 
@@ -706,10 +714,16 @@ export class SearchService {
     args.take = args.take ?? 5;
     await this._applyPlatformSearchSettings(args);
     this._normalizeSearchGeoArgs(args);
+    const clientRegion =
+      await this._supportedCountries.resolveClientCatalogRegion(
+        user,
+        args.countryCode,
+      );
     if (this._isSearchFilterCacheable(args)) {
       const scope = cacheUserScope(user);
       const hash = stableCacheHash({
         scope,
+        clientRegion,
         searchContent: args.searchContent,
         storeId: args.storeId ?? '',
         categoryId: args.categoryId ?? '',
@@ -724,13 +738,23 @@ export class SearchService {
         this._cache,
         AppCacheKeys.searchFilter(hash),
         apiPublicCacheTtlMs(),
-        () => this._filterUncached(args, user),
+        () => this._filterUncached(args, user, clientRegion),
       );
     }
-    return this._filterUncached(args, user);
+    return this._filterUncached(args, user, clientRegion);
   }
 
-  private async _filterUncached(args: SearchDto, user?: UserModel) {
+  private async _filterUncached(
+    args: SearchDto,
+    user?: UserModel,
+    clientRegion?: string,
+  ) {
+    const region =
+      clientRegion ??
+      (await this._supportedCountries.resolveClientCatalogRegion(
+        user,
+        args.countryCode,
+      ));
     const searchContent = args.searchContent;
     // console.log('🚀 ~ SearchService ~ filter ~ args:', searchContent);
     const response: {
@@ -742,28 +766,41 @@ export class SearchService {
     } = {};
 
     if (searchContent.includes(SearchContent.PRODUCTS)) {
-      response.products = await this._filterProducts(args, user);
+      response.products = await this._filterProducts(args, user, region);
     }
 
     if (searchContent.includes(SearchContent.DRINKS)) {
-      response.drinks = await this._drinksService.filterMarketplaceCatalog(args);
+      response.drinks = await this._drinksService.filterMarketplaceCatalog(
+        args,
+        region,
+      );
     }
 
     if (searchContent.includes(SearchContent.STORES)) {
-      response.stores = await this._filterStores(args, user);
+      response.stores = await this._filterStores(args, user, region);
     }
 
     if (searchContent.includes(SearchContent.OFFERS)) {
-      response.offers = await this._filterOffers(args, user);
+      response.offers = await this._filterOffers(args, user, region);
     }
 
     return response;
   }
 
-  private async _filterOffers(args: SearchDto, user?: UserModel) {
+  private async _filterOffers(
+    args: SearchDto,
+    user?: UserModel,
+    clientRegion?: string,
+  ) {
+    const region =
+      clientRegion ??
+      (await this._supportedCountries.resolveClientCatalogRegion(
+        user,
+        args.countryCode,
+      ));
     const ownerOid = this._userObjectId(user);
     const queryEsc = escapeMongoRegex(args.query ?? '');
-    const pipeline = [
+    const pipeline: PipelineStage[] = [
       {
         $match: {
           $and: [
@@ -774,7 +811,7 @@ export class SearchService {
               ].filter(Boolean),
             },
             args.storeId && {
-              _id: new Types.ObjectId(args.storeId),
+              store: new Types.ObjectId(args.storeId),
             },
             {
               $or: [
@@ -787,29 +824,46 @@ export class SearchService {
         },
       },
       {
+        $lookup: {
+          from: 'stores',
+          localField: 'store',
+          foreignField: '_id',
+          as: 'store',
+        },
+      },
+      {
+        $addFields: {
+          store: { $arrayElemAt: ['$store', 0] },
+        },
+      },
+      { $match: embeddedStoreRegionMatch(region) },
+      {
         $project: {
           _id: 1,
         },
       },
     ];
 
-    const [count, offerIds] = await Promise.all([
-      this._offersService.getModel().countDocuments(pipeline[0].$match).exec(),
-      // this._productsService.getProductModel().aggregate(pipeline).project({
-      //   _id: 1,
-      // }),
-      // .populate('store'),
-
-      this._offersService
-        .getModel()
-        .aggregate(pipeline)
-        .project({
-          _id: 1,
-        })
-        .skip((args.page - 1) * args.take)
-        .limit(args.take)
-        .exec(),
-    ]);
+    const [facetAgg] = await this._offersService
+      .getModel()
+      .aggregate([
+        ...pipeline,
+        {
+          $facet: {
+            rows: [
+              { $skip: (args.page! - 1) * args.take! },
+              { $limit: args.take! },
+            ],
+            total: [{ $count: 'n' }],
+          },
+        },
+      ])
+      .exec();
+    const facet = facetAgg as
+      | { rows?: { _id: Types.ObjectId }[]; total?: { n: number }[] }
+      | undefined;
+    const offerIds = facet?.rows ?? [];
+    const count = facet?.total?.[0]?.n ?? 0;
 
     if (!offerIds.length) {
       return {
@@ -833,7 +887,14 @@ export class SearchService {
   private async _filterProducts(
     args: SearchDto,
     user?: UserModel,
+    clientRegion?: string,
   ): Promise<SearchResultDto<ProductModel>> {
+    const region =
+      clientRegion ??
+      (await this._supportedCountries.resolveClientCatalogRegion(
+        user,
+        args.countryCode,
+      ));
     const queryEsc = escapeMongoRegex(args.query ?? '');
     const pipeline = [
       {
@@ -881,6 +942,7 @@ export class SearchService {
               args.maxPrice !== null && {
                 price: { $lte: +args.maxPrice },
               },
+            embeddedStoreRegionMatch(region),
           ].filter(Boolean),
         },
       },
@@ -1299,21 +1361,29 @@ export class SearchService {
   async homeFeedProducts(
     user?: UserModel,
     limit = 48,
+    clientRegion?: string,
   ): Promise<Record<string, unknown>[]> {
     const safeLimit = Math.min(120, Math.max(1, Math.floor(limit)));
     const scope = cacheUserScope(user);
+    const region =
+      clientRegion ??
+      (await this._supportedCountries.resolveClientCatalogRegion(user));
     return getOrSetCache(
       this._cache,
-      AppCacheKeys.homeFeed(scope, safeLimit),
+      AppCacheKeys.homeFeed(scope, safeLimit, region),
       apiPublicCacheTtlMs(),
-      () => this._homeFeedProductsUncached(user, safeLimit),
+      () => this._homeFeedProductsUncached(user, safeLimit, region),
     );
   }
 
   private async _homeFeedProductsUncached(
     user?: UserModel,
     safeLimit = 48,
+    clientRegion?: string,
   ): Promise<Record<string, unknown>[]> {
+    const region =
+      clientRegion ??
+      (await this._supportedCountries.resolveClientCatalogRegion(user));
     /** Fenêtre récente avant `$lookup` stores — évite un scan joint sur toute la collection `products`. */
     const candidateCap = Math.min(900, Math.max(safeLimit * 12, 200));
     const pipeline: PipelineStage[] = [
@@ -1344,6 +1414,7 @@ export class SearchService {
                 { about: { $regex: '', $options: 'i' } },
               ],
             },
+            embeddedStoreRegionMatch(region),
           ],
         },
       },
@@ -1606,11 +1677,23 @@ export class SearchService {
     user?: UserModel,
     query?: string,
     clientPlatform?: string,
+    countryCode?: string,
   ): Promise<{ items: Record<string, unknown>[]; total: number }> {
     if (!Types.ObjectId.isValid(storeId)) {
       return { items: [], total: 0 };
     }
-    if (!(await this._storeService.isStoreVisibleForClient(storeId, clientPlatform))) {
+    const clientRegion =
+      await this._supportedCountries.resolveClientCatalogRegion(
+        user,
+        countryCode,
+      );
+    if (
+      !(await this._storeService.isStoreVisibleForClient(
+        storeId,
+        clientPlatform,
+        clientRegion,
+      ))
+    ) {
       return { items: [], total: 0 };
     }
     const q = query?.trim();
@@ -1746,12 +1829,20 @@ export class SearchService {
   private async _filterStores(
     args: SearchDto,
     user?: UserModel,
+    clientRegion?: string,
   ): Promise<SearchResultDto<StoreModel>> {
+    const region =
+      clientRegion ??
+      (await this._supportedCountries.resolveClientCatalogRegion(
+        user,
+        args.countryCode,
+      ));
     const q = args.query?.trim();
     /** Catalogue client : ACTIVE + commandes + Stripe Connect + au moins un article commandable. */
     const andParts: Record<string, unknown>[] = [
       { status: StoreStatusEnum.ACTIVE },
       { acceptsOrders: { $ne: false } },
+      storeDirectRegionMatch(region),
     ];
     if (q) {
       const esc = escapeMongoRegex(q);

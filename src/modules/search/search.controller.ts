@@ -35,6 +35,7 @@ export class SearchController {
     @Query('page') pageRaw?: string,
     @Query('take') takeRaw?: string,
     @Query('q') q?: string,
+    @Query('countryCode') countryCode?: string,
   ) {
     const sid =
       resolveMongoIdFromPublicParam((storeId ?? '').trim()) ??
@@ -53,6 +54,7 @@ export class SearchController {
         req.user as UserModel,
         q,
         clientPlatform,
+        countryCode,
       );
     return {
       products: {

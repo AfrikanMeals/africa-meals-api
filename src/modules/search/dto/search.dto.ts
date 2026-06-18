@@ -115,6 +115,14 @@ export class SearchDto {
   @Min(1)
   @Max(100)
   maxDistanceKm?: number;
+
+  /** Pays d’utilisation ISO2 (sinon profil JWT ou région primaire). */
+  @IsOptional()
+  @Transform(({ value }) => {
+    const s = trimOptionalQueryString(value);
+    return s ? s.toUpperCase() : s;
+  })
+  countryCode?: string;
 }
 
 export class SearchResultDto<T> {

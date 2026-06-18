@@ -45,6 +45,7 @@ import {
   AppCacheKeys,
   apiPublicCacheTtlMs,
   bustCacheKey,
+  bustCacheKeysByPrefix,
   getOrSetCache,
 } from '@common/redis-app-cache';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -479,7 +480,17 @@ export class AdsService implements OnModuleInit {
   }
 
   private invalidateListCache() {
-    void bustCacheKey(this._cache, AppCacheKeys.adsPublic);
+    void bustCacheKeysByPrefix(this._cache, 'ads:public:v3-region:');
+  }
+
+  async resolvePublicClientRegion(
+    user?: Pick<UserModel, 'appCountryCode'> | null,
+    countryCode?: string | null,
+  ): Promise<string> {
+    return this._supportedCountries.resolveClientCatalogRegion(
+      user,
+      countryCode,
+    );
   }
 
   private async publishAdDomainEvent<T extends DomainEventType>(
@@ -2208,7 +2219,12 @@ export class AdsService implements OnModuleInit {
     }
   }
 
-  async listCampaignsPublic(): Promise<{ items: PublicAdCampaignRow[] }> {
+  async listCampaignsPublic(
+    clientRegion?: string,
+  ): Promise<{ items: PublicAdCampaignRow[] }> {
+    const region =
+      clientRegion ??
+      (await this._supportedCountries.resolveClientCatalogRegion());
     await this._autoArchiveExpiredCampaigns();
     const now = new Date();
     const docs = await this._adCampaignModel
@@ -2232,8 +2248,17 @@ export class AdsService implements OnModuleInit {
     const rows = (docs as Record<string, unknown>[])
       .map((d) => this._toCampaignRow(d))
       .filter((row) => row.items.length > 0);
+    const storeIds = [
+      ...new Set(rows.map((row) => row.storeId).filter(Boolean)),
+    ];
+    const regionByStoreId = await this._storeRegionsById(storeIds);
+    const filtered = rows.filter((row) => {
+      const storeRegion = regionByStoreId.get(row.storeId);
+      if (!storeRegion) return true;
+      return storeRegion === region;
+    });
     return {
-      items: rows.map((row) => ({
+      items: filtered.map((row) => ({
         id: row.id,
         storeId: row.storeId,
         storeName: row.storeName,
@@ -3762,16 +3787,43 @@ export class AdsService implements OnModuleInit {
    * publicités boutiques actives (boutique ACTIVE, dates valides).
    * Ordre renvoyé : au moins 2/3 de pubs **liées boutique** (`store` défini) quand le stock le permet.
    */
-  async listPublic(): Promise<AdModel[]> {
+  async listPublic(clientRegion?: string): Promise<AdModel[]> {
+    const region =
+      clientRegion ??
+      (await this._supportedCountries.resolveClientCatalogRegion());
     return getOrSetCache(
       this._cache,
-      AppCacheKeys.adsPublic,
+      AppCacheKeys.adsPublic(region),
       apiPublicCacheTtlMs(),
-      () => this._loadListPublic(),
+      () => this._loadListPublic(region),
     );
   }
 
-  private async _loadListPublic(): Promise<AdModel[]> {
+  private async _storeRegionsById(
+    storeIds: string[],
+  ): Promise<Map<string, string>> {
+    const oids = storeIds
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    if (!oids.length) return new Map();
+    const rows = await this._storeModel
+      .find({ _id: { $in: oids } })
+      .select('region')
+      .lean()
+      .exec();
+    const out = new Map<string, string>();
+    for (const row of rows) {
+      out.set(
+        String(row._id),
+        String(row.region ?? '')
+          .trim()
+          .toUpperCase(),
+      );
+    }
+    return out;
+  }
+
+  private async _loadListPublic(clientRegion: string): Promise<AdModel[]> {
     await this._autoArchiveExpiredAds();
     const raw = await this.adModel
       .find({
@@ -3797,6 +3849,9 @@ export class AdsService implements OnModuleInit {
       this._storeModel,
       shopStoreIds,
     );
+    const regionByStoreId = await this._storeRegionsById(
+      [...paymentsReadyStoreIds],
+    );
     const t = new Date();
     const data = docs.filter((d) => {
       if (d.archivedAt != null && String(d.archivedAt).trim() !== '') {
@@ -3813,7 +3868,10 @@ export class AdsService implements OnModuleInit {
       }
       const storeOid = this._storeIdFromAdDoc(d);
       if (storeOid == null) return true;
-      return paymentsReadyStoreIds.has(storeOid.toString());
+      if (!paymentsReadyStoreIds.has(storeOid.toString())) return false;
+      const storeRegion = regionByStoreId.get(storeOid.toString());
+      if (!storeRegion) return true;
+      return storeRegion === clientRegion.trim().toUpperCase();
     }) as unknown as AdModel[];
     return this.orderPublicAdsByMinTwoThirdsShop(data);
   }

@@ -2,6 +2,7 @@ import { AdsService } from '@modules/ads/ads.service';
 import { AnnouncementsService } from '@modules/announcements/announcements.service';
 import { ProductCategoryService } from '@modules/products/product-category.service';
 import { SearchService } from '@modules/search/search.service';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { UserModel } from '@schemas/user.schema';
@@ -38,12 +39,18 @@ export class ShopHomeService {
   @Inject(SearchService)
   private readonly _search: SearchService;
 
-  private cacheKey(user?: UserModel) {
+  @Inject(SupportedCountriesService)
+  private readonly _supportedCountries: SupportedCountriesService;
+
+  private cacheKey(user?: UserModel, clientRegion?: string) {
     const id =
       (
         user as unknown as { _id?: { toString?: () => string } }
       )?._id?.toString?.() ?? '';
-    return `shophome:v2-stripe:${id || 'anon'}`;
+    const region = String(clientRegion ?? 'CA')
+      .trim()
+      .toUpperCase();
+    return `shophome:v3-region:${/^[A-Z]{2}$/.test(region) ? region : 'CA'}:${id || 'anon'}`;
   }
 
   private ttlMs() {
@@ -66,8 +73,17 @@ export class ShopHomeService {
    * Bundle accueil : annonces + pubs + catégories + produits (léger).
    * Mis en cache par utilisateur (anon vs vendeur connecté).
    */
-  async load(user?: UserModel, productsTake = 48): Promise<ShopHomePayload> {
-    const key = this.cacheKey(user);
+  async load(
+    user?: UserModel,
+    productsTake = 48,
+    countryCode?: string,
+  ): Promise<ShopHomePayload> {
+    const clientRegion =
+      await this._supportedCountries.resolveClientCatalogRegion(
+        user,
+        countryCode,
+      );
+    const key = this.cacheKey(user, clientRegion);
     const hit = await this._cache.get<ShopHomePayload>(key);
 
     const take = Math.min(120, Math.max(8, Math.floor(productsTake)));
@@ -76,15 +92,15 @@ export class ShopHomeService {
       this._docsToPlainJson(adDocs).map((row) => slimAdForPublicClient(row));
 
     if (hit != null) {
-      const adDocs = await this._ads.list();
+      const adDocs = await this._ads.listPublic(clientRegion);
       return { ...hit, ads: mapAds(adDocs) };
     }
 
     const [announcementDocs, adDocs, categories, products] = await Promise.all([
       this._announcements.list(),
-      this._ads.list(),
+      this._ads.listPublic(clientRegion),
       this._categories.filter(),
-      this._search.homeFeedProducts(user, take),
+      this._search.homeFeedProducts(user, take, clientRegion),
     ]);
 
     const announcements = this._docsToPlainJson(announcementDocs).map((row) =>

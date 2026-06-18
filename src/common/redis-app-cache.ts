@@ -104,8 +104,8 @@ export async function bustCatalogListingPublicCaches(
 ): Promise<void> {
   const prefixes = [
     'search-filter:v1:',
-    'home-feed:v2:',
-    'shophome:v2-stripe:',
+    'home-feed:v3:',
+    'shophome:v3-region:',
   ];
   if (storeId?.trim()) {
     const sid = storeId.trim();
@@ -118,9 +118,18 @@ export async function bustCatalogListingPublicCaches(
 
 export const AppCacheKeys = {
   announcements: 'announcements:active:v1',
-  adsPublic: 'ads:public:v2-stripe',
-  homeFeed: (scope: string, limit: number) =>
-    `home-feed:v2:${scope}:t${limit}`,
+  adsPublic: (clientRegion: string) => {
+    const code = String(clientRegion ?? '')
+      .trim()
+      .toUpperCase();
+    return `ads:public:v3-region:${/^[A-Z]{2}$/.test(code) ? code : 'CA'}`;
+  },
+  homeFeed: (scope: string, limit: number, clientRegion: string) => {
+    const code = String(clientRegion ?? '')
+      .trim()
+      .toUpperCase();
+    return `home-feed:v3:${/^[A-Z]{2}$/.test(code) ? code : 'CA'}:${scope}:t${limit}`;
+  },
   storeMeta: (storeId: string) => `store-meta:v1:${storeId}`,
   storeMenuBundle: (
     storeId: string,
@@ -134,6 +143,12 @@ export const AppCacheKeys = {
     take: number,
     scope: string,
   ) => `store-menu-page:v1:${storeId}:p${page}:t${take}:${scope}`,
-  productDetail: (productId: string) => `product-detail:v1:${productId}`,
+  productDetail: (productId: string, clientRegion?: string) => {
+    const code = String(clientRegion ?? '')
+      .trim()
+      .toUpperCase();
+    const region = /^[A-Z]{2}$/.test(code) ? code : 'CA';
+    return `product-detail:v2:${region}:${productId}`;
+  },
   searchFilter: (hash: string) => `search-filter:v1:${hash}`,
 } as const;
