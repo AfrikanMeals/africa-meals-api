@@ -71,4 +71,9 @@ describe('cors-options (H-01)', () => {
       done();
     });
   });
+
+  it('allows Cache-Control header (admin bootstrap fetch)', () => {
+    const opts = buildApiCorsOptions();
+    expect(opts.allowedHeaders).toContain('Cache-Control');
+  });
 });

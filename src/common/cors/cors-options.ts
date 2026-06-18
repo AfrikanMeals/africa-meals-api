@@ -18,6 +18,8 @@ const CORS_ALLOWED_HEADERS = [
   'Content-Type',
   'Authorization',
   'Accept',
+  'Cache-Control',
+  'Pragma',
   'ngrok-skip-browser-warning',
   'x-dashboard-client',
   'x-dashboard-path',
