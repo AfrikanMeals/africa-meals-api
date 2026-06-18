@@ -85,7 +85,7 @@ export function resolveWsProbeFetchUrl(config: ConfigService): string {
   }
 
   if (isDevStatusProbeStack(config)) {
-    const port = localPort(config, 'PM2_WS_DEV_PORT', '8000');
+    const port = localPort(config, 'PM2_WS_DEV_PORT', '8001');
     return `http://localhost:${port}/api/health`;
   }
 
