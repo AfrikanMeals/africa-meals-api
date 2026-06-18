@@ -15,6 +15,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { BusinessReportsService } from '@modules/business-reports/business-reports.service';
+import { resolveMongoIdFromPublicParam } from '@common/catalog-public-id.util';
 import { CreateBusinessReportDto } from '@modules/business-reports/dto/create-business-report.dto';
 import {
   ConfirmPickupDto,
@@ -239,7 +240,8 @@ export class OrdersController {
     summary: 'Résumé commande public (landing web / lien e-mail)',
   })
   async publicSummary(@Param('id') id: string) {
-    return this._ordersService.getPublicOrderSummary(id);
+    const orderId = resolveMongoIdFromPublicParam(id) ?? id;
+    return this._ordersService.getPublicOrderSummary(orderId);
   }
 
   @Get(':id')
