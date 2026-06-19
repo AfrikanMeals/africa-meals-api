@@ -25,6 +25,7 @@ export type OrderInvoiceSnapshot = {
   taxTotal?: number;
   taxLines?: OrderTaxLineInvoice[];
   shippingPrice: number;
+  deliveryTipCents?: number;
   shouldShip?: boolean;
   currency?: string;
   couponCode?: string;

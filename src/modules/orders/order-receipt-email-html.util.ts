@@ -142,9 +142,11 @@ export function buildOrderReceiptEmailBodyHtml(
     0,
   );
   const shipping = Math.max(0, Number(snapshot.shippingPrice) || 0);
+  const tipCents = Math.max(0, Math.round(Number(snapshot.deliveryTipCents) || 0));
+  const tip = tipCents / 100;
   const tax = Math.max(0, Number(snapshot.taxTotal) || 0);
   const total = Math.max(0, Number(snapshot.totalPrice) || 0);
-  const discount = Math.max(0, linesSubtotal + shipping + tax - total);
+  const discount = Math.max(0, linesSubtotal + shipping + tip + tax - total);
   const paymentLabel = inferInvoicePaymentMethodLabel(snapshot.status);
   const orderDateLabel = formatReceiptOrderDate(snapshot.createdAt);
   const orderDateIso = opts.orderDateIso ?? '';
@@ -194,6 +196,15 @@ export function buildOrderReceiptEmailBodyHtml(
       <tr>
         <td style="padding:8px 0;font-size:14px;color:#6b7280;">Livraison</td>
         <td align="right" style="padding:8px 0;font-size:14px;color:#374151;">${esc(formatInvoiceMoney(shipping, currency))}</td>
+      </tr>`
+      : '';
+
+  const tipRow =
+    tip > 0.009
+      ? `
+      <tr>
+        <td style="padding:8px 0;font-size:14px;color:#6b7280;">Pourboire livreur</td>
+        <td align="right" style="padding:8px 0;font-size:14px;color:#374151;">${esc(formatInvoiceMoney(tip, currency))}</td>
       </tr>`
       : '';
 
@@ -271,6 +282,7 @@ export function buildOrderReceiptEmailBodyHtml(
       <td align="right" style="padding:8px 0;font-size:14px;color:#374151;">${esc(formatInvoiceMoney(linesSubtotal, currency))}</td>
     </tr>
     ${shippingRow}
+    ${tipRow}
     ${taxRow}
     ${discountRow}
     <tr>

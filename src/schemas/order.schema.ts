@@ -388,6 +388,15 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'stripe_delivery_tip_processing_fee_cents' })
   stripeDeliveryTipProcessingFeeCents?: number;
 
+  @Prop({ required: false, name: 'stripe_delivery_tip_transfer_reversal_id' })
+  stripeDeliveryTipTransferReversalId?: string;
+
+  @Prop({
+    required: false,
+    name: 'stripe_delivery_tip_transfer_reversal_amount_cents',
+  })
+  stripeDeliveryTipTransferReversalAmountCents?: number;
+
   /** Dernier reversal de transfer (`trr_…` / id reversal). */
   @Prop({ required: false, name: 'stripe_transfer_reversal_id' })
   stripeTransferReversalId?: string;

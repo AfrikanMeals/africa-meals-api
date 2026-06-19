@@ -272,7 +272,7 @@ function distributeCentsByWeights(weights: number[], target: number): number[] {
 function stripeProductMetadata(params: {
   storeId: string;
   storeName: string;
-  lineKind: 'goods' | 'shipping' | 'promo_goods' | 'payment_fee' | 'tax';
+  lineKind: 'goods' | 'shipping' | 'promo_goods' | 'payment_fee' | 'tax' | 'delivery_tip';
   line: Record<string, unknown>;
 }): Record<string, string> {
   const { storeId, storeName, lineKind, line } = params;
@@ -307,7 +307,7 @@ function checkoutLineFromCartRow(params: {
   line: Record<string, unknown>;
   quantity: number;
   unitAmountCents: number;
-  lineKind: 'goods' | 'shipping' | 'promo_goods' | 'payment_fee' | 'tax';
+  lineKind: 'goods' | 'shipping' | 'promo_goods' | 'payment_fee' | 'tax' | 'delivery_tip';
   extraDescription?: string;
 }): CheckoutLineItem | null {
   const {

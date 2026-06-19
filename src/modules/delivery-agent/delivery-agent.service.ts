@@ -1667,23 +1667,51 @@ export class DeliveryAgentService {
   async listShippingPaymentHistory(user: UserModel) {
     this.assertDeliveryAgent(user);
     const settings = await this._platformShipping.getPublicSettings();
+    const agentId = new Types.ObjectId(String(user.id));
     const rows = await this._orders
       .find({
         shouldShip: true,
+        assignedDeliveryUser: agentId,
         status: {
           $in: [OrderStatusEnum.SHIPPED, OrderStatusEnum.COMPLETED],
         },
       })
       .sort({ updatedAt: -1 })
       .limit(50)
+      .select(
+        'shippingPrice currency deliveryTipCents deliveryTipStatus stripeDeliveryTipTransferAmountCents updatedAt store',
+      )
       .populate({ path: 'store', select: 'name' })
       .lean()
       .exec();
+
+    let totalDriverEarningCad = 0;
+    let totalDriverTipEarningCad = 0;
 
     const items = rows.map((row) => {
       const id = String(row._id);
       const tail = id.slice(-6).toUpperCase();
       const shippingCad = Number(row.shippingPrice) || 0;
+      const currency =
+        typeof row.currency === 'string' && row.currency.trim()
+          ? row.currency.trim().toUpperCase()
+          : 'CAD';
+      const driverEarningCad = this.computeDriverEarningFromShipping(
+        shippingCad,
+        settings,
+      );
+      const tipCents = Math.max(0, Math.round(Number(row.deliveryTipCents) || 0));
+      const tipStatus = String(row.deliveryTipStatus ?? 'none');
+      let driverTipEarningCad = 0;
+      if (tipStatus === 'transferred') {
+        driverTipEarningCad =
+          Math.round(Number(row.stripeDeliveryTipTransferAmountCents) || 0) /
+          100;
+      }
+      const driverTotalEarningCad =
+        Math.round((driverEarningCad + driverTipEarningCad) * 100) / 100;
+      totalDriverEarningCad += driverEarningCad;
+      totalDriverTipEarningCad += driverTipEarningCad;
       const store =
         row.store && typeof row.store === 'object'
           ? (row.store as { name?: string })
@@ -1692,18 +1720,29 @@ export class DeliveryAgentService {
         id,
         orderRef: `#AE-${tail}`,
         storeName: store?.name?.trim() || null,
+        currency,
         shippingPriceCad: shippingCad,
-        driverEarningCad: this.computeDriverEarningFromShipping(
-          shippingCad,
-          settings,
-        ),
+        driverEarningCad,
+        deliveryTipCents: tipCents,
+        deliveryTipStatus: tipStatus,
+        driverTipEarningCad,
+        driverTotalEarningCad,
         status: String(row.status),
         completedAt:
           (row as { updatedAt?: Date }).updatedAt?.toISOString?.() ?? null,
       };
     });
 
-    return { items };
+    return {
+      items,
+      totals: {
+        driverEarningCad: Math.round(totalDriverEarningCad * 100) / 100,
+        driverTipEarningCad: Math.round(totalDriverTipEarningCad * 100) / 100,
+        driverTotalEarningCad:
+          Math.round((totalDriverEarningCad + totalDriverTipEarningCad) * 100) /
+          100,
+      },
+    };
   }
 
   private computeDriverEarningFromShipping(

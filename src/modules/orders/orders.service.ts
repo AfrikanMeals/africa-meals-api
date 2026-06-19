@@ -770,6 +770,10 @@ export class OrdersService {
       totalPrice: Number(order.totalPrice) || 0,
       subtotalBeforeTax: Number(order.subtotalBeforeTax) || undefined,
       shippingPrice: Number(order.shippingPrice) || 0,
+      deliveryTipCents: Math.max(
+        0,
+        Math.round(Number(order.deliveryTipCents) || 0),
+      ),
       taxTotal: Number(order.taxTotal) || undefined,
       shouldShip: Boolean(order.shouldShip),
       deliveryLine,

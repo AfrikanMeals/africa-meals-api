@@ -272,7 +272,7 @@ export class DeliveryAgentController {
   @UseGuards(JwtGuard)
   @ApiOperation({
     summary:
-      'Historique des gains livraison (frais livraison client, part livreur estimée).',
+      'Historique des gains livraison (frais livraison + pourboire versé au livreur).',
   })
   listShippingEarnings(@Req() req: Request) {
     return this._deliveryAgent.listShippingPaymentHistory(

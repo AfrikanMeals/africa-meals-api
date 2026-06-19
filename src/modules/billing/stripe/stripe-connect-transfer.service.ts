@@ -799,7 +799,7 @@ export class StripeConnectTransferService {
     const order = await this.orderModel
       .findById(args.orderId)
       .select(
-        'stripeTransferId stripeTransferAmountCents stripeTransferReversalId stripeTransferReversalAmountCents stripeChargedGoodsCents stripeChargedShipCents stripeDeliveryTransferId stripeDeliveryTransferAmountCents stripeDeliveryTransferReversalAmountCents',
+        'stripeTransferId stripeTransferAmountCents stripeTransferReversalId stripeTransferReversalAmountCents stripeChargedGoodsCents stripeChargedShipCents stripeDeliveryTransferId stripeDeliveryTransferAmountCents stripeDeliveryTransferReversalAmountCents deliveryTipCents deliveryTipStatus stripeDeliveryTipTransferId stripeDeliveryTipTransferAmountCents stripeDeliveryTipTransferReversalAmountCents',
       )
       .lean()
       .exec();
@@ -846,6 +846,24 @@ export class StripeConnectTransferService {
       lastReversalId = deliveryRev.reversalId ?? lastReversalId;
     }
 
+    if (order.stripeDeliveryTipTransferId) {
+      const tipRev = await this.reverseSingleTransfer({
+        transferId: order.stripeDeliveryTipTransferId,
+        transferCents: Number(order.stripeDeliveryTipTransferAmountCents ?? 0),
+        alreadyReversedCents: Number(
+          order.stripeDeliveryTipTransferReversalAmountCents ?? 0,
+        ),
+        orderId: args.orderId,
+        refundCents: args.customerRefundCents,
+        grossCents: Math.max(0, Math.round(Number(order.deliveryTipCents) || 0)),
+        idempotencySuffix: 'delivery_tip',
+        orderFieldPrefix: 'stripeDeliveryTipTransfer',
+        forceFullReversal: true,
+      });
+      totalReversed += tipRev.reversalCents;
+      lastReversalId = tipRev.reversalId ?? lastReversalId;
+    }
+
     return {
       reversed: totalReversed > 0,
       reversalId: lastReversalId,
@@ -861,7 +879,11 @@ export class StripeConnectTransferService {
     refundCents: number;
     grossCents: number;
     idempotencySuffix: string;
-    orderFieldPrefix: 'stripeTransfer' | 'stripeDeliveryTransfer';
+    orderFieldPrefix:
+      | 'stripeTransfer'
+      | 'stripeDeliveryTransfer'
+      | 'stripeDeliveryTipTransfer';
+    forceFullReversal?: boolean;
   }): Promise<{
     reversed: boolean;
     reversalId?: string;
@@ -878,7 +900,7 @@ export class StripeConnectTransferService {
     const refundCents = Math.max(1, Math.round(args.refundCents));
 
     let reversalCents = remaining;
-    if (gross > 0 && refundCents < gross) {
+    if (!args.forceFullReversal && gross > 0 && refundCents < gross) {
       reversalCents = Math.min(
         remaining,
         Math.max(1, Math.round((transferCents * refundCents) / gross)),
@@ -909,10 +931,15 @@ export class StripeConnectTransferService {
               stripeTransferReversalId: reversal.id,
               stripeTransferReversalAmountCents: newReversedTotal,
             }
-          : {
-              stripeDeliveryTransferReversalId: reversal.id,
-              stripeDeliveryTransferReversalAmountCents: newReversedTotal,
-            };
+          : args.orderFieldPrefix === 'stripeDeliveryTransfer'
+            ? {
+                stripeDeliveryTransferReversalId: reversal.id,
+                stripeDeliveryTransferReversalAmountCents: newReversedTotal,
+              }
+            : {
+                stripeDeliveryTipTransferReversalId: reversal.id,
+                stripeDeliveryTipTransferReversalAmountCents: newReversedTotal,
+              };
 
       await this.orderModel.updateOne(
         { _id: args.orderId },

@@ -323,6 +323,10 @@ export class OrderPaidInvoiceEmailService {
           }))
         : undefined,
       shippingPrice: Number(order.shippingPrice) || 0,
+      deliveryTipCents: Math.max(
+        0,
+        Math.round(Number(order.deliveryTipCents) || 0),
+      ),
       shouldShip: Boolean(order.shouldShip),
       currency:
         typeof order.currency === 'string' ? order.currency : undefined,

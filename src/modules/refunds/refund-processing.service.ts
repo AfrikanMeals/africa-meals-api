@@ -724,7 +724,10 @@ export class RefundProcessingService {
     }
     const tipCents = Math.max(0, Math.round(Number(order.deliveryTipCents) || 0));
     const tipStatus = String(order.deliveryTipStatus ?? 'none');
-    if (tipCents > 0 && tipStatus === 'pending') {
+    if (
+      tipCents > 0 &&
+      (tipStatus === 'pending' || tipStatus === 'transferred')
+    ) {
       base += tipCents;
     }
     return base;
@@ -1058,7 +1061,10 @@ export class RefundProcessingService {
     });
     const tipStatus = String(order.deliveryTipStatus ?? 'none');
     const tipCents = Math.max(0, Math.round(Number(order.deliveryTipCents) || 0));
-    if (tipCents > 0 && tipStatus === 'pending') {
+    if (
+      tipCents > 0 &&
+      (tipStatus === 'pending' || tipStatus === 'transferred')
+    ) {
       order.deliveryTipStatus = 'refunded' as OrderModel['deliveryTipStatus'];
     }
     await order.save();
