@@ -1,6 +1,15 @@
+import { GroupedStripeCouponLineDto } from '@modules/billing/stripe/dto/grouped-stripe-checkout.dto';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsObject, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsArray,
+  IsInt,
+  IsObject,
+  IsOptional,
+  IsString,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 
 export class DeliveryTipPreviewDto {
   @ApiPropertyOptional({
@@ -25,4 +34,11 @@ export class DeliveryTipPreviewDto {
   @IsInt()
   @Min(0)
   deliveryTipTotalCents: number;
+
+  @ApiPropertyOptional({ type: [GroupedStripeCouponLineDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => GroupedStripeCouponLineDto)
+  coupons?: GroupedStripeCouponLineDto[];
 }

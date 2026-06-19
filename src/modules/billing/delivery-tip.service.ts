@@ -86,6 +86,7 @@ export class DeliveryTipService {
     user: UserModel,
     fulfillmentByStoreId: Record<string, string>,
     addressId?: string,
+    coupons?: Array<{ storeId: string; code: string }>,
   ): Promise<{
     legs: DeliveryTipLegQuote[];
     pickupStoreIds: string[];
@@ -93,6 +94,11 @@ export class DeliveryTipService {
   }> {
     const cart = await this.cartService.filter(user);
     const groups = (cart?.data ?? []) as CartGroup[];
+    const couponByStore = new Map(
+      (coupons ?? [])
+        .filter((c) => c.storeId?.trim() && c.code?.trim())
+        .map((c) => [c.storeId.trim(), c.code.trim()] as const),
+    );
     const legs: DeliveryTipLegQuote[] = [];
     const pickupStoreIds: string[] = [];
     let deliveryGoodsSubtotalCents = 0;
@@ -104,8 +110,11 @@ export class DeliveryTipService {
       const modeRaw = fulfillmentByStoreId[storeId] ?? 'pickup';
       const mode = modeRaw === 'delivery' ? 'delivery' : 'pickup';
       const storeName = String(g.store?.name ?? 'Restaurant');
-      const goodsSubtotalCents = Math.round(
-        (Number(g.totalPrice) || 0) * 100 + Number.EPSILON,
+      const goodsSubtotalCents = await this._deliveryGoodsSubtotalCentsForStore(
+        user,
+        storeId,
+        g,
+        couponByStore.get(storeId),
       );
 
       if (mode !== 'delivery' || !g.store?.supportsShipping) {
@@ -151,18 +160,52 @@ export class DeliveryTipService {
     tipTotalCents: number,
     deliveryGoodsSubtotalCents: number,
     enabled: boolean,
+    allowedPresetCents: number[] = [],
   ): void {
     const tip = Math.max(0, Math.round(tipTotalCents));
     if (tip < 1) return;
     if (!enabled) {
       throw new BadRequestException('delivery_tip_disabled');
     }
+    if (deliveryGoodsSubtotalCents < 1) {
+      throw new BadRequestException('invalid_tip_amount');
+    }
+    const presetSet = new Set(
+      allowedPresetCents
+        .map((c) => Math.max(0, Math.round(c)))
+        .filter((c) => c >= 1),
+    );
+    if (presetSet.has(tip)) return;
+
     const maxTip = maxDeliveryTipCentsForGoodsSubtotal(deliveryGoodsSubtotalCents);
     if (tip > maxTip) {
       throw new BadRequestException({
         message: 'invalid_tip_amount',
         maxTipCents: maxTip,
       });
+    }
+  }
+
+  private async _deliveryGoodsSubtotalCentsForStore(
+    user: UserModel,
+    storeId: string,
+    group: CartGroup,
+    couponCode?: string,
+  ): Promise<number> {
+    const grossCents = Math.round(
+      (Number(group.totalPrice) || 0) * 100 + Number.EPSILON,
+    );
+    const code = couponCode?.trim();
+    if (!code) return grossCents;
+    try {
+      const snap = await this.cartService.previewCouponForStore(
+        user,
+        storeId,
+        code,
+      );
+      return Math.round(snap.totalAfterDiscount * 100 + Number.EPSILON);
+    } catch {
+      return grossCents;
     }
   }
 
@@ -268,20 +311,37 @@ export class DeliveryTipService {
   }
 
   async preview(user: UserModel, dto: DeliveryTipPreviewDto) {
-    const settings = await this.shippingSettings.getPublicSettings();
+    const regionCode = String(user.appCountryCode ?? '')
+      .trim()
+      .toUpperCase();
+    const settings = await this.shippingSettings.getPublicSettings(
+      regionCode || undefined,
+    );
     const tipTotalCents = Math.max(0, Math.round(dto.deliveryTipTotalCents));
+
+    const coupons = (dto.coupons ?? [])
+      .filter((c) => c.storeId?.trim() && c.code?.trim())
+      .map((c) => ({ storeId: c.storeId.trim(), code: c.code.trim() }));
 
     const { legs, pickupStoreIds, deliveryGoodsSubtotalCents } =
       await this.resolveDeliveryLegs(
         user,
         dto.fulfillmentByStoreId ?? {},
         dto.addressId,
+        coupons,
       );
+
+    const tipPresetOptions = this.tipPresetOptions(
+      settings,
+      deliveryGoodsSubtotalCents,
+      settings.currency,
+    );
 
     this.assertTipAmountAllowed(
       tipTotalCents,
       deliveryGoodsSubtotalCents,
       settings.deliveryTipEnabled,
+      tipPresetOptions.map((option) => option.cents),
     );
 
     const allocated = allocateDeliveryTipCents({
@@ -305,12 +365,6 @@ export class DeliveryTipService {
         allocatedTipCents: row?.allocatedTipCents ?? 0,
       };
     });
-
-    const tipPresetOptions = this.tipPresetOptions(
-      settings,
-      deliveryGoodsSubtotalCents,
-      settings.currency,
-    );
 
     return {
       enabled: settings.deliveryTipEnabled,
@@ -349,6 +403,7 @@ export class DeliveryTipService {
       fulfillmentByStoreId: Record<string, string>;
       addressId?: string;
       deliveryTipTotalCents: number;
+      coupons?: Array<{ storeId: string; code: string }>;
     },
   ): Promise<{
     deliveryTipTotalCents: number;
@@ -367,16 +422,31 @@ export class DeliveryTipService {
       };
     }
 
-    const settings = await this.shippingSettings.getPublicSettings();
+    const settings = await this.shippingSettings.getPublicSettings(
+      String(user.appCountryCode ?? '').trim().toUpperCase() || undefined,
+    );
+    const coupons = (params.coupons ?? [])
+      .filter((c) => c.storeId?.trim() && c.code?.trim())
+      .map((c) => ({ storeId: c.storeId.trim(), code: c.code.trim() }));
+
     const { legs, deliveryGoodsSubtotalCents } = await this.resolveDeliveryLegs(
       user,
       params.fulfillmentByStoreId,
       params.addressId,
+      coupons,
     );
+
+    const tipPresetOptions = this.tipPresetOptions(
+      settings,
+      deliveryGoodsSubtotalCents,
+      settings.currency,
+    );
+
     this.assertTipAmountAllowed(
       tipTotalCents,
       deliveryGoodsSubtotalCents,
       settings.deliveryTipEnabled,
+      tipPresetOptions.map((option) => option.cents),
     );
 
     return {

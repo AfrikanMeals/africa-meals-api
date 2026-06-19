@@ -5,6 +5,7 @@ import {
   Get,
   Post,
   Put,
+  Query,
   Req,
   UseGuards,
   UsePipes,
@@ -28,8 +29,8 @@ export class PlatformShippingSettingsController {
 
   /** Lecture publique (apps mobile / devis livraison). */
   @Get()
-  getSettings() {
-    return this._platformShipping.getPublicSettings();
+  getSettings(@Query('regionCode') regionCode?: string) {
+    return this._platformShipping.getPublicSettings(regionCode);
   }
 
   @ApiBearerAuth('bearer')

@@ -1025,6 +1025,7 @@ export class StripeGroupedCheckoutService {
           fulfillmentByStoreId: fulfillment,
           addressId: dto.addressId,
           deliveryTipTotalCents,
+          coupons,
         },
       );
       deliveryTipTotalCents = tipResolved.deliveryTipTotalCents;

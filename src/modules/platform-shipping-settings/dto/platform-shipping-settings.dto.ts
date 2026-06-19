@@ -191,4 +191,25 @@ export class UpdatePlatformShippingSettingsDto {
   @Min(0, { each: true })
   @Max(100, { each: true })
   deliveryTipPercentPresets?: number[];
+
+  @ApiPropertyOptional({
+    example: 'CM',
+    description:
+      'Région active (ISO2) — enregistre tous les paramètres dans settingsByRegion.',
+  })
+  @IsOptional()
+  @IsString()
+  @Length(2, 2)
+  @Matches(/^[A-Z]{2}$/i)
+  regionCode?: string;
+
+  @ApiPropertyOptional({
+    example: 'CM',
+    description: 'Alias legacy de regionCode (pourboires).',
+  })
+  @IsOptional()
+  @IsString()
+  @Length(2, 2)
+  @Matches(/^[A-Z]{2}$/i)
+  deliveryTipRegionCode?: string;
 }

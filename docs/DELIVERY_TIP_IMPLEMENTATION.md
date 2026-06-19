@@ -28,10 +28,13 @@ Permettre au client de laisser un **pourboire livreur** lors d’un checkout gro
 | `deliveryTipFixed` | 1ᵉʳ preset en mode `fixed` (rétrocompat.) |
 | `deliveryTipPercent` | 1ᵉʳ preset en mode `percent` (rétrocompat.) |
 | `deliveryTipPresets` | Liste legacy (1 seul mode) |
-| `deliveryTipFixedPresets` | Options montant fixe ($) |
+| `deliveryTipFixedPresets` | Options montant fixe (devise région) |
 | `deliveryTipPercentPresets` | Options pourcentage (% sous-total livraison) |
+| `deliveryTipByRegion` | Map `{ [ISO2]: { deliveryTipEnabled, deliveryTipFixedPresets, deliveryTipPercentPresets } }` |
 
-Les montants fixes admin sont libellés dans `platform_shipping_settings.currency` (base **CAD**). L’app mobile convertit ces montants vers la devise checkout (ex. XAF) via les taux journaliers CAD (`ExchangeRatesService` / API Fawaz Ahmed). Les pourcentages s’appliquent au sous-total livraison dans la devise checkout (sans conversion).
+Chaque **région active** a sa propre configuration de pourboire. Les montants fixes sont saisis dans la **devise de la région** (sans conversion). L’app mobile et le site web chargent les tips via `GET /platform/shipping-settings?regionCode=XX` (`user.appCountryCode` côté app). Si aucune entrée régionale n’existe, repli sur les champs globaux legacy.
+
+Plafond tip **personnalisé** : 50 % du sous-total articles livraison (après coupon). Les **presets admin** sont toujours acceptés.
 
 ### `orders` (nouveau)
 
@@ -75,7 +78,8 @@ Tests unitaires : `delivery-tip-allocation.util.spec.ts` (Jest).
 {
   "addressId": "…",
   "fulfillmentByStoreId": { "storeId": "delivery" },
-  "deliveryTipTotalCents": 1200
+  "deliveryTipTotalCents": 1200,
+  "coupons": [{ "storeId": "…", "code": "PROMO" }]
 }
 ```
 
@@ -151,13 +155,27 @@ Champs order : `stripeDeliveryTipTransferReversalId`, `stripeDeliveryTipTransfer
 
 ## 8. Admin
 
-Déjà en place : `/livraisons/shipping-settings` (section « Pourboire livreur »).
+`/livraisons/shipping-settings` — section « Pourboire livreur » :
+
+- dropdown **Région active** (régions actives depuis `/settings/regions`) ;
+- montants fixes libellés dans la **devise de la région** ;
+- enregistrement via `PUT` + `deliveryTipRegionCode` (met à jour `deliveryTipByRegion[code]`).
+
+## 8b. Site web (pages publiques)
+
+| Page | Fichier | Comportement |
+|------|---------|--------------|
+| Livraison & zones | `public/js/delivery-page.js` | `GET /platform/shipping-settings?regionCode=` (région primaire) + panneau pourboire |
+| Devenir livreur | `public/js/courier-page.js` | idem (barème + retenue, cohérence devise) |
+| Tarifs | `public/js/pricing-page.js` | idem |
+
+Helper partagé : `public/js/shipping-fee-util.js` (`resolvePrimaryRegionCode`, `platformShippingSettingsPath`).
 
 ---
 
 ## 9. Déploiement / tests manuels
 
-1. Admin : activer tip, fixe 3 $ ou 10 %.
+1. Admin : activer tip par région (ex. CA — 3 $ fixe + 10 %), puis CM — montants XAF.
 2. Panier 2 boutiques livraison, adresse valide → preview affiche 2 lignes.
 3. Payer → vérifier metadata Stripe `tipB64`.
 4. Commandes : `deliveryTipCents` + `pending`.

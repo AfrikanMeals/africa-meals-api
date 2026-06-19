@@ -935,7 +935,9 @@ export class DeliveryAgentService {
   async listPendingOrders(user: UserModel) {
     this.assertDeliveryAgent(user);
     const { maxDeliveryRadiusKm } =
-      await this._platformShipping.getPublicSettings();
+      await this._platformShipping.getPublicSettings(
+        String(user.appCountryCode ?? '').trim().toUpperCase() || undefined,
+      );
     const rows = await this._orders
       .find({
         shouldShip: true,
@@ -1666,7 +1668,9 @@ export class DeliveryAgentService {
 
   async listShippingPaymentHistory(user: UserModel) {
     this.assertDeliveryAgent(user);
-    const settings = await this._platformShipping.getPublicSettings();
+    const settings = await this._platformShipping.getPublicSettings(
+      String(user.appCountryCode ?? '').trim().toUpperCase() || undefined,
+    );
     const agentId = new Types.ObjectId(String(user.id));
     const rows = await this._orders
       .find({

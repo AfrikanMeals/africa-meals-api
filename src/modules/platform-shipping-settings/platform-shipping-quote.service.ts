@@ -82,7 +82,9 @@ export class PlatformShippingQuoteService {
       dest.lat,
       dest.lon,
     );
-    const settings = await this._settingsService.getPublicSettings();
+    const settings = await this._settingsService.getPublicSettings(
+      String(user.appCountryCode ?? '').trim().toUpperCase() || undefined,
+    );
     const computed = computePlatformShippingFeeFromDistance(
       settings,
       distanceKm,

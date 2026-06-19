@@ -80,6 +80,35 @@ export class PlatformShippingSettingsModel {
   /** Options pourcentage (% du sous-total livraison). */
   @Prop({ type: [Number], default: [] })
   deliveryTipPercentPresets: number[];
+
+  /** @deprecated Préférer settingsByRegion — conservé pour migration. */
+  @Prop({ type: Object, default: {} })
+  deliveryTipByRegion: Record<
+    string,
+    {
+      deliveryTipEnabled: boolean;
+      deliveryTipFixedPresets: number[];
+      deliveryTipPercentPresets: number[];
+    }
+  >;
+
+  /** Paramètres livraison plateforme par région active (ISO2). */
+  @Prop({ type: Object, default: {} })
+  settingsByRegion: Record<
+    string,
+    {
+      perKmRate: number;
+      deliveryBasePrice: number;
+      maxDeliveryRadiusKm: number;
+      ranges: { minKm: number; maxKm: number; fee: number }[];
+      deliveryWithheldFeeMode: PlatformFeeMode;
+      deliveryWithheldFeeFixed: number;
+      deliveryWithheldFeePercent: number;
+      deliveryTipEnabled: boolean;
+      deliveryTipFixedPresets: number[];
+      deliveryTipPercentPresets: number[];
+    }
+  >;
 }
 
 export type PlatformShippingSettingsDocument =
