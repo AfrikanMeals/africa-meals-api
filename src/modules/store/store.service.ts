@@ -26,6 +26,7 @@ import {
   bustCatalogListingPublicCaches,
   getOrSetCache,
 } from '@common/redis-app-cache';
+import { shouldApplyCatalogRegionFilter } from '@common/catalog-public-id.util';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import {
   BadRequestException,
@@ -452,11 +453,15 @@ export class StoreService {
     },
   ) {
     if (options?.requireMobileVisibility) {
-      const clientRegion =
-        await this._supportedCountries.resolveClientCatalogRegion(
-          options.user,
-          options.countryCode,
-        );
+      const clientRegion = shouldApplyCatalogRegionFilter(
+        options.clientPlatform,
+        options.countryCode,
+      )
+        ? await this._supportedCountries.resolveClientCatalogRegion(
+            options.user,
+            options.countryCode,
+          )
+        : undefined;
       await this.assertStoreVisibleForClient(
         id,
         options.clientPlatform,
@@ -544,11 +549,15 @@ export class StoreService {
     if (!Types.ObjectId.isValid(id)) {
       return null;
     }
-    const clientRegion =
-      await this._supportedCountries.resolveClientCatalogRegion(
-        options?.user,
-        options?.countryCode,
-      );
+    const clientRegion = shouldApplyCatalogRegionFilter(
+      options?.clientPlatform,
+      options?.countryCode,
+    )
+      ? await this._supportedCountries.resolveClientCatalogRegion(
+          options?.user,
+          options?.countryCode,
+        )
+      : undefined;
     if (
       !(await this.isStoreVisibleForClient(
         id,
@@ -573,7 +582,7 @@ export class StoreService {
     const doc = await this._storeModel
       .findById(storeOid)
       .select(
-        'bio profileImage name status email phoneNumber currency supportsShipping acceptsOrders acceptsMealPreOrders mealPreOrderCatalogScope',
+        'bio profileImage name status email phoneNumber currency region supportsShipping acceptsOrders acceptsMealPreOrders mealPreOrderCatalogScope',
       )
       .populate({
         path: 'address',

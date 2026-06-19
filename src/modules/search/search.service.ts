@@ -19,6 +19,7 @@ import {
   getOrSetCache,
   stableCacheHash,
 } from '@common/redis-app-cache';
+import { shouldApplyCatalogRegionFilter } from '@common/catalog-public-id.util';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject, Injectable } from '@nestjs/common';
 import { OfferModel, OfferStatusEnum } from '@schemas/offer.schema';
@@ -1682,11 +1683,15 @@ export class SearchService {
     if (!Types.ObjectId.isValid(storeId)) {
       return { items: [], total: 0 };
     }
-    const clientRegion =
-      await this._supportedCountries.resolveClientCatalogRegion(
-        user,
-        countryCode,
-      );
+    const clientRegion = shouldApplyCatalogRegionFilter(
+      clientPlatform,
+      countryCode,
+    )
+      ? await this._supportedCountries.resolveClientCatalogRegion(
+          user,
+          countryCode,
+        )
+      : undefined;
     if (
       !(await this._storeService.isStoreVisibleForClient(
         storeId,

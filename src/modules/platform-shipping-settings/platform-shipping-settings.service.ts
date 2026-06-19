@@ -29,6 +29,9 @@ const DEFAULTS = {
   deliveryTipMode: 'fixed' as PlatformFeeMode,
   deliveryTipFixed: 0,
   deliveryTipPercent: 0,
+  deliveryTipPresets: [] as number[],
+  deliveryTipFixedPresets: [] as number[],
+  deliveryTipPercentPresets: [] as number[],
 };
 
 function assertAdmin(user: UserModel) {
@@ -64,6 +67,68 @@ function inferTipMode(
   if (percent > 0 && fixed <= 0) return 'percent';
   if (fixed > 0 && percent <= 0) return 'fixed';
   return DEFAULTS.deliveryTipMode;
+}
+
+const MAX_TIP_PRESETS = 8;
+
+function normalizePresetList(
+  raw: number[] | undefined,
+  percentMode: boolean,
+): number[] {
+  const values = Array.isArray(raw) ? raw : [];
+  const out: number[] = [];
+  const seen = new Set<string>();
+  for (const v of values) {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0) continue;
+    if (percentMode && n > 100) continue;
+    const key = n.toFixed(4);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(Math.round(n * 10000) / 10000);
+  }
+  out.sort((a, b) => a - b);
+  return out.slice(0, MAX_TIP_PRESETS);
+}
+
+function resolveTipPresetLists(
+  doc: PlatformShippingSettingsModel,
+  deliveryTipMode: PlatformFeeMode,
+): { fixedPresets: number[]; percentPresets: number[] } {
+  let fixedPresets = normalizePresetList(doc.deliveryTipFixedPresets, false);
+  let percentPresets = normalizePresetList(doc.deliveryTipPercentPresets, true);
+
+  if (!fixedPresets.length && !percentPresets.length) {
+    if (deliveryTipMode === 'percent') {
+      percentPresets = normalizePresetList(doc.deliveryTipPresets, true);
+      if (!percentPresets.length && (doc.deliveryTipPercent ?? 0) > 0) {
+        percentPresets = [doc.deliveryTipPercent];
+      }
+    } else {
+      fixedPresets = normalizePresetList(doc.deliveryTipPresets, false);
+      if (!fixedPresets.length && (doc.deliveryTipFixed ?? 0) > 0) {
+        fixedPresets = [doc.deliveryTipFixed];
+      }
+    }
+  }
+
+  return { fixedPresets, percentPresets };
+}
+
+function inferTipModeFromPresets(
+  stored: string | undefined,
+  fixedPresets: number[],
+  percentPresets: number[],
+  legacyFixed: number,
+  legacyPercent: number,
+): PlatformFeeMode {
+  if (stored === 'percent' || stored === 'fixed') {
+    if (fixedPresets.length && percentPresets.length) return 'fixed';
+    return stored;
+  }
+  if (percentPresets.length && !fixedPresets.length) return 'percent';
+  if (fixedPresets.length && !percentPresets.length) return 'fixed';
+  return inferTipMode(stored, legacyFixed, legacyPercent);
 }
 
 function normalizeRanges(
@@ -130,6 +195,19 @@ export class PlatformShippingSettingsService {
       doc.deliveryTipFixed ?? 0,
       doc.deliveryTipPercent ?? 0,
     );
+    const { fixedPresets, percentPresets } = resolveTipPresetLists(
+      doc,
+      deliveryTipMode,
+    );
+    const resolvedTipMode = inferTipModeFromPresets(
+      doc.deliveryTipMode,
+      fixedPresets,
+      percentPresets,
+      doc.deliveryTipFixed ?? 0,
+      doc.deliveryTipPercent ?? 0,
+    );
+    const legacyPresets =
+      resolvedTipMode === 'percent' ? percentPresets : fixedPresets;
     return {
       perKmRate: doc.perKmRate,
       deliveryBasePrice: doc.deliveryBasePrice ?? 0,
@@ -144,9 +222,12 @@ export class PlatformShippingSettingsService {
       deliveryWithheldFeeFixed: doc.deliveryWithheldFeeFixed ?? 0,
       deliveryWithheldFeePercent: doc.deliveryWithheldFeePercent ?? 0,
       deliveryTipEnabled: doc.deliveryTipEnabled ?? false,
-      deliveryTipMode,
-      deliveryTipFixed: doc.deliveryTipFixed ?? 0,
-      deliveryTipPercent: doc.deliveryTipPercent ?? 0,
+      deliveryTipMode: resolvedTipMode,
+      deliveryTipFixed: fixedPresets[0] ?? doc.deliveryTipFixed ?? 0,
+      deliveryTipPercent: percentPresets[0] ?? doc.deliveryTipPercent ?? 0,
+      deliveryTipPresets: legacyPresets,
+      deliveryTipFixedPresets: fixedPresets,
+      deliveryTipPercentPresets: percentPresets,
       updatedAt:
         (doc as unknown as { updatedAt?: Date }).updatedAt?.toISOString?.() ??
         null,
@@ -197,8 +278,44 @@ export class PlatformShippingSettingsService {
       dto.deliveryTipMode,
       current.deliveryTipMode,
     );
-    const tipFixed = dto.deliveryTipFixed ?? current.deliveryTipFixed;
-    const tipPercent = dto.deliveryTipPercent ?? current.deliveryTipPercent;
+    let fixedPresets = normalizePresetList(
+      dto.deliveryTipFixedPresets ?? current.deliveryTipFixedPresets,
+      false,
+    );
+    let percentPresets = normalizePresetList(
+      dto.deliveryTipPercentPresets ?? current.deliveryTipPercentPresets,
+      true,
+    );
+    if (
+      dto.deliveryTipFixedPresets == null &&
+      dto.deliveryTipPercentPresets == null &&
+      Array.isArray(dto.deliveryTipPresets) &&
+      dto.deliveryTipPresets.length
+    ) {
+      if (deliveryTipMode === 'percent') {
+        percentPresets = normalizePresetList(dto.deliveryTipPresets, true);
+        fixedPresets = [];
+      } else {
+        fixedPresets = normalizePresetList(dto.deliveryTipPresets, false);
+        percentPresets = [];
+      }
+    }
+    const resolvedFixed = fixedPresets;
+    const resolvedPercent = percentPresets;
+    if (
+      deliveryTipEnabled &&
+      resolvedFixed.length === 0 &&
+      resolvedPercent.length === 0
+    ) {
+      throw new BadRequestException('delivery_tip_presets_required');
+    }
+    const resolvedTipMode = inferTipModeFromPresets(
+      deliveryTipMode,
+      resolvedFixed,
+      resolvedPercent,
+      dto.deliveryTipFixed ?? current.deliveryTipFixed,
+      dto.deliveryTipPercent ?? current.deliveryTipPercent,
+    );
     const currency = String(dto.currency ?? current.currency)
       .trim()
       .toUpperCase();
@@ -220,11 +337,15 @@ export class PlatformShippingSettingsService {
             deliveryWithheldFeePercent:
               deliveryWithheldFeeMode === 'percent' ? withheldPercent : 0,
             deliveryTipEnabled,
-            deliveryTipMode,
-            deliveryTipFixed:
-              deliveryTipMode === 'fixed' ? tipFixed : 0,
-            deliveryTipPercent:
-              deliveryTipMode === 'percent' ? tipPercent : 0,
+            deliveryTipMode: resolvedTipMode,
+            deliveryTipFixed: resolvedFixed[0] ?? 0,
+            deliveryTipPercent: resolvedPercent[0] ?? 0,
+            deliveryTipPresets:
+              resolvedTipMode === 'percent'
+                ? resolvedPercent
+                : resolvedFixed,
+            deliveryTipFixedPresets: resolvedFixed,
+            deliveryTipPercentPresets: resolvedPercent,
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },

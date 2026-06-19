@@ -1,6 +1,7 @@
 import {
   clientPlatformFromRequest,
   resolveMongoIdFromPublicParam,
+  shouldApplyCatalogRegionFilter,
 } from './catalog-public-id.util';
 
 describe('catalog-public-id.util', () => {
@@ -26,5 +27,16 @@ describe('catalog-public-id.util', () => {
     expect(
       clientPlatformFromRequest({ headers: { 'x-client-platform': 'Web' } }),
     ).toBe('web');
+  });
+
+  it('never applies catalog region filter on web', () => {
+    expect(shouldApplyCatalogRegionFilter('web', undefined)).toBe(false);
+    expect(shouldApplyCatalogRegionFilter('web', 'CM')).toBe(false);
+    expect(shouldApplyCatalogRegionFilter('web', '')).toBe(false);
+  });
+
+  it('applies catalog region filter for non-web clients', () => {
+    expect(shouldApplyCatalogRegionFilter('ios', undefined)).toBe(true);
+    expect(shouldApplyCatalogRegionFilter(undefined, undefined)).toBe(true);
   });
 });

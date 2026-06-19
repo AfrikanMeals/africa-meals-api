@@ -21,6 +21,22 @@ type CartGroup = {
   totalPrice: number;
 };
 
+export type DeliveryTipPresetOption = {
+  cents: number;
+  kind: 'fixed' | 'percent';
+  value: number;
+  label: string;
+};
+
+type TipSettings = {
+  deliveryTipMode: string;
+  deliveryTipFixed: number;
+  deliveryTipPercent: number;
+  deliveryTipPresets?: number[];
+  deliveryTipFixedPresets?: number[];
+  deliveryTipPercentPresets?: number[];
+};
+
 function storeMongoId(store: CartGroup['store']): string {
   const raw = store?._id ?? store?.id;
   if (raw == null) return '';
@@ -28,6 +44,24 @@ function storeMongoId(store: CartGroup['store']): string {
     return String((raw as { _id: unknown })._id);
   }
   return String(raw);
+}
+
+function formatPercentLabel(value: number): string {
+  return `${value % 1 === 0 ? value : value.toFixed(1)} %`;
+}
+
+function formatFixedLabel(value: number, currency: string): string {
+  const amount = Math.max(0, value);
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: amount % 1 === 0 ? 0 : 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${amount.toFixed(2)} ${currency}`;
+  }
 }
 
 export type DeliveryTipLegQuote = {
@@ -132,6 +166,107 @@ export class DeliveryTipService {
     }
   }
 
+  resolveTipPresetLists(settings: TipSettings): {
+    fixedPresets: number[];
+    percentPresets: number[];
+  } {
+    let fixedPresets = (settings.deliveryTipFixedPresets ?? []).filter(
+      (v) => Number.isFinite(v) && v >= 0,
+    );
+    let percentPresets = (settings.deliveryTipPercentPresets ?? []).filter(
+      (v) => Number.isFinite(v) && v >= 0,
+    );
+
+    if (!fixedPresets.length && !percentPresets.length) {
+      const legacy = (settings.deliveryTipPresets ?? []).filter(
+        (v) => Number.isFinite(v) && v >= 0,
+      );
+      if (settings.deliveryTipMode === 'percent') {
+        percentPresets = legacy.length
+          ? legacy
+          : settings.deliveryTipPercent > 0
+            ? [settings.deliveryTipPercent]
+            : [];
+      } else {
+        fixedPresets = legacy.length
+          ? legacy
+          : settings.deliveryTipFixed > 0
+            ? [settings.deliveryTipFixed]
+            : [];
+      }
+    }
+
+    return { fixedPresets, percentPresets };
+  }
+
+  tipPresetOptions(
+    settings: TipSettings,
+    deliveryGoodsSubtotalCents: number,
+    currency: string,
+  ): DeliveryTipPresetOption[] {
+    const { fixedPresets, percentPresets } =
+      this.resolveTipPresetLists(settings);
+    const options: DeliveryTipPresetOption[] = [];
+
+    for (const value of fixedPresets) {
+      const cents = Math.round(Math.max(0, value) * 100);
+      if (cents <= 0) continue;
+      options.push({
+        cents,
+        kind: 'fixed',
+        value,
+        label: formatFixedLabel(value, currency),
+      });
+    }
+
+    for (const value of percentPresets) {
+      const cents = Math.round(
+        (deliveryGoodsSubtotalCents * Math.max(0, value)) / 100,
+      );
+      if (cents <= 0) continue;
+      options.push({
+        cents,
+        kind: 'percent',
+        value,
+        label: formatPercentLabel(value),
+      });
+    }
+
+    options.sort((a, b) => a.cents - b.cents || a.kind.localeCompare(b.kind));
+    const seen = new Set<string>();
+    return options.filter((option) => {
+      const key = `${option.kind}:${option.value.toFixed(4)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  tipPresetCents(
+    settings: TipSettings,
+    deliveryGoodsSubtotalCents: number,
+    currency: string,
+  ): number[] {
+    return this.tipPresetOptions(
+      settings,
+      deliveryGoodsSubtotalCents,
+      currency,
+    ).map((option) => option.cents);
+  }
+
+  suggestedTipCents(
+    settings: TipSettings,
+    deliveryGoodsSubtotalCents: number,
+    currency: string,
+  ): number {
+    const presets = this.tipPresetCents(
+      settings,
+      deliveryGoodsSubtotalCents,
+      currency,
+    );
+    return presets[0] ?? 0;
+  }
+
   async preview(user: UserModel, dto: DeliveryTipPreviewDto) {
     const settings = await this.shippingSettings.getPublicSettings();
     const tipTotalCents = Math.max(0, Math.round(dto.deliveryTipTotalCents));
@@ -171,6 +306,12 @@ export class DeliveryTipService {
       };
     });
 
+    const tipPresetOptions = this.tipPresetOptions(
+      settings,
+      deliveryGoodsSubtotalCents,
+      settings.currency,
+    );
+
     return {
       enabled: settings.deliveryTipEnabled,
       currency: settings.currency,
@@ -180,26 +321,14 @@ export class DeliveryTipService {
       suggestedTipCents: this.suggestedTipCents(
         settings,
         deliveryGoodsSubtotalCents,
+        settings.currency,
       ),
+      tipPresetCents: tipPresetOptions.map((option) => option.cents),
+      tipPresetOptions,
       allocationPreview,
       pickupStoresSkipped: pickupStoreIds,
       warnings: [] as string[],
     };
-  }
-
-  suggestedTipCents(
-    settings: {
-      deliveryTipMode: string;
-      deliveryTipFixed: number;
-      deliveryTipPercent: number;
-    },
-    deliveryGoodsSubtotalCents: number,
-  ): number {
-    if (settings.deliveryTipMode === 'percent') {
-      const pct = Math.max(0, Number(settings.deliveryTipPercent) || 0);
-      return Math.round((deliveryGoodsSubtotalCents * pct) / 100);
-    }
-    return Math.round((Math.max(0, Number(settings.deliveryTipFixed) || 0)) * 100);
   }
 
   allocateForCheckout(params: {

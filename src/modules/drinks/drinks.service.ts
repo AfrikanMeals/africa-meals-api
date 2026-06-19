@@ -1,5 +1,6 @@
 import { detectCatalogImageStorageKind } from '@common/media/detect-storage-engine.util';
 import { escapeMongoRegex } from '@common/mongo/escape-regex.util';
+import { shouldApplyCatalogRegionFilter } from '@common/catalog-public-id.util';
 import {
   isStripeConnectOnboardingCompleteUser,
   productEmbeddedStoreOwnerStripeOnboardedStages,
@@ -401,20 +402,25 @@ export class DrinksService {
     if (!Types.ObjectId.isValid(storeId)) {
       return [];
     }
-    const clientRegion =
-      await this._supportedCountries.resolveClientCatalogRegion(
-        user,
-        countryCode,
-      );
+    const clientRegion = shouldApplyCatalogRegionFilter(
+      clientPlatform,
+      countryCode,
+    )
+      ? await this._supportedCountries.resolveClientCatalogRegion(
+          user,
+          countryCode,
+        )
+      : undefined;
     const storeLean = await this._storeModel
       .findById(storeId)
       .select('status region')
       .lean()
       .exec();
     if (
-      !storeLean ||
-      normalizeCountryCode(storeLean.region) !==
-        normalizeCountryCode(clientRegion)
+      clientRegion &&
+      (!storeLean ||
+        normalizeCountryCode(storeLean.region) !==
+          normalizeCountryCode(clientRegion))
     ) {
       return [];
     }

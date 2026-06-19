@@ -1,5 +1,6 @@
 import { detectCatalogImageStorageKind } from '@common/media/detect-storage-engine.util';
 import { buildCaseInsensitiveExactRegex, escapeMongoRegex } from '@common/mongo/escape-regex.util';
+import { shouldApplyCatalogRegionFilter } from '@common/catalog-public-id.util';
 import { MediasService } from '@modules/medias/medias.service';
 import { prepareIncomingUploadFile } from 'src/incoming-upload-file';
 import {
@@ -417,15 +418,20 @@ export class ProductsService {
     id: string,
     user?: UserModel,
     countryCode?: string,
+    clientPlatform?: string,
   ) {
     if (!Types.ObjectId.isValid(id)) {
       throw new NotFoundException('product_not_found');
     }
-    const clientRegion =
-      await this._supportedCountries.resolveClientCatalogRegion(
-        user,
-        countryCode,
-      );
+    const clientRegion = shouldApplyCatalogRegionFilter(
+      clientPlatform,
+      countryCode,
+    )
+      ? await this._supportedCountries.resolveClientCatalogRegion(
+          user,
+          countryCode,
+        )
+      : undefined;
     return getOrSetCache(
       this._cacheManager,
       AppCacheKeys.productDetail(id, clientRegion),
@@ -441,7 +447,10 @@ export class ProductsService {
     );
   }
 
-  private async _loadProductDetailForShop(id: string, clientRegion: string) {
+  private async _loadProductDetailForShop(
+    id: string,
+    clientRegion?: string,
+  ) {
     const doc = await this.findOneById(id);
     if (!doc) {
       throw new NotFoundException('product_not_found');
@@ -466,7 +475,11 @@ export class ProductsService {
       const storeRegion = normalizeCountryCode(
         (storeLean as { region?: string } | null)?.region,
       );
-      if (storeRegion && storeRegion !== normalizeCountryCode(clientRegion)) {
+      if (
+        clientRegion &&
+        storeRegion &&
+        storeRegion !== normalizeCountryCode(clientRegion)
+      ) {
         throw new NotFoundException('product_not_found');
       }
       dailyMenuRows =

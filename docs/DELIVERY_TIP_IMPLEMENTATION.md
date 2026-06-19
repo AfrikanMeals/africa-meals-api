@@ -9,7 +9,7 @@ Périmètre : API Nest, checkout Stripe groupé, versement livreur, remboursemen
 
 Permettre au client de laisser un **pourboire livreur** lors d’un checkout groupé (plusieurs boutiques), avec :
 
-- configuration admin (activé/désactivé, montant fixe ou % commande suggéré) ;
+- configuration admin (activé/désactivé, **plusieurs options** montant fixe ou % commande, plus montant personnalisé côté app) ;
 - **un seul montant** saisi par le client ;
 - **répartition automatique** par commande livraison (`by_shipping_fee`) ;
 - **versement au livreur assigné** à la livraison terminée (`completed`) ;
@@ -25,8 +25,13 @@ Permettre au client de laisser un **pourboire livreur** lors d’un checkout gro
 |-------|------|
 | `deliveryTipEnabled` | Active le bloc pourboire |
 | `deliveryTipMode` | `fixed` \| `percent` |
-| `deliveryTipFixed` | Montant suggéré ($) |
-| `deliveryTipPercent` | % du sous-total livraison suggéré |
+| `deliveryTipFixed` | 1ᵉʳ preset en mode `fixed` (rétrocompat.) |
+| `deliveryTipPercent` | 1ᵉʳ preset en mode `percent` (rétrocompat.) |
+| `deliveryTipPresets` | Liste legacy (1 seul mode) |
+| `deliveryTipFixedPresets` | Options montant fixe ($) |
+| `deliveryTipPercentPresets` | Options pourcentage (% sous-total livraison) |
+
+Les montants fixes admin sont libellés dans `platform_shipping_settings.currency` (base **CAD**). L’app mobile convertit ces montants vers la devise checkout (ex. XAF) via les taux journaliers CAD (`ExchangeRatesService` / API Fawaz Ahmed). Les pourcentages s’appliquent au sous-total livraison dans la devise checkout (sans conversion).
 
 ### `orders` (nouveau)
 

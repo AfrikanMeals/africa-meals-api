@@ -20,3 +20,11 @@ export function clientPlatformFromRequest(
   const value = Array.isArray(raw) ? raw[0] : raw;
   return String(value ?? '').trim().toLowerCase();
 }
+
+/** Vitrine web publique : pas de filtre région (liens partagés multi-régions). */
+export function shouldApplyCatalogRegionFilter(
+  clientPlatform: string | undefined,
+  _countryCode?: string | undefined,
+): boolean {
+  return String(clientPlatform ?? '').toLowerCase() !== 'web';
+}

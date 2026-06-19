@@ -68,6 +68,18 @@ export class PlatformShippingSettingsModel {
   /** % de la valeur commande (ex. 10 = 10 %). */
   @Prop({ type: Number, default: 0 })
   deliveryTipPercent: number;
+
+  /** Options de pourboire proposées (montants $ ou % selon deliveryTipMode). @deprecated Utiliser deliveryTipFixedPresets / deliveryTipPercentPresets */
+  @Prop({ type: [Number], default: [] })
+  deliveryTipPresets: number[];
+
+  /** Options montant fixe ($). */
+  @Prop({ type: [Number], default: [] })
+  deliveryTipFixedPresets: number[];
+
+  /** Options pourcentage (% du sous-total livraison). */
+  @Prop({ type: [Number], default: [] })
+  deliveryTipPercentPresets: number[];
 }
 
 export type PlatformShippingSettingsDocument =

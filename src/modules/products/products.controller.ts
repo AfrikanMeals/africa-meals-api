@@ -1,5 +1,6 @@
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import { OptionalAuthGuard } from '@modules/auth/guards/optional.auth.guard';
+import { clientPlatformFromRequest } from '@common/catalog-public-id.util';
 import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import {
   Body,
@@ -61,6 +62,7 @@ export class ProductsController {
       id,
       req.user as UserModel | undefined,
       countryCode,
+      clientPlatformFromRequest(req),
     );
   }
 

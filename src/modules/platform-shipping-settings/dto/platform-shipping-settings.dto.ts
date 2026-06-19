@@ -153,4 +153,42 @@ export class UpdatePlatformShippingSettingsDto {
   @Min(0)
   @Max(100)
   deliveryTipPercent?: number;
+
+  @ApiPropertyOptional({
+    type: [Number],
+    example: [2, 3, 5],
+    description:
+      'Options de pourboire proposées ($ ou % selon deliveryTipMode). Au moins une si deliveryTipEnabled.',
+  })
+  @IsOptional()
+  @IsArray()
+  @Type(() => Number)
+  @IsNumber({}, { each: true })
+  @Min(0, { each: true })
+  deliveryTipPresets?: number[];
+
+  @ApiPropertyOptional({
+    type: [Number],
+    example: [2, 3, 5],
+    description: 'Options montant fixe ($).',
+  })
+  @IsOptional()
+  @IsArray()
+  @Type(() => Number)
+  @IsNumber({}, { each: true })
+  @Min(0, { each: true })
+  deliveryTipFixedPresets?: number[];
+
+  @ApiPropertyOptional({
+    type: [Number],
+    example: [5, 10, 15],
+    description: 'Options pourcentage (% sous-total livraison).',
+  })
+  @IsOptional()
+  @IsArray()
+  @Type(() => Number)
+  @IsNumber({}, { each: true })
+  @Min(0, { each: true })
+  @Max(100, { each: true })
+  deliveryTipPercentPresets?: number[];
 }
