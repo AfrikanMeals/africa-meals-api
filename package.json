@@ -31,7 +31,8 @@
     "audit:ci": "npm audit --audit-level=high",
     "bench:api": "node scripts/api-performance-report.mjs",
     "loyalty:backfill": "ts-node -r tsconfig-paths/register src/scripts/loyalty-backfill-paid-orders.ts",
-    "stores:backfill-region": "ts-node -r tsconfig-paths/register src/scripts/store-region-backfill.ts"
+    "stores:backfill-region": "ts-node -r tsconfig-paths/register src/scripts/store-region-backfill.ts",
+    "orders:fix-zero-decimal": "ts-node -r tsconfig-paths/register src/scripts/fix-zero-decimal-order-amounts.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1068.0",

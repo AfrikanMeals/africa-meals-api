@@ -32,6 +32,11 @@ import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { haversineDistance } from 'src/utils/helpers';
 import { mapInChunks } from '@utils/map-in-chunks';
+import {
+  fromStripeMinorUnits,
+  stripeAmountFactor,
+  toStripeMinorUnits,
+} from '@utils/stripe-currency-amount.util';
 import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema';
 import {
   generatePickupCode,
@@ -1344,12 +1349,22 @@ export class OrdersService {
       taxCountryCode = breakdown.countryCode;
     }
 
+    const currencyCode = (
+      opts?.currency ??
+      (o as { currency?: string }).currency ??
+      'CAD'
+    )
+      .trim()
+      .toUpperCase() || 'CAD';
+
     let totalPrice: number;
     let shippingStored: number;
     if (gC != null && sC != null) {
-      const taxPart = tC ?? Math.round(taxTotal * 100 + Number.EPSILON);
-      totalPrice = Math.round(gC + sC + taxPart + Number.EPSILON) / 100;
-      shippingStored = sC / 100;
+      const taxPart =
+        tC ?? toStripeMinorUnits(taxTotal, currencyCode);
+      const totalMinor = Math.round(gC + sC + taxPart + Number.EPSILON);
+      totalPrice = fromStripeMinorUnits(totalMinor, currencyCode);
+      shippingStored = fromStripeMinorUnits(sC, currencyCode);
     } else {
       shippingStored = ship;
       totalPrice =

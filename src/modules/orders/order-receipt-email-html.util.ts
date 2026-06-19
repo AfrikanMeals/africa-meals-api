@@ -1,4 +1,5 @@
 import { escapeEmailHtml } from '@modules/mailer/email-brand.util';
+import { fromStripeMinorUnits } from '@utils/stripe-currency-amount.util';
 import {
   formatInvoiceMoney,
   inferInvoicePaymentMethodLabel,
@@ -143,7 +144,7 @@ export function buildOrderReceiptEmailBodyHtml(
   );
   const shipping = Math.max(0, Number(snapshot.shippingPrice) || 0);
   const tipCents = Math.max(0, Math.round(Number(snapshot.deliveryTipCents) || 0));
-  const tip = tipCents / 100;
+  const tip = fromStripeMinorUnits(tipCents, currency);
   const tax = Math.max(0, Number(snapshot.taxTotal) || 0);
   const total = Math.max(0, Number(snapshot.totalPrice) || 0);
   const discount = Math.max(0, linesSubtotal + shipping + tip + tax - total);
