@@ -717,6 +717,20 @@ export class AdsTargetingService {
     const campaignIds = (campaigns as Array<Record<string, unknown>>)
       .map((c) => String(c._id ?? '').trim())
       .filter(Boolean);
+    const storeIds = [
+      ...new Set(
+        (campaigns as Array<Record<string, unknown>>)
+          .map((c) => {
+            const storeRaw = c.store;
+            if (storeRaw && typeof storeRaw === 'object' && '_id' in storeRaw) {
+              return String((storeRaw as { _id?: unknown })._id ?? '').trim();
+            }
+            return String(storeRaw ?? '').trim();
+          })
+          .filter(Boolean),
+      ),
+    ];
+    const regionByStoreId = await this.adsService.resolveStoreRegionMap(storeIds);
     const placementStats = await this.campaignPlacementStats(
       userKey,
       placement,
@@ -728,15 +742,15 @@ export class AdsTargetingService {
       const campaignId = String(campaign._id ?? '').trim();
       if (!campaignId) continue;
       const storeRaw = campaign.store;
-      if (storeRaw && typeof storeRaw === 'object') {
-        const storeRegion = String(
-          (storeRaw as Record<string, unknown>).region ?? '',
-        )
-          .trim()
-          .toUpperCase();
-        if (storeRegion && storeRegion !== clientRegion) {
-          continue;
-        }
+      let storeId = '';
+      if (storeRaw && typeof storeRaw === 'object' && '_id' in storeRaw) {
+        storeId = String((storeRaw as { _id?: unknown })._id ?? '').trim();
+      } else if (storeRaw) {
+        storeId = String(storeRaw).trim();
+      }
+      const storeRegion = storeId ? regionByStoreId.get(storeId) : undefined;
+      if (!storeRegion || !this.adsService.matchesPublicClientRegion(clientRegion, storeRegion)) {
+        continue;
       }
       const rules = (campaign.targetingRules ?? {}) as Record<string, unknown>;
       if (!matchesPlacementRules(rules, placement)) {

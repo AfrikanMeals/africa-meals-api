@@ -71,6 +71,16 @@ export class CreateAdManagementDto {
   @IsBoolean()
   isActive?: boolean;
 
+  @ApiPropertyOptional({
+    description:
+      'Région ISO2 (obligatoire pour bannière globale sans boutique).',
+    example: 'CM',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2)
+  region?: string;
+
   @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
   @IsDateString()
   validFrom: string;
@@ -153,6 +163,12 @@ export class PatchAdManagementDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ description: 'Région ISO2 (bannière globale).' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2)
+  region?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

@@ -33,6 +33,7 @@ import { MediasService } from '@modules/medias/medias.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
+import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
 import {
   AdMarketingEntityStatus,
   VendorStatusEmailService,
@@ -112,6 +113,8 @@ export type AdManagementRow = {
   id: string;
   storeId: string | null;
   storeName: string | null;
+  /** Région ISO2 de diffusion (globale ou boutique). */
+  region: string | null;
   title: string;
   subtitle: string;
   actionText: string;
@@ -493,6 +496,18 @@ export class AdsService implements OnModuleInit {
       user,
       countryCode,
     );
+  }
+
+  /** Résolution région boutique (region + adresse) pour le filtrage public. */
+  async resolveStoreRegionMap(storeIds: string[]): Promise<Map<string, string>> {
+    return this._storeRegionsById(storeIds);
+  }
+
+  matchesPublicClientRegion(
+    clientRegion: string,
+    entityRegion?: string | null,
+  ): boolean {
+    return this._matchesClientRegion(clientRegion, entityRegion);
   }
 
   private async publishAdDomainEvent<T extends DomainEventType>(
@@ -2256,8 +2271,8 @@ export class AdsService implements OnModuleInit {
     const regionByStoreId = await this._storeRegionsById(storeIds);
     const filtered = rows.filter((row) => {
       const storeRegion = regionByStoreId.get(row.storeId);
-      if (!storeRegion) return true;
-      return storeRegion === region;
+      if (!storeRegion) return false;
+      return this._matchesClientRegion(region, storeRegion);
     });
     return {
       items: filtered.map((row) => ({
@@ -3618,6 +3633,10 @@ export class AdsService implements OnModuleInit {
       id,
       storeId,
       storeName,
+      region:
+        doc.region != null && String(doc.region).trim() !== ''
+          ? normalizeCountryCode(String(doc.region))
+          : null,
       title: String(doc.title ?? ''),
       subtitle: String(doc.subtitle ?? ''),
       actionText: String(doc.actionText ?? ''),
@@ -3856,19 +3875,65 @@ export class AdsService implements OnModuleInit {
     if (!oids.length) return new Map();
     const rows = await this._storeModel
       .find({ _id: { $in: oids } })
-      .select('region')
+      .select('region address')
+      .populate({ path: 'address', select: 'countryCode' })
       .lean()
       .exec();
     const out = new Map<string, string>();
     for (const row of rows) {
-      out.set(
-        String(row._id),
-        String(row.region ?? '')
-          .trim()
-          .toUpperCase(),
+      let code = normalizeCountryCode(
+        (row as { region?: string }).region,
       );
+      if (!code) {
+        const addr = (row as { address?: { countryCode?: string } | null })
+          .address;
+        code = normalizeCountryCode(addr?.countryCode);
+      }
+      if (code) {
+        out.set(String(row._id), code);
+      }
     }
     return out;
+  }
+
+  private _matchesClientRegion(
+    clientRegion: string,
+    entityRegion?: string | null,
+  ): boolean {
+    const target = normalizeCountryCode(clientRegion);
+    const source = normalizeCountryCode(entityRegion ?? '');
+    if (!target || !source) return false;
+    return source === target;
+  }
+
+  private async _resolveStoreRegionCode(storeId: string): Promise<string> {
+    const map = await this._storeRegionsById([storeId]);
+    return map.get(storeId) ?? '';
+  }
+
+  private async _resolveAdRegionForWrite(
+    user: UserModel,
+    storeOid: Types.ObjectId | undefined,
+    dtoRegion?: string | null,
+  ): Promise<string> {
+    if (storeOid) {
+      const fromStore = await this._resolveStoreRegionCode(storeOid.toString());
+      if (!fromStore) {
+        throw new BadRequestException('store_region_required');
+      }
+      return fromStore;
+    }
+    const code = normalizeCountryCode(dtoRegion ?? '');
+    if (!code) {
+      throw new BadRequestException('region_required_for_global_ad');
+    }
+    if (!(await this._supportedCountries.isActiveCode(code))) {
+      throw new BadRequestException('region_not_active');
+    }
+    if (user.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('global_ad_vendor_forbidden');
+    }
+    return code;
   }
 
   private async _loadListPublic(clientRegion: string): Promise<AdModel[]> {
@@ -3915,11 +3980,14 @@ export class AdsService implements OnModuleInit {
         return false;
       }
       const storeOid = this._storeIdFromAdDoc(d);
-      if (storeOid == null) return true;
+      if (storeOid == null) {
+        const adRegion = String(d.region ?? '').trim();
+        return this._matchesClientRegion(clientRegion, adRegion);
+      }
       if (!paymentsReadyStoreIds.has(storeOid.toString())) return false;
       const storeRegion = regionByStoreId.get(storeOid.toString());
-      if (!storeRegion) return true;
-      return storeRegion === clientRegion.trim().toUpperCase();
+      if (!storeRegion) return false;
+      return this._matchesClientRegion(clientRegion, storeRegion);
     }) as unknown as AdModel[];
     const withMedia = await this.resolvePublicAdImageUrls(data);
     return this.orderPublicAdsByMinTwoThirdsShop(withMedia);
@@ -4039,6 +4107,12 @@ export class AdsService implements OnModuleInit {
       ? this.assertActionTargetValue(dto.actionType, dto.actionTarget)
       : undefined;
 
+    const regionCode = await this._resolveAdRegionForWrite(
+      user,
+      storeOid,
+      dto.region,
+    );
+
     const channelAvailability = await this._getAvailableNotificationChannels();
     const created = await this.adModel.create({
       isActive,
@@ -4049,6 +4123,7 @@ export class AdsService implements OnModuleInit {
       imageUrl: dto.imageUrl?.trim() || undefined,
       sortOrder: dto.sortOrder ?? 0,
       store: storeOid,
+      region: regionCode,
       validFrom,
       validUntil,
       actionType: dto.actionType,
@@ -4197,6 +4272,16 @@ export class AdsService implements OnModuleInit {
       existing.imageUrl = next;
     }
     if (dto.sortOrder != null) existing.sortOrder = dto.sortOrder;
+    if (dto.region !== undefined) {
+      if (storeIdStr) {
+        throw new BadRequestException('store_ad_region_locked');
+      }
+      existing.region = await this._resolveAdRegionForWrite(
+        user,
+        undefined,
+        dto.region,
+      );
+    }
     if (dto.isActive != null) existing.isActive = dto.isActive;
     if (dto.actionType != null) existing.actionType = dto.actionType;
 

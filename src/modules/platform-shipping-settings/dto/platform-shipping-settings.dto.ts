@@ -33,6 +33,17 @@ export class PlatformShippingRangeDto {
   maxKm: number;
 
   @ApiProperty({
+    example: 2.5,
+    description:
+      'Prix de base pour cette tranche (remplace le prix de base global lorsque la distance tombe dans [minKm, maxKm))',
+  })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  basePrice?: number;
+
+  @ApiProperty({
     example: 3.99,
     description: 'Forfait (devise plateforme) pour cette tranche',
   })

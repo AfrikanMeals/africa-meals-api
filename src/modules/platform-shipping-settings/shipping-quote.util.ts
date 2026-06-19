@@ -37,11 +37,18 @@ export function extractLatLonFromGeoPoint(
   return { lat, lon };
 }
 
+export type PlatformShippingRangeForQuote = {
+  minKm: number;
+  maxKm: number;
+  basePrice?: number;
+  fee: number;
+};
+
 export type PlatformShippingSettingsForQuote = {
   perKmRate: number;
   deliveryBasePrice: number;
   maxDeliveryRadiusKm: number;
-  ranges: { minKm: number; maxKm: number; fee: number }[];
+  ranges: PlatformShippingRangeForQuote[];
 };
 
 /** Sous ce seuil (bruit GPS / coordonnées), la distance est traitée comme 0 pour le tarif. */
@@ -57,28 +64,60 @@ export function snapDistanceForShippingBillingKm(distanceKm: number): number {
   return distanceKm;
 }
 
-/** Tranche [minKm, maxKm) ; 0 si aucune tranche correspond (repli sur base + km). */
-export function findPlatformRangeFlat(
-  ranges: { minKm: number; maxKm: number; fee: number }[],
+/** Tranche [minKm, maxKm) correspondante ou null. */
+export function findMatchingPlatformRange(
+  ranges: PlatformShippingRangeForQuote[],
   distanceKm: number,
-): number {
+): PlatformShippingRangeForQuote | null {
   if (!ranges?.length) {
-    return 0;
+    return null;
   }
   for (const r of ranges) {
     const minKm = Number(r.minKm);
     const maxKm = Number(r.maxKm);
     if (distanceKm >= minKm && distanceKm < maxKm) {
-      return Number(r.fee) || 0;
+      return r;
     }
   }
-  return 0;
+  return null;
+}
+
+/** @deprecated Préférer resolvePlatformRangePricing */
+export function findPlatformRangeFlat(
+  ranges: PlatformShippingRangeForQuote[],
+  distanceKm: number,
+): number {
+  const match = findMatchingPlatformRange(ranges, distanceKm);
+  return match ? Number(match.fee) || 0 : 0;
+}
+
+/**
+ * Résout prix de base + forfait pour une distance.
+ * - Tranche trouvée : base = basePrice tranche si défini, sinon deliveryBasePrice global.
+ * - Hors tranche : base = deliveryBasePrice global, forfait = 0.
+ */
+export function resolvePlatformRangePricing(
+  ranges: PlatformShippingRangeForQuote[],
+  distanceKm: number,
+  globalDeliveryBasePrice: number,
+): { deliveryBasePrice: number; rangeFlat: number } {
+  const globalBase = Number(globalDeliveryBasePrice) || 0;
+  const match = findMatchingPlatformRange(ranges ?? [], distanceKm);
+  if (!match) {
+    return { deliveryBasePrice: globalBase, rangeFlat: 0 };
+  }
+  const rangeFlat = Number(match.fee) || 0;
+  const hasRangeBase =
+    match.basePrice !== undefined && match.basePrice !== null;
+  const deliveryBasePrice = hasRangeBase
+    ? Math.max(0, Number(match.basePrice) || 0)
+    : globalBase;
+  return { deliveryBasePrice, rangeFlat };
 }
 
 /**
  * Frais plateforme (dans le rayon max) :
- * **total = deliveryBasePrice + forfait tranche [min, max) + distance × perKmRate**.
- * Sans tranche correspondante : deliveryBasePrice + distance × perKmRate.
+ * **total = prix de base (tranche ou global) + forfait tranche + distance × perKmRate**.
  */
 export function computePlatformShippingFeeFromDistance(
   settings: PlatformShippingSettingsForQuote,
@@ -110,8 +149,11 @@ export function computePlatformShippingFeeFromDistance(
     };
   }
   const perKmRate = Number(settings.perKmRate) || 0;
-  const deliveryBasePrice = Number(settings.deliveryBasePrice) || 0;
-  const rangeFlat = findPlatformRangeFlat(settings.ranges ?? [], d);
+  const { deliveryBasePrice, rangeFlat } = resolvePlatformRangePricing(
+    settings.ranges ?? [],
+    d,
+    settings.deliveryBasePrice,
+  );
   const perKmComponent = d * perKmRate;
   const rawTotal = deliveryBasePrice + rangeFlat + perKmComponent;
   const total = Math.round((rawTotal + Number.EPSILON) * 100) / 100;

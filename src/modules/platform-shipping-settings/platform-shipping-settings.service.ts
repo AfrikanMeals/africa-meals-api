@@ -31,7 +31,7 @@ const DEFAULTS = {
   deliveryBasePrice: 0,
   maxDeliveryRadiusKm: 25,
   currency: 'CAD',
-  ranges: [] as { minKm: number; maxKm: number; fee: number }[],
+  ranges: [] as { minKm: number; maxKm: number; basePrice?: number; fee: number }[],
   deliveryWithheldFeeMode: 'percent' as PlatformFeeMode,
   deliveryWithheldFeeFixed: 0,
   deliveryWithheldFeePercent: 0,

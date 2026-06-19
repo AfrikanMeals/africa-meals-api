@@ -3,6 +3,8 @@ import { PlatformFeeMode } from '@schemas/platform-shipping-settings.schema';
 export type RegionShippingRange = {
   minKm: number;
   maxKm: number;
+  /** Prix de base propre à la tranche ; absent = repli sur deliveryBasePrice global. */
+  basePrice?: number;
   fee: number;
 };
 
@@ -84,7 +86,14 @@ function normalizeRanges(
     ) {
       continue;
     }
-    out.push({ minKm, maxKm, fee });
+    const baseRaw = o.basePrice;
+    const entry: RegionShippingRange = { minKm, maxKm, fee };
+    if (baseRaw !== undefined && baseRaw !== null && baseRaw !== '') {
+      const basePrice = Number(baseRaw);
+      if (!Number.isFinite(basePrice) || basePrice < 0) continue;
+      entry.basePrice = basePrice;
+    }
+    out.push(entry);
   }
   return out.sort((a, b) => a.minKm - b.minKm);
 }

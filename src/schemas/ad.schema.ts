@@ -67,6 +67,10 @@ export class AdModel extends BaseSchema {
   })
   store?: MongooseSchema.Types.ObjectId;
 
+  /** Région ISO2 cible (bannières globales admin). Pour les pubs boutique, dérivé de la boutique. */
+  @Prop({ required: false, trim: true, uppercase: true })
+  region?: string;
+
   @Prop({ required: false })
   validFrom?: Date;
 
@@ -167,6 +171,7 @@ export class AdModel extends BaseSchema {
 export const AdSchema = SchemaFactory.createForClass(AdModel);
 
 AdSchema.index({ store: 1, sortOrder: 1 });
+AdSchema.index({ region: 1, isActive: 1 });
 
 AdSchema.set('toJSON', {
   virtuals: true,

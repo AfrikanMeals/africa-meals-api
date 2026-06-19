@@ -37,12 +37,14 @@ export class PlatformShippingSettingsModel {
       {
         minKm: { type: Number, required: true },
         maxKm: { type: Number, required: true },
+        /** Prix de base propre à la tranche (remplace le global si défini). */
+        basePrice: { type: Number, default: 0 },
         fee: { type: Number, required: true },
       },
     ],
     default: [],
   })
-  ranges: { minKm: number; maxKm: number; fee: number }[];
+  ranges: { minKm: number; maxKm: number; basePrice?: number; fee: number }[];
 
   /** Frais prélevés par la plateforme sur le montant livraison facturé au client. */
   @Prop({ type: String, enum: PLATFORM_FEE_MODES, default: 'percent' })
@@ -100,7 +102,7 @@ export class PlatformShippingSettingsModel {
       perKmRate: number;
       deliveryBasePrice: number;
       maxDeliveryRadiusKm: number;
-      ranges: { minKm: number; maxKm: number; fee: number }[];
+      ranges: { minKm: number; maxKm: number; basePrice?: number; fee: number }[];
       deliveryWithheldFeeMode: PlatformFeeMode;
       deliveryWithheldFeeFixed: number;
       deliveryWithheldFeePercent: number;
