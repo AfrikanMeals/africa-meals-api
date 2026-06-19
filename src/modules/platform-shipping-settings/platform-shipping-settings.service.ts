@@ -60,8 +60,8 @@ function normalizeMode(
 }
 
 function normalizeRanges(
-  ranges: { minKm: number; maxKm: number; fee: number }[],
-): { minKm: number; maxKm: number; fee: number }[] {
+  ranges: { minKm: number; maxKm: number; basePrice?: number; fee: number }[],
+): { minKm: number; maxKm: number; basePrice?: number; fee: number }[] {
   const sorted = [...ranges].sort((a, b) => a.minKm - b.minKm);
   for (const r of sorted) {
     if (
@@ -71,6 +71,12 @@ function normalizeRanges(
         Number.isFinite(r.fee)
       )
     ) {
+      throw new BadRequestException('invalid_range_numbers');
+    }
+    if (r.basePrice != null && !Number.isFinite(r.basePrice)) {
+      throw new BadRequestException('invalid_range_numbers');
+    }
+    if (r.basePrice != null && r.basePrice < 0) {
       throw new BadRequestException('invalid_range_numbers');
     }
     if (r.minKm < 0 || r.maxKm <= r.minKm) {
@@ -157,6 +163,7 @@ export class PlatformShippingSettingsService {
       ranges: (resolved.ranges ?? []).map((r) => ({
         minKm: r.minKm,
         maxKm: r.maxKm,
+        ...(r.basePrice != null ? { basePrice: r.basePrice } : {}),
         fee: r.fee,
       })),
       deliveryWithheldFeeMode: resolved.deliveryWithheldFeeMode,

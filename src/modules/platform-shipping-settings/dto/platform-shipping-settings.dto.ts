@@ -67,7 +67,7 @@ export class UpdatePlatformShippingSettingsDto {
   @ApiProperty({
     example: 3.5,
     description:
-      'Forfait de base ajouté aux frais livraison (en plus de distance × perKmRate)',
+      'Prix de base global (repli hors tranche ou si une tranche n’a pas de basePrice propre)',
   })
   @Type(() => Number)
   @IsNumber()
