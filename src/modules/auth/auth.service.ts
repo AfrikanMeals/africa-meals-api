@@ -1317,7 +1317,7 @@ export class AuthService {
     return user;
   }
 
-  /** Upload audio pour messages vocaux (chat). Retourne l’URL publique Firebase. */
+  /** Upload audio pour messages vocaux (chat). Retourne l’URL publique (moteur admin). */
   async uploadChatVoiceFile(
     userId: string,
     file: Express.Multer.File,
@@ -1334,14 +1334,16 @@ export class AuthService {
       `users/${userId}/chat-voice`,
     );
     if (!url) throw new BadRequestException('voice_upload_failed');
+    const fileUrl =
+      (await this._mediasService.resolvePublicMediaUrl(url)) ?? url;
     return {
-      fileUrl: url,
+      fileUrl,
       mimeType: file.mimetype,
       sizeBytes: file.size,
     };
   }
 
-  /** Images et pièces jointes pour le chat (Firebase Storage). */
+  /** Images et pièces jointes pour le chat (moteur admin Paramètres → Stockage). */
   async uploadChatMediaFile(
     userId: string,
     file: Express.Multer.File,
@@ -1363,8 +1365,10 @@ export class AuthService {
       `users/${userId}/chat-media`,
     );
     if (!url) throw new BadRequestException('chat_media_upload_failed');
+    const fileUrl =
+      (await this._mediasService.resolvePublicMediaUrl(url)) ?? url;
     return {
-      fileUrl: url,
+      fileUrl,
       mimeType: file.mimetype,
       sizeBytes: file.size,
       fileName: file.originalname || 'file',

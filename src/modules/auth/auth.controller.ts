@@ -18,6 +18,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { MediasService } from '@modules/medias/medias.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
@@ -67,6 +68,9 @@ export class AuthController {
 
   @Inject(TeamsService)
   private readonly _teamsService: TeamsService;
+
+  @Inject(MediasService)
+  private readonly _mediasService: MediasService;
 
   @Post('register')
   @AuthRateLimit('register')
@@ -518,7 +522,7 @@ export class AuthController {
     if (!buffer.length) {
       throw new BadRequestException('empty_audio');
     }
-    const max = 15 * 1024 * 1024;
+    const max = await this._mediasService.getMaxFileSizeBytes();
     if (buffer.length > max) {
       throw new BadRequestException('file_too_large');
     }
@@ -624,7 +628,7 @@ export class AuthController {
     if (!buffer.length) {
       throw new BadRequestException('empty_file');
     }
-    const max = 20 * 1024 * 1024;
+    const max = await this._mediasService.getMaxFileSizeBytes();
     if (buffer.length > max) {
       throw new BadRequestException('file_too_large');
     }

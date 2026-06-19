@@ -1,3 +1,4 @@
+import { detectCatalogImageStorageKind } from '@common/media/detect-storage-engine.util';
 import { buildCaseInsensitiveExactRegex, escapeMongoRegex } from '@common/mongo/escape-regex.util';
 import { MediasService } from '@modules/medias/medias.service';
 import { prepareIncomingUploadFile } from 'src/incoming-upload-file';
@@ -25,10 +26,13 @@ import { Cache } from 'cache-manager';
 import { InjectModel } from '@nestjs/mongoose';
 import { ProductCategoryModel } from '@schemas/product-category.schema';
 import { productEmbeddedStoreOwnerStripeOnboardedStages } from '@modules/billing/stripe/stripe-connect-visibility';
-import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
+import {
+  ProductModel,
+  ProductStatusEnum,
+} from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
-import { Model, PipelineStage, Types } from 'mongoose';
+import { HydratedDocument, Model, PipelineStage, Types } from 'mongoose';
 import type { FavoriteListingPagePayload } from './dto/favorite-listing.payload';
 import { buildDailyMenuTodayForProduct } from '@utils/daily-menu-today-product.util';
 import { productDailyMenuListingPipelineStages } from '@utils/product-daily-menu-listing.pipeline';
@@ -244,7 +248,7 @@ export class ProductsService {
     return prepared.buffer?.length ?? prepared.size ?? 0;
   }
 
-  private async uploadGalleryToFirebase(
+  private async uploadGalleryImages(
     files: Express.Multer.File[] | undefined,
     user: UserModel,
     basePath: string,
@@ -271,6 +275,117 @@ export class ProductsService {
       items.push({ imageUrl: url });
     }
     return { items, uploadedUrls };
+  }
+
+  /** Migre les images legacy (base64 MongoDB) vers le moteur admin (MediasService). */
+  private async migrateLegacyProductImages(
+    doc: HydratedDocument<ProductModel>,
+    storeId: string,
+  ): Promise<boolean> {
+    const basePath = `stores/${storeId}/products`;
+    let changed = false;
+
+    const b64 = doc.imageBase64?.trim();
+    const mime = doc.imageMimeType?.trim();
+    if (b64 && mime && !doc.profileImage?.startsWith('http')) {
+      try {
+        const buffer = Buffer.from(b64, 'base64');
+        if (buffer.length) {
+          const ext = mime.includes('png')
+            ? '.png'
+            : mime.includes('webp')
+              ? '.webp'
+              : '.jpg';
+          const url = await this._mediasService.uploadSystemBuffer({
+            buffer,
+            contentType: mime,
+            basePath,
+            extension: ext,
+          });
+          doc.profileImage = url;
+          doc.set('imageBase64', undefined);
+          doc.set('imageMimeType', undefined);
+          changed = true;
+        }
+      } catch {
+        // conserve le legacy base64 si l’upload échoue
+      }
+    }
+
+    const gallery = doc.galleryImages;
+    if (Array.isArray(gallery) && gallery.length) {
+      const nextGallery: NonNullable<ProductModel['galleryImages']> = [];
+      for (const item of gallery) {
+        const gUrl = item.imageUrl?.trim();
+        if (gUrl?.startsWith('http')) {
+          nextGallery.push({ imageUrl: gUrl });
+          continue;
+        }
+        const gB64 = item.imageBase64?.trim();
+        const gMime = item.imageMimeType?.trim();
+        if (gB64 && gMime) {
+          try {
+            const buffer = Buffer.from(gB64, 'base64');
+            if (buffer.length) {
+              const ext = gMime.includes('png')
+                ? '.png'
+                : gMime.includes('webp')
+                  ? '.webp'
+                  : '.jpg';
+              const url = await this._mediasService.uploadSystemBuffer({
+                buffer,
+                contentType: gMime,
+                basePath: `${basePath}/gallery`,
+                extension: ext,
+              });
+              nextGallery.push({ imageUrl: url });
+              changed = true;
+              continue;
+            }
+          } catch {
+            nextGallery.push(item);
+            continue;
+          }
+        }
+        if (gUrl) nextGallery.push({ imageUrl: gUrl });
+      }
+      if (changed) doc.galleryImages = nextGallery;
+    }
+
+    if (changed) {
+      await doc.save();
+    }
+    return changed;
+  }
+
+  private async resolveVendorProductMediaUrls<
+    T extends {
+      profileImage?: string;
+      profileImages?: string[];
+      imageStoredInDb?: boolean;
+      imageStorageEngine?: ReturnType<typeof detectCatalogImageStorageKind>;
+    },
+  >(row: T): Promise<T> {
+    const mainRaw = row.profileImage;
+    const main =
+      mainRaw?.startsWith('data:') || !mainRaw
+        ? mainRaw
+        : ((await this._mediasService.resolvePublicMediaUrl(mainRaw)) ?? mainRaw);
+    const profileImages = await Promise.all(
+      (row.profileImages ?? []).map(async (u) => {
+        if (!u || u.startsWith('data:')) return u;
+        return (await this._mediasService.resolvePublicMediaUrl(u)) ?? u;
+      }),
+    );
+    const storedInDb =
+      Boolean(main?.startsWith('data:')) || row.imageStoredInDb === true;
+    return {
+      ...row,
+      profileImage: main,
+      profileImages,
+      imageStoredInDb: storedInDb,
+      imageStorageEngine: detectCatalogImageStorageKind(main, storedInDb),
+    };
   }
 
   private async deleteRemoteGalleryItems(rawGallery: unknown[]) {
@@ -737,6 +852,10 @@ export class ProductsService {
       profileImages,
       imageMimeType: mime || undefined,
       imageStoredInDb: Boolean(b64) || galleryHasBase64InDb,
+      imageStorageEngine: detectCatalogImageStorageKind(
+        mainSrc,
+        Boolean(b64) || galleryHasBase64InDb,
+      ),
       createdAt:
         p.createdAt instanceof Date
           ? p.createdAt.toISOString()
@@ -760,24 +879,25 @@ export class ProductsService {
     ) {
       throw new NotFoundException('product_not_found');
     }
-    const row = await this._productModel
+    const doc = await this._productModel
       .findOne({
         _id: new Types.ObjectId(productId),
         store: storeId,
       })
       .populate({ path: 'category', select: 'title' })
-      .lean()
       .exec();
-    if (!row) {
+    if (!doc) {
       throw new NotFoundException('product_not_found');
     }
+    await this.migrateLegacyProductImages(doc, storeId).catch(() => undefined);
+    const row = doc.toObject() as Record<string, unknown>;
     const store = await this._storeModel
       .findById(storeId)
       .select('currency')
       .lean()
       .exec();
     const mapped = this.mapVendorProductRow(
-      row as Record<string, unknown>,
+      row,
       String(store?.currency ?? 'CAD'),
     );
     const main =
@@ -791,16 +911,35 @@ export class ProductsService {
         typeof u === 'string' &&
         (u.startsWith('http://') || u.startsWith('https://')),
     );
-    return {
+    return this.resolveVendorProductMediaUrls({
       ...mapped,
       profileImage: main,
       profileImages: gallery,
       imageStoredInDb: false,
-    };
+    });
   }
 
   /** Liste catalogue vendeur (document allégé + catégorie peuplée). */
   async findByStoreId(storeId: string) {
+    const legacy = await this._productModel
+      .find({
+        store: storeId,
+        $or: [
+          { imageBase64: { $exists: true, $nin: [null, ''] } },
+          { 'galleryImages.imageBase64': { $exists: true, $nin: [null, ''] } },
+        ],
+      })
+      .select('_id')
+      .exec();
+    for (const { _id } of legacy) {
+      const doc = await this._productModel.findById(_id).exec();
+      if (doc) {
+        await this.migrateLegacyProductImages(doc, storeId).catch(
+          () => undefined,
+        );
+      }
+    }
+
     const rows = await this._productModel
       .find({ store: storeId })
       .populate({ path: 'category', select: 'title' })
@@ -814,8 +953,11 @@ export class ProductsService {
       .lean()
       .exec();
     const storeCurrency = String(store?.currency ?? 'CAD');
-    return rows.map((p) =>
+    const mapped = rows.map((p) =>
       this.mapVendorProductRow(p as Record<string, unknown>, storeCurrency),
+    );
+    return Promise.all(
+      mapped.map((row) => this.resolveVendorProductMediaUrls(row)),
     );
   }
 
@@ -1048,7 +1190,7 @@ export class ProductsService {
       }
 
       const { items: galleryItems, uploadedUrls: gUrls } =
-        await this.uploadGalleryToFirebase(gallery, user, basePath);
+        await this.uploadGalleryImages(gallery, user, basePath);
       uploadedUrls.push(...gUrls);
 
       const originCountry = args.originCountry ?? store.address.country;
@@ -1236,7 +1378,7 @@ export class ProductsService {
     const rawExistingGallery = (doc.galleryImages as unknown[])?.slice() ?? [];
     if (gallery && gallery.length > 0) {
       await this.deleteRemoteGalleryItems(rawExistingGallery);
-      const { items } = await this.uploadGalleryToFirebase(
+      const { items } = await this.uploadGalleryImages(
         gallery,
         user,
         `stores/${storeId}/products`,

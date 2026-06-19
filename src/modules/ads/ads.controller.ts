@@ -317,14 +317,14 @@ export class AdsController {
     );
   }
 
-  /** Image bannière → Firebase Storage (SDK Admin), dossier `marketing/ads`. */
+  /** Image bannière → moteur Paramètres → Stockage, dossier `marketing/ads`. */
   @Post('manage/image')
   @UseGuards(JwtGuard)
   @ApiBearerAuth('bearer')
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
-      limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+      limits: { fileSize: 50 * 1024 * 1024, files: 1 },
       fileFilter: (_req, file, cb) => {
         const extOk = /\.(jpe?g|png|webp)$/i.test(file.originalname);
         const mimeOk = /^(image\/(jpeg|png|webp))$/i.test(file.mimetype);
@@ -342,7 +342,7 @@ export class AdsController {
     return this.adsService.uploadBannerImage(req.user as UserModel, file);
   }
 
-  /** JSON + base64 : recommandé derrière Firebase / CF (multipart « Unexpected end of form »). */
+  /** JSON + base64 : recommandé derrière proxys (multipart « Unexpected end of form »). */
   @Post('manage/image-json')
   @UseGuards(JwtGuard)
   @ApiBearerAuth('bearer')

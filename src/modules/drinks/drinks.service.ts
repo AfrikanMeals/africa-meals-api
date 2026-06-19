@@ -1,3 +1,4 @@
+import { detectCatalogImageStorageKind } from '@common/media/detect-storage-engine.util';
 import { escapeMongoRegex } from '@common/mongo/escape-regex.util';
 import {
   isStripeConnectOnboardingCompleteUser,
@@ -147,6 +148,20 @@ export class DrinksService {
   @Inject(SupportedCountriesService)
   private readonly _supportedCountries: SupportedCountriesService;
 
+  private async enrichDrinkMedia<
+    T extends { imageUrl?: string; imageStorageEngine?: string | null },
+  >(row: T): Promise<T> {
+    const raw = row.imageUrl;
+    const imageUrl = raw
+      ? ((await this._mediasService.resolvePublicMediaUrl(raw)) ?? raw)
+      : undefined;
+    return {
+      ...row,
+      ...(imageUrl ? { imageUrl } : {}),
+      imageStorageEngine: detectCatalogImageStorageKind(imageUrl ?? raw),
+    };
+  }
+
   private async _invalidateCategoryCountsCache(): Promise<void> {
     await this._productCategoryService.invalidatePublicListCache();
   }
@@ -263,7 +278,7 @@ export class DrinksService {
     if (!row) {
       throw new NotFoundException('drink_not_found');
     }
-    return mapDrinkDoc(row as Record<string, unknown>);
+    return this.enrichDrinkMedia(mapDrinkDoc(row as Record<string, unknown>));
   }
 
   async findByStoreForOwner(storeId: string, user: UserModel) {
@@ -286,7 +301,8 @@ export class DrinksService {
       .populate('category', 'title kind isEnabled')
       .lean()
       .exec();
-    return rows.map((r) => mapDrinkDoc(r as Record<string, unknown>));
+    const mapped = rows.map((r) => mapDrinkDoc(r as Record<string, unknown>));
+    return Promise.all(mapped.map((row) => this.enrichDrinkMedia(row)));
   }
 
   async countByStoreId(storeId: string): Promise<number> {
@@ -454,7 +470,7 @@ export class DrinksService {
     if (!row) {
       return null;
     }
-    return mapDrinkDoc(row as Record<string, unknown>);
+    return this.enrichDrinkMedia(mapDrinkDoc(row as Record<string, unknown>));
   }
 
   /**
@@ -638,7 +654,7 @@ export class DrinksService {
     if (!row) {
       return null;
     }
-    return mapDrinkDoc(row as Record<string, unknown>);
+    return this.enrichDrinkMedia(mapDrinkDoc(row as Record<string, unknown>));
   }
 
   async createForStore(
@@ -693,7 +709,9 @@ export class DrinksService {
       .lean()
       .exec();
     await this._invalidateCategoryCountsCache();
-    return mapDrinkDoc((populated ?? doc.toObject()) as Record<string, unknown>);
+    return this.enrichDrinkMedia(
+      mapDrinkDoc((populated ?? doc.toObject()) as Record<string, unknown>),
+    );
   }
 
   async updateForStore(
@@ -765,7 +783,9 @@ export class DrinksService {
       .lean()
       .exec();
     await this._invalidateCategoryCountsCache();
-    return mapDrinkDoc((populated ?? found.toObject()) as Record<string, unknown>);
+    return this.enrichDrinkMedia(
+      mapDrinkDoc((populated ?? found.toObject()) as Record<string, unknown>),
+    );
   }
 
   async deleteForStore(storeId: string, drinkId: string, user: UserModel) {

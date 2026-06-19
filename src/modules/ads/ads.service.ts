@@ -28,6 +28,7 @@ import {
   isStripeConnectOnboardingCompleteUser,
   resolveStoreIdsVisibleOnMobileApp,
 } from '@modules/billing/stripe/stripe-connect-visibility';
+import { detectCatalogImageStorageKind } from '@common/media/detect-storage-engine.util';
 import { MediasService } from '@modules/medias/medias.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
@@ -115,6 +116,7 @@ export type AdManagementRow = {
   subtitle: string;
   actionText: string;
   imageUrl: string | null;
+  imageStorageEngine?: ReturnType<typeof detectCatalogImageStorageKind>;
   sortOrder: number;
   isActive: boolean;
   validFrom: string | null;
@@ -3394,7 +3396,9 @@ export class AdsService implements OnModuleInit {
       throw new BadRequestException('empty_image');
     }
     const url = await this._mediasService.upload(file, user, 'marketing/ads');
-    return { url };
+    const resolved =
+      (await this._mediasService.resolvePublicMediaUrl(url)) ?? url;
+    return { url: resolved };
   }
 
   /** Même destination Storage que multipart ; corps JSON pour proxys qui coupent multipart. */
@@ -3443,7 +3447,49 @@ export class AdsService implements OnModuleInit {
       stream: undefined,
     } as Express.Multer.File;
     const url = await this._mediasService.upload(file, user, 'marketing/ads');
-    return { url };
+    const resolved =
+      (await this._mediasService.resolvePublicMediaUrl(url)) ?? url;
+    return { url: resolved };
+  }
+
+  private async enrichAdManagementRow(
+    row: AdManagementRow,
+  ): Promise<AdManagementRow> {
+    const raw = row.imageUrl;
+    const imageUrl = raw
+      ? ((await this._mediasService.resolvePublicMediaUrl(raw)) ?? raw)
+      : null;
+    return {
+      ...row,
+      imageUrl,
+      imageStorageEngine: detectCatalogImageStorageKind(imageUrl ?? raw),
+    };
+  }
+
+  private async toManagementRowResolved(
+    doc: Record<string, unknown>,
+  ): Promise<AdManagementRow> {
+    return this.enrichAdManagementRow(this.toManagementRow(doc));
+  }
+
+  private async resolvePublicAdImageUrls(docs: AdModel[]): Promise<AdModel[]> {
+    const out: AdModel[] = [];
+    for (const doc of docs) {
+      const raw = doc.imageUrl?.trim();
+      if (!raw) {
+        out.push(doc);
+        continue;
+      }
+      const resolved =
+        (await this._mediasService.resolvePublicMediaUrl(raw)) ?? raw;
+      if (resolved === raw) {
+        out.push(doc);
+        continue;
+      }
+      doc.imageUrl = resolved;
+      out.push(doc);
+    }
+    return out;
   }
 
   private async assertUserCanManageStore(
@@ -3567,6 +3613,7 @@ export class AdsService implements OnModuleInit {
       doc.actionTarget != null && String(doc.actionTarget).trim() !== ''
         ? String(doc.actionTarget).trim()
         : null;
+    const imageUrl = doc.imageUrl != null ? String(doc.imageUrl) : null;
     return {
       id,
       storeId,
@@ -3574,7 +3621,8 @@ export class AdsService implements OnModuleInit {
       title: String(doc.title ?? ''),
       subtitle: String(doc.subtitle ?? ''),
       actionText: String(doc.actionText ?? ''),
-      imageUrl: doc.imageUrl != null ? String(doc.imageUrl) : null,
+      imageUrl,
+      imageStorageEngine: detectCatalogImageStorageKind(imageUrl),
       sortOrder: Number(doc.sortOrder ?? 0),
       isActive: Boolean(doc.isActive),
       validFrom: validFromIso,
@@ -3873,7 +3921,8 @@ export class AdsService implements OnModuleInit {
       if (!storeRegion) return true;
       return storeRegion === clientRegion.trim().toUpperCase();
     }) as unknown as AdModel[];
-    return this.orderPublicAdsByMinTwoThirdsShop(data);
+    const withMedia = await this.resolvePublicAdImageUrls(data);
+    return this.orderPublicAdsByMinTwoThirdsShop(withMedia);
   }
 
   /** @deprecated Utiliser `listPublic` (même comportement). */
@@ -3892,8 +3941,10 @@ export class AdsService implements OnModuleInit {
         .sort({ sortOrder: 1, createdAt: -1 })
         .lean()
         .exec();
-      return docs.map((d) =>
-        this.toManagementRow(d as Record<string, unknown>),
+      return Promise.all(
+        docs.map((d) =>
+          this.toManagementRowResolved(d as Record<string, unknown>),
+        ),
       );
     }
     const ids = await this.vendorStoreIds(user);
@@ -3907,7 +3958,11 @@ export class AdsService implements OnModuleInit {
       .sort({ sortOrder: 1, createdAt: -1 })
       .lean()
       .exec();
-    return docs.map((d) => this.toManagementRow(d as Record<string, unknown>));
+    return Promise.all(
+      docs.map((d) =>
+        this.toManagementRowResolved(d as Record<string, unknown>),
+      ),
+    );
   }
 
   private async assertProductBelongsToStore(
@@ -4024,7 +4079,7 @@ export class AdsService implements OnModuleInit {
       .populate('product', 'title')
       .lean()
       .exec();
-    return this.toManagementRow(populated as Record<string, unknown>);
+    return this.toManagementRowResolved(populated as Record<string, unknown>);
   }
 
   async patchManagement(
@@ -4131,10 +4186,15 @@ export class AdsService implements OnModuleInit {
     if (dto.subtitle != null) existing.subtitle = dto.subtitle.trim();
     if (dto.actionText != null) existing.actionText = dto.actionText.trim();
     if (dto.imageUrl !== undefined) {
-      existing.imageUrl =
+      const prev = existing.imageUrl?.trim();
+      const next =
         dto.imageUrl === null || dto.imageUrl === ''
           ? undefined
           : dto.imageUrl.trim();
+      if (prev?.startsWith('http') && next !== prev) {
+        await this._mediasService.delete(prev).catch(() => undefined);
+      }
+      existing.imageUrl = next;
     }
     if (dto.sortOrder != null) existing.sortOrder = dto.sortOrder;
     if (dto.isActive != null) existing.isActive = dto.isActive;
@@ -4244,7 +4304,7 @@ export class AdsService implements OnModuleInit {
       .populate('product', 'title')
       .lean()
       .exec();
-    return this.toManagementRow(populated as Record<string, unknown>);
+    return this.toManagementRowResolved(populated as Record<string, unknown>);
   }
 
   async endManagement(
@@ -5052,11 +5112,14 @@ export class AdsService implements OnModuleInit {
         .lean()
         .exec(),
     ]);
-    const items: AdModerationQueueItem[] = [
-      ...(bannerDocs as Record<string, unknown>[]).map((d) => ({
+    const bannerItems = await Promise.all(
+      (bannerDocs as Record<string, unknown>[]).map(async (d) => ({
         kind: 'BANNER' as const,
-        ...this.toManagementRow(d),
+        ...(await this.toManagementRowResolved(d)),
       })),
+    );
+    const items: AdModerationQueueItem[] = [
+      ...bannerItems,
       ...(campaignDocs as Record<string, unknown>[]).map((d) => ({
         kind: 'CAMPAIGN' as const,
         ...this._toCampaignRow(d),
@@ -5109,7 +5172,7 @@ export class AdsService implements OnModuleInit {
       .populate('product', 'title')
       .lean()
       .exec();
-    return this.toManagementRow(populated as Record<string, unknown>);
+    return this.toManagementRowResolved(populated as Record<string, unknown>);
   }
 
   async rejectBannerModeration(
@@ -5148,7 +5211,7 @@ export class AdsService implements OnModuleInit {
       .populate('product', 'title')
       .lean()
       .exec();
-    return this.toManagementRow(populated as Record<string, unknown>);
+    return this.toManagementRowResolved(populated as Record<string, unknown>);
   }
 
   async approveCampaignModeration(
@@ -5263,7 +5326,7 @@ export class AdsService implements OnModuleInit {
       .populate('product', 'title')
       .lean()
       .exec();
-    return this.toManagementRow(populated as Record<string, unknown>);
+    return this.toManagementRowResolved(populated as Record<string, unknown>);
   }
 
   async blockCampaignModeration(

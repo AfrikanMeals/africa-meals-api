@@ -891,7 +891,7 @@ export class StoreController {
     if (!buffer.length) {
       throw new BadRequestException('empty_image');
     }
-    const max = 50 * 1024 * 1024;
+    const max = await this._mediasService.getMaxFileSizeBytes();
     if (buffer.length > max) {
       throw new BadRequestException('file_too_large');
     }
