@@ -1,6 +1,7 @@
 import { CartService } from '@modules/cart/cart.service';
 import { PlatformShippingQuoteService } from '@modules/platform-shipping-settings/platform-shipping-quote.service';
 import { PlatformShippingSettingsService } from '@modules/platform-shipping-settings/platform-shipping-settings.service';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { UserModel } from '@schemas/user.schema';
 import {
@@ -80,13 +81,29 @@ export class DeliveryTipService {
     private readonly cartService: CartService,
     private readonly quoteService: PlatformShippingQuoteService,
     private readonly shippingSettings: PlatformShippingSettingsService,
+    private readonly supportedCountries: SupportedCountriesService,
   ) {}
+
+  private async _stripeAmountFactor(
+    user: UserModel,
+    currency: string,
+  ): Promise<number> {
+    return this.supportedCountries.resolveStripeAmountFactorForCheckout({
+      currency,
+      userCountryCode: String(user.appCountryCode ?? '').trim().toUpperCase(),
+    });
+  }
+
+  private _toStripeMinor(amount: number, factor: number): number {
+    return Math.max(0, Math.round(amount * factor + Number.EPSILON));
+  }
 
   async resolveDeliveryLegs(
     user: UserModel,
     fulfillmentByStoreId: Record<string, string>,
     addressId?: string,
     coupons?: Array<{ storeId: string; code: string }>,
+    amountFactor?: number,
   ): Promise<{
     legs: DeliveryTipLegQuote[];
     pickupStoreIds: string[];
@@ -94,6 +111,15 @@ export class DeliveryTipService {
   }> {
     const cart = await this.cartService.filter(user);
     const groups = (cart?.data ?? []) as CartGroup[];
+    const regionCode = String(user.appCountryCode ?? '')
+      .trim()
+      .toUpperCase();
+    const settings = await this.shippingSettings.getPublicSettings(
+      regionCode || undefined,
+    );
+    const factor =
+      amountFactor ??
+      (await this._stripeAmountFactor(user, settings.currency));
     const couponByStore = new Map(
       (coupons ?? [])
         .filter((c) => c.storeId?.trim() && c.code?.trim())
@@ -115,6 +141,7 @@ export class DeliveryTipService {
         storeId,
         g,
         couponByStore.get(storeId),
+        factor,
       );
 
       if (mode !== 'delivery' || !g.store?.supportsShipping) {
@@ -148,7 +175,7 @@ export class DeliveryTipService {
         fulfillment: 'delivery',
         deliverable: true,
         distanceKm: q.distanceKm,
-        shippingFeeCents: Math.round(q.fee * 100 + Number.EPSILON),
+        shippingFeeCents: this._toStripeMinor(q.fee, factor),
         goodsSubtotalCents,
       });
     }
@@ -191,9 +218,11 @@ export class DeliveryTipService {
     storeId: string,
     group: CartGroup,
     couponCode?: string,
+    amountFactor = 100,
   ): Promise<number> {
-    const grossCents = Math.round(
-      (Number(group.totalPrice) || 0) * 100 + Number.EPSILON,
+    const grossCents = this._toStripeMinor(
+      Number(group.totalPrice) || 0,
+      amountFactor,
     );
     const code = couponCode?.trim();
     if (!code) return grossCents;
@@ -203,7 +232,7 @@ export class DeliveryTipService {
         storeId,
         code,
       );
-      return Math.round(snap.totalAfterDiscount * 100 + Number.EPSILON);
+      return this._toStripeMinor(snap.totalAfterDiscount, amountFactor);
     } catch {
       return grossCents;
     }
@@ -246,13 +275,14 @@ export class DeliveryTipService {
     settings: TipSettings,
     deliveryGoodsSubtotalCents: number,
     currency: string,
+    amountFactor = 100,
   ): DeliveryTipPresetOption[] {
     const { fixedPresets, percentPresets } =
       this.resolveTipPresetLists(settings);
     const options: DeliveryTipPresetOption[] = [];
 
     for (const value of fixedPresets) {
-      const cents = Math.round(Math.max(0, value) * 100);
+      const cents = this._toStripeMinor(Math.max(0, value), amountFactor);
       if (cents <= 0) continue;
       options.push({
         cents,
@@ -289,11 +319,13 @@ export class DeliveryTipService {
     settings: TipSettings,
     deliveryGoodsSubtotalCents: number,
     currency: string,
+    amountFactor = 100,
   ): number[] {
     return this.tipPresetOptions(
       settings,
       deliveryGoodsSubtotalCents,
       currency,
+      amountFactor,
     ).map((option) => option.cents);
   }
 
@@ -301,11 +333,13 @@ export class DeliveryTipService {
     settings: TipSettings,
     deliveryGoodsSubtotalCents: number,
     currency: string,
+    amountFactor = 100,
   ): number {
     const presets = this.tipPresetCents(
       settings,
       deliveryGoodsSubtotalCents,
       currency,
+      amountFactor,
     );
     return presets[0] ?? 0;
   }
@@ -317,6 +351,7 @@ export class DeliveryTipService {
     const settings = await this.shippingSettings.getPublicSettings(
       regionCode || undefined,
     );
+    const amountFactor = await this._stripeAmountFactor(user, settings.currency);
     const tipTotalCents = Math.max(0, Math.round(dto.deliveryTipTotalCents));
 
     const coupons = (dto.coupons ?? [])
@@ -329,12 +364,14 @@ export class DeliveryTipService {
         dto.fulfillmentByStoreId ?? {},
         dto.addressId,
         coupons,
+        amountFactor,
       );
 
     const tipPresetOptions = this.tipPresetOptions(
       settings,
       deliveryGoodsSubtotalCents,
       settings.currency,
+      amountFactor,
     );
 
     this.assertTipAmountAllowed(
@@ -376,9 +413,11 @@ export class DeliveryTipService {
         settings,
         deliveryGoodsSubtotalCents,
         settings.currency,
+        amountFactor,
       ),
       tipPresetCents: tipPresetOptions.map((option) => option.cents),
       tipPresetOptions,
+      stripeAmountFactor: amountFactor,
       allocationPreview,
       pickupStoresSkipped: pickupStoreIds,
       warnings: [] as string[],
@@ -425,6 +464,7 @@ export class DeliveryTipService {
     const settings = await this.shippingSettings.getPublicSettings(
       String(user.appCountryCode ?? '').trim().toUpperCase() || undefined,
     );
+    const amountFactor = await this._stripeAmountFactor(user, settings.currency);
     const coupons = (params.coupons ?? [])
       .filter((c) => c.storeId?.trim() && c.code?.trim())
       .map((c) => ({ storeId: c.storeId.trim(), code: c.code.trim() }));
@@ -434,12 +474,14 @@ export class DeliveryTipService {
       params.fulfillmentByStoreId,
       params.addressId,
       coupons,
+      amountFactor,
     );
 
     const tipPresetOptions = this.tipPresetOptions(
       settings,
       deliveryGoodsSubtotalCents,
       settings.currency,
+      amountFactor,
     );
 
     this.assertTipAmountAllowed(

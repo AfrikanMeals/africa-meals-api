@@ -43,6 +43,13 @@ export class SupportedCountryModel extends BaseSchema {
   @Prop({ required: true, uppercase: true, default: 'CAD' })
   currency: string;
 
+  /**
+   * Override Stripe : montants entiers sans ×100 (XAF, XOF…).
+   * Si absent, dérivé automatiquement de la devise.
+   */
+  @Prop({ required: false, type: Boolean })
+  stripeZeroDecimal?: boolean;
+
   @Prop({ default: true })
   active: boolean;
 

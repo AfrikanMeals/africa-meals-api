@@ -54,6 +54,7 @@ import { Model, Types } from 'mongoose';
 import Stripe = require('stripe');
 import { FilterGroupedPaymentsDto } from './dto/filter-grouped-payments.dto';
 import { GroupedStripeCheckoutDto } from './dto/grouped-stripe-checkout.dto';
+import { stripeAmountFactor } from '../../../utils/stripe-currency-amount.util';
 import { DeliveryTipService } from '../delivery-tip.service';
 import { DELIVERY_TIP_ALLOCATION_BY_SHIPPING_FEE } from '../delivery-tip-allocation.util';
 
@@ -105,6 +106,8 @@ type GroupedStripeBuilt = {
   deliveryTipTotalCents: number;
   tipCentsByStore: Record<string, number>;
   tipAllocationMethod: string;
+  /** Facteur montant affiché → unité Stripe (100 = centimes, 1 = XAF entier). */
+  amountFactor: number;
 };
 
 function storeMongoId(store: CartGroup['store']): string {
@@ -140,9 +143,16 @@ function cartLineQuantity(line: Record<string, unknown>): number {
   return Math.max(1, Math.floor(Number(line['quantity'] ?? 1)));
 }
 
-function cartLineUnitCents(line: Record<string, unknown>): number {
+function cartLineUnitCents(
+  line: Record<string, unknown>,
+  amountFactor: number,
+): number {
   const price = Number(line['price'] ?? 0);
-  return Math.max(0, Math.round(price * 100 + Number.EPSILON));
+  return Math.max(0, Math.round(price * amountFactor + Number.EPSILON));
+}
+
+function minorUnitsToDisplayAmount(minor: number, amountFactor: number): number {
+  return minor / amountFactor;
 }
 
 function normalizeStripeCurrencyCode(raw: unknown): string {
@@ -648,6 +658,7 @@ export class StripeGroupedCheckoutService {
   private async appendOrderTaxLinesForStore(args: {
     user: UserModel;
     currency: string;
+    amountFactor: number;
     storeId: string;
     storeName: string;
     store: unknown;
@@ -662,8 +673,10 @@ export class StripeGroupedCheckoutService {
       taxBreakdown?: RegionTaxBreakdown;
     };
   }): Promise<void> {
-    const subtotalCad =
-      (args.payoutRow.goodsCents + args.payoutRow.shipCents) / 100;
+    const subtotalCad = minorUnitsToDisplayAmount(
+      args.payoutRow.goodsCents + args.payoutRow.shipCents,
+      args.amountFactor,
+    );
     if (subtotalCad <= 0) return;
     const countryCode = await this.resolveOrderTaxCountryForStore(
       args.user,
@@ -678,7 +691,9 @@ export class StripeGroupedCheckoutService {
     args.payoutRow.taxBreakdown = breakdown;
     args.payoutRow.taxCents = 0;
     for (const taxLine of breakdown.lines) {
-      const taxCents = Math.round(taxLine.amount * 100 + Number.EPSILON);
+      const taxCents = Math.round(
+        taxLine.amount * args.amountFactor + Number.EPSILON,
+      );
       if (taxCents < 1) continue;
       const li = checkoutLineFromCartRow({
         currency: args.currency,
@@ -777,6 +792,15 @@ export class StripeGroupedCheckoutService {
       currency = [...currencies][0];
     }
 
+    const amountFactor =
+      await this.supportedCountries.resolveStripeAmountFactorForCheckout({
+        currency: currency.toUpperCase(),
+        userCountryCode: (
+          user as UserModel & { appCountryCode?: string }
+        ).appCountryCode,
+      });
+    const stripeMinimumMinor = amountFactor === 1 ? 100 : 50;
+
     const fulfillment = dto.fulfillmentByStoreId ?? {};
     const needsAddress = groups.some((g) => {
       const id = storeMongoId(g.store);
@@ -819,7 +843,9 @@ export class StripeGroupedCheckoutService {
         }
         shipFee = q.fee;
       }
-      shipCentsByStore[storeId] = Math.round(shipFee * 100 + Number.EPSILON);
+      shipCentsByStore[storeId] = Math.round(
+        shipFee * amountFactor + Number.EPSILON,
+      );
 
       const storeName = String(g.store?.name ?? 'Restaurant');
       payoutByStore[storeId] = {
@@ -841,11 +867,11 @@ export class StripeGroupedCheckoutService {
           code,
         );
         const targetGoodsCents = Math.round(
-          snap.totalAfterDiscount * 100 + Number.EPSILON,
+          snap.totalAfterDiscount * amountFactor + Number.EPSILON,
         );
         const shipC = shipCentsByStore[storeId] ?? 0;
         const totalCents = targetGoodsCents + shipC;
-        if (totalCents < 50) {
+        if (totalCents < stripeMinimumMinor) {
           throw new BadRequestException({
             message: 'amount_below_stripe_minimum',
             storeId,
@@ -853,7 +879,8 @@ export class StripeGroupedCheckoutService {
           });
         }
         const grossPerLine = cartLines.map(
-          (line) => cartLineUnitCents(line) * cartLineQuantity(line),
+          (line) =>
+            cartLineUnitCents(line, amountFactor) * cartLineQuantity(line),
         );
         const sumGross = grossPerLine.reduce((a, b) => a + b, 0);
         if (cartLines.length && sumGross > 0) {
@@ -926,6 +953,7 @@ export class StripeGroupedCheckoutService {
         await this.appendOrderTaxLinesForStore({
           user,
           currency,
+          amountFactor,
           storeId,
           storeName,
           store: g.store,
@@ -940,7 +968,7 @@ export class StripeGroupedCheckoutService {
       // Sans code promo : une ligne Checkout par article (alignée sur le panier).
       for (const line of cartLines) {
         const qty = cartLineQuantity(line);
-        const ua = cartLineUnitCents(line);
+        const ua = cartLineUnitCents(line, amountFactor);
         if (ua * qty < 1) continue;
         const li = checkoutLineFromCartRow({
           currency,
@@ -983,6 +1011,7 @@ export class StripeGroupedCheckoutService {
       await this.appendOrderTaxLinesForStore({
         user,
         currency,
+        amountFactor,
         storeId,
         storeName,
         store: g.store,
@@ -994,11 +1023,12 @@ export class StripeGroupedCheckoutService {
 
       let bundleCents = 0;
       for (const line of cartLines) {
-        bundleCents += cartLineUnitCents(line) * cartLineQuantity(line);
+        bundleCents +=
+          cartLineUnitCents(line, amountFactor) * cartLineQuantity(line);
       }
       bundleCents +=
         (shipCentsByStore[storeId] ?? 0) + (payoutByStore[storeId].taxCents ?? 0);
-      if (bundleCents < 50) {
+      if (bundleCents < stripeMinimumMinor) {
         throw new BadRequestException({
           message: 'amount_below_stripe_minimum',
           storeId,
@@ -1074,6 +1104,7 @@ export class StripeGroupedCheckoutService {
       deliveryTipTotalCents,
       tipCentsByStore,
       tipAllocationMethod,
+      amountFactor,
     };
   }
 
@@ -1153,6 +1184,7 @@ export class StripeGroupedCheckoutService {
       ).toString('base64url');
       base.tipAllocMethod = built.tipAllocationMethod;
     }
+    base.amtFactor = String(built.amountFactor);
     return {
       ...base,
       ...this.payoutMetadataChunks(built.payoutByStore),
@@ -1365,6 +1397,7 @@ export class StripeGroupedCheckoutService {
     checkoutAddressId: string;
     tipCentsByStore: Record<string, number>;
     tipAllocationMethod: string;
+    amountFactor: number;
   }): Promise<{
     breakdown: StripePerStoreBreakdownRow;
     orderId?: string;
@@ -1384,6 +1417,7 @@ export class StripeGroupedCheckoutService {
       checkoutAddressId,
       tipCentsByStore,
       tipAllocationMethod,
+      amountFactor,
     } = params;
 
     const prior = priorByStore.get(storeId);
@@ -1492,14 +1526,17 @@ export class StripeGroupedCheckoutService {
       const useStripeCents = payoutRow != null;
       const deliveryTipCents =
         shipCents > 0 ? Math.max(0, Math.round(tipCentsByStore[storeId] ?? 0)) : 0;
-      await this.ordersService.markOrderPaidWithShipping(oid, shipCents / 100, {
+      await this.ordersService.markOrderPaidWithShipping(
+        oid,
+        minorUnitsToDisplayAmount(shipCents, amountFactor),
+        {
         stripeParentPaymentId: stripePaymentId,
         couponCode,
         chargedGoodsCents: useStripeCents ? goodsCents : undefined,
         chargedShipCents: useStripeCents ? shipCents : undefined,
         subtotalBeforeTax:
           goodsCents != null && shipCents != null
-            ? (goodsCents + shipCents) / 100
+            ? minorUnitsToDisplayAmount(goodsCents + shipCents, amountFactor)
             : undefined,
         deliveryAddressId:
           shipCents > 0 && checkoutAddressId ? checkoutAddressId : undefined,
@@ -1507,7 +1544,8 @@ export class StripeGroupedCheckoutService {
         deliveryTipCents,
         deliveryTipAllocationMethod:
           deliveryTipCents > 0 ? tipAllocationMethod : undefined,
-      });
+      },
+      );
       const paidOk = await this.ordersService.isOrderPaidForStripePayment(
         oid,
         stripePaymentId,
@@ -1749,6 +1787,17 @@ export class StripeGroupedCheckoutService {
     }
     const user = userDoc as unknown as UserModel;
 
+    const metaFactor = Number(metadata?.amtFactor ?? metadata?.amt_factor ?? 0);
+    const amountFactor =
+      Number.isFinite(metaFactor) && metaFactor > 0
+        ? metaFactor
+        : await this.supportedCountries.resolveStripeAmountFactorForCheckout({
+            currency: String(currency ?? 'cad').toUpperCase(),
+            userCountryCode: (
+              user as UserModel & { appCountryCode?: string }
+            ).appCountryCode,
+          });
+
     const orderIds: string[] = [...(processed?.orderIds ?? [])];
     const perStoreBreakdown: StripePerStoreBreakdownRow[] = [];
     const fulfillErrors: Array<{ storeId: string; error: string }> = [];
@@ -1770,6 +1819,7 @@ export class StripeGroupedCheckoutService {
           checkoutAddressId,
           tipCentsByStore,
           tipAllocationMethod,
+          amountFactor,
         }),
       ),
     );
@@ -1933,6 +1983,7 @@ export class StripeGroupedCheckoutService {
       const totalCents = Number(doc.amountTotalCents ?? 0);
       const curRaw = doc.currency != null ? String(doc.currency).trim() : '';
       const cur = curRaw ? curRaw.toUpperCase() : 'CAD';
+      const amountFactor = stripeAmountFactor(cur);
 
       const storeBlock = first ?? {
         _id: '',
@@ -1946,7 +1997,7 @@ export class StripeGroupedCheckoutService {
         createdAt,
         updatedAt,
         status: 'succeeded',
-        totalPrice: totalCents / 100,
+        totalPrice: totalCents / amountFactor,
         shippingPrice: 0,
         currency: cur,
         store: {

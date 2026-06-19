@@ -16,6 +16,41 @@ import {
   resolveTaxCountryCode,
 } from './region-tax.util';
 import { normalizeCountryCode } from './client-market-region.util';
+import {
+  resolveStripeZeroDecimal,
+  stripeAmountFactor,
+} from '../../utils/stripe-currency-amount.util';
+
+export type SupportedCountryPublicRow = {
+  code: string;
+  name: string;
+  phoneRegion: string;
+  currency: string;
+  stripeZeroDecimal: boolean;
+  stripeAmountFactor: number;
+};
+
+function mapSupportedCountryPublicRow(doc: {
+  code?: string;
+  name?: string;
+  phoneRegion?: string;
+  currency?: string;
+  stripeZeroDecimal?: boolean | null;
+}): SupportedCountryPublicRow {
+  const currency = String(doc.currency ?? 'CAD').toUpperCase();
+  const stripeZeroDecimal = resolveStripeZeroDecimal(
+    currency,
+    doc.stripeZeroDecimal,
+  );
+  return {
+    code: String(doc.code ?? '').toUpperCase(),
+    name: String(doc.name ?? ''),
+    phoneRegion: String(doc.phoneRegion ?? '').toUpperCase(),
+    currency,
+    stripeZeroDecimal,
+    stripeAmountFactor: stripeAmountFactor(currency, doc.stripeZeroDecimal),
+  };
+}
 
 export const DEFAULT_SUPPORTED_COUNTRIES: Array<{
   code: string;
@@ -45,12 +80,7 @@ export class SupportedCountriesService implements OnModuleInit {
   private static readonly _LIST_ACTIVE_TTL_MS = 60_000;
   private _listActiveCache: {
     at: number;
-    data: Array<{
-      code: string;
-      name: string;
-      phoneRegion: string;
-      currency: string;
-    }>;
+    data: SupportedCountryPublicRow[];
   } | null = null;
 
   @InjectModel(SupportedCountryModel.name)
@@ -79,9 +109,7 @@ export class SupportedCountriesService implements OnModuleInit {
     this._listActiveCache = null;
   }
 
-  async listActive(): Promise<
-    Array<{ code: string; name: string; phoneRegion: string; currency: string }>
-  > {
+  async listActive(): Promise<SupportedCountryPublicRow[]> {
     const now = Date.now();
     if (
       this._listActiveCache &&
@@ -95,12 +123,7 @@ export class SupportedCountriesService implements OnModuleInit {
       .sort({ name: 1 })
       .lean()
       .exec();
-    const data = docs.map((d) => ({
-      code: d.code,
-      name: d.name,
-      phoneRegion: d.phoneRegion,
-      currency: String(d.currency ?? 'CAD').toUpperCase(),
-    }));
+    const data = docs.map((d) => mapSupportedCountryPublicRow(d));
     this._listActiveCache = { at: now, data };
     return data;
   }
@@ -128,6 +151,42 @@ export class SupportedCountriesService implements OnModuleInit {
       .exec();
     if (!doc?.currency) return null;
     return String(doc.currency).toUpperCase();
+  }
+
+  /** Override admin « montants entiers Stripe » pour une région (undefined = auto). */
+  async getStripeZeroDecimalOverride(
+    countryCode: string,
+  ): Promise<boolean | undefined> {
+    const c = (countryCode || '').trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(c)) return undefined;
+    const doc = await this._model.findOne({ code: c }).lean().exec();
+    if (!doc || doc.stripeZeroDecimal == null) return undefined;
+    return Boolean(doc.stripeZeroDecimal);
+  }
+
+  /**
+   * Facteur montant affiché → unité Stripe pour un checkout (devise + région utilisateur).
+   */
+  async resolveStripeAmountFactorForCheckout(args: {
+    currency: string;
+    userCountryCode?: string | null;
+  }): Promise<number> {
+    const currency = String(args.currency ?? 'CAD').toUpperCase();
+    const cc = String(args.userCountryCode ?? '')
+      .trim()
+      .toUpperCase();
+    let override: boolean | undefined;
+    if (/^[A-Z]{2}$/.test(cc)) {
+      const doc = await this._model.findOne({ code: cc }).lean().exec();
+      if (
+        doc &&
+        String(doc.currency ?? '').toUpperCase() === currency &&
+        doc.stripeZeroDecimal != null
+      ) {
+        override = Boolean(doc.stripeZeroDecimal);
+      }
+    }
+    return stripeAmountFactor(currency, override);
   }
 
   /** Devise plateforme (paramètres Régions) — Canada prioritaire, sinon 1ère région active. */
@@ -172,12 +231,7 @@ export class SupportedCountriesService implements OnModuleInit {
     primaryCountryCode: string;
     primaryCountryName: string;
     currency: string;
-    countries: Array<{
-      code: string;
-      name: string;
-      phoneRegion: string;
-      currency: string;
-    }>;
+    countries: SupportedCountryPublicRow[];
     taxes: Array<{
       name: string;
       description?: string;
@@ -216,6 +270,8 @@ export class SupportedCountriesService implements OnModuleInit {
       phoneRegion: string;
       currency: string;
       active: boolean;
+      stripeZeroDecimal: boolean;
+      stripeAmountFactor: number;
       taxes: RegionTaxRule[];
     }>
   > {
@@ -224,14 +280,14 @@ export class SupportedCountriesService implements OnModuleInit {
       .sort({ name: 1, code: 1 })
       .lean()
       .exec();
-    return docs.map((d) => ({
-      code: String(d.code ?? '').toUpperCase(),
-      name: String(d.name ?? ''),
-      phoneRegion: String(d.phoneRegion ?? '').toUpperCase(),
-      currency: String(d.currency ?? 'CAD').toUpperCase(),
-      active: Boolean(d.active),
-      taxes: normalizeRegionTaxRules(d.taxes),
-    }));
+    return docs.map((d) => {
+      const row = mapSupportedCountryPublicRow(d);
+      return {
+        ...row,
+        active: Boolean(d.active),
+        taxes: normalizeRegionTaxRules(d.taxes),
+      };
+    });
   }
 
   async getTaxRulesForCountry(code: string): Promise<RegionTaxRule[]> {
@@ -329,6 +385,7 @@ export class SupportedCountriesService implements OnModuleInit {
       phoneRegion: string;
       currency: string;
       active: boolean;
+      stripeZeroDecimal?: boolean;
     }>,
   ): Promise<void> {
     const seen = new Set<string>();
@@ -361,15 +418,19 @@ export class SupportedCountriesService implements OnModuleInit {
         throw new BadRequestException(`duplicate_country_code:${code}`);
       }
       seen.add(code);
+      const $set: Record<string, unknown> = {
+        name,
+        phoneRegion,
+        currency,
+        active: Boolean(row.active),
+      };
+      if (row.stripeZeroDecimal != null) {
+        $set.stripeZeroDecimal = Boolean(row.stripeZeroDecimal);
+      }
       await this._model.updateOne(
         { code },
         {
-          $set: {
-            name,
-            phoneRegion,
-            currency,
-            active: Boolean(row.active),
-          },
+          $set,
           $setOnInsert: { code, taxes: [] },
         },
         { upsert: true },

@@ -5,6 +5,7 @@ import {
   IsArray,
   IsBoolean,
   IsNotEmpty,
+  IsOptional,
   IsString,
   Length,
   Matches,
@@ -43,6 +44,16 @@ export class AdminSupportedCountryItemDto {
   @ApiProperty({ example: true })
   @IsBoolean()
   active: boolean;
+
+  @ApiProperty({
+    example: true,
+    required: false,
+    description:
+      'Stripe : montants entiers (×1) au lieu de centimes (×100). Par défaut dérivé de la devise.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  stripeZeroDecimal?: boolean;
 }
 
 export class AdminSupportedCountriesUpdateDto {
