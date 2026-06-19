@@ -1,8 +1,12 @@
 import { escapeEmailHtml } from '@modules/mailer/email-brand.util';
-import { fromStripeMinorUnits } from '@utils/stripe-currency-amount.util';
 import {
   formatInvoiceMoney,
   inferInvoicePaymentMethodLabel,
+  orderInvoiceOrderSubtotal,
+  orderInvoicePaymentFeeAmount,
+  orderInvoicePaymentFeeLabel,
+  orderInvoiceTipAmount,
+  orderInvoiceTotalCharged,
   type OrderInvoiceSnapshot,
 } from './order-invoice.util';
 
@@ -48,7 +52,7 @@ export function buildOrderReceiptSummaryCardHtml(
     String(snapshot.items?.[0]?.label ?? '').trim() || storeName,
   );
   const total = formatInvoiceMoney(
-    Number(snapshot.totalPrice) || 0,
+    orderInvoiceTotalCharged(snapshot),
     opts.currency,
   );
   const orderUrl = opts.orderUrl?.trim() ?? '';
@@ -143,11 +147,13 @@ export function buildOrderReceiptEmailBodyHtml(
     0,
   );
   const shipping = Math.max(0, Number(snapshot.shippingPrice) || 0);
-  const tipCents = Math.max(0, Math.round(Number(snapshot.deliveryTipCents) || 0));
-  const tip = fromStripeMinorUnits(tipCents, currency);
+  const tip = orderInvoiceTipAmount(snapshot);
   const tax = Math.max(0, Number(snapshot.taxTotal) || 0);
-  const total = Math.max(0, Number(snapshot.totalPrice) || 0);
-  const discount = Math.max(0, linesSubtotal + shipping + tip + tax - total);
+  const paymentFee = orderInvoicePaymentFeeAmount(snapshot);
+  const paymentFeeLabel = orderInvoicePaymentFeeLabel(snapshot);
+  const orderSubtotal = orderInvoiceOrderSubtotal(snapshot);
+  const totalCharged = orderInvoiceTotalCharged(snapshot);
+  const discount = Math.max(0, linesSubtotal + shipping + tax - orderSubtotal);
   const paymentLabel = inferInvoicePaymentMethodLabel(snapshot.status);
   const orderDateLabel = formatReceiptOrderDate(snapshot.createdAt);
   const orderDateIso = opts.orderDateIso ?? '';
@@ -209,6 +215,15 @@ export function buildOrderReceiptEmailBodyHtml(
       </tr>`
       : '';
 
+  const paymentFeeRow =
+    paymentFee > 0.009
+      ? `
+      <tr>
+        <td style="padding:8px 0;font-size:14px;color:#6b7280;">${esc(paymentFeeLabel)}</td>
+        <td align="right" style="padding:8px 0;font-size:14px;color:#374151;">${esc(formatInvoiceMoney(paymentFee, currency))}</td>
+      </tr>`
+      : '';
+
   const taxRow =
     tax > 0.009
       ? `
@@ -229,7 +244,7 @@ export function buildOrderReceiptEmailBodyHtml(
 
   const metaTags = [
     `<meta itemprop="orderNumber" content="${esc(ref)}" />`,
-    `<meta itemprop="price" content="${total.toFixed(2)}" />`,
+    `<meta itemprop="price" content="${totalCharged.toFixed(2)}" />`,
     `<meta itemprop="priceCurrency" content="${esc(currency)}" />`,
     orderDateIso ? `<meta itemprop="orderDate" content="${esc(orderDateIso)}" />` : '',
     orderStatusUri ? `<meta itemprop="orderStatus" content="${esc(orderStatusUri)}" />` : '',
@@ -286,13 +301,14 @@ export function buildOrderReceiptEmailBodyHtml(
     ${tipRow}
     ${taxRow}
     ${discountRow}
+    ${paymentFeeRow}
     <tr>
       <td style="padding:10px 0 4px;font-size:14px;color:#6b7280;">Mode de paiement</td>
       <td align="right" style="padding:10px 0 4px;font-size:14px;color:#374151;">${esc(paymentLabel)}</td>
     </tr>
     <tr>
-      <td style="padding:12px 0 0;border-top:2px solid #392800;font-size:16px;font-weight:700;color:#392800;">Total</td>
-      <td align="right" style="padding:12px 0 0;border-top:2px solid #392800;font-size:16px;font-weight:700;color:#392800;">${esc(formatInvoiceMoney(total, currency))}</td>
+      <td style="padding:12px 0 0;border-top:2px solid #392800;font-size:16px;font-weight:700;color:#392800;">Total débité</td>
+      <td align="right" style="padding:12px 0 0;border-top:2px solid #392800;font-size:16px;font-weight:700;color:#392800;">${esc(formatInvoiceMoney(totalCharged, currency))}</td>
     </tr>
   </table>
 </div>`.trim();

@@ -69,7 +69,7 @@ import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain
     forwardRef(() => TeamsModule),
     MailerModule,
     forwardRef(() => SupportedCountriesModule),
-    VendorStatusEmailModule,
+    forwardRef(() => VendorStatusEmailModule),
     forwardRef(() => VendorNotificationModule),
     BusinessReportsModule,
     CartModule,

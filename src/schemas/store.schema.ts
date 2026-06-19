@@ -123,6 +123,13 @@ export class StoreModel extends BaseSchema {
   mealPreOrderCatalogScope?: MealPreOrderCatalogScopeEnum;
 
   /**
+   * Autorise le paiement à la collecte pour les commandes à emporter (pickup).
+   * Indépendant de la livraison (`supportsShipping`).
+   */
+  @Prop({ default: false, name: 'accepts_pickup_pay_on_delivery' })
+  acceptsPickupPayOnDelivery?: boolean;
+
+  /**
    * Le restaurant gère sa propre flotte de livreurs (invitations, assignation).
    * Nécessite `supportsShipping`.
    */

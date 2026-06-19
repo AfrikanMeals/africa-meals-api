@@ -123,6 +123,15 @@ export class CreateStoreDto {
 
   @ApiPropertyOptional({
     description:
+      'Autorise le paiement à la collecte pour les commandes à emporter (pickup).',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  acceptsPickupPayOnDelivery?: boolean;
+
+  @ApiPropertyOptional({
+    description:
       'Le restaurant gère ses propres livreurs (invitations, assignation).',
   })
   @IsOptional()
@@ -338,6 +347,14 @@ export class PatchVendorShippingZonesDto {
   @IsOptional()
   @IsEnum(MealPreOrderCatalogScopeEnum)
   mealPreOrderCatalogScope?: MealPreOrderCatalogScopeEnum;
+
+  @ApiPropertyOptional({
+    description:
+      'Autorise le paiement à la collecte (pickup). Nécessite une formule incluant cette option.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  acceptsPickupPayOnDelivery?: boolean;
 
   @ApiPropertyOptional({
     type: () => [StoreShippingZoneDto],

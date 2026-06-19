@@ -8,6 +8,7 @@ import {
 } from '@modules/cart/cart-customization.util';
 import type { OrdeLineItem } from '@schemas/order.schema';
 import { haversineDistance } from '@utils/helpers';
+import { fromStripeMinorUnits } from '@utils/stripe-currency-amount.util';
 
 export type OrderTaxLineInvoice = {
   name: string;
@@ -26,6 +27,8 @@ export type OrderInvoiceSnapshot = {
   taxLines?: OrderTaxLineInvoice[];
   shippingPrice: number;
   deliveryTipCents?: number;
+  orderPaymentFeeCents?: number;
+  orderPaymentFeeLabel?: string;
   shouldShip?: boolean;
   currency?: string;
   couponCode?: string;
@@ -86,6 +89,112 @@ export function formatInvoiceDate(iso?: Date | string): string {
 export function orderInvoiceRef(orderId: string): string {
   const id = orderId.trim();
   return id.length > 8 ? id.slice(-8).toUpperCase() : id.toUpperCase();
+}
+
+/** Pourboire livreur (unités affichées). */
+export function orderInvoiceTipAmount(snapshot: OrderInvoiceSnapshot): number {
+  const currency = (snapshot.currency ?? 'CAD').trim().toUpperCase() || 'CAD';
+  const tipCents = Math.max(
+    0,
+    Math.round(Number(snapshot.deliveryTipCents) || 0),
+  );
+  return fromStripeMinorUnits(tipCents, currency);
+}
+
+/** Frais de transaction plateforme (unités affichées). */
+export function orderInvoicePaymentFeeAmount(
+  snapshot: OrderInvoiceSnapshot,
+): number {
+  const currency = (snapshot.currency ?? 'CAD').trim().toUpperCase() || 'CAD';
+  const feeCents = Math.max(
+    0,
+    Math.round(Number(snapshot.orderPaymentFeeCents) || 0),
+  );
+  return fromStripeMinorUnits(feeCents, currency);
+}
+
+export function orderInvoicePaymentFeeLabel(
+  snapshot: OrderInvoiceSnapshot,
+): string {
+  const label = snapshot.orderPaymentFeeLabel?.trim();
+  return label && label.length > 0 ? label : 'Frais de transaction';
+}
+
+/** Montant commande (articles + livraison + taxes, hors pourboire et frais transaction). */
+export function orderInvoiceOrderSubtotal(
+  snapshot: OrderInvoiceSnapshot,
+): number {
+  return Math.max(0, Number(snapshot.totalPrice) || 0);
+}
+
+/** Montant total débité (commande + pourboire + frais transaction). */
+export function orderInvoiceTotalCharged(
+  snapshot: OrderInvoiceSnapshot,
+): number {
+  return (
+    orderInvoiceOrderSubtotal(snapshot) +
+    orderInvoiceTipAmount(snapshot) +
+    orderInvoicePaymentFeeAmount(snapshot)
+  );
+}
+
+/** Lignes texte brut pour e-mail / archives. */
+export function buildOrderReceiptTextLines(
+  snapshot: OrderInvoiceSnapshot,
+): string[] {
+  const currency = (snapshot.currency ?? 'CAD').trim().toUpperCase() || 'CAD';
+  const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+  const linesSubtotal = items.reduce((acc, it) => {
+    const qty = Math.max(0, Number(it.quantity) || 0);
+    const price = Math.max(0, Number(it.price) || 0);
+    return acc + qty * price;
+  }, 0);
+  const shipping = Math.max(0, Number(snapshot.shippingPrice) || 0);
+  const tip = orderInvoiceTipAmount(snapshot);
+  const tax = Math.max(0, Number(snapshot.taxTotal) || 0);
+  const orderSubtotal = orderInvoiceOrderSubtotal(snapshot);
+  const fee = orderInvoicePaymentFeeAmount(snapshot);
+  const totalCharged = orderInvoiceTotalCharged(snapshot);
+  const discount = Math.max(0, linesSubtotal + shipping + tax - orderSubtotal);
+
+  const out: string[] = [];
+  for (const it of items) {
+    const name = String(it.label ?? '').trim() || 'Article';
+    const qty = Math.max(1, Math.floor(Number(it.quantity) || 1));
+    const unit = Math.max(0, Number(it.price) || 0);
+    const lineTotal = qty * unit;
+    out.push(
+      qty > 1
+        ? `${name} × ${qty} : ${formatInvoiceMoney(lineTotal, currency)}`
+        : `${name} : ${formatInvoiceMoney(lineTotal, currency)}`,
+    );
+  }
+  out.push(`Sous-total articles : ${formatInvoiceMoney(linesSubtotal, currency)}`);
+  if (shipping > 0.009) {
+    out.push(`Livraison : ${formatInvoiceMoney(shipping, currency)}`);
+  }
+  if (tip > 0.009) {
+    out.push(`Pourboire livreur : ${formatInvoiceMoney(tip, currency)}`);
+  }
+  if ((snapshot.taxLines ?? []).length > 0) {
+    for (const taxLine of snapshot.taxLines ?? []) {
+      out.push(
+        `${taxLine.name} : ${formatInvoiceMoney(taxLine.amount, currency)}`,
+      );
+    }
+  } else if (tax > 0.009) {
+    out.push(`Taxes : ${formatInvoiceMoney(tax, currency)}`);
+  }
+  if (discount > 0.009) {
+    out.push(`Rabais : −${formatInvoiceMoney(discount, currency)}`);
+  }
+  if (fee > 0.009) {
+    out.push(
+      `${orderInvoicePaymentFeeLabel(snapshot)} : ${formatInvoiceMoney(fee, currency)}`,
+    );
+  }
+  out.push(`Total débité : ${formatInvoiceMoney(totalCharged, currency)}`);
+  return out;
 }
 
 /**
@@ -187,7 +296,7 @@ function estimateOrderDiscount(
   }, 0);
   const shipping = Number(snapshot.shippingPrice) || 0;
   const tax = Number(snapshot.taxTotal) || 0;
-  const total = Number(snapshot.totalPrice) || 0;
+  const total = orderInvoiceOrderSubtotal(snapshot);
   const beforeDiscount = linesSubtotal + shipping + tax;
   const discount = beforeDiscount - total;
   const currency = (snapshot.currency || 'CAD').trim().toUpperCase() || 'CAD';
@@ -554,7 +663,8 @@ export function buildOrderEmailJsonLd(
   );
   const acceptedOffer = normalizeAcceptedOfferForGmail(offers);
   const billingAddress = buildBillingPostalAddress(snapshot);
-  const totalPrice = (Number(snapshot.totalPrice) || 0).toFixed(2);
+  const totalCharged = orderInvoiceTotalCharged(snapshot);
+  const totalPrice = totalCharged.toFixed(2);
   const discount = estimateOrderDiscount(snapshot);
 
   const merchant: Record<string, unknown> = {
@@ -622,7 +732,7 @@ export function buildInvoiceEmailJsonLd(
   orderJsonLd: Record<string, unknown>,
 ): Record<string, unknown> {
   const currency = (snapshot.currency || 'CAD').trim().toUpperCase() || 'CAD';
-  const total = (Number(snapshot.totalPrice) || 0).toFixed(2);
+  const total = orderInvoiceTotalCharged(snapshot).toFixed(2);
   const orderDate = formatOrderDateIso(snapshot.createdAt);
   const dueDate = orderDate?.split('T')[0];
 

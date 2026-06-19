@@ -164,6 +164,52 @@ export class BillingController {
     );
   }
 
+  @Post('stripe/grouped-checkout-preview')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Prévisualisation checkout groupé (même montants que PaymentIntent)',
+  })
+  async stripeGroupedCheckoutPreview(
+    @Req() req: Request,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: false,
+      }),
+    )
+    dto: GroupedStripeCheckoutDto,
+  ) {
+    return this._stripeGroupedCheckout.previewGroupedCheckout(
+      req.user as UserModel,
+      dto,
+    );
+  }
+
+  @Post('pickup-pay-on-delivery-checkout')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Commande à emporter avec paiement à la collecte (sans Stripe en ligne)',
+  })
+  async pickupPayOnDeliveryCheckout(
+    @Req() req: Request,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: false,
+      }),
+    )
+    dto: GroupedStripeCheckoutDto,
+  ) {
+    return this._stripeGroupedCheckout.createPickupPayOnDeliveryCheckout(
+      req.user as UserModel,
+      dto,
+    );
+  }
+
   @Post('stripe/grouped-payment-intent')
   @UseGuards(JwtGuard)
   @ApiOperation({

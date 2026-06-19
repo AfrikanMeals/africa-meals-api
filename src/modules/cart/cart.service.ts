@@ -12,6 +12,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
+import {
+  bustCartPricingCachesForUser,
+  stableCacheHash,
+} from '@common/redis-app-cache';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { StoreCouponDiscountTypeEnum } from '@schemas/store_coupon.schema';
 import { StoreModel } from '@schemas/store.schema';
@@ -119,6 +125,46 @@ export class CartService {
 
   @Inject(CouponsService)
   private readonly _couponsService: CouponsService;
+
+  @Inject(CACHE_MANAGER)
+  private readonly _cache: Cache;
+
+  /** Empreinte stable du panier pour clé cache pricing checkout. */
+  async getCartPricingFingerprint(user: UserModel): Promise<string> {
+    const rows = await this._cartItemModel
+      .find({ user: new Types.ObjectId(user.id) })
+      .select(
+        'store entityId type quantity price customizationKey updatedAt',
+      )
+      .lean()
+      .exec();
+    const items = (rows ?? [])
+      .map((r) => ({
+        store: String((r as { store?: unknown }).store ?? ''),
+        entityId: String((r as { entityId?: unknown }).entityId ?? ''),
+        type: String((r as { type?: unknown }).type ?? ''),
+        qty: Math.max(0, Math.floor(Number((r as { quantity?: number }).quantity ?? 0))),
+        price: Number((r as { price?: number }).price ?? 0),
+        ck: String((r as { customizationKey?: string }).customizationKey ?? ''),
+        u: (r as { updatedAt?: Date }).updatedAt?.getTime?.() ?? 0,
+      }))
+      .sort(
+        (a, b) =>
+          a.store.localeCompare(b.store) ||
+          a.entityId.localeCompare(b.entityId) ||
+          a.type.localeCompare(b.type) ||
+          a.ck.localeCompare(b.ck),
+      );
+    return stableCacheHash(items);
+  }
+
+  private async bustCartPricingCache(user: UserModel): Promise<void> {
+    try {
+      await bustCartPricingCachesForUser(this._cache, user.id);
+    } catch {
+      /* cache optionnel */
+    }
+  }
 
   async findOneByStoreId(
     storeId: string,
@@ -436,6 +482,7 @@ export class CartService {
       });
     }
 
+    await this.bustCartPricingCache(user);
     return await this.findOneByItemId(item.id, user);
   }
 
@@ -452,6 +499,7 @@ export class CartService {
         user: new Types.ObjectId(user.id),
       })
       .exec();
+    await this.bustCartPricingCache(user);
   }
 
   /** Met à jour la quantité d’une ligne (vérifie que la ligne appartient à l’utilisateur). */
@@ -486,6 +534,7 @@ export class CartService {
       }
     }
     await this.updateQuantity(item, q);
+    await this.bustCartPricingCache(user);
   }
 
   async clearStoreCart(store: StoreModel, user: UserModel): Promise<void> {
@@ -495,6 +544,7 @@ export class CartService {
         user: new Types.ObjectId(user.id),
       })
       .exec();
+    await this.bustCartPricingCache(user);
   }
 
   /** Supprime toutes les lignes panier du client (ex. déconnexion). */
@@ -502,6 +552,7 @@ export class CartService {
     await this._cartItemModel
       .deleteMany({ user: new Types.ObjectId(user.id) })
       .exec();
+    await this.bustCartPricingCache(user);
   }
 
   /** Valide un code promo pour les lignes panier de l’utilisateur dans une boutique. */

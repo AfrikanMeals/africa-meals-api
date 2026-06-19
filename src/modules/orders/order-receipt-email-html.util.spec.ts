@@ -52,7 +52,29 @@ describe('order-receipt-email-html.util', () => {
     expect(html).toContain('itemprop="orderNumber"');
     expect(html).toContain('Okok');
     expect(html).toContain('Sous-total');
-    expect(html).toContain('Total');
+    expect(html).toContain('Total débité');
     expect(html).toContain('Commande #AE95ED9A');
+  });
+
+  it('includes tip and payment fee rows when present', () => {
+    const html = buildOrderReceiptEmailBodyHtml(
+      {
+        ...snapshot,
+        totalPrice: 20,
+        shippingPrice: 5,
+        deliveryTipCents: 500,
+        orderPaymentFeeCents: 100,
+        taxTotal: 2,
+        currency: 'CAD',
+      },
+      {
+        ref: 'AE95ED9A',
+        currency: 'CAD',
+      },
+    );
+
+    expect(html).toContain('Pourboire livreur');
+    expect(html).toContain('Frais de transaction');
+    expect(html).toContain('Total débité');
   });
 });

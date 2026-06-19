@@ -68,6 +68,7 @@ function mapPlan(doc: Record<string, unknown>) {
     mobileAccess: doc.mobileAccess === true,
     storeSubscriptionEnabled: doc.storeSubscriptionEnabled === true,
     mealPreOrderEnabled: doc.mealPreOrderEnabled === true,
+    pickupPayOnDeliveryEnabled: doc.pickupPayOnDeliveryEnabled === true,
     maxCatalogItems: Math.max(0, Number(doc.maxCatalogItems ?? 0)),
     maxDailyMenuItems: Math.max(0, Number(doc.maxDailyMenuItems ?? 0)),
     maxAdCampaignItems: Math.max(0, Number(doc.maxAdCampaignItems ?? 0)),
@@ -310,6 +311,7 @@ export class SubscriptionsService implements OnModuleInit {
         mobileAccess: seed.mobileAccess === true,
         storeSubscriptionEnabled: seed.storeSubscriptionEnabled === true,
         mealPreOrderEnabled: seed.mealPreOrderEnabled === true,
+        pickupPayOnDeliveryEnabled: seed.pickupPayOnDeliveryEnabled === true,
         maxCatalogItems: Math.max(0, Number(seed.maxCatalogItems ?? 0)),
         maxDailyMenuItems: Math.max(0, Number(seed.maxDailyMenuItems ?? 0)),
         ...(seed.maxAdCampaignItems != null && {
@@ -340,6 +342,12 @@ export class SubscriptionsService implements OnModuleInit {
           docFields.mealPreOrderEnabled != null
         ) {
           patch.mealPreOrderEnabled = docFields.mealPreOrderEnabled;
+        }
+        if (
+          existingDoc.pickupPayOnDeliveryEnabled == null &&
+          docFields.pickupPayOnDeliveryEnabled != null
+        ) {
+          patch.pickupPayOnDeliveryEnabled = docFields.pickupPayOnDeliveryEnabled;
         }
         if (Object.keys(patch).length > 0) {
           await this.planModel
@@ -1017,6 +1025,36 @@ export class SubscriptionsService implements OnModuleInit {
     return this.isMealPreOrderEnabledForPlanName(planName);
   }
 
+  async isPickupPayOnDeliveryEnabledForPlanName(
+    planName: string,
+  ): Promise<boolean> {
+    const name = String(planName ?? '').trim();
+    if (!name) return false;
+    const escaped = buildCaseInsensitiveExactRegex(name);
+    const doc = await this.planModel
+      .findOne({
+        name: { $regex: escaped },
+        active: { $ne: false },
+      })
+      .select('pickupPayOnDeliveryEnabled')
+      .lean()
+      .exec();
+    return (
+      (doc as { pickupPayOnDeliveryEnabled?: boolean } | null)
+        ?.pickupPayOnDeliveryEnabled === true
+    );
+  }
+
+  async isPickupPayOnDeliveryEnabledForStore(
+    storeId: string,
+  ): Promise<boolean> {
+    const id = String(storeId ?? '').trim();
+    if (!Types.ObjectId.isValid(id)) return false;
+    const planByStore = await this.resolveActivePlanNamesByStoreIds([id]);
+    const planName = String(planByStore.get(id) ?? '').trim();
+    return this.isPickupPayOnDeliveryEnabledForPlanName(planName);
+  }
+
   /**
    * Liste des boutiques accessibles pour un propriétaire selon son quota courant.
    * En cas de downgrade, les boutiques excédentaires les plus récentes deviennent inaccessibles
@@ -1262,6 +1300,7 @@ export class SubscriptionsService implements OnModuleInit {
       mobileAccess: dto.mobileAccess === true,
       storeSubscriptionEnabled: dto.storeSubscriptionEnabled === true,
       mealPreOrderEnabled: dto.mealPreOrderEnabled === true,
+      pickupPayOnDeliveryEnabled: dto.pickupPayOnDeliveryEnabled === true,
       maxCatalogItems: Math.max(
         0,
         Math.floor(Number(dto.maxCatalogItems ?? 0)),
@@ -1318,6 +1357,9 @@ export class SubscriptionsService implements OnModuleInit {
     }
     if (dto.mealPreOrderEnabled != null) {
       patch.mealPreOrderEnabled = dto.mealPreOrderEnabled === true;
+    }
+    if (dto.pickupPayOnDeliveryEnabled != null) {
+      patch.pickupPayOnDeliveryEnabled = dto.pickupPayOnDeliveryEnabled === true;
     }
     if (dto.maxCatalogItems != null) {
       patch.maxCatalogItems = Math.max(
@@ -1421,6 +1463,9 @@ export class SubscriptionsService implements OnModuleInit {
       fields.push('abonnements clients');
     }
     if (dto.mealPreOrderEnabled != null) fields.push('pré-commande');
+    if (dto.pickupPayOnDeliveryEnabled != null) {
+      fields.push('paiement à la collecte');
+    }
     if (dto.maxCatalogItems != null) fields.push('catalogue');
     if (dto.maxDailyMenuItems != null) fields.push('menu du jour');
     if (dto.maxAdCampaignItems != null) fields.push('campagnes pub');

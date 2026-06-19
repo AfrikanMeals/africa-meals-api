@@ -1,4 +1,5 @@
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
+import { toStripeMinorUnits } from '../../utils/stripe-currency-amount.util';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import {
@@ -188,6 +189,7 @@ export function computeOrderPaymentFeeSplit(
     orderPaymentFeeFixed: number;
     orderPaymentFeePercent: number;
   },
+  currency = 'CAD',
 ): OrderPaymentFeeSplit {
   const gross = Math.max(0, Math.round(grossCents));
   const feeMode = settings.orderPaymentFeeMode;
@@ -208,7 +210,7 @@ export function computeOrderPaymentFeeSplit(
   const platformFeeCents =
     feeMode === 'percent'
       ? Math.round(gross * (feePercent / 100))
-      : Math.round(feeFixedCad * 100);
+      : toStripeMinorUnits(feeFixedCad, currency);
 
   const fee = Math.max(0, platformFeeCents);
 
@@ -441,14 +443,19 @@ export class PlatformFeesService {
 
   async computeOrderPaymentFeeFromSettings(
     grossCents: number,
+    currency = 'CAD',
   ): Promise<OrderPaymentFeeSplit> {
     const doc = await this._ensureDoc();
     const settings = this._toResponse(doc);
-    return computeOrderPaymentFeeSplit(grossCents, {
-      orderPaymentFeeMode: settings.orderPaymentFeeMode,
-      orderPaymentFeeFixed: settings.orderPaymentFeeFixed,
-      orderPaymentFeePercent: settings.orderPaymentFeePercent,
-    });
+    return computeOrderPaymentFeeSplit(
+      grossCents,
+      {
+        orderPaymentFeeMode: settings.orderPaymentFeeMode,
+        orderPaymentFeeFixed: settings.orderPaymentFeeFixed,
+        orderPaymentFeePercent: settings.orderPaymentFeePercent,
+      },
+      currency,
+    );
   }
 
   async updateSettings(user: UserModel, dto: UpdatePlatformFeesDto) {

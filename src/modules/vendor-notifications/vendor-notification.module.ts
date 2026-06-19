@@ -1,4 +1,5 @@
 import { MailerModule } from '@modules/mailer/mailer.module';
+import { SmsModule } from '@modules/messaging/sms.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { TeamsModule } from '@modules/teams/teams.module';
 import { forwardRef, Module } from '@nestjs/common';
@@ -33,6 +34,7 @@ import { VendorNotificationStripeBillingService } from './vendor-notification-st
 @Module({
   imports: [
     MailerModule,
+    SmsModule,
     NotificationsModule,
     forwardRef(() => TeamsModule),
     MongooseModule.forFeature([

@@ -6,7 +6,9 @@ import { prepareIncomingUploadFile } from 'src/incoming-upload-file';
 import {
   AppCacheKeys,
   apiPublicCacheTtlMs,
-  bustCacheKey,
+  bustCatalogListingPublicCaches,
+  bustProductDetailCachesForProduct,
+  favoritesCacheTtlMs,
   getOrSetCache,
 } from '@common/redis-app-cache';
 import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
@@ -440,11 +442,13 @@ export class ProductsService {
     );
   }
 
-  private async _bustProductDetailCache(productId: string): Promise<void> {
-    await bustCacheKey(
-      this._cacheManager,
-      AppCacheKeys.productDetail(productId),
-    );
+  /** Détail produit + listings publics (menu boutique, recherche, accueil). */
+  private async _bustShopProductCaches(
+    productId: string,
+    storeId: string,
+  ): Promise<void> {
+    await bustProductDetailCachesForProduct(this._cacheManager, productId);
+    await bustCatalogListingPublicCaches(this._cacheManager, storeId);
   }
 
   private async _loadProductDetailForShop(
@@ -1255,6 +1259,11 @@ export class ProductsService {
         this._sitemapDispatch.requestRegenerate('product_created_active');
       }
 
+      await this._bustShopProductCaches(
+        product._id.toString(),
+        storeId,
+      );
+
       return this.findOneById(product._id.toString());
     } catch (e) {
       for (const u of uploadedUrls) {
@@ -1337,10 +1346,12 @@ export class ProductsService {
       doc.listDiscountPrice = Number(args.listDiscountPrice);
     }
     if (args.discountSchedules !== undefined) {
-      doc.set(
-        'discountSchedules',
-        this._discountSchedules.normalizeSchedulesFromDto(args.discountSchedules),
-      );
+      const normalizedSchedules =
+        this._discountSchedules.normalizeSchedulesFromDto(
+          args.discountSchedules,
+        );
+      doc.set('discountSchedules', normalizedSchedules);
+      doc.markModified('discountSchedules');
     }
     if (args.price !== undefined) {
       const price = Number(args.price);
@@ -1404,7 +1415,7 @@ export class ProductsService {
 
     this._discountSchedules.applyToDocument(doc);
     await doc.save();
-    await this._bustProductDetailCache(productId);
+    await this._bustShopProductCaches(productId, storeId);
     if (
       doc.status === ProductStatusEnum.ACTIVE &&
       previousStatus !== ProductStatusEnum.ACTIVE &&
@@ -1427,7 +1438,7 @@ export class ProductsService {
     }
     await this.deleteRemoteGalleryItems((doc.galleryImages as unknown[]) ?? []);
     await doc.deleteOne();
-    await this._bustProductDetailCache(productId);
+    await this._bustShopProductCaches(productId, storeId);
   }
 
   async createExtra(
@@ -1599,8 +1610,7 @@ export class ProductsService {
     }
     const uid = userId.toString();
     const cacheKey = this.favoritesGraphqlCacheKey(uid, { page, take });
-    const ttlEnv = Number(process.env.FAVORITES_CACHE_TTL_MS);
-    const ttlMs = Number.isFinite(ttlEnv) && ttlEnv > 0 ? ttlEnv : 25_000;
+    const ttlMs = favoritesCacheTtlMs();
 
     return this.runWithFavoriteListDedupe(cacheKey, ttlMs, async () => {
       const skip = (page - 1) * take;
@@ -1784,8 +1794,7 @@ export class ProductsService {
     }
     const uid = userId.toString();
     const cacheKey = this.favoritesCacheKey(uid, pagination);
-    const ttlEnv = Number(process.env.FAVORITES_CACHE_TTL_MS);
-    const ttlMs = Number.isFinite(ttlEnv) && ttlEnv > 0 ? ttlEnv : 25_000;
+    const ttlMs = favoritesCacheTtlMs();
 
     return this.runWithFavoriteListDedupe(cacheKey, ttlMs, async () => {
       const skip = pagination ? (pagination.page - 1) * pagination.take : 0;

@@ -54,7 +54,17 @@ import { Model, Types } from 'mongoose';
 import Stripe = require('stripe');
 import { FilterGroupedPaymentsDto } from './dto/filter-grouped-payments.dto';
 import { GroupedStripeCheckoutDto } from './dto/grouped-stripe-checkout.dto';
-import { stripeAmountFactor } from '../../../utils/stripe-currency-amount.util';
+import {
+  stripeAmountFactor,
+  stripeMinimumChargeMinorUnits,
+} from '../../../utils/stripe-currency-amount.util';
+import {
+  AppCacheKeys,
+  checkoutPreviewCacheTtlMs,
+  stableCacheHash,
+} from '@common/redis-app-cache';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 import { DeliveryTipService } from '../delivery-tip.service';
 import { DELIVERY_TIP_ALLOCATION_BY_SHIPPING_FEE } from '../delivery-tip-allocation.util';
 
@@ -108,7 +118,104 @@ type GroupedStripeBuilt = {
   tipAllocationMethod: string;
   /** Facteur montant affiché → unité Stripe (100 = centimes, 1 = XAF entier). */
   amountFactor: number;
+  /** Sous-total avant frais de transaction (articles + livraison + taxes + pourboire). */
+  subtotalBeforePaymentFeeCents: number;
+  orderPaymentFeeCents: number;
+  orderPaymentFeeLabel?: string;
+  totalCents: number;
+  fulfillmentByStoreId: Record<string, 'pickup' | 'delivery'>;
+  deliveryMetaByStore: Record<
+    string,
+    {
+      deliverable: boolean;
+      distanceKm: number | null;
+      maxDeliveryRadiusKm: number | null;
+    }
+  >;
 };
+
+export type GroupedCheckoutPreviewTaxLine = {
+  name: string;
+  amount: number;
+};
+
+export type GroupedCheckoutPreviewPerStore = {
+  storeId: string;
+  storeName: string;
+  fulfillmentMode: 'pickup' | 'delivery';
+  goodsCents: number;
+  shippingCents: number;
+  taxCents: number;
+  tipCents: number;
+  orderPaymentFeeCents: number;
+  deliverable: boolean;
+  distanceKm: number | null;
+  maxDeliveryRadiusKm: number | null;
+  taxLines: GroupedCheckoutPreviewTaxLine[];
+};
+
+export type GroupedCheckoutPreviewCacheMeta = {
+  hit: boolean;
+  ttlMs: number;
+};
+
+export type GroupedCheckoutPreviewLine = {
+  kind: string;
+  label: string;
+  amountCents: number;
+};
+
+export type GroupedCheckoutPreviewResponse = {
+  currency: string;
+  amountFactor: number;
+  goodsCents: number;
+  shippingCents: number;
+  taxCents: number;
+  deliveryTipCents: number;
+  orderPaymentFeeCents: number;
+  orderPaymentFeeLabel?: string;
+  /** Montant commande (hors frais de transaction plateforme). */
+  orderSubtotalCents: number;
+  /** Montant PaymentIntent / total débité. */
+  totalCents: number;
+  lines: GroupedCheckoutPreviewLine[];
+  perStore: GroupedCheckoutPreviewPerStore[];
+  cache?: GroupedCheckoutPreviewCacheMeta;
+};
+
+/** Entrée stable pour clé cache pricing panier / checkout. */
+export function cartPricingCacheInputHash(
+  cartFingerprint: string,
+  dto: GroupedStripeCheckoutDto,
+): string {
+  const fulfillment = dto.fulfillmentByStoreId ?? {};
+  const coupons = (dto.coupons ?? [])
+    .map((c) => ({
+      storeId: String(c.storeId ?? '').trim(),
+      code: String(c.code ?? '')
+        .trim()
+        .toUpperCase(),
+    }))
+    .filter((c) => c.storeId && c.code)
+    .sort(
+      (a, b) =>
+        a.storeId.localeCompare(b.storeId) || a.code.localeCompare(b.code),
+    );
+  return stableCacheHash({
+    v: 1,
+    cartFingerprint,
+    fulfillment,
+    addressId: String(dto.addressId ?? '').trim(),
+    currency: String(dto.currency ?? '')
+      .trim()
+      .toUpperCase(),
+    deliveryTipTotalCents: Math.max(
+      0,
+      Math.round(Number(dto.deliveryTipTotalCents) || 0),
+    ),
+    coupons,
+  });
+}
 
 function storeMongoId(store: CartGroup['store']): string {
   const raw = store?.id ?? store?._id;
@@ -425,6 +532,117 @@ function sumCheckoutLineItemsCents(lineItems: CheckoutLineItem[]): number {
   return sum;
 }
 
+function checkoutLineItemKind(li: CheckoutLineItem): string {
+  const meta = li.price_data?.product_data?.metadata;
+  const kind =
+    meta && typeof meta === 'object' && !Array.isArray(meta)
+      ? String((meta as Record<string, unknown>).afrika_line_kind ?? '').trim()
+      : '';
+  return kind || 'other';
+}
+
+function checkoutLineItemAmountCents(li: CheckoutLineItem): number {
+  const ua = li.price_data?.unit_amount ?? 0;
+  const q = li.quantity ?? 1;
+  return ua * q;
+}
+
+function groupedCheckoutPreviewFromBuilt(
+  built: GroupedStripeBuilt,
+): Omit<GroupedCheckoutPreviewResponse, 'cache'> {
+  let goodsCents = 0;
+  let shippingCents = 0;
+  let taxCents = 0;
+  for (const row of Object.values(built.payoutByStore)) {
+    goodsCents += Math.max(0, row.goodsCents ?? 0);
+    shippingCents += Math.max(0, row.shipCents ?? 0);
+    taxCents += Math.max(0, row.taxCents ?? 0);
+  }
+  const lines: GroupedCheckoutPreviewLine[] = built.lineItems.map((li) => ({
+    kind: checkoutLineItemKind(li),
+    label: String(li.price_data?.product_data?.name ?? '').slice(0, 120),
+    amountCents: checkoutLineItemAmountCents(li),
+  }));
+  const storeIds = Object.keys(built.payoutByStore);
+  const payoutMap = new Map<
+    string,
+    { goodsCents: number; shipCents: number }
+  >();
+  for (const id of storeIds) {
+    const row = built.payoutByStore[id];
+    payoutMap.set(id, {
+      goodsCents: row?.goodsCents ?? 0,
+      shipCents: row?.shipCents ?? 0,
+    });
+  }
+  const feeByStore = allocateOrderPaymentFeeByStore({
+    totalFeeCents: built.orderPaymentFeeCents,
+    storeIds,
+    payoutMap,
+    tipCentsByStore: built.tipCentsByStore,
+  });
+  const perStore: GroupedCheckoutPreviewPerStore[] = storeIds.map((storeId) => {
+    const row = built.payoutByStore[storeId];
+    const meta = built.deliveryMetaByStore[storeId];
+    const mode = built.fulfillmentByStoreId[storeId] ?? 'pickup';
+    return {
+      storeId,
+      storeName: row?.storeName ?? 'Restaurant',
+      fulfillmentMode: mode,
+      goodsCents: Math.max(0, row?.goodsCents ?? 0),
+      shippingCents: Math.max(0, row?.shipCents ?? 0),
+      taxCents: Math.max(0, row?.taxCents ?? 0),
+      tipCents: Math.max(0, Math.round(built.tipCentsByStore[storeId] ?? 0)),
+      orderPaymentFeeCents: Math.max(0, feeByStore[storeId] ?? 0),
+      deliverable: meta?.deliverable ?? true,
+      distanceKm: meta?.distanceKm ?? null,
+      maxDeliveryRadiusKm: meta?.maxDeliveryRadiusKm ?? null,
+      taxLines: (row?.taxBreakdown?.lines ?? []).map((l) => ({
+        name: l.name,
+        amount: l.amount,
+      })),
+    };
+  });
+  return {
+    currency: built.currency.toUpperCase(),
+    amountFactor: built.amountFactor,
+    goodsCents,
+    shippingCents,
+    taxCents,
+    deliveryTipCents: Math.max(0, built.deliveryTipTotalCents),
+    orderPaymentFeeCents: Math.max(0, built.orderPaymentFeeCents),
+    orderPaymentFeeLabel: built.orderPaymentFeeLabel,
+    orderSubtotalCents: Math.max(0, built.subtotalBeforePaymentFeeCents),
+    totalCents: Math.max(0, built.totalCents),
+    lines,
+    perStore,
+  };
+}
+
+function allocateOrderPaymentFeeByStore(args: {
+  totalFeeCents: number;
+  storeIds: string[];
+  payoutMap: Map<string, { goodsCents: number; shipCents: number }>;
+  tipCentsByStore: Record<string, number>;
+}): Record<string, number> {
+  const fee = Math.max(0, Math.round(args.totalFeeCents));
+  if (fee < 1 || !args.storeIds.length) return {};
+  const weights = args.storeIds.map((storeId) => {
+    const row = args.payoutMap.get(storeId);
+    const goods = Math.max(0, row?.goodsCents ?? 0);
+    const ship = Math.max(0, row?.shipCents ?? 0);
+    const tip = Math.max(0, Math.round(args.tipCentsByStore[storeId] ?? 0));
+    return goods + ship + tip;
+  });
+  const allocated = distributeCentsByWeights(weights, fee);
+  const out: Record<string, number> = {};
+  for (let i = 0; i < args.storeIds.length; i++) {
+    const cents = allocated[i] ?? 0;
+    if (cents > 0) out[args.storeIds[i]] = cents;
+  }
+  return out;
+}
+
 /** Montants par boutique issus des métadonnées Stripe (`payout_v1`). */
 function parsePayoutFromStripeMetadata(
   meta: Record<string, string | undefined | null>,
@@ -525,6 +743,8 @@ export class StripeGroupedCheckoutService {
     @Inject(SubscriptionsStripeCheckoutService)
     private readonly subscriptionStripeCheckout: SubscriptionsStripeCheckoutService,
     private readonly webhookMetrics: StripeWebhookMetricsService,
+    @Inject(CACHE_MANAGER)
+    private readonly cache: Cache,
     @Inject(forwardRef(() => VendorNotificationStripeBillingService))
     @Optional()
     private readonly vendorSmsBilling?: VendorNotificationStripeBillingService,
@@ -814,6 +1034,7 @@ export class StripeGroupedCheckoutService {
     const lineItems: CheckoutLineItem[] = [];
     const shipCentsByStore: Record<string, number> = {};
     const payoutByStore: GroupedStripeBuilt['payoutByStore'] = {};
+    const deliveryMetaByStore: GroupedStripeBuilt['deliveryMetaByStore'] = {};
     const couponByStore = new Map(
       coupons.map((c) => [c.storeId, c.code] as const),
     );
@@ -833,6 +1054,11 @@ export class StripeGroupedCheckoutService {
           storeId,
           addressId: dto.addressId,
         });
+        deliveryMetaByStore[storeId] = {
+          deliverable: Boolean(q.deliverable && q.fee != null),
+          distanceKm: q.distanceKm ?? null,
+          maxDeliveryRadiusKm: q.maxDeliveryRadiusKm ?? null,
+        };
         if (!q.deliverable || q.fee == null) {
           throw new BadRequestException({
             message: 'delivery_not_available',
@@ -842,6 +1068,12 @@ export class StripeGroupedCheckoutService {
           });
         }
         shipFee = q.fee;
+      } else {
+        deliveryMetaByStore[storeId] = {
+          deliverable: true,
+          distanceKm: null,
+          maxDeliveryRadiusKm: null,
+        };
       }
       shipCentsByStore[storeId] = Math.round(
         shipFee * amountFactor + Number.EPSILON,
@@ -1071,7 +1303,10 @@ export class StripeGroupedCheckoutService {
 
     const subtotalCents = sumCheckoutLineItemsCents(lineItems);
     const paymentFee =
-      await this.platformFees.computeOrderPaymentFeeFromSettings(subtotalCents);
+      await this.platformFees.computeOrderPaymentFeeFromSettings(
+        subtotalCents,
+        currency,
+      );
     if (paymentFee.platformFeeCents > 0) {
       const feeLabel =
         paymentFee.feeMode === 'percent'
@@ -1093,6 +1328,16 @@ export class StripeGroupedCheckoutService {
       });
     }
 
+    const subtotalBeforePaymentFeeCents = subtotalCents;
+    const orderPaymentFeeCents = Math.max(0, paymentFee.platformFeeCents);
+    const orderPaymentFeeLabel =
+      orderPaymentFeeCents > 0
+        ? paymentFee.feeMode === 'percent'
+          ? `Frais de transaction (${paymentFee.feePercent} %)`
+          : 'Frais de transaction'
+        : undefined;
+    const totalCents = subtotalBeforePaymentFeeCents + orderPaymentFeeCents;
+
     return {
       currency,
       lineItems,
@@ -1105,6 +1350,12 @@ export class StripeGroupedCheckoutService {
       tipCentsByStore,
       tipAllocationMethod,
       amountFactor,
+      subtotalBeforePaymentFeeCents,
+      orderPaymentFeeCents,
+      orderPaymentFeeLabel,
+      totalCents,
+      fulfillmentByStoreId: fulfillment as Record<string, 'pickup' | 'delivery'>,
+      deliveryMetaByStore,
     };
   }
 
@@ -1185,6 +1436,9 @@ export class StripeGroupedCheckoutService {
       base.tipAllocMethod = built.tipAllocationMethod;
     }
     base.amtFactor = String(built.amountFactor);
+    if (built.orderPaymentFeeCents > 0) {
+      base.payFeeCents = String(built.orderPaymentFeeCents);
+    }
     return {
       ...base,
       ...this.payoutMetadataChunks(built.payoutByStore),
@@ -1205,6 +1459,32 @@ export class StripeGroupedCheckoutService {
         ...recheck,
       });
     }
+  }
+
+  /**
+   * Prévisualisation serveur (même calcul que PaymentIntent) — total débité et détail.
+   * Résultat mis en cache Redis (TTL court, invalidé à chaque mutation panier).
+   */
+  async previewGroupedCheckout(
+    user: UserModel,
+    dto: GroupedStripeCheckoutDto,
+  ): Promise<GroupedCheckoutPreviewResponse> {
+    const ttlMs = checkoutPreviewCacheTtlMs();
+    const cartFingerprint =
+      await this.cartService.getCartPricingFingerprint(user);
+    const inputHash = cartPricingCacheInputHash(cartFingerprint, dto);
+    const cacheKey = AppCacheKeys.cartPricing(String(user.id), inputHash);
+
+    const cached =
+      await this.cache.get<Omit<GroupedCheckoutPreviewResponse, 'cache'>>(cacheKey);
+    if (cached) {
+      return { ...cached, cache: { hit: true, ttlMs } };
+    }
+
+    const built = await this.buildGroupedStripePayload(user, dto);
+    const preview = groupedCheckoutPreviewFromBuilt(built);
+    await this.cache.set(cacheKey, preview, ttlMs);
+    return { ...preview, cache: { hit: false, ttlMs } };
   }
 
   async createGroupedCheckoutSession(
@@ -1282,10 +1562,13 @@ export class StripeGroupedCheckoutService {
       return sum + ua * q;
     }, 0);
 
-    if (totalCents < 50) {
+    const stripeMinimumMinor = stripeMinimumChargeMinorUnits(built.currency);
+    if (totalCents < stripeMinimumMinor) {
       throw new BadRequestException({
         message: 'amount_below_stripe_minimum',
         totalCents,
+        stripeMinimumMinor,
+        currency: built.currency,
       });
     }
 
@@ -1295,6 +1578,23 @@ export class StripeGroupedCheckoutService {
       nStores > 1
         ? `Wise Eat · ${nStores} restaurants`
         : `Wise Eat · ${nStores} restaurant`;
+    const lineBreakdown = built.lineItems.map((li) => ({
+      name: li.price_data?.product_data?.name?.slice(0, 64),
+      unit_amount: li.price_data?.unit_amount,
+      quantity: li.quantity ?? 1,
+    }));
+    this.logger.log(
+      JSON.stringify({
+        event: 'grouped_payment_intent_create',
+        userId: String(user.id),
+        currency: built.currency,
+        amountFactor: built.amountFactor,
+        totalCents,
+        stripeMinimumMinor,
+        lineItems: lineBreakdown,
+        idempotencyKey: idempotencyKey?.trim().slice(0, 64) || undefined,
+      }),
+    );
     const stripe = this.stripe();
     const idem = idempotencyKey?.trim().slice(0, 255);
     const pi = await stripe.paymentIntents.create(
@@ -1307,6 +1607,15 @@ export class StripeGroupedCheckoutService {
         description: piDescription,
       },
       idem ? { idempotencyKey: idem } : undefined,
+    );
+    this.logger.log(
+      JSON.stringify({
+        event: 'grouped_payment_intent_created',
+        paymentIntentId: pi.id,
+        amount: pi.amount,
+        currency: pi.currency,
+        status: pi.status,
+      }),
     );
 
     if (!pi.client_secret) {
@@ -1398,6 +1707,7 @@ export class StripeGroupedCheckoutService {
     tipCentsByStore: Record<string, number>;
     tipAllocationMethod: string;
     amountFactor: number;
+    orderPaymentFeeCents?: number;
   }): Promise<{
     breakdown: StripePerStoreBreakdownRow;
     orderId?: string;
@@ -1418,6 +1728,7 @@ export class StripeGroupedCheckoutService {
       tipCentsByStore,
       tipAllocationMethod,
       amountFactor,
+      orderPaymentFeeCents,
     } = params;
 
     const prior = priorByStore.get(storeId);
@@ -1544,6 +1855,10 @@ export class StripeGroupedCheckoutService {
         deliveryTipCents,
         deliveryTipAllocationMethod:
           deliveryTipCents > 0 ? tipAllocationMethod : undefined,
+        orderPaymentFeeCents:
+          orderPaymentFeeCents != null && orderPaymentFeeCents > 0
+            ? orderPaymentFeeCents
+            : undefined,
       },
       );
       const paidOk = await this.ordersService.isOrderPaidForStripePayment(
@@ -1802,6 +2117,19 @@ export class StripeGroupedCheckoutService {
     const perStoreBreakdown: StripePerStoreBreakdownRow[] = [];
     const fulfillErrors: Array<{ storeId: string; error: string }> = [];
 
+    const totalPayFeeCents = Math.max(
+      0,
+      Math.round(
+        Number(metadata?.payFeeCents ?? metadata?.pay_fee_cents ?? 0),
+      ),
+    );
+    const orderPaymentFeeByStore = allocateOrderPaymentFeeByStore({
+      totalFeeCents: totalPayFeeCents,
+      storeIds,
+      payoutMap,
+      tipCentsByStore,
+    });
+
     const storeSlots = await Promise.all(
       storeIds.map((storeId) =>
         this.fulfillStripeGroupedStore({
@@ -1820,6 +2148,7 @@ export class StripeGroupedCheckoutService {
           tipCentsByStore,
           tipAllocationMethod,
           amountFactor,
+          orderPaymentFeeCents: orderPaymentFeeByStore[storeId] ?? 0,
         }),
       ),
     );
@@ -2382,6 +2711,98 @@ export class StripeGroupedCheckoutService {
     } finally {
       this.webhookMetrics.record(performance.now() - started, eventType);
     }
+  }
+
+  /**
+   * Paiement à la collecte (pickup) sans Stripe — une commande par boutique du panier.
+   */
+  async createPickupPayOnDeliveryCheckout(
+    user: UserModel,
+    dto: GroupedStripeCheckoutDto,
+  ): Promise<{ orderIds: string[] }> {
+    const coupons = (dto.coupons ?? [])
+      .filter((c) => c.code?.trim())
+      .map((c) => ({
+        storeId: c.storeId.trim(),
+        code: c.code.trim(),
+      }));
+
+    const validation = await this.cartService.validateCheckoutReadiness(user, {
+      coupons,
+    });
+    if (!validation.ok) {
+      throw new BadRequestException({
+        message: 'checkout_validation_failed',
+        ...validation,
+      });
+    }
+
+    const cart = await this.cartService.filter(user);
+    const groups = (cart?.data ?? []) as CartGroup[];
+    if (!groups.length) {
+      throw new BadRequestException('cart_is_empty');
+    }
+
+    const fulfillment = dto.fulfillmentByStoreId ?? {};
+    const couponByStore = new Map(
+      coupons.map((c) => [c.storeId, c.code] as const),
+    );
+    const orderIds: string[] = [];
+
+    for (const g of groups) {
+      const storeId = storeMongoId(g.store);
+      if (!storeId) continue;
+
+      const mode = fulfillment[storeId] ?? 'pickup';
+      if (mode !== 'pickup') {
+        throw new BadRequestException('pickup_pay_on_delivery_pickup_only');
+      }
+
+      const offered =
+        await this.storeService.isPickupPayOnDeliveryOfferedByStore(storeId);
+      if (!offered) {
+        throw new BadRequestException({
+          message: 'pickup_pay_on_delivery_not_available',
+          storeId,
+        });
+      }
+
+      const cartLines = (g.items ?? []).filter(
+        (x): x is Record<string, unknown> =>
+          x != null && typeof x === 'object' && !Array.isArray(x),
+      );
+      const currency = currencyForCartGroup(cartLines, g.store?.currency);
+      if (currency === 'multi') {
+        throw new BadRequestException('multi_currency_not_supported');
+      }
+
+      const order = await this.storeService.createOrderFromCart(storeId, user);
+      const oid =
+        (order as { _id?: Types.ObjectId })?._id?.toString() ??
+        (order as { id?: string })?.id ??
+        null;
+      if (!oid) {
+        throw new BadRequestException('order_create_failed');
+      }
+
+      const couponCode = couponByStore.get(storeId);
+      await this.ordersService.markOrderPaidWithShipping(oid, 0, {
+        payOnPickup: true,
+        couponCode,
+        currency: currency || undefined,
+      });
+
+      if (couponCode) {
+        await this.couponsService.recordUsageAfterSuccessfulPayment(
+          storeId,
+          couponCode,
+        );
+      }
+
+      orderIds.push(oid);
+    }
+
+    return { orderIds };
   }
 
   private getStripeWebhookSecrets(): string[] {

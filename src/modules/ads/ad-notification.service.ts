@@ -68,9 +68,10 @@ import {
   verifyAdNotificationTrackToken,
 } from '@modules/ads/ad-notification-track-token.util';
 import {
-  trySendAdSms,
+  isAdNotificationSmsEnabled,
   trySendAdWhatsApp,
 } from '@modules/ads/bird-channels.util';
+import { SmsDispatchService } from '@modules/messaging/sms-dispatch.service';
 import {
   AdNotificationTestSourceEnum,
   SendAdNotificationTestDto,
@@ -141,6 +142,7 @@ export class AdNotificationService {
     private readonly dispatchQueue: AdNotificationDispatchQueueService,
     private readonly storeAccess: StoreAccessService,
     private readonly wsInboxNotify: WsInboxNotifyService,
+    private readonly smsDispatch: SmsDispatchService,
   ) {}
 
   private async assertAdminSettings(user: UserModel): Promise<void> {
@@ -1407,14 +1409,29 @@ export class AdNotificationService {
         0,
         1600,
       );
-    const sent = await trySendAdSms({
-      env: process.env,
+    if (!isAdNotificationSmsEnabled(process.env)) {
+      this.logger.debug(
+        `SMS ad notification (désactivé): ${args.recipient.phone}`,
+      );
+      await this.recordDelivery({
+        deliveryId: args.deliveryId,
+        entityType: args.entityType,
+        adId: args.adId,
+        campaignId: args.campaignId,
+        storeId: args.storeId,
+        userId: args.recipient.userId,
+        channel: AdNotificationChannelEnum.SMS,
+        targetLink: args.targetLink,
+      });
+      return;
+    }
+    const sent = await this.smsDispatch.sendSms({
       toPhone: args.recipient.phone,
       body: message,
     });
-    if (!sent) {
+    if (!sent.ok) {
       this.logger.debug(
-        `SMS ad notification (non envoyé / désactivé): ${args.recipient.phone}`,
+        `SMS ad notification (${sent.engine ?? 'unknown'}): ${args.recipient.phone} — ${sent.error ?? 'non envoyé'}`,
       );
     }
     await this.recordDelivery({

@@ -1,6 +1,7 @@
 import {
   ADMIN_PERMISSION_LABELS,
   ALL_ADMIN_PERMISSIONS,
+  ADMIN_PERMISSION_GROUPS,
   DEFAULT_ADMIN_ROLE_TEMPLATES,
   isAdminPermission,
 } from '../../common/permissions/admin-permissions';
@@ -9,6 +10,7 @@ import {
   DEFAULT_STORE_ROLE_TEMPLATES,
   isStorePermission,
   sortStoreRolesByTemplate,
+  STORE_PERMISSION_GROUPS,
   STORE_PERMISSION_LABELS,
 } from '../../common/permissions/store-permissions';
 import {
@@ -134,9 +136,19 @@ export class TeamsService {
         key,
         label: STORE_PERMISSION_LABELS[key],
       })),
+      storeGroups: STORE_PERMISSION_GROUPS.map((g) => ({
+        id: g.id,
+        label: g.label,
+        keys: [...g.keys],
+      })),
       admin: ALL_ADMIN_PERMISSIONS.map((key) => ({
         key,
         label: ADMIN_PERMISSION_LABELS[key],
+      })),
+      adminGroups: ADMIN_PERMISSION_GROUPS.map((g) => ({
+        id: g.id,
+        label: g.label,
+        keys: [...g.keys],
       })),
     };
   }
@@ -214,6 +226,16 @@ export class TeamsService {
           existing.description = tpl.description;
           existing.isOwnerRole = true;
           await existing.save();
+        } else if (existing.isSystem) {
+          const merged = [
+            ...new Set([
+              ...(existing.permissions ?? []).filter(isStorePermission),
+              ...tpl.permissions,
+            ]),
+          ];
+          existing.permissions = merged;
+          existing.description = tpl.description;
+          await existing.save();
         }
         continue;
       }
@@ -254,6 +276,24 @@ export class TeamsService {
   }
 
   async ensurePlatformRolesSeeded() {
+    for (const tpl of DEFAULT_ADMIN_ROLE_TEMPLATES) {
+      const existing = await this.platformRoleModel
+        .findOne({ templateKey: tpl.key, isSystem: true })
+        .exec();
+      if (existing) {
+        if (!existing.isSuper) {
+          const merged = [
+            ...new Set([
+              ...(existing.permissions ?? []).filter(isAdminPermission),
+              ...tpl.permissions,
+            ]),
+          ];
+          existing.permissions = merged;
+          await existing.save();
+        }
+        continue;
+      }
+    }
     const count = await this.platformRoleModel.countDocuments().exec();
     if (count > 0) return;
     for (const tpl of DEFAULT_ADMIN_ROLE_TEMPLATES) {

@@ -16,6 +16,8 @@ import {
   extractLatLonFromGeoPoint,
   haversineDistanceKm,
 } from './shipping-quote.util';
+import { resolvePlatformShippingRegionCode } from './platform-shipping-region.util';
+import { countryCodeFromStoreRegion } from '@modules/supported-countries/region-tax.util';
 
 @Injectable()
 export class PlatformShippingQuoteService {
@@ -43,7 +45,7 @@ export class PlatformShippingQuoteService {
 
     const deliveryAddr = await this._addressModel
       .findById(dto.addressId)
-      .select('location')
+      .select('location countryCode')
       .lean()
       .exec();
     if (!deliveryAddr) {
@@ -61,14 +63,18 @@ export class PlatformShippingQuoteService {
 
     const store = await this._storeModel
       .findById(dto.storeId)
-      .populate({ path: 'address', select: 'location' })
+      .populate({ path: 'address', select: 'location countryCode' })
+      .select('region address')
       .lean()
       .exec();
     if (!store) {
       throw new NotFoundException('store_not_found');
     }
     const shopAddr = store.address as
-      | { location?: { type?: string; coordinates?: number[] } }
+      | {
+          location?: { type?: string; coordinates?: number[] };
+          countryCode?: string;
+        }
       | null
       | undefined;
     const origin = extractLatLonFromGeoPoint(shopAddr?.location);
@@ -76,14 +82,23 @@ export class PlatformShippingQuoteService {
       throw new BadRequestException('store_address_missing_coordinates');
     }
 
+    const storeAddrCc =
+      shopAddr && typeof shopAddr === 'object' && !Array.isArray(shopAddr)
+        ? String(shopAddr.countryCode ?? '').trim().toUpperCase()
+        : '';
+    const regionCode = resolvePlatformShippingRegionCode([
+      store.region,
+      countryCodeFromStoreRegion(store),
+      storeAddrCc,
+      deliveryAddr?.countryCode,
+      user.appCountryCode,
+    ]);
+    const settings = await this._settingsService.getPublicSettings(regionCode);
     const distanceKm = haversineDistanceKm(
       origin.lat,
       origin.lon,
       dest.lat,
       dest.lon,
-    );
-    const settings = await this._settingsService.getPublicSettings(
-      String(user.appCountryCode ?? '').trim().toUpperCase() || undefined,
     );
     const computed = computePlatformShippingFeeFromDistance(
       settings,
@@ -99,6 +114,7 @@ export class PlatformShippingQuoteService {
       maxDeliveryRadiusKm: settings.maxDeliveryRadiusKm,
       deliverable: computed.deliverable,
       fee: computed.deliverable ? computed.total : null,
+      resolvedRegionCode: regionCode ?? null,
       breakdown: {
         rangeFlat: computed.rangeFlat,
         deliveryBasePrice: computed.deliveryBasePrice,

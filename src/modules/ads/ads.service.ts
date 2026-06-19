@@ -31,6 +31,7 @@ import {
 import { detectCatalogImageStorageKind } from '@common/media/detect-storage-engine.util';
 import { MediasService } from '@modules/medias/medias.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
+import { storePermissionGranted } from '../../common/permissions/store-permissions';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
@@ -1036,7 +1037,11 @@ export class AdsService implements OnModuleInit {
     }
     const access = await this._storeAccess.resolveStoreAccess(user);
     return access
-      .filter((a) => a.isOwner || a.permissions.includes('campaigns.manage'))
+      .filter(
+        (a) =>
+          a.isOwner ||
+          storePermissionGranted(a.permissions, 'campaigns.manage'),
+      )
       .map((a) => a.storeId)
       .filter((id) => Types.ObjectId.isValid(id));
   }

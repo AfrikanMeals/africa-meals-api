@@ -1264,6 +1264,8 @@ export class OrdersService {
       currency?: string;
       deliveryTipCents?: number;
       deliveryTipAllocationMethod?: string;
+      orderPaymentFeeCents?: number;
+      payOnPickup?: boolean;
     },
   ): Promise<void> {
     const ship = Math.max(0, Number(shippingPrice) || 0);
@@ -1399,6 +1401,9 @@ export class OrdersService {
     if (opts?.stripeParentPaymentId?.trim()) {
       $set['stripeParentPaymentId'] = opts.stripeParentPaymentId.trim();
     }
+    if (opts?.payOnPickup === true) {
+      $set['payOnPickup'] = true;
+    }
     if (opts?.couponCode?.trim()) {
       $set['couponCode'] = opts.couponCode.trim().toUpperCase();
     }
@@ -1416,6 +1421,11 @@ export class OrdersService {
       opts?.deliveryTipCents != null && Number.isFinite(opts.deliveryTipCents)
         ? Math.max(0, Math.round(opts.deliveryTipCents))
         : 0;
+    const orderPaymentFeeCents =
+      opts?.orderPaymentFeeCents != null &&
+      Number.isFinite(opts.orderPaymentFeeCents)
+        ? Math.max(0, Math.round(opts.orderPaymentFeeCents))
+        : 0;
     if (!isPickup && tipCents > 0) {
       $set['deliveryTipCents'] = tipCents;
       $set['deliveryTipStatus'] = 'pending';
@@ -1426,6 +1436,12 @@ export class OrdersService {
     } else {
       $set['deliveryTipCents'] = 0;
       $set['deliveryTipStatus'] = 'none';
+    }
+
+    if (orderPaymentFeeCents > 0) {
+      $set['orderPaymentFeeCents'] = orderPaymentFeeCents;
+    } else {
+      $set['orderPaymentFeeCents'] = 0;
     }
 
     if (!isPickup && opts?.deliveryAddressId?.trim()) {
@@ -3341,16 +3357,7 @@ export class OrdersService {
     if (!storeId) {
       throw new BadRequestException('order_store_missing');
     }
-    const rawStores = user.stores || [];
-    const allowed = rawStores.some((s: unknown) => {
-      if (typeof s === 'object' && s !== null && '_id' in s) {
-        return String((s as { _id: unknown })._id) === storeId;
-      }
-      return String(s) === storeId;
-    });
-    if (!allowed) {
-      throw new ForbiddenException('store_forbidden');
-    }
+    await this._storeAccess.assertStoreAccess(user, storeId, 'orders.manage');
   }
 
   /**

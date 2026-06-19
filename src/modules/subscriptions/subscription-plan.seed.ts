@@ -13,6 +13,7 @@ export type SubscriptionPlanSeed = {
   mobileAccess?: boolean;
   storeSubscriptionEnabled?: boolean;
   mealPreOrderEnabled?: boolean;
+  pickupPayOnDeliveryEnabled?: boolean;
   maxCatalogItems?: number;
   maxDailyMenuItems?: number;
   maxAdCampaignItems?: number;
@@ -67,6 +68,7 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     mobileAccess: true,
     storeSubscriptionEnabled: true,
     mealPreOrderEnabled: true,
+    pickupPayOnDeliveryEnabled: true,
     maxCatalogItems: 0,
     maxDailyMenuItems: 0,
   },

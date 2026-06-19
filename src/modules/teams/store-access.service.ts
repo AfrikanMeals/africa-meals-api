@@ -2,10 +2,16 @@ import {
   ALL_STORE_PERMISSIONS,
   isStorePermission,
   StorePermission,
+  storePermissionGranted,
+  STORE_PERMISSION_GROUPS,
+  STORE_PERMISSION_LABELS,
 } from '../../common/permissions/store-permissions';
 import {
+  adminPermissionGranted,
   ALL_ADMIN_PERMISSIONS,
   isAdminPermission,
+  ADMIN_PERMISSION_GROUPS,
+  ADMIN_PERMISSION_LABELS,
 } from '../../common/permissions/admin-permissions';
 import {
   ForbiddenException,
@@ -97,7 +103,11 @@ export class StoreAccessService {
     permission: string,
   ): Promise<void> {
     const perms = await this.listAdminPermissions(user);
-    if (!perms.includes(permission)) {
+    if (
+      isAdminPermission(permission)
+        ? !adminPermissionGranted(perms, permission)
+        : !perms.includes(permission)
+    ) {
       throw new ForbiddenException('permission_denied');
     }
   }
@@ -259,7 +269,7 @@ export class StoreAccessService {
     permission: StorePermission,
   ): Promise<boolean> {
     const perms = await this.getStorePermissions(user, storeId);
-    return perms.includes(permission);
+    return storePermissionGranted(perms, permission);
   }
 
   async assertStorePermission(

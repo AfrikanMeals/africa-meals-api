@@ -53,6 +53,10 @@ export class SubscriptionPlanModel {
   @Prop({ type: Boolean, default: false })
   mealPreOrderEnabled: boolean;
 
+  /** Autorise le paiement à la collecte (pickup) pour les boutiques sur cette formule. */
+  @Prop({ type: Boolean, default: false })
+  pickupPayOnDeliveryEnabled: boolean;
+
   /**
    * Nombre max d’éléments catalogue (plats + boissons) pour la boutique.
    * 0 = illimité.

@@ -309,6 +309,10 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'stripe_parent_payment_id' })
   stripeParentPaymentId?: string;
 
+  /** Paiement différé à la collecte (pickup) — sans encaissement Stripe en ligne. */
+  @Prop({ default: false, name: 'pay_on_pickup' })
+  payOnPickup?: boolean;
+
   /** Code promo boutique appliqué au moment du paiement (si présent). */
   @Prop({ required: false, name: 'coupon_code' })
   couponCode?: string;
@@ -363,6 +367,10 @@ export class OrderModel extends BaseSchema {
   /** Pourboire livreur (centimes) alloué à cette commande livraison. */
   @Prop({ required: false, name: 'delivery_tip_cents', default: 0 })
   deliveryTipCents?: number;
+
+  /** Frais de transaction plateforme payés par le client (centimes, hors totalPrice). */
+  @Prop({ required: false, name: 'order_payment_fee_cents', default: 0 })
+  orderPaymentFeeCents?: number;
 
   @Prop({
     required: false,

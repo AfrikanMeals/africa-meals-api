@@ -38,6 +38,17 @@ export function normalizeRegionCode(raw?: string | null): string | null {
   return /^[A-Z]{2}$/.test(code) ? code : null;
 }
 
+/** Région ISO2 pour barème livraison : boutique → adresse → profil client. */
+export function resolvePlatformShippingRegionCode(
+  candidates: Array<string | null | undefined>,
+): string | undefined {
+  for (const raw of candidates) {
+    const code = normalizeRegionCode(raw);
+    if (code) return code;
+  }
+  return undefined;
+}
+
 export function normalizePresetList(
   raw: number[] | undefined,
   percentMode: boolean,
@@ -89,9 +100,13 @@ function normalizeRanges(
     const baseRaw = o.basePrice;
     const entry: RegionShippingRange = { minKm, maxKm, fee };
     if (baseRaw !== undefined && baseRaw !== null && baseRaw !== '') {
-      const basePrice = Number(baseRaw);
-      if (!Number.isFinite(basePrice) || basePrice < 0) continue;
-      entry.basePrice = basePrice;
+      const baseStr = String(baseRaw).trim().toLowerCase();
+      if (baseStr !== 'global') {
+        const basePrice = Number(baseRaw);
+        if (Number.isFinite(basePrice) && basePrice >= 0) {
+          entry.basePrice = basePrice;
+        }
+      }
     }
     out.push(entry);
   }

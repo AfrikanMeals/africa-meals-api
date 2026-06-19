@@ -38,11 +38,13 @@ import { PlatformShippingSettingsModule } from './modules/platform-shipping-sett
 import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
 import { AppPoliciesModule } from './modules/app-policies/app-policies.module';
 import { DocumentationModule } from './modules/documentation/documentation.module';
+import { VendorGuidesModule } from './modules/vendor-guides/vendor-guides.module';
 import { BlogModule } from './modules/blog/blog.module';
 import { AdminUsersModule } from './modules/admin-users/admin-users.module';
 import { CronMonitorModule } from './modules/cron-monitor/cron-monitor.module';
 import { DbMaintenanceModule } from './modules/db-maintenance/db-maintenance.module';
 import { AdminOpsReportsModule } from './modules/admin-ops-reports/admin-ops-reports.module';
+import { MaintenanceAlertsModule } from './modules/maintenance-alerts/maintenance-alerts.module';
 import { RequestStatsModule } from './modules/request-stats/request-stats.module';
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
 import { DomainEventsModule } from './common/domain-events/domain-events.module';
@@ -51,6 +53,7 @@ import { SseRedisModule } from './common/sse/sse-redis.module';
 import { AuthSettingsModule } from './modules/auth-settings/auth-settings.module';
 import { SecuritySettingsModule } from './modules/security-settings/security-settings.module';
 import { StorageSettingsModule } from './modules/storage-settings/storage-settings.module';
+import { CacheSettingsModule } from './modules/cache-settings/cache-settings.module';
 import { MapSettingsModule } from './modules/map-settings/map-settings.module';
 import { SearchSettingsModule } from './modules/search-settings/search-settings.module';
 import { SecretManagerModule } from './modules/secret-manager/secret-manager.module';
@@ -302,15 +305,18 @@ function redactRedisUrl(url: string): string {
     PenaltiesModule,
     AppPoliciesModule,
     DocumentationModule,
+    VendorGuidesModule,
     BlogModule,
     DbMaintenanceModule,
     AdminOpsReportsModule,
+    MaintenanceAlertsModule,
     RequestStatsModule,
     FieldSelectionModule,
     DomainEventsModule,
     AuthSettingsModule,
     SecuritySettingsModule,
     StorageSettingsModule,
+    CacheSettingsModule,
     MapSettingsModule,
     SearchSettingsModule,
     SecretManagerModule,

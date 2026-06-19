@@ -247,7 +247,7 @@ async function run() {
       query.limit(opts.limit);
     }
 
-    const rows = (await query.exec()) as OrderRow[];
+    const rows = (await query.exec()) as unknown as OrderRow[];
     const plans: FixPlan[] = [];
 
     for (const row of rows) {

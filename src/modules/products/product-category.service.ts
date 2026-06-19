@@ -22,6 +22,7 @@ import {
   PatchProductCategoryDto,
 } from './dto/product-category.dto';
 import { mapInChunks } from '@utils/map-in-chunks';
+import { productCategoriesCacheTtlMs } from '@common/redis-app-cache';
 import { productDailyMenuListingPipelineStages } from '@utils/product-daily-menu-listing.pipeline';
 
 /** Ligne JSON renvoyée par [filter] / REST / GraphQL public. */
@@ -130,8 +131,7 @@ export class ProductCategoryService implements OnModuleInit {
   }
 
   private _categoriesListTtlMs() {
-    const n = Number(process.env.PRODUCT_CATEGORIES_CACHE_TTL_MS);
-    return Number.isFinite(n) && n > 0 ? n : 120_000;
+    return productCategoriesCacheTtlMs();
   }
 
   private async _bustPublicCategoriesCache() {

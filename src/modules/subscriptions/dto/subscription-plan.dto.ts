@@ -77,6 +77,10 @@ export class CreateSubscriptionPlanDto {
   mealPreOrderEnabled?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  pickupPayOnDeliveryEnabled?: boolean;
+
+  @IsOptional()
   @IsInt()
   @Min(0)
   maxCatalogItems?: number;
@@ -169,6 +173,10 @@ export class UpdateSubscriptionPlanDto {
   @IsOptional()
   @IsBoolean()
   mealPreOrderEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  pickupPayOnDeliveryEnabled?: boolean;
 
   @IsOptional()
   @IsInt()

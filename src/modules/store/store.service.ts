@@ -303,6 +303,64 @@ export class StoreService {
     return planAllows && this._docAcceptsMealPreOrders(doc);
   }
 
+  private _normalizePickupPayOnDeliveryFlag(
+    acceptsPickupPayOnDelivery?: boolean,
+  ): boolean {
+    return acceptsPickupPayOnDelivery === true;
+  }
+
+  private _docAcceptsPickupPayOnDelivery(doc: Record<string, unknown>): boolean {
+    return (
+      doc.acceptsPickupPayOnDelivery === true ||
+      doc.accepts_pickup_pay_on_delivery === true
+    );
+  }
+
+  private async _pickupPayOnDeliveryEnabledForStore(
+    storeId: string,
+  ): Promise<boolean> {
+    return this._subscriptionsService.isPickupPayOnDeliveryEnabledForStore(
+      storeId,
+    );
+  }
+
+  /** Boutique + formule : paiement à la collecte (pickup) actif pour les clients. */
+  async isPickupPayOnDeliveryOfferedByStore(storeId: string): Promise<boolean> {
+    const id = String(storeId ?? '').trim();
+    if (!Types.ObjectId.isValid(id)) return false;
+    const [doc, planAllows] = await Promise.all([
+      this._storeModel
+        .findById(id)
+        .select('acceptsPickupPayOnDelivery')
+        .lean()
+        .exec(),
+      this._pickupPayOnDeliveryEnabledForStore(id),
+    ]);
+    if (!doc) return false;
+    return this._effectiveAcceptsPickupPayOnDelivery(
+      doc as Record<string, unknown>,
+      planAllows,
+    );
+  }
+
+  private async _assertPickupPayOnDeliveryAllowedForStore(
+    storeId: string,
+    wantsPickupPayOnDelivery: boolean,
+  ): Promise<void> {
+    if (!wantsPickupPayOnDelivery) return;
+    const allowed = await this._pickupPayOnDeliveryEnabledForStore(storeId);
+    if (!allowed) {
+      throw new ForbiddenException('pickup_pay_on_delivery_not_in_plan');
+    }
+  }
+
+  private _effectiveAcceptsPickupPayOnDelivery(
+    doc: Record<string, unknown>,
+    planAllows: boolean,
+  ): boolean {
+    return planAllows && this._docAcceptsPickupPayOnDelivery(doc);
+  }
+
   private _normalizeMealPreOrderCatalogScope(
     value?: string | MealPreOrderCatalogScopeEnum | null,
   ): MealPreOrderCatalogScopeEnum {
@@ -582,7 +640,7 @@ export class StoreService {
     const doc = await this._storeModel
       .findById(storeOid)
       .select(
-        'bio profileImage name status email phoneNumber currency region supportsShipping acceptsOrders acceptsMealPreOrders mealPreOrderCatalogScope',
+        'bio profileImage name status email phoneNumber currency region supportsShipping acceptsOrders acceptsMealPreOrders acceptsPickupPayOnDelivery mealPreOrderCatalogScope',
       )
       .populate({
         path: 'address',
@@ -614,6 +672,10 @@ export class StoreService {
       await this._subscriptionsService.isMealPreOrderEnabledForPlanName(
         planName,
       );
+    const pickupPayOnDeliveryPlanEnabled =
+      await this._subscriptionsService.isPickupPayOnDeliveryEnabledForPlanName(
+        planName,
+      );
     const o = doc as unknown as Record<string, unknown>;
     const plain: Record<string, unknown> = {
       ...o,
@@ -623,9 +685,14 @@ export class StoreService {
       subscriptionPlan: planName,
       storeSubscriptionEnabled,
       mealPreOrderPlanEnabled,
+      pickupPayOnDeliveryPlanEnabled,
       acceptsMealPreOrders: this._effectiveAcceptsMealPreOrders(
         o,
         mealPreOrderPlanEnabled,
+      ),
+      acceptsPickupPayOnDelivery: this._effectiveAcceptsPickupPayOnDelivery(
+        o,
+        pickupPayOnDeliveryPlanEnabled,
       ),
       mealPreOrderCatalogScope: this._docMealPreOrderCatalogScope(o),
     };
@@ -685,6 +752,19 @@ export class StoreService {
       }
     }
 
+    const wantsPickupPayOnDelivery = this._normalizePickupPayOnDeliveryFlag(
+      args.acceptsPickupPayOnDelivery,
+    );
+    if (wantsPickupPayOnDelivery) {
+      const allowed =
+        await this._subscriptionsService.isPickupPayOnDeliveryEnabledForPlanName(
+          'FREE',
+        );
+      if (!allowed) {
+        throw new ForbiddenException('pickup_pay_on_delivery_not_in_plan');
+      }
+    }
+
     const addr = await this._addressesService.create(
       {
         ...address,
@@ -708,6 +788,7 @@ export class StoreService {
       mealPreOrderCatalogScope: this._normalizeMealPreOrderCatalogScope(
         args.mealPreOrderCatalogScope,
       ),
+      acceptsPickupPayOnDelivery: wantsPickupPayOnDelivery,
     });
 
     if (!store) {
@@ -772,7 +853,7 @@ export class StoreService {
         select: 'address city country zipCode countryCode location',
       })
       .select(
-        'name bio businessType email phoneNumber currency region status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders mealPreOrderCatalogScope partnerBadgeCode',
+        'name bio businessType email phoneNumber currency region status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders acceptsPickupPayOnDelivery mealPreOrderCatalogScope partnerBadgeCode',
       )
       .lean()
       .exec();
@@ -819,6 +900,9 @@ export class StoreService {
       acceptsMealPreOrders: this._docAcceptsMealPreOrders(
         doc as Record<string, unknown>,
       ),
+      acceptsPickupPayOnDelivery: this._docAcceptsPickupPayOnDelivery(
+        doc as Record<string, unknown>,
+      ),
       mealPreOrderCatalogScope: this._docMealPreOrderCatalogScope(
         doc as Record<string, unknown>,
       ),
@@ -859,6 +943,8 @@ export class StoreService {
     );
     const mealPreOrderPlanEnabled =
       await this._mealPreOrderEnabledForStore(targetId);
+    const pickupPayOnDeliveryPlanEnabled =
+      await this._pickupPayOnDeliveryEnabledForStore(targetId);
 
     return {
       store: {
@@ -871,7 +957,11 @@ export class StoreService {
         acceptsMealPreOrders: this._docAcceptsMealPreOrders(
           doc as Record<string, unknown>,
         ),
+        acceptsPickupPayOnDelivery: this._docAcceptsPickupPayOnDelivery(
+          doc as Record<string, unknown>,
+        ),
         mealPreOrderPlanEnabled,
+        pickupPayOnDeliveryPlanEnabled,
         vendorManagesDeliveryDrivers: !!doc.vendorManagesDeliveryDrivers,
         deliveryAssignmentMode: String(
           doc.deliveryAssignmentMode ?? 'AUTO',
@@ -1579,6 +1669,13 @@ export class StoreService {
       (store._id as { toString(): string }).toString(),
       wantsPreOrders,
     );
+    const wantsPickupPayOnDelivery = this._normalizePickupPayOnDeliveryFlag(
+      args.acceptsPickupPayOnDelivery,
+    );
+    await this._assertPickupPayOnDeliveryAllowedForStore(
+      (store._id as { toString(): string }).toString(),
+      wantsPickupPayOnDelivery,
+    );
     const setFields: Record<string, unknown> = {
       name: args.name,
       bio: args.bio,
@@ -1589,6 +1686,7 @@ export class StoreService {
       supportsShipping: args.supportsShipping,
       shippingZones,
       acceptsMealPreOrders: wantsPreOrders,
+      acceptsPickupPayOnDelivery: wantsPickupPayOnDelivery,
       mealPreOrderCatalogScope: this._normalizeMealPreOrderCatalogScope(
         args.mealPreOrderCatalogScope,
       ),
@@ -1682,6 +1780,13 @@ export class StoreService {
     if (wantsPreOrders === true) {
       await this._assertMealPreOrdersAllowedForStore(targetId, true);
     }
+    const wantsPickupPayOnDelivery =
+      args.acceptsPickupPayOnDelivery !== undefined
+        ? this._normalizePickupPayOnDeliveryFlag(args.acceptsPickupPayOnDelivery)
+        : undefined;
+    if (wantsPickupPayOnDelivery === true) {
+      await this._assertPickupPayOnDeliveryAllowedForStore(targetId, true);
+    }
     const updateFields: Record<string, unknown> = {
       supportsShipping: args.supportsShipping,
       shippingZones,
@@ -1691,6 +1796,9 @@ export class StoreService {
     };
     if (wantsPreOrders !== undefined) {
       updateFields.acceptsMealPreOrders = wantsPreOrders;
+    }
+    if (wantsPickupPayOnDelivery !== undefined) {
+      updateFields.acceptsPickupPayOnDelivery = wantsPickupPayOnDelivery;
     }
     if (args.mealPreOrderCatalogScope !== undefined) {
       updateFields.mealPreOrderCatalogScope =
@@ -1706,7 +1814,8 @@ export class StoreService {
         $push: {
           vendorMessages: {
             message:
-              wantsPreOrders !== undefined
+              wantsPreOrders !== undefined ||
+              wantsPickupPayOnDelivery !== undefined
                 ? 'Préférences commandes et livraison enregistrées.'
                 : 'Préférence de livraison enregistrée.',
             from: 'SYSTEM',
@@ -2832,6 +2941,9 @@ export class StoreService {
       acceptsMealPreOrders: this._docAcceptsMealPreOrders(
         doc as Record<string, unknown>,
       ),
+      acceptsPickupPayOnDelivery: this._docAcceptsPickupPayOnDelivery(
+        doc as Record<string, unknown>,
+      ),
       mealPreOrderCatalogScope: this._docMealPreOrderCatalogScope(
         doc as Record<string, unknown>,
       ),
@@ -3025,6 +3137,13 @@ export class StoreService {
       (store._id as { toString(): string }).toString(),
       wantsPreOrders,
     );
+    const wantsPickupPayOnDelivery = this._normalizePickupPayOnDeliveryFlag(
+      args.acceptsPickupPayOnDelivery,
+    );
+    await this._assertPickupPayOnDeliveryAllowedForStore(
+      (store._id as { toString(): string }).toString(),
+      wantsPickupPayOnDelivery,
+    );
     const setFields: Record<string, unknown> = {
       name: args.name,
       bio: args.bio,
@@ -3036,6 +3155,7 @@ export class StoreService {
       acceptsOrders: args.acceptsOrders !== false,
       shippingZones,
       acceptsMealPreOrders: wantsPreOrders,
+      acceptsPickupPayOnDelivery: wantsPickupPayOnDelivery,
       mealPreOrderCatalogScope: this._normalizeMealPreOrderCatalogScope(
         args.mealPreOrderCatalogScope,
       ),

@@ -1306,6 +1306,9 @@ export class SearchService {
               acceptsMealPreOrders:
                 st['acceptsMealPreOrders'] === true ||
                 st['acceptsPreProgrammedFoodDeliveries'] === true,
+              acceptsPickupPayOnDelivery:
+                st['acceptsPickupPayOnDelivery'] === true ||
+                st['accepts_pickup_pay_on_delivery'] === true,
               currency: String(st['currency'] ?? 'CAD'),
               email: String(st['email'] ?? ''),
               phoneNumber: String(st['phoneNumber'] ?? ''),

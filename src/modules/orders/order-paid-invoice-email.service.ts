@@ -14,12 +14,14 @@ import { buildOrderReceiptEmailBodyHtml } from './order-receipt-email-html.util'
 import {
   buildOrderEmailJsonLd,
   buildOrderReceiptEmailJsonLd,
+  buildOrderReceiptTextLines,
   buildParcelDeliveryEmailJsonLd,
   coordsFromAddressLike,
   formatInvoiceMoney,
   formatOrderDeliveryLine,
   OrderSchemaStatus,
   orderInvoiceRef,
+  orderInvoiceTotalCharged,
   orderReceiptEmailSubject,
   firstOrderItemImageUrl,
   resolveOrderEmailPublicUrl,
@@ -327,6 +329,10 @@ export class OrderPaidInvoiceEmailService {
         0,
         Math.round(Number(order.deliveryTipCents) || 0),
       ),
+      orderPaymentFeeCents: Math.max(
+        0,
+        Math.round(Number(order.orderPaymentFeeCents) || 0),
+      ),
       shouldShip: Boolean(order.shouldShip),
       currency:
         typeof order.currency === 'string' ? order.currency : undefined,
@@ -476,7 +482,10 @@ export class OrderPaidInvoiceEmailService {
     const storeEsc = esc(snapshot.storeName);
     const orderUrl = this.resolveOrderUrl(snapshot.orderId);
     const publicWebUrl = this.resolvePublicWebUrl();
-    const amountStr = formatInvoiceMoney(snapshot.totalPrice, snapshot.currency);
+    const amountStr = formatInvoiceMoney(
+      orderInvoiceTotalCharged(snapshot),
+      snapshot.currency,
+    );
     const currency =
       (snapshot.currency || 'CAD').trim().toUpperCase() || 'CAD';
     const brand = this.emailTemplate.getBrand();
@@ -514,6 +523,7 @@ export class OrderPaidInvoiceEmailService {
         `Merci pour votre commande chez ${snapshot.storeName}`,
         `Commande #${ref}`,
         snapshot.deliveryLine,
+        ...buildOrderReceiptTextLines(snapshot),
         snapshot.pickupCode?.trim()
           ? `Code retrait : ${snapshot.pickupCode.trim().toUpperCase()}`
           : '',

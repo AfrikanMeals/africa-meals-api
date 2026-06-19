@@ -1,6 +1,8 @@
 import { CartService } from '@modules/cart/cart.service';
 import { PlatformShippingQuoteService } from '@modules/platform-shipping-settings/platform-shipping-quote.service';
 import { PlatformShippingSettingsService } from '@modules/platform-shipping-settings/platform-shipping-settings.service';
+import { resolvePlatformShippingRegionCode } from '@modules/platform-shipping-settings/platform-shipping-region.util';
+import { countryCodeFromStoreRegion } from '@modules/supported-countries/region-tax.util';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { UserModel } from '@schemas/user.schema';
@@ -17,6 +19,7 @@ type CartGroup = {
     id?: string;
     name?: string;
     supportsShipping?: boolean;
+    region?: string;
   };
   items: unknown[];
   totalPrice: number;
@@ -111,12 +114,11 @@ export class DeliveryTipService {
   }> {
     const cart = await this.cartService.filter(user);
     const groups = (cart?.data ?? []) as CartGroup[];
-    const regionCode = String(user.appCountryCode ?? '')
-      .trim()
-      .toUpperCase();
-    const settings = await this.shippingSettings.getPublicSettings(
-      regionCode || undefined,
-    );
+    const regionCode = resolvePlatformShippingRegionCode([
+      ...groups.map((g) => countryCodeFromStoreRegion(g.store)),
+      user.appCountryCode,
+    ]);
+    const settings = await this.shippingSettings.getPublicSettings(regionCode);
     const factor =
       amountFactor ??
       (await this._stripeAmountFactor(user, settings.currency));
@@ -345,12 +347,13 @@ export class DeliveryTipService {
   }
 
   async preview(user: UserModel, dto: DeliveryTipPreviewDto) {
-    const regionCode = String(user.appCountryCode ?? '')
-      .trim()
-      .toUpperCase();
-    const settings = await this.shippingSettings.getPublicSettings(
-      regionCode || undefined,
-    );
+    const cart = await this.cartService.filter(user);
+    const groups = (cart?.data ?? []) as CartGroup[];
+    const regionCode = resolvePlatformShippingRegionCode([
+      ...groups.map((g) => countryCodeFromStoreRegion(g.store)),
+      user.appCountryCode,
+    ]);
+    const settings = await this.shippingSettings.getPublicSettings(regionCode);
     const amountFactor = await this._stripeAmountFactor(user, settings.currency);
     const tipTotalCents = Math.max(0, Math.round(dto.deliveryTipTotalCents));
 
@@ -407,6 +410,7 @@ export class DeliveryTipService {
       enabled: settings.deliveryTipEnabled,
       currency: settings.currency,
       deliveryTipTotalCents: tipTotalCents,
+      deliveryGoodsSubtotalCents,
       allocationMethod: DELIVERY_TIP_ALLOCATION_BY_SHIPPING_FEE,
       deliveryLegCount: legs.length,
       suggestedTipCents: this.suggestedTipCents(
@@ -461,9 +465,13 @@ export class DeliveryTipService {
       };
     }
 
-    const settings = await this.shippingSettings.getPublicSettings(
-      String(user.appCountryCode ?? '').trim().toUpperCase() || undefined,
-    );
+    const cart = await this.cartService.filter(user);
+    const groups = (cart?.data ?? []) as CartGroup[];
+    const regionCode = resolvePlatformShippingRegionCode([
+      ...groups.map((g) => countryCodeFromStoreRegion(g.store)),
+      user.appCountryCode,
+    ]);
+    const settings = await this.shippingSettings.getPublicSettings(regionCode);
     const amountFactor = await this._stripeAmountFactor(user, settings.currency);
     const coupons = (params.coupons ?? [])
       .filter((c) => c.storeId?.trim() && c.code?.trim())

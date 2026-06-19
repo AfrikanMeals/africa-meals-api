@@ -11,6 +11,10 @@ import {
   formatInvoiceMoney,
   inferInvoicePaymentMethodLabel,
   lineCustomizationText,
+  orderInvoicePaymentFeeAmount,
+  orderInvoicePaymentFeeLabel,
+  orderInvoiceTipAmount,
+  orderInvoiceTotalCharged,
   orderInvoiceRef,
   type OrderInvoiceSnapshot,
 } from './order-invoice.util';
@@ -247,6 +251,20 @@ export class OrderInvoicePdfService {
         'Frais de livraison',
         formatInvoiceMoney(snapshot.shippingPrice ?? 0, currency),
       ]);
+      const tip = orderInvoiceTipAmount(snapshot);
+      if (tip > 0.009) {
+        totals.push([
+          'Pourboire livreur',
+          formatInvoiceMoney(tip, currency),
+        ]);
+      }
+      const paymentFee = orderInvoicePaymentFeeAmount(snapshot);
+      if (paymentFee > 0.009) {
+        totals.push([
+          orderInvoicePaymentFeeLabel(snapshot),
+          formatInvoiceMoney(paymentFee, currency),
+        ]);
+      }
       for (const [left, right] of totals) {
         doc.font('Helvetica').fontSize(10).fillColor(colors.text);
         doc.text(left, col1, y);
@@ -265,11 +283,16 @@ export class OrderInvoicePdfService {
         .stroke();
       doc.restore();
       doc.fillColor(colors.primary).font('Helvetica-Bold').fontSize(12);
-      doc.text('Total TTC', col1 + 8, y + 9);
-      doc.text(formatInvoiceMoney(snapshot.totalPrice, currency), col4, y + 9, {
+      doc.text('Total débité', col1 + 8, y + 9);
+      doc.text(
+        formatInvoiceMoney(orderInvoiceTotalCharged(snapshot), currency),
+        col4,
+        y + 9,
+        {
         width: 90,
         align: 'right',
-      });
+      },
+      );
       y += 40;
 
       const footerParts = ['Document généré automatiquement.'];

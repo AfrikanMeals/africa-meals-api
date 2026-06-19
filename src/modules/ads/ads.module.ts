@@ -7,6 +7,7 @@ import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
+import { SmsModule } from '@modules/messaging/sms.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
@@ -77,6 +78,7 @@ import { AdsService } from './ads.service';
     SupportedCountriesModule,
     VendorStatusEmailModule,
     WsNotifyModule,
+    SmsModule,
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       { name: AdNotificationEventModel.name, schema: AdNotificationEventSchema },

@@ -4,9 +4,8 @@ import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import {
   phoneToSmsE164,
-  readBirdSmsConfig,
-  sendBirdSmsMessage,
 } from '@modules/ads/bird-channels.util';
+import { SmsDispatchService } from '@modules/messaging/sms-dispatch.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -65,6 +64,7 @@ export class VendorNotificationDispatchService {
     private readonly storeModel: Model<StoreModel>,
     @InjectModel(UserModel.name)
     private readonly userModel: Model<UserModel>,
+    private readonly smsDispatch: SmsDispatchService,
   ) {}
 
   async notifyStoreVendors(args: {
@@ -343,49 +343,37 @@ export class VendorNotificationDispatchService {
       return;
     }
 
-    const birdSms = readBirdSmsConfig(process.env);
-    if (!birdSms) {
+    const res = await this.smsDispatch.sendSms({
+      toPhone: phone,
+      body: args.body,
+      defaultCountryCode: defaultCc,
+    });
+    if (!res.ok) {
       await this.recordDelivery({
         storeId: args.storeId,
         category: args.category,
         channel: 'sms',
         status: VendorNotificationDeliveryStatusEnum.FAILED,
         body: args.body,
-        errorMessage: 'sms_not_configured',
+        errorMessage: res.error ?? `sms_not_configured_${res.engine ?? 'unknown'}`,
         metadata: args.metadata,
       });
+      if (res.error && res.error !== 'invalid_phone') {
+        this.logger.warn(`${args.logTag} sms (${res.engine}): ${res.error}`);
+      }
       return;
     }
 
-    try {
-      const res = await sendBirdSmsMessage({
-        config: birdSms,
-        to,
-        body: args.body,
-      });
-      await this.recordDelivery({
-        storeId: args.storeId,
-        category: args.category,
-        channel: 'sms',
-        status: VendorNotificationDeliveryStatusEnum.SENT,
-        body: args.body,
-        unitCostCad: args.unitCostCad,
-        externalId: res.messageId,
-        metadata: args.metadata,
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      await this.recordDelivery({
-        storeId: args.storeId,
-        category: args.category,
-        channel: 'sms',
-        status: VendorNotificationDeliveryStatusEnum.FAILED,
-        body: args.body,
-        errorMessage: msg,
-        metadata: args.metadata,
-      });
-      this.logger.warn(`${args.logTag} sms: ${msg}`);
-    }
+    await this.recordDelivery({
+      storeId: args.storeId,
+      category: args.category,
+      channel: 'sms',
+      status: VendorNotificationDeliveryStatusEnum.SENT,
+      body: args.body,
+      unitCostCad: args.unitCostCad,
+      externalId: res.messageId ?? null,
+      metadata: args.metadata,
+    });
   }
 
   async recordDelivery(args: {
