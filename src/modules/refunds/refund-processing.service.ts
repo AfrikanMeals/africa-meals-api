@@ -715,11 +715,19 @@ export class RefundProcessingService {
   private refundAmountCents(order: OrderModel): number {
     const goods = order.stripeChargedGoodsCents ?? 0;
     const ship = order.stripeChargedShipCents ?? 0;
-    if (goods + ship > 0) return goods + ship;
-    const total = typeof order.totalPrice === 'number' ? order.totalPrice : 0;
-    const shipping =
-      typeof order.shippingPrice === 'number' ? order.shippingPrice : 0;
-    return Math.round((total + shipping) * 100);
+    let base = goods + ship;
+    if (base <= 0) {
+      const total = typeof order.totalPrice === 'number' ? order.totalPrice : 0;
+      const shipping =
+        typeof order.shippingPrice === 'number' ? order.shippingPrice : 0;
+      base = Math.round((total + shipping) * 100);
+    }
+    const tipCents = Math.max(0, Math.round(Number(order.deliveryTipCents) || 0));
+    const tipStatus = String(order.deliveryTipStatus ?? 'none');
+    if (tipCents > 0 && tipStatus === 'pending') {
+      base += tipCents;
+    }
+    return base;
   }
 
   private patchLatestEntry(
@@ -1048,6 +1056,11 @@ export class RefundProcessingService {
       customerRefundCents: split.customerRefundCents,
       vendorPenaltyCents: split.vendorPenaltyCents,
     });
+    const tipStatus = String(order.deliveryTipStatus ?? 'none');
+    const tipCents = Math.max(0, Math.round(Number(order.deliveryTipCents) || 0));
+    if (tipCents > 0 && tipStatus === 'pending') {
+      order.deliveryTipStatus = 'refunded' as OrderModel['deliveryTipStatus'];
+    }
     await order.save();
 
     await this.notifyRefundUpdate({

@@ -28,6 +28,7 @@ import {
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { BillingController } from './billing.controller';
 import { BillingService } from './billing.service';
+import { DeliveryTipService } from './delivery-tip.service';
 import { PaypalModule } from './paypal/paypal.module';
 import { AddressModel, AddressSchema } from '@schemas/address.schema';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
@@ -41,6 +42,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
   controllers: [BillingController],
   providers: [
     BillingService,
+    DeliveryTipService,
     StripeGroupedCheckoutService,
     StripeConnectService,
     StripeWebhookMetricsService,

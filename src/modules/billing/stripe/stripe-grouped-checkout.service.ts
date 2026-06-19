@@ -54,6 +54,8 @@ import { Model, Types } from 'mongoose';
 import Stripe = require('stripe');
 import { FilterGroupedPaymentsDto } from './dto/filter-grouped-payments.dto';
 import { GroupedStripeCheckoutDto } from './dto/grouped-stripe-checkout.dto';
+import { DeliveryTipService } from '../delivery-tip.service';
+import { DELIVERY_TIP_ALLOCATION_BY_SHIPPING_FEE } from '../delivery-tip-allocation.util';
 
 type StripeClient = InstanceType<typeof Stripe>;
 
@@ -100,6 +102,9 @@ type GroupedStripeBuilt = {
   coupons: Array<{ storeId: string; code: string }>;
   /** Adresse livraison choisie au checkout (si au moins une boutique en livraison). */
   checkoutAddressId?: string;
+  deliveryTipTotalCents: number;
+  tipCentsByStore: Record<string, number>;
+  tipAllocationMethod: string;
 };
 
 function storeMongoId(store: CartGroup['store']): string {
@@ -340,6 +345,35 @@ function checkoutLineFromCartRow(params: {
   };
 }
 
+function checkoutDeliveryTipLine(params: {
+  currency: string;
+  tipCents: number;
+}): CheckoutLineItem | null {
+  const { currency, tipCents } = params;
+  if (tipCents < 1) return null;
+  const line: Record<string, unknown> = {
+    type: 'delivery_tip',
+    entity: { title: 'Pourboire livreur' },
+  };
+  return {
+    quantity: 1,
+    price_data: {
+      currency,
+      unit_amount: tipCents,
+      product_data: {
+        name: 'Pourboire livreur',
+        description: 'Pourboire pour le livreur (réparti par livraison)',
+        metadata: stripeProductMetadata({
+          storeId: 'platform',
+          storeName: 'Wise Eat',
+          lineKind: 'delivery_tip',
+          line,
+        }),
+      },
+    },
+  };
+}
+
 function checkoutPlatformPaymentFeeLine(params: {
   currency: string;
   feeCents: number;
@@ -461,6 +495,7 @@ export class StripeGroupedCheckoutService {
     private readonly config: ConfigService,
     private readonly cartService: CartService,
     private readonly quoteService: PlatformShippingQuoteService,
+    private readonly deliveryTipService: DeliveryTipService,
     private readonly storeService: StoreService,
     private readonly usersService: UsersService,
     private readonly ordersService: OrdersService,
@@ -976,6 +1011,33 @@ export class StripeGroupedCheckoutService {
       throw new BadRequestException('cart_is_empty');
     }
 
+    let deliveryTipTotalCents = Math.max(
+      0,
+      Math.round(Number(dto.deliveryTipTotalCents) || 0),
+    );
+    let tipCentsByStore: Record<string, number> = {};
+    const tipAllocationMethod = DELIVERY_TIP_ALLOCATION_BY_SHIPPING_FEE;
+
+    if (deliveryTipTotalCents > 0) {
+      const tipResolved = await this.deliveryTipService.resolveCheckoutTipAllocation(
+        user,
+        {
+          fulfillmentByStoreId: fulfillment,
+          addressId: dto.addressId,
+          deliveryTipTotalCents,
+        },
+      );
+      deliveryTipTotalCents = tipResolved.deliveryTipTotalCents;
+      tipCentsByStore = tipResolved.tipCentsByStore;
+      const tipLi = checkoutDeliveryTipLine({
+        currency,
+        tipCents: deliveryTipTotalCents,
+      });
+      if (tipLi) lineItems.push(tipLi);
+    } else {
+      deliveryTipTotalCents = 0;
+    }
+
     const subtotalCents = sumCheckoutLineItemsCents(lineItems);
     const paymentFee =
       await this.platformFees.computeOrderPaymentFeeFromSettings(subtotalCents);
@@ -1008,6 +1070,9 @@ export class StripeGroupedCheckoutService {
       groups,
       coupons,
       checkoutAddressId: needsAddress ? dto.addressId?.trim() : undefined,
+      deliveryTipTotalCents,
+      tipCentsByStore,
+      tipAllocationMethod,
     };
   }
 
@@ -1078,6 +1143,14 @@ export class StripeGroupedCheckoutService {
     };
     if (built.checkoutAddressId) {
       base.addressId = built.checkoutAddressId;
+    }
+    if (built.deliveryTipTotalCents > 0) {
+      base.tipTotalCents = String(built.deliveryTipTotalCents);
+      base.tipB64 = Buffer.from(
+        JSON.stringify(built.tipCentsByStore),
+        'utf8',
+      ).toString('base64url');
+      base.tipAllocMethod = built.tipAllocationMethod;
     }
     return {
       ...base,
@@ -1289,6 +1362,8 @@ export class StripeGroupedCheckoutService {
     currency?: string;
     stripeEventKind: 'checkout_session' | 'payment_intent';
     checkoutAddressId: string;
+    tipCentsByStore: Record<string, number>;
+    tipAllocationMethod: string;
   }): Promise<{
     breakdown: StripePerStoreBreakdownRow;
     orderId?: string;
@@ -1306,6 +1381,8 @@ export class StripeGroupedCheckoutService {
       amountTotalCents,
       currency,
       checkoutAddressId,
+      tipCentsByStore,
+      tipAllocationMethod,
     } = params;
 
     const prior = priorByStore.get(storeId);
@@ -1412,6 +1489,8 @@ export class StripeGroupedCheckoutService {
       }
 
       const useStripeCents = payoutRow != null;
+      const deliveryTipCents =
+        shipCents > 0 ? Math.max(0, Math.round(tipCentsByStore[storeId] ?? 0)) : 0;
       await this.ordersService.markOrderPaidWithShipping(oid, shipCents / 100, {
         stripeParentPaymentId: stripePaymentId,
         couponCode,
@@ -1424,6 +1503,9 @@ export class StripeGroupedCheckoutService {
         deliveryAddressId:
           shipCents > 0 && checkoutAddressId ? checkoutAddressId : undefined,
         currency: currency ? currency.trim().toUpperCase() : undefined,
+        deliveryTipCents,
+        deliveryTipAllocationMethod:
+          deliveryTipCents > 0 ? tipAllocationMethod : undefined,
       });
       const paidOk = await this.ordersService.isOrderPaidForStripePayment(
         oid,
@@ -1555,6 +1637,21 @@ export class StripeGroupedCheckoutService {
       metadata?.addressId ?? metadata?.address_id ?? '',
     ).trim();
 
+    let tipCentsByStore: Record<string, number> = {};
+    const tipB64 = String(metadata?.tipB64 ?? metadata?.tip_b64 ?? '').trim();
+    if (tipB64) {
+      try {
+        tipCentsByStore = JSON.parse(
+          Buffer.from(tipB64, 'base64url').toString('utf8'),
+        ) as Record<string, number>;
+      } catch {
+        tipCentsByStore = {};
+      }
+    }
+    const tipAllocationMethod = String(
+      metadata?.tipAllocMethod ?? DELIVERY_TIP_ALLOCATION_BY_SHIPPING_FEE,
+    ).trim();
+
     const storeIds = storesCsv
       .split(',')
       .map((s) => s.trim())
@@ -1670,6 +1767,8 @@ export class StripeGroupedCheckoutService {
           currency,
           stripeEventKind,
           checkoutAddressId,
+          tipCentsByStore,
+          tipAllocationMethod,
         }),
       ),
     );

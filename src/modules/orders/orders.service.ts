@@ -1253,6 +1253,8 @@ export class OrdersService {
       subtotalBeforeTax?: number;
       deliveryAddressId?: string;
       currency?: string;
+      deliveryTipCents?: number;
+      deliveryTipAllocationMethod?: string;
     },
   ): Promise<void> {
     const ship = Math.max(0, Number(shippingPrice) || 0);
@@ -1389,6 +1391,22 @@ export class OrdersService {
     }
     if (sC != null) {
       $set['stripeChargedShipCents'] = sC;
+    }
+
+    const tipCents =
+      opts?.deliveryTipCents != null && Number.isFinite(opts.deliveryTipCents)
+        ? Math.max(0, Math.round(opts.deliveryTipCents))
+        : 0;
+    if (!isPickup && tipCents > 0) {
+      $set['deliveryTipCents'] = tipCents;
+      $set['deliveryTipStatus'] = 'pending';
+      if (opts?.deliveryTipAllocationMethod?.trim()) {
+        $set['deliveryTipAllocationMethod'] =
+          opts.deliveryTipAllocationMethod.trim();
+      }
+    } else {
+      $set['deliveryTipCents'] = 0;
+      $set['deliveryTipStatus'] = 'none';
     }
 
     if (!isPickup && opts?.deliveryAddressId?.trim()) {
@@ -3000,22 +3018,7 @@ export class OrdersService {
     }
 
     if (!isPickup && order.shouldShip === true) {
-      void this._stripeTransfers
-        .transferDeliveryShareForCompletedOrder({ orderId: oid })
-        .then((tr) => {
-          if (!tr.transferred && tr.skippedReason) {
-            this.logger.warn(
-              `Delivery Connect transfer skipped order=${oid}: ${tr.skippedReason}`,
-            );
-          }
-        })
-        .catch((err) => {
-          this.logger.warn(
-            `Delivery Connect transfer error order=${oid}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        });
+      this.scheduleDeliveryAgentPayouts(oid);
     }
 
     return {
@@ -3187,22 +3190,7 @@ export class OrdersService {
     void this._deliveryAgentService.publishPresenceWs(agentId, 'order_completed');
 
     if (!isPickup && order.shouldShip === true) {
-      void this._stripeTransfers
-        .transferDeliveryShareForCompletedOrder({ orderId: oid })
-        .then((tr) => {
-          if (!tr.transferred && tr.skippedReason) {
-            this.logger.warn(
-              `Delivery Connect transfer skipped order=${oid}: ${tr.skippedReason}`,
-            );
-          }
-        })
-        .catch((err) => {
-          this.logger.warn(
-            `Delivery Connect transfer error order=${oid}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        });
+      this.scheduleDeliveryAgentPayouts(oid);
     }
 
     return {
@@ -3264,6 +3252,41 @@ export class OrdersService {
     }
     const id = String(raw).trim();
     return id.length > 0 ? id : null;
+  }
+
+  private scheduleDeliveryAgentPayouts(orderId: string): void {
+    void this._stripeTransfers
+      .transferDeliveryShareForCompletedOrder({ orderId })
+      .then((tr) => {
+        if (!tr.transferred && tr.skippedReason) {
+          this.logger.warn(
+            `Delivery Connect transfer skipped order=${orderId}: ${tr.skippedReason}`,
+          );
+        }
+      })
+      .catch((err) => {
+        this.logger.warn(
+          `Delivery Connect transfer error order=${orderId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      });
+    void this._stripeTransfers
+      .transferDeliveryTipForCompletedOrder({ orderId })
+      .then((tr) => {
+        if (!tr.transferred && tr.skippedReason) {
+          this.logger.warn(
+            `Delivery tip transfer skipped order=${orderId}: ${tr.skippedReason}`,
+          );
+        }
+      })
+      .catch((err) => {
+        this.logger.warn(
+          `Delivery tip transfer error order=${orderId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      });
   }
 
   private userIdFromOrderDoc(order: OrderModel): string | undefined {

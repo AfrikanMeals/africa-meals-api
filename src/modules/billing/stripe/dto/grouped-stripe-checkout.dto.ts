@@ -2,9 +2,11 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsInt,
   IsObject,
   IsOptional,
   IsString,
+  Min,
   ValidateNested,
 } from 'class-validator';
 
@@ -48,4 +50,15 @@ export class GroupedStripeCheckoutDto {
   @IsOptional()
   @IsString()
   currency?: string;
+
+  @ApiPropertyOptional({
+    example: 1200,
+    description:
+      'Pourboire livreur total (centimes). Réparti côté serveur sur les commandes livraison.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  deliveryTipTotalCents?: number;
 }

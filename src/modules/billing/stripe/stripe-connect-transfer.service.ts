@@ -586,6 +586,199 @@ export class StripeConnectTransferService {
   }
 
   /**
+   * Verse le pourboire livreur au livreur assigné (100 % moins part frais Stripe).
+   */
+  async transferDeliveryTipForCompletedOrder(args: {
+    orderId: string;
+    paymentTotalCents?: number;
+  }): Promise<DeliveryTransferResult> {
+    const empty: DeliveryTransferResult = {
+      transferred: false,
+      transferCents: 0,
+      stripeProcessingFeeCents: 0,
+      grossShipCents: 0,
+    };
+
+    if (!this.transfersEnabled()) {
+      return { ...empty, skippedReason: 'transfers_disabled' };
+    }
+    if (!Types.ObjectId.isValid(args.orderId)) {
+      return { ...empty, skippedReason: 'invalid_order_id' };
+    }
+
+    const order = await this.orderModel
+      .findById(args.orderId)
+      .select(
+        'shouldShip assignedDeliveryUser stripeParentPaymentId deliveryTipCents deliveryTipStatus stripeDeliveryTipTransferId stripeDeliveryTipTransferAmountCents status',
+      )
+      .lean()
+      .exec();
+    if (!order) {
+      return { ...empty, skippedReason: 'order_not_found' };
+    }
+    if (!order.shouldShip) {
+      return { ...empty, skippedReason: 'not_delivery_order' };
+    }
+
+    const tipCents = Math.max(0, Math.round(Number(order.deliveryTipCents) || 0));
+    if (tipCents < 1) {
+      return { ...empty, skippedReason: 'no_tip_amount' };
+    }
+
+    const tipStatus = String(order.deliveryTipStatus ?? 'none');
+    if (tipStatus === 'transferred') {
+      return {
+        transferred: true,
+        transferId: order.stripeDeliveryTipTransferId,
+        transferCents: order.stripeDeliveryTipTransferAmountCents ?? 0,
+        stripeProcessingFeeCents: 0,
+        grossShipCents: tipCents,
+        skippedReason: 'already_transferred',
+      };
+    }
+    if (tipStatus === 'refunded' || tipStatus === 'none') {
+      return { ...empty, grossShipCents: tipCents, skippedReason: 'tip_not_payable' };
+    }
+
+    if (order.stripeDeliveryTipTransferId) {
+      return {
+        transferred: true,
+        transferId: order.stripeDeliveryTipTransferId,
+        transferCents: order.stripeDeliveryTipTransferAmountCents ?? 0,
+        stripeProcessingFeeCents: 0,
+        grossShipCents: tipCents,
+        skippedReason: 'already_transferred',
+      };
+    }
+
+    const agentId = order.assignedDeliveryUser
+      ? String(order.assignedDeliveryUser)
+      : '';
+    if (!agentId) {
+      return { ...empty, grossShipCents: tipCents, skippedReason: 'no_assigned_delivery_agent' };
+    }
+
+    const { accountId, agentReady } = await this.agentConnectAccountId(agentId);
+    if (!agentReady || !accountId) {
+      return {
+        ...empty,
+        grossShipCents: tipCents,
+        skippedReason: 'delivery_connect_onboarding_incomplete',
+      };
+    }
+
+    const parentId = String(order.stripeParentPaymentId ?? '').trim();
+    const chargeId = parentId ? await this.resolveChargeId(parentId) : null;
+    if (!chargeId) {
+      return {
+        ...empty,
+        grossShipCents: tipCents,
+        skippedReason: 'charge_unresolved',
+      };
+    }
+
+    const paymentAmountCents = await this.stripeFees.paymentTotalCentsForParent(
+      parentId,
+      args.paymentTotalCents ?? tipCents,
+    );
+    const totalStripeFeeCents = await this.stripeFees.totalProcessingFeeCents({
+      chargeId,
+      paymentAmountCents,
+    });
+    const stripeProcessingFeeShareCents =
+      this.stripeFees.allocateProcessingFeeShareCents({
+        totalStripeFeeCents,
+        paymentAmountCents,
+        sliceAmountCents: tipCents,
+        maxDeductibleCents: tipCents,
+      });
+    const transferCents = Math.max(0, tipCents - stripeProcessingFeeShareCents);
+
+    if (transferCents < 1) {
+      await this.orderModel.updateOne(
+        { _id: args.orderId },
+        {
+          $set: {
+            stripeDeliveryTipProcessingFeeCents: stripeProcessingFeeShareCents,
+            stripeDeliveryTipTransferAmountCents: 0,
+            deliveryTipStatus: 'transferred',
+          },
+        },
+      );
+      return {
+        transferred: false,
+        transferCents: 0,
+        stripeProcessingFeeCents: stripeProcessingFeeShareCents,
+        grossShipCents: tipCents,
+        skippedReason: 'transfer_amount_zero_after_stripe_fee',
+      };
+    }
+
+    const currency =
+      this.config.get<string>('STRIPE_CONNECT_TRANSFER_CURRENCY')?.trim() ||
+      'cad';
+
+    try {
+      const transfer = await this.stripe().transfers.create(
+        {
+          amount: transferCents,
+          currency: currency.toLowerCase(),
+          destination: accountId,
+          source_transaction: chargeId,
+          transfer_group: parentId || undefined,
+          metadata: {
+            orderId: args.orderId,
+            agentUserId: agentId,
+            platform: 'wise-eat',
+            transferKind: 'delivery_tip',
+            stripeProcessingFeeCents: String(stripeProcessingFeeShareCents),
+            grossTipCents: String(tipCents),
+          },
+        },
+        { idempotencyKey: `transfer-order-delivery-tip-${args.orderId}` },
+      );
+
+      await this.orderModel.updateOne(
+        { _id: args.orderId },
+        {
+          $set: {
+            stripeDeliveryTipTransferId: transfer.id,
+            stripeDeliveryTipTransferAmountCents: transferCents,
+            stripeDeliveryTipProcessingFeeCents: stripeProcessingFeeShareCents,
+            deliveryTipStatus: 'transferred',
+          },
+        },
+      );
+
+      this.logger.log(
+        `Connect delivery tip transfer ${transfer.id}: ${
+          transferCents / 100
+        } ${currency} → ${accountId} (order ${args.orderId})`,
+      );
+
+      return {
+        transferred: true,
+        transferId: transfer.id,
+        transferCents,
+        stripeProcessingFeeCents: stripeProcessingFeeShareCents,
+        grossShipCents: tipCents,
+      };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(
+        `Connect delivery tip transfer failed order ${args.orderId}: ${msg}`,
+      );
+      return {
+        transferred: false,
+        transferCents,
+        stripeProcessingFeeCents: stripeProcessingFeeShareCents,
+        grossShipCents: tipCents,
+        skippedReason: `stripe_error:${msg}`.slice(0, 200),
+      };
+    }
+  }
+
+  /**
    * Annule partiellement ou totalement le transfer vendeur (remboursement client).
    */
   async reverseTransferForRefund(args: {

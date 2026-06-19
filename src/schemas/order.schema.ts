@@ -19,6 +19,14 @@ export enum OrderStatusEnum {
   COMPLETED = 'completed', // WHEN ORDER IS COMPLETED
 }
 
+/** Cycle de vie du pourboire livreur sur une commande. */
+export enum DeliveryTipStatusEnum {
+  NONE = 'none',
+  PENDING = 'pending',
+  TRANSFERRED = 'transferred',
+  REFUNDED = 'refunded',
+}
+
 /** Statut d’une entrée du journal de demande de remboursement (côté client → admin). */
 export enum OrderRefundRequestEntryStatusEnum {
   PENDING = 'pending',
@@ -351,6 +359,34 @@ export class OrderModel extends BaseSchema {
     name: 'stripe_delivery_transfer_reversal_amount_cents',
   })
   stripeDeliveryTransferReversalAmountCents?: number;
+
+  /** Pourboire livreur (centimes) alloué à cette commande livraison. */
+  @Prop({ required: false, name: 'delivery_tip_cents', default: 0 })
+  deliveryTipCents?: number;
+
+  @Prop({
+    required: false,
+    name: 'delivery_tip_status',
+    enum: DeliveryTipStatusEnum,
+    default: DeliveryTipStatusEnum.NONE,
+  })
+  deliveryTipStatus?: DeliveryTipStatusEnum;
+
+  @Prop({
+    required: false,
+    name: 'delivery_tip_allocation_method',
+    trim: true,
+  })
+  deliveryTipAllocationMethod?: string;
+
+  @Prop({ required: false, name: 'stripe_delivery_tip_transfer_id' })
+  stripeDeliveryTipTransferId?: string;
+
+  @Prop({ required: false, name: 'stripe_delivery_tip_transfer_amount_cents' })
+  stripeDeliveryTipTransferAmountCents?: number;
+
+  @Prop({ required: false, name: 'stripe_delivery_tip_processing_fee_cents' })
+  stripeDeliveryTipProcessingFeeCents?: number;
 
   /** Dernier reversal de transfer (`trr_…` / id reversal). */
   @Prop({ required: false, name: 'stripe_transfer_reversal_id' })

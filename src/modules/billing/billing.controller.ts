@@ -19,6 +19,8 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { BillingService } from './billing.service';
+import { DeliveryTipPreviewDto } from './dto/delivery-tip-preview.dto';
+import { DeliveryTipService } from './delivery-tip.service';
 import { StripeConnectOnboardingDto } from './dto/stripe-connect-onboarding.dto';
 import { CreatePaymentMethodDto } from './paypal/dto/paypal.dto';
 import { PaypalService } from './paypal/paypal.service';
@@ -43,6 +45,8 @@ export class BillingController {
   private readonly _stripeConnect: StripeConnectService;
   @Inject(SubscriptionsStripeCheckoutService)
   private readonly _subscriptionStripe: SubscriptionsStripeCheckoutService;
+  @Inject(DeliveryTipService)
+  private readonly _deliveryTip: DeliveryTipService;
 
   @Post('create-paypal-vault-token')
   @UseGuards(JwtGuard)
@@ -115,6 +119,26 @@ export class BillingController {
       req.user as UserModel,
       { storeId: body.storeId },
     );
+  }
+
+  @Post('checkout/delivery-tip-preview')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Prévisualise la répartition du pourboire livreur sur les commandes livraison du panier groupé',
+  })
+  async deliveryTipPreview(
+    @Req() req: Request,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: false,
+      }),
+    )
+    dto: DeliveryTipPreviewDto,
+  ) {
+    return this._deliveryTip.preview(req.user as UserModel, dto);
   }
 
   @Post('stripe/grouped-checkout-session')
