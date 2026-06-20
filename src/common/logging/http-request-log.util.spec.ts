@@ -4,6 +4,7 @@ import {
   httpLogLevelForStatus,
   isHttpBodyLoggingEnabled,
   isHttpRequestLoggingEnabled,
+  resolveHttpLogEnvironment,
 } from './http-request-log.util';
 
 describe('http-request-log.util', () => {
@@ -31,9 +32,10 @@ describe('http-request-log.util', () => {
       url: '/api/health',
       status: 200,
       durationMs: 4.2,
+      environment: 'Development',
       useColors: false,
     });
-    expect(line).toBe('[HTTP] GET /api/health 200 4ms');
+    expect(line).toBe('[HTTP] [Development] GET /api/health 200 4ms');
   });
 
   it('formate une ligne avec couleur et suffixe body', () => {
@@ -42,10 +44,12 @@ describe('http-request-log.util', () => {
       url: '/api/auth/login',
       status: 401,
       durationMs: 12.7,
+      environment: 'Production',
       bodySuffix: ' body: (no body)',
       useColors: true,
     });
     expect(line).toContain('[HTTP]');
+    expect(line).toContain('[Production]');
     expect(line).toContain('POST');
     expect(line).toContain('/api/auth/login');
     expect(line).toContain('401');
@@ -68,5 +72,12 @@ describe('http-request-log.util', () => {
     expect(isHttpRequestLoggingEnabled()).toBe(true);
     process.env.NODE_ENV = 'production';
     expect(isHttpRequestLoggingEnabled()).toBe(false);
+  });
+
+  it('résout le libellé environnement depuis NODE_ENV', () => {
+    expect(resolveHttpLogEnvironment('production')).toBe('Production');
+    expect(resolveHttpLogEnvironment('development')).toBe('Development');
+    expect(resolveHttpLogEnvironment('test')).toBe('Test');
+    expect(resolveHttpLogEnvironment('')).toBe('Development');
   });
 });

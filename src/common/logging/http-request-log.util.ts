@@ -1,5 +1,7 @@
 export type HttpLogLevel = 'info' | 'warn' | 'error';
 
+export type HttpLogEnvironment = 'Development' | 'Production' | 'Test' | 'Staging';
+
 const ANSI = {
   reset: '\x1b[0m',
   bold: '\x1b[1m',
@@ -19,6 +21,40 @@ function envFlag(name: string): boolean | undefined {
   if (raw === 'true' || raw === '1') return true;
   if (raw === 'false' || raw === '0') return false;
   return undefined;
+}
+
+let cachedHttpLogEnvironment: HttpLogEnvironment | null = null;
+
+export function resolveHttpLogEnvironment(
+  nodeEnv = process.env.NODE_ENV,
+): HttpLogEnvironment {
+  const raw = String(nodeEnv ?? 'development')
+    .trim()
+    .toLowerCase();
+  if (raw === 'production' || raw === 'prod') return 'Production';
+  if (raw === 'test') return 'Test';
+  if (raw === 'staging' || raw === 'stage') return 'Staging';
+  return 'Development';
+}
+
+export function httpLogEnvironmentLabel(): HttpLogEnvironment {
+  if (cachedHttpLogEnvironment == null) {
+    cachedHttpLogEnvironment = resolveHttpLogEnvironment();
+  }
+  return cachedHttpLogEnvironment;
+}
+
+export function colorForHttpEnvironment(env: HttpLogEnvironment): string {
+  switch (env) {
+    case 'Production':
+      return ANSI.magenta;
+    case 'Test':
+      return ANSI.yellow;
+    case 'Staging':
+      return ANSI.cyan;
+    default:
+      return ANSI.green;
+  }
 }
 
 export function isHttpBodyLoggingEnabled(): boolean {
@@ -86,6 +122,7 @@ export type HttpRequestLogLineInput = {
   url: string;
   status: number;
   durationMs: number;
+  environment?: HttpLogEnvironment;
   bodySuffix?: string;
   useColors?: boolean;
 };
@@ -97,15 +134,18 @@ export function formatHttpRequestLogLine(input: HttpRequestLogLineInput): string
   const duration = `${Math.max(0, Math.round(input.durationMs))}ms`;
   const bodySuffix = input.bodySuffix ?? '';
   const useColors = input.useColors ?? shouldUseHttpLogColors();
+  const environment = input.environment ?? httpLogEnvironmentLabel();
 
   if (!useColors) {
-    return `[HTTP] ${method} ${input.url} ${status} ${duration}${bodySuffix}`;
+    return `[HTTP] [${environment}] ${method} ${input.url} ${status} ${duration}${bodySuffix}`;
   }
 
   const statusColor = colorForHttpStatus(input.status);
   const methodColor = colorForHttpMethod(method);
+  const envColor = colorForHttpEnvironment(environment);
   return (
     `${ANSI.gray}[HTTP]${ANSI.reset} ` +
+    `${envColor}${ANSI.bold}[${environment}]${ANSI.reset} ` +
     `${methodColor}${ANSI.bold}${method}${ANSI.reset} ` +
     `${input.url} ` +
     `${statusColor}${ANSI.bold}${status}${ANSI.reset} ` +

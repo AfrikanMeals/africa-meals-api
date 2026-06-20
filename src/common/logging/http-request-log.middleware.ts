@@ -1,6 +1,7 @@
 import { redactSensitiveJsonForLog } from './redact-sensitive.util';
 import {
   formatHttpRequestLogLine,
+  httpLogEnvironmentLabel,
   isHttpBodyLoggingEnabled,
   isHttpRequestLoggingEnabled,
   shouldUseHttpLogColors,
@@ -32,6 +33,7 @@ function shouldSkipHttpRequestLog(path: string): boolean {
 export function httpRequestLogMiddleware() {
   const enabled = isHttpRequestLoggingEnabled();
   const useColors = shouldUseHttpLogColors();
+  const environment = httpLogEnvironmentLabel();
 
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!enabled) {
@@ -59,6 +61,7 @@ export function httpRequestLogMiddleware() {
         url: path,
         status,
         durationMs,
+        environment,
         bodySuffix,
         useColors,
       });
