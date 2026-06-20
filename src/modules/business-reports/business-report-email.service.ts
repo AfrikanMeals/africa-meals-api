@@ -113,7 +113,11 @@ export class BusinessReportEmailService {
     const shortOrderId = orderId ? orderId.slice(-8).toUpperCase() : null;
     const orderStatus =
       typeof order?.['status'] === 'string'
-        ? vendorOrderStatusLabelFr(String(order['status']))
+        ? vendorOrderStatusLabelFr(
+            String(order['status']),
+            undefined,
+            order['payOnPickup'] === true || order['pay_on_pickup'] === true,
+          )
         : null;
     const totalPriceRaw = order?.['totalPrice'];
     const totalPrice =

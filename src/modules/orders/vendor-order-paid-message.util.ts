@@ -95,12 +95,16 @@ export type VendorOrderNotifyReason =
 export function vendorOrderStatusLabelFr(
   status: string,
   isPickup?: boolean,
+  payOnPickup?: boolean,
 ): string {
   switch (status) {
     case 'created':
       return 'Nouvelle commande (en attente de paiement)';
     case 'paied':
     case 'paid':
+      if (payOnPickup) {
+        return 'À payer à la collecte';
+      }
       return 'Commande payée';
     case 'approved':
       return isPickup ? 'Prête pour retrait' : 'Prête pour livraison';

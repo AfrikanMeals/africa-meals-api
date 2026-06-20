@@ -201,8 +201,13 @@ export function cartPricingCacheInputHash(
       (a, b) =>
         a.storeId.localeCompare(b.storeId) || a.code.localeCompare(b.code),
     );
+  const payOnPickupByStoreId = Object.entries(dto.payOnPickupByStoreId ?? {})
+    .filter(([, enabled]) => enabled === true)
+    .map(([storeId]) => String(storeId).trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
   return stableCacheHash({
-    v: 1,
+    v: 2,
     cartFingerprint,
     fulfillment,
     addressId: String(dto.addressId ?? '').trim(),
@@ -214,6 +219,7 @@ export function cartPricingCacheInputHash(
       Math.round(Number(dto.deliveryTipTotalCents) || 0),
     ),
     coupons,
+    payOnPickupByStoreId,
   });
 }
 

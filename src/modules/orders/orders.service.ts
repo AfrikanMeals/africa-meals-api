@@ -72,6 +72,12 @@ import {
 import { OrderPaidInvoiceEmailService } from './order-paid-invoice-email.service';
 import { orderInvoiceRef } from './order-invoice.util';
 import {
+  enrichOrderDisplayStatus,
+  enrichOrdersDisplayStatus,
+  orderPaymentStatusLabelFr,
+  publicOrderStatusLabelFr,
+} from './order-display-status.util';
+import {
   VendorStatusEmailService,
   type VendorOrderEmailEvent,
 } from '@modules/vendor-emails/vendor-status-email.service';
@@ -478,6 +484,8 @@ export class OrdersService {
       await this.ensureHandoffCodesForAdminSupport(enriched);
     }
 
+    enriched = enrichOrdersDisplayStatus(enriched);
+
     return { data: enriched as unknown as OrderModel[] };
   }
 
@@ -690,7 +698,7 @@ export class OrdersService {
     const [withCurrency] = await this.enrichOrdersWithStripeCurrency([
       enriched,
     ]);
-    const out = withCurrency;
+    const out = enrichOrderDisplayStatus(withCurrency);
     if (
       asCustomerScope ||
       user.type === UserTypeEnum.USER ||
@@ -766,7 +774,15 @@ export class OrdersService {
       orderId: oid,
       ref: orderInvoiceRef(oid),
       status,
-      statusLabel: this.publicOrderStatusLabel(status),
+      statusLabel: publicOrderStatusLabelFr({
+        status,
+        payOnPickup: order.payOnPickup === true,
+      }),
+      payOnPickup: order.payOnPickup === true,
+      paymentStatusLabel: orderPaymentStatusLabelFr({
+        status,
+        payOnPickup: order.payOnPickup === true,
+      }),
       createdAt: order.createdAt,
       currency:
         typeof order.currency === 'string'
@@ -790,23 +806,6 @@ export class OrdersService {
       },
       items,
     };
-  }
-
-  private publicOrderStatusLabel(status: string): string {
-    switch (String(status ?? '').toLowerCase()) {
-      case OrderStatusEnum.PAIED:
-        return 'Payée';
-      case OrderStatusEnum.APPROVED:
-        return 'Confirmée';
-      case OrderStatusEnum.SHIPPED:
-        return 'En livraison';
-      case OrderStatusEnum.COMPLETED:
-        return 'Terminée';
-      case OrderStatusEnum.CANCELLED:
-        return 'Annulée';
-      default:
-        return 'Commande';
-    }
   }
 
   async createFromCart(storeId: string, user: UserModel) {
@@ -1150,6 +1149,7 @@ export class OrdersService {
     const statusLabel = vendorOrderStatusLabelFr(
       ctx.status,
       ctx.isPickup ?? this.isPickupOrder(order),
+      order.payOnPickup === true,
     );
     const push = buildVendorOrderStatusPush({
       reason: ctx.reason,
@@ -1754,7 +1754,11 @@ export class OrdersService {
         currency:
           typeof order.currency === 'string' ? order.currency : undefined,
         itemCount: paidItemCount,
-        statusLabel: vendorOrderStatusLabelFr(OrderStatusEnum.PAIED),
+        statusLabel: vendorOrderStatusLabelFr(
+          OrderStatusEnum.PAIED,
+          this.isPickupOrder(order),
+          order.payOnPickup === true,
+        ),
       },
       logTag: 'order_paid',
     });

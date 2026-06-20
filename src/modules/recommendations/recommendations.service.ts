@@ -591,6 +591,7 @@ export class RecommendationsService {
       imageUrl: d.imageUrl ?? '',
       storeId: d.storeId,
       storeName: storeNameById.get(d.storeId) ?? '',
+      quantite: d.quantite,
     }));
   }
 }
