@@ -1,6 +1,7 @@
 import { detectCatalogImageStorageKind } from '@common/media/detect-storage-engine.util';
 import { escapeMongoRegex } from '@common/mongo/escape-regex.util';
 import { shouldApplyCatalogRegionFilter } from '@common/catalog-public-id.util';
+import { bustCatalogListingPublicCaches } from '@common/redis-app-cache';
 import {
   isStripeConnectOnboardingCompleteUser,
   productEmbeddedStoreOwnerStripeOnboardedStages,
@@ -25,6 +26,8 @@ import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, PipelineStage, Types } from 'mongoose';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 import { CreateDrinkDto, PatchDrinkDto } from './dto/drink.dto';
 import { SearchDto } from '@modules/search/dto/search.dto';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
@@ -148,6 +151,20 @@ export class DrinksService {
 
   @Inject(SupportedCountriesService)
   private readonly _supportedCountries: SupportedCountriesService;
+
+  @Inject(CACHE_MANAGER)
+  private readonly _cache: Cache;
+
+  private async _bustStoreCatalogCaches(storeId: string): Promise<void> {
+    const sid = String(storeId ?? '').trim();
+    if (!sid) return;
+    try {
+      await bustCatalogListingPublicCaches(this._cache, sid);
+      await this._productCategoryService.invalidatePublicListCache();
+    } catch {
+      /* cache best-effort */
+    }
+  }
 
   private async enrichDrinkMedia<
     T extends { imageUrl?: string; imageStorageEngine?: string | null },
@@ -715,6 +732,7 @@ export class DrinksService {
       .lean()
       .exec();
     await this._invalidateCategoryCountsCache();
+    await this._bustStoreCatalogCaches(storeId);
     return this.enrichDrinkMedia(
       mapDrinkDoc((populated ?? doc.toObject()) as Record<string, unknown>),
     );
@@ -789,6 +807,7 @@ export class DrinksService {
       .lean()
       .exec();
     await this._invalidateCategoryCountsCache();
+    await this._bustStoreCatalogCaches(storeId);
     return this.enrichDrinkMedia(
       mapDrinkDoc((populated ?? found.toObject()) as Record<string, unknown>),
     );
@@ -814,6 +833,7 @@ export class DrinksService {
     }
     await doc.deleteOne();
     await this._invalidateCategoryCountsCache();
+    await this._bustStoreCatalogCaches(storeId);
   }
 
   /**

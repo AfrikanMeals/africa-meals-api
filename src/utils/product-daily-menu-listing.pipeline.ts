@@ -1,12 +1,12 @@
 import { PipelineStage } from 'mongoose';
 
 /**
- * Filtre catalogue mobile : uniquement les plats du menu du jour (jour serveur)
- * avec stock disponible (illimité ou `stockRemaining` > 0).
+ * Calcule `__onDailyMenu`, `__menuItem`, `__menuSoldOut` à partir de
+ * `store.dailyMenuByWeekday` (jour serveur).
  *
- * Prérequis : `$store` est un document boutique (pas un tableau) avec `dailyMenuByWeekday`.
+ * Prérequis : `$store` est un document boutique (pas un tableau).
  */
-export function productDailyMenuListingPipelineStages(): PipelineStage[] {
+export function productDailyMenuEnrichmentPipelineStages(): PipelineStage[] {
   const dow = new Date().getDay();
   return [
     {
@@ -76,11 +76,27 @@ export function productDailyMenuListingPipelineStages(): PipelineStage[] {
         },
       },
     },
-    {
-      $match: {
-        __onDailyMenu: true,
-        __menuSoldOut: { $ne: true },
-      },
+  ];
+}
+
+/** Menu du jour uniquement, avec stock > 0 (ou illimité). */
+export function productDailyMenuStrictListingMatchStage(): PipelineStage {
+  return {
+    $match: {
+      __onDailyMenu: true,
+      __menuSoldOut: { $ne: true },
     },
+  };
+}
+
+/**
+ * Filtre catalogue mobile : menu du jour uniquement (accueil, recherche, menu boutique, …).
+ *
+ * Prérequis : `$store` est un document boutique (pas un tableau) avec `dailyMenuByWeekday`.
+ */
+export function productDailyMenuListingPipelineStages(): PipelineStage[] {
+  return [
+    ...productDailyMenuEnrichmentPipelineStages(),
+    productDailyMenuStrictListingMatchStage(),
   ];
 }

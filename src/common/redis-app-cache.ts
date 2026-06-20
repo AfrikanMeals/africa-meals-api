@@ -90,7 +90,9 @@ export async function bustCartPricingCachesForUser(
 ): Promise<number> {
   const uid = String(userId ?? '').trim();
   if (!uid) return 0;
-  return bustCacheKeysByPrefix(cache, `cart-pricing:v1:${uid}:`);
+  return bustCacheKeysByPrefix(cache, `cart-pricing:v1:${uid}:`, {
+    skipClusterNotify: true,
+  });
 }
 
 export function cacheUserScope(user?: UserModel): string {
@@ -110,6 +112,129 @@ export function stableCacheHash(input: unknown): string {
 
 const inflight = new Map<string, Promise<unknown>>();
 
+export const APP_CACHE_BUST_CHANNEL = 'wise-eat:app-cache-bust';
+const BUST_GEN_REDIS_KEY = 'wise-eat:app-cache:bust-generation';
+
+let localBustGeneration = 0;
+let redisBustClient: {
+  get: (key: string) => Promise<string | null>;
+  incr: (key: string) => Promise<number>;
+} | null = null;
+
+let clusterBustPublisher: ((payload: string) => Promise<void>) | null = null;
+
+/** Client Redis partagé (compteur bust cluster + pub/sub). */
+export function registerAppCacheBustRedis(
+  client: {
+    get: (key: string) => Promise<string | null>;
+    incr: (key: string) => Promise<number>;
+  } | null | undefined,
+): void {
+  redisBustClient = client ?? null;
+}
+
+export function registerAppCacheBustClusterPublisher(
+  fn: (payload: string) => Promise<void>,
+): void {
+  clusterBustPublisher = fn;
+}
+
+export function bumpCacheBustGenerationLocal(): void {
+  localBustGeneration++;
+}
+
+export function clearInflightCache(): void {
+  inflight.clear();
+}
+
+export async function readCacheBustGeneration(): Promise<number> {
+  if (redisBustClient) {
+    try {
+      const raw = await redisBustClient.get(BUST_GEN_REDIS_KEY);
+      const n = Number(raw);
+      if (Number.isFinite(n)) return n;
+    } catch {
+      /* best-effort */
+    }
+  }
+  return localBustGeneration;
+}
+
+/** Invalide les écritures cache en cours (requêtes parallèles après bust admin / catalogue). */
+export async function bumpCacheBustGeneration(): Promise<void> {
+  bumpCacheBustGenerationLocal();
+  clearInflightCache();
+  if (redisBustClient) {
+    try {
+      await redisBustClient.incr(BUST_GEN_REDIS_KEY);
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+
+export async function notifyClusterCacheBust(
+  prefixes: string[],
+): Promise<void> {
+  const unique = [...new Set(prefixes.map((p) => String(p).trim()).filter(Boolean))];
+  if (!unique.length || !clusterBustPublisher) return;
+  try {
+    await clusterBustPublisher(
+      JSON.stringify({ prefixes: unique, at: Date.now() }),
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Annule les requêtes en cours dont la clé correspond (évite ré-écriture stale après bust). */
+export function bustInflightCacheKeysMatching(
+  matcher: (key: string) => boolean,
+): number {
+  let cleared = 0;
+  for (const key of [...inflight.keys()]) {
+    if (matcher(key)) {
+      inflight.delete(key);
+      cleared++;
+    }
+  }
+  return cleared;
+}
+
+function bustInflightByPrefix(prefix: string): number {
+  return bustInflightCacheKeysMatching((key) => key.startsWith(prefix));
+}
+
+function collectMemoryStoreKeys(
+  cache: Cache,
+  prefix: string,
+): string[] {
+  const out = new Set<string>();
+  const visited = new Set<object>();
+
+  const walk = (node: unknown, depth = 0): void => {
+    if (node == null || depth > 5 || typeof node !== 'object') return;
+    if (visited.has(node as object)) return;
+    visited.add(node as object);
+
+    if (node instanceof Map) {
+      for (const k of node.keys()) {
+        const sk = String(k);
+        if (sk.startsWith(prefix)) out.add(sk);
+      }
+      return;
+    }
+
+    const rec = node as Record<string, unknown>;
+    for (const prop of ['store', 'data', 'cache', 'map'] as const) {
+      if (prop in rec) walk(rec[prop], depth + 1);
+    }
+  };
+
+  walk((cache as { store?: unknown }).store);
+  return [...out];
+}
+
 /** Lecture cache Redis/mémoire + déduplication requêtes parallèles (cache froid). */
 export async function getOrSetCache<T>(
   cache: Cache,
@@ -125,10 +250,14 @@ export async function getOrSetCache<T>(
   if (pending) {
     return pending as Promise<T>;
   }
+  const genAtStart = await readCacheBustGeneration();
   const task = (async () => {
     try {
       const res = await factory();
-      await cache.set(key, res, ttlMs);
+      const genAtEnd = await readCacheBustGeneration();
+      if (genAtStart === genAtEnd) {
+        await cache.set(key, res, ttlMs);
+      }
       return res;
     } finally {
       inflight.delete(key);
@@ -142,6 +271,7 @@ export async function bustCacheKey(
   cache: Cache,
   key: string,
 ): Promise<void> {
+  inflight.delete(key);
   await cache.del(key);
 }
 
@@ -152,6 +282,8 @@ export async function bustProductDetailCachesForProduct(
 ): Promise<void> {
   const pid = String(productId ?? '').trim();
   if (!pid) return;
+
+  bustInflightCacheKeysMatching((key) => key.includes(`:${pid}`));
 
   const store = (cache as { store?: unknown }).store;
   const client = (
@@ -173,11 +305,18 @@ export async function bustProductDetailCachesForProduct(
   await bustCacheKey(cache, AppCacheKeys.productDetail(pid));
 }
 
-/** Supprime les clés Redis commençant par `prefix` (no-op si store sans SCAN). */
+type BustCacheKeysOptions = {
+  skipClusterNotify?: boolean;
+};
+
+/** Supprime les clés Redis / mémoire commençant par `prefix`. */
 export async function bustCacheKeysByPrefix(
   cache: Cache,
   prefix: string,
+  options?: BustCacheKeysOptions,
 ): Promise<number> {
+  bustInflightByPrefix(prefix);
+
   const store = (cache as { store?: unknown }).store;
   if (!store) return 0;
 
@@ -185,19 +324,38 @@ export async function bustCacheKeysByPrefix(
     store as {
       client?: {
         keys?: (pattern: string) => Promise<string[]>;
+        scanIterator?: (opts: { MATCH: string }) => AsyncIterable<string>;
       };
     }
   ).client;
 
-  if (typeof client?.keys === 'function') {
-    const keys = await client.keys(`${prefix}*`);
-    if (keys.length) {
-      await Promise.all(keys.map((k) => cache.del(k)));
+  let keys: string[] = [];
+
+  if (typeof client?.scanIterator === 'function') {
+    for await (const key of client.scanIterator({ MATCH: `${prefix}*` })) {
+      keys.push(String(key));
     }
-    return keys.length;
+  } else if (typeof client?.keys === 'function') {
+    keys = await client.keys(`${prefix}*`);
+  } else {
+    const storeKeysFn = (
+      store as { keys?: () => Promise<string[]> }
+    ).keys;
+    if (typeof storeKeysFn === 'function') {
+      const all = await storeKeysFn.call(store);
+      keys = all.filter((k) => String(k).startsWith(prefix));
+    } else {
+      keys = collectMemoryStoreKeys(cache, prefix);
+    }
   }
 
-  return 0;
+  if (keys.length) {
+    await Promise.all(keys.map((k) => cache.del(k)));
+  }
+  if (!options?.skipClusterNotify) {
+    void notifyClusterCacheBust([prefix]);
+  }
+  return keys.length;
 }
 
 /**
@@ -208,6 +366,7 @@ export async function bustCatalogListingPublicCaches(
   cache: Cache,
   storeId?: string,
 ): Promise<void> {
+  await bumpCacheBustGeneration();
   const prefixes = [
     'search-filter:v1:',
     'home-feed:v3:',
@@ -217,9 +376,18 @@ export async function bustCatalogListingPublicCaches(
     const sid = storeId.trim();
     prefixes.push(`store-menu-page:v1:${sid}:`);
     prefixes.push(`store-menu-bundle:v1:${sid}:`);
+    bustInflightByPrefix(`store-meta:v1:${sid}`);
     await bustCacheKey(cache, AppCacheKeys.storeMeta(sid));
   }
-  await Promise.all(prefixes.map((p) => bustCacheKeysByPrefix(cache, p)));
+  for (const p of prefixes) {
+    bustInflightByPrefix(p);
+  }
+  await Promise.all(
+    prefixes.map((p) =>
+      bustCacheKeysByPrefix(cache, p, { skipClusterNotify: true }),
+    ),
+  );
+  void notifyClusterCacheBust(prefixes);
 }
 
 const PUBLIC_CATALOG_CACHE_PREFIXES = [
@@ -240,18 +408,41 @@ const EXTENDED_PUBLIC_CACHE_PREFIXES = [
   'favlistgql:',
 ] as const;
 
+const ENTIRE_APP_CACHE_PREFIXES = [
+  ...EXTENDED_PUBLIC_CACHE_PREFIXES,
+  'cart-pricing:v1:',
+] as const;
+
+async function bustPrefixesBatch(
+  cache: Cache,
+  prefixes: readonly string[],
+  exactKeys: string[] = [],
+): Promise<number> {
+  await bumpCacheBustGeneration();
+  let keysCleared = 0;
+  for (const key of exactKeys) {
+    bustInflightCacheKeysMatching((k) => k === key);
+    await cache.del(key);
+    keysCleared++;
+  }
+  for (const prefix of prefixes) {
+    keysCleared += await bustCacheKeysByPrefix(cache, prefix, {
+      skipClusterNotify: true,
+    });
+  }
+  void notifyClusterCacheBust([...prefixes, ...exactKeys]);
+  return keysCleared;
+}
+
 /** Vide les caches catalogue client (menus, recherche, prix, accueil). */
 export async function bustPublicCatalogAppCaches(
   cache: Cache,
 ): Promise<{ keysCleared: number }> {
-  let keysCleared = 0;
-  keysCleared += await bustCacheKeysByPrefix(
+  const keysCleared = await bustPrefixesBatch(
     cache,
-    AppCacheKeys.announcements,
+    PUBLIC_CATALOG_CACHE_PREFIXES,
+    [AppCacheKeys.announcements],
   );
-  for (const prefix of PUBLIC_CATALOG_CACHE_PREFIXES) {
-    keysCleared += await bustCacheKeysByPrefix(cache, prefix);
-  }
   return { keysCleared };
 }
 
@@ -259,14 +450,32 @@ export async function bustPublicCatalogAppCaches(
 export async function bustAllPublicAppCaches(
   cache: Cache,
 ): Promise<{ keysCleared: number }> {
-  let keysCleared = 0;
-  keysCleared += await bustCacheKeysByPrefix(
+  const keysCleared = await bustPrefixesBatch(
     cache,
-    AppCacheKeys.announcements,
+    EXTENDED_PUBLIC_CACHE_PREFIXES,
+    [AppCacheKeys.announcements],
   );
-  for (const prefix of EXTENDED_PUBLIC_CACHE_PREFIXES) {
-    keysCleared += await bustCacheKeysByPrefix(cache, prefix);
+  return { keysCleared };
+}
+
+/** Vide tout le cache applicatif connu (catalogue, favoris, pricing panier). */
+export async function bustEntireAppCaches(
+  cache: Cache,
+): Promise<{ keysCleared: number }> {
+  if (detectCacheStoreKind(cache) === 'memory') {
+    await bumpCacheBustGeneration();
+    const resetFn = (cache as { reset?: () => Promise<void> }).reset;
+    if (typeof resetFn === 'function') {
+      await resetFn.call(cache);
+      void notifyClusterCacheBust([...ENTIRE_APP_CACHE_PREFIXES]);
+      return { keysCleared: -1 };
+    }
   }
+  const keysCleared = await bustPrefixesBatch(
+    cache,
+    ENTIRE_APP_CACHE_PREFIXES,
+    [AppCacheKeys.announcements],
+  );
   return { keysCleared };
 }
 

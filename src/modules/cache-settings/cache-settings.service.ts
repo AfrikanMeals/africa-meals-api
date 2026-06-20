@@ -9,6 +9,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import {
   apiPublicCacheTtlMs,
   bustAllPublicAppCaches,
+  bustEntireAppCaches,
   bustPublicCatalogAppCaches,
   detectCacheStoreKind,
   favoritesCacheTtlMs,
@@ -42,7 +43,7 @@ export type CacheSettingsResponse = {
 };
 
 export type ClearCacheResponse = {
-  scope: 'public-catalog' | 'all';
+  scope: 'public-catalog' | 'all' | 'everything';
   keysCleared: number;
   cacheStore: 'redis' | 'memory';
   clearedAt: string;
@@ -155,13 +156,15 @@ export class CacheSettingsService implements OnModuleInit {
 
   async clearCache(
     user: UserModel,
-    scope: 'public-catalog' | 'all',
+    scope: 'public-catalog' | 'all' | 'everything',
   ): Promise<ClearCacheResponse> {
     await this.assertAdminSettings(user);
     const result =
-      scope === 'all'
-        ? await bustAllPublicAppCaches(this._cache)
-        : await bustPublicCatalogAppCaches(this._cache);
+      scope === 'everything'
+        ? await bustEntireAppCaches(this._cache)
+        : scope === 'all'
+          ? await bustAllPublicAppCaches(this._cache)
+          : await bustPublicCatalogAppCaches(this._cache);
     return {
       scope,
       keysCleared: result.keysCleared,

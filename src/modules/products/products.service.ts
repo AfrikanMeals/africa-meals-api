@@ -1480,6 +1480,11 @@ export class ProductsService {
       )
       .exec();
 
+    await this._bustShopProductCaches(
+      product._id.toString(),
+      store._id.toString(),
+    );
+
     return this.findOneById(product._id.toString());
   }
 
@@ -1520,6 +1525,14 @@ export class ProductsService {
         },
       )
       .exec();
+
+    await this._bustShopProductCaches(
+      id,
+      String(
+        (product.store as { _id?: { toString?: () => string } })?._id?.toString?.() ??
+          product.store,
+      ),
+    );
 
     return this.findOneById(id);
   }

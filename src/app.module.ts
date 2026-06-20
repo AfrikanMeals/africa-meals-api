@@ -49,6 +49,8 @@ import { RequestStatsModule } from './modules/request-stats/request-stats.module
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
 import { DomainEventsModule } from './common/domain-events/domain-events.module';
 import { RedisSharedModule } from './common/redis/redis-shared.module';
+import { AppCacheBustSubscriber } from './common/app-cache-bust.subscriber';
+import { registerAppCacheBustRedis } from './common/redis-app-cache';
 import { SseRedisModule } from './common/sse/sse-redis.module';
 import { AuthSettingsModule } from './modules/auth-settings/auth-settings.module';
 import { SecuritySettingsModule } from './modules/security-settings/security-settings.module';
@@ -231,7 +233,13 @@ function redactRedisUrl(url: string): string {
             ttl,
           });
           const redisClient = (
-            store as { client?: { on?(event: string, cb: (err: Error) => void): void } }
+            store as {
+              client?: {
+                on?(event: string, cb: (err: Error) => void): void;
+                get: (key: string) => Promise<string | null>;
+                incr: (key: string) => Promise<number>;
+              };
+            }
           ).client;
           redisClient?.on?.('error', (err: Error) => {
             Logger.warn(
@@ -243,6 +251,7 @@ function redactRedisUrl(url: string): string {
             `Cache store: redis (${redactRedisUrl(redisUrl)})`,
             'CacheModule',
           );
+          registerAppCacheBustRedis(redisClient);
           return {
             ttl,
             max,
@@ -343,7 +352,7 @@ function redactRedisUrl(url: string): string {
     AppController,
     ...(isEnvDebugControllerEnabled() ? [EnvDebugController] : []),
   ],
-  providers: [AppService],
+  providers: [AppService, AppCacheBustSubscriber],
   // exports: [ConfigModule],
 })
 export class AppModule {}
