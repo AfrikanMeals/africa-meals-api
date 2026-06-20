@@ -3274,26 +3274,33 @@ export class StoreService {
     return this.getVendorStoreDetailForAdmin(storeId, admin);
   }
 
-  /** Supprime une boutique non active (PENDING / REVISION / INACTIVE) — admin uniquement. */
+  /** Supprime une boutique (admin) pour permettre au vendeur de recommencer sa fiche. */
   async deleteVendorStoreForAdmin(storeId: string, admin: UserModel) {
     if (admin.type !== UserTypeEnum.ADMIN) {
       throw new ForbiddenException('admin_only');
     }
     const doc = await this._storeModel
       .findById(storeId)
-      .select('_id status owner address profileImage')
+      .select('_id name status owner address profileImage')
       .exec();
     if (!doc) {
       throw new NotFoundException('store_not_found');
     }
-    if (
-      ![
-        StoreStatusEnum.PENDING,
-        StoreStatusEnum.REVISION,
-        StoreStatusEnum.INACTIVE,
-      ].includes(doc.status)
-    ) {
-      throw new ForbiddenException('store_delete_only_non_approved');
+
+    const openOrders = await this._orderModel
+      .countDocuments({
+        store: doc._id,
+        status: {
+          $in: [
+            OrderStatusEnum.PAIED,
+            OrderStatusEnum.APPROVED,
+            OrderStatusEnum.SHIPPED,
+          ],
+        },
+      })
+      .exec();
+    if (openOrders > 0) {
+      throw new ConflictException('store_delete_has_open_orders');
     }
 
     const ownerId =
@@ -3309,6 +3316,8 @@ export class StoreService {
         : '';
     const imageUrl =
       typeof doc.profileImage === 'string' ? doc.profileImage : '';
+    const previousStatus = String(doc.status ?? '');
+    const storeName = String(doc.name ?? '');
 
     await this._storeModel.deleteOne({ _id: doc._id }).exec();
     if (ownerId) {
@@ -3322,6 +3331,20 @@ export class StoreService {
     if (imageUrl.startsWith('http')) {
       await this._mediasService.delete(imageUrl).catch(() => undefined);
     }
+
+    this._dashboardAudit.recordPlatformEvent(admin, {
+      action: 'ADMIN_VENDOR_STORE_DELETED',
+      category: 'vendors',
+      path: `/vendeurs/${storeId}`,
+      storeId,
+      resource: 'vendor_store',
+      resourceId: storeId,
+      metadata: {
+        storeName,
+        previousStatus,
+      },
+    });
+
     return { ok: true, storeId: String(doc._id) };
   }
 

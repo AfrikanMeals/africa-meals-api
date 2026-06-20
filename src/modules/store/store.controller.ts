@@ -343,7 +343,7 @@ export class StoreController {
     );
   }
 
-  /** Suppression d’une boutique non approuvée (PENDING / REVISION) — administrateurs uniquement. */
+  /** Suppression d’une boutique — le vendeur peut soumettre une nouvelle fiche. */
   @Delete('admin/vendors/:storeId')
   @UseGuards(JwtGuard)
   async deleteVendorStore(
