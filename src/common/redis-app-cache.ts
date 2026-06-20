@@ -509,13 +509,13 @@ export const AppCacheKeys = {
     page: number,
     take: number,
     scope: string,
-  ) => `store-menu-bundle:v1:${storeId}:p${page}:t${take}:${scope}`,
+  ) => `store-menu-bundle:v2:${storeId}:p${page}:t${take}:${scope}`,
   storeMenuPage: (
     storeId: string,
     page: number,
     take: number,
     scope: string,
-  ) => `store-menu-page:v1:${storeId}:p${page}:t${take}:${scope}`,
+  ) => `store-menu-page:v2:${storeId}:p${page}:t${take}:${scope}`,
   productDetail: (productId: string, clientRegion?: string) => {
     const code = String(clientRegion ?? '')
       .trim()

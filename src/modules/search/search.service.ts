@@ -41,7 +41,10 @@ import {
   parseDailyMenuAddonsAvailability,
 } from '@utils/daily-menu-today-product.util';
 import { mapInChunks } from '@utils/map-in-chunks';
-import { productDailyMenuListingPipelineStages } from '@utils/product-daily-menu-listing.pipeline';
+import {
+  productDailyMenuEnrichmentPipelineStages,
+  productDailyMenuListingPipelineStages,
+} from '@utils/product-daily-menu-listing.pipeline';
 import { storeArticlesAvailabilityPipelineStages } from '@utils/store-articles-availability.pipeline';
 
 @Injectable()
@@ -656,6 +659,30 @@ export class SearchService {
             },
           },
           distanceKm: { $ifNull: ['$distanceKm', null] },
+          dailyMenuToday: {
+            $cond: [
+              { $eq: ['$__onDailyMenu', true] },
+              {
+                onMenu: true,
+                stockUnlimited: {
+                  $ne: [
+                    { $ifNull: ['$__menuItem.stockUnlimited', true] },
+                    false,
+                  ],
+                },
+                stockRemaining: {
+                  $ifNull: ['$__menuItem.stockRemaining', 0],
+                },
+                soldOut: { $eq: ['$__menuSoldOut', true] },
+              },
+              {
+                onMenu: false,
+                stockUnlimited: true,
+                stockRemaining: 0,
+                soldOut: false,
+              },
+            ],
+          },
         },
       },
     ];
@@ -1716,12 +1743,11 @@ export class SearchService {
         AppCacheKeys.storeMenuPage(storeId, safePage, safeTake, scope),
         apiPublicCacheTtlMs(),
         () =>
-          this._storeMenuProductsLeanPageUncached(
+          this._storeMenuProductsLeanPageWithDailyMenuFallback(
             storeId,
             safePage,
             safeTake,
             user,
-            undefined,
             clientPlatform,
           ),
       );
@@ -1733,6 +1759,41 @@ export class SearchService {
       user,
       query,
       clientPlatform,
+      true,
+    );
+  }
+
+  /**
+   * Menu du jour en priorité ; si aucun plat planifié aujourd’hui, catalogue actif
+   * de la boutique (sans lien avec la pré-commande).
+   */
+  private async _storeMenuProductsLeanPageWithDailyMenuFallback(
+    storeId: string,
+    page: number,
+    take: number,
+    user?: UserModel,
+    clientPlatform?: string,
+  ): Promise<{ items: Record<string, unknown>[]; total: number }> {
+    const dailyOnly = await this._storeMenuProductsLeanPageUncached(
+      storeId,
+      page,
+      take,
+      user,
+      undefined,
+      clientPlatform,
+      true,
+    );
+    if (dailyOnly.total > 0) {
+      return dailyOnly;
+    }
+    return this._storeMenuProductsLeanPageUncached(
+      storeId,
+      page,
+      take,
+      user,
+      undefined,
+      clientPlatform,
+      false,
     );
   }
 
@@ -1743,6 +1804,7 @@ export class SearchService {
     user?: UserModel,
     query?: string,
     clientPlatform?: string,
+    dailyMenuOnly = true,
   ): Promise<{ items: Record<string, unknown>[]; total: number }> {
     if (!Types.ObjectId.isValid(storeId)) {
       return { items: [], total: 0 };
@@ -1803,7 +1865,9 @@ export class SearchService {
         },
       },
       ...productEmbeddedStoreOwnerStripeOnboardedStages(),
-      ...this._productDailyMenuListingStages(),
+      ...(dailyMenuOnly
+        ? this._productDailyMenuListingStages()
+        : productDailyMenuEnrichmentPipelineStages()),
       {
         $facet: {
           total: [{ $count: 'n' }],
