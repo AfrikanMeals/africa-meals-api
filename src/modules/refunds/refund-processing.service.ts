@@ -11,7 +11,6 @@ import { MailerService } from '@modules/mailer/mailer.service';
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { OrdersService } from '@modules/orders/orders.service';
-import { isPayOnPickupOrder } from '@modules/orders/order-display-status.util';
 import { WsOrderNotifyHandler } from '@modules/domain-event-handlers/handlers/ws-order-notify.handler';
 import { StripeChargeFeeService } from '@modules/billing/stripe/stripe-charge-fee.service';
 import { effectiveStripeProcessingFeeCents } from '@modules/billing/stripe/stripe-processing-fee.util';
@@ -879,14 +878,6 @@ export class RefundProcessingService {
       throw new NotFoundException('order_not_found');
     }
 
-    if (
-      isPayOnPickupOrder(
-        (order.toObject?.() ?? order) as Record<string, unknown>,
-      )
-    ) {
-      throw new BadRequestException('refund_not_applicable_pay_on_pickup');
-    }
-
     const entry = activeRefundEntry(refundLogFromOrderDoc(order));
     if (
       !entry ||
@@ -1110,17 +1101,6 @@ export class RefundProcessingService {
   async enqueueRefundForCancelledOrder(orderId: string): Promise<void> {
     const oid = orderId.trim();
     if (!oid) return;
-
-    const order = await this.orderModel
-      .findById(oid)
-      .select('payOnPickup stripeParentPaymentId status')
-      .lean()
-      .exec();
-    if (!order) return;
-    if (isPayOnPickupOrder(order as Record<string, unknown>)) {
-      return;
-    }
-
     try {
       await this.processRefundForOrder({
         orderId: oid,

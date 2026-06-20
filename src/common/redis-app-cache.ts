@@ -115,7 +115,6 @@ const inflight = new Map<string, Promise<unknown>>();
 export const APP_CACHE_BUST_CHANNEL = 'wise-eat:app-cache-bust';
 const BUST_GEN_REDIS_KEY = 'wise-eat:app-cache:bust-generation';
 const BUST_GEN_REDIS_TIMEOUT_MS = 250;
-const CACHE_FACTORY_TIMEOUT_MS = 25_000;
 
 async function redisBustOp<T>(
   op: () => Promise<T>,
@@ -264,15 +263,7 @@ export async function getOrSetCache<T>(
   const genAtStart = await readCacheBustGeneration();
   const task = (async () => {
     try {
-      const res = await Promise.race([
-        factory(),
-        new Promise<never>((_, reject) => {
-          setTimeout(
-            () => reject(new Error('cache_factory_timeout')),
-            CACHE_FACTORY_TIMEOUT_MS,
-          );
-        }),
-      ]);
+      const res = await factory();
       const genAtEnd = await readCacheBustGeneration();
       if (genAtStart === genAtEnd) {
         await cache.set(key, res, ttlMs);

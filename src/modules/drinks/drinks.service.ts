@@ -473,63 +473,6 @@ export class DrinksService {
   }
 
   /**
-   * Fiche boisson catalogue client (mêmes règles visibilité / région que la liste).
-   */
-  async findOneByStoreForCatalog(
-    storeId: string,
-    drinkId: string,
-    clientPlatform?: string,
-    countryCode?: string,
-    user?: UserModel,
-  ): Promise<ReturnType<typeof mapDrinkDoc> | null> {
-    if (!Types.ObjectId.isValid(storeId) || !Types.ObjectId.isValid(drinkId)) {
-      return null;
-    }
-    const clientRegion = shouldApplyCatalogRegionFilter(
-      clientPlatform,
-      countryCode,
-    )
-      ? await this._supportedCountries.resolveClientCatalogRegion(
-          user,
-          countryCode,
-        )
-      : undefined;
-    const storeLean = await this._storeModel
-      .findById(storeId)
-      .select('status region')
-      .lean()
-      .exec();
-    if (
-      clientRegion &&
-      (!storeLean ||
-        normalizeCountryCode(storeLean.region) !==
-          normalizeCountryCode(clientRegion))
-    ) {
-      return null;
-    }
-    const visible =
-      clientPlatform === 'web'
-        ? await this.isStoreActiveForCatalog(storeId)
-        : await this.isStoreVisibleOnMobileApp(storeId);
-    if (!visible) {
-      return null;
-    }
-    const row = await this._drinkModel
-      .findOne({
-        _id: new Types.ObjectId(drinkId),
-        store: new Types.ObjectId(storeId),
-        ...DRINK_IN_STOCK_FILTER,
-      })
-      .populate('category', 'title kind isEnabled')
-      .lean()
-      .exec();
-    if (!row) {
-      return null;
-    }
-    return this.enrichDrinkMedia(mapDrinkDoc(row as Record<string, unknown>));
-  }
-
-  /**
    * Une boisson du catalogue client (boutique + stock > 0), ou `null`.
    */
   async findOneInStoreCatalog(

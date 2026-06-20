@@ -746,29 +746,6 @@ export class StoreController {
     );
   }
 
-  /** Une boisson catalogue client (`drinks`, stock > 0) — sans auth. */
-  @Get(':id/drinks-catalog/:drinkId')
-  @UseGuards(OptionalAuthGuard)
-  async getDrinkCatalogItem(
-    @Param('id') id: string,
-    @Param('drinkId') drinkId: string,
-    @Req() req: Request,
-    @Query('countryCode') countryCode?: string,
-  ) {
-    const storeId = resolveMongoIdFromPublicParam(id) ?? id;
-    const drink = await this._drinksService.findOneByStoreForCatalog(
-      storeId,
-      drinkId,
-      clientPlatformFromRequest(req),
-      countryCode,
-      req.user as UserModel | undefined,
-    );
-    if (!drink) {
-      throw new NotFoundException('drink_not_found');
-    }
-    return drink;
-  }
-
   @Get('/:id')
   @UseGuards(OptionalAuthGuard)
   async findOneById(
