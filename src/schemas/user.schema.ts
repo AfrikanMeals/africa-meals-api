@@ -116,6 +116,10 @@ export class UserModel extends BaseSchema {
   @Prop({ default: false, name: 'reward_program_eligible' })
   rewardProgramEligible?: boolean;
 
+  /** Mode debug activé par un admin (diagnostics côté client). */
+  @Prop({ default: false, name: 'debug' })
+  debug?: boolean;
+
   /** Points fidélité cumulés */
   @Prop({ default: 0, name: 'loyalty_points' })
   loyaltyPoints?: number;

@@ -1,5 +1,5 @@
 import { UserTypeEnum } from '@schemas/user.schema';
-import { IsEmail, IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class AdminUpdateUserDto {
   @IsOptional()
@@ -27,4 +27,8 @@ export class AdminUpdateUserDto {
   @MinLength(2)
   @MaxLength(2)
   appCountryCode?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  debug?: boolean;
 }

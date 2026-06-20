@@ -25,6 +25,7 @@ export type AdminUserRow = {
   appCountryCode: string | null;
   emailVerified: boolean;
   disabled: boolean;
+  debug: boolean;
   accountDisabledAt: string | null;
   deletionPending: boolean;
   accountDeletionRequestedAt: string | null;
@@ -32,6 +33,9 @@ export type AdminUserRow = {
   createdAt: string | null;
   updatedAt: string | null;
 };
+
+const ADMIN_USER_SELECT =
+  'fullName email phoneNumber type appCountryCode emailVerifiedAt debug accountDisabledAt accountDeletionRequestedAt accountDeletionScheduledFor createdAt updatedAt';
 
 function toIso(value: unknown): string | null {
   if (value instanceof Date) return value.toISOString();
@@ -55,6 +59,7 @@ function serializeUser(doc: Record<string, unknown>): AdminUserRow {
       typeof doc.appCountryCode === 'string' ? doc.appCountryCode : null,
     emailVerified: doc.emailVerifiedAt instanceof Date,
     disabled: disabledAt instanceof Date,
+    debug: doc.debug === true,
     accountDisabledAt: toIso(disabledAt),
     deletionPending:
       deletionRequestedAt instanceof Date && deletionScheduledFor instanceof Date,
@@ -129,9 +134,7 @@ export class AdminUsersService {
       this.userModel.countDocuments(filter).exec(),
       this.userModel
         .find(filter)
-        .select(
-          'fullName email phoneNumber type appCountryCode emailVerifiedAt accountDisabledAt accountDeletionRequestedAt accountDeletionScheduledFor createdAt updatedAt',
-        )
+        .select(ADMIN_USER_SELECT)
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
@@ -156,9 +159,7 @@ export class AdminUsersService {
     }
     const row = await this.userModel
       .findById(id)
-      .select(
-        'fullName email phoneNumber type appCountryCode emailVerifiedAt accountDisabledAt accountDeletionRequestedAt accountDeletionScheduledFor createdAt updatedAt',
-      )
+      .select(ADMIN_USER_SELECT)
       .lean()
       .exec();
     if (!row) throw new NotFoundException('user_not_found');
@@ -200,6 +201,7 @@ export class AdminUsersService {
       if (existing) throw new ConflictException('email_already_used');
       update.email = email;
     }
+    if (dto.debug != null) update.debug = dto.debug === true;
 
     if (Object.keys(update).length === 0) {
       return this.getUser(actor, userId);
@@ -207,9 +209,7 @@ export class AdminUsersService {
 
     const updated = await this.userModel
       .findByIdAndUpdate(userId, { $set: update }, { new: true })
-      .select(
-        'fullName email phoneNumber type appCountryCode emailVerifiedAt accountDisabledAt accountDeletionRequestedAt accountDeletionScheduledFor createdAt updatedAt',
-      )
+      .select(ADMIN_USER_SELECT)
       .lean()
       .exec();
     if (!updated) throw new NotFoundException('user_not_found');
@@ -237,9 +237,7 @@ export class AdminUsersService {
         },
         { new: true },
       )
-      .select(
-        'fullName email phoneNumber type appCountryCode emailVerifiedAt accountDisabledAt accountDeletionRequestedAt accountDeletionScheduledFor createdAt updatedAt',
-      )
+      .select(ADMIN_USER_SELECT)
       .lean()
       .exec();
     if (!updated) throw new NotFoundException('user_not_found');
