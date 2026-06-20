@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  bullmqJobId,
   parsePositiveInt,
   readBullmqRedisConnectionFromConfig,
 } from '../../common/bullmq-redis-connection';
@@ -126,7 +127,7 @@ export class AdminAlertEmailQueueService
     for (const batch of batches) {
       await this.queue.add(JOB_BATCH, batch, {
         ...this.defaultJobOpts(),
-        jobId: `${batch.campaignId}:${i}:${randomUUID()}`,
+        jobId: bullmqJobId(batch.campaignId, i, randomUUID()),
       });
       i += 1;
     }

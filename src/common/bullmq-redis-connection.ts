@@ -8,6 +8,11 @@ export function parsePositiveInt(raw: string | undefined, fallback: number): num
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : fallback;
 }
 
+/** BullMQ interdit les « : » dans les identifiants de job personnalisés. */
+export function bullmqJobId(...parts: Array<string | number>): string {
+  return parts.map((part) => String(part).replace(/:/g, '-')).join('-');
+}
+
 function toBool(raw: string | undefined): boolean {
   const v = (raw ?? '').trim().toLowerCase();
   return v === '1' || v === 'true' || v === 'yes' || v === 'on';

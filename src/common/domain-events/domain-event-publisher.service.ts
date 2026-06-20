@@ -15,6 +15,7 @@ import {
 } from 'mqtt';
 import { Model } from 'mongoose';
 import {
+  bullmqJobId,
   parsePositiveInt,
   readBullmqRedisConnectionFromConfig,
 } from '../bullmq-redis-connection';
@@ -341,7 +342,7 @@ export class DomainEventPublisherService
   ): Promise<void> {
     if (!this.handlersQueue) return;
     const opts: JobsOptions = {
-      jobId: `handler:${envelope.id}`,
+      jobId: bullmqJobId('handler', envelope.id),
       attempts: parsePositiveInt(
         this.config.get<string>('DOMAIN_EVENTS_HANDLERS_QUEUE_ATTEMPTS'),
         4,

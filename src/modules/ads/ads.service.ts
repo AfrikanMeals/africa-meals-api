@@ -618,6 +618,20 @@ export class AdsService implements OnModuleInit {
       .catch(() => undefined);
   }
 
+  private _queueAdModerationNotify(args: {
+    kind: 'banner' | 'campaign';
+    storeId: string;
+    entityId: string;
+    entityTitle: string;
+    previousStatus: AdModerationStatusEnum;
+    newStatus: AdModerationStatusEnum;
+    rejectionReason?: string | null;
+  }): void {
+    void this._vendorStatusEmail
+      .notifyAdModerationStatusChange(args)
+      .catch(() => undefined);
+  }
+
   /** Enqueue immédiat si add-on notifications actif et pub éligible. */
   private scheduleNotificationDispatchAfterSave(
     kind: 'banner' | 'campaign',
@@ -5241,6 +5255,9 @@ export class AdsService implements OnModuleInit {
       throw new BadRequestException('ad_moderation_not_pending');
     }
     const storeIdStr = String(existing.store);
+    const previousStatus =
+      existing.moderationStatus ?? AdModerationStatusEnum.PENDING_REVIEW;
+    const bannerTitle = String(existing.title ?? '').trim();
     await this.assertActiveBannerLimit(storeIdStr, user, {
       enforcePlanLimit: true,
     });
@@ -5251,6 +5268,14 @@ export class AdsService implements OnModuleInit {
     existing.isActive = true;
     await existing.save();
     this.invalidateListCache();
+    this._queueAdModerationNotify({
+      kind: 'banner',
+      storeId: storeIdStr,
+      entityId: String(existing._id),
+      entityTitle: bannerTitle,
+      previousStatus,
+      newStatus: AdModerationStatusEnum.APPROVED,
+    });
     this.scheduleNotificationDispatchAfterSave(
       'banner',
       existing._id,
@@ -5288,6 +5313,10 @@ export class AdsService implements OnModuleInit {
     if (existing.moderationStatus !== AdModerationStatusEnum.PENDING_REVIEW) {
       throw new BadRequestException('ad_moderation_not_pending');
     }
+    const storeIdStr = String(existing.store);
+    const previousStatus =
+      existing.moderationStatus ?? AdModerationStatusEnum.PENDING_REVIEW;
+    const bannerTitle = String(existing.title ?? '').trim();
     existing.moderationStatus = AdModerationStatusEnum.REJECTED;
     existing.rejectionReason = reason;
     existing.reviewedAt = new Date();
@@ -5295,6 +5324,15 @@ export class AdsService implements OnModuleInit {
     existing.isActive = false;
     await existing.save();
     this.invalidateListCache();
+    this._queueAdModerationNotify({
+      kind: 'banner',
+      storeId: storeIdStr,
+      entityId: String(existing._id),
+      entityTitle: bannerTitle,
+      previousStatus,
+      newStatus: AdModerationStatusEnum.REJECTED,
+      rejectionReason: reason,
+    });
     const populated = await this.adModel
       .findById(existing._id)
       .populate('store', 'name')
@@ -5320,6 +5358,9 @@ export class AdsService implements OnModuleInit {
       throw new BadRequestException('ad_moderation_not_pending');
     }
     const storeIdStr = String(existing.store);
+    const previousStatus =
+      existing.moderationStatus ?? AdModerationStatusEnum.PENDING_REVIEW;
+    const campaignTitle = String(existing.title ?? '').trim();
     await this.assertActiveCampaignLimit(storeIdStr, user, {
       enforcePlanLimit: true,
     });
@@ -5329,6 +5370,14 @@ export class AdsService implements OnModuleInit {
     existing.set('reviewedBy', user._id);
     existing.isActive = true;
     await existing.save();
+    this._queueAdModerationNotify({
+      kind: 'campaign',
+      storeId: storeIdStr,
+      entityId: String(existing._id),
+      entityTitle: campaignTitle,
+      previousStatus,
+      newStatus: AdModerationStatusEnum.APPROVED,
+    });
     this.scheduleNotificationDispatchAfterSave(
       'campaign',
       existing._id,
@@ -5364,12 +5413,25 @@ export class AdsService implements OnModuleInit {
     if (existing.moderationStatus !== AdModerationStatusEnum.PENDING_REVIEW) {
       throw new BadRequestException('ad_moderation_not_pending');
     }
+    const storeIdStr = String(existing.store);
+    const previousStatus =
+      existing.moderationStatus ?? AdModerationStatusEnum.PENDING_REVIEW;
+    const campaignTitle = String(existing.title ?? '').trim();
     existing.moderationStatus = AdModerationStatusEnum.REJECTED;
     existing.rejectionReason = reason;
     existing.reviewedAt = new Date();
     existing.set('reviewedBy', user._id);
     existing.isActive = false;
     await existing.save();
+    this._queueAdModerationNotify({
+      kind: 'campaign',
+      storeId: storeIdStr,
+      entityId: String(existing._id),
+      entityTitle: campaignTitle,
+      previousStatus,
+      newStatus: AdModerationStatusEnum.REJECTED,
+      rejectionReason: reason,
+    });
     const row = await this._adCampaignModel
       .findById(existing._id)
       .populate('store', 'name profileImage')
@@ -5403,6 +5465,12 @@ export class AdsService implements OnModuleInit {
     if (existing.moderationStatus === AdModerationStatusEnum.BLOCKED) {
       throw new BadRequestException('ad_already_blocked');
     }
+    const storeIdStr = String(existing.store);
+    const previousStatus =
+      this.moderationStatusFromDoc(
+        existing.toObject() as Record<string, unknown>,
+      );
+    const bannerTitle = String(existing.title ?? '').trim();
     existing.moderationStatus = AdModerationStatusEnum.BLOCKED;
     existing.rejectionReason = reason;
     existing.reviewedAt = new Date();
@@ -5410,6 +5478,15 @@ export class AdsService implements OnModuleInit {
     existing.isActive = false;
     await existing.save();
     this.invalidateListCache();
+    this._queueAdModerationNotify({
+      kind: 'banner',
+      storeId: storeIdStr,
+      entityId: String(existing._id),
+      entityTitle: bannerTitle,
+      previousStatus,
+      newStatus: AdModerationStatusEnum.BLOCKED,
+      rejectionReason: reason,
+    });
     const populated = await this.adModel
       .findById(existing._id)
       .populate('store', 'name')
@@ -5439,12 +5516,27 @@ export class AdsService implements OnModuleInit {
     if (existing.moderationStatus === AdModerationStatusEnum.BLOCKED) {
       throw new BadRequestException('ad_already_blocked');
     }
+    const storeIdStr = String(existing.store);
+    const previousStatus =
+      this.moderationStatusFromDoc(
+        existing.toObject() as Record<string, unknown>,
+      );
+    const campaignTitle = String(existing.title ?? '').trim();
     existing.moderationStatus = AdModerationStatusEnum.BLOCKED;
     existing.rejectionReason = reason;
     existing.reviewedAt = new Date();
     existing.set('reviewedBy', user._id);
     existing.isActive = false;
     await existing.save();
+    this._queueAdModerationNotify({
+      kind: 'campaign',
+      storeId: storeIdStr,
+      entityId: String(existing._id),
+      entityTitle: campaignTitle,
+      previousStatus,
+      newStatus: AdModerationStatusEnum.BLOCKED,
+      rejectionReason: reason,
+    });
     const row = await this._adCampaignModel
       .findById(existing._id)
       .populate('store', 'name profileImage')

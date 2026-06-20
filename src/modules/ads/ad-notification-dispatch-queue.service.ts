@@ -9,6 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   parsePositiveInt,
+  bullmqJobId,
   readBullmqRedisConnectionFromConfig,
 } from '../../common/bullmq-redis-connection';
 import { randomUUID } from 'crypto';
@@ -146,7 +147,7 @@ export class AdNotificationDispatchQueueService
     }
     await this.queue.add(JOB_ENTITY, job, {
       ...this.defaultJobOpts(),
-      jobId: `${job.kind}:${job.entityId}`,
+      jobId: bullmqJobId(job.kind, job.entityId),
     });
   }
 
@@ -159,7 +160,12 @@ export class AdNotificationDispatchQueueService
     }
     await this.queue.add(JOB_RECIPIENT_BATCH, payload, {
       ...this.defaultJobOpts(),
-      jobId: `batch:${payload.entityType}:${payload.entityId}:${randomUUID()}`,
+      jobId: bullmqJobId(
+        'batch',
+        payload.entityType,
+        payload.entityId,
+        randomUUID(),
+      ),
     });
   }
 }

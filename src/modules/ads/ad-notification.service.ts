@@ -11,7 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { JobsOptions, Queue } from 'bullmq';
 import { randomUUID } from 'crypto';
-import { parsePositiveInt } from '../../common/bullmq-redis-connection';
+import { bullmqJobId, parsePositiveInt } from '../../common/bullmq-redis-connection';
 import { AdNotificationDispatchQueueService } from '@modules/ads/ad-notification-dispatch-queue.service';
 import type {
   AdNotifyEntityJob,
@@ -440,7 +440,7 @@ export class AdNotificationService {
         await queue.add(
           opts.entityJobName,
           { kind: 'banner', entityId: id } satisfies AdNotifyEntityJob,
-          { ...opts.jobOpts, jobId: `banner:${id}` },
+          { ...opts.jobOpts, jobId: bullmqJobId('banner', id) },
         );
         bannersDispatched++;
       }),
@@ -451,7 +451,7 @@ export class AdNotificationService {
         await queue.add(
           opts.entityJobName,
           { kind: 'campaign', entityId: id } satisfies AdNotifyEntityJob,
-          { ...opts.jobOpts, jobId: `campaign:${id}` },
+          { ...opts.jobOpts, jobId: bullmqJobId('campaign', id) },
         );
         campaignsDispatched++;
       }),

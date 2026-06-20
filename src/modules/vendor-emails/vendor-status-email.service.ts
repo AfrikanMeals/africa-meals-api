@@ -20,6 +20,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
+import { AdModerationStatusEnum } from '@schemas/ad.schema';
 import { Model, Types } from 'mongoose';
 
 export type AdMarketingEntityStatus =
@@ -156,6 +157,105 @@ export class VendorStatusEmailService {
       default:
         return status;
     }
+  }
+
+  static moderationStatusLabelFr(status: AdModerationStatusEnum): string {
+    switch (status) {
+      case AdModerationStatusEnum.PENDING_REVIEW:
+        return 'En attente de modération';
+      case AdModerationStatusEnum.APPROVED:
+        return 'Approuvée';
+      case AdModerationStatusEnum.REJECTED:
+        return 'Refusée';
+      case AdModerationStatusEnum.BLOCKED:
+        return 'Bloquée';
+      default:
+        return status;
+    }
+  }
+
+  private static moderationPushTitle(args: {
+    kind: 'banner' | 'campaign';
+    newStatus: AdModerationStatusEnum;
+  }): string {
+    const entity = args.kind === 'banner' ? 'Bannière' : 'Campagne';
+    switch (args.newStatus) {
+      case AdModerationStatusEnum.APPROVED:
+        return `${entity} approuvée`;
+      case AdModerationStatusEnum.REJECTED:
+        return `${entity} refusée`;
+      case AdModerationStatusEnum.BLOCKED:
+        return `${entity} bloquée`;
+      default:
+        return 'Modération publicitaire';
+    }
+  }
+
+  /** Email + push vendeur lors d’un changement de statut de modération (bannière ou campagne). */
+  async notifyAdModerationStatusChange(args: {
+    storeId: string;
+    kind: 'banner' | 'campaign';
+    entityId: string;
+    entityTitle: string;
+    previousStatus: AdModerationStatusEnum;
+    newStatus: AdModerationStatusEnum;
+    rejectionReason?: string | null;
+  }): Promise<void> {
+    if (args.previousStatus === args.newStatus) return;
+
+    const storeName = await this.storeName(args.storeId);
+    const entityLabel =
+      args.kind === 'banner' ? 'bannière' : 'campagne publicitaire';
+    const title = args.entityTitle.trim() || 'Sans titre';
+    const next = VendorStatusEmailService.moderationStatusLabelFr(args.newStatus);
+    const reason = args.rejectionReason?.trim() ?? '';
+
+    let body: string;
+    if (args.newStatus === AdModerationStatusEnum.APPROVED) {
+      body = `Votre ${entityLabel} « ${title} » (${storeName}) a été approuvée par notre équipe. Vous pouvez la diffuser selon vos paramètres.`;
+    } else if (
+      args.newStatus === AdModerationStatusEnum.REJECTED ||
+      args.newStatus === AdModerationStatusEnum.BLOCKED
+    ) {
+      body = `Votre ${entityLabel} « ${title} » (${storeName}) a été ${args.newStatus === AdModerationStatusEnum.REJECTED ? 'refusée' : 'bloquée'}.`;
+      if (reason) {
+        body += ` Motif : ${reason}`;
+      }
+    } else {
+      body = `Le statut de modération de votre ${entityLabel} « ${title} » (${storeName}) est maintenant « ${next} ».`;
+    }
+
+    const infoRows: Array<{ label: string; value: string }> = [
+      {
+        label: args.kind === 'banner' ? 'Bannière' : 'Campagne',
+        value: title,
+      },
+      { label: 'Restaurant', value: storeName },
+      { label: 'Statut', value: next },
+    ];
+    if (reason) {
+      infoRows.push({ label: 'Motif', value: reason });
+    }
+
+    const metadata =
+      args.kind === 'banner'
+        ? { bannerId: args.entityId, moderationStatus: args.newStatus }
+        : { campaignId: args.entityId, moderationStatus: args.newStatus };
+
+    await this.sendToStoreRecipients({
+      storeId: args.storeId,
+      category: 'marketing',
+      subject: `Modération publicitaire — ${next}`,
+      heading: 'Modération publicitaire',
+      body,
+      infoRows,
+      pushTitle: VendorStatusEmailService.moderationPushTitle({
+        kind: args.kind,
+        newStatus: args.newStatus,
+      }),
+      metadata,
+      logTag: `ad_${args.kind}_moderation store=${args.storeId} ${args.entityId} ${args.previousStatus}->${args.newStatus}`,
+    });
   }
 
   async notifyVendorOrderEvent(args: {
