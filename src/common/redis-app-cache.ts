@@ -114,6 +114,22 @@ const inflight = new Map<string, Promise<unknown>>();
 
 export const APP_CACHE_BUST_CHANNEL = 'wise-eat:app-cache-bust';
 const BUST_GEN_REDIS_KEY = 'wise-eat:app-cache:bust-generation';
+const BUST_GEN_REDIS_TIMEOUT_MS = 250;
+
+async function redisBustOp<T>(
+  op: () => Promise<T>,
+): Promise<T | undefined> {
+  try {
+    return await Promise.race([
+      op(),
+      new Promise<undefined>((resolve) =>
+        setTimeout(() => resolve(undefined), BUST_GEN_REDIS_TIMEOUT_MS),
+      ),
+    ]);
+  } catch {
+    return undefined;
+  }
+}
 
 let localBustGeneration = 0;
 let redisBustClient: {
@@ -149,13 +165,11 @@ export function clearInflightCache(): void {
 
 export async function readCacheBustGeneration(): Promise<number> {
   if (redisBustClient) {
-    try {
-      const raw = await redisBustClient.get(BUST_GEN_REDIS_KEY);
-      const n = Number(raw);
-      if (Number.isFinite(n)) return n;
-    } catch {
-      /* best-effort */
-    }
+    const raw = await redisBustOp(() =>
+      redisBustClient!.get(BUST_GEN_REDIS_KEY),
+    );
+    const n = Number(raw);
+    if (Number.isFinite(n)) return n;
   }
   return localBustGeneration;
 }
@@ -165,11 +179,7 @@ export async function bumpCacheBustGeneration(): Promise<void> {
   bumpCacheBustGenerationLocal();
   clearInflightCache();
   if (redisBustClient) {
-    try {
-      await redisBustClient.incr(BUST_GEN_REDIS_KEY);
-    } catch {
-      /* best-effort */
-    }
+    void redisBustOp(() => redisBustClient!.incr(BUST_GEN_REDIS_KEY));
   }
 }
 
