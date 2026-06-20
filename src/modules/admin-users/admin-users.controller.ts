@@ -42,7 +42,6 @@ export class AdminUsersController {
   }
 
   @Patch(':userId')
-  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
   @ApiOperation({ summary: 'Modifier un compte (admin.settings)' })
   update(
     @Req() req: Request,
