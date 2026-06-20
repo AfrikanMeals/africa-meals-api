@@ -1,4 +1,4 @@
-import { OrderStatusEnum } from '@/schemas/order.schema';
+import { OrderStatusEnum } from '@schemas/order.schema';
 
 /** Libellé statut commande client — paiement cash à la collecte non encore encaissé. */
 export const PAY_ON_PICKUP_UNSETTLED_STATUS_LABEL = 'À payer';
