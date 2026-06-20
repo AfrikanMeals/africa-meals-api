@@ -181,8 +181,15 @@ function redactRedisUrl(url: string): string {
 @Module({
   imports: [
     ConfigModule.forRoot({
-      // `.env.local` est chargé en premier (secrets locaux) ; souvent absent du dépôt.
-      envFilePath: ['.env.local', '.env', '../.env'],
+      // `.env.local` en premier ; dev PM2 → `.env.develop`, prod → `.env`.
+      envFilePath: [
+        '.env.local',
+        ...(process.env.NODE_ENV === 'development'
+          ? ['.env.develop']
+          : []),
+        '.env',
+        '../.env',
+      ],
       isGlobal: true,
     }),
     RedisSharedModule,
