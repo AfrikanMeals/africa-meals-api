@@ -36,6 +36,15 @@ export class GroupedStripeCheckoutDto {
   @IsObject()
   fulfillmentByStoreId: Record<string, string>;
 
+  @ApiPropertyOptional({
+    description:
+      'Par boutique : true = paiement à la collecte (pickup, sans Stripe en ligne). Les autres boutiques restent sur Stripe.',
+    example: { storeMongoId24Hex: true },
+  })
+  @IsOptional()
+  @IsObject()
+  payOnPickupByStoreId?: Record<string, boolean>;
+
   @ApiPropertyOptional({ type: [GroupedStripeCouponLineDto] })
   @IsOptional()
   @IsArray()

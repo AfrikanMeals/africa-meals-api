@@ -1281,6 +1281,7 @@ export class OrdersService {
       throw new BadRequestException('order_has_no_items');
     }
     const prevStatus = String(o.status ?? '');
+    const isPayOnPickup = opts?.payOnPickup === true;
     const goods = (o.items as OrdeLineItem[]).reduce(
       (acc, item) => acc + item.price * item.quantity,
       0,
@@ -1299,17 +1300,25 @@ export class OrdersService {
         ? Math.max(0, Math.round(opts.chargedTaxCents))
         : null;
 
-    let taxTotal = Math.max(0, Number(opts?.taxTotal) || 0);
-    let taxLines = Array.isArray(opts?.taxLines) ? opts!.taxLines : [];
-    let taxCountryCode = String(opts?.taxCountryCode ?? '')
-      .trim()
-      .toUpperCase();
+    let taxTotal = isPayOnPickup
+      ? 0
+      : Math.max(0, Number(opts?.taxTotal) || 0);
+    let taxLines = isPayOnPickup
+      ? []
+      : Array.isArray(opts?.taxLines)
+        ? opts!.taxLines
+        : [];
+    let taxCountryCode = isPayOnPickup
+      ? ''
+      : String(opts?.taxCountryCode ?? '')
+          .trim()
+          .toUpperCase();
     let subtotalBeforeTax =
       opts?.subtotalBeforeTax != null
         ? Math.max(0, Number(opts.subtotalBeforeTax) || 0)
         : goods + ship;
 
-    if (!taxLines.length && !taxTotal) {
+    if (!isPayOnPickup && !taxLines.length && !taxTotal) {
       const customer = await this._userModel
         .findById(o.user)
         .select('appCountryCode')
@@ -1362,16 +1371,18 @@ export class OrdersService {
     let totalPrice: number;
     let shippingStored: number;
     if (gC != null && sC != null) {
-      const taxPart =
-        tC ?? toStripeMinorUnits(taxTotal, currencyCode);
+      const taxPart = isPayOnPickup
+        ? 0
+        : tC ?? toStripeMinorUnits(taxTotal, currencyCode);
       const totalMinor = Math.round(gC + sC + taxPart + Number.EPSILON);
       totalPrice = fromStripeMinorUnits(totalMinor, currencyCode);
       shippingStored = fromStripeMinorUnits(sC, currencyCode);
     } else {
       shippingStored = ship;
-      totalPrice =
-        Math.round((subtotalBeforeTax + taxTotal) * 100 + Number.EPSILON) /
-        100;
+      totalPrice = isPayOnPickup
+        ? Math.round(subtotalBeforeTax * 100 + Number.EPSILON) / 100
+        : Math.round((subtotalBeforeTax + taxTotal) * 100 + Number.EPSILON) /
+          100;
     }
 
     const isPickup = shippingStored <= 0;
@@ -1422,10 +1433,12 @@ export class OrdersService {
         ? Math.max(0, Math.round(opts.deliveryTipCents))
         : 0;
     const orderPaymentFeeCents =
-      opts?.orderPaymentFeeCents != null &&
-      Number.isFinite(opts.orderPaymentFeeCents)
-        ? Math.max(0, Math.round(opts.orderPaymentFeeCents))
-        : 0;
+      isPayOnPickup
+        ? 0
+        : opts?.orderPaymentFeeCents != null &&
+            Number.isFinite(opts.orderPaymentFeeCents)
+          ? Math.max(0, Math.round(opts.orderPaymentFeeCents))
+          : 0;
     if (!isPickup && tipCents > 0) {
       $set['deliveryTipCents'] = tipCents;
       $set['deliveryTipStatus'] = 'pending';

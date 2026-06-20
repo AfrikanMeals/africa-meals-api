@@ -949,6 +949,30 @@ export class StripeGroupedCheckoutService {
   /**
    * Panier groupé → lignes Checkout + frais (même logique que PaymentIntent).
    */
+  private payOnPickupRequestedForStore(
+    dto: GroupedStripeCheckoutDto,
+    storeId: string,
+  ): boolean {
+    return dto.payOnPickupByStoreId?.[storeId] === true;
+  }
+
+  private async assertPayOnPickupAllowedForStore(
+    storeId: string,
+    mode: string,
+  ): Promise<void> {
+    if (mode !== 'pickup') {
+      throw new BadRequestException('pickup_pay_on_delivery_pickup_only');
+    }
+    const offered =
+      await this.storeService.isPickupPayOnDeliveryOfferedByStore(storeId);
+    if (!offered) {
+      throw new BadRequestException({
+        message: 'pickup_pay_on_delivery_not_available',
+        storeId,
+      });
+    }
+  }
+
   private async buildGroupedStripePayload(
     user: UserModel,
     dto: GroupedStripeCheckoutDto,
@@ -1025,6 +1049,7 @@ export class StripeGroupedCheckoutService {
     const needsAddress = groups.some((g) => {
       const id = storeMongoId(g.store);
       const mode = fulfillment[id] ?? 'pickup';
+      if (this.payOnPickupRequestedForStore(dto, id)) return false;
       return mode === 'delivery' && g.store?.supportsShipping === true;
     });
     if (needsAddress && !dto.addressId?.trim()) {
@@ -1046,6 +1071,11 @@ export class StripeGroupedCheckoutService {
       const mode = fulfillment[storeId] ?? 'pickup';
       if (mode !== 'delivery' && mode !== 'pickup') {
         throw new BadRequestException('invalid_fulfillment_mode');
+      }
+
+      if (this.payOnPickupRequestedForStore(dto, storeId)) {
+        await this.assertPayOnPickupAllowedForStore(storeId, mode);
+        continue;
       }
 
       let shipFee = 0;
@@ -1270,7 +1300,7 @@ export class StripeGroupedCheckoutService {
     }
 
     if (!lineItems.length) {
-      throw new BadRequestException('cart_is_empty');
+      throw new BadRequestException('stripe_checkout_no_online_stores');
     }
 
     let deliveryTipTotalCents = Math.max(
@@ -2719,7 +2749,7 @@ export class StripeGroupedCheckoutService {
   async createPickupPayOnDeliveryCheckout(
     user: UserModel,
     dto: GroupedStripeCheckoutDto,
-  ): Promise<{ orderIds: string[] }> {
+  ): Promise<{ orderIds: string[]; pickupStoreIds: string[] }> {
     const coupons = (dto.coupons ?? [])
       .filter((c) => c.code?.trim())
       .map((c) => ({
@@ -2748,24 +2778,18 @@ export class StripeGroupedCheckoutService {
       coupons.map((c) => [c.storeId, c.code] as const),
     );
     const orderIds: string[] = [];
+    const pickupStoreIds: string[] = [];
 
     for (const g of groups) {
       const storeId = storeMongoId(g.store);
       if (!storeId) continue;
 
-      const mode = fulfillment[storeId] ?? 'pickup';
-      if (mode !== 'pickup') {
-        throw new BadRequestException('pickup_pay_on_delivery_pickup_only');
+      if (!this.payOnPickupRequestedForStore(dto, storeId)) {
+        continue;
       }
 
-      const offered =
-        await this.storeService.isPickupPayOnDeliveryOfferedByStore(storeId);
-      if (!offered) {
-        throw new BadRequestException({
-          message: 'pickup_pay_on_delivery_not_available',
-          storeId,
-        });
-      }
+      const mode = fulfillment[storeId] ?? 'pickup';
+      await this.assertPayOnPickupAllowedForStore(storeId, mode);
 
       const cartLines = (g.items ?? []).filter(
         (x): x is Record<string, unknown> =>
@@ -2786,10 +2810,50 @@ export class StripeGroupedCheckoutService {
       }
 
       const couponCode = couponByStore.get(storeId);
+
+      const amountFactor =
+        await this.supportedCountries.resolveStripeAmountFactorForCheckout({
+          currency: (currency || 'CAD').toUpperCase(),
+          userCountryCode: (
+            user as UserModel & { appCountryCode?: string }
+          ).appCountryCode,
+        });
+
+      let goodsCents = 0;
+      if (couponCode) {
+        const snap = await this.cartService.previewCouponForStore(
+          user,
+          storeId,
+          couponCode,
+        );
+        goodsCents = Math.round(
+          snap.totalAfterDiscount * amountFactor + Number.EPSILON,
+        );
+      } else {
+        goodsCents = cartLines.reduce(
+          (sum, line) =>
+            sum +
+            cartLineUnitCents(line, amountFactor) * cartLineQuantity(line),
+          0,
+        );
+      }
+
+      const shipCents = 0;
+      const subtotalBeforeTax = minorUnitsToDisplayAmount(
+        goodsCents + shipCents,
+        amountFactor,
+      );
+
       await this.ordersService.markOrderPaidWithShipping(oid, 0, {
         payOnPickup: true,
         couponCode,
         currency: currency || undefined,
+        chargedGoodsCents: goodsCents,
+        chargedShipCents: shipCents,
+        chargedTaxCents: 0,
+        subtotalBeforeTax,
+        taxTotal: 0,
+        taxLines: [],
       });
 
       if (couponCode) {
@@ -2800,9 +2864,14 @@ export class StripeGroupedCheckoutService {
       }
 
       orderIds.push(oid);
+      pickupStoreIds.push(storeId);
     }
 
-    return { orderIds };
+    if (!orderIds.length) {
+      throw new BadRequestException('pickup_pay_on_delivery_no_stores');
+    }
+
+    return { orderIds, pickupStoreIds };
   }
 
   private getStripeWebhookSecrets(): string[] {
