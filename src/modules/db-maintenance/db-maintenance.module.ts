@@ -21,13 +21,23 @@ import {
   StripeProcessedCheckoutModel,
   StripeProcessedCheckoutSchema,
 } from '@schemas/stripe-processed-checkout.schema';
+import { CartItemModel, CartItemSchema } from '@schemas/cart_item.schema';
 import { DrinkModel, DrinkSchema } from '@schemas/drink.schema';
+import { OfferModel, OfferSchema } from '@schemas/offer.schema';
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
+import {
+  RecommendationTrainingSnapshotModel,
+  RecommendationTrainingSnapshotSchema,
+} from '@schemas/recommendation-training-snapshot.schema';
 import {
   StoreCouponModel,
   StoreCouponSchema,
 } from '@schemas/store_coupon.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
+import {
+  UserRecommendationDigestModel,
+  UserRecommendationDigestSchema,
+} from '@schemas/user-recommendation-digest.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import { OrdersModule } from '../orders/orders.module';
 import { MailerModule } from '../mailer/mailer.module';
@@ -71,6 +81,16 @@ import { DbMaintenanceService } from './db-maintenance.service';
         schema: AdNotificationEventSchema,
       },
       { name: StoreCouponModel.name, schema: StoreCouponSchema },
+      { name: CartItemModel.name, schema: CartItemSchema },
+      { name: OfferModel.name, schema: OfferSchema },
+      {
+        name: RecommendationTrainingSnapshotModel.name,
+        schema: RecommendationTrainingSnapshotSchema,
+      },
+      {
+        name: UserRecommendationDigestModel.name,
+        schema: UserRecommendationDigestSchema,
+      },
       {
         name: InfraRuntimeSettingsModel.name,
         schema: InfraRuntimeSettingsSchema,

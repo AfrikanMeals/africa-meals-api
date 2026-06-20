@@ -29,6 +29,11 @@ describe('DbMaintenanceService integrity tests', () => {
   let adNotificationPricingModel: { findOne: jest.Mock };
   let adNotificationEventModel: { aggregate: jest.Mock };
   let couponModel: { find: jest.Mock };
+  let cartItemModel: { find: jest.Mock };
+  let offerModel: { find: jest.Mock; aggregate?: jest.Mock };
+  let recommendationSnapshotModel: { findOne: jest.Mock };
+  let userRecommendationDigestModel: { find: jest.Mock };
+  let userModel: { find: jest.Mock };
   let infraRuntimeSettingsModel: { findOneAndUpdate: jest.Mock };
 
   beforeEach(() => {
@@ -66,6 +71,16 @@ describe('DbMaintenanceService integrity tests', () => {
       }),
     };
     couponModel = { find: jest.fn() };
+    cartItemModel = { find: jest.fn() };
+    offerModel = { find: jest.fn(), aggregate: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([]) }) };
+    recommendationSnapshotModel = {
+      findOne: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue(null),
+      }),
+    };
+    userRecommendationDigestModel = { find: jest.fn().mockReturnValue(queryResult([])) };
+    userModel = { find: jest.fn().mockReturnValue(queryResult([])) };
     infraRuntimeSettingsModel = {
       findOneAndUpdate: jest.fn().mockReturnValue({
         exec: jest.fn().mockResolvedValue({
@@ -90,6 +105,11 @@ describe('DbMaintenanceService integrity tests', () => {
       adNotificationPricingModel as any,
       adNotificationEventModel as any,
       couponModel as any,
+      cartItemModel as any,
+      offerModel as any,
+      recommendationSnapshotModel as any,
+      userRecommendationDigestModel as any,
+      userModel as any,
       infraRuntimeSettingsModel as any,
       { options: { projectId: 'test-project' } } as any,
       { getMqttStatus: jest.fn() } as any,
@@ -115,6 +135,21 @@ describe('DbMaintenanceService integrity tests', () => {
     expect(out.tests.some((t) => t.key === 'coupon-codes-integrity-test')).toBe(
       true,
     );
+    expect(out.tests.some((t) => t.key === 'cart-features-integrity-test')).toBe(
+      true,
+    );
+    expect(
+      out.tests.some((t) => t.key === 'product-recommendations-integrity-test'),
+    ).toBe(true);
+    expect(out.tests.some((t) => t.key === 'catalog-loading-integrity-test')).toBe(
+      true,
+    );
+    expect(
+      out.tests.some((t) => t.key === 'store-detail-page-integrity-test'),
+    ).toBe(true);
+    expect(
+      out.tests.some((t) => t.key === 'platform-readiness-integrity-test'),
+    ).toBe(true);
   });
 
   it('détecte les dépassements quotas boutiques et catalogue par boutique', async () => {

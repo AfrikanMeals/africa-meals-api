@@ -40,15 +40,22 @@ import {
   readBirdSmsConfig,
   readBirdWhatsAppConfig,
 } from '@modules/ads/bird-channels.util';
+import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { DrinkModel } from '@schemas/drink.schema';
 import { InfraRuntimeSettingsModel } from '@schemas/infra-runtime-settings.schema';
+import { OfferModel, OfferStatusEnum } from '@schemas/offer.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
-import { ProductModel } from '@schemas/product.schema';
+import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
+import {
+  RECOMMENDATION_GLOBAL_SNAPSHOT_KEY,
+  RecommendationTrainingSnapshotModel,
+} from '@schemas/recommendation-training-snapshot.schema';
 import {
   StoreCouponDiscountTypeEnum,
   StoreCouponModel,
 } from '@schemas/store_coupon.schema';
-import { StoreModel } from '@schemas/store.schema';
+import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
+import { UserRecommendationDigestModel } from '@schemas/user-recommendation-digest.schema';
 import { StripeProcessedCheckoutModel } from '@schemas/stripe-processed-checkout.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { App } from 'firebase-admin/app';
@@ -208,6 +215,36 @@ export class DbMaintenanceService {
       description:
         'Vérifie la cohérence des codes promo (format, période de validité, quotas, boutique liée).',
     },
+    {
+      key: 'cart-features-integrity-test',
+      label: 'Cart Features Integrity Test',
+      description:
+        'Vérifie les lignes panier (type, quantité, prix, boutique/utilisateur liés, entités catalogue valides).',
+    },
+    {
+      key: 'product-recommendations-integrity-test',
+      label: 'Product Recommendations Integrity Test',
+      description:
+        'Vérifie le snapshot tendances, la fraîcheur du job et la cohérence des digests utilisateur.',
+    },
+    {
+      key: 'catalog-loading-integrity-test',
+      label: 'Catalog Loading Integrity Test',
+      description:
+        'Vérifie que produits et boissons actifs sont chargeables (champs requis, boutique active, visuels).',
+    },
+    {
+      key: 'store-detail-page-integrity-test',
+      label: 'Store Detail Page Integrity Test',
+      description:
+        'Vérifie les boutiques actives pour l’écran menu (méta publique, adresse, contact, devise).',
+    },
+    {
+      key: 'platform-readiness-integrity-test',
+      label: 'Platform Readiness Integrity Test',
+      description:
+        'Contrôles transverses : offres actives, catalogues vides, incohérences boutique ↔ articles.',
+    },
   ];
   private readonly systemHealthChecks: SystemHealthCheckDefinition[] = [
     {
@@ -304,6 +341,16 @@ export class DbMaintenanceService {
     private readonly adNotificationEventModel: Model<AdNotificationEventModel>,
     @InjectModel(StoreCouponModel.name)
     private readonly couponModel: Model<StoreCouponModel>,
+    @InjectModel(CartItemModel.name)
+    private readonly cartItemModel: Model<CartItemModel>,
+    @InjectModel(OfferModel.name)
+    private readonly offerModel: Model<OfferModel>,
+    @InjectModel(RecommendationTrainingSnapshotModel.name)
+    private readonly recommendationSnapshotModel: Model<RecommendationTrainingSnapshotModel>,
+    @InjectModel(UserRecommendationDigestModel.name)
+    private readonly userRecommendationDigestModel: Model<UserRecommendationDigestModel>,
+    @InjectModel(UserModel.name)
+    private readonly userModel: Model<UserModel>,
     @InjectModel(InfraRuntimeSettingsModel.name)
     private readonly infraRuntimeSettingsModel: Model<InfraRuntimeSettingsModel>,
     @Inject('FIREBASE_ADMIN')
@@ -513,6 +560,16 @@ export class DbMaintenanceService {
         return { result: await this.runAdsIntegrityTest() };
       case 'coupon-codes-integrity-test':
         return { result: await this.runCouponCodesIntegrityTest() };
+      case 'cart-features-integrity-test':
+        return { result: await this.runCartFeaturesIntegrityTest() };
+      case 'product-recommendations-integrity-test':
+        return { result: await this.runProductRecommendationsIntegrityTest() };
+      case 'catalog-loading-integrity-test':
+        return { result: await this.runCatalogLoadingIntegrityTest() };
+      case 'store-detail-page-integrity-test':
+        return { result: await this.runStoreDetailPageIntegrityTest() };
+      case 'platform-readiness-integrity-test':
+        return { result: await this.runPlatformReadinessIntegrityTest() };
       default:
         throw new BadRequestException(`unknown_integrity_test:${normalized}`);
     }
@@ -2307,6 +2364,1039 @@ export class DbMaintenanceService {
       totalRuns === scanLimit
         ? `${successRuns}/${totalRuns} coupons valides (scan limité à ${scanLimit}).`
         : `${successRuns}/${totalRuns} coupons valides.`;
+
+    return this.decorateIntegrityResult({
+      key,
+      label,
+      totalEvaluateTimeMs: Date.now() - startedAt,
+      successRuns,
+      totalRuns,
+      score,
+      confidence,
+      summary,
+      checkedAt: checkedAtIso,
+      sampleFailures,
+    });
+  }
+
+  private isValidObjectIdString(raw: unknown): boolean {
+    const id = String(raw ?? '').trim();
+    if (!id) return false;
+    if (!Types.ObjectId.isValid(id)) return false;
+    return String(new Types.ObjectId(id)) === id;
+  }
+
+  private async runCartFeaturesIntegrityTest(): Promise<IntegrityTestRunResult> {
+    const startedAt = Date.now();
+    const checkedAtIso = new Date().toISOString();
+    const key = 'cart-features-integrity-test';
+    const label = 'Cart Features Integrity Test';
+    const scanLimit = this.getIntegrityScanLimit();
+
+    const cartItems = await this.cartItemModel
+      .find({})
+      .sort({ updatedAt: -1 })
+      .limit(scanLimit)
+      .select([
+        '_id',
+        'store',
+        'user',
+        'type',
+        'entityId',
+        'productId',
+        'quantity',
+        'price',
+        'customizationKey',
+      ])
+      .lean()
+      .exec();
+
+    if (!cartItems.length) {
+      return this.decorateIntegrityResult({
+        key,
+        label,
+        totalEvaluateTimeMs: Date.now() - startedAt,
+        successRuns: 0,
+        totalRuns: 0,
+        score: 100,
+        confidence: 100,
+        summary: 'Aucune ligne panier à auditer.',
+        checkedAt: checkedAtIso,
+        sampleFailures: [],
+      });
+    }
+
+    const storeIds = new Set<string>();
+    const userIds = new Set<string>();
+    const productIds = new Set<string>();
+    const drinkIds = new Set<string>();
+    const offerIds = new Set<string>();
+
+    for (const row of cartItems as Array<Record<string, unknown>>) {
+      const storeId = String(row.store ?? '').trim();
+      const userId = String(row.user ?? '').trim();
+      const entityId = String(row.entityId ?? '').trim();
+      const type = String(row.type ?? '').trim();
+      if (storeId) storeIds.add(storeId);
+      if (userId) userIds.add(userId);
+      if (!entityId) continue;
+      if (type === CartItemTypeEnum.PRODUCT || type === CartItemTypeEnum.PRODUCT_EXTRA) {
+        productIds.add(entityId);
+        const productId = String(row.productId ?? '').trim();
+        if (productId) productIds.add(productId);
+      } else if (type === CartItemTypeEnum.DRINK) {
+        drinkIds.add(entityId);
+      } else if (type === CartItemTypeEnum.OFFER) {
+        offerIds.add(entityId);
+      }
+    }
+
+    const [stores, users, products, drinks, offers] = await Promise.all([
+      storeIds.size
+        ? this.storeModel
+            .find({ _id: { $in: [...storeIds] } })
+            .select('_id status')
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+      userIds.size
+        ? this.userModel
+            .find({ _id: { $in: [...userIds] } })
+            .select('_id')
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+      productIds.size
+        ? this.productModel
+            .find({ _id: { $in: [...productIds] } })
+            .select('_id store status extras')
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+      drinkIds.size
+        ? this.drinkModel
+            .find({ _id: { $in: [...drinkIds] } })
+            .select('_id store quantite')
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+      offerIds.size
+        ? this.offerModel
+            .find({ _id: { $in: [...offerIds] } })
+            .select('_id store status price discountPrice items')
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+    ]);
+
+    const storeById = new Map(
+      (stores as Array<Record<string, unknown>>).map((s) => [
+        String(s._id ?? ''),
+        s,
+      ]),
+    );
+    const knownUsers = new Set(
+      (users as Array<Record<string, unknown>>).map((u) =>
+        String(u._id ?? '').trim(),
+      ),
+    );
+    const productById = new Map(
+      (products as Array<Record<string, unknown>>).map((p) => [
+        String(p._id ?? ''),
+        p,
+      ]),
+    );
+    const drinkById = new Map(
+      (drinks as Array<Record<string, unknown>>).map((d) => [
+        String(d._id ?? ''),
+        d,
+      ]),
+    );
+    const offerById = new Map(
+      (offers as Array<Record<string, unknown>>).map((o) => [
+        String(o._id ?? ''),
+        o,
+      ]),
+    );
+
+    const validTypes = new Set<string>(Object.values(CartItemTypeEnum));
+    const sampleFailures: IntegrityTestRunResult['sampleFailures'] = [];
+    let successRuns = 0;
+
+    for (const row of cartItems as Array<Record<string, unknown>>) {
+      const lineId = String(row._id ?? '').trim();
+      const storeId = String(row.store ?? '').trim();
+      const userId = String(row.user ?? '').trim();
+      const type = String(row.type ?? '').trim();
+      const entityId = String(row.entityId ?? '').trim();
+      const productId = String(row.productId ?? '').trim();
+      const quantity = Number(row.quantity ?? 0);
+      const price = Number(row.price ?? 0);
+      const issues: string[] = [];
+
+      if (!type || !validTypes.has(type)) {
+        issues.push('invalid_cart_item_type');
+      }
+      if (!this.isValidObjectIdString(entityId)) {
+        issues.push('invalid_cart_entity_id');
+      }
+      if (!Number.isFinite(quantity) || quantity < 1) {
+        issues.push('invalid_cart_quantity');
+      }
+      if (!Number.isFinite(price) || price < 0) {
+        issues.push('invalid_cart_price');
+      }
+      if (!storeId || !storeById.has(storeId)) {
+        issues.push('cart_store_not_found');
+      }
+      if (!userId || !knownUsers.has(userId)) {
+        issues.push('cart_user_not_found');
+      }
+
+      if (type === CartItemTypeEnum.PRODUCT_EXTRA) {
+        if (!this.isValidObjectIdString(productId)) {
+          issues.push('missing_cart_product_id_for_extra');
+        } else {
+          const parent = productById.get(productId);
+          if (!parent) {
+            issues.push('cart_extra_parent_product_not_found');
+          } else {
+            const extras = (parent.extras as Array<Record<string, unknown>>) ?? [];
+            const extraMatch = extras.some(
+              (e) => String(e._id ?? e['id'] ?? '').trim() === entityId,
+            );
+            if (!extraMatch) {
+              issues.push('cart_extra_not_in_product');
+            }
+            const parentStore = String(parent.store ?? '').trim();
+            if (parentStore && storeId && parentStore !== storeId) {
+              issues.push('cart_extra_store_mismatch');
+            }
+          }
+        }
+      } else if (type === CartItemTypeEnum.PRODUCT) {
+        const product = productById.get(entityId);
+        if (!product) {
+          issues.push('cart_product_not_found');
+        } else {
+          const productStore = String(product.store ?? '').trim();
+          if (productStore && storeId && productStore !== storeId) {
+            issues.push('cart_product_store_mismatch');
+          }
+          if (String(product.status ?? '') !== ProductStatusEnum.ACTIVE) {
+            issues.push('cart_product_not_active');
+          }
+        }
+      } else if (type === CartItemTypeEnum.DRINK) {
+        const drink = drinkById.get(entityId);
+        if (!drink) {
+          issues.push('cart_drink_not_found');
+        } else {
+          const drinkStore = String(drink.store ?? '').trim();
+          if (drinkStore && storeId && drinkStore !== storeId) {
+            issues.push('cart_drink_store_mismatch');
+          }
+          const stock = Number(drink.quantite ?? 0);
+          if (Number.isFinite(stock) && stock <= 0) {
+            issues.push('cart_drink_out_of_stock');
+          }
+        }
+      } else if (type === CartItemTypeEnum.OFFER) {
+        const offer = offerById.get(entityId);
+        if (!offer) {
+          issues.push('cart_offer_not_found');
+        } else {
+          const offerStore = String(offer.store ?? '').trim();
+          if (offerStore && storeId && offerStore !== storeId) {
+            issues.push('cart_offer_store_mismatch');
+          }
+          if (String(offer.status ?? '') !== OfferStatusEnum.ACTIVE) {
+            issues.push('cart_offer_not_active');
+          }
+          const items = (offer.items as unknown[]) ?? [];
+          if (!Array.isArray(items) || items.length < 2) {
+            issues.push('cart_offer_invalid_items');
+          }
+        }
+      }
+
+      if (!issues.length) {
+        successRuns += 1;
+      } else if (sampleFailures.length < 25) {
+        sampleFailures.push({
+          orderId: `cart:${lineId || 'unknown'}`,
+          issues,
+        });
+      }
+    }
+
+    const totalRuns = cartItems.length;
+    const score = Number(((successRuns / totalRuns) * 100).toFixed(2));
+    const confidence = Number(
+      Math.min(99, 65 + Math.min(totalRuns, 3000) / 60).toFixed(2),
+    );
+    const summary =
+      totalRuns === scanLimit
+        ? `${successRuns}/${totalRuns} lignes panier valides (scan limité à ${scanLimit}).`
+        : `${successRuns}/${totalRuns} lignes panier valides.`;
+
+    return this.decorateIntegrityResult({
+      key,
+      label,
+      totalEvaluateTimeMs: Date.now() - startedAt,
+      successRuns,
+      totalRuns,
+      score,
+      confidence,
+      summary,
+      checkedAt: checkedAtIso,
+      sampleFailures,
+    });
+  }
+
+  private async runProductRecommendationsIntegrityTest(): Promise<IntegrityTestRunResult> {
+    const startedAt = Date.now();
+    const checkedAtIso = new Date().toISOString();
+    const key = 'product-recommendations-integrity-test';
+    const label = 'Product Recommendations Integrity Test';
+    const scanLimit = this.getIntegrityScanLimit();
+    const nowMs = Date.now();
+    const staleSnapshotMs = 72 * 60 * 60 * 1000;
+
+    const [snapshot, digests] = await Promise.all([
+      this.recommendationSnapshotModel
+        .findOne({ docKey: RECOMMENDATION_GLOBAL_SNAPSHOT_KEY })
+        .lean()
+        .exec(),
+      this.userRecommendationDigestModel
+        .find({})
+        .sort({ computedAt: -1 })
+        .limit(Math.min(scanLimit, 500))
+        .select([
+          '_id',
+          'user',
+          'computedAt',
+          'topViewedProductIds',
+          'topViewedStoreIds',
+          'topSearchTerms',
+        ])
+        .lean()
+        .exec(),
+    ]);
+
+    const sampleFailures: IntegrityTestRunResult['sampleFailures'] = [];
+    let successRuns = 0;
+    let totalRuns = 0;
+
+    if (!snapshot) {
+      totalRuns += 1;
+      sampleFailures.push({
+        orderId: 'snapshot:global',
+        issues: ['missing_global_recommendation_snapshot'],
+      });
+    } else {
+      totalRuns += 1;
+      const snapIssues: string[] = [];
+      const computedAt = snapshot.computedAt
+        ? new Date(String(snapshot.computedAt))
+        : null;
+      if (!(computedAt instanceof Date) || Number.isNaN(computedAt.getTime())) {
+        snapIssues.push('invalid_snapshot_computed_at');
+      } else if (nowMs - computedAt.getTime() > staleSnapshotMs) {
+        snapIssues.push('stale_recommendation_snapshot');
+      }
+
+      const trendProductIds = (snapshot.trendProductIds ?? []).slice(0, 40);
+      const trendStoreIds = (snapshot.trendStoreIds ?? []).slice(0, 40);
+      const trendDrinkIds = (snapshot.trendDrinkIds ?? []).slice(0, 40);
+
+      for (const id of trendProductIds) {
+        if (!this.isValidObjectIdString(id)) {
+          snapIssues.push('invalid_trend_product_id');
+          break;
+        }
+      }
+      for (const id of trendStoreIds) {
+        if (!this.isValidObjectIdString(id)) {
+          snapIssues.push('invalid_trend_store_id');
+          break;
+        }
+      }
+      for (const id of trendDrinkIds) {
+        if (!this.isValidObjectIdString(id)) {
+          snapIssues.push('invalid_trend_drink_id');
+          break;
+        }
+      }
+
+      const [knownProducts, knownStores, knownDrinks] = await Promise.all([
+        trendProductIds.length
+          ? this.productModel
+              .find({ _id: { $in: trendProductIds } })
+              .select('_id status')
+              .lean()
+              .exec()
+          : Promise.resolve([]),
+        trendStoreIds.length
+          ? this.storeModel
+              .find({ _id: { $in: trendStoreIds } })
+              .select('_id status')
+              .lean()
+              .exec()
+          : Promise.resolve([]),
+        trendDrinkIds.length
+          ? this.drinkModel
+              .find({ _id: { $in: trendDrinkIds } })
+              .select('_id')
+              .lean()
+              .exec()
+          : Promise.resolve([]),
+      ]);
+
+      const productIdSet = new Set(
+        (knownProducts as Array<Record<string, unknown>>).map((p) =>
+          String(p._id ?? ''),
+        ),
+      );
+      const storeIdSet = new Set(
+        (knownStores as Array<Record<string, unknown>>).map((s) =>
+          String(s._id ?? ''),
+        ),
+      );
+      const drinkIdSet = new Set(
+        (knownDrinks as Array<Record<string, unknown>>).map((d) =>
+          String(d._id ?? ''),
+        ),
+      );
+
+      if (trendProductIds.some((id) => !productIdSet.has(String(id)))) {
+        snapIssues.push('trend_product_not_found');
+      }
+      if (
+        trendProductIds.some((id) => {
+          const p = (knownProducts as Array<Record<string, unknown>>).find(
+            (row) => String(row._id ?? '') === String(id),
+          );
+          return p && String(p.status ?? '') !== ProductStatusEnum.ACTIVE;
+        })
+      ) {
+        snapIssues.push('trend_product_not_active');
+      }
+      if (trendStoreIds.some((id) => !storeIdSet.has(String(id)))) {
+        snapIssues.push('trend_store_not_found');
+      }
+      if (
+        trendStoreIds.some((id) => {
+          const s = (knownStores as Array<Record<string, unknown>>).find(
+            (row) => String(row._id ?? '') === String(id),
+          );
+          return s && String(s.status ?? '') !== StoreStatusEnum.ACTIVE;
+        })
+      ) {
+        snapIssues.push('trend_store_not_active');
+      }
+      if (trendDrinkIds.some((id) => !drinkIdSet.has(String(id)))) {
+        snapIssues.push('trend_drink_not_found');
+      }
+
+      if (!snapIssues.length) {
+        successRuns += 1;
+      } else {
+        sampleFailures.push({ orderId: 'snapshot:global', issues: snapIssues });
+      }
+    }
+
+    const digestUserIds = [
+      ...new Set(
+        (digests as Array<Record<string, unknown>>)
+          .map((d) => String(d.user ?? '').trim())
+          .filter(Boolean),
+      ),
+    ];
+    const knownDigestUsers = digestUserIds.length
+      ? new Set(
+          (
+            await this.userModel
+              .find({ _id: { $in: digestUserIds } })
+              .select('_id')
+              .lean()
+              .exec()
+          ).map((u) => String((u as { _id?: unknown })._id ?? '')),
+        )
+      : new Set<string>();
+
+    for (const digest of digests as Array<Record<string, unknown>>) {
+      totalRuns += 1;
+      const digestId = String(digest._id ?? '').trim();
+      const userId = String(digest.user ?? '').trim();
+      const issues: string[] = [];
+      const computedAt = digest.computedAt
+        ? new Date(String(digest.computedAt))
+        : null;
+
+      if (!userId || !knownDigestUsers.has(userId)) {
+        issues.push('digest_user_not_found');
+      }
+      if (!(computedAt instanceof Date) || Number.isNaN(computedAt.getTime())) {
+        issues.push('invalid_digest_computed_at');
+      } else if (nowMs - computedAt.getTime() > staleSnapshotMs) {
+        issues.push('stale_user_digest');
+      }
+
+      for (const pid of (digest.topViewedProductIds as string[]) ?? []) {
+        if (!this.isValidObjectIdString(pid)) {
+          issues.push('invalid_digest_product_id');
+          break;
+        }
+      }
+      for (const sid of (digest.topViewedStoreIds as string[]) ?? []) {
+        if (!this.isValidObjectIdString(sid)) {
+          issues.push('invalid_digest_store_id');
+          break;
+        }
+      }
+      for (const term of (digest.topSearchTerms as string[]) ?? []) {
+        const t = String(term ?? '').trim();
+        if (t && t.length < 2) {
+          issues.push('invalid_digest_search_term');
+          break;
+        }
+      }
+
+      if (!issues.length) {
+        successRuns += 1;
+      } else if (sampleFailures.length < 25) {
+        sampleFailures.push({
+          orderId: `digest:${digestId || userId || 'unknown'}`,
+          issues,
+        });
+      }
+    }
+
+    const score =
+      totalRuns > 0
+        ? Number(((successRuns / totalRuns) * 100).toFixed(2))
+        : 100;
+    const confidence = Number(
+      Math.min(99, 60 + Math.min(totalRuns, 500) / 10).toFixed(2),
+    );
+    const summary =
+      totalRuns === 0
+        ? 'Aucun snapshot ni digest à auditer.'
+        : `${successRuns}/${totalRuns} checks recommandations OK (snapshot + digests).`;
+
+    return this.decorateIntegrityResult({
+      key,
+      label,
+      totalEvaluateTimeMs: Date.now() - startedAt,
+      successRuns,
+      totalRuns,
+      score,
+      confidence,
+      summary,
+      checkedAt: checkedAtIso,
+      sampleFailures,
+    });
+  }
+
+  private async runCatalogLoadingIntegrityTest(): Promise<IntegrityTestRunResult> {
+    const startedAt = Date.now();
+    const checkedAtIso = new Date().toISOString();
+    const key = 'catalog-loading-integrity-test';
+    const label = 'Catalog Loading Integrity Test';
+    const scanLimit = this.getIntegrityScanLimit();
+
+    const [products, drinks] = await Promise.all([
+      this.productModel
+        .find({ status: ProductStatusEnum.ACTIVE })
+        .sort({ updatedAt: -1 })
+        .limit(scanLimit)
+        .select([
+          '_id',
+          'title',
+          'bio',
+          'price',
+          'store',
+          'category',
+          'profileImage',
+          'imageBase64',
+          'galleryImages',
+        ])
+        .lean()
+        .exec(),
+      this.drinkModel
+        .find({})
+        .sort({ updatedAt: -1 })
+        .limit(scanLimit)
+        .select([
+          '_id',
+          'name',
+          'priceCad',
+          'quantite',
+          'store',
+          'imageUrl',
+        ])
+        .lean()
+        .exec(),
+    ]);
+
+    const storeIds = [
+      ...new Set([
+        ...(products as Array<Record<string, unknown>>)
+          .map((p) => String(p.store ?? '').trim())
+          .filter(Boolean),
+        ...(drinks as Array<Record<string, unknown>>)
+          .map((d) => String(d.store ?? '').trim())
+          .filter(Boolean),
+      ]),
+    ];
+    const stores = storeIds.length
+      ? await this.storeModel
+          .find({ _id: { $in: storeIds } })
+          .select('_id status name')
+          .lean()
+          .exec()
+      : [];
+    const storeById = new Map(
+      (stores as Array<Record<string, unknown>>).map((s) => [
+        String(s._id ?? ''),
+        s,
+      ]),
+    );
+
+    const sampleFailures: IntegrityTestRunResult['sampleFailures'] = [];
+    let successRuns = 0;
+    let totalRuns = 0;
+
+    const auditCatalogRow = (
+      rowId: string,
+      prefix: string,
+      storeId: string,
+      issues: string[],
+    ) => {
+      totalRuns += 1;
+      if (!storeId || !storeById.has(storeId)) {
+        issues.push('catalog_store_not_found');
+      } else {
+        const store = storeById.get(storeId)!;
+        if (String(store.status ?? '') !== StoreStatusEnum.ACTIVE) {
+          issues.push('catalog_store_not_active');
+        }
+      }
+      if (!issues.length) {
+        successRuns += 1;
+      } else if (sampleFailures.length < 25) {
+        sampleFailures.push({ orderId: `${prefix}:${rowId}`, issues });
+      }
+    };
+
+    for (const product of products as Array<Record<string, unknown>>) {
+      const productId = String(product._id ?? '').trim();
+      const storeId = String(product.store ?? '').trim();
+      const title = String(product.title ?? '').trim();
+      const bio = String(product.bio ?? '').trim();
+      const price = Number(product.price ?? 0);
+      const category = String(product.category ?? '').trim();
+      const profileImage = String(product.profileImage ?? '').trim();
+      const imageBase64 = String(product.imageBase64 ?? '').trim();
+      const gallery = (product.galleryImages as unknown[]) ?? [];
+      const issues: string[] = [];
+
+      if (!title) issues.push('missing_product_title');
+      if (!bio) issues.push('missing_product_bio');
+      if (!Number.isFinite(price) || price < 0) issues.push('invalid_product_price');
+      if (!this.isValidObjectIdString(category)) issues.push('missing_product_category');
+      if (!profileImage && !imageBase64 && (!Array.isArray(gallery) || !gallery.length)) {
+        issues.push('missing_product_image');
+      }
+
+      auditCatalogRow(productId, 'product', storeId, issues);
+    }
+
+    for (const drink of drinks as Array<Record<string, unknown>>) {
+      const drinkId = String(drink._id ?? '').trim();
+      const storeId = String(drink.store ?? '').trim();
+      const name = String(drink.name ?? '').trim();
+      const priceCad = Number(drink.priceCad ?? 0);
+      const quantite = Number(drink.quantite ?? 0);
+      const issues: string[] = [];
+
+      if (!name) issues.push('missing_drink_name');
+      if (!Number.isFinite(priceCad) || priceCad < 0) issues.push('invalid_drink_price');
+      if (!Number.isFinite(quantite) || quantite < 0) issues.push('invalid_drink_quantity');
+      if (quantite <= 0) issues.push('drink_not_visible_in_catalog');
+
+      auditCatalogRow(drinkId, 'drink', storeId, issues);
+    }
+
+    const score =
+      totalRuns > 0
+        ? Number(((successRuns / totalRuns) * 100).toFixed(2))
+        : 100;
+    const confidence = Number(
+      Math.min(99, 65 + Math.min(totalRuns, 4000) / 80).toFixed(2),
+    );
+    const summary =
+      totalRuns === 0
+        ? 'Aucun article catalogue actif à auditer.'
+        : `${successRuns}/${totalRuns} articles catalogue chargeables (${products.length} produits, ${drinks.length} boissons scannés).`;
+
+    return this.decorateIntegrityResult({
+      key,
+      label,
+      totalEvaluateTimeMs: Date.now() - startedAt,
+      successRuns,
+      totalRuns,
+      score,
+      confidence,
+      summary,
+      checkedAt: checkedAtIso,
+      sampleFailures,
+    });
+  }
+
+  private async runStoreDetailPageIntegrityTest(): Promise<IntegrityTestRunResult> {
+    const startedAt = Date.now();
+    const checkedAtIso = new Date().toISOString();
+    const key = 'store-detail-page-integrity-test';
+    const label = 'Store Detail Page Integrity Test';
+    const scanLimit = this.getIntegrityScanLimit();
+
+    const stores = await this.storeModel
+      .find({ status: StoreStatusEnum.ACTIVE })
+      .sort({ updatedAt: -1 })
+      .limit(scanLimit)
+      .select([
+        '_id',
+        'name',
+        'bio',
+        'email',
+        'phoneNumber',
+        'currency',
+        'region',
+        'profileImage',
+        'address',
+        'acceptsOrders',
+        'canCreateProducts',
+      ])
+      .populate({
+        path: 'address',
+        select: 'address city country countryCode zipCode label location',
+      })
+      .lean()
+      .exec();
+
+    if (!stores.length) {
+      return this.decorateIntegrityResult({
+        key,
+        label,
+        totalEvaluateTimeMs: Date.now() - startedAt,
+        successRuns: 0,
+        totalRuns: 0,
+        score: 100,
+        confidence: 100,
+        summary: 'Aucune boutique active à auditer.',
+        checkedAt: checkedAtIso,
+        sampleFailures: [],
+      });
+    }
+
+    const sampleFailures: IntegrityTestRunResult['sampleFailures'] = [];
+    let successRuns = 0;
+
+    for (const store of stores as Array<Record<string, unknown>>) {
+      const storeId = String(store._id ?? '').trim();
+      const name = String(store.name ?? '').trim();
+      const email = String(store.email ?? '').trim();
+      const phoneNumber = String(store.phoneNumber ?? '').trim();
+      const currency = String(store.currency ?? '').trim();
+      const profileImage = String(store.profileImage ?? '').trim();
+      const address = store.address as Record<string, unknown> | null | undefined;
+      const issues: string[] = [];
+
+      if (!name) issues.push('missing_store_name');
+      if (!email) issues.push('missing_store_email');
+      if (!phoneNumber) issues.push('missing_store_phone');
+      if (!currency) issues.push('missing_store_currency');
+      if (!profileImage) issues.push('missing_store_profile_image');
+      if (!address || typeof address !== 'object') {
+        issues.push('missing_store_address');
+      } else {
+        const city = String(address.city ?? '').trim();
+        const country = String(address.country ?? '').trim();
+        const countryCode = String(address.countryCode ?? '').trim();
+        const labelAddr = String(address.label ?? address.address ?? '').trim();
+        const location = address.location as Record<string, unknown> | undefined;
+        const coords = location?.coordinates as unknown[] | undefined;
+        if (!city && !country && !countryCode && !labelAddr) {
+          issues.push('incomplete_store_address');
+        }
+        if (!Array.isArray(coords) || coords.length < 2) {
+          issues.push('missing_store_geo_location');
+        }
+      }
+
+      if (!issues.length) {
+        successRuns += 1;
+      } else if (sampleFailures.length < 25) {
+        sampleFailures.push({
+          orderId: `store:${storeId || 'unknown'}`,
+          issues,
+        });
+      }
+    }
+
+    const totalRuns = stores.length;
+    const score = Number(((successRuns / totalRuns) * 100).toFixed(2));
+    const confidence = Number(
+      Math.min(99, 70 + Math.min(totalRuns, 2000) / 40).toFixed(2),
+    );
+    const summary =
+      totalRuns === scanLimit
+        ? `${successRuns}/${totalRuns} boutiques prêtes pour menu-meta (scan limité à ${scanLimit}).`
+        : `${successRuns}/${totalRuns} boutiques prêtes pour menu-meta.`;
+
+    return this.decorateIntegrityResult({
+      key,
+      label,
+      totalEvaluateTimeMs: Date.now() - startedAt,
+      successRuns,
+      totalRuns,
+      score,
+      confidence,
+      summary,
+      checkedAt: checkedAtIso,
+      sampleFailures,
+    });
+  }
+
+  private async runPlatformReadinessIntegrityTest(): Promise<IntegrityTestRunResult> {
+    const startedAt = Date.now();
+    const checkedAtIso = new Date().toISOString();
+    const key = 'platform-readiness-integrity-test';
+    const label = 'Platform Readiness Integrity Test';
+    const scanLimit = Math.min(this.getIntegrityScanLimit(), 2000);
+
+    const [activeStores, activeOffers, activeProductsOnInactiveStore] =
+      await Promise.all([
+        this.storeModel
+          .find({ status: StoreStatusEnum.ACTIVE })
+          .sort({ updatedAt: -1 })
+          .limit(scanLimit)
+          .select('_id name acceptsOrders canCreateProducts')
+          .lean()
+          .exec(),
+        this.offerModel
+          .find({ status: OfferStatusEnum.ACTIVE })
+          .sort({ updatedAt: -1 })
+          .limit(scanLimit)
+          .select(['_id', 'title', 'price', 'discountPrice', 'store', 'items'])
+          .lean()
+          .exec(),
+        this.productModel
+          .find({ status: ProductStatusEnum.ACTIVE })
+          .sort({ updatedAt: -1 })
+          .limit(scanLimit)
+          .select('_id store')
+          .lean()
+          .exec(),
+      ]);
+
+    const storeIds = [
+      ...new Set(
+        (activeStores as Array<Record<string, unknown>>)
+          .map((s) => String(s._id ?? '').trim())
+          .filter(Boolean),
+      ),
+    ];
+    const storeStatusById = new Map(
+      (activeStores as Array<Record<string, unknown>>).map((s) => [
+        String(s._id ?? ''),
+        String(s.status ?? StoreStatusEnum.ACTIVE),
+      ]),
+    );
+
+    const [productCounts, drinkCounts] = await Promise.all([
+      storeIds.length
+        ? this.productModel
+            .aggregate<{ _id: Types.ObjectId; n: number }>([
+              {
+                $match: {
+                  store: { $in: storeIds.map((id) => new Types.ObjectId(id)) },
+                  status: ProductStatusEnum.ACTIVE,
+                },
+              },
+              { $group: { _id: '$store', n: { $sum: 1 } } },
+            ])
+            .exec()
+        : Promise.resolve([]),
+      storeIds.length
+        ? this.drinkModel
+            .aggregate<{ _id: Types.ObjectId; n: number }>([
+              {
+                $match: {
+                  store: { $in: storeIds.map((id) => new Types.ObjectId(id)) },
+                  quantite: { $gt: 0 },
+                },
+              },
+              { $group: { _id: '$store', n: { $sum: 1 } } },
+            ])
+            .exec()
+        : Promise.resolve([]),
+    ]);
+
+    const catalogCountByStore = new Map<string, number>();
+    for (const row of productCounts) {
+      catalogCountByStore.set(
+        String(row._id ?? ''),
+        (catalogCountByStore.get(String(row._id ?? '')) ?? 0) + Number(row.n ?? 0),
+      );
+    }
+    for (const row of drinkCounts) {
+      const id = String(row._id ?? '');
+      catalogCountByStore.set(id, (catalogCountByStore.get(id) ?? 0) + Number(row.n ?? 0));
+    }
+
+    const allStoreIdsForProducts = [
+      ...new Set(
+        (activeProductsOnInactiveStore as Array<Record<string, unknown>>)
+          .map((p) => String(p.store ?? '').trim())
+          .filter(Boolean),
+      ),
+    ];
+    const storesForProducts = allStoreIdsForProducts.length
+      ? await this.storeModel
+          .find({ _id: { $in: allStoreIdsForProducts } })
+          .select('_id status')
+          .lean()
+          .exec()
+      : [];
+    for (const s of storesForProducts as Array<Record<string, unknown>>) {
+      storeStatusById.set(String(s._id ?? ''), String(s.status ?? ''));
+    }
+
+    const offerStoreIds = [
+      ...new Set(
+        (activeOffers as Array<Record<string, unknown>>)
+          .map((o) => String(o.store ?? '').trim())
+          .filter(Boolean),
+      ),
+    ];
+    const offerStores = offerStoreIds.length
+      ? await this.storeModel
+          .find({ _id: { $in: offerStoreIds } })
+          .select('_id status')
+          .lean()
+          .exec()
+      : [];
+    const offerStoreById = new Map(
+      (offerStores as Array<Record<string, unknown>>).map((s) => [
+        String(s._id ?? ''),
+        s,
+      ]),
+    );
+
+    const sampleFailures: IntegrityTestRunResult['sampleFailures'] = [];
+    let successRuns = 0;
+    let totalRuns = 0;
+
+    for (const store of activeStores as Array<Record<string, unknown>>) {
+      totalRuns += 1;
+      const storeId = String(store._id ?? '').trim();
+      const acceptsOrders = store.acceptsOrders === true;
+      const canCreateProducts = store.canCreateProducts === true;
+      const catalogCount = catalogCountByStore.get(storeId) ?? 0;
+      const issues: string[] = [];
+
+      if ((acceptsOrders || canCreateProducts) && catalogCount === 0) {
+        issues.push('active_store_empty_catalog');
+      }
+
+      if (!issues.length) {
+        successRuns += 1;
+      } else if (sampleFailures.length < 25) {
+        sampleFailures.push({
+          orderId: `store-readiness:${storeId}`,
+          issues,
+        });
+      }
+    }
+
+    for (const offer of activeOffers as Array<Record<string, unknown>>) {
+      totalRuns += 1;
+      const offerId = String(offer._id ?? '').trim();
+      const storeId = String(offer.store ?? '').trim();
+      const price = Number(offer.price ?? 0);
+      const discountPrice = Number(offer.discountPrice ?? 0);
+      const items = (offer.items as unknown[]) ?? [];
+      const title = String(offer.title ?? '').trim();
+      const issues: string[] = [];
+
+      if (!title) issues.push('missing_offer_title');
+      if (!Number.isFinite(price) || price <= 0) issues.push('invalid_offer_price');
+      if (!Number.isFinite(discountPrice) || discountPrice <= 0) {
+        issues.push('invalid_offer_discount_price');
+      }
+      if (
+        Number.isFinite(price) &&
+        Number.isFinite(discountPrice) &&
+        discountPrice <= price
+      ) {
+        issues.push('offer_discount_not_below_price');
+      }
+      if (!Array.isArray(items) || items.length < 2) {
+        issues.push('offer_insufficient_items');
+      }
+      const store = offerStoreById.get(storeId);
+      if (!store) {
+        issues.push('offer_store_not_found');
+      } else if (String(store.status ?? '') !== StoreStatusEnum.ACTIVE) {
+        issues.push('offer_store_not_active');
+      }
+
+      if (!issues.length) {
+        successRuns += 1;
+      } else if (sampleFailures.length < 25) {
+        sampleFailures.push({
+          orderId: `offer:${offerId || 'unknown'}`,
+          issues,
+        });
+      }
+    }
+
+    for (const product of activeProductsOnInactiveStore as Array<
+      Record<string, unknown>
+    >) {
+      totalRuns += 1;
+      const productId = String(product._id ?? '').trim();
+      const storeId = String(product.store ?? '').trim();
+      const storeStatus = storeStatusById.get(storeId) ?? '';
+      const issues: string[] = [];
+
+      if (!storeId) {
+        issues.push('product_missing_store');
+      } else if (storeStatus !== StoreStatusEnum.ACTIVE) {
+        issues.push('active_product_on_inactive_store');
+      }
+
+      if (!issues.length) {
+        successRuns += 1;
+      } else if (sampleFailures.length < 25) {
+        sampleFailures.push({
+          orderId: `product-readiness:${productId}`,
+          issues,
+        });
+      }
+    }
+
+    const score =
+      totalRuns > 0
+        ? Number(((successRuns / totalRuns) * 100).toFixed(2))
+        : 100;
+    const confidence = Number(
+      Math.min(99, 65 + Math.min(totalRuns, 3000) / 60).toFixed(2),
+    );
+    const summary = `${successRuns}/${totalRuns} checks plateforme OK (boutiques, offres, produits actifs).`;
 
     return this.decorateIntegrityResult({
       key,
