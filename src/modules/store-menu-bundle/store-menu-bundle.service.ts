@@ -1,5 +1,6 @@
 import { SearchService } from '@modules/search/search.service';
 import { StoreService } from '@modules/store/store.service';
+import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
 import {
   AppCacheKeys,
   apiPublicCacheTtlMs,
@@ -45,19 +46,41 @@ export class StoreMenuBundleService {
     productsTake: number,
     user?: UserModel,
     productsPage = 1,
+    options?: {
+      clientPlatform?: string;
+      countryCode?: string;
+    },
   ): Promise<StoreMenuBundlePayload> {
     const take = Math.min(120, Math.max(8, Math.floor(productsTake)));
     const page = Math.max(1, Math.floor(productsPage));
-    const scope = cacheUserScope(user);
+    const clientPlatform = options?.clientPlatform;
+    const countryCode = normalizeCountryCode(options?.countryCode);
+    const scope =
+      cacheUserScope(user) +
+      (countryCode ? `:cc${countryCode}` : '') +
+      (clientPlatform === 'web' ? ':web-catalog' : ':client-catalog');
     const cacheKey = AppCacheKeys.storeMenuBundle(storeId, page, take, scope);
+    const metaOptions = {
+      clientPlatform,
+      countryCode: countryCode || undefined,
+      user,
+    };
     return getOrSetCache(
       this._cache,
       cacheKey,
       apiPublicCacheTtlMs(),
       async () => {
         const [meta, pageOut] = await Promise.all([
-          this._stores.findPublicStoreMenuMeta(storeId),
-          this._search.storeMenuProductsLeanPage(storeId, page, take, user),
+          this._stores.findPublicStoreMenuMeta(storeId, metaOptions),
+          this._search.storeMenuProductsLeanPage(
+            storeId,
+            page,
+            take,
+            user,
+            undefined,
+            clientPlatform,
+            countryCode || undefined,
+          ),
         ]);
         const products = pageOut.items.map((p) => this._productToPlain(p));
         return {

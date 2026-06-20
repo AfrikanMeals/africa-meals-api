@@ -40,6 +40,7 @@ const sharedDevApp = {
 
 const apiDevEnv = {
   NODE_ENV: 'development',
+  FORCE_COLOR: '1',
   ...apiPm2Env.devEnvVars(),
   ...apiPortEnv,
 };

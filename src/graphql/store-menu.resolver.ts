@@ -1,7 +1,9 @@
+import { clientPlatformFromRequest } from '@common/catalog-public-id.util';
 import { StoreMenuBundleService } from '@modules/store-menu-bundle/store-menu-bundle.service';
 import { UserModel } from '@schemas/user.schema';
 import { Inject, NotFoundException, UseGuards } from '@nestjs/common';
-import { Args, Int, Query, Resolver } from '@nestjs/graphql';
+import { Args, Context, Int, Query, Resolver } from '@nestjs/graphql';
+import { Request } from 'express';
 import { GqlOptionalUser } from './decorators/gql-optional-user.decorator';
 import { OptionalGqlAuthGuard } from './guards/optional-gql-auth.guard';
 import { StoreMenuPayloadGql } from './types/store-menu.types';
@@ -19,6 +21,7 @@ export class StoreMenuResolver {
   @UseGuards(OptionalGqlAuthGuard)
   async storeMenu(
     @GqlOptionalUser() user: UserModel | undefined,
+    @Context() ctx: { req: Request },
     @Args('storeId', { description: 'Identifiant Mongo de la boutique.' })
     storeId: string,
     @Args('productsTake', {
@@ -35,6 +38,12 @@ export class StoreMenuResolver {
       description: 'Page produits (1-based), alignée sur GET /search.',
     })
     productsPage?: number,
+    @Args('countryCode', {
+      type: () => String,
+      nullable: true,
+      description: 'Pays ISO2 du catalogue (sinon profil JWT ou région primaire).',
+    })
+    countryCode?: string,
   ): Promise<StoreMenuPayloadGql> {
     const take = productsTake ?? 24;
     const page = productsPage ?? 1;
@@ -43,6 +52,10 @@ export class StoreMenuResolver {
       take,
       user,
       page,
+      {
+        clientPlatform: clientPlatformFromRequest(ctx.req),
+        countryCode,
+      },
     );
     if (store == null) {
       throw new NotFoundException('store_not_found');
