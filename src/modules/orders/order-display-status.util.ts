@@ -9,8 +9,36 @@ export const PAY_ON_PICKUP_UNSETTLED_PAYMENT_LABEL = 'Non réglée';
 /** Paiement cash collecté (commande terminée). */
 export const PAY_ON_PICKUP_SETTLED_PAYMENT_LABEL = 'Réglée';
 
+export function readOrderStripeParentPaymentId(
+  order: Record<string, unknown>,
+): string {
+  return String(
+    order['stripeParentPaymentId'] ?? order['stripe_parent_payment_id'] ?? '',
+  ).trim();
+}
+
+/**
+ * Commande « paiement à la collecte » (cash) — flag explicite ou absence de paiement Stripe
+ * alors que le workflow commande a démarré (statut au-delà de `created`).
+ */
+export function isPayOnPickupOrder(order: Record<string, unknown>): boolean {
+  if (order['payOnPickup'] === true || order['pay_on_pickup'] === true) {
+    return true;
+  }
+  if (readOrderStripeParentPaymentId(order).length > 0) {
+    return false;
+  }
+  const st = String(order['status'] ?? '').toLowerCase();
+  return (
+    st === OrderStatusEnum.PAIED ||
+    st === OrderStatusEnum.APPROVED ||
+    st === OrderStatusEnum.SHIPPED ||
+    st === OrderStatusEnum.COMPLETED
+  );
+}
+
 export function readOrderPayOnPickup(order: Record<string, unknown>): boolean {
-  return order['payOnPickup'] === true || order['pay_on_pickup'] === true;
+  return isPayOnPickupOrder(order);
 }
 
 /** Paiement à la collecte encore dû (hors annulation). */

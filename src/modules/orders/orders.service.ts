@@ -76,6 +76,8 @@ import {
   enrichOrdersDisplayStatus,
   orderPaymentStatusLabelFr,
   publicOrderStatusLabelFr,
+  readOrderPayOnPickup,
+  isPayOnPickupOrder,
 } from './order-display-status.util';
 import {
   VendorStatusEmailService,
@@ -521,6 +523,7 @@ export class OrdersService {
       return {
         ...o,
         canRequestRefund: refund.canRequestRefund,
+        canCancelOrder: refund.canCancelOrder,
         refundRequestState: refund.refundRequestState,
         assignedDeliveryUserId: delivery.assignedDeliveryUserId,
       };
@@ -551,6 +554,7 @@ export class OrdersService {
         ...o,
         hasBusinessReport: reported.has(id),
         canRequestRefund: refund.canRequestRefund,
+        canCancelOrder: refund.canCancelOrder,
         refundRequestState: refund.refundRequestState,
         assignedDeliveryUserId: delivery.assignedDeliveryUserId,
         canMessageDeliveryAgent: delivery.canMessageDeliveryAgent,
@@ -590,9 +594,11 @@ export class OrdersService {
    */
   clientRefundFlags(order: Record<string, unknown>): {
     canRequestRefund: boolean;
+    canCancelOrder: boolean;
     refundRequestState: 'eligible' | 'pending' | 'processed' | 'unavailable';
   } {
     const status = String(order['status'] ?? '');
+    const payOnPickup = readOrderPayOnPickup(order);
     const log =
       ((order['refundRequestLog'] ?? order['refund_request_log']) as
         | Array<{ status?: string }>
@@ -604,7 +610,11 @@ export class OrdersService {
         s === OrderRefundRequestEntryStatusEnum.PENDING ||
         s === OrderRefundRequestEntryStatusEnum.PAUSED
       ) {
-        return { canRequestRefund: false, refundRequestState: 'pending' };
+        return {
+          canRequestRefund: false,
+          canCancelOrder: false,
+          refundRequestState: 'pending',
+        };
       }
     }
     for (const row of log) {
@@ -613,16 +623,42 @@ export class OrdersService {
         s === OrderRefundRequestEntryStatusEnum.APPROVED ||
         s === OrderRefundRequestEntryStatusEnum.COMPLETED
       ) {
-        return { canRequestRefund: false, refundRequestState: 'processed' };
+        return {
+          canRequestRefund: false,
+          canCancelOrder: false,
+          refundRequestState: 'processed',
+        };
       }
     }
+    if (
+      payOnPickup &&
+      this.isRefundRequestAllowedForStatus(status)
+    ) {
+      return {
+        canRequestRefund: false,
+        canCancelOrder: true,
+        refundRequestState: 'unavailable',
+      };
+    }
     if (this.isRefundRequestAllowedForStatus(status)) {
-      return { canRequestRefund: true, refundRequestState: 'eligible' };
+      return {
+        canRequestRefund: true,
+        canCancelOrder: false,
+        refundRequestState: 'eligible',
+      };
     }
     if (status === OrderStatusEnum.CANCELLED) {
-      return { canRequestRefund: false, refundRequestState: 'unavailable' };
+      return {
+        canRequestRefund: false,
+        canCancelOrder: false,
+        refundRequestState: 'unavailable',
+      };
     }
-    return { canRequestRefund: false, refundRequestState: 'unavailable' };
+    return {
+      canRequestRefund: false,
+      canCancelOrder: false,
+      refundRequestState: 'unavailable',
+    };
   }
 
   async findOneById(
@@ -2307,6 +2343,9 @@ export class OrdersService {
     if (
       wasPaid &&
       parentId.length > 0 &&
+      !isPayOnPickupOrder(
+        order.toObject() as Record<string, unknown>,
+      ) &&
       !this.hasActiveRefundRequest(order.refundRequestLog)
     ) {
       const autoDetails =
@@ -3385,7 +3424,11 @@ export class OrdersService {
     orderId: string,
     user: UserModel,
     dto: CreateRefundRequestDto,
-  ): Promise<{ orderId: string; status: OrderRefundRequestEntryStatusEnum }> {
+  ): Promise<{
+    orderId: string;
+    status: OrderRefundRequestEntryStatusEnum | OrderStatusEnum;
+    cancelledOnly?: boolean;
+  }> {
     const oid = orderId.trim();
     if (!Types.ObjectId.isValid(oid)) {
       throw new NotFoundException('order_not_found');
@@ -3394,7 +3437,7 @@ export class OrdersService {
     const order = await this._orderModel
       .findOne({ _id: new Types.ObjectId(oid), user: uid })
       .select(
-        'status shouldShip refundRequestLog store items totalPrice currency pickupCode user',
+        'status shouldShip refundRequestLog store items totalPrice currency pickupCode user payOnPickup stripeParentPaymentId',
       )
       .populate('store', 'name')
       .exec();
@@ -3402,9 +3445,17 @@ export class OrdersService {
       throw new NotFoundException('order_not_found');
     }
     const st = order.status as OrderStatusEnum;
-    this.assertRefundRequestApplicableToOrder(st);
-    const log = order.refundRequestLog ?? [];
-    this.assertRefundRequestNotBlockedByHistory(log);
+    const orderRecord = order.toObject() as Record<string, unknown>;
+    const payOnPickup = isPayOnPickupOrder(orderRecord);
+    if (payOnPickup) {
+      if (st !== OrderStatusEnum.PAIED) {
+        throw new BadRequestException('refund_not_applicable_status');
+      }
+    } else {
+      this.assertRefundRequestApplicableToOrder(st);
+      const log = order.refundRequestLog ?? [];
+      this.assertRefundRequestNotBlockedByHistory(log);
+    }
 
     try {
       assertOrderCancelReasonPayload({
@@ -3428,14 +3479,24 @@ export class OrdersService {
     order.cancelReasonCode = resolved.code;
     order.cancelReasonDetails = resolved.details;
     order.cancelReasonSource = 'client';
-    order.refundRequestLog = [
-      ...(order.refundRequestLog ?? []),
-      {
-        status: OrderRefundRequestEntryStatusEnum.PENDING,
-        details: resolved.details,
-        requestedAt: new Date(),
-      },
-    ];
+    if (payOnPickup) {
+      order.refundRequestLog = (order.refundRequestLog ?? []).filter((row) => {
+        const s = String(row?.status ?? '');
+        return (
+          s !== OrderRefundRequestEntryStatusEnum.PENDING &&
+          s !== OrderRefundRequestEntryStatusEnum.PAUSED
+        );
+      });
+    } else {
+      order.refundRequestLog = [
+        ...(order.refundRequestLog ?? []),
+        {
+          status: OrderRefundRequestEntryStatusEnum.PENDING,
+          details: resolved.details,
+          requestedAt: new Date(),
+        },
+      ];
+    }
     await order.save();
 
     const storeId = this.storeIdFromOrderDoc(order);
@@ -3458,7 +3519,9 @@ export class OrdersService {
         storeId: storeId ?? undefined,
         previousStatus: prevStatus,
         newStatus: OrderStatusEnum.CANCELLED,
-        bodyOverride: 'Commande annulée — remboursement en cours d’examen',
+        bodyOverride: payOnPickup
+          ? 'Commande annulée'
+          : 'Commande annulée — remboursement en cours d’examen',
       })
       .catch((err) =>
         this.logger.warn(
@@ -3480,7 +3543,10 @@ export class OrdersService {
 
     return {
       orderId: oid,
-      status: OrderRefundRequestEntryStatusEnum.PENDING,
+      status: payOnPickup
+        ? OrderStatusEnum.CANCELLED
+        : OrderRefundRequestEntryStatusEnum.PENDING,
+      cancelledOnly: payOnPickup,
     };
   }
 
