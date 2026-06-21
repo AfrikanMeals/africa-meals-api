@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
   UsePipes,
@@ -49,6 +50,12 @@ export class PlatformChannelsController {
     return this.channels.updateWhatsappSettings(req.user as UserModel, dto);
   }
 
+  @Get('whatsapp/probe')
+  @ApiOperation({ summary: 'Vérifie la configuration Bird WhatsApp' })
+  probeWhatsappSettings(@Req() req: Request) {
+    return this.channels.probeWhatsappSettings();
+  }
+
   @Get('telegram')
   @ApiOperation({
     summary:
@@ -68,6 +75,12 @@ export class PlatformChannelsController {
     return this.channels.updateTelegramSettings(req.user as UserModel, dto);
   }
 
+  @Get('telegram/probe')
+  @ApiOperation({ summary: 'Vérifie la configuration Telegram Bot API' })
+  probeTelegramSettings(@Req() req: Request) {
+    return this.channels.probeTelegramSettings();
+  }
+
   @Get('email')
   @ApiOperation({
     summary:
@@ -75,6 +88,12 @@ export class PlatformChannelsController {
   })
   getEmailSettings(@Req() req: Request) {
     return this.channels.getEmailSettings(req.user as UserModel);
+  }
+
+  @Get('email/probe')
+  @ApiOperation({ summary: 'Vérifie la configuration d’un moteur Email platform' })
+  probeEmailSettings(@Query('engine') engine?: string) {
+    return this.channels.probeEmailEngine(engine)
   }
 
   @Patch('email')

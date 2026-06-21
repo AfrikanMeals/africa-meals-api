@@ -6,12 +6,15 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { randomUUID } from 'crypto';
+import * as nodemailer from 'nodemailer';
 import {
+  probeBirdChannelApi,
   readBirdEmailConfig,
   readBirdWhatsAppConfig,
   type BirdConfig,
 } from '@modules/ads/bird-channels.util';
 import {
+  probeTelegramBotApi,
   readTelegramBotConfig,
   type TelegramBotConfig,
 } from '@modules/messaging/telegram-bot.util';
@@ -31,10 +34,16 @@ import {
 import {
   buildEmailEngineOptions,
   EMAIL_ENGINE_ANY,
+  EMAIL_ENGINE_AUTO,
+  EMAIL_ENGINE_DEFAULT,
+  EMAIL_ENGINE_BIRD,
+  EMAIL_ENGINE_RESEND,
+  EMAIL_ENGINE_SENDGRID,
   normalizeEmailEngine,
   normalizeEmailModuleEngine,
   smtpConfigSecretKey,
   smtpEngineValue,
+  smtpConfigIdFromEngine,
   type EmailEngineOption,
   type EmailModuleEngineRow,
   type PlatformSmtpConfigView,
@@ -817,6 +826,204 @@ export class PlatformChannelsService {
   async getBirdEmailConfig(): Promise<BirdConfig | null> {
     const env = await this.getBirdEmailMergedEnv();
     return readBirdEmailConfig(env);
+  }
+
+  async probeWhatsappSettings(): Promise<{ ok: boolean; message: string; details?: string }> {
+    const config = await this.getBirdWhatsAppConfig();
+    if (!config) {
+      return {
+        ok: false,
+        message: 'Bird WhatsApp non configuré.',
+      };
+    }
+    const probe = await probeBirdChannelApi({
+      config,
+      channelId: config.whatsappChannelId ?? '',
+    });
+    return {
+      ok: probe.ok,
+      message: probe.ok
+        ? 'Bird WhatsApp configuré et accessible.'
+        : 'Bird WhatsApp non accessible.',
+      details: probe.error,
+    };
+  }
+
+  async probeTelegramSettings(): Promise<{ ok: boolean; message: string; details?: string }> {
+    const config = await this.getTelegramConfig();
+    if (!config) {
+      return {
+        ok: false,
+        message: 'Telegram Bot non configuré.',
+      };
+    }
+    const probe = await probeTelegramBotApi({ config });
+    return {
+      ok: probe.ok,
+      message: probe.ok
+        ? 'Telegram Bot API valide.'
+        : 'Telegram Bot API non valide.',
+      details: probe.error,
+    };
+  }
+
+  async probeEmailEngine(
+    engine: string | null | undefined,
+  ): Promise<{ ok: boolean; message: string; details?: string }> {
+    const doc = await this.ensureSettings();
+    const smtpConfigs = doc.smtpConfigs ?? [];
+    const normalized = normalizeEmailEngine(engine, smtpConfigs);
+
+    if (normalized === EMAIL_ENGINE_DEFAULT) {
+      return this.probeSmtpProfile(
+        await this.readDefaultSmtpSendProfile(),
+        'SMTP par défaut',
+      );
+    }
+    if (normalized === EMAIL_ENGINE_BIRD) {
+      const config = await this.getBirdEmailConfig();
+      if (!config) {
+        return { ok: false, message: 'Bird Email non configuré.' };
+      }
+      const probe = await probeBirdChannelApi({
+        config,
+        channelId: config.emailChannelId ?? '',
+      });
+      return {
+        ok: probe.ok,
+        message: probe.ok ? 'Bird Email API valide.' : 'Bird Email API non valide.',
+        details: probe.error,
+      };
+    }
+    if (normalized === EMAIL_ENGINE_RESEND) {
+      const key = await this.secrets.resolveString('api', 'RESEND_API_KEY');
+      if (!key.trim()) {
+        return { ok: false, message: 'Resend non configuré.' };
+      }
+      return { ok: true, message: 'Resend configuré.' };
+    }
+    if (normalized === EMAIL_ENGINE_SENDGRID) {
+      const apiKey = await this.secrets.resolveString('api', 'SENDGRID_API_KEY');
+      if (!apiKey.trim()) {
+        return { ok: false, message: 'SendGrid non configuré.' };
+      }
+      return this.probeSendgridApiKey(apiKey);
+    }
+    const smtpId = smtpConfigIdFromEngine(normalized);
+    if (smtpId) {
+      return this.probeSmtpProfile(
+        await this.readPlatformSmtpSendProfile(smtpId),
+        `SMTP ${smtpId}`,
+      );
+    }
+    if (normalized === EMAIL_ENGINE_AUTO) {
+      const defaultSmtp = await this.readDefaultSmtpSendProfile();
+      if (defaultSmtp) {
+        return this.probeSmtpProfile(defaultSmtp, 'SMTP par défaut');
+      }
+      if (smtpConfigs.length > 0) {
+        const profile = await this.readPlatformSmtpSendProfile(smtpConfigs[0].id);
+        return this.probeSmtpProfile(profile, `SMTP ${smtpConfigs[0].label}`);
+      }
+      return { ok: false, message: 'Aucun SMTP configuré pour Auto.' };
+    }
+    if (normalized === EMAIL_ENGINE_ANY) {
+      const defaultSmtp = await this.readDefaultSmtpSendProfile();
+      if (defaultSmtp) {
+        return this.probeSmtpProfile(defaultSmtp, 'SMTP par défaut');
+      }
+      if (smtpConfigs.length > 0) {
+        const profile = await this.readPlatformSmtpSendProfile(smtpConfigs[0].id);
+        return this.probeSmtpProfile(profile, `SMTP ${smtpConfigs[0].label}`);
+      }
+      if (await this.isBirdEmailConfigured()) {
+        const config = await this.getBirdEmailConfig();
+        if (config) {
+          const probe = await probeBirdChannelApi({
+            config,
+            channelId: config.emailChannelId ?? '',
+          });
+          return {
+            ok: probe.ok,
+            message: probe.ok ? 'Bird Email API valide.' : 'Bird Email API non valide.',
+            details: probe.error,
+          };
+        }
+      }
+      if (await this.isSendgridConfigured()) {
+        const apiKey = await this.secrets.resolveString('api', 'SENDGRID_API_KEY');
+        return this.probeSendgridApiKey(apiKey);
+      }
+      if (await this.isResendConfigured()) {
+        return { ok: true, message: 'Resend configuré.' };
+      }
+      return { ok: false, message: 'Aucun moteur email configuré pour Any.' };
+    }
+
+    return { ok: false, message: `Moteur email inconnu : ${engine}` };
+  }
+
+  private async probeSmtpProfile(
+    profile: SmtpSendProfile | null,
+    label: string,
+  ): Promise<{ ok: boolean; message: string; details?: string }> {
+    if (!profile) {
+      return { ok: false, message: `${label} non configuré.` };
+    }
+    try {
+      const transport = nodemailer.createTransport({
+        host: profile.host,
+        port: profile.port,
+        secure: profile.secure ?? false,
+        auth: {
+          user: profile.user,
+          pass: profile.pass,
+        },
+        connectionTimeout: 5000,
+        greetingTimeout: 5000,
+        socketTimeout: 5000,
+      });
+      await transport.verify();
+      return {
+        ok: true,
+        message: `${label} configuré et vérifié (${profile.host}:${profile.port}).`, 
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        message: `${label} non accessible.`,
+        details: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }
+
+  private async probeSendgridApiKey(
+    apiKey: string,
+  ): Promise<{ ok: boolean; message: string; details?: string }> {
+    try {
+      const res = await fetch('https://api.sendgrid.com/v3/user/account', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${apiKey.trim()}`,
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+      const data = (await res.json().catch(() => ({}))) as { message?: string };
+      if (!res.ok) {
+        return {
+          ok: false,
+          message: 'SendGrid non valide.',
+          details: data.message ?? `SendGrid HTTP ${res.status}`,
+        };
+      }
+      return { ok: true, message: 'SendGrid configuré et valide.' };
+    } catch (e) {
+      return {
+        ok: false,
+        message: 'SendGrid non accessible.',
+        details: e instanceof Error ? e.message : String(e),
+      };
+    }
   }
 
   private async isResendConfigured(): Promise<boolean> {

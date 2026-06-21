@@ -18,6 +18,31 @@ export function isTelegramBotConfigured(env: NodeJS.ProcessEnv): boolean {
   return readTelegramBotConfig(env) != null;
 }
 
+export async function probeTelegramBotApi(args: {
+  config: TelegramBotConfig;
+}): Promise<{ ok: boolean; error?: string }> {
+  const url = `${args.config.apiBaseUrl}/bot${args.config.botToken}/getMe`;
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      description?: string;
+    };
+    if (!res.ok || data.ok === false) {
+      return {
+        ok: false,
+        error: data.description ?? `Telegram HTTP ${res.status}`,
+      };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** Envoie un message via l’API Bot Telegram (sendMessage). */
 export async function sendTelegramBotMessage(args: {
   config: TelegramBotConfig;
