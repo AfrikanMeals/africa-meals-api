@@ -2,7 +2,6 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Trim } from 'class-sanitizer';
 import {
   IsEmail,
-  IsEnum,
   IsIn,
   IsNotEmpty,
   IsOptional,
@@ -33,42 +32,42 @@ export class RemoveFcmTokenDto {
 }
 
 export class CheckAccountDto {
-  @ApiProperty({ enum: ['email'], example: 'email' })
+  @ApiProperty({ enum: ['email', 'phoneNumber'], example: 'email' })
   @IsNotEmpty()
   @Trim()
-  @IsEnum(['email'])
+  @IsIn(['email', 'phoneNumber'])
   source: 'email' | 'phoneNumber' | 'googleId' | 'Idfacebook';
 
   @ApiPropertyOptional({ format: 'email', example: 'user@example.com' })
+  @ValidateIf((o) => o.source === 'email')
   @IsNotEmpty()
   @IsEmail()
   @Trim()
-  @ValidateIf((o) => o.registrationSource === 'email')
-  email: string;
+  email?: string;
 
   @ApiPropertyOptional({
     format: 'tel',
     example: '+14165551234',
     description: 'Numéro canadien',
   })
+  @ValidateIf((o) => o.source === 'phoneNumber')
   @IsNotEmpty()
   @Trim()
   @IsPhoneNumber('CN', {
     message: 'Please enter a valid Canadian phone number.',
   })
-  @ValidateIf((o) => o.registrationSource === 'phone')
-  phoneNumber: string;
+  phoneNumber?: string;
 
   @ApiPropertyOptional()
+  @ValidateIf((o) => o.source === 'facebookId')
   @IsNotEmpty()
   @Trim()
-  @ValidateIf((o) => o.registrationSource === 'facebookId')
   facebookId?: string;
 
   @ApiPropertyOptional()
+  @ValidateIf((o) => o.source === 'googleId')
   @IsNotEmpty()
   @Trim()
-  @ValidateIf((o) => o.registrationSource === 'googleId')
   googleId?: string;
 }
 
