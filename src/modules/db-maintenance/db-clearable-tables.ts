@@ -8,7 +8,8 @@ export type DbClearableTableCategory =
   | 'billing'
   | 'platform'
   | 'support'
-  | 'recommendations';
+  | 'recommendations'
+  | 'websockets';
 
 export type DbClearableTableDef = {
   /** Identifiant envoyé par le client (stable). */
@@ -704,6 +705,20 @@ export const DB_CLEARABLE_TABLES: readonly DbClearableTableDef[] = [
     labelFr: 'Articles blog',
     labelEn: 'Blog articles',
     category: 'marketing',
+  },
+  {
+    key: 'chat_conversations',
+    collection: 'chat_conversations',
+    labelFr: 'Conversations chat (WebSocket)',
+    labelEn: 'Chat conversations (WebSocket)',
+    category: 'websockets',
+  },
+  {
+    key: 'chat_messages',
+    collection: 'chat_messages',
+    labelFr: 'Messages chat (WebSocket)',
+    labelEn: 'Chat messages (WebSocket)',
+    category: 'websockets',
   },
 ] as const;
 

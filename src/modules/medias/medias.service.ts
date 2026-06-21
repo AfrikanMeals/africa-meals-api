@@ -263,10 +263,13 @@ export class MediasService {
     return await this.resolveUploadPublicUrl(result);
   }
 
-  async delete(pathOrUrl: string) {
+  async delete(pathOrUrl: string): Promise<void> {
+    const target = pathOrUrl?.trim();
+    if (!target) return;
+
     try {
-      if (pathOrUrl.includes('/medias/public/')) {
-        const objectPath = extractObjectPath(pathOrUrl);
+      if (target.includes('/medias/public/')) {
+        const objectPath = extractObjectPath(target);
         const settings = await this.storageSettings.getPublicSettings();
         const engines = this.engineFactory.enginesToTryForRead(
           settings.storageEngine,
@@ -282,9 +285,12 @@ export class MediasService {
         }
         return;
       }
-      const engine = this.engineFactory.resolveForDelete(pathOrUrl);
-      await engine.delete(pathOrUrl);
+      const engine = this.engineFactory.resolveForDelete(target);
+      await engine.delete(target);
     } catch (e) {
+      if (isStorageObjectNotFoundError(e)) {
+        return;
+      }
       console.error('MediasService.delete', e);
       throw e;
     }
