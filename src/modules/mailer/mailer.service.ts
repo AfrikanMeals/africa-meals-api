@@ -1,5 +1,4 @@
 import {
-  BadGatewayException,
   Inject,
   Injectable,
   Logger,
@@ -7,7 +6,9 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { EmailParams, MailerSend, Recipient, Sender } from 'mailersend';
 import * as nodemailer from 'nodemailer';
+import type { EmailAppModuleId } from '@modules/platform-channels/email-module.registry';
 import { SendMailDto } from './dto/mailer.dto';
+import { EmailDispatchService } from './email-dispatch.service';
 import { EmailTemplateService } from './email-template.service';
 
 export type MailAttachment = {
@@ -29,6 +30,8 @@ export type SendSimpleMailDto = {
   attachments?: MailAttachment[];
   /** Préfixe de logs (ex. vendor-ops-report-manual). */
   logContext?: string;
+  /** Module applicatif pour la résolution du moteur e-mail. */
+  emailModule?: EmailAppModuleId;
   /** Bannière hero sous l'en-tête (illustration IA onboarding, etc.). */
   heroImageUrl?: string;
   heroImageAlt?: string;
@@ -53,6 +56,7 @@ export class MailerService {
     @Inject('MAILER') private readonly _mailer: MailerSend,
     private readonly _configService: ConfigService,
     private readonly _emailTemplate: EmailTemplateService,
+    private readonly _emailDispatch: EmailDispatchService,
   ) {}
 
   private prepareHtml(html: string, subject: string, args?: Pick<SendSimpleMailDto, 'heroImageUrl' | 'heroImageAlt'>): string {
@@ -65,11 +69,6 @@ export class MailerService {
       heroImageUrl: args?.heroImageUrl,
       heroImageAlt: args?.heroImageAlt,
     });
-  }
-
-  /** Gmail / SMTP (voir docs MAIL_SETUP.md) — prioritaire sur MailerSend pour les e-mails simples. */
-  private smtpConfigured(): boolean {
-    return this.readDefaultSmtpProfile() != null;
   }
 
   /** Profil `AD_SMTP_*` pour les e-mails marketing / notifications ads. */
@@ -96,26 +95,6 @@ export class MailerService {
       this._configService.get<string>('AD_SMTP_FROM_NAME')?.trim() ||
       this._configService.get<string>('APP_NAME')?.trim() ||
       'Wise Eat';
-    return { host, port, user, pass, from, fromDisplayName };
-  }
-
-  private readDefaultSmtpProfile(): SmtpSendProfile | null {
-    const user = this._configService.get<string>('SMTP_USER')?.trim() ?? '';
-    const passRaw =
-      this._configService.get<string>('SMTP_APP_PASSWORD')?.trim() ||
-      this._configService.get<string>('SMTP_PASS')?.trim() ||
-      '';
-    const pass = passRaw.replace(/\s/g, '');
-    if (!user || !pass) return null;
-    const from =
-      this._configService.get<string>('SMTP_FROM')?.trim() || user;
-    const host =
-      this._configService.get<string>('SMTP_HOST')?.trim() || 'smtp.gmail.com';
-    const portRaw =
-      this._configService.get<string>('SMTP_PORT')?.trim() || '587';
-    const port = parseInt(portRaw, 10) || 587;
-    const fromDisplayName =
-      this._configService.get<string>('APP_NAME')?.trim() || 'Wise Eat';
     return { host, port, user, pass, from, fromDisplayName };
   }
 
@@ -191,122 +170,52 @@ export class MailerService {
    */
   async sendAdNotificationEmail(args: SendSimpleMailDto): Promise<void> {
     const profile = this.readAdNotificationSmtpProfile();
-    if (!profile) {
-      throw new BadGatewayException(
-        'ad_email_not_configured — AD_SMTP_USER et AD_SMTP_APP_PASSWORD requis',
-      );
-    }
     const prepared: SendSimpleMailDto = {
       ...args,
       html: this.prepareHtml(args.html, args.subject, args),
-      replyTo: args.replyTo ?? profile.from,
-      replyToName: args.replyToName ?? profile.fromDisplayName,
+      replyTo: args.replyTo ?? profile?.from,
+      replyToName: args.replyToName ?? profile?.fromDisplayName,
     };
-    try {
-      await this.sendSimpleSmtp(prepared, profile);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this._logger.error(`AD SMTP send failed: ${msg}`);
-      throw new BadGatewayException(`email_send_failed — ${msg}`);
+
+    if (profile) {
+      try {
+        await this.sendSimpleSmtp(prepared, profile);
+        return;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this._logger.warn(
+          `AD SMTP en échec, bascule vers le dispatcher Ads: ${msg}`,
+        );
+      }
     }
+
+    await this._emailDispatch.sendSimple({
+      ...prepared,
+      logContext: args.logContext,
+      emailModule: 'ads',
+    });
   }
 
-  /** E-mail HTML/text sans template (ex. reset password, test). */
+  /** E-mail HTML/text sans template — dispatcher multi-moteurs avec bascule. */
   async sendSimple(args: SendSimpleMailDto) {
-    const { logContext, ...mailArgs } = args;
-    const prepared: SendSimpleMailDto = {
+    const { logContext, emailModule, heroImageUrl, heroImageAlt, ...mailArgs } =
+      args;
+    const prepared = {
       ...mailArgs,
-      html: this.prepareHtml(mailArgs.html, mailArgs.subject, mailArgs),
+      logContext,
+      emailModule,
+      html: this.prepareHtml(mailArgs.html, mailArgs.subject, {
+        heroImageUrl,
+        heroImageAlt,
+      }),
     };
-    const ccList =
-      prepared.cc?.map((e) => e.trim()).filter(Boolean) ?? [];
+    const ccList = prepared.cc?.map((e) => e.trim()).filter(Boolean) ?? [];
     if (logContext) {
-      const ccPart =
-        ccList.length > 0 ? ` cc=${ccList.join(', ')}` : '';
+      const ccPart = ccList.length > 0 ? ` cc=${ccList.join(', ')}` : '';
       this._logger.log(
         `[${logContext}] envoi → to=${prepared.to}${ccPart} subject="${prepared.subject}"`,
       );
     }
-    const smtpProfile = this.readDefaultSmtpProfile();
-    if (smtpProfile) {
-      try {
-        await this.sendSimpleSmtp(prepared, smtpProfile);
-        if (logContext) {
-          const ccPart =
-            ccList.length > 0 ? ` cc=${ccList.join(', ')}` : '';
-          this._logger.log(
-            `[${logContext}] envoyé (SMTP) → to=${prepared.to}${ccPart} from=${smtpProfile.from}`,
-          );
-        }
-        return;
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this._logger.error(
-          logContext
-            ? `[${logContext}] SMTP échec → to=${prepared.to}: ${msg}`
-            : `SMTP sendSimple failed: ${msg}`,
-        );
-        throw new BadGatewayException(`email_send_failed — ${msg}`);
-      }
-    }
-
-    const apiKey = this._configService.get<string>('MAILER_API_KEY')?.trim();
-    const senderEmail = this._configService
-      .get<string>('MAILER_SENDER')
-      ?.trim();
-    if (!apiKey) {
-      throw new BadGatewayException(
-        'email_not_configured — SMTP_USER + SMTP_APP_PASSWORD ou MAILER_API_KEY + MAILER_SENDER',
-      );
-    }
-    if (!senderEmail) {
-      throw new BadGatewayException(
-        'email_not_configured — MAILER_SENDER requis (expéditeur MailerSend vérifié)',
-      );
-    }
-
-    const appName = this._configService.get<string>('APP_NAME') ?? 'App';
-    const sentFrom = new Sender(senderEmail, appName);
-    const recipients = [new Recipient(prepared.to, prepared.toName ?? prepared.to)];
-    const ccRecipients = ccList.map((email) => new Recipient(email, email));
-    const paramsBuilder = new EmailParams()
-      .setFrom(sentFrom)
-      .setTo(recipients)
-      .setReplyTo(
-        args.replyTo?.trim()
-          ? new Sender(
-              args.replyTo.trim(),
-              args.replyToName?.trim() || args.replyTo.trim(),
-            )
-          : sentFrom,
-      )
-      .setSubject(prepared.subject)
-      .setHtml(prepared.html);
-    if (ccRecipients.length > 0) {
-      paramsBuilder.setCc(ccRecipients);
-    }
-    if (prepared.text?.trim()) {
-      paramsBuilder.setText(prepared.text);
-    }
-
-    try {
-      const res = await this._mailer.email.send(paramsBuilder);
-      if (logContext) {
-        const ccPart =
-          ccList.length > 0 ? ` cc=${ccList.join(', ')}` : '';
-        this._logger.log(
-          `[${logContext}] envoyé (MailerSend) → to=${prepared.to}${ccPart} from=${senderEmail}`,
-        );
-      }
-      return res;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this._logger.error(
-        logContext
-          ? `[${logContext}] MailerSend échec → to=${prepared.to}: ${msg}`
-          : `MailerSend sendSimple failed: ${msg}`,
-      );
-      throw new BadGatewayException(`email_send_failed — ${msg}`);
-    }
+    await this._emailDispatch.sendSimple(prepared);
   }
 }

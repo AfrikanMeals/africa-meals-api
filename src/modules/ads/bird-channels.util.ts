@@ -8,6 +8,7 @@ export type BirdConfig = {
   apiBaseUrl: string;
   smsChannelId?: string;
   whatsappChannelId?: string;
+  emailChannelId?: string;
 };
 
 export type BirdChannelProbeResult = {
@@ -45,6 +46,10 @@ export function readBirdConfig(env: NodeJS.ProcessEnv): BirdConfig | null {
     env.BIRD_WHATSAPP_CHANNEL_ID?.trim() ||
     env.BIRD_WHATSAPP_CHANNEL?.trim() ||
     '';
+  const emailChannelId =
+    env.BIRD_EMAIL_CHANNEL_ID?.trim() ||
+    env.BIRD_EMAIL_CHANNEL?.trim() ||
+    '';
 
   return {
     accessKey,
@@ -52,6 +57,7 @@ export function readBirdConfig(env: NodeJS.ProcessEnv): BirdConfig | null {
     apiBaseUrl: birdApiBaseUrl(env),
     smsChannelId: smsChannelId || undefined,
     whatsappChannelId: whatsappChannelId || undefined,
+    emailChannelId: emailChannelId || undefined,
   };
 }
 
@@ -66,6 +72,12 @@ export function readBirdWhatsAppConfig(
 ): BirdConfig | null {
   const config = readBirdConfig(env);
   if (!config?.whatsappChannelId) return null;
+  return config;
+}
+
+export function readBirdEmailConfig(env: NodeJS.ProcessEnv): BirdConfig | null {
+  const config = readBirdConfig(env);
+  if (!config?.emailChannelId) return null;
   return config;
 }
 
@@ -290,6 +302,39 @@ export async function sendBirdWhatsAppTemplateMessage(args: {
         version: args.version,
         locale: args.locale,
         ...(args.parameters.length > 0 ? { parameters: args.parameters } : {}),
+      },
+    },
+  });
+}
+
+export async function sendBirdEmailMessage(args: {
+  config: BirdConfig;
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+}): Promise<{ messageId: string | null }> {
+  const channelId = args.config.emailChannelId;
+  if (!channelId) {
+    throw new Error('Email: BIRD_EMAIL_CHANNEL_ID requis');
+  }
+  const text =
+    args.text?.trim() ||
+    args.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  return postBirdChannelMessage({
+    config: args.config,
+    channelId,
+    payload: {
+      receiver: {
+        contacts: [{ identifierValue: args.to.trim() }],
+      },
+      body: {
+        type: 'html',
+        html: {
+          metadata: { subject: args.subject.slice(0, 998) },
+          html: args.html,
+          text: text.slice(0, 512_000),
+        },
       },
     },
   });

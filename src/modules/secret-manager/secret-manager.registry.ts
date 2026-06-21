@@ -113,6 +113,18 @@ export const API_SECRET_REGISTRY: SecretKeyDefinition[] = [
     category: 'E-mail',
   },
   {
+    envVarName: 'RESEND_API_KEY',
+    label: 'Resend — clé API',
+    description: 'Clé API Resend pour l’envoi d’e-mails transactionnels.',
+    category: 'E-mail',
+  },
+  {
+    envVarName: 'SENDGRID_API_KEY',
+    label: 'SendGrid — clé API',
+    description: 'Clé API SendGrid pour l’envoi d’e-mails transactionnels.',
+    category: 'E-mail',
+  },
+  {
     envVarName: 'MAPBOX_ACCESS_TOKEN',
     label: 'Mapbox — token',
     description: 'Token d’accès Mapbox pour la géolocalisation.',

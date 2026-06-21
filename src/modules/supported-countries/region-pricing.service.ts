@@ -107,7 +107,7 @@ export class RegionPricingService {
   async saveAdDiffusionPricing(
     countryCode: string,
     dto: UpdateRegionAdDiffusionPricingDto,
-  ): Promise<RegionAdDiffusionPricingPayload> {
+  ): Promise<ReturnType<RegionPricingService['getLegacyAdDiffusionPricingPayload']>> {
     const code = normalizeRegionCode(countryCode);
     if (!code) throw new BadRequestException('invalid_country_code');
     const current = await this.getAdDiffusionPricing(code);
@@ -128,7 +128,7 @@ export class RegionPricingService {
         { $set: { adDiffusionPricing: toRegionAdDiffusionDoc(next) } },
       )
       .exec();
-    return this.getAdDiffusionPricing(code);
+    return this.getLegacyAdDiffusionPricingPayload(code);
   }
 
   async getAdNotificationPricing(
@@ -153,7 +153,7 @@ export class RegionPricingService {
   async saveAdNotificationPricing(
     countryCode: string,
     dto: UpdateRegionAdNotificationPricingDto,
-  ): Promise<RegionAdNotificationPricingPayload> {
+  ): Promise<ReturnType<RegionPricingService['getLegacyAdNotificationPricingPayload']>> {
     const code = normalizeRegionCode(countryCode);
     if (!code) throw new BadRequestException('invalid_country_code');
     const current = await this.getAdNotificationPricing(code);
@@ -197,7 +197,7 @@ export class RegionPricingService {
         { $set: { adNotificationPricing: toRegionAdNotificationDoc(next) } },
       )
       .exec();
-    return this.getAdNotificationPricing(code);
+    return this.getLegacyAdNotificationPricingPayload(code);
   }
 
   async getVendorSmsPricing(
@@ -283,7 +283,7 @@ export class RegionPricingService {
       campaignActionCad: resolved.campaignActionCad,
       conversionCad: resolved.conversionCad,
       minimumBudgetCad: resolved.minimumBudgetCad,
-      updatedAt: null as string | null,
+      updatedAt: null,
       regionCode: resolved.regionCode,
     };
   }

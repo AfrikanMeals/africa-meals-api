@@ -15,6 +15,7 @@ import { ContactController } from './contact.controller';
 import { NewsletterController } from './newsletter.controller';
 import { ContactSubmissionService } from './contact-submission.service';
 import { EmailAiHeroImageService } from './email-ai-hero-image.service';
+import { EmailDispatchService } from './email-dispatch.service';
 import { EmailTemplateService } from './email-template.service';
 import { MailerService } from './mailer.service';
 import { NewsletterSubscriptionService } from './newsletter-subscription.service';
@@ -46,6 +47,7 @@ import { RecaptchaEnterpriseService } from './recaptcha-enterprise.service';
     },
     EmailTemplateService,
     EmailAiHeroImageService,
+    EmailDispatchService,
     MailerService,
     ContactSubmissionService,
     NewsletterSubscriptionService,
@@ -53,6 +55,7 @@ import { RecaptchaEnterpriseService } from './recaptcha-enterprise.service';
   ],
   exports: [
     MailerService,
+    EmailDispatchService,
     EmailTemplateService,
     EmailAiHeroImageService,
     ContactSubmissionService,

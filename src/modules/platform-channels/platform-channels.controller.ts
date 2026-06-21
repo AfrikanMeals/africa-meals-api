@@ -1,8 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  Param,
   Patch,
+  Post,
   Req,
   UseGuards,
   UsePipes,
@@ -14,6 +17,10 @@ import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { UpdateWhatsappChannelSettingsDto } from './dto/update-whatsapp-channel-settings.dto';
 import { UpdateTelegramChannelSettingsDto } from './dto/update-telegram-channel-settings.dto';
+import {
+  UpdateEmailChannelSettingsDto,
+  UpsertPlatformSmtpConfigDto,
+} from './dto/email-channel-settings.dto';
 import { PlatformChannelsService } from './platform-channels.service';
 
 @ApiTags('Admin — Platform channels')
@@ -59,5 +66,51 @@ export class PlatformChannelsController {
     @Body() dto: UpdateTelegramChannelSettingsDto,
   ) {
     return this.channels.updateTelegramSettings(req.user as UserModel, dto);
+  }
+
+  @Get('email')
+  @ApiOperation({
+    summary:
+      'Paramètres Email — moteur d’envoi et configurations SMTP additionnelles',
+  })
+  getEmailSettings(@Req() req: Request) {
+    return this.channels.getEmailSettings(req.user as UserModel);
+  }
+
+  @Patch('email')
+  @ApiOperation({ summary: 'Met à jour le moteur Email plateforme' })
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  updateEmailSettings(
+    @Req() req: Request,
+    @Body() dto: UpdateEmailChannelSettingsDto,
+  ) {
+    return this.channels.updateEmailSettings(req.user as UserModel, dto);
+  }
+
+  @Post('email/smtp-configs')
+  @ApiOperation({ summary: 'Ajoute une configuration SMTP additionnelle' })
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  createSmtpConfig(
+    @Req() req: Request,
+    @Body() dto: UpsertPlatformSmtpConfigDto,
+  ) {
+    return this.channels.createSmtpConfig(req.user as UserModel, dto);
+  }
+
+  @Patch('email/smtp-configs/:configId')
+  @ApiOperation({ summary: 'Met à jour une configuration SMTP additionnelle' })
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  updateSmtpConfig(
+    @Req() req: Request,
+    @Param('configId') configId: string,
+    @Body() dto: UpsertPlatformSmtpConfigDto,
+  ) {
+    return this.channels.updateSmtpConfig(req.user as UserModel, configId, dto);
+  }
+
+  @Delete('email/smtp-configs/:configId')
+  @ApiOperation({ summary: 'Supprime une configuration SMTP additionnelle' })
+  deleteSmtpConfig(@Req() req: Request, @Param('configId') configId: string) {
+    return this.channels.deleteSmtpConfig(req.user as UserModel, configId);
   }
 }
