@@ -130,6 +130,57 @@ export class StoreService {
     }
   }
 
+  /**
+   * Met à jour l’adresse boutique du store, ou en crée une nouvelle si la référence
+   * est absente ou pointe vers un document supprimé.
+   */
+  private async _upsertVendorStoreShopAddress(
+    storeId: unknown,
+    addressDto: CreateAddressDto,
+    owner: UserModel,
+  ): Promise<Record<string, unknown> | null> {
+    const row = await this._storeModel
+      .findById(storeId)
+      .select('address')
+      .lean()
+      .exec();
+    const refId = row?.address ? String(row.address) : null;
+
+    if (refId) {
+      const existing = await this._addressModel.findById(refId).exec();
+      if (existing) {
+        await this._addressesService.patchById(refId, {
+          ...addressDto,
+          latitude: addressDto.latitude,
+          longitude: addressDto.longitude,
+        });
+        return (await this._addressModel.findById(refId).lean().exec()) as Record<
+          string,
+          unknown
+        > | null;
+      }
+    }
+
+    const created = await this._addressesService.create(
+      {
+        ...addressDto,
+        type: AddressTypeEnum.SHOP,
+      },
+      owner,
+    );
+    if (!created?._id) {
+      throw new ConflictException('address_not_found');
+    }
+    await this._storeModel.updateOne(
+      { _id: storeId },
+      { $set: { address: created._id } },
+    );
+    return (await this._addressModel
+      .findById(created._id)
+      .lean()
+      .exec()) as Record<string, unknown> | null;
+  }
+
   /** Devise imposée par le pays sélectionné (régions actives). */
   private async _resolveCurrencyForCountryCode(
     countryCode: string,
@@ -1644,15 +1695,11 @@ export class StoreService {
     if (dup) {
       throw new ConflictException('store_already_exists');
     }
-    const addrDoc = store.address as AddressModel & {
-      _id: { toString(): string };
-    };
-    const addrId = addrDoc._id.toString();
-    await this._addressesService.patchById(addrId, {
-      ...args.address,
-      latitude: args.address.latitude,
-      longitude: args.address.longitude,
-    });
+    await this._upsertVendorStoreShopAddress(
+      store._id,
+      args.address,
+      fullUser,
+    );
 
     const wasRevision = store.status === StoreStatusEnum.REVISION;
     const shippingZones = args.supportsShipping
@@ -3101,9 +3148,6 @@ export class StoreService {
     const addrDoc = store.address as AddressModel & {
       _id: { toString(): string };
     };
-    if (!addrDoc?._id) {
-      throw new BadRequestException('store_address_missing');
-    }
     const addrLean = addrDoc
       ? (addrDoc as unknown as Record<string, unknown>)
       : null;
@@ -3118,12 +3162,11 @@ export class StoreService {
         }
       }
     }
-    const addrId = addrDoc._id.toString();
-    await this._addressesService.patchById(addrId, {
-      ...args.address,
-      latitude: args.address.latitude,
-      longitude: args.address.longitude,
-    });
+    await this._upsertVendorStoreShopAddress(
+      store._id,
+      args.address,
+      fullOwner,
+    );
     const shippingZones = args.supportsShipping
       ? args.shippingZones ?? store.shippingZones ?? []
       : [];
