@@ -272,8 +272,11 @@ export class AdsController {
   @UseGuards(JwtGuard)
   @ApiBearerAuth('bearer')
   @ApiOperation({ summary: 'Lire le barème Ads (admin et boutique)' })
-  async getManagePricing(@Req() req: Request) {
-    return this.adsService.getPricing(req.user as UserModel);
+  async getManagePricing(
+    @Req() req: Request,
+    @Query('countryCode') countryCode?: string,
+  ) {
+    return this.adsService.getPricing(req.user as UserModel, countryCode);
   }
 
   @Put('manage/pricing')
@@ -284,8 +287,13 @@ export class AdsController {
   async updateManagePricing(
     @Req() req: Request,
     @Body() body: UpdateAdPricingDto,
+    @Query('countryCode') countryCode?: string,
   ) {
-    return this.adsService.updatePricing(req.user as UserModel, body);
+    return this.adsService.updatePricing(
+      req.user as UserModel,
+      body,
+      countryCode,
+    );
   }
 
   @Get('manage/notification-pricing')
@@ -295,8 +303,14 @@ export class AdsController {
     summary:
       'Barème + canaux disponibles notifications Ads (lecture boutique / admin)',
   })
-  async getManageNotificationPricing(@Req() req: Request) {
-    return this.adsService.getNotificationPricing(req.user as UserModel);
+  async getManageNotificationPricing(
+    @Req() req: Request,
+    @Query('countryCode') countryCode?: string,
+  ) {
+    return this.adsService.getNotificationPricing(
+      req.user as UserModel,
+      countryCode,
+    );
   }
 
   @Put('manage/notification-pricing')
@@ -310,10 +324,12 @@ export class AdsController {
   async updateManageNotificationPricing(
     @Req() req: Request,
     @Body() body: UpdateAdNotificationPricingDto,
+    @Query('countryCode') countryCode?: string,
   ) {
     return this.adsService.updateNotificationPricing(
       req.user as UserModel,
       body,
+      countryCode,
     );
   }
 

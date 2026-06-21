@@ -56,9 +56,12 @@ export class VendorNotificationAdminController {
   }
 
   @Get('pricing')
-  async getPricing(@Req() req: Request) {
+  async getPricing(
+    @Req() req: Request,
+    @Query('countryCode') countryCode?: string,
+  ) {
     this.assertAdmin(req.user as UserModel);
-    return this.dispatch.getPricing();
+    return this.dispatch.getPricing(countryCode);
   }
 
   @Patch('pricing')
@@ -66,9 +69,10 @@ export class VendorNotificationAdminController {
     @Req() req: Request,
     @Body(new ValidationPipe({ transform: true, whitelist: true }))
     body: UpdateVendorNotificationPricingDto,
+    @Query('countryCode') countryCode?: string,
   ) {
     this.assertAdmin(req.user as UserModel);
-    return this.dispatch.updatePricing(body);
+    return this.dispatch.updatePricing(body, countryCode);
   }
 
   @Get('monthly-charges')

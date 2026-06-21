@@ -34,6 +34,7 @@ import { StoreAccessService } from '@modules/teams/store-access.service';
 import { storePermissionGranted } from '../../common/permissions/store-permissions';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
+import { RegionPricingService } from '@modules/supported-countries/region-pricing.service';
 import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
 import {
   AdMarketingEntityStatus,
@@ -468,6 +469,9 @@ export class AdsService implements OnModuleInit {
 
   @Inject(SupportedCountriesService)
   private readonly _supportedCountries: SupportedCountriesService;
+
+  @Inject(RegionPricingService)
+  private readonly _regionPricing: RegionPricingService;
 
   @Inject(VendorStatusEmailService)
   private readonly _vendorStatusEmail: VendorStatusEmailService;
@@ -1111,57 +1115,64 @@ export class AdsService implements OnModuleInit {
     return doc as unknown as AdPricingSettingsModel;
   }
 
-  async getPricing(user: UserModel): Promise<AdPricingPayload> {
+  async getPricing(
+    user: UserModel,
+    countryCode?: string | null,
+  ): Promise<AdPricingPayload> {
     this.assertVendorOrAdmin(user);
-    const doc = await this._ensurePricingDoc();
-    return this._toPricingPayload(doc);
+    return this._regionPricing.getLegacyAdDiffusionPricingPayload(countryCode);
   }
 
   async updatePricing(
     user: UserModel,
     dto: UpdateAdPricingDto,
+    countryCode?: string | null,
   ): Promise<AdPricingPayload> {
     this.assertAdmin(user);
-    const current = await this._ensurePricingDoc();
-    const nextCurrency = String(dto.currency ?? current.currency ?? 'CAD')
-      .trim()
-      .toUpperCase();
-    const cpmCad = Number(dto.cpmCad ?? current.cpmCad ?? 0);
-    const cpcCad = Number(dto.cpcCad ?? current.cpcCad ?? 0);
-    const campaignCpmCad = Number(
-      dto.campaignCpmCad ?? current.campaignCpmCad ?? 0,
-    );
-    const campaignCpcCad = Number(
-      dto.campaignCpcCad ?? current.campaignCpcCad ?? 0,
-    );
-    const campaignActionCad = Number(
-      dto.campaignActionCad ?? current.campaignActionCad ?? 0,
-    );
-    const conversionCad = Number(
-      dto.conversionCad ?? current.conversionCad ?? 0,
-    );
-    const minimumBudgetCad = Number(
-      dto.minimumBudgetCad ?? current.minimumBudgetCad ?? 0,
-    );
-    const updated = await this._adPricingModel
-      .findOneAndUpdate(
-        { key: ADS_PRICING_KEY },
-        {
-          $set: {
-            currency: nextCurrency || 'CAD',
-            cpmCad: cpmCad < 0 ? 0 : cpmCad,
-            cpcCad: cpcCad < 0 ? 0 : cpcCad,
-            campaignCpmCad: campaignCpmCad < 0 ? 0 : campaignCpmCad,
-            campaignCpcCad: campaignCpcCad < 0 ? 0 : campaignCpcCad,
-            campaignActionCad: campaignActionCad < 0 ? 0 : campaignActionCad,
-            conversionCad: conversionCad < 0 ? 0 : conversionCad,
-            minimumBudgetCad: minimumBudgetCad < 0 ? 0 : minimumBudgetCad,
-          },
-        },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
-      )
+    const code = await this._regionPricing.resolveRegionCode(countryCode);
+    return this._regionPricing.saveAdDiffusionPricing(code, dto);
+  }
+
+  private async _resolveBillingRegionForAd(
+    adId: Types.ObjectId,
+  ): Promise<string> {
+    const ad = await this.adModel
+      .findById(adId)
+      .select('region store')
+      .lean()
       .exec();
-    return this._toPricingPayload(updated as unknown as AdPricingSettingsModel);
+    const fromAd = normalizeCountryCode(
+      (ad as { region?: string } | null)?.region,
+    );
+    if (fromAd) return fromAd;
+    const storeRef = (ad as { store?: unknown } | null)?.store;
+    if (storeRef) {
+      const storeId = String(storeRef);
+      if (Types.ObjectId.isValid(storeId)) {
+        const fromStore = await this._resolveStoreRegionCode(storeId);
+        if (fromStore) return fromStore;
+      }
+    }
+    return this._regionPricing.resolveRegionCode();
+  }
+
+  private async _resolveBillingRegionForCampaign(
+    campaignId: Types.ObjectId,
+  ): Promise<string> {
+    const camp = await this._adCampaignModel
+      .findById(campaignId)
+      .select('store')
+      .lean()
+      .exec();
+    const storeRef = (camp as { store?: unknown } | null)?.store;
+    if (storeRef) {
+      const storeId = String(storeRef);
+      if (Types.ObjectId.isValid(storeId)) {
+        const fromStore = await this._resolveStoreRegionCode(storeId);
+        if (fromStore) return fromStore;
+      }
+    }
+    return this._regionPricing.resolveRegionCode();
   }
 
   private _toNotificationPricingPayload(
@@ -1230,95 +1241,20 @@ export class AdsService implements OnModuleInit {
 
   async getNotificationPricing(
     user: UserModel,
+    countryCode?: string | null,
   ): Promise<AdNotificationPricingPayload> {
     this.assertVendorOrAdmin(user);
-    const doc = await this._ensureNotificationPricingDoc();
-    const payload = this._toNotificationPricingPayload(doc);
-    const currency = await this._supportedCountries.getPrimaryBillingCurrency();
-    return { ...payload, currency };
+    return this._regionPricing.getLegacyAdNotificationPricingPayload(countryCode);
   }
 
   async updateNotificationPricing(
     user: UserModel,
     dto: UpdateAdNotificationPricingDto,
+    countryCode?: string | null,
   ): Promise<AdNotificationPricingPayload> {
     this.assertAdmin(user);
-    const current = await this._ensureNotificationPricingDoc();
-    const nextCurrency =
-      await this._supportedCountries.getPrimaryBillingCurrency();
-    const n = (key: keyof UpdateAdNotificationPricingDto, fallback: number) => {
-      const raw = dto[key];
-      const x = Number(raw ?? fallback);
-      return Number.isFinite(x) && x >= 0 ? x : 0;
-    };
-    const availDto = dto.availableChannels;
-    const currentAvail = parseAvailableChannelsFromDoc(
-      current as unknown as Record<string, unknown>,
-    );
-    const nextAvailableChannels = availDto
-      ? {
-          email: availDto.email ?? currentAvail.email,
-          push: availDto.push ?? currentAvail.push,
-          inApp: availDto.inApp ?? currentAvail.inApp,
-          sms: availDto.sms ?? currentAvail.sms,
-          whatsapp: availDto.whatsapp ?? currentAvail.whatsapp,
-        }
-      : currentAvail;
-    const updated = await this._adNotificationPricingModel
-      .findOneAndUpdate(
-        { key: AD_NOTIFICATION_PRICING_KEY },
-        {
-          $set: {
-            currency: nextCurrency || 'CAD',
-            availableChannels: nextAvailableChannels,
-            emailDeliveryCad: n('emailDeliveryCad', current.emailDeliveryCad),
-            emailInteractionCad: n(
-              'emailInteractionCad',
-              current.emailInteractionCad,
-            ),
-            emailConversionCad: n(
-              'emailConversionCad',
-              current.emailConversionCad,
-            ),
-            pushDeliveryCad: n('pushDeliveryCad', current.pushDeliveryCad),
-            pushInteractionCad: n(
-              'pushInteractionCad',
-              current.pushInteractionCad,
-            ),
-            pushConversionCad: n('pushConversionCad', current.pushConversionCad),
-            inAppDeliveryCad: n('inAppDeliveryCad', current.inAppDeliveryCad),
-            inAppInteractionCad: n(
-              'inAppInteractionCad',
-              current.inAppInteractionCad,
-            ),
-            inAppConversionCad: n(
-              'inAppConversionCad',
-              current.inAppConversionCad,
-            ),
-            smsDeliveryCad: n('smsDeliveryCad', current.smsDeliveryCad),
-            smsInteractionCad: n('smsInteractionCad', current.smsInteractionCad),
-            smsConversionCad: n('smsConversionCad', current.smsConversionCad),
-            whatsappDeliveryCad: n(
-              'whatsappDeliveryCad',
-              current.whatsappDeliveryCad,
-            ),
-            whatsappInteractionCad: n(
-              'whatsappInteractionCad',
-              current.whatsappInteractionCad,
-            ),
-            whatsappConversionCad: n(
-              'whatsappConversionCad',
-              current.whatsappConversionCad,
-            ),
-          },
-        },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
-      )
-      .exec();
-    const payload = this._toNotificationPricingPayload(
-      updated as unknown as AdNotificationPricingSettingsModel,
-    );
-    return { ...payload, currency: nextCurrency };
+    const code = await this._regionPricing.resolveRegionCode(countryCode);
+    return this._regionPricing.saveAdNotificationPricing(code, dto);
   }
 
   private _normalizeCampaignItems(items: CampaignItemDto[]): CampaignItemDto[] {
@@ -1595,7 +1531,11 @@ export class AdsService implements OnModuleInit {
   private async _finalizeCampaignBilling(
     campaignId: Types.ObjectId,
   ): Promise<void> {
-    const pricing = this._toPricingPayload(await this._ensurePricingDoc());
+    const billingRegion =
+      await this._resolveBillingRegionForCampaign(campaignId);
+    const pricing = await this._regionPricing.getLegacyAdDiffusionPricingPayload(
+      billingRegion,
+    );
     const metrics = await this._campaignBillingMetrics(campaignId);
     const displayAmount = this._campaignBillingAmount(pricing, metrics);
 
@@ -1612,9 +1552,10 @@ export class AdsService implements OnModuleInit {
     let notificationAmountCad = 0;
     let notificationBlock: Record<string, unknown> | null = null;
     if (addon.enabled) {
-      const notifPricing = this._toNotificationPricingPayload(
-        await this._ensureNotificationPricingDoc(),
-      );
+      const notifPricing =
+        await this._regionPricing.getLegacyAdNotificationPricingPayload(
+          billingRegion,
+        );
       const notifMetrics =
         await this._adNotifications.aggregateMetricsForCampaign(campaignId);
       notificationAmountCad = this._adNotifications.computeNotificationAmount(
@@ -1756,7 +1697,10 @@ export class AdsService implements OnModuleInit {
   }
 
   private async _finalizeAdBilling(adId: Types.ObjectId): Promise<void> {
-    const pricing = this._toPricingPayload(await this._ensurePricingDoc());
+    const billingRegion = await this._resolveBillingRegionForAd(adId);
+    const pricing = await this._regionPricing.getLegacyAdDiffusionPricingPayload(
+      billingRegion,
+    );
     const metrics = await this._adBillingMetrics(adId);
     const displayAmount = this._adBillingAmount(pricing, metrics);
 
@@ -1773,9 +1717,10 @@ export class AdsService implements OnModuleInit {
     let notificationAmountCad = 0;
     let notificationBlock: Record<string, unknown> | null = null;
     if (addon.enabled) {
-      const notifPricing = this._toNotificationPricingPayload(
-        await this._ensureNotificationPricingDoc(),
-      );
+      const notifPricing =
+        await this._regionPricing.getLegacyAdNotificationPricingPayload(
+          billingRegion,
+        );
       const notifMetrics =
         await this._adNotifications.aggregateMetricsForAd(adId);
       notificationAmountCad = this._adNotifications.computeNotificationAmount(

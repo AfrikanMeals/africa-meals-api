@@ -19,8 +19,14 @@ import {
   AdminRegionTaxesUpdateDto,
   RegionTaxEstimateQueryDto,
 } from './dto/region-taxes.dto';
+import {
+  UpdateRegionAdDiffusionPricingDto,
+  UpdateRegionAdNotificationPricingDto,
+  UpdateRegionVendorSmsPricingDto,
+} from './dto/region-pricing.dto';
 import type { RegionTaxModule } from './region-tax.constants';
 import { normalizeRegionTaxRules } from './region-tax.util';
+import { RegionPricingService } from './region-pricing.service';
 import { SupportedCountriesService } from './supported-countries.service';
 
 @ApiTags('supported-countries')
@@ -28,6 +34,7 @@ import { SupportedCountriesService } from './supported-countries.service';
 export class SupportedCountriesController {
   constructor(
     private readonly _supportedCountries: SupportedCountriesService,
+    private readonly _regionPricing: RegionPricingService,
     private readonly _storeAccess: StoreAccessService,
   ) {}
 
@@ -115,5 +122,95 @@ export class SupportedCountriesController {
       normalizeRegionTaxRules(body.taxes ?? []),
     );
     return { code: code.trim().toUpperCase(), taxes };
+  }
+
+  @Get('admin/:code/ad-diffusion-pricing')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async getAdDiffusionPricingForAdmin(
+    @Req() req: Request,
+    @Param('code') code: string,
+  ) {
+    await this._storeAccess.assertAdminPermission(
+      req.user as UserModel,
+      'admin.settings',
+    );
+    return this._regionPricing.getAdDiffusionPricing(code);
+  }
+
+  @Put('admin/:code/ad-diffusion-pricing')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async saveAdDiffusionPricingForAdmin(
+    @Req() req: Request,
+    @Param('code') code: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: UpdateRegionAdDiffusionPricingDto,
+  ) {
+    await this._storeAccess.assertAdminPermission(
+      req.user as UserModel,
+      'admin.settings',
+    );
+    return this._regionPricing.saveAdDiffusionPricing(code, body);
+  }
+
+  @Get('admin/:code/ad-notification-pricing')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async getAdNotificationPricingForAdmin(
+    @Req() req: Request,
+    @Param('code') code: string,
+  ) {
+    await this._storeAccess.assertAdminPermission(
+      req.user as UserModel,
+      'admin.settings',
+    );
+    return this._regionPricing.getAdNotificationPricing(code);
+  }
+
+  @Put('admin/:code/ad-notification-pricing')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async saveAdNotificationPricingForAdmin(
+    @Req() req: Request,
+    @Param('code') code: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: UpdateRegionAdNotificationPricingDto,
+  ) {
+    await this._storeAccess.assertAdminPermission(
+      req.user as UserModel,
+      'admin.settings',
+    );
+    return this._regionPricing.saveAdNotificationPricing(code, body);
+  }
+
+  @Get('admin/:code/vendor-sms-pricing')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async getVendorSmsPricingForAdmin(
+    @Req() req: Request,
+    @Param('code') code: string,
+  ) {
+    await this._storeAccess.assertAdminPermission(
+      req.user as UserModel,
+      'admin.settings',
+    );
+    return this._regionPricing.getVendorSmsPricing(code);
+  }
+
+  @Put('admin/:code/vendor-sms-pricing')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async saveVendorSmsPricingForAdmin(
+    @Req() req: Request,
+    @Param('code') code: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: UpdateRegionVendorSmsPricingDto,
+  ) {
+    await this._storeAccess.assertAdminPermission(
+      req.user as UserModel,
+      'admin.settings',
+    );
+    return this._regionPricing.saveVendorSmsPricing(code, body);
   }
 }

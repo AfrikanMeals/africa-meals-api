@@ -1,6 +1,7 @@
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { SmsModule } from '@modules/messaging/sms.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
+import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { TeamsModule } from '@modules/teams/teams.module';
 import { forwardRef, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -36,6 +37,7 @@ import { VendorNotificationStripeBillingService } from './vendor-notification-st
     MailerModule,
     SmsModule,
     NotificationsModule,
+    SupportedCountriesModule,
     forwardRef(() => TeamsModule),
     MongooseModule.forFeature([
       {

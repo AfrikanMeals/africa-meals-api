@@ -149,6 +149,12 @@ export const API_SECRET_REGISTRY: SecretKeyDefinition[] = [
     category: 'Messagerie',
   },
   {
+    envVarName: 'TELEGRAM_BOT_TOKEN',
+    label: 'Telegram — token bot',
+    description: 'Token Bot API Telegram (@BotFather).',
+    category: 'Messagerie',
+  },
+  {
     envVarName: 'AWS_SECRET_ACCESS_KEY',
     label: 'AWS — secret access key',
     description: 'Clé secrète AWS pour le stockage S3.',

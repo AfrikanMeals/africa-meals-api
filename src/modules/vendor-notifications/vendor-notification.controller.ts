@@ -95,7 +95,7 @@ export class VendorNotificationController {
     @Query('limit') limit?: string,
   ) {
     await this.prefs.getForStoreAsVendor(req.user as UserModel, storeId);
-    const pricing = await this.dispatch.getPricing();
+    const pricing = await this.dispatch.getPricingForStore(storeId);
     const billingSummary =
       await this.billing.getVendorSmsBillingSummary(storeId);
     const history = await this.billing.vendorSmsHistory({

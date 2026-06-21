@@ -5,7 +5,6 @@ import {
   sendBirdWhatsAppTextMessage,
 } from '@modules/ads/bird-channels.util';
 import {
-  readTelegramBotConfig,
   sendTelegramBotMessage,
 } from '@modules/messaging/telegram-bot.util';
 import { MaintenanceAlertSettingsDocument } from '@schemas/maintenance-alert-settings.schema';
@@ -126,7 +125,7 @@ export class MaintenanceAlertNotifierService {
   }
 
   private async sendTelegram(chatIds: string[], body: string): Promise<void> {
-    const config = readTelegramBotConfig(process.env);
+    const config = await this.platformChannels.getTelegramConfig();
     if (!config) {
       this.logger.warn('Maintenance Telegram: TELEGRAM_BOT_TOKEN manquant');
       return;

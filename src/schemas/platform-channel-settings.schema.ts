@@ -15,6 +15,9 @@ export class PlatformChannelSettingsModel {
 
   @Prop({ type: String, default: null, trim: true, name: 'bird_api_base_url' })
   birdApiBaseUrl?: string | null;
+
+  @Prop({ type: String, default: null, trim: true, name: 'telegram_api_base_url' })
+  telegramApiBaseUrl?: string | null;
 }
 
 export type PlatformChannelSettingsDocument =

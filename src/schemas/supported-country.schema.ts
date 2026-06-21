@@ -1,5 +1,13 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { BaseSchema } from './base.schema';
+import {
+  RegionAdDiffusionPricingModel,
+  RegionAdDiffusionPricingSchema,
+  RegionAdNotificationPricingModel,
+  RegionAdNotificationPricingSchema,
+  RegionVendorSmsPricingModel,
+  RegionVendorSmsPricingSchema,
+} from './region-pricing.schema';
 
 /** Règle de taxe régionale (par pays). */
 @Schema({ _id: false })
@@ -55,6 +63,27 @@ export class SupportedCountryModel extends BaseSchema {
 
   @Prop({ type: [RegionTaxRuleSchema], default: [] })
   taxes: RegionTaxRuleModel[];
+
+  @Prop({
+    type: RegionAdDiffusionPricingSchema,
+    default: null,
+    name: 'ad_diffusion_pricing',
+  })
+  adDiffusionPricing?: RegionAdDiffusionPricingModel | null;
+
+  @Prop({
+    type: RegionAdNotificationPricingSchema,
+    default: null,
+    name: 'ad_notification_pricing',
+  })
+  adNotificationPricing?: RegionAdNotificationPricingModel | null;
+
+  @Prop({
+    type: RegionVendorSmsPricingSchema,
+    default: null,
+    name: 'vendor_sms_pricing',
+  })
+  vendorSmsPricing?: RegionVendorSmsPricingModel | null;
 }
 
 export const SupportedCountrySchema = SchemaFactory.createForClass(

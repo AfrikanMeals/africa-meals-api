@@ -6,6 +6,8 @@ import {
   phoneToSmsE164,
 } from '@modules/ads/bird-channels.util';
 import { SmsDispatchService } from '@modules/messaging/sms-dispatch.service';
+import { RegionPricingService } from '@modules/supported-countries/region-pricing.service';
+import { countryCodeFromStoreRegion } from '@modules/supported-countries/region-tax.util';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -65,6 +67,7 @@ export class VendorNotificationDispatchService {
     @InjectModel(UserModel.name)
     private readonly userModel: Model<UserModel>,
     private readonly smsDispatch: SmsDispatchService,
+    private readonly regionPricing: RegionPricingService,
   ) {}
 
   async notifyStoreVendors(args: {
@@ -198,7 +201,7 @@ export class VendorNotificationDispatchService {
       args.category,
       'sms',
     );
-    const pricing = await this.getPricing();
+    const pricing = await this.getPricingForStore(sid);
     if (args.smsBody?.trim() && smsEnabledPref && pricing.smsEnabled) {
       void this.sendSmsToStore({
         storeId: sid,
@@ -392,7 +395,7 @@ export class VendorNotificationDispatchService {
     deliveredAt?: Date;
   }): Promise<void> {
     const deliveredAt = args.deliveredAt ?? new Date();
-    const pricing = await this.getPricing();
+    const pricing = await this.getPricingForStore(args.storeId);
     await this.deliveryModel.create({
       store: new Types.ObjectId(args.storeId),
       recipientUser:
@@ -417,47 +420,47 @@ export class VendorNotificationDispatchService {
     });
   }
 
-  async getPricing(): Promise<{
+  async getPricing(countryCode?: string | null): Promise<{
     currency: string;
     smsUnitCostCad: number;
     smsEnabled: boolean;
     billingCyclePeriod: VendorNotificationBillingCyclePeriodEnum;
+    regionCode?: string;
   }> {
-    const doc = await this.pricingModel.findOne({ key: 'default' }).lean().exec();
-    return {
-      currency: String(doc?.currency ?? 'CAD').trim() || 'CAD',
-      smsUnitCostCad: Number(doc?.smsUnitCostCad ?? 0.08) || 0,
-      smsEnabled: doc?.smsEnabled !== false,
-      billingCyclePeriod: normalizeBillingCyclePeriod(doc?.billingCyclePeriod),
-    };
+    return this.regionPricing.getLegacyVendorSmsPricingPayload(countryCode);
   }
 
-  async updatePricing(input: {
-    currency?: string;
-    smsUnitCostCad?: number;
-    smsEnabled?: boolean;
-    billingCyclePeriod?: VendorNotificationBillingCyclePeriodEnum;
-  }) {
-    const current = await this.getPricing();
-    const next = {
-      currency: input.currency?.trim() || current.currency,
-      smsUnitCostCad:
-        input.smsUnitCostCad != null
-          ? Math.max(0, Number(input.smsUnitCostCad) || 0)
-          : current.smsUnitCostCad,
-      smsEnabled: input.smsEnabled ?? current.smsEnabled,
-      billingCyclePeriod: input.billingCyclePeriod
-        ? normalizeBillingCyclePeriod(input.billingCyclePeriod)
-        : current.billingCyclePeriod,
-    };
-    await this.pricingModel
-      .findOneAndUpdate(
-        { key: 'default' },
-        { $set: next },
-        { upsert: true, new: true },
-      )
+  async getPricingForStore(storeId: string): Promise<{
+    currency: string;
+    smsUnitCostCad: number;
+    smsEnabled: boolean;
+    billingCyclePeriod: VendorNotificationBillingCyclePeriodEnum;
+    regionCode?: string;
+  }> {
+    const sid = storeId?.trim();
+    if (!sid || !Types.ObjectId.isValid(sid)) {
+      return this.getPricing();
+    }
+    const store = await this.storeModel
+      .findById(sid)
+      .populate('address', 'countryCode')
+      .lean()
       .exec();
-    return next;
+    const regionCode = countryCodeFromStoreRegion(store);
+    return this.getPricing(regionCode || null);
+  }
+
+  async updatePricing(
+    input: {
+      currency?: string;
+      smsUnitCostCad?: number;
+      smsEnabled?: boolean;
+      billingCyclePeriod?: VendorNotificationBillingCyclePeriodEnum;
+    },
+    countryCode?: string | null,
+  ) {
+    const code = await this.regionPricing.resolveRegionCode(countryCode);
+    return this.regionPricing.saveVendorSmsPricing(code, input);
   }
 }
 

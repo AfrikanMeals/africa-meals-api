@@ -73,6 +73,9 @@ import {
 } from '@modules/ads/bird-channels.util';
 import { SmsDispatchService } from '@modules/messaging/sms-dispatch.service';
 import { PlatformChannelsService } from '@modules/platform-channels/platform-channels.service';
+import { RegionPricingService } from '@modules/supported-countries/region-pricing.service';
+import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
+import { countryCodeFromStoreRegion } from '@modules/supported-countries/region-tax.util';
 import {
   AdNotificationTestSourceEnum,
   SendAdNotificationTestDto,
@@ -120,6 +123,7 @@ export class AdNotificationService {
   private readonly logger = new Logger(AdNotificationService.name);
   private channelAvailabilityCache: {
     at: number;
+    key: string;
     channels: AdNotificationChannelAvailability;
   } | null = null;
 
@@ -145,6 +149,7 @@ export class AdNotificationService {
     private readonly wsInboxNotify: WsInboxNotifyService,
     private readonly smsDispatch: SmsDispatchService,
     private readonly platformChannels: PlatformChannelsService,
+    private readonly regionPricing: RegionPricingService,
   ) {}
 
   private async assertAdminSettings(user: UserModel): Promise<void> {
@@ -189,22 +194,21 @@ export class AdNotificationService {
     return storeId?.toString() ?? '';
   }
 
-  private async loadAvailableChannels(): Promise<AdNotificationChannelAvailability> {
+  private async loadAvailableChannels(
+    regionCode?: string | null,
+  ): Promise<AdNotificationChannelAvailability> {
+    const resolvedCode = await this.regionPricing.resolveRegionCode(regionCode);
     const now = Date.now();
     if (
       this.channelAvailabilityCache &&
-      now - this.channelAvailabilityCache.at < CHANNEL_AVAILABILITY_TTL_MS
+      now - this.channelAvailabilityCache.at < CHANNEL_AVAILABILITY_TTL_MS &&
+      this.channelAvailabilityCache.key === resolvedCode
     ) {
       return this.channelAvailabilityCache.channels;
     }
-    const doc = await this.notificationPricingModel
-      .findOne({ key: AD_NOTIFICATION_PRICING_KEY })
-      .lean()
-      .exec();
-    const channels = parseAvailableChannelsFromDoc(
-      doc as unknown as Record<string, unknown> | null,
-    );
-    this.channelAvailabilityCache = { at: now, channels };
+    const pricing = await this.regionPricing.getAdNotificationPricing(resolvedCode);
+    const channels = pricing.availableChannels;
+    this.channelAvailabilityCache = { at: now, key: resolvedCode, channels };
     return channels;
   }
 
@@ -570,7 +574,7 @@ export class AdNotificationService {
             pendingFilter,
           ],
         })
-        .select('_id store title subtitle notificationAddon audienceTotal')
+        .select('_id store region title subtitle notificationAddon audienceTotal')
         .limit(30)
         .lean()
         .exec(),
@@ -582,7 +586,7 @@ export class AdNotificationService {
           'notificationAddon.enabled': true,
           $and: [this.notArchivedFilter(), pendingFilter],
         })
-        .select('_id store title subtitle notificationAddon audienceTotal')
+        .select('_id store region title subtitle notificationAddon audienceTotal')
         .limit(30)
         .lean()
         .exec(),
@@ -598,11 +602,24 @@ export class AdNotificationService {
     const row = await this.claimEntityRow(job);
     if (!row) return;
 
+    const storeId = this.objectIdFromDocRef(row.store);
+    let regionCode = normalizeCountryCode(
+      (row as { region?: string }).region,
+    );
+    if (!regionCode && storeId) {
+      const store = await this.storeModel
+        .findById(storeId)
+        .populate('address', 'countryCode')
+        .lean()
+        .exec();
+      regionCode = countryCodeFromStoreRegion(store) || null;
+    }
+
     const addon = applyChannelAvailabilityToAddon(
       notificationAddonFromDoc(
         row.notificationAddon as Record<string, unknown>,
       ),
-      await this.loadAvailableChannels(),
+      await this.loadAvailableChannels(regionCode),
     );
     if (!addon.enabled) {
       this.logger.log(
@@ -611,7 +628,6 @@ export class AdNotificationService {
       return;
     }
 
-    const storeId = this.objectIdFromDocRef(row.store);
     if (!storeId) {
       this.logger.warn(
         `ad notification ${job.kind} ${job.entityId}: entité sans boutique — dispatch ignoré`,
@@ -690,7 +706,7 @@ export class AdNotificationService {
           { $set: { notificationDispatchedAt: now } },
           { new: true, lean: true },
         )
-        .select('_id store title subtitle notificationAddon audienceTotal')
+        .select('_id store region title subtitle notificationAddon audienceTotal')
         .exec();
       if (!doc) return null;
       const store = await this.storeModel

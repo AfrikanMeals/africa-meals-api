@@ -13,6 +13,7 @@ import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { UpdateWhatsappChannelSettingsDto } from './dto/update-whatsapp-channel-settings.dto';
+import { UpdateTelegramChannelSettingsDto } from './dto/update-telegram-channel-settings.dto';
 import { PlatformChannelsService } from './platform-channels.service';
 
 @ApiTags('Admin — Platform channels')
@@ -39,5 +40,24 @@ export class PlatformChannelsController {
     @Body() dto: UpdateWhatsappChannelSettingsDto,
   ) {
     return this.channels.updateWhatsappSettings(req.user as UserModel, dto);
+  }
+
+  @Get('telegram')
+  @ApiOperation({
+    summary:
+      'Paramètres Telegram — credentials DB avec fallback .env / Secret Manager',
+  })
+  getTelegramSettings(@Req() req: Request) {
+    return this.channels.getTelegramSettings(req.user as UserModel);
+  }
+
+  @Patch('telegram')
+  @ApiOperation({ summary: 'Met à jour les credentials Telegram Bot API' })
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  updateTelegramSettings(
+    @Req() req: Request,
+    @Body() dto: UpdateTelegramChannelSettingsDto,
+  ) {
+    return this.channels.updateTelegramSettings(req.user as UserModel, dto);
   }
 }
