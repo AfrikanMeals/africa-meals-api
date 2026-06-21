@@ -72,6 +72,7 @@ import {
   trySendAdWhatsApp,
 } from '@modules/ads/bird-channels.util';
 import { SmsDispatchService } from '@modules/messaging/sms-dispatch.service';
+import { PlatformChannelsService } from '@modules/platform-channels/platform-channels.service';
 import {
   AdNotificationTestSourceEnum,
   SendAdNotificationTestDto,
@@ -143,6 +144,7 @@ export class AdNotificationService {
     private readonly storeAccess: StoreAccessService,
     private readonly wsInboxNotify: WsInboxNotifyService,
     private readonly smsDispatch: SmsDispatchService,
+    private readonly platformChannels: PlatformChannelsService,
   ) {}
 
   private async assertAdminSettings(user: UserModel): Promise<void> {
@@ -1356,8 +1358,9 @@ export class AdNotificationService {
     const waBody = args.targetItem
       ? `${args.body} — ${args.targetItem.title}`
       : args.body;
+    const env = await this.platformChannels.getBirdWhatsAppMergedEnv();
     const sent = await trySendAdWhatsApp({
-      env: process.env,
+      env,
       toPhone: args.recipient.phone,
       storeName: args.storeName,
       title: args.title,

@@ -9,6 +9,7 @@ export { MaintenancePlatformEnum } from './platform-maintenance.schema';
 export type { PlatformMaintenanceEntryModel } from './platform-maintenance.schema';
 
 export enum SmsEngineEnum {
+  AUTO = 'auto',
   BIRD = 'bird',
   TWILIO = 'twilio',
 }

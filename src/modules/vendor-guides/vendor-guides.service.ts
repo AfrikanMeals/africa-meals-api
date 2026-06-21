@@ -268,15 +268,28 @@ export class VendorGuidesService {
       }
     }
 
-    const candidates = await this.guides
-      .find({
-        locale,
-        isActive: true,
-        slug: { $nin: [...blockedSlugs] },
-      })
-      .sort({ sortOrder: 1, createdAt: 1 })
-      .limit(settings.articlesPerBatch)
-      .exec();
+    const localeOrder =
+      locale === 'en' ? (['en', 'fr'] as const) : ([locale, 'en'] as const)
+    const candidates: VendorGuideArticleDocument[] = []
+    const usedSlugs = new Set<string>()
+
+    for (const loc of localeOrder) {
+      if (candidates.length >= settings.articlesPerBatch) break
+      const remaining = settings.articlesPerBatch - candidates.length
+      const batch = await this.guides
+        .find({
+          locale: loc,
+          isActive: true,
+          slug: { $nin: [...blockedSlugs, ...usedSlugs] },
+        })
+        .sort({ sortOrder: 1, createdAt: 1 })
+        .limit(remaining)
+        .exec()
+      for (const doc of batch) {
+        usedSlugs.add(doc.slug)
+        candidates.push(doc)
+      }
+    }
 
     return {
       settings,

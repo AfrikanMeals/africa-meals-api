@@ -202,7 +202,9 @@ export class MaintenanceAlertSettingsService {
       smsEngine:
         doc.smsEngine === SmsEngineEnum.TWILIO
           ? SmsEngineEnum.TWILIO
-          : SmsEngineEnum.BIRD,
+          : doc.smsEngine === SmsEngineEnum.AUTO
+            ? SmsEngineEnum.AUTO
+            : SmsEngineEnum.BIRD,
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
       channelAvailability: this.getChannelAvailability(),
     };

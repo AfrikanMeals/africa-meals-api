@@ -13,6 +13,7 @@ import {
   MqttRuntimeStatus,
   WsNotifyDispatchQueueService,
 } from '@modules/ws-notify/ws-notify-dispatch-queue.service';
+import { PlatformChannelsService } from '@modules/platform-channels/platform-channels.service';
 import { InjectConnection } from '@nestjs/mongoose';
 import {
   AdCampaignItemTypeEnum,
@@ -356,6 +357,7 @@ export class DbMaintenanceService {
     @Inject('FIREBASE_ADMIN')
     private readonly firebaseApp: App,
     private readonly wsNotifyDispatchQueue: WsNotifyDispatchQueueService,
+    private readonly platformChannels: PlatformChannelsService,
     private readonly orderPaidInvoiceEmail: OrderPaidInvoiceEmailService,
     @Inject(forwardRef(() => AdminJobEmitterService))
     @Optional()
@@ -4276,7 +4278,7 @@ export class DbMaintenanceService {
     const startedAtMs = Date.now();
     const key = 'bird-whatsapp-api-status';
     const label = 'WhatsApp API status';
-    const env = process.env;
+    const env = await this.platformChannels.getBirdWhatsAppMergedEnv();
     const config = readBirdWhatsAppConfig(env);
     const waEnabled = isAdNotificationWhatsAppEnabled(env);
 

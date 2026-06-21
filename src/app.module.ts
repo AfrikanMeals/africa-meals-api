@@ -59,6 +59,7 @@ import { CacheSettingsModule } from './modules/cache-settings/cache-settings.mod
 import { MapSettingsModule } from './modules/map-settings/map-settings.module';
 import { SearchSettingsModule } from './modules/search-settings/search-settings.module';
 import { SecretManagerModule } from './modules/secret-manager/secret-manager.module';
+import { PlatformChannelsModule } from './modules/platform-channels/platform-channels.module';
 import { MobileAppSettingsModule } from './modules/mobile-app-settings/mobile-app-settings.module';
 import { PosSettingsModule } from './modules/pos-settings/pos-settings.module';
 import { BusinessTypesModule } from './modules/business-types/business-types.module';
@@ -336,6 +337,7 @@ function redactRedisUrl(url: string): string {
     MapSettingsModule,
     SearchSettingsModule,
     SecretManagerModule,
+    PlatformChannelsModule,
     MobileAppSettingsModule,
     PosSettingsModule,
     BusinessTypesModule,

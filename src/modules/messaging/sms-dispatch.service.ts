@@ -42,7 +42,8 @@ export class SmsDispatchService {
     body: string;
     defaultCountryCode?: string;
   }): Promise<SmsDispatchResult> {
-    const engine = await this.getSmsEngine();
+    const configuredEngine = await this.getSmsEngine();
+    const engine = this.resolveEngineForSend(configuredEngine);
     const defaultCc =
       args.defaultCountryCode?.trim() ||
       this.config.get<string>('AD_NOTIFICATION_SMS_DEFAULT_COUNTRY_CODE')?.trim() ||
@@ -51,6 +52,10 @@ export class SmsDispatchService {
     const to = phoneToBirdE164(args.toPhone, defaultCc);
     if (!to) {
       return { ok: false, engine, error: 'invalid_phone' };
+    }
+
+    if (engine === SmsEngineEnum.AUTO) {
+      return { ok: false, engine, error: 'no_sms_engine_configured' };
     }
 
     if (engine === SmsEngineEnum.TWILIO) {
@@ -96,11 +101,36 @@ export class SmsDispatchService {
       .select('smsEngine')
       .lean()
       .exec();
+    const raw = doc?.smsEngine;
     const value =
-      doc?.smsEngine === SmsEngineEnum.TWILIO
+      raw === SmsEngineEnum.TWILIO
         ? SmsEngineEnum.TWILIO
-        : SmsEngineEnum.BIRD;
+        : raw === SmsEngineEnum.AUTO
+          ? SmsEngineEnum.AUTO
+          : SmsEngineEnum.BIRD;
     this.engineCache = { value, expiresAt: now + 30_000 };
     return value;
+  }
+
+  private resolveEngineForSend(
+    configured: SmsEngineEnum,
+  ): SmsEngineEnum {
+    if (configured !== SmsEngineEnum.AUTO) {
+      return configured;
+    }
+    const available: SmsEngineEnum[] = [];
+    if (readBirdSmsConfig(process.env)) {
+      available.push(SmsEngineEnum.BIRD);
+    }
+    if (readTwilioSmsConfig(process.env)) {
+      available.push(SmsEngineEnum.TWILIO);
+    }
+    if (available.length === 0) {
+      return SmsEngineEnum.AUTO;
+    }
+    if (available.length === 1) {
+      return available[0]!;
+    }
+    return available[Math.floor(Math.random() * available.length)]!;
   }
 }

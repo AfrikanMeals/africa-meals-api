@@ -33,7 +33,7 @@ type LastAlertState = {
   recoveredAt?: Date | null;
 };
 
-const MONITOR_INTERVAL_MS = 120_000;
+const MONITOR_INTERVAL_MS = 1800_000; // 30 minutes
 
 @Injectable()
 export class MaintenanceAlertMonitorService

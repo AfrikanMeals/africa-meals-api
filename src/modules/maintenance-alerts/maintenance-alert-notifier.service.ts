@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { MailerService } from '@modules/mailer/mailer.service';
 import {
   phoneToBirdE164,
-  readBirdWhatsAppConfig,
   sendBirdWhatsAppTextMessage,
 } from '@modules/ads/bird-channels.util';
 import {
@@ -11,6 +10,7 @@ import {
 } from '@modules/messaging/telegram-bot.util';
 import { MaintenanceAlertSettingsDocument } from '@schemas/maintenance-alert-settings.schema';
 import { SmsDispatchService } from '@modules/messaging/sms-dispatch.service';
+import { PlatformChannelsService } from '@modules/platform-channels/platform-channels.service';
 
 export type ServiceAlertEvent = {
   kind: 'incident' | 'recovery';
@@ -29,6 +29,7 @@ export class MaintenanceAlertNotifierService {
   constructor(
     private readonly mailer: MailerService,
     private readonly smsDispatch: SmsDispatchService,
+    private readonly platformChannels: PlatformChannelsService,
   ) {}
 
   async notify(
@@ -102,7 +103,7 @@ export class MaintenanceAlertNotifierService {
     body: string,
     defaultCc: string,
   ): Promise<void> {
-    const config = readBirdWhatsAppConfig(process.env);
+    const config = await this.platformChannels.getBirdWhatsAppConfig();
     if (!config) {
       this.logger.warn('Maintenance WhatsApp: canal Bird non configuré');
       return;
