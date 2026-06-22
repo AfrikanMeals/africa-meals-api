@@ -1,4 +1,6 @@
 import { AdsModule } from '@modules/ads/ads.module';
+import { SearchSettingsModule } from '@modules/search-settings/search-settings.module';
+import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -21,6 +23,8 @@ import { AdsTargetingService } from './ads-targeting.service';
 @Module({
   imports: [
     AdsModule,
+    SubscriptionsModule,
+    SearchSettingsModule,
     WsNotifyModule,
     MongooseModule.forFeature([
       { name: AdsTargetingEventModel.name, schema: AdsTargetingEventSchema },

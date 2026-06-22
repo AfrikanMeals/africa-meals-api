@@ -1,5 +1,6 @@
 import { PlatformFeesModule } from '@modules/platform-fees/platform-fees.module';
 import { PlatformShippingSettingsModule } from '@modules/platform-shipping-settings/platform-shipping-settings.module';
+import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
@@ -17,6 +18,7 @@ import { StripeConnectTransferService } from './stripe-connect-transfer.service'
   imports: [
     PlatformFeesModule,
     PlatformShippingSettingsModule,
+    SubscriptionsModule,
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       {

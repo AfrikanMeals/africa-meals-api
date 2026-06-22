@@ -106,11 +106,12 @@ export function computeVendorTransferSplit(
     platformOrderFeeFixed: number;
     platformOrderFeePercent: number;
   },
+  currency = 'CAD',
 ): VendorTransferSplit {
   const gross = Math.max(0, Math.round(grossCents));
   const feeMode = settings.platformOrderFeeMode;
   const feePercent = Math.max(0, settings.platformOrderFeePercent ?? 0);
-  const feeFixedCad = Math.max(0, settings.platformOrderFeeFixed ?? 0);
+  const feeFixedAmount = Math.max(0, settings.platformOrderFeeFixed ?? 0);
 
   if (gross < 1) {
     return {
@@ -119,14 +120,14 @@ export function computeVendorTransferSplit(
       transferCents: 0,
       feeMode,
       feePercent,
-      feeFixedCad,
+      feeFixedCad: feeFixedAmount,
     };
   }
 
   let platformFeeCents =
     feeMode === 'percent'
       ? Math.round(gross * (feePercent / 100))
-      : Math.round(feeFixedCad * 100);
+      : toStripeMinorUnits(feeFixedAmount, currency);
 
   platformFeeCents = Math.max(0, Math.min(platformFeeCents, gross));
   const transferCents = gross - platformFeeCents;
@@ -137,7 +138,7 @@ export function computeVendorTransferSplit(
     transferCents,
     feeMode,
     feePercent,
-    feeFixedCad,
+    feeFixedCad: feeFixedAmount,
   };
 }
 
@@ -372,13 +373,34 @@ export class PlatformFeesService {
   async computeVendorTransferSplitFromSettings(
     grossCents: number,
   ): Promise<VendorTransferSplit> {
+    const settings = await this.getGlobalOrderCommissionSettings();
+    return computeVendorTransferSplit(
+      grossCents,
+      {
+        platformOrderFeeMode: settings.platformOrderFeeMode,
+        platformOrderFeeFixed: settings.platformOrderFeeFixed,
+        platformOrderFeePercent: settings.platformOrderFeePercent,
+      },
+      settings.currency,
+    );
+  }
+
+  /** Barème global commission commande (repli si formule/région non configurés). */
+  async getGlobalOrderCommissionSettings(): Promise<{
+    currency: string;
+    platformOrderFeeMode: PlatformFeeMode;
+    platformOrderFeeFixed: number;
+    platformOrderFeePercent: number;
+  }> {
     const doc = await this._ensureDoc();
     const settings = this._toResponse(doc);
-    return computeVendorTransferSplit(grossCents, {
+    const storeCurrency = await this._resolveCurrencyFromStoreSettings();
+    return {
+      currency: storeCurrency,
       platformOrderFeeMode: settings.platformOrderFeeMode,
       platformOrderFeeFixed: settings.platformOrderFeeFixed,
       platformOrderFeePercent: settings.platformOrderFeePercent,
-    });
+    };
   }
 
   /** Frais appliqués lors d'un versement manuel vendeur (request payout). */

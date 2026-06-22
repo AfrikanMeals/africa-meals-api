@@ -114,6 +114,10 @@ export class SearchSettingsModel {
   @Prop({ type: Number, default: null })
   recoVendorPlanSortOrder: number | null;
 
+  /** Poids du score formule (0–100) dans recommandations et Ads. */
+  @Prop({ type: Number, default: null })
+  recoVendorPlanScore: number | null;
+
   @Prop({ type: Number, default: null })
   recoTrendProductMax: number | null;
 

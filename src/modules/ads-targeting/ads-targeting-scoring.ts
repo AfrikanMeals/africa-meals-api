@@ -11,6 +11,8 @@ export type AdsTargetingScoreInput = {
   deliveryConversionBoost?: number;
   /** CTR / conversions passées sur ce placement (0–1). */
   placementPerformance?: number;
+  /** Score formule boutique normalisé (0–1). */
+  vendorPlanBoost?: number;
 };
 
 function clamp01(v: number): number {
@@ -33,16 +35,18 @@ export function computeAdsTargetingScore(
     input.deliveryConversionBoost ?? 0.4,
   );
   const placementPerformance = clamp01(input.placementPerformance ?? 0.45);
+  const vendorPlanBoost = clamp01(input.vendorPlanBoost ?? 0);
 
   const raw =
-    interestMatch * 0.34 +
+    interestMatch * 0.32 +
     recencyBoost * 0.1 +
     engagementScore * 0.1 +
     conversionProbability * 0.08 +
     placementMatch * 0.1 +
     positionBoost * 0.1 +
     deliveryConversionBoost * 0.12 +
-    placementPerformance * 0.06;
+    placementPerformance * 0.06 +
+    vendorPlanBoost * 0.12;
 
   return Number(raw.toFixed(4));
 }

@@ -1,5 +1,9 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
+import {
+  PlanRegionOrderCommissionModel,
+  PlanRegionOrderCommissionSchema,
+} from './plan-region-order-commission.schema';
 
 /** Offre d’abonnement vendeur (catalogue admin). */
 @Schema({ timestamps: true, collection: 'subscription_plans' })
@@ -28,6 +32,13 @@ export class SubscriptionPlanModel {
 
   @Prop({ type: Number, default: 0 })
   sortOrder: number;
+
+  /**
+   * Score de visibilité (0–100) pour recommandations et diffusion Ads.
+   * Plus la valeur est élevée, plus les produits et pubs de la boutique sont favorisés.
+   */
+  @Prop({ type: Number, default: 0, min: 0, max: 100 })
+  recommendationScore: number;
 
   /** Nombre de jours d’essai gratuit (0 = pas d’essai). Interdit sur formule FREE. */
   @Prop({ type: Number, default: 0, min: 0 })
@@ -91,6 +102,17 @@ export class SubscriptionPlanModel {
    */
   @Prop({ type: Number, default: 0, min: 0 })
   maxActiveCampaigns: number;
+
+  /**
+   * Commission plateforme sur commande par région (ISO2).
+   * Si absent pour une région → repli sur le barème global `platform_fees_settings`.
+   */
+  @Prop({
+    type: [PlanRegionOrderCommissionSchema],
+    default: [],
+    name: 'order_commissions_by_region',
+  })
+  orderCommissionsByRegion: PlanRegionOrderCommissionModel[];
 }
 
 export type SubscriptionPlanDocument = HydratedDocument<SubscriptionPlanModel>;

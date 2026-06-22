@@ -44,6 +44,7 @@ export type RecommendationScoreWeights = {
   searchGlobalMatch: number;
   subscribedStore: number;
   vendorPlanSortOrder: number;
+  vendorPlanScore: number;
 };
 
 function assertAdmin(user: UserModel) {
@@ -447,6 +448,11 @@ export class SearchSettingsService {
         'RECO_WEIGHT_VENDOR_PLAN_SORT',
         16,
       ),
+      vendorPlanScore: pickWeight(
+        d.recoVendorPlanScore,
+        'RECO_WEIGHT_VENDOR_PLAN_SCORE',
+        40,
+      ),
     };
   }
 
@@ -524,6 +530,7 @@ export class SearchSettingsService {
       { patchKey: 'recoViewedProduct', dtoKey: 'recoViewedProduct' },
       { patchKey: 'recoSubscribedStore', dtoKey: 'recoSubscribedStore' },
       { patchKey: 'recoVendorPlanSortOrder', dtoKey: 'recoVendorPlanSortOrder' },
+      { patchKey: 'recoVendorPlanScore', dtoKey: 'recoVendorPlanScore' },
       { patchKey: 'recoTrendProductMax', dtoKey: 'recoTrendProductMax' },
     ];
     for (const { patchKey, dtoKey } of weightFields) {

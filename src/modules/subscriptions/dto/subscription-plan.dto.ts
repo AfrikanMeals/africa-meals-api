@@ -9,7 +9,12 @@ import {
   Max,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  PlanRegionOrderCommissionDto,
+} from './plan-region-order-commission.dto';
 
 export class CreateSubscriptionPlanDto {
   @IsString()
@@ -44,6 +49,12 @@ export class CreateSubscriptionPlanDto {
   @IsOptional()
   @IsNumber()
   sortOrder?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  recommendationScore?: number;
 
   @IsOptional()
   @IsInt()
@@ -104,6 +115,12 @@ export class CreateSubscriptionPlanDto {
   @IsInt()
   @Min(0)
   maxActiveCampaigns?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PlanRegionOrderCommissionDto)
+  orderCommissionsByRegion?: PlanRegionOrderCommissionDto[];
 }
 
 export class UpdateSubscriptionPlanDto {
@@ -146,6 +163,12 @@ export class UpdateSubscriptionPlanDto {
   @IsOptional()
   @IsInt()
   @Min(0)
+  @Max(100)
+  recommendationScore?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
   @Max(365)
   trialDays?: number;
 
@@ -202,6 +225,12 @@ export class UpdateSubscriptionPlanDto {
   @IsInt()
   @Min(0)
   maxActiveCampaigns?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PlanRegionOrderCommissionDto)
+  orderCommissionsByRegion?: PlanRegionOrderCommissionDto[];
 }
 
 export class SubscribeVendorDto {

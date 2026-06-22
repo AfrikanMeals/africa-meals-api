@@ -139,5 +139,11 @@ export class UpdateSearchSettingsDto {
   @Type(() => Number)
   @IsNumber()
   @Min(0)
+  recoVendorPlanScore?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
   recoTrendProductMax?: number | null;
 }

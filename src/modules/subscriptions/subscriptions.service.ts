@@ -23,6 +23,7 @@ import {
   SubscribeVendorDto,
   UpdateSubscriptionPlanDto,
 } from './dto/subscription-plan.dto';
+import { normalizePlanRegionOrderCommissions } from './dto/plan-region-order-commission.dto';
 import {
   isFreePlanName,
   isFreeSubscriptionPlan,
@@ -47,7 +48,27 @@ function vendorStoreObjectIds(user: UserModel): Types.ObjectId[] {
   return ids;
 }
 
+function mapPlanCommissionRow(row: Record<string, unknown>) {
+  const regionCode = String(row.regionCode ?? '')
+    .trim()
+    .toUpperCase();
+  if (!regionCode) return null;
+  const mode = row.mode === 'fixed' ? 'fixed' : 'percent';
+  return {
+    regionCode,
+    mode: mode as 'fixed' | 'percent',
+    fixed: Math.max(0, Number(row.fixed ?? 0)),
+    percent: Math.max(0, Number(row.percent ?? 0)),
+  };
+}
+
 function mapPlan(doc: Record<string, unknown>) {
+  const commissionRows = Array.isArray(doc.orderCommissionsByRegion)
+    ? doc.orderCommissionsByRegion
+        .map((row) => mapPlanCommissionRow(row as Record<string, unknown>))
+        .filter((row): row is NonNullable<typeof row> => row != null)
+    : [];
+
   return {
     id: String(doc._id),
     name: String(doc.name ?? ''),
@@ -60,6 +81,10 @@ function mapPlan(doc: Record<string, unknown>) {
       : [],
     active: doc.active !== false,
     sortOrder: Number(doc.sortOrder ?? 0),
+    recommendationScore: Math.max(
+      0,
+      Math.min(100, Number(doc.recommendationScore ?? 0)),
+    ),
     trialDays: Number(doc.trialDays ?? 0),
     trialReminderDays: Array.isArray(doc.trialReminderDays)
       ? doc.trialReminderDays.map((d) => Number(d)).filter((d) => d > 0)
@@ -74,6 +99,7 @@ function mapPlan(doc: Record<string, unknown>) {
     maxAdCampaignItems: Math.max(0, Number(doc.maxAdCampaignItems ?? 0)),
     maxActiveBanners: Math.max(0, Number(doc.maxActiveBanners ?? 0)),
     maxActiveCampaigns: Math.max(0, Number(doc.maxActiveCampaigns ?? 0)),
+    orderCommissionsByRegion: commissionRows,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -305,6 +331,10 @@ export class SubscriptionsService implements OnModuleInit {
         features: seed.features.map((f) => f.trim()).filter(Boolean),
         active: seed.active !== false,
         sortOrder: seed.sortOrder ?? 0,
+        recommendationScore: Math.max(
+          0,
+          Math.min(100, Number(seed.recommendationScore ?? 0)),
+        ),
         trialDays: trial.trialDays,
         trialReminderDays: trial.trialReminderDays,
         maxStores: Math.max(0, Number(seed.maxStores ?? 0)),
@@ -348,6 +378,14 @@ export class SubscriptionsService implements OnModuleInit {
           docFields.pickupPayOnDeliveryEnabled != null
         ) {
           patch.pickupPayOnDeliveryEnabled = docFields.pickupPayOnDeliveryEnabled;
+        }
+        if (
+          (existingDoc.recommendationScore == null ||
+            Number(existingDoc.recommendationScore) === 0) &&
+          docFields.recommendationScore != null &&
+          Number(docFields.recommendationScore) > 0
+        ) {
+          patch.recommendationScore = docFields.recommendationScore;
         }
         if (Object.keys(patch).length > 0) {
           await this.planModel
@@ -979,6 +1017,54 @@ export class SubscriptionsService implements OnModuleInit {
     return out;
   }
 
+  /** Score recommandation formule active par boutique (0–100). */
+  async resolveActivePlanScoreByStoreIds(
+    storeIds: string[],
+  ): Promise<Map<string, number>> {
+    const ids = [
+      ...new Set(
+        storeIds
+          .map((id) => String(id ?? '').trim())
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ];
+    if (!ids.length) return new Map();
+
+    const [planNameByStore, activePlans] = await Promise.all([
+      this.resolveActivePlanNamesByStoreIds(ids),
+      this.planModel
+        .find({ active: true })
+        .select('name recommendationScore')
+        .lean()
+        .exec(),
+    ]);
+
+    const scoreByPlanName = new Map<string, number>();
+    for (const row of activePlans as Record<string, unknown>[]) {
+      const name = String(row.name ?? '')
+        .trim()
+        .toUpperCase();
+      if (!name) continue;
+      scoreByPlanName.set(
+        name,
+        Math.max(
+          0,
+          Math.min(100, Number(row.recommendationScore ?? 0)),
+        ),
+      );
+    }
+    const freeScore = scoreByPlanName.get('FREE') ?? 0;
+
+    const out = new Map<string, number>();
+    for (const storeId of ids) {
+      const planName = (planNameByStore.get(storeId) ?? 'FREE')
+        .trim()
+        .toUpperCase();
+      out.set(storeId, scoreByPlanName.get(planName) ?? freeScore);
+    }
+    return out;
+  }
+
   async isStoreSubscriptionEnabledForPlanName(
     planName: string,
   ): Promise<boolean> {
@@ -1294,6 +1380,10 @@ export class SubscriptionsService implements OnModuleInit {
       features,
       active: dto.active !== false,
       sortOrder: dto.sortOrder ?? 0,
+      recommendationScore: Math.max(
+        0,
+        Math.min(100, Math.floor(Number(dto.recommendationScore ?? 0))),
+      ),
       trialDays: trial.trialDays,
       trialReminderDays: trial.trialReminderDays,
       maxStores: Math.max(0, Math.floor(Number(dto.maxStores ?? 0))),
@@ -1321,6 +1411,9 @@ export class SubscriptionsService implements OnModuleInit {
         0,
         Math.floor(Number(dto.maxActiveCampaigns ?? 0)),
       ),
+      orderCommissionsByRegion: normalizePlanRegionOrderCommissions(
+        dto.orderCommissionsByRegion,
+      ),
     });
     return mapPlan(doc.toObject() as Record<string, unknown>);
   }
@@ -1347,6 +1440,12 @@ export class SubscriptionsService implements OnModuleInit {
     }
     if (dto.active != null) patch.active = dto.active;
     if (dto.sortOrder != null) patch.sortOrder = dto.sortOrder;
+    if (dto.recommendationScore != null) {
+      patch.recommendationScore = Math.max(
+        0,
+        Math.min(100, Math.floor(Number(dto.recommendationScore))),
+      );
+    }
     if (dto.maxStores != null) {
       patch.maxStores = Math.max(0, Math.floor(Number(dto.maxStores)));
     }
@@ -1389,6 +1488,11 @@ export class SubscriptionsService implements OnModuleInit {
       patch.maxActiveCampaigns = Math.max(
         0,
         Math.floor(Number(dto.maxActiveCampaigns)),
+      );
+    }
+    if (dto.orderCommissionsByRegion != null) {
+      patch.orderCommissionsByRegion = normalizePlanRegionOrderCommissions(
+        dto.orderCommissionsByRegion,
       );
     }
 
@@ -1454,6 +1558,9 @@ export class SubscriptionsService implements OnModuleInit {
     if (dto.currency != null) fields.push('devise');
     if (dto.features != null) fields.push('fonctionnalités');
     if (dto.active != null) fields.push('disponibilité');
+    if (dto.recommendationScore != null) {
+      fields.push('score recommandation');
+    }
     if (dto.trialDays != null || dto.trialReminderDays != null) {
       fields.push('essai gratuit');
     }

@@ -6,6 +6,8 @@ export type SubscriptionPlanSeed = {
   currency: string;
   features: string[];
   sortOrder: number;
+  /** Score visibilité 0–100 (recommandations + Ads). */
+  recommendationScore?: number;
   active: boolean;
   trialDays?: number;
   trialReminderDays?: number[];
@@ -37,6 +39,7 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
       'Aucune gestion d’équipe (plan supérieur requis)',
     ],
     sortOrder: 1,
+    recommendationScore: 10,
     active: true,
     trialDays: 0,
     trialReminderDays: [],
@@ -61,6 +64,7 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
       'Promotions et offres avancées',
     ],
     sortOrder: 2,
+    recommendationScore: 75,
     active: true,
     trialDays: 14,
     trialReminderDays: [7, 3, 1],

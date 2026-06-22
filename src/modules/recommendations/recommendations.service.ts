@@ -193,10 +193,12 @@ export class RecommendationsService {
 
     const W = await this._scoreWeights();
     const candidateStoreIds = this._collectCandidateStoreIds(candidates);
-    const [planSortByStore, subscribedStoreIds] = await Promise.all([
+    const [planSortByStore, planScoreByStore, subscribedStoreIds] =
+      await Promise.all([
       this._subscriptions.resolveActivePlanSortOrderByStoreIds(
         candidateStoreIds,
       ),
+      this._subscriptions.resolveActivePlanScoreByStoreIds(candidateStoreIds),
       user && userOid
         ? this._storeSubscribers.listSubscribedStoreIds(user)
         : Promise.resolve([]),
@@ -338,6 +340,8 @@ export class RecommendationsService {
       if (storeId) {
         const planSort = planSortByStore.get(storeId) ?? 1;
         score += Math.max(0, planSort) * W.vendorPlanSortOrder;
+        const planScore = planScoreByStore.get(storeId) ?? 0;
+        score += (Math.max(0, planScore) / 100) * W.vendorPlanScore;
       }
 
       const title = String(p.title ?? '');
@@ -382,8 +386,10 @@ export class RecommendationsService {
       ],
       {
         planSortByStore,
+        planScoreByStore,
         subscribedStoreIds: subscribedStoreBoost,
         planSortWeight: W.vendorPlanSortOrder,
+        planScoreWeight: W.vendorPlanScore,
         subscribedWeight: W.subscribedStore,
       },
       clientRegion,
@@ -417,8 +423,10 @@ export class RecommendationsService {
     boostStoreIds: string[],
     opts?: {
       planSortByStore?: Map<string, number>;
+      planScoreByStore?: Map<string, number>;
       subscribedStoreIds?: Set<string>;
       planSortWeight?: number;
+      planScoreWeight?: number;
       subscribedWeight?: number;
     },
     clientRegion?: string,
@@ -501,24 +509,54 @@ export class RecommendationsService {
       .exec();
 
     const planSortByStore = opts?.planSortByStore;
+    const planScoreByStore = opts?.planScoreByStore;
     const subscribedStoreIds = opts?.subscribedStoreIds;
     const planSortWeight = opts?.planSortWeight ?? 0;
+    const planScoreWeight = opts?.planScoreWeight ?? 0;
     const subscribedWeight = opts?.subscribedWeight ?? 0;
 
     let storePlanSort = planSortByStore;
-    if (!storePlanSort || subscribedWeight > 0) {
+    let storePlanScore = planScoreByStore;
+    if (
+      !storePlanSort ||
+      !storePlanScore ||
+      subscribedWeight > 0
+    ) {
       const rowIds = (rows as Record<string, unknown>[]).map((s) =>
         String(s._id ?? ''),
       );
-      const missingPlanIds = storePlanSort
+      const missingPlanSortIds = storePlanSort
         ? rowIds.filter((id) => !storePlanSort!.has(id))
-        : rowIds;
-      if (missingPlanIds.length) {
-        const fetched =
-          await this._subscriptions.resolveActivePlanSortOrderByStoreIds(
-            missingPlanIds,
-          );
-        storePlanSort = new Map([...(storePlanSort ?? []), ...fetched]);
+        : planSortWeight > 0
+          ? rowIds
+          : [];
+      const missingPlanScoreIds = storePlanScore
+        ? rowIds.filter((id) => !storePlanScore!.has(id))
+        : planScoreWeight > 0
+          ? rowIds
+          : [];
+      const missingIds = [
+        ...new Set([...missingPlanSortIds, ...missingPlanScoreIds]),
+      ];
+      if (missingIds.length) {
+        const [fetchedSort, fetchedScore] = await Promise.all([
+          missingPlanSortIds.length || !storePlanSort
+            ? this._subscriptions.resolveActivePlanSortOrderByStoreIds(
+                missingPlanSortIds.length ? missingPlanSortIds : missingIds,
+              )
+            : Promise.resolve(new Map<string, number>()),
+          missingPlanScoreIds.length || !storePlanScore
+            ? this._subscriptions.resolveActivePlanScoreByStoreIds(
+                missingPlanScoreIds.length ? missingPlanScoreIds : missingIds,
+              )
+            : Promise.resolve(new Map<string, number>()),
+        ]);
+        if (fetchedSort.size) {
+          storePlanSort = new Map([...(storePlanSort ?? []), ...fetchedSort]);
+        }
+        if (fetchedScore.size) {
+          storePlanScore = new Map([...(storePlanScore ?? []), ...fetchedScore]);
+        }
       }
     }
 
@@ -527,6 +565,10 @@ export class RecommendationsService {
       let rankScore = Number(s.rankScore ?? 0);
       if (storePlanSort && planSortWeight > 0) {
         rankScore += Math.max(0, storePlanSort.get(id) ?? 1) * planSortWeight;
+      }
+      if (storePlanScore && planScoreWeight > 0) {
+        const planScore = storePlanScore.get(id) ?? 0;
+        rankScore += (Math.max(0, planScore) / 100) * planScoreWeight;
       }
       if (subscribedStoreIds?.has(id) && subscribedWeight > 0) {
         rankScore += subscribedWeight;

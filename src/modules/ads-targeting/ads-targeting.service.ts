@@ -10,6 +10,8 @@ import { Cron } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { AdsService } from '@modules/ads/ads.service';
+import { SearchSettingsService } from '@modules/search-settings/search-settings.service';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { shouldEmitLegacyAdWsFromApi } from '@modules/domain-event-handlers/domain-event-handlers.util';
 import { CronMonitorService } from '@modules/cron-monitor/cron-monitor.service';
 import {
@@ -73,6 +75,10 @@ export class AdsTargetingService {
     private readonly campaignModel: Model<AdCampaignModel>,
     @Inject(CACHE_MANAGER) private readonly cache: Cache,
     @Inject(AdsService) private readonly adsService: AdsService,
+    @Inject(SubscriptionsService)
+    private readonly subscriptionsService: SubscriptionsService,
+    @Inject(SearchSettingsService)
+    private readonly searchSettingsService: SearchSettingsService,
     @Inject(WsAdsTargetingNotifyService)
     private readonly wsAdsTargetingNotify: WsAdsTargetingNotifyService,
     private readonly config: ConfigService,
@@ -731,6 +737,13 @@ export class AdsTargetingService {
       ),
     ];
     const regionByStoreId = await this.adsService.resolveStoreRegionMap(storeIds);
+    const [planScoreByStore, recoWeights] = await Promise.all([
+      storeIds.length
+        ? this.subscriptionsService.resolveActivePlanScoreByStoreIds(storeIds)
+        : Promise.resolve(new Map<string, number>()),
+      this.searchSettingsService.getRecommendationWeights(),
+    ]);
+    const planScoreWeight = recoWeights.vendorPlanScore;
     const placementStats = await this.campaignPlacementStats(
       userKey,
       placement,
@@ -814,6 +827,11 @@ export class AdsTargetingService {
       const slotForScoring =
         requestSlot ?? preferredSlot;
       const stats = placementStats.get(campaignId);
+      const planScore = storeId ? (planScoreByStore.get(storeId) ?? 0) : 0;
+      const vendorPlanBoost =
+        planScoreWeight > 0
+          ? (Math.max(0, planScore) / 100) * (planScoreWeight / 100)
+          : 0;
 
       const score = computeAdsTargetingScore({
         interestMatch: interest.value,
@@ -834,6 +852,7 @@ export class AdsTargetingService {
           requestSlot: slotForScoring,
         }),
         placementPerformance: computePlacementPerformanceBoost(stats),
+        vendorPlanBoost,
       });
       if (score <= 0) continue;
 

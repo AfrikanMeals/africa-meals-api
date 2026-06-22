@@ -4,6 +4,7 @@ import { MediasModule } from '@modules/medias/medias.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { TeamsModule } from '@modules/teams/teams.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
+import { SearchSettingsModule } from '@modules/search-settings/search-settings.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
@@ -79,6 +80,7 @@ import { AdsService } from './ads.service';
     MediasModule,
     TeamsModule,
     SubscriptionsModule,
+    SearchSettingsModule,
     SupportedCountriesModule,
     VendorStatusEmailModule,
     WsNotifyModule,

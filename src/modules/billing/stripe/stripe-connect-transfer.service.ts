@@ -5,6 +5,7 @@ import {
   computeDeliveryNetCentsBeforeStripe,
 } from '@modules/billing/stripe/stripe-processing-fee.util';
 import { PlatformFeesService } from '@modules/platform-fees/platform-fees.service';
+import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
 import { PlatformShippingSettingsService } from '@modules/platform-shipping-settings/platform-shipping-settings.service';
 import {
   BadRequestException,
@@ -48,6 +49,7 @@ export class StripeConnectTransferService {
   constructor(
     private readonly config: ConfigService,
     private readonly platformFees: PlatformFeesService,
+    private readonly planOrderCommission: SubscriptionPlanOrderCommissionService,
     private readonly platformShipping: PlatformShippingSettingsService,
     private readonly stripeFees: StripeChargeFeeService,
     @InjectModel(OrderModel.name)
@@ -139,7 +141,8 @@ export class StripeConnectTransferService {
     const orderGrossCents = goodsCents + shipCents;
 
     const split =
-      await this.platformFees.computeVendorTransferSplitFromSettings(
+      await this.planOrderCommission.computeVendorTransferSplitForStore(
+        args.storeId,
         orderGrossCents,
       );
 

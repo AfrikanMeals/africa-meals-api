@@ -33,6 +33,7 @@ import { MediasService } from '@modules/medias/medias.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { storePermissionGranted } from '../../common/permissions/store-permissions';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import { SearchSettingsService } from '@modules/search-settings/search-settings.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { RegionPricingService } from '@modules/supported-countries/region-pricing.service';
 import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
@@ -535,6 +536,9 @@ export class AdsService implements OnModuleInit {
 
   @Inject(SubscriptionsService)
   private readonly _subscriptions: SubscriptionsService;
+
+  @Inject(SearchSettingsService)
+  private readonly _searchSettings: SearchSettingsService;
 
   @Inject(ConfigService)
   private readonly _config: ConfigService;
@@ -3720,7 +3724,7 @@ export class AdsService implements OnModuleInit {
       .lean()
       .exec();
 
-    const items: AdminStoreAdSpendingRow[] = [];
+    const items: Omit<AdminStoreAdSpendingRow, 'adCash'>[] = [];
     await Promise.all(
       vendorDocs.map(async (doc) => {
         const vendor = doc as unknown as UserModel;
@@ -4586,6 +4590,38 @@ export class AdsService implements OnModuleInit {
     return out;
   }
 
+  private async _sortPublicAdsByStorePlanScore(ads: AdModel[]): Promise<AdModel[]> {
+    const storeIds = [
+      ...new Set(
+        ads
+          .map((d) => this._storeIdFromAdDoc(d as unknown as Record<string, unknown>))
+          .filter((id): id is Types.ObjectId => id != null)
+          .map((id) => id.toString()),
+      ),
+    ];
+    if (!storeIds.length) return ads;
+
+    const [planScoreByStore, weights] = await Promise.all([
+      this._subscriptions.resolveActivePlanScoreByStoreIds(storeIds),
+      this._searchSettings.getRecommendationWeights(),
+    ]);
+    const weight = weights.vendorPlanScore;
+    if (weight <= 0) return ads;
+
+    const scoreForAd = (d: AdModel): number => {
+      const storeOid = this._storeIdFromAdDoc(d as unknown as Record<string, unknown>);
+      if (storeOid == null) return 0;
+      const planScore = planScoreByStore.get(storeOid.toString()) ?? 0;
+      return (Math.max(0, planScore) / 100) * weight;
+    };
+
+    return [...ads].sort((a, b) => {
+      const diff = scoreForAd(b) - scoreForAd(a);
+      if (diff !== 0) return diff;
+      return Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0);
+    });
+  }
+
   private _storeIdFromAdDoc(d: Record<string, unknown>): Types.ObjectId | null {
     const st = d.store;
     if (st == null) return null;
@@ -4741,7 +4777,8 @@ export class AdsService implements OnModuleInit {
       return this._matchesClientRegion(clientRegion, storeRegion);
     }) as unknown as AdModel[];
     const withMedia = await this.resolvePublicAdImageUrls(data);
-    return this.orderPublicAdsByMinTwoThirdsShop(withMedia);
+    const planSorted = await this._sortPublicAdsByStorePlanScore(withMedia);
+    return this.orderPublicAdsByMinTwoThirdsShop(planSorted);
   }
 
   /** @deprecated Utiliser `listPublic` (même comportement). */

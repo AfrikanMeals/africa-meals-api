@@ -1,5 +1,6 @@
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
+import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AdModel, AdSchema } from '@schemas/ad.schema';
@@ -23,12 +24,14 @@ import { SubscriptionTrialReminderCron } from './subscription-trial-reminder.cro
 import { SubscriptionTrialReminderService } from './subscription-trial-reminder.service';
 import { SubscriptionsService } from './subscriptions.service';
 import { SubscriptionsStripeCheckoutService } from './subscriptions-stripe-checkout.service';
+import { SubscriptionPlanOrderCommissionService } from './subscription-plan-order-commission.service';
 import { VendorSubscriptionEmailService } from './vendor-subscription-email.service';
 
 @Module({
   imports: [
     MailerModule,
     NotificationsModule,
+    SupportedCountriesModule,
     MongooseModule.forFeature([
       { name: UserModel.name, schema: UserSchema },
       { name: SubscriptionPlanModel.name, schema: SubscriptionPlanSchema },
@@ -47,6 +50,7 @@ import { VendorSubscriptionEmailService } from './vendor-subscription-email.serv
   providers: [
     SubscriptionsService,
     SubscriptionsStripeCheckoutService,
+    SubscriptionPlanOrderCommissionService,
     VendorSubscriptionEmailService,
     SubscriptionLifecycleCron,
     SubscriptionTrialReminderService,
@@ -55,6 +59,7 @@ import { VendorSubscriptionEmailService } from './vendor-subscription-email.serv
   exports: [
     SubscriptionsService,
     SubscriptionsStripeCheckoutService,
+    SubscriptionPlanOrderCommissionService,
     VendorSubscriptionEmailService,
     SubscriptionTrialReminderService,
   ],
