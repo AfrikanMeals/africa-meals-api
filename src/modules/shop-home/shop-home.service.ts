@@ -3,10 +3,10 @@ import { AnnouncementsService } from '@modules/announcements/announcements.servi
 import { ProductCategoryService } from '@modules/products/product-category.service';
 import { SearchService } from '@modules/search/search.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { apiPublicCacheTtlMs } from '@common/redis-app-cache';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { UserModel } from '@schemas/user.schema';
-import { Cache } from 'cache-manager';
 import {
   slimAdForPublicClient,
   slimAnnouncementForClient,
@@ -24,8 +24,8 @@ export type ShopHomePayload = {
 export class ShopHomeService {
   private readonly _logger = new Logger(ShopHomeService.name);
 
-  @Inject(CACHE_MANAGER)
-  private readonly _cache: Cache;
+  @Inject(ModuleCacheLayerService)
+  private readonly _cacheLayer: ModuleCacheLayerService;
 
   @Inject(AnnouncementsService)
   private readonly _announcements: AnnouncementsService;
@@ -84,7 +84,8 @@ export class ShopHomeService {
         countryCode,
       );
     const key = this.cacheKey(user, clientRegion);
-    const hit = await this._cache.get<ShopHomePayload>(key);
+    const cache = this._cacheLayer.cacheFor('publicCatalog');
+    const hit = await cache.get<ShopHomePayload>(key);
 
     const take = Math.min(120, Math.max(8, Math.floor(productsTake)));
 
@@ -118,7 +119,7 @@ export class ShopHomeService {
       products,
     };
 
-    await this._cache.set(key, payload, this.ttlMs());
+    await cache.set(key, payload, this.ttlMs());
     return payload;
   }
 

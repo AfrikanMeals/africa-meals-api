@@ -44,6 +44,10 @@ import { PlatformMaintenanceSseService } from './platform-maintenance-sse.servic
     PlatformMaintenanceEmailService,
     PlatformMaintenanceSseService,
   ],
-  exports: [MaintenanceAlertSettingsService, PlatformMaintenanceSseService],
+  exports: [
+    MaintenanceAlertSettingsService,
+    PlatformMaintenanceSseService,
+    PlatformMaintenanceService,
+  ],
 })
 export class MaintenanceAlertsModule {}

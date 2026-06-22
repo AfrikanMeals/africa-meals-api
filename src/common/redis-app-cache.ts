@@ -489,14 +489,21 @@ export async function bustEntireAppCaches(
   return { keysCleared };
 }
 
-export function detectCacheStoreKind(cache: Cache): 'redis' | 'memory' {
+export function detectCacheStoreKind(
+  cache: Cache,
+): 'redis' | 'memcached' | 'memory' {
   const store = (cache as { store?: unknown }).store;
   const client = (
     store as {
       client?: { keys?: (pattern: string) => Promise<string[]> };
     }
   ).client;
-  return typeof client?.keys === 'function' ? 'redis' : 'memory';
+  if (typeof client?.keys === 'function') return 'redis';
+  const storeName = String(
+    (store as { name?: string } | undefined)?.name ?? '',
+  ).toLowerCase();
+  if (storeName.includes('memcached')) return 'memcached';
+  return 'memory';
 }
 
 export const AppCacheKeys = {

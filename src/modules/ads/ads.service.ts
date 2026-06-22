@@ -50,11 +50,8 @@ import { shouldEmitLegacyAdWsFromApi, isDomainEventsEnabled } from '@modules/dom
 import {
   AppCacheKeys,
   apiPublicCacheTtlMs,
-  bustCacheKey,
-  bustCacheKeysByPrefix,
-  getOrSetCache,
 } from '@common/redis-app-cache';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -66,7 +63,6 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
-import { Cache } from 'cache-manager';
 import {
   AdConversionSourceEnum,
   AdEventModel,
@@ -599,15 +595,15 @@ export class AdsService implements OnModuleInit {
   @Optional()
   private readonly _domainPublisher?: DomainEventPublisherService;
 
-  @Inject(CACHE_MANAGER)
-  private readonly _cache: Cache;
+  @Inject(ModuleCacheLayerService)
+  private readonly _cacheLayer: ModuleCacheLayerService;
 
   async onModuleInit() {
     await this.seedIfEmpty();
   }
 
   private invalidateListCache() {
-    void bustCacheKeysByPrefix(this._cache, 'ads:public:v3-region:');
+    void this._cacheLayer.bustPrefixOnAllStores('ads:public:v3-region:');
   }
 
   async resolvePublicClientRegion(
@@ -4693,8 +4689,8 @@ export class AdsService implements OnModuleInit {
     const region =
       clientRegion ??
       (await this._supportedCountries.resolveClientCatalogRegion());
-    return getOrSetCache(
-      this._cache,
+    return this._cacheLayer.getOrSet(
+      'publicCatalog',
       AppCacheKeys.adsPublic(region),
       apiPublicCacheTtlMs(),
       () => this._loadListPublic(region),

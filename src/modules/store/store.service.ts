@@ -23,11 +23,9 @@ import { UsersService } from '@modules/users/users.service';
 import {
   AppCacheKeys,
   apiPublicCacheTtlMs,
-  bustCatalogListingPublicCaches,
-  getOrSetCache,
 } from '@common/redis-app-cache';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import { shouldApplyCatalogRegionFilter } from '@common/catalog-public-id.util';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import {
   BadRequestException,
   ConflictException,
@@ -53,7 +51,6 @@ import {
 } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { VendorSubscriptionModel } from '@schemas/vendor-subscription.schema';
-import { Cache } from 'cache-manager';
 import { Model, Types } from 'mongoose';
 import {
   CreateStoreDto,
@@ -272,8 +269,8 @@ export class StoreService {
   @Inject(ConfigService)
   private readonly _configService: ConfigService;
 
-  @Inject(CACHE_MANAGER)
-  private readonly _cache: Cache;
+  @Inject(ModuleCacheLayerService)
+  private readonly _cacheLayer: ModuleCacheLayerService;
 
   @Inject(MailerService)
   private readonly _mailerService: MailerService;
@@ -732,8 +729,8 @@ export class StoreService {
     ) {
       return null;
     }
-    return getOrSetCache(
-      this._cache,
+    return this._cacheLayer.getOrSet(
+      'publicCatalog',
       AppCacheKeys.storeMeta(id),
       apiPublicCacheTtlMs(),
       () => this._loadPublicStoreMenuMeta(id),
@@ -1229,7 +1226,7 @@ export class StoreService {
     storeId: string,
   ): Promise<void> {
     try {
-      await bustCatalogListingPublicCaches(this._cache, storeId);
+      await this._cacheLayer.bustCatalogListing(storeId);
       await this._productCategoryService.invalidatePublicListCache();
     } catch (err) {
       this._logger.warn(

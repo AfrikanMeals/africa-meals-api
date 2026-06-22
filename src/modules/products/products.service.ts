@@ -6,17 +6,14 @@ import { prepareIncomingUploadFile } from 'src/incoming-upload-file';
 import {
   AppCacheKeys,
   apiPublicCacheTtlMs,
-  bustCatalogListingPublicCaches,
-  bustProductDetailCachesForProduct,
   favoritesCacheTtlMs,
-  getOrSetCache,
 } from '@common/redis-app-cache';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import { isDemoProductRaterEmail } from '@modules/ratings/demo-product-rating-users';
 import { RatingsService } from '@modules/ratings/ratings.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import {
   BadRequestException,
   ConflictException,
@@ -25,7 +22,6 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Cache } from 'cache-manager';
 import { InjectModel } from '@nestjs/mongoose';
 import { ProductCategoryModel } from '@schemas/product-category.schema';
 import { productEmbeddedStoreOwnerStripeOnboardedStages } from '@modules/billing/stripe/stripe-connect-visibility';
@@ -64,8 +60,8 @@ export class ProductsService {
   @Inject(RatingsService)
   private readonly _ratingsService: RatingsService;
 
-  @Inject(CACHE_MANAGER)
-  private readonly _cacheManager: Cache;
+  @Inject(ModuleCacheLayerService)
+  private readonly _cacheLayer: ModuleCacheLayerService;
 
   @Inject(ProductDiscountScheduleService)
   private readonly _discountSchedules: ProductDiscountScheduleService;
@@ -87,7 +83,9 @@ export class ProductsService {
     ttlMs: number,
     factory: () => Promise<T>,
   ): Promise<T> {
-    const cached = await this._cacheManager.get<T>(cacheKey);
+    const cached = await this._cacheLayer
+      .cacheFor('favorites')
+      .get<T>(cacheKey);
     if (cached !== undefined && cached !== null) {
       return cached;
     }
@@ -98,7 +96,9 @@ export class ProductsService {
     const task = (async () => {
       try {
         const res = await factory();
-        await this._cacheManager.set(cacheKey, res, ttlMs);
+        await this._cacheLayer
+          .cacheFor('favorites')
+          .set(cacheKey, res, ttlMs);
         return res;
       } finally {
         this._favoriteListInflight.delete(cacheKey);
@@ -434,8 +434,8 @@ export class ProductsService {
           countryCode,
         )
       : undefined;
-    return getOrSetCache(
-      this._cacheManager,
+    return this._cacheLayer.getOrSet(
+      'publicCatalog',
       AppCacheKeys.productDetail(id, clientRegion),
       apiPublicCacheTtlMs(),
       () => this._loadProductDetailForShop(id, clientRegion),
@@ -447,8 +447,8 @@ export class ProductsService {
     productId: string,
     storeId: string,
   ): Promise<void> {
-    await bustProductDetailCachesForProduct(this._cacheManager, productId);
-    await bustCatalogListingPublicCaches(this._cacheManager, storeId);
+    await this._cacheLayer.bustProductDetail(productId);
+    await this._cacheLayer.bustCatalogListing(storeId);
   }
 
   private async _loadProductDetailForShop(

@@ -2,10 +2,8 @@ import { MediasService } from '@modules/medias/medias.service';
 import {
   AppCacheKeys,
   apiPublicCacheTtlMs,
-  bustCacheKey,
-  getOrSetCache,
 } from '@common/redis-app-cache';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import {
@@ -13,7 +11,6 @@ import {
   AnnouncementNavigationTypeEnum,
 } from '@schemas/announcement.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
-import { Cache } from 'cache-manager';
 import { Model } from 'mongoose';
 import { CreateAnnouncementDto } from './dto/announcements.dto';
 
@@ -25,12 +22,12 @@ export class AnnouncementsService {
   @Inject(MediasService)
   private readonly _mediasService: MediasService;
 
-  @Inject(CACHE_MANAGER)
-  private readonly _cache: Cache;
+  @Inject(ModuleCacheLayerService)
+  private readonly _cacheLayer: ModuleCacheLayerService;
 
   async list() {
-    return getOrSetCache(
-      this._cache,
+    return this._cacheLayer.getOrSet(
+      'publicCatalog',
       AppCacheKeys.announcements,
       apiPublicCacheTtlMs(),
       () =>
@@ -79,7 +76,7 @@ export class AnnouncementsService {
       ...args,
       ...(pictureUrl && { pictureUrl }),
     });
-    await bustCacheKey(this._cache, AppCacheKeys.announcements);
+    await this._cacheLayer.bustKeyOnAllStores(AppCacheKeys.announcements);
     return created;
   }
 }

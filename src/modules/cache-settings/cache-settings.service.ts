@@ -1,17 +1,16 @@
 import {
   ForbiddenException,
-  Inject,
   Injectable,
   OnModuleInit,
 } from '@nestjs/common';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { InjectModel } from '@nestjs/mongoose';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
+import type { ModuleEngineMap } from '@common/cache/cache-engine.types';
 import {
   apiPublicCacheTtlMs,
   bustAllPublicAppCaches,
   bustEntireAppCaches,
   bustPublicCatalogAppCaches,
-  detectCacheStoreKind,
   favoritesCacheTtlMs,
   productCategoriesCacheTtlMs,
   setRuntimeCacheTtlOverrides,
@@ -22,9 +21,11 @@ import {
   CacheSettingsModel,
 } from '@schemas/cache-settings.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
-import { Cache } from 'cache-manager';
 import { Model } from 'mongoose';
-import { UpdateCacheSettingsDto } from './dto/update-cache-settings.dto';
+import {
+  moduleEnginesFromDoc,
+  UpdateCacheSettingsDto,
+} from './dto/update-cache-settings.dto';
 
 const SETTINGS_KEY = 'default';
 
@@ -38,14 +39,22 @@ export type CacheSettingsResponse = {
   envPublicCatalogTtlMs: number;
   envFavoritesTtlMs: number;
   envProductCategoriesTtlMs: number;
-  cacheStore: 'redis' | 'memory';
+  moduleEngines: ModuleEngineMap;
+  effectiveModuleEngines: ModuleEngineMap;
+  enginesAvailable: {
+    redis: boolean;
+    memcached: boolean;
+    memory: true;
+  };
+  /** @deprecated Utiliser effectiveModuleEngines */
+  cacheStore: 'redis' | 'memcached' | 'memory';
   updatedAt: string | null;
 };
 
 export type ClearCacheResponse = {
   scope: 'public-catalog' | 'all' | 'everything';
   keysCleared: number;
-  cacheStore: 'redis' | 'memory';
+  cacheStore: 'redis' | 'memcached' | 'memory';
   clearedAt: string;
 };
 
@@ -54,15 +63,13 @@ export class CacheSettingsService implements OnModuleInit {
   constructor(
     @InjectModel(CacheSettingsModel.name)
     private readonly _settings: Model<CacheSettingsDocument>,
-    @Inject(CACHE_MANAGER)
-    private readonly _cache: Cache,
-    @Inject(StoreAccessService)
+    private readonly _cacheLayer: ModuleCacheLayerService,
     private readonly _storeAccess: StoreAccessService,
   ) {}
 
   async onModuleInit(): Promise<void> {
     const doc = await this.ensureSettingsDoc();
-    this.applyRuntimeTtls(doc);
+    this.applyRuntimeSettings(doc);
   }
 
   private async assertAdminSettings(user: UserModel): Promise<void> {
@@ -77,16 +84,23 @@ export class CacheSettingsService implements OnModuleInit {
     return Number.isFinite(n) && n > 0 ? Math.trunc(n) : fallback;
   }
 
-  private applyRuntimeTtls(doc: CacheSettingsModel): void {
+  private applyRuntimeSettings(doc: CacheSettingsModel): void {
     setRuntimeCacheTtlOverrides({
       publicCatalogTtlMs: doc.publicCatalogTtlMs,
       favoritesTtlMs: doc.favoritesTtlMs,
       productCategoriesTtlMs: doc.productCategoriesTtlMs,
     });
+    this._cacheLayer.applyModuleEngines(moduleEnginesFromDoc(doc));
+  }
+
+  private primaryStoreLabel(): 'redis' | 'memcached' | 'memory' {
+    const effective = this._cacheLayer.getEffectiveModuleEngines();
+    return effective.publicCatalog;
   }
 
   private toResponse(doc: CacheSettingsModel): CacheSettingsResponse {
     const typed = doc as unknown as { updatedAt?: Date };
+    const moduleEngines = moduleEnginesFromDoc(doc);
     return {
       publicCatalogTtlMs: doc.publicCatalogTtlMs,
       favoritesTtlMs: doc.favoritesTtlMs,
@@ -100,7 +114,10 @@ export class CacheSettingsService implements OnModuleInit {
         'PRODUCT_CATEGORIES_CACHE_TTL_MS',
         120_000,
       ),
-      cacheStore: detectCacheStoreKind(this._cache),
+      moduleEngines,
+      effectiveModuleEngines: this._cacheLayer.getEffectiveModuleEngines(),
+      enginesAvailable: this._cacheLayer.getAvailability(),
+      cacheStore: this.primaryStoreLabel(),
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
   }
@@ -136,21 +153,25 @@ export class CacheSettingsService implements OnModuleInit {
     dto: UpdateCacheSettingsDto,
   ): Promise<CacheSettingsResponse> {
     await this.assertAdminSettings(user);
+    const $set: Record<string, unknown> = {
+      publicCatalogTtlMs: dto.publicCatalogTtlMs,
+      favoritesTtlMs: dto.favoritesTtlMs,
+      productCategoriesTtlMs: dto.productCategoriesTtlMs,
+    };
+    if (dto.moduleEngines) {
+      $set.moduleEngines = dto.moduleEngines;
+    }
     const updated = await this._settings
       .findOneAndUpdate(
         { key: SETTINGS_KEY },
         {
-          $set: {
-            publicCatalogTtlMs: dto.publicCatalogTtlMs,
-            favoritesTtlMs: dto.favoritesTtlMs,
-            productCategoriesTtlMs: dto.productCategoriesTtlMs,
-          },
+          $set,
           $setOnInsert: { key: SETTINGS_KEY },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },
       )
       .exec();
-    this.applyRuntimeTtls(updated);
+    this.applyRuntimeSettings(updated);
     return this.toResponse(updated);
   }
 
@@ -159,16 +180,25 @@ export class CacheSettingsService implements OnModuleInit {
     scope: 'public-catalog' | 'all' | 'everything',
   ): Promise<ClearCacheResponse> {
     await this.assertAdminSettings(user);
-    const result =
-      scope === 'everything'
-        ? await bustEntireAppCaches(this._cache)
-        : scope === 'all'
-          ? await bustAllPublicAppCaches(this._cache)
-          : await bustPublicCatalogAppCaches(this._cache);
+    const stores = this._cacheLayer.allStores();
+    let keysCleared = 0;
+    for (const store of stores) {
+      const result =
+        scope === 'everything'
+          ? await bustEntireAppCaches(store)
+          : scope === 'all'
+            ? await bustAllPublicAppCaches(store)
+            : await bustPublicCatalogAppCaches(store);
+      if (result.keysCleared >= 0) {
+        keysCleared += result.keysCleared;
+      } else {
+        keysCleared = -1;
+      }
+    }
     return {
       scope,
-      keysCleared: result.keysCleared,
-      cacheStore: detectCacheStoreKind(this._cache),
+      keysCleared,
+      cacheStore: this.primaryStoreLabel(),
       clearedAt: new Date().toISOString(),
     };
   }

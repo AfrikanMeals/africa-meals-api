@@ -7,9 +7,9 @@ import {
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { productCategoriesCacheTtlMs } from '@common/redis-app-cache';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import { InjectModel } from '@nestjs/mongoose';
-import { Cache } from 'cache-manager';
 import { ProductCategoryModel, ProductCategoryKindEnum } from '@schemas/product-category.schema';
 import { DrinkModel } from '@schemas/drink.schema';
 import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
@@ -22,7 +22,6 @@ import {
   PatchProductCategoryDto,
 } from './dto/product-category.dto';
 import { mapInChunks } from '@utils/map-in-chunks';
-import { productCategoriesCacheTtlMs } from '@common/redis-app-cache';
 import { productDailyMenuListingPipelineStages } from '@utils/product-daily-menu-listing.pipeline';
 
 /** Ligne JSON renvoyée par [filter] / REST / GraphQL public. */
@@ -45,8 +44,8 @@ export class ProductCategoryService implements OnModuleInit {
   /** Cache liste publique catégories (invalidé à chaque mutation admin). */
   private static readonly _publicListCacheKey = 'product-categories:public:v4';
 
-  @Inject(CACHE_MANAGER)
-  private readonly _cache: Cache;
+  @Inject(ModuleCacheLayerService)
+  private readonly _cacheLayer: ModuleCacheLayerService;
 
   @InjectModel(ProductCategoryModel.name)
   private readonly _productCategoryModel: Model<ProductCategoryModel>;
@@ -135,7 +134,9 @@ export class ProductCategoryService implements OnModuleInit {
   }
 
   private async _bustPublicCategoriesCache() {
-    await this._cache.del(ProductCategoryService._publicListCacheKey);
+    await this._cacheLayer.bustKeyOnAllStores(
+      ProductCategoryService._publicListCacheKey,
+    );
   }
 
   private assertCanManageCategories(user: UserModel) {
@@ -264,7 +265,8 @@ export class ProductCategoryService implements OnModuleInit {
    * L’ancien `$lookup` chargeait **tous** les produits par catégorie en RAM → risque de timeout / 500 sur gros catalogues.
    */
   async filter(): Promise<PublicProductCategoryRow[]> {
-    const cached = await this._cache.get<PublicProductCategoryRow[]>(
+    const categoriesCache = this._cacheLayer.cacheFor('productCategories');
+    const cached = await categoriesCache.get<PublicProductCategoryRow[]>(
       ProductCategoryService._publicListCacheKey,
     );
     if (cached != null && cached.length > 0) {
@@ -354,7 +356,7 @@ export class ProductCategoryService implements OnModuleInit {
         this.serializeCategoryRow(doc),
       );
       if (result.length > 0) {
-        await this._cache.set(
+        await categoriesCache.set(
           ProductCategoryService._publicListCacheKey,
           result,
           this._categoriesListTtlMs(),
@@ -366,7 +368,7 @@ export class ProductCategoryService implements OnModuleInit {
       try {
         const fallback = await this._filterWithCounts();
         if (fallback.length > 0) {
-          await this._cache.set(
+          await categoriesCache.set(
             ProductCategoryService._publicListCacheKey,
             fallback,
             this._categoriesListTtlMs(),

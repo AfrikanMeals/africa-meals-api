@@ -6,10 +6,9 @@ import {
   registerAppCacheBustRedis,
   APP_CACHE_BUST_CHANNEL,
 } from '@common/redis-app-cache';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import { SharedRedisService } from '@common/redis/shared-redis.service';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { Cache } from 'cache-manager';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type Redis from 'ioredis';
 
 /** Propage les bust cache entre workers PM2 (cache mémoire par processus). */
@@ -19,8 +18,7 @@ export class AppCacheBustSubscriber implements OnModuleInit {
   private subscriber: Redis | null = null;
 
   constructor(
-    @Inject(CACHE_MANAGER)
-    private readonly _cache: Cache,
+    private readonly _cacheLayer: ModuleCacheLayerService,
     private readonly _sharedRedis: SharedRedisService,
   ) {}
 
@@ -61,10 +59,12 @@ export class AppCacheBustSubscriber implements OnModuleInit {
         : [];
       bumpCacheBustGenerationLocal();
       clearInflightCache();
-      for (const prefix of prefixes) {
-        await bustCacheKeysByPrefix(this._cache, prefix, {
-          skipClusterNotify: true,
-        });
+      for (const cache of this._cacheLayer.allStores()) {
+        for (const prefix of prefixes) {
+          await bustCacheKeysByPrefix(cache, prefix, {
+            skipClusterNotify: true,
+          });
+        }
       }
     } catch (err) {
       this._logger.warn(

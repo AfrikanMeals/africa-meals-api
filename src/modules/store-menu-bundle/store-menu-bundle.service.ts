@@ -5,12 +5,10 @@ import {
   AppCacheKeys,
   apiPublicCacheTtlMs,
   cacheUserScope,
-  getOrSetCache,
 } from '@common/redis-app-cache';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import { Inject, Injectable } from '@nestjs/common';
 import { UserModel } from '@schemas/user.schema';
-import { Cache } from 'cache-manager';
 
 export type StoreMenuBundlePayload = {
   store: Record<string, unknown> | null;
@@ -21,8 +19,8 @@ export type StoreMenuBundlePayload = {
 
 @Injectable()
 export class StoreMenuBundleService {
-  @Inject(CACHE_MANAGER)
-  private readonly _cache: Cache;
+  @Inject(ModuleCacheLayerService)
+  private readonly _cacheLayer: ModuleCacheLayerService;
 
   @Inject(StoreService)
   private readonly _stores: StoreService;
@@ -65,8 +63,8 @@ export class StoreMenuBundleService {
       countryCode: countryCode || undefined,
       user,
     };
-    return getOrSetCache(
-      this._cache,
+    return this._cacheLayer.getOrSet(
+      'publicCatalog',
       cacheKey,
       apiPublicCacheTtlMs(),
       async () => {

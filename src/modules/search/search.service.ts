@@ -16,17 +16,15 @@ import {
   AppCacheKeys,
   apiPublicCacheTtlMs,
   cacheUserScope,
-  getOrSetCache,
   stableCacheHash,
 } from '@common/redis-app-cache';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import { shouldApplyCatalogRegionFilter } from '@common/catalog-public-id.util';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject, Injectable } from '@nestjs/common';
 import { OfferModel, OfferStatusEnum } from '@schemas/offer.schema';
 import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
-import { Cache } from 'cache-manager';
 import { PipelineStage, Types } from 'mongoose';
 import {
   SearchContent,
@@ -706,8 +704,8 @@ export class SearchService {
   @Inject(SupportedCountriesService)
   private readonly _supportedCountries: SupportedCountriesService;
 
-  @Inject(CACHE_MANAGER)
-  private readonly _cache: Cache;
+  @Inject(ModuleCacheLayerService)
+  private readonly _cacheLayer: ModuleCacheLayerService;
 
   private async _applyPlatformSearchSettings(args: SearchDto): Promise<void> {
     const cfg = await this._searchSettings.getSearchRuntimeConfig();
@@ -762,8 +760,8 @@ export class SearchService {
         page: args.page,
         take: args.take,
       });
-      return getOrSetCache(
-        this._cache,
+      return this._cacheLayer.getOrSet(
+        'publicCatalog',
         AppCacheKeys.searchFilter(hash),
         apiPublicCacheTtlMs(),
         () => this._filterUncached(args, user, clientRegion),
@@ -1399,8 +1397,8 @@ export class SearchService {
     const region =
       clientRegion ??
       (await this._supportedCountries.resolveClientCatalogRegion(user));
-    return getOrSetCache(
-      this._cache,
+    return this._cacheLayer.getOrSet(
+      'publicCatalog',
       AppCacheKeys.homeFeed(scope, safeLimit, region),
       apiPublicCacheTtlMs(),
       () => this._homeFeedProductsUncached(user, safeLimit, region),
@@ -1738,8 +1736,8 @@ export class SearchService {
       const scope =
         cacheUserScope(user) +
         (clientPlatform === 'web' ? ':web-catalog' : ':client-catalog');
-      return getOrSetCache(
-        this._cache,
+      return this._cacheLayer.getOrSet(
+        'publicCatalog',
         AppCacheKeys.storeMenuPage(storeId, safePage, safeTake, scope),
         apiPublicCacheTtlMs(),
         () =>

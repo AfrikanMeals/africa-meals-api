@@ -64,8 +64,7 @@ import {
   checkoutPreviewCacheTtlMs,
   stableCacheHash,
 } from '@common/redis-app-cache';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import type { Cache } from 'cache-manager';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import { DeliveryTipService } from '../delivery-tip.service';
 import { DELIVERY_TIP_ALLOCATION_BY_SHIPPING_FEE } from '../delivery-tip-allocation.util';
 
@@ -754,8 +753,7 @@ export class StripeGroupedCheckoutService {
     @Inject(SubscriptionsStripeCheckoutService)
     private readonly subscriptionStripeCheckout: SubscriptionsStripeCheckoutService,
     private readonly webhookMetrics: StripeWebhookMetricsService,
-    @Inject(CACHE_MANAGER)
-    private readonly cache: Cache,
+    private readonly cacheLayer: ModuleCacheLayerService,
     @Inject(forwardRef(() => VendorNotificationStripeBillingService))
     @Optional()
     private readonly vendorSmsBilling?: VendorNotificationStripeBillingService,
@@ -1525,8 +1523,9 @@ export class StripeGroupedCheckoutService {
     const inputHash = cartPricingCacheInputHash(cartFingerprint, dto);
     const cacheKey = AppCacheKeys.cartPricing(String(user.id), inputHash);
 
+    const checkoutCache = this.cacheLayer.cacheFor('checkoutPreview');
     const cached =
-      await this.cache.get<Omit<GroupedCheckoutPreviewResponse, 'cache'>>(cacheKey);
+      await checkoutCache.get<Omit<GroupedCheckoutPreviewResponse, 'cache'>>(cacheKey);
     if (cached) {
       return { ...cached, cache: { hit: true, ttlMs } };
     }
@@ -1535,7 +1534,7 @@ export class StripeGroupedCheckoutService {
       previewAllowUndeliverable: true,
     });
     const preview = groupedCheckoutPreviewFromBuilt(built);
-    await this.cache.set(cacheKey, preview, ttlMs);
+    await checkoutCache.set(cacheKey, preview, ttlMs);
     return { ...preview, cache: { hit: false, ttlMs } };
   }
 

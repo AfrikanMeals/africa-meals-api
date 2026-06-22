@@ -12,10 +12,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import type { Cache } from 'cache-manager';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import {
-  bustCartPricingCachesForUser,
   stableCacheHash,
 } from '@common/redis-app-cache';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
@@ -126,8 +124,8 @@ export class CartService {
   @Inject(CouponsService)
   private readonly _couponsService: CouponsService;
 
-  @Inject(CACHE_MANAGER)
-  private readonly _cache: Cache;
+  @Inject(ModuleCacheLayerService)
+  private readonly _cacheLayer: ModuleCacheLayerService;
 
   /** Empreinte stable du panier pour clé cache pricing checkout. */
   async getCartPricingFingerprint(user: UserModel): Promise<string> {
@@ -160,7 +158,7 @@ export class CartService {
 
   private async bustCartPricingCache(user: UserModel): Promise<void> {
     try {
-      await bustCartPricingCachesForUser(this._cache, user.id);
+      await this._cacheLayer.bustCartPricingForUser(user.id);
     } catch {
       /* cache optionnel */
     }

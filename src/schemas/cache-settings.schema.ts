@@ -1,3 +1,4 @@
+import { DEFAULT_MODULE_ENGINES } from '@common/cache/cache-engine.types';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
 
@@ -18,6 +19,34 @@ export class CacheSettingsModel {
   /** TTL liste publique catégories produits — ms. */
   @Prop({ type: Number, default: 120_000, min: 5_000, max: 3_600_000 })
   productCategoriesTtlMs: number;
+
+  /** Moteur cache par module applicatif. */
+  @Prop({
+    type: {
+      publicCatalog: {
+        type: String,
+        enum: ['redis', 'memcached', 'memory'],
+        default: DEFAULT_MODULE_ENGINES.publicCatalog,
+      },
+      favorites: {
+        type: String,
+        enum: ['redis', 'memcached', 'memory'],
+        default: DEFAULT_MODULE_ENGINES.favorites,
+      },
+      productCategories: {
+        type: String,
+        enum: ['redis', 'memcached', 'memory'],
+        default: DEFAULT_MODULE_ENGINES.productCategories,
+      },
+      checkoutPreview: {
+        type: String,
+        enum: ['redis', 'memcached', 'memory'],
+        default: DEFAULT_MODULE_ENGINES.checkoutPreview,
+      },
+    },
+    default: () => ({ ...DEFAULT_MODULE_ENGINES }),
+  })
+  moduleEngines: typeof DEFAULT_MODULE_ENGINES;
 }
 
 export type CacheSettingsDocument = HydratedDocument<CacheSettingsModel>;

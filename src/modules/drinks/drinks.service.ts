@@ -1,7 +1,7 @@
 import { detectCatalogImageStorageKind } from '@common/media/detect-storage-engine.util';
 import { escapeMongoRegex } from '@common/mongo/escape-regex.util';
 import { shouldApplyCatalogRegionFilter } from '@common/catalog-public-id.util';
-import { bustCatalogListingPublicCaches } from '@common/redis-app-cache';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import {
   isStripeConnectOnboardingCompleteUser,
   productEmbeddedStoreOwnerStripeOnboardedStages,
@@ -26,8 +26,6 @@ import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, PipelineStage, Types } from 'mongoose';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Cache } from 'cache-manager';
 import { CreateDrinkDto, PatchDrinkDto } from './dto/drink.dto';
 import { SearchDto } from '@modules/search/dto/search.dto';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
@@ -152,14 +150,14 @@ export class DrinksService {
   @Inject(SupportedCountriesService)
   private readonly _supportedCountries: SupportedCountriesService;
 
-  @Inject(CACHE_MANAGER)
-  private readonly _cache: Cache;
+  @Inject(ModuleCacheLayerService)
+  private readonly _cacheLayer: ModuleCacheLayerService;
 
   private async _bustStoreCatalogCaches(storeId: string): Promise<void> {
     const sid = String(storeId ?? '').trim();
     if (!sid) return;
     try {
-      await bustCatalogListingPublicCaches(this._cache, sid);
+      await this._cacheLayer.bustCatalogListing(sid);
       await this._productCategoryService.invalidatePublicListCache();
     } catch {
       /* cache best-effort */

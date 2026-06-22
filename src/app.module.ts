@@ -48,6 +48,7 @@ import { MaintenanceAlertsModule } from './modules/maintenance-alerts/maintenanc
 import { RequestStatsModule } from './modules/request-stats/request-stats.module';
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
 import { DomainEventsModule } from './common/domain-events/domain-events.module';
+import { ModuleCacheLayerModule } from './common/cache/module-cache-layer.module';
 import { RedisSharedModule } from './common/redis/redis-shared.module';
 import { AppCacheBustSubscriber } from './common/app-cache-bust.subscriber';
 import { registerAppCacheBustRedis } from './common/redis-app-cache';
@@ -270,6 +271,7 @@ function redactRedisUrl(url: string): string {
         }
       },
     }),
+    ModuleCacheLayerModule,
     ScheduleModule.forRoot(),
     CronMonitorModule,
     AdminUsersModule,
