@@ -272,6 +272,7 @@ export class SupportedCountriesService implements OnModuleInit {
       active: boolean;
       stripeZeroDecimal: boolean;
       stripeAmountFactor: number;
+      adCashToCurrencyRate: number;
       taxes: RegionTaxRule[];
     }>
   > {
@@ -282,9 +283,12 @@ export class SupportedCountriesService implements OnModuleInit {
       .exec();
     return docs.map((d) => {
       const row = mapSupportedCountryPublicRow(d);
+      const rate = Number(d.adCashToCurrencyRate ?? 1);
       return {
         ...row,
         active: Boolean(d.active),
+        adCashToCurrencyRate:
+          Number.isFinite(rate) && rate > 0 ? rate : 1,
         taxes: normalizeRegionTaxRules(d.taxes),
       };
     });
@@ -378,6 +382,32 @@ export class SupportedCountriesService implements OnModuleInit {
     ]);
   }
 
+  async getAdCashToCurrencyRate(countryCode: string): Promise<number> {
+    const code = String(countryCode ?? '')
+      .trim()
+      .toUpperCase();
+    if (!/^[A-Z]{2}$/.test(code)) return 1;
+    const doc = await this._model
+      .findOne({ code })
+      .select('adCashToCurrencyRate')
+      .lean()
+      .exec();
+    const rate = Number(doc?.adCashToCurrencyRate ?? 1);
+    return Number.isFinite(rate) && rate > 0 ? rate : 1;
+  }
+
+  async getCountryCurrency(code: string): Promise<string> {
+    const c = String(code ?? '')
+      .trim()
+      .toUpperCase();
+    if (!/^[A-Z]{2}$/.test(c)) return 'CAD';
+    const doc = await this._model.findOne({ code: c }).select('currency').lean().exec();
+    const currency = String(doc?.currency ?? 'CAD')
+      .trim()
+      .toUpperCase();
+    return /^[A-Z]{3}$/.test(currency) ? currency : 'CAD';
+  }
+
   async saveAllForAdmin(
     countries: Array<{
       code: string;
@@ -386,6 +416,7 @@ export class SupportedCountriesService implements OnModuleInit {
       currency: string;
       active: boolean;
       stripeZeroDecimal?: boolean;
+      adCashToCurrencyRate?: number;
     }>,
   ): Promise<void> {
     const seen = new Set<string>();
@@ -426,6 +457,13 @@ export class SupportedCountriesService implements OnModuleInit {
       };
       if (row.stripeZeroDecimal != null) {
         $set.stripeZeroDecimal = Boolean(row.stripeZeroDecimal);
+      }
+      if (row.adCashToCurrencyRate != null) {
+        const rate = Number(row.adCashToCurrencyRate);
+        if (!Number.isFinite(rate) || rate <= 0) {
+          throw new BadRequestException(`invalid_ad_cash_rate:${code}`);
+        }
+        $set.adCashToCurrencyRate = rate;
       }
       await this._model.updateOne(
         { code },

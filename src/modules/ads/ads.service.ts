@@ -40,6 +40,7 @@ import {
   AdMarketingEntityStatus,
   VendorStatusEmailService,
 } from '@modules/vendor-emails/vendor-status-email.service';
+import { AdCashEmailService } from '@modules/vendor-emails/ad-cash-email.service';
 import { WsAdManagerNotifyService } from '@modules/ws-notify/ws-ad-manager-notify.service';
 import { DomainEventPublisherService } from '../../common/domain-events/domain-event-publisher.service';
 import { DomainEventDraft } from '../../common/domain-events/domain-event.types';
@@ -92,6 +93,10 @@ import {
   AdCreditPaymentModel,
   AdCreditPaymentStatusEnum,
 } from '@schemas/ad-credit-payment.schema';
+import {
+  StoreAdCashLedgerModel,
+  StoreAdCashLedgerTypeEnum,
+} from '@schemas/store-ad-cash.schema';
 import {
   AdArchiveReasonEnum,
   AdModerationStatusEnum,
@@ -314,8 +319,75 @@ export type AdCreditSummaryPayload = {
       due: number;
     };
     totalDue: number;
+    /** Dette brute avant Ad Cash / Stripe. */
+    grossDue?: number;
+    adCash?: {
+      balanceUnits: number;
+      exchangeRate: number;
+      balanceCurrencyEquivalent: number;
+      payableCurrency: number;
+    };
   }>;
   totalDue: number;
+  adCash?: {
+    totalBalanceCurrency: number;
+    payableCurrency: number;
+  };
+};
+
+export type StoreAdCashSummaryPayload = {
+  storeId: string;
+  storeName: string;
+  regionCode: string;
+  currency: string;
+  exchangeRate: number;
+  balanceAdCash: number;
+  balanceCurrencyEquivalent: number;
+  redeemedCurrency: number;
+  recentGrants: Array<{
+    id: string;
+    adCashAmount: number;
+    currencyEquivalent: number;
+    note: string | null;
+    grantedBy: string | null;
+    createdAt: string;
+  }>;
+};
+
+export type AdminStoreAdSpendingRow = {
+  storeId: string;
+  storeName: string;
+  ownerId: string;
+  ownerName: string;
+  ownerEmail: string | null;
+  currency: string;
+  bannersPendingCad: number;
+  campaignsPendingCad: number;
+  adCreditDebtCad: number;
+  adCash: {
+    balanceUnits: number;
+    totalReceivedUnits: number;
+    usedUnits: number;
+    balanceCurrencyEquivalent: number;
+    totalReceivedCurrencyEquivalent: number;
+    usedCurrencyEquivalent: number;
+  };
+};
+
+export type AdminStoreAdSpendingPayload = {
+  currency: string;
+  items: AdminStoreAdSpendingRow[];
+  totals: {
+    bannersPendingCad: number;
+    campaignsPendingCad: number;
+    adCreditDebtCad: number;
+    adCashBalanceUnits: number;
+    adCashTotalReceivedUnits: number;
+    adCashUsedUnits: number;
+    adCashBalanceCurrencyEquivalent: number;
+    adCashTotalReceivedCurrencyEquivalent: number;
+    adCashUsedCurrencyEquivalent: number;
+  };
 };
 
 export type AdCreditPaymentHistoryRow = {
@@ -440,6 +512,9 @@ export class AdsService implements OnModuleInit {
   @InjectModel(AdCreditPaymentModel.name)
   private readonly _adCreditPaymentModel: Model<AdCreditPaymentModel>;
 
+  @InjectModel(StoreAdCashLedgerModel.name)
+  private readonly _storeAdCashModel: Model<StoreAdCashLedgerModel>;
+
   @InjectModel(StoreModel.name)
   private readonly _storeModel: Model<StoreModel>;
 
@@ -475,6 +550,9 @@ export class AdsService implements OnModuleInit {
 
   @Inject(VendorStatusEmailService)
   private readonly _vendorStatusEmail: VendorStatusEmailService;
+
+  @Inject(AdCashEmailService)
+  private readonly _adCashEmail: AdCashEmailService;
 
   @Inject(WsAdManagerNotifyService)
   private readonly _wsAdManager: WsAdManagerNotifyService;
@@ -1027,6 +1105,386 @@ export class AdsService implements OnModuleInit {
       outstandingDue,
       creditBalance: Number(Math.max(0, credit).toFixed(2)),
     };
+  }
+
+  private _applyCurrencyCreditToStoreRow(
+    store: AdCreditSummaryPayload['stores'][number],
+    creditCurrency: number,
+  ): AdCreditSummaryPayload['stores'][number] {
+    let credit = Math.max(0, Number(creditCurrency ?? 0));
+    const row = {
+      ...store,
+      banners: { ...store.banners },
+      campaigns: { ...store.campaigns },
+      totalDue: Number(store.totalDue ?? 0),
+    };
+    if (credit <= 0) return row;
+
+    const campaignDue = Math.max(0, Number(row.campaigns.due ?? 0));
+    const campaignPaid = Math.min(campaignDue, credit);
+    row.campaigns.due = Number((campaignDue - campaignPaid).toFixed(2));
+    credit = Number((credit - campaignPaid).toFixed(2));
+
+    if (credit > 0) {
+      const bannerDue = Math.max(0, Number(row.banners.due ?? 0));
+      const bannerPaid = Math.min(bannerDue, credit);
+      row.banners.due = Number((bannerDue - bannerPaid).toFixed(2));
+      credit = Number((credit - bannerPaid).toFixed(2));
+    }
+
+    row.totalDue = Number((row.campaigns.due + row.banners.due).toFixed(2));
+    return row;
+  }
+
+  private async _storeAdCashRedeemedCurrency(
+    storeId: string,
+  ): Promise<number> {
+    if (!Types.ObjectId.isValid(storeId)) return 0;
+    const rows = await this._storeAdCashModel
+      .aggregate<{ _id: null; total: number }>([
+        {
+          $match: {
+            store: new Types.ObjectId(storeId),
+            type: StoreAdCashLedgerTypeEnum.REDEMPTION,
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$currencyEquivalent' },
+          },
+        },
+      ])
+      .exec();
+    return Number(Number(rows[0]?.total ?? 0).toFixed(2));
+  }
+
+  private async _storeAdCashBalanceUnits(storeId: string): Promise<number> {
+    if (!Types.ObjectId.isValid(storeId)) return 0;
+    const storeOid = new Types.ObjectId(storeId);
+    const [granted, redeemed] = await Promise.all([
+      this._storeAdCashModel
+        .aggregate<{ _id: null; total: number }>([
+          {
+            $match: {
+              store: storeOid,
+              type: StoreAdCashLedgerTypeEnum.GRANT,
+            },
+          },
+          { $group: { _id: null, total: { $sum: '$adCashAmount' } } },
+        ])
+        .exec(),
+      this._storeAdCashModel
+        .aggregate<{ _id: null; total: number }>([
+          {
+            $match: {
+              store: storeOid,
+              type: StoreAdCashLedgerTypeEnum.REDEMPTION,
+            },
+          },
+          { $group: { _id: null, total: { $sum: '$adCashAmount' } } },
+        ])
+        .exec(),
+    ]);
+    const balance = Number(granted[0]?.total ?? 0) - Number(redeemed[0]?.total ?? 0);
+    return Number(Math.max(0, balance).toFixed(4));
+  }
+
+  private emptyAdCashStats(): AdminStoreAdSpendingRow['adCash'] {
+    return {
+      balanceUnits: 0,
+      totalReceivedUnits: 0,
+      usedUnits: 0,
+      balanceCurrencyEquivalent: 0,
+      totalReceivedCurrencyEquivalent: 0,
+      usedCurrencyEquivalent: 0,
+    };
+  }
+
+  private async _bulkStoreAdCashStats(
+    storeIds: string[],
+  ): Promise<Map<string, AdminStoreAdSpendingRow['adCash']>> {
+    const out = new Map<string, AdminStoreAdSpendingRow['adCash']>();
+    const validIds = storeIds.filter((id) => Types.ObjectId.isValid(id));
+    for (const id of validIds) {
+      out.set(id, this.emptyAdCashStats());
+    }
+    if (!validIds.length) return out;
+
+    const oids = validIds.map((id) => new Types.ObjectId(id));
+    const grouped = await this._storeAdCashModel
+      .aggregate<{
+        _id: { store: Types.ObjectId; type: StoreAdCashLedgerTypeEnum };
+        adCashUnits: number;
+        currencyEquivalent: number;
+      }>([
+        { $match: { store: { $in: oids } } },
+        {
+          $group: {
+            _id: { store: '$store', type: '$type' },
+            adCashUnits: { $sum: '$adCashAmount' },
+            currencyEquivalent: { $sum: '$currencyEquivalent' },
+          },
+        },
+      ])
+      .exec();
+
+    for (const row of grouped) {
+      const storeId = String(row._id.store ?? '');
+      if (!storeId || !out.has(storeId)) continue;
+      const entry = out.get(storeId)!;
+      const units = Number(row.adCashUnits ?? 0);
+      const currencyEq = Number(row.currencyEquivalent ?? 0);
+      if (row._id.type === StoreAdCashLedgerTypeEnum.GRANT) {
+        entry.totalReceivedUnits = Number(
+          (entry.totalReceivedUnits + units).toFixed(4),
+        );
+        entry.totalReceivedCurrencyEquivalent = Number(
+          (entry.totalReceivedCurrencyEquivalent + currencyEq).toFixed(2),
+        );
+      } else if (row._id.type === StoreAdCashLedgerTypeEnum.REDEMPTION) {
+        entry.usedUnits = Number((entry.usedUnits + units).toFixed(4));
+        entry.usedCurrencyEquivalent = Number(
+          (entry.usedCurrencyEquivalent + currencyEq).toFixed(2),
+        );
+      }
+    }
+
+    for (const [storeId, entry] of out.entries()) {
+      entry.balanceUnits = Number(
+        Math.max(0, entry.totalReceivedUnits - entry.usedUnits).toFixed(4),
+      );
+    }
+
+    await Promise.all(
+      [...out.entries()].map(async ([storeId, entry]) => {
+        const ctx = await this._resolveStoreAdCashContext(storeId);
+        const rate = ctx?.exchangeRate ?? 1;
+        entry.balanceCurrencyEquivalent = Number(
+          (entry.balanceUnits * rate).toFixed(2),
+        );
+      }),
+    );
+
+    return out;
+  }
+
+  private async _resolveStoreAdCashContext(storeId: string): Promise<{
+    storeOid: Types.ObjectId;
+    regionCode: string;
+    currency: string;
+    exchangeRate: number;
+  } | null> {
+    if (!Types.ObjectId.isValid(storeId)) return null;
+    const store = await this._storeModel
+      .findById(storeId)
+      .select('region currency')
+      .lean()
+      .exec();
+    if (!store) return null;
+    const regionCode = String(store.region ?? 'CA')
+      .trim()
+      .toUpperCase();
+    const exchangeRate =
+      await this._supportedCountries.getAdCashToCurrencyRate(regionCode);
+    const currency =
+      (await this._supportedCountries.getCountryCurrency(regionCode)) ||
+      String(store.currency ?? 'CAD').toUpperCase();
+    return {
+      storeOid: new Types.ObjectId(storeId),
+      regionCode,
+      currency,
+      exchangeRate,
+    };
+  }
+
+  private async _reconcileStoreAdCashForStore(
+    storeId: string,
+    grossDueCurrency: number,
+  ): Promise<void> {
+    const grossDue = Math.max(0, Number(grossDueCurrency) || 0);
+    if (grossDue <= 0) return;
+
+    const ctx = await this._resolveStoreAdCashContext(storeId);
+    if (!ctx) return;
+
+    const [balanceUnits, alreadyRedeemedCurrency] = await Promise.all([
+      this._storeAdCashBalanceUnits(storeId),
+      this._storeAdCashRedeemedCurrency(storeId),
+    ]);
+    const pendingDebt = Math.max(0, grossDue - alreadyRedeemedCurrency);
+    if (pendingDebt <= 0 || balanceUnits <= 0) return;
+
+    const maxCurrencyFromBalance = Number(
+      (balanceUnits * ctx.exchangeRate).toFixed(2),
+    );
+    const redeemCurrency = Math.min(pendingDebt, maxCurrencyFromBalance);
+    const redeemUnits = Number((redeemCurrency / ctx.exchangeRate).toFixed(4));
+    if (redeemUnits <= 0 || redeemCurrency <= 0) return;
+
+    const store = await this._storeModel
+      .findById(storeId)
+      .select('owner')
+      .lean()
+      .exec();
+    if (!store?.owner) return;
+
+    await this._storeAdCashModel.create({
+      store: ctx.storeOid,
+      owner: store.owner,
+      type: StoreAdCashLedgerTypeEnum.REDEMPTION,
+      adCashAmount: redeemUnits,
+      currencyEquivalent: redeemCurrency,
+      exchangeRate: ctx.exchangeRate,
+      currency: ctx.currency,
+      note: 'auto_settlement_ad_credit',
+    });
+  }
+
+  private async _reconcileStoreAdCashForStores(
+    stores: AdCreditSummaryPayload['stores'],
+  ): Promise<void> {
+    for (const store of stores) {
+      await this._reconcileStoreAdCashForStore(store.storeId, store.totalDue);
+    }
+  }
+
+  private async _applyRedeemedAdCashToStores(
+    stores: AdCreditSummaryPayload['stores'],
+  ): Promise<AdCreditSummaryPayload['stores']> {
+    const out: AdCreditSummaryPayload['stores'] = [];
+    for (const store of stores) {
+      const redeemedCurrency = await this._storeAdCashRedeemedCurrency(
+        store.storeId,
+      );
+      out.push(this._applyCurrencyCreditToStoreRow(store, redeemedCurrency));
+    }
+    return out;
+  }
+
+  async getStoreAdCashSummary(
+    user: UserModel,
+    storeId: string,
+  ): Promise<StoreAdCashSummaryPayload> {
+    this.assertAdmin(user);
+    if (!Types.ObjectId.isValid(storeId)) {
+      throw new BadRequestException('invalid_store_id');
+    }
+    const store = await this._storeModel
+      .findById(storeId)
+      .select('name region currency')
+      .lean()
+      .exec();
+    if (!store) throw new NotFoundException('store_not_found');
+
+    const ctx = await this._resolveStoreAdCashContext(storeId);
+    if (!ctx) throw new NotFoundException('store_not_found');
+
+    const [balanceUnits, redeemedCurrency, recentGrants] = await Promise.all([
+      this._storeAdCashBalanceUnits(storeId),
+      this._storeAdCashRedeemedCurrency(storeId),
+      this._storeAdCashModel
+        .find({
+          store: ctx.storeOid,
+          type: StoreAdCashLedgerTypeEnum.GRANT,
+        })
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .populate('grantedBy', 'fullName email')
+        .lean()
+        .exec(),
+    ]);
+
+    return {
+      storeId,
+      storeName: String(store.name ?? storeId),
+      regionCode: ctx.regionCode,
+      currency: ctx.currency,
+      exchangeRate: ctx.exchangeRate,
+      balanceAdCash: balanceUnits,
+      balanceCurrencyEquivalent: Number(
+        (balanceUnits * ctx.exchangeRate).toFixed(2),
+      ),
+      redeemedCurrency,
+      recentGrants: recentGrants.map((row) => {
+        const grant = row as StoreAdCashLedgerModel & {
+          grantedBy?: { fullName?: string; email?: string } | null;
+        };
+        const admin = grant.grantedBy;
+        const adminLabel =
+          typeof admin === 'object' && admin
+            ? String(admin.fullName ?? admin.email ?? '')
+            : '';
+        return {
+          id: String(row._id ?? ''),
+          adCashAmount: Number(row.adCashAmount ?? 0),
+          currencyEquivalent: Number(row.currencyEquivalent ?? 0),
+          note: row.note ?? null,
+          grantedBy: adminLabel || null,
+          createdAt:
+            row.createdAt instanceof Date
+              ? row.createdAt.toISOString()
+              : String(row.createdAt ?? ''),
+        };
+      }),
+    };
+  }
+
+  async grantAdCashToStore(
+    user: UserModel,
+    storeId: string,
+    amount: number,
+    note?: string,
+  ): Promise<StoreAdCashSummaryPayload> {
+    this.assertAdmin(user);
+    if (!Types.ObjectId.isValid(storeId)) {
+      throw new BadRequestException('invalid_store_id');
+    }
+    const units = Number(amount);
+    if (!Number.isFinite(units) || units <= 0) {
+      throw new BadRequestException('invalid_ad_cash_amount');
+    }
+
+    const store = await this._storeModel
+      .findById(storeId)
+      .select('owner name region currency')
+      .lean()
+      .exec();
+    if (!store?.owner) throw new NotFoundException('store_not_found');
+
+    const ctx = await this._resolveStoreAdCashContext(storeId);
+    if (!ctx) throw new NotFoundException('store_not_found');
+
+    const currencyEquivalent = Number((units * ctx.exchangeRate).toFixed(2));
+    await this._storeAdCashModel.create({
+      store: ctx.storeOid,
+      owner: store.owner,
+      type: StoreAdCashLedgerTypeEnum.GRANT,
+      adCashAmount: Number(units.toFixed(4)),
+      currencyEquivalent,
+      exchangeRate: ctx.exchangeRate,
+      currency: ctx.currency,
+      grantedBy: user._id,
+      note: note?.trim() || null,
+    });
+
+    const summary = await this.getStoreAdCashSummary(user, storeId);
+    const grantedByName = String(user.fullName ?? user.email ?? '').trim();
+    void this._adCashEmail
+      .notifyAdCashGranted({
+        storeId,
+        storeName: String(store.name ?? storeId),
+        adCashAmount: Number(units.toFixed(4)),
+        currencyEquivalent,
+        currency: ctx.currency,
+        exchangeRate: ctx.exchangeRate,
+        balanceAdCash: summary.balanceAdCash,
+        note: note?.trim() || null,
+        grantedByName: grantedByName || null,
+      })
+      .catch(() => undefined);
+
+    return summary;
   }
 
   private async assertCanManageCampaignStore(
@@ -3007,7 +3465,49 @@ export class AdsService implements OnModuleInit {
     const ownerId = new Types.ObjectId(String(user._id));
     await this._syncAdCreditPaymentsFromStripe(ownerId);
     let paidTotal = await this._adCreditPaidTotalCad(ownerId);
-    const applied = this.applyPaidAmountToStoreBreakdown(stores, paidTotal);
+    await this._reconcileStoreAdCashForStores(stores);
+    const storesAfterAdCash = await this._applyRedeemedAdCashToStores(stores);
+    const applied = this.applyPaidAmountToStoreBreakdown(
+      storesAfterAdCash,
+      paidTotal,
+    );
+    const grossByStoreId = new Map(
+      stores.map((row) => [row.storeId, row.totalDue]),
+    );
+    const enrichedStores = await Promise.all(
+      applied.stores.map(async (store) => {
+        const grossStoreDue = grossByStoreId.get(store.storeId) ?? store.totalDue;
+        const balanceUnits = await this._storeAdCashBalanceUnits(store.storeId);
+        const ctx = await this._resolveStoreAdCashContext(store.storeId);
+        const exchangeRate = ctx?.exchangeRate ?? 1;
+        const balanceCurrency = Number(
+          (balanceUnits * exchangeRate).toFixed(2),
+        );
+        const payableCurrency = Number(
+          Math.min(store.totalDue, balanceCurrency).toFixed(2),
+        );
+        return {
+          ...store,
+          grossDue: Number(grossStoreDue.toFixed(2)),
+          adCash: {
+            balanceUnits,
+            exchangeRate,
+            balanceCurrencyEquivalent: balanceCurrency,
+            payableCurrency,
+          },
+        };
+      }),
+    );
+    const adCashTotals = enrichedStores.reduce(
+      (acc, row) => ({
+        totalBalanceCurrency:
+          acc.totalBalanceCurrency +
+          Number(row.adCash?.balanceCurrencyEquivalent ?? 0),
+        payableCurrency:
+          acc.payableCurrency + Number(row.adCash?.payableCurrency ?? 0),
+      }),
+      { totalBalanceCurrency: 0, payableCurrency: 0 },
+    );
     return {
       currency: pricing.currency,
       grossDue,
@@ -3026,8 +3526,295 @@ export class AdsService implements OnModuleInit {
         conversions: campaignConversions,
         due: applied.campaignsDue,
       },
-      stores: applied.stores,
+      stores: enrichedStores,
       totalDue: applied.outstandingDue,
+      adCash: {
+        totalBalanceCurrency: Number(
+          adCashTotals.totalBalanceCurrency.toFixed(2),
+        ),
+        payableCurrency: Number(adCashTotals.payableCurrency.toFixed(2)),
+      },
+    };
+  }
+
+  /** Vendeur : imputer l'Ad Cash disponible sur la dette crédit Ads. */
+  async payMyAdCreditWithAdCash(
+    user: UserModel,
+    storeId?: string,
+  ): Promise<{
+    redeemedCurrency: number;
+    summary: AdCreditSummaryPayload;
+  }> {
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_only');
+    }
+    const trimmedStoreId = storeId?.trim();
+    if (trimmedStoreId) {
+      if (!Types.ObjectId.isValid(trimmedStoreId)) {
+        throw new BadRequestException('invalid_store_id');
+      }
+      await this._storeAccess.assertStoreAccess(
+        user,
+        trimmedStoreId,
+        'campaigns.view',
+      );
+    }
+
+    await this.reconcileAdCreditBilling(user);
+    const access = await this._storeAccess.resolveStoreAccess(user);
+    const targetStoreIds = (
+      trimmedStoreId
+        ? [trimmedStoreId]
+        : access
+            .filter((a) => Types.ObjectId.isValid(a.storeId))
+            .map((a) => a.storeId)
+    ).filter((id, idx, arr) => arr.indexOf(id) === idx);
+
+    if (trimmedStoreId && !targetStoreIds.length) {
+      throw new NotFoundException('store_not_found');
+    }
+
+    const redeemedBefore = (
+      await Promise.all(
+        targetStoreIds.map((id) => this._storeAdCashRedeemedCurrency(id)),
+      )
+    ).reduce((acc, v) => acc + v, 0);
+
+    const grossRows = await Promise.all(
+      targetStoreIds.map(async (id) => {
+        const grossDue = await this._computeSingleStoreGrossAdDue(id);
+        const accessRow = access.find((a) => a.storeId === id);
+        return {
+          storeId: id,
+          storeName: accessRow?.storeName || id,
+          banners: {
+            impressions: 0,
+            clicks: 0,
+            conversions: 0,
+            due: 0,
+          },
+          campaigns: {
+            impressions: 0,
+            clicks: 0,
+            actionClicks: 0,
+            conversions: 0,
+            due: 0,
+          },
+          totalDue: grossDue,
+        };
+      }),
+    );
+
+    await this._reconcileStoreAdCashForStores(grossRows);
+
+    const redeemedAfter = (
+      await Promise.all(
+        targetStoreIds.map((id) => this._storeAdCashRedeemedCurrency(id)),
+      )
+    ).reduce((acc, v) => acc + v, 0);
+
+    const summary = await this.getMyAdCredit(user);
+    const redeemedCurrency = Number(
+      Math.max(0, redeemedAfter - redeemedBefore).toFixed(2),
+    );
+
+    if (redeemedCurrency <= 0) {
+      const hasBalance = summary.stores.some(
+        (s) => (s.adCash?.balanceCurrencyEquivalent ?? 0) > 0,
+      );
+      if (!hasBalance) {
+        throw new BadRequestException('ad_cash_balance_empty');
+      }
+      if (summary.totalDue <= 0) {
+        throw new BadRequestException('ad_credit_already_settled');
+      }
+      throw new BadRequestException('ad_cash_settlement_unavailable');
+    }
+
+    return { redeemedCurrency, summary };
+  }
+
+  private async _computeSingleStoreGrossAdDue(storeId: string): Promise<number> {
+    if (!Types.ObjectId.isValid(storeId)) return 0;
+    await this._autoArchiveExpiredCampaigns();
+    await this._autoArchiveExpiredAds();
+    const storeOid = new Types.ObjectId(storeId);
+    const pricing = this._toPricingPayload(await this._ensurePricingDoc());
+
+    const [bannerDocs, campaignDocs] = await Promise.all([
+      this.adModel
+        .find({ store: storeOid })
+        .select('_id archivedAt billingFinalAmountCad')
+        .lean()
+        .exec(),
+      this._adCampaignModel
+        .find({ store: storeOid })
+        .select('_id archivedAt billingFinalAmountCad')
+        .lean()
+        .exec(),
+    ]);
+
+    let total = 0;
+    for (const doc of bannerDocs as Array<Record<string, unknown>>) {
+      if (this._archivedAtFromLean(doc) == null) continue;
+      const metrics = { impressions: 0, clicks: 0, conversions: 0 };
+      total += Number(
+        this._billingFinalAmountFromLean(doc) ||
+          this._adBillingAmount(pricing, metrics),
+      );
+    }
+    for (const doc of campaignDocs as Array<Record<string, unknown>>) {
+      if (this._archivedAtFromLean(doc) == null) continue;
+      const metrics = {
+        impressions: 0,
+        clicks: 0,
+        actionClicks: 0,
+        conversions: 0,
+      };
+      total += Number(
+        this._billingFinalAmountFromLean(doc) ||
+          this._campaignBillingAmount(pricing, metrics),
+      );
+    }
+    return Number(total.toFixed(2));
+  }
+
+  /** Admin : dette crédit Ads et montants en attente par boutique. */
+  async getAdminStoreAdSpending(
+    user: UserModel,
+  ): Promise<AdminStoreAdSpendingPayload> {
+    this.assertAdmin(user);
+    await this._autoArchiveExpiredCampaigns();
+    await this._autoArchiveExpiredAds();
+
+    const ownerIds = await this._storeModel.distinct('owner', {
+      owner: { $exists: true, $ne: null },
+    });
+    const validOwnerIds = ownerIds
+      .map((id) => String(id))
+      .filter((id) => Types.ObjectId.isValid(id));
+    if (!validOwnerIds.length) {
+      return {
+        currency: 'CAD',
+        items: [],
+        totals: {
+          bannersPendingCad: 0,
+          campaignsPendingCad: 0,
+          adCreditDebtCad: 0,
+          adCashBalanceUnits: 0,
+          adCashTotalReceivedUnits: 0,
+          adCashUsedUnits: 0,
+          adCashBalanceCurrencyEquivalent: 0,
+          adCashTotalReceivedCurrencyEquivalent: 0,
+          adCashUsedCurrencyEquivalent: 0,
+        },
+      };
+    }
+
+    const vendorDocs = await this._userModel
+      .find({
+        _id: { $in: validOwnerIds.map((id) => new Types.ObjectId(id)) },
+        type: UserTypeEnum.VENDOR,
+      })
+      .select('_id fullName email type')
+      .lean()
+      .exec();
+
+    const items: AdminStoreAdSpendingRow[] = [];
+    await Promise.all(
+      vendorDocs.map(async (doc) => {
+        const vendor = doc as unknown as UserModel;
+        try {
+          const credit = await this.getMyAdCredit(vendor);
+          const ownerId = String(vendor._id ?? '');
+          const ownerName = String(vendor.fullName ?? vendor.email ?? 'Vendeur');
+          const ownerEmail =
+            typeof vendor.email === 'string' && vendor.email.trim()
+              ? vendor.email.trim()
+              : null;
+          for (const store of credit.stores) {
+            items.push({
+              storeId: store.storeId,
+              storeName: store.storeName,
+              ownerId,
+              ownerName,
+              ownerEmail,
+              currency: credit.currency,
+              bannersPendingCad: Number(store.banners.due ?? 0),
+              campaignsPendingCad: Number(store.campaigns.due ?? 0),
+              adCreditDebtCad: Number(store.totalDue ?? 0),
+            });
+          }
+        } catch {
+          /* vendeur sans accès boutique */
+        }
+      }),
+    );
+
+    items.sort((a, b) => b.adCreditDebtCad - a.adCreditDebtCad);
+    const currency = items[0]?.currency ?? 'CAD';
+
+    const adCashByStore = await this._bulkStoreAdCashStats(
+      items.map((row) => row.storeId),
+    );
+    const enrichedItems = items.map((row) => ({
+      ...row,
+      adCash: adCashByStore.get(row.storeId) ?? this.emptyAdCashStats(),
+    }));
+
+    const totals = enrichedItems.reduce(
+      (acc, row) => ({
+        bannersPendingCad: acc.bannersPendingCad + row.bannersPendingCad,
+        campaignsPendingCad: acc.campaignsPendingCad + row.campaignsPendingCad,
+        adCreditDebtCad: acc.adCreditDebtCad + row.adCreditDebtCad,
+        adCashBalanceUnits: acc.adCashBalanceUnits + row.adCash.balanceUnits,
+        adCashTotalReceivedUnits:
+          acc.adCashTotalReceivedUnits + row.adCash.totalReceivedUnits,
+        adCashUsedUnits: acc.adCashUsedUnits + row.adCash.usedUnits,
+        adCashBalanceCurrencyEquivalent:
+          acc.adCashBalanceCurrencyEquivalent +
+          row.adCash.balanceCurrencyEquivalent,
+        adCashTotalReceivedCurrencyEquivalent:
+          acc.adCashTotalReceivedCurrencyEquivalent +
+          row.adCash.totalReceivedCurrencyEquivalent,
+        adCashUsedCurrencyEquivalent:
+          acc.adCashUsedCurrencyEquivalent + row.adCash.usedCurrencyEquivalent,
+      }),
+      {
+        bannersPendingCad: 0,
+        campaignsPendingCad: 0,
+        adCreditDebtCad: 0,
+        adCashBalanceUnits: 0,
+        adCashTotalReceivedUnits: 0,
+        adCashUsedUnits: 0,
+        adCashBalanceCurrencyEquivalent: 0,
+        adCashTotalReceivedCurrencyEquivalent: 0,
+        adCashUsedCurrencyEquivalent: 0,
+      },
+    );
+
+    return {
+      currency,
+      items: enrichedItems,
+      totals: {
+        bannersPendingCad: Number(totals.bannersPendingCad.toFixed(2)),
+        campaignsPendingCad: Number(totals.campaignsPendingCad.toFixed(2)),
+        adCreditDebtCad: Number(totals.adCreditDebtCad.toFixed(2)),
+        adCashBalanceUnits: Number(totals.adCashBalanceUnits.toFixed(4)),
+        adCashTotalReceivedUnits: Number(
+          totals.adCashTotalReceivedUnits.toFixed(4),
+        ),
+        adCashUsedUnits: Number(totals.adCashUsedUnits.toFixed(4)),
+        adCashBalanceCurrencyEquivalent: Number(
+          totals.adCashBalanceCurrencyEquivalent.toFixed(2),
+        ),
+        adCashTotalReceivedCurrencyEquivalent: Number(
+          totals.adCashTotalReceivedCurrencyEquivalent.toFixed(2),
+        ),
+        adCashUsedCurrencyEquivalent: Number(
+          totals.adCashUsedCurrencyEquivalent.toFixed(2),
+        ),
+      },
     };
   }
 

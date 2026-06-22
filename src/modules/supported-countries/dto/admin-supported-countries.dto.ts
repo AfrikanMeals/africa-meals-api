@@ -5,10 +5,12 @@ import {
   IsArray,
   IsBoolean,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   Length,
   Matches,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -54,6 +56,16 @@ export class AdminSupportedCountryItemDto {
   @IsOptional()
   @IsBoolean()
   stripeZeroDecimal?: boolean;
+
+  @ApiProperty({
+    example: 1,
+    required: false,
+    description: '1 Ad Cash = X unités de la devise régionale.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0.0001)
+  adCashToCurrencyRate?: number;
 }
 
 export class AdminSupportedCountriesUpdateDto {

@@ -6,12 +6,23 @@ import axios from 'axios';
 import { createHash, randomUUID } from 'crypto';
 
 export type OnboardingHeroKind = 'vendor' | 'delivery';
+export type AdCashHeroKind = 'ad-cash';
 export type OnboardingSectionImageKind =
   | 'help'
   | 'kyc-vendor'
   | 'kyc-delivery'
   | 'stripe';
-export type CuratedEmailImageKind = OnboardingHeroKind | OnboardingSectionImageKind;
+export type CuratedEmailImageKind =
+  | OnboardingHeroKind
+  | AdCashHeroKind
+  | OnboardingSectionImageKind;
+
+export type AdCashHeroDetails = {
+  adCashAmount: number;
+  currencyEquivalent: number;
+  currency: string;
+  storeName: string;
+};
 
 type CuratedPool = { folder: string; files: string[] };
 
@@ -41,6 +52,10 @@ const CURATED_POOLS: Record<CuratedEmailImageKind, CuratedPool> = {
     folder: 'onboarding-sections',
     files: ['stripe-01.png', 'stripe-02.png'],
   },
+  'ad-cash': {
+    folder: 'email-heroes',
+    files: ['vendor-onboarding-01.png', 'vendor-onboarding-02.png'],
+  },
 };
 
 const STYLE_SUFFIX =
@@ -54,6 +69,11 @@ const VENDOR_SCENES = [
 const DELIVERY_SCENES = [
   'Food delivery courier with insulated thermal bag leaving a vibrant African restaurant, city street at golden hour, warm orange sky.',
   'Delivery driver on a scooter with meal packages, African neighborhood backdrop, dynamic friendly illustration.',
+];
+
+const AD_CASH_SCENES = [
+  'Golden advertising credit coins flowing into a restaurant marketing dashboard on a tablet, megaphone and banner icons, African restaurant ambiance, celebratory warm gold #ffae00 glow.',
+  'Restaurant owner smiling at digital wallet with ad campaign credits, coins and chart rising, modern SaaS marketing reward illustration, deep brown and gold palette.',
 ];
 
 @Injectable()
@@ -81,6 +101,28 @@ export class EmailAiHeroImageService {
     }
 
     return this.resolveCuratedImageUrl(kind, session);
+  }
+
+  /**
+   * Bannière hero crédit Ad Cash — Gemini, puis SVG Sharp personnalisé, puis pool vitrine.
+   */
+  async generateForAdCashGrant(
+    sessionId: string,
+    details?: AdCashHeroDetails,
+  ): Promise<string | null> {
+    const session = sessionId?.trim() || randomUUID();
+
+    if (this.geminiEnabled()) {
+      const generated = await this.tryGenerateAdCashWithGemini(session);
+      if (generated) return generated;
+    }
+
+    if (details) {
+      const rendered = await this.tryGenerateAdCashHeroWithSharp(session, details);
+      if (rendered) return rendered;
+    }
+
+    return this.resolveCuratedImageUrl('ad-cash', session);
   }
 
   /** Illustration d'une section onboarding (KYC, Stripe, aide, …). */
@@ -160,6 +202,114 @@ export class EmailAiHeroImageService {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(`onboarding hero Gemini failed (${kind}): ${msg}`);
       return null;
+    }
+  }
+
+  private async tryGenerateAdCashWithGemini(
+    sessionId: string,
+  ): Promise<string | null> {
+    const apiKey = this.resolveApiKey();
+    if (!apiKey) return null;
+
+    const model = this.resolveModel();
+    const scene =
+      AD_CASH_SCENES[Math.floor(Math.random() * AD_CASH_SCENES.length)];
+    const prompt = `${scene} ${STYLE_SUFFIX} Session: ${sessionId}.`;
+
+    try {
+      const image = await this.requestGeminiImage(apiKey, model, prompt);
+      if (!image) return null;
+      return await this.medias.uploadSystemBuffer({
+        buffer: image.buffer,
+        contentType: image.mimeType,
+        basePath: 'email-heroes/ad-cash',
+        extension: image.mimeType.includes('png') ? '.png' : '.jpg',
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`ad-cash hero Gemini failed: ${msg}`);
+      return null;
+    }
+  }
+
+  private async tryGenerateAdCashHeroWithSharp(
+    sessionId: string,
+    details: AdCashHeroDetails,
+  ): Promise<string | null> {
+    try {
+      const sharp = (await import('sharp')).default;
+      const width = 1200;
+      const height = 630;
+      const storeName = this.escapeSvgText(details.storeName.trim() || 'Votre boutique');
+      const acLabel = this.escapeSvgText(
+        `${this.formatAdCashUnits(details.adCashAmount)} Ad Cash`,
+      );
+      const moneyLabel = this.escapeSvgText(
+        this.formatCurrencyAmount(details.currencyEquivalent, details.currency),
+      );
+      const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fdf8f0"/>
+      <stop offset="100%" stop-color="#f5e6c8"/>
+    </linearGradient>
+  </defs>
+  <rect width="${width}" height="${height}" fill="url(#bg)"/>
+  <circle cx="980" cy="120" r="90" fill="#ffae00" opacity="0.35"/>
+  <circle cx="1050" cy="220" r="55" fill="#ffd966" opacity="0.25"/>
+  <circle cx="180" cy="500" r="70" fill="#ffae00" opacity="0.2"/>
+  <text x="80" y="110" fill="#392800" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700">Wise Eat · Ad Cash</text>
+  <text x="80" y="200" fill="#392800" font-family="Arial, Helvetica, sans-serif" font-size="52" font-weight="700">${acLabel}</text>
+  <text x="80" y="270" fill="#aa6900" font-family="Arial, Helvetica, sans-serif" font-size="36" font-weight="600">${moneyLabel}</text>
+  <text x="80" y="340" fill="#6b5344" font-family="Arial, Helvetica, sans-serif" font-size="28">${storeName}</text>
+  <text x="80" y="400" fill="#6b5344" font-family="Arial, Helvetica, sans-serif" font-size="22">Crédit publicitaire disponible pour vos campagnes</text>
+  <rect x="80" y="460" width="320" height="56" rx="28" fill="#392800"/>
+  <text x="240" y="496" fill="#fdf8f0" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" text-anchor="middle">Crédit reçu</text>
+</svg>`;
+      const buffer = await sharp(Buffer.from(svg)).png().toBuffer();
+      return await this.medias.uploadSystemBuffer({
+        buffer,
+        contentType: 'image/png',
+        basePath: `email-heroes/ad-cash/${sessionId.slice(0, 8)}`,
+        extension: '.png',
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`ad-cash hero Sharp failed: ${msg}`);
+      return null;
+    }
+  }
+
+  private escapeSvgText(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  private formatAdCashUnits(amount: number): string {
+    const n = Number(amount);
+    if (!Number.isFinite(n)) return '0';
+    return n.toLocaleString('fr-CA', {
+      maximumFractionDigits: 4,
+    });
+  }
+
+  private formatCurrencyAmount(amount: number, currency: string): string {
+    const cur = String(currency ?? 'CAD').trim().toUpperCase() || 'CAD';
+    const n = Number(amount);
+    const safe = Number.isFinite(n) ? n : 0;
+    try {
+      return new Intl.NumberFormat('fr-CA', {
+        style: 'currency',
+        currency: cur,
+        maximumFractionDigits: 2,
+      }).format(safe);
+    } catch {
+      return `${safe.toFixed(2)} ${cur}`;
     }
   }
 

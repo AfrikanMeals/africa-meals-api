@@ -4,6 +4,7 @@ import {
   PatchAdManagementDto,
 } from '@modules/ads/dto/ad-management.dto';
 import { ConfirmAdCreditCheckoutDto } from '@modules/ads/dto/confirm-ad-credit-checkout.dto';
+import { PayWithAdCashDto } from '@modules/ads/dto/pay-with-ad-cash.dto';
 import {
   CreateAdCampaignDto,
   PatchAdCampaignDto,
@@ -266,6 +267,20 @@ export class AdsController {
     return this.adsService.reconcileAdCreditBilling(req.user as UserModel, {
       targetOwnerId: ownerId?.trim() || undefined,
     });
+  }
+
+  @Post('my-credit/pay-with-ad-cash')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary: 'Régler le crédit Ads avec l’Ad Cash disponible (taux régional).',
+  })
+  async payWithAdCash(@Req() req: Request, @Body() body: PayWithAdCashDto) {
+    return this.adsService.payMyAdCreditWithAdCash(
+      req.user as UserModel,
+      body.storeId,
+    );
   }
 
   @Get('manage/pricing')

@@ -8,6 +8,7 @@ import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import { VendorStatusEmailService } from './vendor-status-email.service';
 import { PartnerOnboardingEmailService } from './partner-onboarding-email.service';
+import { AdCashEmailService } from './ad-cash-email.service';
 
 @Module({
   imports: [
@@ -20,7 +21,15 @@ import { PartnerOnboardingEmailService } from './partner-onboarding-email.servic
       { name: StoreModel.name, schema: StoreSchema },
     ]),
   ],
-  providers: [VendorStatusEmailService, PartnerOnboardingEmailService],
-  exports: [VendorStatusEmailService, PartnerOnboardingEmailService],
+  providers: [
+    VendorStatusEmailService,
+    PartnerOnboardingEmailService,
+    AdCashEmailService,
+  ],
+  exports: [
+    VendorStatusEmailService,
+    PartnerOnboardingEmailService,
+    AdCashEmailService,
+  ],
 })
 export class VendorStatusEmailModule {}

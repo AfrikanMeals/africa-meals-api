@@ -84,6 +84,13 @@ export class SupportedCountryModel extends BaseSchema {
     name: 'vendor_sms_pricing',
   })
   vendorSmsPricing?: RegionVendorSmsPricingModel | null;
+
+  /**
+   * Taux de change Ad Cash → devise régionale.
+   * 1 Ad Cash = adCashToCurrencyRate unités de `currency`.
+   */
+  @Prop({ required: false, default: 1, min: 0.0001 })
+  adCashToCurrencyRate?: number;
 }
 
 export const SupportedCountrySchema = SchemaFactory.createForClass(

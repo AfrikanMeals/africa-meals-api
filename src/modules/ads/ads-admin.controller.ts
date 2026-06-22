@@ -8,12 +8,14 @@ import {
   Query,
   Req,
   UseGuards,
+  ValidationPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AdModerationStatusEnum } from '@schemas/ad.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { RejectAdModerationDto } from './dto/ad-moderation.dto';
+import { GrantAdCashDto } from './dto/grant-ad-cash.dto';
 import { AdsAdminService } from './ads-admin.service';
 import { AdsService } from './ads.service';
 
@@ -68,6 +70,34 @@ export class AdsAdminController {
     @Query('to') to?: string,
   ) {
     return this.adsAdmin.getVendors(req.user as UserModel, { from, to });
+  }
+
+  @Get('store-spending')
+  storeSpending(@Req() req: Request) {
+    return this.adsService.getAdminStoreAdSpending(req.user as UserModel);
+  }
+
+  @Get('stores/:storeId/ad-cash')
+  storeAdCash(@Req() req: Request, @Param('storeId') storeId: string) {
+    return this.adsService.getStoreAdCashSummary(
+      req.user as UserModel,
+      storeId,
+    );
+  }
+
+  @Post('stores/:storeId/ad-cash/grant')
+  grantStoreAdCash(
+    @Req() req: Request,
+    @Param('storeId') storeId: string,
+    @Body(new ValidationPipe({ whitelist: true, transform: true }))
+    body: GrantAdCashDto,
+  ) {
+    return this.adsService.grantAdCashToStore(
+      req.user as UserModel,
+      storeId,
+      body.amount,
+      body.note,
+    );
   }
 
   @Get('notifications')

@@ -33,6 +33,10 @@ import {
   AdCreditPaymentModel,
   AdCreditPaymentSchema,
 } from '@schemas/ad-credit-payment.schema';
+import {
+  StoreAdCashLedgerModel,
+  StoreAdCashLedgerSchema,
+} from '@schemas/store-ad-cash.schema';
 import { AdModel, AdSchema } from '@schemas/ad.schema';
 import { DrinkModel, DrinkSchema } from '@schemas/drink.schema';
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
@@ -92,6 +96,7 @@ import { AdsService } from './ads.service';
         schema: AdNotificationPricingSettingsSchema,
       },
       { name: AdCreditPaymentModel.name, schema: AdCreditPaymentSchema },
+      { name: StoreAdCashLedgerModel.name, schema: StoreAdCashLedgerSchema },
       { name: StoreModel.name, schema: StoreSchema },
       { name: ProductModel.name, schema: ProductSchema },
       { name: DrinkModel.name, schema: DrinkSchema },
