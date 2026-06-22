@@ -3,7 +3,9 @@ import { StripeChargeFeeService } from '@modules/billing/stripe/stripe-charge-fe
 import {
   allocatePlatformFeeToGoodsCents,
   computeDeliveryNetCentsBeforeStripe,
+  scaleStorePayoutMinorToPaymentShare,
 } from '@modules/billing/stripe/stripe-processing-fee.util';
+import { normalizeStripeCurrencyCode } from '@utils/stripe-currency-amount.util';
 import { PlatformFeesService } from '@modules/platform-fees/platform-fees.service';
 import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
 import { PlatformShippingSettingsService } from '@modules/platform-shipping-settings/platform-shipping-settings.service';
@@ -79,6 +81,37 @@ export class StripeConnectTransferService {
     return this.stripeFees.resolveChargeId(stripeParentPaymentId);
   }
 
+  private async totalPayoutGrossCentsForPayment(
+    stripeParentPaymentId: string,
+  ): Promise<number> {
+    const parentId = stripeParentPaymentId.trim();
+    if (!parentId) return 0;
+    const orders = await this.orderModel
+      .find({ stripeParentPaymentId: parentId })
+      .select('stripeChargedGoodsCents stripeChargedShipCents')
+      .lean()
+      .exec();
+    let sum = 0;
+    for (const o of orders) {
+      sum += Math.max(0, Math.round(Number(o.stripeChargedGoodsCents ?? 0)));
+      sum += Math.max(0, Math.round(Number(o.stripeChargedShipCents ?? 0)));
+    }
+    return sum;
+  }
+
+  private async connectTransferCurrency(
+    chargeId: string,
+    paymentCurrency?: string,
+  ): Promise<string> {
+    const configured =
+      this.config.get<string>('STRIPE_CONNECT_TRANSFER_CURRENCY')?.trim() ||
+      'cad';
+    const snap = await this.stripeFees.chargeFeeSnapshot(chargeId);
+    return normalizeStripeCurrencyCode(
+      snap?.currency || paymentCurrency || configured,
+    ).toLowerCase();
+  }
+
   private async ownerConnectAccountId(
     storeId: string,
   ): Promise<{ accountId: string | null; ownerReady: boolean }> {
@@ -133,11 +166,34 @@ export class StripeConnectTransferService {
     goodsCents: number;
     shipCents: number;
     stripeParentPaymentId: string;
-    /** Montant total encaissé sur la charge (toutes boutiques + frais transaction), en centimes. */
+    /** Montant total encaissé sur la charge (toutes boutiques + frais transaction), en unités Stripe mineures. */
     paymentTotalCents?: number;
+    /** Somme goods+ship du payout metadata (toutes boutiques) — pour aligner XAF/CAD. */
+    totalPayoutGrossCents?: number;
+    /** Devise du PaymentIntent / charge (ex. xaf, cad). */
+    paymentCurrency?: string;
   }): Promise<StoreTransferResult> {
-    const goodsCents = Math.max(0, Math.round(args.goodsCents));
-    const shipCents = Math.max(0, Math.round(args.shipCents));
+    let goodsCents = Math.max(0, Math.round(args.goodsCents));
+    let shipCents = Math.max(0, Math.round(args.shipCents));
+    const paymentCap = Math.max(0, Math.round(args.paymentTotalCents ?? 0));
+    const totalPayoutGross = Math.max(0, Math.round(args.totalPayoutGrossCents ?? 0));
+    if (paymentCap > 0 && totalPayoutGross > paymentCap) {
+      const scaled = scaleStorePayoutMinorToPaymentShare({
+        goodsCents,
+        shipCents,
+        totalPayoutGrossMinor: totalPayoutGross,
+        paymentTotalMinor: paymentCap,
+      });
+      if (scaled.goodsCents !== goodsCents || scaled.shipCents !== shipCents) {
+        this.logger.warn(
+          `Connect transfer payout scaled order=${args.orderId} ` +
+            `goods ${goodsCents}→${scaled.goodsCents} ship ${shipCents}→${scaled.shipCents} ` +
+            `(payment=${paymentCap} payoutGross=${totalPayoutGross})`,
+        );
+      }
+      goodsCents = scaled.goodsCents;
+      shipCents = scaled.shipCents;
+    }
     const orderGrossCents = goodsCents + shipCents;
 
     const split =
@@ -266,21 +322,34 @@ export class StripeConnectTransferService {
       parentId,
       args.paymentTotalCents ?? orderGrossCents,
     );
+    const chargeSnap = await this.stripeFees.chargeFeeSnapshot(chargeId);
+    const chargeAmountCents = Math.max(
+      paymentAmountCents,
+      chargeSnap?.amountCents ?? 0,
+    );
     const totalStripeFeeCents = await this.stripeFees.totalProcessingFeeCents({
       chargeId,
-      paymentAmountCents,
+      paymentAmountCents: chargeAmountCents,
     });
     const stripeProcessingFeeShareCents =
       this.stripeFees.allocateProcessingFeeShareCents({
         totalStripeFeeCents,
-        paymentAmountCents,
+        paymentAmountCents: chargeAmountCents,
         sliceAmountCents: goodsCents,
         maxDeductibleCents: vendorBeforeStripe,
       });
-    const transferCents = Math.max(
+    let transferCents = Math.max(
       0,
       vendorBeforeStripe - stripeProcessingFeeShareCents,
     );
+
+    const remainingOnCharge =
+      await this.stripeFees.remainingTransferableCents(chargeId);
+    if (remainingOnCharge > 0) {
+      transferCents = Math.min(transferCents, remainingOnCharge);
+    } else if (chargeAmountCents > 0) {
+      transferCents = Math.min(transferCents, chargeAmountCents);
+    }
 
     if (transferCents < 1) {
       await this.orderModel.updateOne(
@@ -303,15 +372,29 @@ export class StripeConnectTransferService {
       };
     }
 
-    const currency =
+    const configuredCurrency =
       this.config.get<string>('STRIPE_CONNECT_TRANSFER_CURRENCY')?.trim() ||
       'cad';
+    const transferCurrency = normalizeStripeCurrencyCode(
+      chargeSnap?.currency ||
+        args.paymentCurrency ||
+        configuredCurrency,
+    ).toLowerCase();
+    if (
+      chargeSnap?.currency &&
+      configuredCurrency.toLowerCase() !== chargeSnap.currency
+    ) {
+      this.logger.warn(
+        `Connect transfer currency ${transferCurrency} (charge) ` +
+          `≠ STRIPE_CONNECT_TRANSFER_CURRENCY=${configuredCurrency} order=${args.orderId}`,
+      );
+    }
 
     try {
       const transfer = await this.stripe().transfers.create(
         {
           amount: transferCents,
-          currency: currency.toLowerCase(),
+          currency: transferCurrency,
           destination: accountId,
           source_transaction: chargeId,
           transfer_group: parentId || undefined,
@@ -344,10 +427,8 @@ export class StripeConnectTransferService {
       );
 
       this.logger.log(
-        `Connect vendor transfer ${transfer.id}: ${
-          transferCents / 100
-        } ${currency} → ${accountId} (order ${args.orderId}, stripeFee=${
-          stripeProcessingFeeShareCents / 100
+        `Connect vendor transfer ${transfer.id}: ${transferCents} ${transferCurrency} → ${accountId} (order ${args.orderId}, stripeFee=${
+          stripeProcessingFeeShareCents
         })`,
       );
 
@@ -409,7 +490,7 @@ export class StripeConnectTransferService {
     const order = await this.orderModel
       .findById(args.orderId)
       .select(
-        'shouldShip assignedDeliveryUser stripeParentPaymentId stripeChargedShipCents shippingPrice stripeDeliveryTransferId stripeDeliveryTransferAmountCents stripeDeliveryProcessingFeeCents status',
+        'shouldShip assignedDeliveryUser stripeParentPaymentId stripeChargedGoodsCents stripeChargedShipCents shippingPrice stripeDeliveryTransferId stripeDeliveryTransferAmountCents stripeDeliveryProcessingFeeCents status',
       )
       .lean()
       .exec();
@@ -439,13 +520,64 @@ export class StripeConnectTransferService {
       return { ...empty, skippedReason: 'no_assigned_delivery_agent' };
     }
 
-    const shipCents = Math.max(
+    const shipCentsRaw = Math.max(
       0,
       Math.round(
         Number(order.stripeChargedShipCents ?? 0) ||
           Math.round((Number(order.shippingPrice) || 0) * 100),
       ),
     );
+    const goodsCents = Math.max(
+      0,
+      Math.round(Number(order.stripeChargedGoodsCents ?? 0)),
+    );
+    if (shipCentsRaw < 1) {
+      return { ...empty, skippedReason: 'no_shipping_amount' };
+    }
+
+    const parentId = String(order.stripeParentPaymentId ?? '').trim();
+    const chargeId = parentId ? await this.resolveChargeId(parentId) : null;
+    if (!chargeId) {
+      return {
+        ...empty,
+        grossShipCents: shipCentsRaw,
+        skippedReason: 'charge_unresolved',
+      };
+    }
+
+    const paymentAmountCents = await this.stripeFees.paymentTotalCentsForParent(
+      parentId,
+      args.paymentTotalCents ?? shipCentsRaw,
+    );
+    const chargeSnap = await this.stripeFees.chargeFeeSnapshot(chargeId);
+    const chargeAmountCents = Math.max(
+      paymentAmountCents,
+      chargeSnap?.amountCents ?? 0,
+    );
+
+    let shipCents = shipCentsRaw;
+    const totalPayoutGross =
+      await this.totalPayoutGrossCentsForPayment(parentId);
+    if (
+      chargeAmountCents > 0 &&
+      totalPayoutGross > chargeAmountCents &&
+      goodsCents + shipCentsRaw > 0
+    ) {
+      const scaled = scaleStorePayoutMinorToPaymentShare({
+        goodsCents,
+        shipCents: shipCentsRaw,
+        totalPayoutGrossMinor: totalPayoutGross,
+        paymentTotalMinor: chargeAmountCents,
+      });
+      if (scaled.shipCents !== shipCentsRaw) {
+        this.logger.warn(
+          `Connect delivery payout scaled order=${args.orderId} ` +
+            `ship ${shipCentsRaw}→${scaled.shipCents} ` +
+            `(payment=${chargeAmountCents} payoutGross=${totalPayoutGross})`,
+        );
+      }
+      shipCents = scaled.shipCents;
+    }
     if (shipCents < 1) {
       return { ...empty, skippedReason: 'no_shipping_amount' };
     }
@@ -474,35 +606,29 @@ export class StripeConnectTransferService {
       };
     }
 
-    const parentId = String(order.stripeParentPaymentId ?? '').trim();
-    const chargeId = parentId ? await this.resolveChargeId(parentId) : null;
-    if (!chargeId) {
-      return {
-        ...empty,
-        grossShipCents: shipCents,
-        skippedReason: 'charge_unresolved',
-      };
-    }
-
-    const paymentAmountCents = await this.stripeFees.paymentTotalCentsForParent(
-      parentId,
-      args.paymentTotalCents ?? shipCents,
-    );
     const totalStripeFeeCents = await this.stripeFees.totalProcessingFeeCents({
       chargeId,
-      paymentAmountCents,
+      paymentAmountCents: chargeAmountCents,
     });
     const stripeProcessingFeeShareCents =
       this.stripeFees.allocateProcessingFeeShareCents({
         totalStripeFeeCents,
-        paymentAmountCents,
+        paymentAmountCents: chargeAmountCents,
         sliceAmountCents: shipCents,
         maxDeductibleCents: deliveryNetBeforeStripe,
       });
-    const transferCents = Math.max(
+    let transferCents = Math.max(
       0,
       deliveryNetBeforeStripe - stripeProcessingFeeShareCents,
     );
+
+    const remainingOnCharge =
+      await this.stripeFees.remainingTransferableCents(chargeId);
+    if (remainingOnCharge > 0) {
+      transferCents = Math.min(transferCents, remainingOnCharge);
+    } else if (chargeAmountCents > 0) {
+      transferCents = Math.min(transferCents, chargeAmountCents);
+    }
 
     if (transferCents < 1) {
       await this.orderModel.updateOne(
@@ -523,15 +649,13 @@ export class StripeConnectTransferService {
       };
     }
 
-    const currency =
-      this.config.get<string>('STRIPE_CONNECT_TRANSFER_CURRENCY')?.trim() ||
-      'cad';
+    const transferCurrency = await this.connectTransferCurrency(chargeId);
 
     try {
       const transfer = await this.stripe().transfers.create(
         {
           amount: transferCents,
-          currency: currency.toLowerCase(),
+          currency: transferCurrency,
           destination: accountId,
           source_transaction: chargeId,
           transfer_group: parentId || undefined,
@@ -559,10 +683,8 @@ export class StripeConnectTransferService {
       );
 
       this.logger.log(
-        `Connect delivery transfer ${transfer.id}: ${
-          transferCents / 100
-        } ${currency} → ${accountId} (order ${args.orderId}, stripeFee=${
-          stripeProcessingFeeShareCents / 100
+        `Connect delivery transfer ${transfer.id}: ${transferCents} ${transferCurrency} → ${accountId} (order ${args.orderId}, stripeFee=${
+          stripeProcessingFeeShareCents
         })`,
       );
 
@@ -684,18 +806,31 @@ export class StripeConnectTransferService {
       parentId,
       args.paymentTotalCents ?? tipCents,
     );
+    const chargeSnap = await this.stripeFees.chargeFeeSnapshot(chargeId);
+    const chargeAmountCents = Math.max(
+      paymentAmountCents,
+      chargeSnap?.amountCents ?? 0,
+    );
     const totalStripeFeeCents = await this.stripeFees.totalProcessingFeeCents({
       chargeId,
-      paymentAmountCents,
+      paymentAmountCents: chargeAmountCents,
     });
     const stripeProcessingFeeShareCents =
       this.stripeFees.allocateProcessingFeeShareCents({
         totalStripeFeeCents,
-        paymentAmountCents,
+        paymentAmountCents: chargeAmountCents,
         sliceAmountCents: tipCents,
         maxDeductibleCents: tipCents,
       });
-    const transferCents = Math.max(0, tipCents - stripeProcessingFeeShareCents);
+    let transferCents = Math.max(0, tipCents - stripeProcessingFeeShareCents);
+
+    const remainingOnCharge =
+      await this.stripeFees.remainingTransferableCents(chargeId);
+    if (remainingOnCharge > 0) {
+      transferCents = Math.min(transferCents, remainingOnCharge);
+    } else if (chargeAmountCents > 0) {
+      transferCents = Math.min(transferCents, chargeAmountCents);
+    }
 
     if (transferCents < 1) {
       await this.orderModel.updateOne(
@@ -717,15 +852,13 @@ export class StripeConnectTransferService {
       };
     }
 
-    const currency =
-      this.config.get<string>('STRIPE_CONNECT_TRANSFER_CURRENCY')?.trim() ||
-      'cad';
+    const transferCurrency = await this.connectTransferCurrency(chargeId);
 
     try {
       const transfer = await this.stripe().transfers.create(
         {
           amount: transferCents,
-          currency: currency.toLowerCase(),
+          currency: transferCurrency,
           destination: accountId,
           source_transaction: chargeId,
           transfer_group: parentId || undefined,
@@ -754,9 +887,7 @@ export class StripeConnectTransferService {
       );
 
       this.logger.log(
-        `Connect delivery tip transfer ${transfer.id}: ${
-          transferCents / 100
-        } ${currency} → ${accountId} (order ${args.orderId})`,
+        `Connect delivery tip transfer ${transfer.id}: ${transferCents} ${transferCurrency} → ${accountId} (order ${args.orderId})`,
       );
 
       return {

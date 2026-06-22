@@ -12,9 +12,10 @@ const devEnvFile = '.env.develop';
 const prodEnvPath = path.join(apiDir, prodEnvFile);
 const devEnvPath = path.join(apiDir, devEnvFile);
 
+const localEnvPath = path.join(apiDir, '.env.local');
+
 function loadEnvVars(envPath) {
   if (!fs.existsSync(envPath)) {
-    console.warn(`[pm2-env] Fichier absent : ${envPath}`);
     return {};
   }
   try {
@@ -29,12 +30,22 @@ function loadEnvVars(envPath) {
   }
 }
 
+/** Fusionne les fichiers env comme Nest ConfigModule (.env.local prioritaire). */
+function mergeEnvVars(...paths) {
+  const merged = {};
+  for (const envPath of paths) {
+    if (!fs.existsSync(envPath)) continue;
+    Object.assign(merged, loadEnvVars(envPath));
+  }
+  return merged;
+}
+
 function prodEnvVars() {
-  return loadEnvVars(prodEnvPath);
+  return mergeEnvVars(prodEnvPath, localEnvPath);
 }
 
 function devEnvVars() {
-  return loadEnvVars(devEnvPath);
+  return mergeEnvVars(devEnvPath, prodEnvPath, localEnvPath);
 }
 
 module.exports = {

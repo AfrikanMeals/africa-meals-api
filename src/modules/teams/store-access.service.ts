@@ -45,6 +45,7 @@ export type StoreAccessEntry = {
   permissions: StorePermission[];
   isOwner: boolean;
   isFreePlan: boolean;
+  marketingToolsPlanEnabled: boolean;
 };
 
 @Injectable()
@@ -130,6 +131,7 @@ export class StoreAccessService {
         permissions: [...ALL_STORE_PERMISSIONS],
         isOwner: false,
         isFreePlan: false,
+        marketingToolsPlanEnabled: true,
       }));
     }
 
@@ -164,6 +166,7 @@ export class StoreAccessService {
         permissions: [...ALL_STORE_PERMISSIONS],
         isOwner: true,
         isFreePlan: false,
+        marketingToolsPlanEnabled: false,
       });
     }
 
@@ -233,6 +236,7 @@ export class StoreAccessService {
         permissions: unionStorePermissionsFromRoles(memberRoles),
         isOwner: false,
         isFreePlan: false,
+        marketingToolsPlanEnabled: false,
       });
     }
 
@@ -240,6 +244,10 @@ export class StoreAccessService {
       entry.isFreePlan = await this.subscriptionsService.isStoreOnFreePlan(
         entry.storeId,
       );
+      entry.marketingToolsPlanEnabled =
+        await this.subscriptionsService.isMarketingToolsEnabledForStore(
+          entry.storeId,
+        );
     }
 
     return entries;

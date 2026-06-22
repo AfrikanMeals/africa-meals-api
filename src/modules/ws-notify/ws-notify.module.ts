@@ -11,6 +11,7 @@ import { WsDeliveryAgentNotifyService } from './ws-delivery-agent-notify.service
 import { WsInboxNotifyService } from './ws-inbox-notify.service';
 import { WsNotifyDispatchQueueService } from './ws-notify-dispatch-queue.service';
 import { WsOrderNotifyService } from './ws-order-notify.service';
+import { WsPlatformMaintenanceNotifyService } from './ws-platform-maintenance-notify.service';
 import { WsStripeConnectNotifyService } from './ws-stripe-connect-notify.service';
 
 @Module({
@@ -31,6 +32,7 @@ import { WsStripeConnectNotifyService } from './ws-stripe-connect-notify.service
     WsAdsTargetingNotifyService,
     WsAdManagerNotifyService,
     WsDeliveryAgentNotifyService,
+    WsPlatformMaintenanceNotifyService,
   ],
   exports: [
     WsNotifyDispatchQueueService,
@@ -41,6 +43,7 @@ import { WsStripeConnectNotifyService } from './ws-stripe-connect-notify.service
     WsAdsTargetingNotifyService,
     WsAdManagerNotifyService,
     WsDeliveryAgentNotifyService,
+    WsPlatformMaintenanceNotifyService,
   ],
 })
 export class WsNotifyModule {}

@@ -12,6 +12,7 @@ import {
 } from '@schemas/store-delivery-driver-membership.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
+import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { PlatformStoreDriverInvitesController } from './platform-store-driver-invites.controller';
 import { StoreDeliveryDriversService } from './store-delivery-drivers.service';
 
@@ -31,6 +32,7 @@ import { StoreDeliveryDriversService } from './store-delivery-drivers.service';
         schema: DeliveryAgentApplicationSchema,
       },
     ]),
+    SubscriptionsModule,
   ],
   controllers: [PlatformStoreDriverInvitesController],
   providers: [StoreDeliveryDriversService],

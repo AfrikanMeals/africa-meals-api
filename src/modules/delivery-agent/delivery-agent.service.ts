@@ -68,6 +68,7 @@ import { DomainEventType } from '../../common/domain-events/domain-event-types';
 import { isDomainEventsEnabled } from '@modules/domain-event-handlers/domain-event-handlers.util';
 import { FleetAudienceService } from '@modules/fleet/fleet-audience.service';
 import { FleetSnapshotService } from '@modules/fleet/fleet-snapshot.service';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import {
   AGENT_LOCATION_EMIT_THROTTLE_MS,
   mapDeliveryPresenceToDomain,
@@ -145,6 +146,7 @@ export class DeliveryAgentService {
     private readonly _wsDeliveryAgent: WsDeliveryAgentNotifyService,
     private readonly _fleet: FleetSnapshotService,
     private readonly _fleetAudience: FleetAudienceService,
+    private readonly _subscriptions: SubscriptionsService,
     @Optional()
     private readonly _domainPublisher?: DomainEventPublisherService,
   ) {}
@@ -992,17 +994,34 @@ export class DeliveryAgentService {
     const managedStoreMap = new Map(
       managedStoreRows.map((s) => [String(s._id), s]),
     );
+    const managedStoreIds = [...managedStoreMap.keys()];
+    const selfDeliveryByStore =
+      await this._subscriptions.resolveSelfDeliveryRequiredByStoreIds(
+        managedStoreIds,
+      );
 
     const items = mapped.filter((item) => {
       const sid = item.storeId ?? '';
       const managed = sid ? managedStoreMap.get(sid) : undefined;
       if (managed) {
-        if (!userStoreIds.has(sid)) return false;
-        const mode = String(
-          managed.deliveryAssignmentMode ?? StoreDeliveryAssignmentModeEnum.AUTO,
-        ).toUpperCase();
-        if (mode === StoreDeliveryAssignmentModeEnum.MANUAL) return false;
-        return true;
+        const selfDeliveryRequired = selfDeliveryByStore.get(sid) === true;
+        if (selfDeliveryRequired) {
+          if (!userStoreIds.has(sid)) return false;
+          const mode = String(
+            managed.deliveryAssignmentMode ??
+              StoreDeliveryAssignmentModeEnum.AUTO,
+          ).toUpperCase();
+          if (mode === StoreDeliveryAssignmentModeEnum.MANUAL) return false;
+          return true;
+        }
+        if (userStoreIds.has(sid)) {
+          const mode = String(
+            managed.deliveryAssignmentMode ??
+              StoreDeliveryAssignmentModeEnum.AUTO,
+          ).toUpperCase();
+          if (mode === StoreDeliveryAssignmentModeEnum.MANUAL) return false;
+          return true;
+        }
       }
       if (item.distanceKm == null) return false;
       return item.distanceKm <= maxDeliveryRadiusKm + 1e-9;
@@ -1506,21 +1525,26 @@ export class DeliveryAgentService {
         ? (orderDoc.store as StoreModel)
         : null;
     if (storePop?.vendorManagesDeliveryDrivers) {
-      const mode = String(
-        storePop.deliveryAssignmentMode ?? StoreDeliveryAssignmentModeEnum.AUTO,
-      ).toUpperCase();
-      if (mode === StoreDeliveryAssignmentModeEnum.MANUAL) {
-        throw new BadRequestException('order_manual_assignment_only');
-      }
-      if (!orderStoreId) {
-        throw new BadRequestException('order_store_missing');
-      }
-      const isMember = await this._storeDeliveryDrivers.isActiveStoreDriver(
+      const policy = await this._subscriptions.resolveStoreDeliveryPolicy(
         orderStoreId,
-        String(agentId),
       );
-      if (!isMember) {
-        throw new ForbiddenException('store_driver_membership_required');
+      if (policy.selfDeliveryRequired) {
+        const mode = String(
+          storePop.deliveryAssignmentMode ?? StoreDeliveryAssignmentModeEnum.AUTO,
+        ).toUpperCase();
+        if (mode === StoreDeliveryAssignmentModeEnum.MANUAL) {
+          throw new BadRequestException('order_manual_assignment_only');
+        }
+        if (!orderStoreId) {
+          throw new BadRequestException('order_store_missing');
+        }
+        const isMember = await this._storeDeliveryDrivers.isActiveStoreDriver(
+          orderStoreId,
+          String(agentId),
+        );
+        if (!isMember) {
+          throw new ForbiddenException('store_driver_membership_required');
+        }
       }
     }
 

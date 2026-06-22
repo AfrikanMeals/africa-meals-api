@@ -1,5 +1,6 @@
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { MailerService } from '@modules/mailer/mailer.service';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import {
   BadRequestException,
   ConflictException,
@@ -64,6 +65,9 @@ export class StoreDeliveryDriversService {
   @Inject(EmailTemplateService)
   private readonly _emailTpl: EmailTemplateService;
 
+  @Inject(SubscriptionsService)
+  private readonly _subscriptions: SubscriptionsService;
+
   async assertStoreOwner(user: UserModel, storeId: string): Promise<StoreModel> {
     if (!Types.ObjectId.isValid(storeId)) {
       throw new BadRequestException('invalid_store_id');
@@ -100,6 +104,27 @@ export class StoreDeliveryDriversService {
     return raw === StoreDeliveryAssignmentModeEnum.MANUAL
       ? StoreDeliveryAssignmentModeEnum.MANUAL
       : StoreDeliveryAssignmentModeEnum.AUTO;
+  }
+
+  private async _assertDeliveryAgentSlotAvailable(storeId: string): Promise<void> {
+    const limit = await this._subscriptions.resolveMaxDeliveryAgentsForStore(
+      storeId,
+    );
+    if (limit <= 0) return;
+    const count = await this._membershipModel
+      .countDocuments({
+        store: new Types.ObjectId(storeId),
+        status: {
+          $in: [
+            StoreDeliveryDriverMembershipStatus.ACTIVE,
+            StoreDeliveryDriverMembershipStatus.PENDING,
+          ],
+        },
+      })
+      .exec();
+    if (count >= limit) {
+      throw new BadRequestException('store_delivery_agents_limit_reached');
+    }
   }
 
   async isActiveStoreDriver(
@@ -395,6 +420,7 @@ export class StoreDeliveryDriversService {
     if (!store.vendorManagesDeliveryDrivers) {
       throw new BadRequestException('store_delivery_drivers_not_enabled');
     }
+    await this._assertDeliveryAgentSlotAvailable(String(store._id));
 
     const email = emailRaw.trim().toLowerCase();
     if (!email) throw new BadRequestException('invalid_email');
@@ -708,6 +734,7 @@ export class StoreDeliveryDriversService {
     if (!store?.vendorManagesDeliveryDrivers) {
       throw new BadRequestException('store_delivery_drivers_not_enabled');
     }
+    await this._assertDeliveryAgentSlotAvailable(String(store._id));
 
     const updated = await this._membershipModel
       .findOneAndUpdate(

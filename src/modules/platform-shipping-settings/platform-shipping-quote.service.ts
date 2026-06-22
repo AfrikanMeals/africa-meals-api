@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -51,16 +50,6 @@ export class PlatformShippingQuoteService {
     if (!deliveryAddr) {
       throw new NotFoundException('address_not_found');
     }
-    const dest = extractLatLonFromGeoPoint(
-      deliveryAddr.location as {
-        type?: string;
-        coordinates?: number[];
-      },
-    );
-    if (!dest) {
-      throw new BadRequestException('delivery_address_missing_coordinates');
-    }
-
     const store = await this._storeModel
       .findById(dto.storeId)
       .populate({ path: 'address', select: 'location countryCode' })
@@ -77,11 +66,6 @@ export class PlatformShippingQuoteService {
         }
       | null
       | undefined;
-    const origin = extractLatLonFromGeoPoint(shopAddr?.location);
-    if (!origin) {
-      throw new BadRequestException('store_address_missing_coordinates');
-    }
-
     const storeAddrCc =
       shopAddr && typeof shopAddr === 'object' && !Array.isArray(shopAddr)
         ? String(shopAddr.countryCode ?? '').trim().toUpperCase()
@@ -94,6 +78,26 @@ export class PlatformShippingQuoteService {
       user.appCountryCode,
     ]);
     const settings = await this._settingsService.getPublicSettings(regionCode);
+
+    const dest = extractLatLonFromGeoPoint(
+      deliveryAddr.location as {
+        type?: string;
+        coordinates?: number[];
+      },
+    );
+    if (!dest) {
+      return this._undeliverableQuote(dto, settings, {
+        reason: 'delivery_address_missing_coordinates',
+      });
+    }
+
+    const origin = extractLatLonFromGeoPoint(shopAddr?.location);
+    if (!origin) {
+      return this._undeliverableQuote(dto, settings, {
+        reason: 'store_address_missing_coordinates',
+      });
+    }
+
     const distanceKm = haversineDistanceKm(
       origin.lat,
       origin.lon,
@@ -115,12 +119,41 @@ export class PlatformShippingQuoteService {
       deliverable: computed.deliverable,
       fee: computed.deliverable ? computed.total : null,
       resolvedRegionCode: regionCode ?? null,
+      undeliverableReason: computed.deliverable
+        ? null
+        : 'beyond_delivery_radius',
       breakdown: {
         rangeFlat: computed.rangeFlat,
         deliveryBasePrice: computed.deliveryBasePrice,
         perKmRate: settings.perKmRate,
         perKmComponent: computed.perKmComponent,
         total: computed.deliverable ? computed.total : null,
+      },
+    };
+  }
+
+  private _undeliverableQuote(
+    dto: ShippingQuoteDto,
+    settings: Awaited<
+      ReturnType<PlatformShippingSettingsService['getPublicSettings']>
+    >,
+    opts: { reason: string },
+  ) {
+    return {
+      storeId: dto.storeId,
+      addressId: dto.addressId,
+      distanceKm: null,
+      maxDeliveryRadiusKm: settings?.maxDeliveryRadiusKm ?? null,
+      deliverable: false,
+      fee: null,
+      resolvedRegionCode: null,
+      undeliverableReason: opts.reason,
+      breakdown: {
+        rangeFlat: null,
+        deliveryBasePrice: null,
+        perKmRate: settings?.perKmRate ?? null,
+        perKmComponent: null,
+        total: null,
       },
     };
   }

@@ -1,13 +1,16 @@
 import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
 import {
+  computePayoutFeeSplit,
   computeVendorTransferSplit,
   PlatformFeesService,
+  PayoutFeeSplit,
   VendorTransferSplit,
 } from '@modules/platform-fees/platform-fees.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { PlanRegionOrderCommissionModel } from '@schemas/plan-region-order-commission.schema';
+import { PlanRegionPricingModel } from '@schemas/plan-region-pricing.schema';
 import { PlatformFeeMode } from '@schemas/platform-fees-settings.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { SubscriptionPlanModel } from '@schemas/subscription-plan.schema';
@@ -24,12 +27,61 @@ export type ResolvedOrderCommissionSettings = {
   planId?: string;
 };
 
-function mapCommissionRow(
+export type ResolvedPayoutFeeSettings = {
+  payoutFeeMode: PlatformFeeMode;
+  payoutFeeFixed: number;
+  payoutFeePercent: number;
+  currency: string;
+  source: 'plan_region' | 'global';
+  regionCode?: string;
+  planId?: string;
+};
+
+export type ResolvedPlanPricing = {
+  priceMonthly: number;
+  priceYearly: number;
+  currency: string;
+  source: 'plan_region' | 'default';
+  regionCode?: string;
+};
+
+function readPlanDefaults(plan: Record<string, unknown>): ResolvedPlanPricing {
+  return {
+    priceMonthly: Math.max(0, Number(plan.priceMonthly ?? 0)),
+    priceYearly: Math.max(0, Number(plan.priceYearly ?? 0)),
+    currency:
+      String(plan.currency ?? 'CAD')
+        .trim()
+        .toUpperCase() || 'CAD',
+    source: 'default',
+  };
+}
+
+function mapRegionPricingRow(
+  row: PlanRegionPricingModel,
+): Omit<ResolvedPlanPricing, 'source' | 'regionCode'> | null {
+  const regionCode = String(row.regionCode ?? '')
+    .trim()
+    .toUpperCase();
+  if (!regionCode) return null;
+  return {
+    priceMonthly: Math.max(0, Number(row.priceMonthly ?? 0)),
+    priceYearly: Math.max(0, Number(row.priceYearly ?? 0)),
+    currency:
+      String(row.currency ?? 'CAD')
+        .trim()
+        .toUpperCase() || 'CAD',
+  };
+}
+
+function mapRegionFeeRow(
   row: PlanRegionOrderCommissionModel,
-): Omit<
-  ResolvedOrderCommissionSettings,
-  'currency' | 'source' | 'regionCode' | 'planId'
-> | null {
+  mapFields: (
+    mode: PlatformFeeMode,
+    fixed: number,
+    percent: number,
+  ) => Record<string, unknown> | null,
+): Record<string, unknown> | null {
   const regionCode = String(row.regionCode ?? '')
     .trim()
     .toUpperCase();
@@ -39,11 +91,41 @@ function mapCommissionRow(
   const percent = Math.max(0, Number(row.percent ?? 0));
   if (mode === 'fixed' && fixed <= 0) return null;
   if (mode === 'percent' && percent <= 0) return null;
-  return {
+  return mapFields(mode, fixed, percent);
+}
+
+function mapCommissionRow(
+  row: PlanRegionOrderCommissionModel,
+): Omit<
+  ResolvedOrderCommissionSettings,
+  'currency' | 'source' | 'regionCode' | 'planId'
+> | null {
+  const mapped = mapRegionFeeRow(row, (mode, fixed, percent) => ({
     platformOrderFeeMode: mode,
     platformOrderFeeFixed: mode === 'fixed' ? fixed : 0,
     platformOrderFeePercent: mode === 'percent' ? percent : 0,
-  };
+  }));
+  return mapped as Omit<
+    ResolvedOrderCommissionSettings,
+    'currency' | 'source' | 'regionCode' | 'planId'
+  > | null;
+}
+
+function mapPayoutFeeRow(
+  row: PlanRegionOrderCommissionModel,
+): Omit<
+  ResolvedPayoutFeeSettings,
+  'currency' | 'source' | 'regionCode' | 'planId'
+> | null {
+  const mapped = mapRegionFeeRow(row, (mode, fixed, percent) => ({
+    payoutFeeMode: mode,
+    payoutFeeFixed: mode === 'fixed' ? fixed : 0,
+    payoutFeePercent: mode === 'percent' ? percent : 0,
+  }));
+  return mapped as Omit<
+    ResolvedPayoutFeeSettings,
+    'currency' | 'source' | 'regionCode' | 'planId'
+  > | null;
 }
 
 @Injectable()
@@ -194,5 +276,120 @@ export class SubscriptionPlanOrderCommissionService {
       },
       settings.currency,
     );
+  }
+
+  async resolvePayoutFeeForStore(
+    storeId: string,
+  ): Promise<ResolvedPayoutFeeSettings> {
+    const regionCode = await this.resolveStoreRegionCode(storeId);
+    const planId = await this.resolveActivePlanIdForStore(storeId);
+
+    if (planId && regionCode) {
+      const plan = await this.planModel
+        .findById(planId)
+        .select('payoutFeesByRegion')
+        .lean()
+        .exec();
+      const rows = (
+        plan as { payoutFeesByRegion?: PlanRegionOrderCommissionModel[] }
+      )?.payoutFeesByRegion;
+      const entry = Array.isArray(rows)
+        ? rows.find(
+            (r) =>
+              String(r.regionCode ?? '')
+                .trim()
+                .toUpperCase() === regionCode,
+          )
+        : undefined;
+      if (entry) {
+        const mapped = mapPayoutFeeRow(entry);
+        if (mapped) {
+          const currency =
+            (await this.supportedCountries.getCurrency(regionCode)) ?? 'CAD';
+          return {
+            ...mapped,
+            currency,
+            source: 'plan_region',
+            regionCode,
+            planId,
+          };
+        }
+      }
+    }
+
+    const global = await this.platformFees.getGlobalPayoutFeeSettings();
+    const currency =
+      (regionCode
+        ? await this.supportedCountries.getCurrency(regionCode)
+        : null) ??
+      global.currency ??
+      'CAD';
+
+    return {
+      payoutFeeMode: global.payoutFeeMode,
+      payoutFeeFixed: global.payoutFeeFixed,
+      payoutFeePercent: global.payoutFeePercent,
+      currency,
+      source: 'global',
+      regionCode: regionCode ?? undefined,
+      planId: planId ?? undefined,
+    };
+  }
+
+  async computePayoutFeeSplitForStore(
+    storeId: string,
+    grossCents: number,
+  ): Promise<PayoutFeeSplit> {
+    const settings = await this.resolvePayoutFeeForStore(storeId);
+    return computePayoutFeeSplit(
+      grossCents,
+      {
+        payoutFeeMode: settings.payoutFeeMode,
+        payoutFeeFixed: settings.payoutFeeFixed,
+        payoutFeePercent: settings.payoutFeePercent,
+      },
+      settings.currency,
+    );
+  }
+
+  resolvePlanPricing(
+    plan: Record<string, unknown>,
+    regionCode?: string | null,
+  ): ResolvedPlanPricing {
+    const defaults = readPlanDefaults(plan);
+    const code = String(regionCode ?? '')
+      .trim()
+      .toUpperCase();
+    if (!code) return defaults;
+
+    const rows = (
+      plan as { pricingByRegion?: PlanRegionPricingModel[] }
+    )?.pricingByRegion;
+    const entry = Array.isArray(rows)
+      ? rows.find(
+          (r) =>
+            String(r.regionCode ?? '')
+              .trim()
+              .toUpperCase() === code,
+        )
+      : undefined;
+    if (!entry) return { ...defaults, regionCode: code };
+
+    const mapped = mapRegionPricingRow(entry);
+    if (!mapped) return { ...defaults, regionCode: code };
+
+    return {
+      ...mapped,
+      source: 'plan_region',
+      regionCode: code,
+    };
+  }
+
+  async resolvePlanPricingForStore(
+    storeId: string,
+    plan: Record<string, unknown>,
+  ): Promise<ResolvedPlanPricing> {
+    const regionCode = await this.resolveStoreRegionCode(storeId);
+    return this.resolvePlanPricing(plan, regionCode);
   }
 }

@@ -14,6 +14,7 @@ type StripeClient = InstanceType<typeof Stripe>;
 export type ChargeFeeSnapshot = {
   amountCents: number;
   feeCents: number;
+  currency: string;
 };
 
 /**
@@ -69,15 +70,16 @@ export class StripeChargeFeeService {
       expand: ['balance_transaction'],
     });
     const amountCents = Math.max(0, Math.round(Number(charge.amount ?? 0)));
+    const currency = String(charge.currency ?? 'cad').toLowerCase();
     const bt = charge.balance_transaction;
     if (!bt || typeof bt === 'string' || typeof bt !== 'object') {
-      return { amountCents, feeCents: 0 };
+      return { amountCents, feeCents: 0, currency };
     }
     const feeCents = Math.max(
       0,
       Math.round(Number((bt as { fee?: number }).fee ?? 0)),
     );
-    return { amountCents, feeCents };
+    return { amountCents, feeCents, currency };
   }
 
   chargeFeeSnapshot(chargeId: string): Promise<ChargeFeeSnapshot | null> {
@@ -118,6 +120,29 @@ export class StripeChargeFeeService {
       sliceAmountCents: args.sliceAmountCents,
       maxDeductibleCents: args.maxDeductibleCents,
     });
+  }
+
+  /** Montant encore transférable depuis une charge (source_transaction). */
+  async remainingTransferableCents(chargeId: string): Promise<number> {
+    const snap = await this.chargeFeeSnapshot(chargeId);
+    if (!snap || snap.amountCents < 1) return 0;
+    const stripe = this.stripe();
+    let transferred = 0;
+    let startingAfter: string | undefined;
+    for (let page = 0; page < 20; page++) {
+      const batch = await stripe.transfers.list({
+        limit: 100,
+        ...(startingAfter ? { starting_after: startingAfter } : {}),
+      });
+      for (const tr of batch.data) {
+        if (tr.source_transaction === chargeId) {
+          transferred += Math.max(0, Math.round(Number(tr.amount ?? 0)));
+        }
+      }
+      if (!batch.has_more || !batch.data.length) break;
+      startingAfter = batch.data[batch.data.length - 1]?.id;
+    }
+    return Math.max(0, snap.amountCents - transferred);
   }
 
   /** Résout l’id charge `ch_…` liée à un `pi_…` ou `cs_…`. */

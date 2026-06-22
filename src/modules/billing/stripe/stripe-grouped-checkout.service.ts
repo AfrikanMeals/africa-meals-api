@@ -20,6 +20,7 @@ import {
 } from '@schemas/ad-credit-payment.schema';
 import { StripeConnectService } from './stripe-connect.service';
 import { StripeConnectTransferService } from './stripe-connect-transfer.service';
+import { scaleStorePayoutMinorToPaymentShare } from './stripe-processing-fee.util';
 import { OrdersService } from '@modules/orders/orders.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import type { RegionTaxBreakdown } from '@modules/supported-countries/region-tax.constants';
@@ -687,6 +688,16 @@ function parsePayoutFromStripeMetadata(
   return m;
 }
 
+function sumPayoutMapGrossCents(
+  payoutMap: Map<string, { goodsCents: number; shipCents: number }>,
+): number {
+  let sum = 0;
+  for (const row of payoutMap.values()) {
+    sum += Math.max(0, row.goodsCents) + Math.max(0, row.shipCents);
+  }
+  return sum;
+}
+
 /** Codes promo par boutique (`coupons_v1` sur la session / le PaymentIntent). */
 function parseCouponsFromStripeMetadata(
   meta: Record<string, string | undefined | null>,
@@ -976,6 +987,7 @@ export class StripeGroupedCheckoutService {
   private async buildGroupedStripePayload(
     user: UserModel,
     dto: GroupedStripeCheckoutDto,
+    opts?: { previewAllowUndeliverable?: boolean },
   ): Promise<GroupedStripeBuilt> {
     const coupons = (dto.coupons ?? [])
       .filter((c) => c.code?.trim())
@@ -1090,14 +1102,21 @@ export class StripeGroupedCheckoutService {
           maxDeliveryRadiusKm: q.maxDeliveryRadiusKm ?? null,
         };
         if (!q.deliverable || q.fee == null) {
-          throw new BadRequestException({
-            message: 'delivery_not_available',
-            storeId,
-            distanceKm: q.distanceKm,
-            maxDeliveryRadiusKm: q.maxDeliveryRadiusKm,
-          });
+          if (!opts?.previewAllowUndeliverable) {
+            throw new BadRequestException({
+              message: 'delivery_not_available',
+              storeId,
+              distanceKm: q.distanceKm,
+              maxDeliveryRadiusKm: q.maxDeliveryRadiusKm,
+              undeliverableReason:
+                (q as { undeliverableReason?: string | null })
+                  .undeliverableReason ?? null,
+            });
+          }
+          shipFee = 0;
+        } else {
+          shipFee = q.fee;
         }
-        shipFee = q.fee;
       } else {
         deliveryMetaByStore[storeId] = {
           deliverable: true,
@@ -1466,6 +1485,7 @@ export class StripeGroupedCheckoutService {
       base.tipAllocMethod = built.tipAllocationMethod;
     }
     base.amtFactor = String(built.amountFactor);
+    base.checkoutCur = built.currency.toLowerCase();
     if (built.orderPaymentFeeCents > 0) {
       base.payFeeCents = String(built.orderPaymentFeeCents);
     }
@@ -1511,7 +1531,9 @@ export class StripeGroupedCheckoutService {
       return { ...cached, cache: { hit: true, ttlMs } };
     }
 
-    const built = await this.buildGroupedStripePayload(user, dto);
+    const built = await this.buildGroupedStripePayload(user, dto, {
+      previewAllowUndeliverable: true,
+    });
     const preview = groupedCheckoutPreviewFromBuilt(built);
     await this.cache.set(cacheKey, preview, ttlMs);
     return { ...preview, cache: { hit: false, ttlMs } };
@@ -1738,6 +1760,8 @@ export class StripeGroupedCheckoutService {
     tipAllocationMethod: string;
     amountFactor: number;
     orderPaymentFeeCents?: number;
+    totalPayoutGrossCents: number;
+    paymentCurrency?: string;
   }): Promise<{
     breakdown: StripePerStoreBreakdownRow;
     orderId?: string;
@@ -1759,7 +1783,11 @@ export class StripeGroupedCheckoutService {
       tipAllocationMethod,
       amountFactor,
       orderPaymentFeeCents,
+      totalPayoutGrossCents,
+      paymentCurrency,
     } = params;
+
+    const paymentCap = Math.max(0, Math.round(amountTotalCents ?? 0));
 
     const prior = priorByStore.get(storeId);
     if (prior?.orderId && !prior.error) {
@@ -1792,6 +1820,8 @@ export class StripeGroupedCheckoutService {
             shipCents: s,
             stripeParentPaymentId: stripePaymentId,
             paymentTotalCents: amountTotalCents,
+            totalPayoutGrossCents,
+            paymentCurrency: paymentCurrency ?? currency,
           });
           transferId = tr.transferId ?? transferId;
           transferCents = tr.transferCents;
@@ -1814,12 +1844,34 @@ export class StripeGroupedCheckoutService {
     }
 
     const payoutRow = payoutMap.get(storeId);
-    const shipCents =
+    let shipCents =
       payoutRow != null
         ? Math.max(0, payoutRow.shipCents)
         : Math.max(0, Math.round(shipCentsByStore[storeId] ?? 0));
-    const goodsCents =
+    let goodsCents =
       payoutRow != null ? Math.max(0, payoutRow.goodsCents) : undefined;
+    if (
+      payoutRow != null &&
+      paymentCap > 0 &&
+      totalPayoutGrossCents > paymentCap &&
+      goodsCents != null
+    ) {
+      const scaled = scaleStorePayoutMinorToPaymentShare({
+        goodsCents,
+        shipCents,
+        totalPayoutGrossMinor: totalPayoutGrossCents,
+        paymentTotalMinor: paymentCap,
+      });
+      if (scaled.goodsCents !== goodsCents || scaled.shipCents !== shipCents) {
+        this.logger.warn(
+          `Stripe fulfill payout scaled store=${storeId} ` +
+            `goods ${goodsCents}→${scaled.goodsCents} ship ${shipCents}→${scaled.shipCents} ` +
+            `(payment=${paymentCap} payoutGross=${totalPayoutGrossCents})`,
+        );
+      }
+      goodsCents = scaled.goodsCents;
+      shipCents = scaled.shipCents;
+    }
     const couponCode = couponByStore.get(storeId);
 
     const baseRow: StripePerStoreBreakdownRow = {
@@ -1917,6 +1969,8 @@ export class StripeGroupedCheckoutService {
           shipCents,
           stripeParentPaymentId: stripePaymentId,
           paymentTotalCents: amountTotalCents,
+          totalPayoutGrossCents,
+          paymentCurrency: paymentCurrency ?? currency,
         });
         transferCents = tr.transferCents;
         platformFeeCents = tr.platformFeeCents;
@@ -2160,6 +2214,11 @@ export class StripeGroupedCheckoutService {
       tipCentsByStore,
     });
 
+    const totalPayoutGrossCents = sumPayoutMapGrossCents(payoutMap);
+    const paymentCurrency = String(
+      metadata?.checkoutCur ?? currency ?? '',
+    ).trim();
+
     const storeSlots = await Promise.all(
       storeIds.map((storeId) =>
         this.fulfillStripeGroupedStore({
@@ -2179,6 +2238,8 @@ export class StripeGroupedCheckoutService {
           tipAllocationMethod,
           amountFactor,
           orderPaymentFeeCents: orderPaymentFeeByStore[storeId] ?? 0,
+          totalPayoutGrossCents,
+          paymentCurrency: paymentCurrency || undefined,
         }),
       ),
     );

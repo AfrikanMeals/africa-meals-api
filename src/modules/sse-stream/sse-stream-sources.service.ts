@@ -5,8 +5,8 @@ import {
 } from '@modules/search-settings/search-reindex-progress.service';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
-import { Observable, interval, from, merge } from 'rxjs';
-import { switchMap, startWith, map, distinctUntilChanged } from 'rxjs/operators';
+import { Observable, interval, from, merge, of } from 'rxjs';
+import { switchMap, startWith, map, distinctUntilChanged, take } from 'rxjs/operators';
 import { sseHealthDedupKey } from './sse-health-dedup.util';
 import { PublicStatusProbeService, PublicStatusSnapshot } from './public-status-probe.service';
 import { SseStreamService } from './sse-stream.service';
@@ -15,6 +15,8 @@ import { AdminJobProgressService } from '@modules/admin-jobs/admin-job-progress.
 import { FleetBootstrapService } from '@modules/fleet/fleet-bootstrap.service';
 import { FleetSnapshotService } from '@modules/fleet/fleet-snapshot.service';
 import { CheckoutSessionSseService } from './checkout-session-sse.service';
+import { PlatformMaintenanceSseService } from '@modules/maintenance-alerts/platform-maintenance-sse.service';
+import { PlatformMaintenanceService } from '@modules/maintenance-alerts/platform-maintenance.service';
 
 @Injectable()
 export class SseStreamSourcesService {
@@ -27,6 +29,8 @@ export class SseStreamSourcesService {
     private readonly fleetBootstrap: FleetBootstrapService,
     private readonly adminJobs: AdminJobProgressService,
     private readonly checkoutSse: CheckoutSessionSseService,
+    private readonly platformMaintenanceSse: PlatformMaintenanceSseService,
+    private readonly platformMaintenance: PlatformMaintenanceService,
   ) {}
 
   assertAdmin(user: UserModel): void {
@@ -181,6 +185,20 @@ export class SseStreamSourcesService {
       completeWhen: (p) =>
         p.type === 'checkout_completed' ||
         p.type === 'subscription_completed',
+    });
+  }
+
+  platformMaintenanceStream(): Observable<MessageEvent> {
+    const seed$ = of(null).pipe(
+      switchMap(() => from(this.platformMaintenance.getPublicStatus())),
+      map((snapshot) => ({ type: 'maintenance', ...snapshot })),
+    );
+    const live$ = this.platformMaintenanceSse.observe().pipe(
+      map((snapshot) => ({ type: 'maintenance', ...snapshot })),
+    );
+    return this.sse.stream({
+      eventName: 'maintenance',
+      source$: merge(seed$.pipe(take(1)), live$),
     });
   }
 }

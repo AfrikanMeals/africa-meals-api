@@ -1,7 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { AdNotificationPricingKindEnum } from '@modules/ads/ad-notification-pricing-kind.enum';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsEnum,
   IsNumber,
   IsOptional,
   IsString,
@@ -102,6 +104,15 @@ export class UpdateAdNotificationPricingDto {
   @ValidateNested()
   @Type(() => UpdateAdNotificationChannelAvailabilityDto)
   availableChannels?: UpdateAdNotificationChannelAvailabilityDto;
+
+  @ApiPropertyOptional({
+    enum: AdNotificationPricingKindEnum,
+    description:
+      'Contexte tarifaire : bannières (banner) ou campagnes (campaign). Défaut : banner.',
+  })
+  @IsOptional()
+  @IsEnum(AdNotificationPricingKindEnum)
+  kind?: AdNotificationPricingKindEnum;
 
   @IsOptional()
   @IsNumber()

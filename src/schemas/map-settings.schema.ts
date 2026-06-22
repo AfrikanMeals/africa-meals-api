@@ -14,6 +14,13 @@ export class MapSettingsModel {
   @Prop({ type: Boolean, default: true })
   vendorGoogleEnabled: boolean;
 
+  @Prop({ type: Boolean, default: true })
+  vendorOsmEnabled: boolean;
+
+  /** Moteur par défaut — tableau de bord vendeur (mapbox | google). */
+  @Prop({ type: String, default: 'mapbox', trim: true })
+  vendorDefaultMapEngine: string;
+
   /** App mobile — mode client (USER). */
   @Prop({ type: Boolean, default: true })
   mobileUserMapboxEnabled: boolean;
@@ -21,12 +28,26 @@ export class MapSettingsModel {
   @Prop({ type: Boolean, default: true })
   mobileUserGoogleEnabled: boolean;
 
+  @Prop({ type: Boolean, default: true })
+  mobileUserOsmEnabled: boolean;
+
+  /** Moteur par défaut — app mobile client (mapbox | google | osm). */
+  @Prop({ type: String, default: 'mapbox', trim: true })
+  mobileUserDefaultMapEngine: string;
+
   /** App mobile — mode livreur (DELIVERY). */
   @Prop({ type: Boolean, default: true })
   mobileDeliveryMapboxEnabled: boolean;
 
   @Prop({ type: Boolean, default: true })
   mobileDeliveryGoogleEnabled: boolean;
+
+  @Prop({ type: Boolean, default: true })
+  mobileDeliveryOsmEnabled: boolean;
+
+  /** Moteur par défaut — app mobile livreur (mapbox | google | osm). */
+  @Prop({ type: String, default: 'mapbox', trim: true })
+  mobileDeliveryDefaultMapEngine: string;
 }
 
 export type MapSettingsDocument = HydratedDocument<MapSettingsModel>;

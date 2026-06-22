@@ -83,6 +83,7 @@ import { FleetSnapshotService } from '@modules/fleet/fleet-snapshot.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { ContactSubmissionService } from '@modules/mailer/contact-submission.service';
 import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import {
   buildDashboardAdPerformancePayload,
   DASHBOARD_AD_PERFORMANCE_DAYS,
@@ -625,6 +626,7 @@ export class DashboardService {
     private readonly storeAccess: StoreAccessService,
     private readonly contactSubmissionService: ContactSubmissionService,
     private readonly storeDeliveryDrivers: StoreDeliveryDriversService,
+    private readonly subscriptionsService: SubscriptionsService,
   ) {}
 
   async getAlerts(user: UserModel): Promise<{
@@ -3348,12 +3350,16 @@ export class DashboardService {
       .lean()
       .exec();
     if (orderStoreLean?.vendorManagesDeliveryDrivers) {
-      const isMember = await this.storeDeliveryDrivers.isActiveStoreDriver(
-        orderStoreId,
-        deliveryUserId,
-      );
-      if (!isMember) {
-        throw new BadRequestException('livreur_not_store_member');
+      const policy =
+        await this.subscriptionsService.resolveStoreDeliveryPolicy(orderStoreId);
+      if (policy.selfDeliveryRequired) {
+        const isMember = await this.storeDeliveryDrivers.isActiveStoreDriver(
+          orderStoreId,
+          deliveryUserId,
+        );
+        if (!isMember) {
+          throw new BadRequestException('livreur_not_store_member');
+        }
       }
     }
 

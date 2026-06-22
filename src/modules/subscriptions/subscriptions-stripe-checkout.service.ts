@@ -20,6 +20,8 @@ import Stripe = require('stripe');
 import { SubscribeVendorDto } from './dto/subscription-plan.dto';
 import { isFreeSubscriptionPlan } from './subscription-plan.util';
 import { SubscriptionsService } from './subscriptions.service';
+import { SubscriptionPlanOrderCommissionService } from './subscription-plan-order-commission.service';
+import { SubscriptionAdCashService } from './subscription-ad-cash.service';
 import { VendorSubscriptionEmailService } from './vendor-subscription-email.service';
 
 type StripeClient = InstanceType<typeof Stripe>;
@@ -82,6 +84,8 @@ export class SubscriptionsStripeCheckoutService {
   constructor(
     private readonly subscriptionEmails: VendorSubscriptionEmailService,
     private readonly subscriptions: SubscriptionsService,
+    private readonly planRegionalFees: SubscriptionPlanOrderCommissionService,
+    private readonly subscriptionAdCash: SubscriptionAdCashService,
   ) {}
 
   private stripe(): StripeClient {
@@ -201,19 +205,23 @@ export class SubscriptionsStripeCheckoutService {
       status: 'PENDING_PAYMENT',
     });
 
+    const planDoc = plan as Record<string, unknown> & {
+      _id: Types.ObjectId;
+      name: string;
+    };
+    const pricing = await this.planRegionalFees.resolvePlanPricingForStore(
+      String(storeId),
+      planDoc,
+    );
     const pricePaid =
-      period === 'MONTHLY'
-        ? Number((plan as { priceMonthly: number }).priceMonthly)
-        : Number((plan as { priceYearly: number }).priceYearly);
-    const currency = String((plan as { currency?: string }).currency ?? 'CAD')
-      .trim()
-      .toUpperCase();
+      period === 'MONTHLY' ? pricing.priceMonthly : pricing.priceYearly;
+    const currency = pricing.currency;
     const unitAmountCents = dollarsToCents(pricePaid);
-    const planName = String((plan as { name: string }).name ?? 'Abonnement');
+    const planName = String(planDoc.name ?? 'Abonnement');
 
     return {
       storeId,
-      plan: plan as PlanSwitchDraft['plan'],
+      plan: planDoc as PlanSwitchDraft['plan'],
       period,
       pricePaid,
       currency,
@@ -235,13 +243,7 @@ export class SubscriptionsStripeCheckoutService {
     user: UserModel,
     draft: PlanSwitchDraft,
   ): Promise<{ activated: true; subscriptionId: string }> {
-    if (
-      !isFreeSubscriptionPlan({
-        name: draft.planName,
-        priceMonthly: Number(draft.plan.priceMonthly ?? 0),
-        priceYearly: Number(draft.plan.priceYearly ?? 0),
-      })
-    ) {
+    if (draft.pricePaid > 0 || draft.unitAmountCents > 0) {
       throw new BadRequestException({
         message: 'amount_below_stripe_minimum',
         pricePaid: draft.pricePaid,
@@ -287,6 +289,16 @@ export class SubscriptionsStripeCheckoutService {
     await this.subscriptions.applyAdLimitsDowngradeForStore(
       String(draft.storeId),
     );
+
+    void this.subscriptionAdCash
+      .applyForActivatedSubscription(String(created._id))
+      .catch((e) => {
+        this.logger.warn(
+          `Plan Ad Cash gift failed sub=${String(created._id)}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      });
 
     return {
       activated: true,
@@ -462,6 +474,16 @@ export class SubscriptionsStripeCheckoutService {
         });
       }
     }
+
+    void this.subscriptionAdCash
+      .applyForActivatedSubscription(String(existing._id))
+      .catch((e) => {
+        this.logger.warn(
+          `Plan Ad Cash gift failed sub=${String(existing._id)}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      });
 
     return {
       activated: true,

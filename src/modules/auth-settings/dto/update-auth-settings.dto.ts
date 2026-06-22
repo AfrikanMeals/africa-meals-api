@@ -2,17 +2,29 @@ import { ApiProperty } from '@nestjs/swagger';
 import { IsBoolean } from 'class-validator';
 
 export class UpdateAuthSettingsDto {
-  @ApiProperty({ description: 'Connexion Google (Firebase) active' })
+  @ApiProperty({ description: 'Connexion Google (Firebase) — tableau de bord admin' })
   @IsBoolean()
-  googleEnabled: boolean;
+  googleEnabledAdmin: boolean;
 
-  @ApiProperty({ description: 'Connexion Apple (Firebase) active' })
+  @ApiProperty({ description: 'Connexion Google (Firebase) — application mobile' })
   @IsBoolean()
-  appleEnabled: boolean;
+  googleEnabledMobile: boolean;
 
-  @ApiProperty({ description: 'Connexion Facebook (Firebase) active' })
+  @ApiProperty({ description: 'Connexion Apple (Firebase) — tableau de bord admin' })
   @IsBoolean()
-  facebookEnabled: boolean;
+  appleEnabledAdmin: boolean;
+
+  @ApiProperty({ description: 'Connexion Apple (Firebase) — application mobile' })
+  @IsBoolean()
+  appleEnabledMobile: boolean;
+
+  @ApiProperty({ description: 'Connexion Facebook (Firebase) — tableau de bord admin' })
+  @IsBoolean()
+  facebookEnabledAdmin: boolean;
+
+  @ApiProperty({ description: 'Connexion Facebook (Firebase) — application mobile' })
+  @IsBoolean()
+  facebookEnabledMobile: boolean;
 
   @ApiProperty({
     description: 'E-mail de notification à chaque connexion (tableau de bord admin)',

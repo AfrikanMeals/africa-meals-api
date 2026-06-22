@@ -69,6 +69,7 @@ import {
   CreateStoreDto,
   PatchDailyMenuDto,
   PatchVendorShippingZonesDto,
+  PatchVendorWorkingHoursDto,
   StoreProfileImageJsonDto,
 } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
@@ -797,6 +798,22 @@ export class StoreController {
     @Query('storeId') storeId?: string,
   ) {
     return this._storeService.updateVendorShippingZones(
+      req.user as UserModel,
+      body,
+      storeId,
+    );
+  }
+
+  /** Horaires d’ouverture et fuseau horaire (boutique ACTIVE ou dossier en cours). */
+  @Patch('vendor/working-hours')
+  @UseGuards(JwtGuard)
+  async patchVendorWorkingHours(
+    @Req() req: Request,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: PatchVendorWorkingHoursDto,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this._storeService.updateVendorWorkingHours(
       req.user as UserModel,
       body,
       storeId,

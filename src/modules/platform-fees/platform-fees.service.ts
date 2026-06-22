@@ -149,11 +149,12 @@ export function computePayoutFeeSplit(
     payoutFeeFixed: number;
     payoutFeePercent: number;
   },
+  currency = 'CAD',
 ): PayoutFeeSplit {
   const gross = Math.max(0, Math.round(grossCents));
   const feeMode = settings.payoutFeeMode;
   const feePercent = Math.max(0, settings.payoutFeePercent ?? 0);
-  const feeFixedCad = Math.max(0, settings.payoutFeeFixed ?? 0);
+  const feeFixedAmount = Math.max(0, settings.payoutFeeFixed ?? 0);
 
   if (gross < 1) {
     return {
@@ -162,14 +163,14 @@ export function computePayoutFeeSplit(
       payoutCents: 0,
       feeMode,
       feePercent,
-      feeFixedCad,
+      feeFixedCad: feeFixedAmount,
     };
   }
 
   let platformFeeCents =
     feeMode === 'percent'
       ? Math.round(gross * (feePercent / 100))
-      : Math.round(feeFixedCad * 100);
+      : toStripeMinorUnits(feeFixedAmount, currency);
 
   platformFeeCents = Math.max(0, Math.min(platformFeeCents, gross));
 
@@ -179,7 +180,7 @@ export function computePayoutFeeSplit(
     payoutCents: gross - platformFeeCents,
     feeMode,
     feePercent,
-    feeFixedCad,
+    feeFixedCad: feeFixedAmount,
   };
 }
 
@@ -403,17 +404,40 @@ export class PlatformFeesService {
     };
   }
 
-  /** Frais appliqués lors d'un versement manuel vendeur (request payout). */
-  async computePayoutFeeFromSettings(
-    grossCents: number,
-  ): Promise<PayoutFeeSplit> {
+  /** Barème global frais de versement (repli si formule/région non configurés). */
+  async getGlobalPayoutFeeSettings(): Promise<{
+    currency: string;
+    payoutFeeMode: PlatformFeeMode;
+    payoutFeeFixed: number;
+    payoutFeePercent: number;
+  }> {
     const doc = await this._ensureDoc();
     const settings = this._toResponse(doc);
-    return computePayoutFeeSplit(grossCents, {
+    const storeCurrency = await this._resolveCurrencyFromStoreSettings();
+    return {
+      currency: storeCurrency,
       payoutFeeMode: settings.payoutFeeMode,
       payoutFeeFixed: settings.payoutFeeFixed,
       payoutFeePercent: settings.payoutFeePercent,
-    });
+    };
+  }
+
+  /** Frais appliqués lors d'un versement manuel vendeur (request payout). */
+  async computePayoutFeeFromSettings(
+    grossCents: number,
+    currency = 'CAD',
+  ): Promise<PayoutFeeSplit> {
+    const doc = await this._ensureDoc();
+    const settings = this._toResponse(doc);
+    return computePayoutFeeSplit(
+      grossCents,
+      {
+        payoutFeeMode: settings.payoutFeeMode,
+        payoutFeeFixed: settings.payoutFeeFixed,
+        payoutFeePercent: settings.payoutFeePercent,
+      },
+      currency,
+    );
   }
 
   /** Barème remboursement (sans auth) — utilisé par le traitement des remboursements. */

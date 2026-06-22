@@ -60,7 +60,13 @@ import {
   DailyMenuItemDto,
   DailyMenuSlotDto,
   PatchVendorShippingZonesDto,
+  PatchVendorWorkingHoursDto,
 } from './dto/store.dto';
+import {
+  normalizeStoreTimezone,
+  normalizeStoreWorkingHours,
+  serializeStoreWorkingHoursForApi,
+} from './store-working-hours.util';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { AdminPatchVendorStoreDto } from './dto/admin-vendor-store.dto';
 import {
@@ -299,16 +305,42 @@ export class StoreService {
   @Inject(BusinessTypesService)
   private readonly _businessTypesService: BusinessTypesService;
 
-  private _normalizeVendorDeliveryDriverSettings(args: {
-    supportsShipping: boolean;
-    vendorManagesDeliveryDrivers?: boolean;
-    deliveryAssignmentMode?: string;
-  }): {
+  private async _resolveVendorDeliveryDriverSettings(
+    storeId: string | undefined,
+    fallbackPlanName: string | undefined,
+    args: {
+      supportsShipping: boolean;
+      vendorManagesDeliveryDrivers?: boolean;
+      deliveryAssignmentMode?: string;
+    },
+  ): Promise<{
     vendorManagesDeliveryDrivers: boolean;
     deliveryAssignmentMode: 'AUTO' | 'MANUAL';
-  } {
-    const vendorManagesDeliveryDrivers =
-      args.supportsShipping && args.vendorManagesDeliveryDrivers === true;
+  }> {
+    const policy =
+      storeId && Types.ObjectId.isValid(storeId)
+        ? await this._subscriptionsService.resolveStoreDeliveryPolicy(storeId)
+        : {
+            selfDeliveryRequired: fallbackPlanName
+              ? await this._subscriptionsService.isSelfDeliveryRequiredForPlanName(
+                  fallbackPlanName,
+                )
+              : false,
+            maxDeliveryAgents: fallbackPlanName
+              ? await this._subscriptionsService.resolveMaxDeliveryAgentsForPlanName(
+                  fallbackPlanName,
+                )
+              : 0,
+            platformPoolEnabled: !(fallbackPlanName
+              ? await this._subscriptionsService.isSelfDeliveryRequiredForPlanName(
+                  fallbackPlanName,
+                )
+              : false),
+          };
+    const vendorManagesDeliveryDrivers = args.supportsShipping
+      ? policy.selfDeliveryRequired ||
+        args.vendorManagesDeliveryDrivers === true
+      : false;
     const deliveryAssignmentMode =
       vendorManagesDeliveryDrivers &&
       String(args.deliveryAssignmentMode ?? 'AUTO').toUpperCase() === 'MANUAL'
@@ -373,6 +405,30 @@ export class StoreService {
     return this._subscriptionsService.isPickupPayOnDeliveryEnabledForStore(
       storeId,
     );
+  }
+
+  private async _marketingToolsEnabledForStore(storeId: string): Promise<boolean> {
+    return this._subscriptionsService.isMarketingToolsEnabledForStore(storeId);
+  }
+
+  private async _mapEngineSwitcherEnabledForStore(
+    storeId: string,
+  ): Promise<boolean> {
+    return this._subscriptionsService.isMapEngineSwitcherEnabledForStore(storeId);
+  }
+
+  private async _deliveryPlanExtrasForStore(storeId: string): Promise<{
+    selfDeliveryPlanRequired: boolean;
+    maxDeliveryAgentsPlan: number;
+    platformDeliveryPoolEnabled: boolean;
+  }> {
+    const policy =
+      await this._subscriptionsService.resolveStoreDeliveryPolicy(storeId);
+    return {
+      selfDeliveryPlanRequired: policy.selfDeliveryRequired,
+      maxDeliveryAgentsPlan: policy.maxDeliveryAgents,
+      platformDeliveryPoolEnabled: policy.platformPoolEnabled,
+    };
   }
 
   /** Boutique + formule : paiement à la collecte (pickup) actif pour les clients. */
@@ -691,7 +747,7 @@ export class StoreService {
     const doc = await this._storeModel
       .findById(storeOid)
       .select(
-        'bio profileImage name status email phoneNumber currency region supportsShipping acceptsOrders acceptsMealPreOrders acceptsPickupPayOnDelivery mealPreOrderCatalogScope',
+        'bio profileImage name status email phoneNumber currency region supportsShipping acceptsOrders acceptsMealPreOrders acceptsPickupPayOnDelivery mealPreOrderCatalogScope timezone workingHours',
       )
       .populate({
         path: 'address',
@@ -727,6 +783,15 @@ export class StoreService {
       await this._subscriptionsService.isPickupPayOnDeliveryEnabledForPlanName(
         planName,
       );
+    const marketingToolsPlanEnabled =
+      await this._subscriptionsService.isMarketingToolsEnabledForPlanName(
+        planName,
+      );
+    const mapEngineSwitcherPlanEnabled =
+      await this._subscriptionsService.isMapEngineSwitcherEnabledForPlanName(
+        planName,
+      );
+    const deliveryPlanExtras = await this._deliveryPlanExtrasForStore(id);
     const o = doc as unknown as Record<string, unknown>;
     const plain: Record<string, unknown> = {
       ...o,
@@ -737,6 +802,9 @@ export class StoreService {
       storeSubscriptionEnabled,
       mealPreOrderPlanEnabled,
       pickupPayOnDeliveryPlanEnabled,
+      marketingToolsPlanEnabled,
+      mapEngineSwitcherPlanEnabled,
+      ...deliveryPlanExtras,
       acceptsMealPreOrders: this._effectiveAcceptsMealPreOrders(
         o,
         mealPreOrderPlanEnabled,
@@ -746,6 +814,13 @@ export class StoreService {
         pickupPayOnDeliveryPlanEnabled,
       ),
       mealPreOrderCatalogScope: this._docMealPreOrderCatalogScope(o),
+      timezone:
+        typeof o['timezone'] === 'string' && String(o['timezone']).trim()
+          ? String(o['timezone']).trim()
+          : undefined,
+      workingHours: serializeStoreWorkingHoursForApi(
+        o['workingHours'] as Record<string, unknown> | undefined,
+      ),
     };
     const oid = o['_id'];
     if (
@@ -760,7 +835,7 @@ export class StoreService {
   }
 
   async create(dto: CreateStoreDto, user: UserModel) {
-    const { address, ...args } = dto;
+    const { address, timezone, workingHours, ...args } = dto;
     this._assertVendorShopAddressForOnboarding(address);
     await this._businessTypesService.assertActiveSlug(args.businessType);
     const fullUser = await this._usersService.findById(
@@ -828,13 +903,18 @@ export class StoreService {
       throw new ConflictException('address_not_found');
     }
 
+    const normalizedTimezone = normalizeStoreTimezone(timezone);
+    const normalizedWorkingHours = normalizeStoreWorkingHours(workingHours);
+
     const store = await this._storeModel.create({
       ...args,
       region: storeRegion,
       currency: derivedCurrency,
+      ...(normalizedTimezone ? { timezone: normalizedTimezone } : {}),
+      ...(normalizedWorkingHours ? { workingHours: normalizedWorkingHours } : {}),
       address: addr._id,
       owner: user._id,
-      ...this._normalizeVendorDeliveryDriverSettings(args),
+      ...(await this._resolveVendorDeliveryDriverSettings(undefined, 'FREE', args)),
       acceptsMealPreOrders: wantsPreOrders,
       mealPreOrderCatalogScope: this._normalizeMealPreOrderCatalogScope(
         args.mealPreOrderCatalogScope,
@@ -904,7 +984,7 @@ export class StoreService {
         select: 'address city country zipCode countryCode location',
       })
       .select(
-        'name bio businessType email phoneNumber currency region status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders acceptsPickupPayOnDelivery mealPreOrderCatalogScope partnerBadgeCode',
+        'name bio businessType email phoneNumber currency region status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders acceptsPickupPayOnDelivery mealPreOrderCatalogScope partnerBadgeCode timezone workingHours',
       )
       .lean()
       .exec();
@@ -975,6 +1055,13 @@ export class StoreService {
         latitude: coords[1] ?? 0,
         longitude: coords[0] ?? 0,
       },
+      timezone:
+        typeof doc.timezone === 'string' && doc.timezone.trim()
+          ? String(doc.timezone).trim()
+          : undefined,
+      workingHours: serializeStoreWorkingHoursForApi(
+        doc.workingHours as Record<string, unknown> | undefined,
+      ),
     };
 
     const profileImage = await this._mediasService.resolvePublicMediaUrl(
@@ -996,6 +1083,11 @@ export class StoreService {
       await this._mealPreOrderEnabledForStore(targetId);
     const pickupPayOnDeliveryPlanEnabled =
       await this._pickupPayOnDeliveryEnabledForStore(targetId);
+    const marketingToolsPlanEnabled =
+      await this._marketingToolsEnabledForStore(targetId);
+    const mapEngineSwitcherPlanEnabled =
+      await this._mapEngineSwitcherEnabledForStore(targetId);
+    const deliveryPlanExtras = await this._deliveryPlanExtrasForStore(targetId);
 
     return {
       store: {
@@ -1013,6 +1105,9 @@ export class StoreService {
         ),
         mealPreOrderPlanEnabled,
         pickupPayOnDeliveryPlanEnabled,
+        marketingToolsPlanEnabled,
+        mapEngineSwitcherPlanEnabled,
+        ...deliveryPlanExtras,
         vendorManagesDeliveryDrivers: !!doc.vendorManagesDeliveryDrivers,
         deliveryAssignmentMode: String(
           doc.deliveryAssignmentMode ?? 'AUTO',
@@ -1706,7 +1801,9 @@ export class StoreService {
       ? args.shippingZones ?? store.shippingZones ?? []
       : [];
 
-    const deliveryDriverSettings = this._normalizeVendorDeliveryDriverSettings(
+    const deliveryDriverSettings = await this._resolveVendorDeliveryDriverSettings(
+      (store._id as { toString(): string }).toString(),
+      undefined,
       args,
     );
     const wantsPreOrders = this._normalizeMealPreOrdersFlag(
@@ -1723,6 +1820,8 @@ export class StoreService {
       (store._id as { toString(): string }).toString(),
       wantsPickupPayOnDelivery,
     );
+    const normalizedTimezone = normalizeStoreTimezone(args.timezone);
+    const normalizedWorkingHours = normalizeStoreWorkingHours(args.workingHours);
     const setFields: Record<string, unknown> = {
       name: args.name,
       bio: args.bio,
@@ -1742,6 +1841,12 @@ export class StoreService {
       deliveryAssignmentMode: deliveryDriverSettings.deliveryAssignmentMode,
       ...(wasRevision && { status: StoreStatusEnum.PENDING }),
     };
+    if (normalizedTimezone !== undefined) {
+      setFields.timezone = normalizedTimezone;
+    }
+    if (normalizedWorkingHours !== undefined) {
+      setFields.workingHours = normalizedWorkingHours;
+    }
     const updateDoc: Record<string, unknown> = { $set: setFields };
     if (args.businessType) {
       setFields.businessType = args.businessType;
@@ -1817,7 +1922,9 @@ export class StoreService {
         }
       }
     }
-    const deliveryDriverSettings = this._normalizeVendorDeliveryDriverSettings(
+    const deliveryDriverSettings = await this._resolveVendorDeliveryDriverSettings(
+      (store._id as { toString(): string }).toString(),
+      undefined,
       args,
     );
     const wantsPreOrders =
@@ -1865,6 +1972,70 @@ export class StoreService {
               wantsPickupPayOnDelivery !== undefined
                 ? 'Préférences commandes et livraison enregistrées.'
                 : 'Préférence de livraison enregistrée.',
+            from: 'SYSTEM',
+            createdAt: new Date(),
+          },
+        },
+      },
+    );
+    this._wsInboxNotify.notifyUserInboxRefresh(
+      (user._id as { toString(): string }).toString(),
+    );
+    await this._invalidatePublicCatalogCachesForStore(targetId);
+    return this.findMyStoreSummary(user, targetId);
+  }
+
+  /** Horaires d’ouverture et fuseau horaire (boutique ACTIVE ou dossier en cours). */
+  async updateVendorWorkingHours(
+    user: UserModel,
+    args: PatchVendorWorkingHoursDto,
+    storeId?: string,
+  ) {
+    const access = await this._storeAccess.resolveStoreAccess(user);
+    const requested = storeId?.trim();
+    let targetId = requested;
+    if (!targetId) {
+      const owned =
+        access.find((a) => a.isOwner)?.storeId ?? access[0]?.storeId;
+      targetId = owned;
+    }
+    if (!targetId) {
+      throw new NotFoundException('store_not_found');
+    }
+    const row = access.find((a) => a.storeId === targetId);
+    if (!row) {
+      throw new ForbiddenException('store_not_found');
+    }
+
+    const store = await this._storeModel.findById(targetId).exec();
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+    if (store.status === StoreStatusEnum.INACTIVE) {
+      throw new ForbiddenException('store_not_editable');
+    }
+
+    const normalizedWorkingHours = normalizeStoreWorkingHours(args.workingHours);
+    const updateDoc: Record<string, unknown> = {
+      $set: { workingHours: normalizedWorkingHours },
+    };
+    if (args.timezone !== undefined) {
+      const normalizedTimezone = normalizeStoreTimezone(args.timezone);
+      if (normalizedTimezone !== undefined) {
+        (updateDoc.$set as Record<string, unknown>).timezone =
+          normalizedTimezone;
+      } else {
+        updateDoc.$unset = { timezone: 1 };
+      }
+    }
+
+    await this._storeModel.updateOne({ _id: store._id }, updateDoc);
+    await this._storeModel.updateOne(
+      { _id: store._id },
+      {
+        $push: {
+          vendorMessages: {
+            message: 'Horaires d’ouverture enregistrés.',
             from: 'SYSTEM',
             createdAt: new Date(),
           },
@@ -2605,6 +2776,7 @@ export class StoreService {
       phoneNumber: String(s.phoneNumber ?? s.phone_number ?? ''),
       status: String(s.status ?? StoreStatusEnum.PENDING),
       currency: String(s.currency ?? 'CAD'),
+      region: String(s.region ?? '').trim().toUpperCase() || undefined,
       ownerFullName: fullName,
       ownerNom,
       ownerPrenom,
@@ -3170,7 +3342,9 @@ export class StoreService {
     const shippingZones = args.supportsShipping
       ? args.shippingZones ?? store.shippingZones ?? []
       : [];
-    const deliveryDriverSettings = this._normalizeVendorDeliveryDriverSettings(
+    const deliveryDriverSettings = await this._resolveVendorDeliveryDriverSettings(
+      (store._id as { toString(): string }).toString(),
+      undefined,
       args,
     );
     const wantsPreOrders = this._normalizeMealPreOrdersFlag(

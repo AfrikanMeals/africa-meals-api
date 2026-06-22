@@ -5,6 +5,59 @@ import {
 } from '@schemas/ad-notification-addon.schema';
 import { HydratedDocument } from 'mongoose';
 
+/** 15 tarifs notification par contexte (bannière ou campagne). */
+@Schema({ _id: false })
+export class AdNotificationContextRatesModel {
+  @Prop({ type: Number, default: 0, name: 'email_delivery_cad' })
+  emailDeliveryCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'email_interaction_cad' })
+  emailInteractionCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'email_conversion_cad' })
+  emailConversionCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'push_delivery_cad' })
+  pushDeliveryCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'push_interaction_cad' })
+  pushInteractionCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'push_conversion_cad' })
+  pushConversionCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'in_app_delivery_cad' })
+  inAppDeliveryCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'in_app_interaction_cad' })
+  inAppInteractionCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'in_app_conversion_cad' })
+  inAppConversionCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'sms_delivery_cad' })
+  smsDeliveryCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'sms_interaction_cad' })
+  smsInteractionCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'sms_conversion_cad' })
+  smsConversionCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'whatsapp_delivery_cad' })
+  whatsappDeliveryCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'whatsapp_interaction_cad' })
+  whatsappInteractionCad: number;
+
+  @Prop({ type: Number, default: 0, name: 'whatsapp_conversion_cad' })
+  whatsappConversionCad: number;
+}
+
+export const AdNotificationContextRatesSchema = SchemaFactory.createForClass(
+  AdNotificationContextRatesModel,
+);
+
 /**
  * Barème facturation des notifications Ads (singleton `key = default`).
  * Par canal : livraison, interaction (ouverture/clic), conversion.
@@ -31,6 +84,21 @@ export class AdNotificationPricingSettingsModel {
   })
   availableChannels: AdNotificationChannelsModel;
 
+  @Prop({
+    type: AdNotificationContextRatesSchema,
+    default: null,
+    name: 'banner_rates',
+  })
+  bannerRates?: AdNotificationContextRatesModel | null;
+
+  @Prop({
+    type: AdNotificationContextRatesSchema,
+    default: null,
+    name: 'campaign_rates',
+  })
+  campaignRates?: AdNotificationContextRatesModel | null;
+
+  /** Legacy — repli si banner_rates / campaign_rates absents. */
   @Prop({ type: Number, default: 0, name: 'email_delivery_cad' })
   emailDeliveryCad: number;
 

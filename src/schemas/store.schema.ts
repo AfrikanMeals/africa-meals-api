@@ -289,6 +289,44 @@ export class StoreModel extends BaseSchema {
     }>;
   }>;
 
+  /** Fuseau horaire IANA pour les horaires d’ouverture (ex. Africa/Douala). */
+  @Prop({ required: false, name: 'timezone', type: String, trim: true })
+  timezone?: string;
+
+  /**
+   * Horaires d’ouverture par jour (0 = dimanche … 6 = samedi).
+   * Si `enabled` est faux, la boutique est considérée ouverte en permanence.
+   */
+  @Prop({
+    required: false,
+    name: 'working_hours',
+    type: {
+      enabled: { type: Boolean, default: true },
+      schedule: [
+        {
+          dayOfWeek: { type: Number, required: true, min: 0, max: 6 },
+          closed: { type: Boolean, default: false },
+          open24h: { type: Boolean, default: false },
+          slots: [
+            {
+              open: { type: String, required: true },
+              close: { type: String, required: true },
+            },
+          ],
+        },
+      ],
+    },
+  })
+  workingHours?: {
+    enabled?: boolean;
+    schedule?: Array<{
+      dayOfWeek: number;
+      closed?: boolean;
+      open24h?: boolean;
+      slots?: Array<{ open: string; close: string }>;
+    }>;
+  };
+
   /** Badge partenaire (Silver / Gold / Diamond) — délai de versement Stripe. */
   @Prop({
     required: false,

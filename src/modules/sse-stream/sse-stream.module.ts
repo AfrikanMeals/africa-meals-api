@@ -4,7 +4,8 @@ import { SearchSettingsModule } from '@modules/search-settings/search-settings.m
 import { FleetModule } from '@modules/fleet/fleet.module';
 import { RequestStatsModule } from '@modules/request-stats/request-stats.module';
 import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
-import { DynamicModule, Module } from '@nestjs/common';
+import { MaintenanceAlertsModule } from '@modules/maintenance-alerts/maintenance-alerts.module';
+import { DynamicModule, Module, forwardRef } from '@nestjs/common';
 import { AppService } from '../../app.service';
 import { isSseHttpOnApi } from '../../common/sse/sse-redis.channels';
 import { SseJwtAuthGuard } from './guards/sse-jwt-auth.guard';
@@ -34,6 +35,7 @@ const sseProviders = [
     FleetModule,
     DomainEventHandlersModule,
     CheckoutSessionSseModule,
+    forwardRef(() => MaintenanceAlertsModule),
   ],
   providers: sseProviders,
   exports: [
@@ -56,6 +58,7 @@ export class SseStreamModule {
         RequestStatsModule,
         DomainEventHandlersModule,
         CheckoutSessionSseModule,
+        forwardRef(() => MaintenanceAlertsModule),
       ],
       controllers: httpEnabled ? [SseStreamController] : [],
       providers: sseProviders,

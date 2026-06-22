@@ -109,4 +109,15 @@ export class SseRedisPublishService {
       60,
     );
   }
+
+  async publishPlatformMaintenance(
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    await this.push(
+      SSE_REDIS_CHANNELS.platformMaintenance,
+      SSE_REDIS_LAST_KEYS.platformMaintenance,
+      payload,
+      86_400,
+    );
+  }
 }

@@ -24,13 +24,19 @@ import {
   mergeAdNotificationPricing,
   mergeVendorSmsPricing,
   normalizeRegionCode,
+  pickAdNotificationRatesForKind,
   toRegionAdDiffusionDoc,
   toRegionAdNotificationDoc,
   toRegionVendorSmsDoc,
   type RegionAdDiffusionPricingPayload,
   type RegionAdNotificationPricingPayload,
   type RegionVendorSmsPricingPayload,
+  type AdNotificationPricingKind,
 } from './region-pricing.util';
+import {
+  extractAdNotificationRatesFromDto,
+  mergeAdNotificationRatesPartial,
+} from './ad-notification-rates.util';
 
 const GLOBAL_KEY = 'default';
 
@@ -167,28 +173,24 @@ export class RegionPricingService {
           whatsapp: availDto.whatsapp ?? current.availableChannels.whatsapp,
         }
       : current.availableChannels;
+    const ratePatch = extractAdNotificationRatesFromDto(
+      dto as unknown as Record<string, unknown>,
+    );
+    const kind = dto.kind === 'campaign' ? 'campaign' : dto.kind === 'banner' ? 'banner' : null;
+    const nextBanner =
+      kind === 'campaign'
+        ? current.banner
+        : mergeAdNotificationRatesPartial(current.banner, ratePatch);
+    const nextCampaign =
+      kind === 'banner'
+        ? current.campaign
+        : mergeAdNotificationRatesPartial(current.campaign, ratePatch);
     const next: RegionAdNotificationPricingPayload = {
       ...current,
       availableChannels: nextAvailable,
-      emailDeliveryCad: dto.emailDeliveryCad ?? current.emailDeliveryCad,
-      emailInteractionCad:
-        dto.emailInteractionCad ?? current.emailInteractionCad,
-      emailConversionCad: dto.emailConversionCad ?? current.emailConversionCad,
-      pushDeliveryCad: dto.pushDeliveryCad ?? current.pushDeliveryCad,
-      pushInteractionCad: dto.pushInteractionCad ?? current.pushInteractionCad,
-      pushConversionCad: dto.pushConversionCad ?? current.pushConversionCad,
-      inAppDeliveryCad: dto.inAppDeliveryCad ?? current.inAppDeliveryCad,
-      inAppInteractionCad:
-        dto.inAppInteractionCad ?? current.inAppInteractionCad,
-      inAppConversionCad: dto.inAppConversionCad ?? current.inAppConversionCad,
-      smsDeliveryCad: dto.smsDeliveryCad ?? current.smsDeliveryCad,
-      smsInteractionCad: dto.smsInteractionCad ?? current.smsInteractionCad,
-      smsConversionCad: dto.smsConversionCad ?? current.smsConversionCad,
-      whatsappDeliveryCad: dto.whatsappDeliveryCad ?? current.whatsappDeliveryCad,
-      whatsappInteractionCad:
-        dto.whatsappInteractionCad ?? current.whatsappInteractionCad,
-      whatsappConversionCad:
-        dto.whatsappConversionCad ?? current.whatsappConversionCad,
+      banner: nextBanner,
+      campaign: nextCampaign,
+      ...nextBanner,
       configuredOnRegion: true,
     };
     await this.countryModel
@@ -197,7 +199,7 @@ export class RegionPricingService {
         { $set: { adNotificationPricing: toRegionAdNotificationDoc(next) } },
       )
       .exec();
-    return this.getLegacyAdNotificationPricingPayload(code);
+    return this.getLegacyAdNotificationPricingPayload(code, kind ?? 'banner');
   }
 
   async getVendorSmsPricing(
@@ -243,28 +245,21 @@ export class RegionPricingService {
   }
 
   /** Payload compatible legacy ads.service notification pricing. */
-  async getLegacyAdNotificationPricingPayload(countryCode?: string | null) {
+  async getLegacyAdNotificationPricingPayload(
+    countryCode?: string | null,
+    kind: AdNotificationPricingKind = 'banner',
+  ) {
     const resolved = await this.getAdNotificationPricing(
       await this.resolveRegionCode(countryCode),
     );
+    const rates = pickAdNotificationRatesForKind(resolved, kind);
     return {
       currency: resolved.currency,
       availableChannels: resolved.availableChannels,
-      emailDeliveryCad: resolved.emailDeliveryCad,
-      emailInteractionCad: resolved.emailInteractionCad,
-      emailConversionCad: resolved.emailConversionCad,
-      pushDeliveryCad: resolved.pushDeliveryCad,
-      pushInteractionCad: resolved.pushInteractionCad,
-      pushConversionCad: resolved.pushConversionCad,
-      inAppDeliveryCad: resolved.inAppDeliveryCad,
-      inAppInteractionCad: resolved.inAppInteractionCad,
-      inAppConversionCad: resolved.inAppConversionCad,
-      smsDeliveryCad: resolved.smsDeliveryCad,
-      smsInteractionCad: resolved.smsInteractionCad,
-      smsConversionCad: resolved.smsConversionCad,
-      whatsappDeliveryCad: resolved.whatsappDeliveryCad,
-      whatsappInteractionCad: resolved.whatsappInteractionCad,
-      whatsappConversionCad: resolved.whatsappConversionCad,
+      kind,
+      banner: resolved.banner,
+      campaign: resolved.campaign,
+      ...rates,
       updatedAt: null as string | null,
       regionCode: resolved.regionCode,
     };

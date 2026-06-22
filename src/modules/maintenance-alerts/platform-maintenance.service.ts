@@ -13,6 +13,8 @@ import { UserModel } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 import { TogglePlatformMaintenanceDto } from './dto/toggle-platform-maintenance.dto';
 import { PlatformMaintenanceEmailService } from './platform-maintenance-email.service';
+import { PlatformMaintenanceSseService } from './platform-maintenance-sse.service';
+import { WsPlatformMaintenanceNotifyService } from '@modules/ws-notify/ws-platform-maintenance-notify.service';
 import {
   mapPlatformMaintenanceEntry,
   platformMaintenanceField,
@@ -37,11 +39,17 @@ export class PlatformMaintenanceService {
     private readonly settingsModel: Model<MaintenanceAlertSettingsModel>,
     private readonly dbMaintenance: DbMaintenanceService,
     private readonly email: PlatformMaintenanceEmailService,
+    private readonly maintenanceSse: PlatformMaintenanceSseService,
+    private readonly wsMaintenance: WsPlatformMaintenanceNotifyService,
   ) {}
 
   async getPublicStatus(): Promise<PublicPlatformMaintenanceResponse> {
     const doc = await this.ensureSettings();
-    return this.toPublicResponse(doc);
+    const response = this.toPublicResponse(doc);
+    if (!this.maintenanceSse.lastSnapshot()) {
+      this.maintenanceSse.emit(response);
+    }
+    return response;
   }
 
   async getAdminStatus(user: UserModel): Promise<PlatformMaintenanceSettingsResponse> {
@@ -101,6 +109,13 @@ export class PlatformMaintenanceService {
     this.logger.log(
       `Platform maintenance ${dto.platform}=${dto.enabled} by ${actorEmail || actorId} email=${emailSent}`,
     );
+
+    const publicSnapshot = {
+      ...this.toAdminResponse(updated),
+      checkedAt: new Date().toISOString(),
+    };
+    this.maintenanceSse.emit(publicSnapshot);
+    this.wsMaintenance.broadcastStatus(publicSnapshot);
 
     return {
       ...this.toAdminResponse(updated),

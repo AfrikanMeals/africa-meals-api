@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import {
   DeliveryAgentApplicationModel,
   DeliveryAgentApplicationStatus,
@@ -33,6 +34,7 @@ export class FleetAudienceService {
     @InjectModel(OrderModel.name)
     private readonly orders: Model<OrderModel>,
     private readonly storeDeliveryDrivers: StoreDeliveryDriversService,
+    private readonly subscriptions: SubscriptionsService,
   ) {}
 
   /**
@@ -140,6 +142,15 @@ export class FleetAudienceService {
       .exec();
 
     const rows: GeoStore[] = [];
+    const storeIds: string[] = [];
+    for (const store of stores) {
+      const storeId = String(store._id ?? '').trim();
+      if (!storeId) continue;
+      storeIds.push(storeId);
+    }
+    const selfDeliveryByStore =
+      await this.subscriptions.resolveSelfDeliveryRequiredByStoreIds(storeIds);
+
     for (const store of stores) {
       const storeId = String(store._id ?? '').trim();
       if (!storeId) continue;
@@ -161,7 +172,7 @@ export class FleetAudienceService {
         storeId,
         lng,
         lat,
-        platformPool: store.vendorManagesDeliveryDrivers !== true,
+        platformPool: selfDeliveryByStore.get(storeId) !== true,
       });
     }
 

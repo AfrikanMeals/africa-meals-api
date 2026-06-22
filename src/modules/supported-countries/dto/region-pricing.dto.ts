@@ -1,3 +1,7 @@
+import { AdNotificationPricingKindEnum } from '@modules/ads/ad-notification-pricing-kind.enum';
+import { UpdateAdNotificationChannelAvailabilityDto } from '@modules/ads/dto/ad-notification.dto';
+import { VendorNotificationBillingCyclePeriodEnum } from '@modules/vendor-notifications/vendor-notification-billing-period.util';
+import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsEnum,
@@ -6,9 +10,8 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
-import { UpdateAdNotificationChannelAvailabilityDto } from '@modules/ads/dto/ad-notification.dto';
-import { VendorNotificationBillingCyclePeriodEnum } from '@modules/vendor-notifications/vendor-notification-billing-period.util';
+
+export { AdNotificationPricingKindEnum } from '@modules/ads/ad-notification-pricing-kind.enum';
 
 export class UpdateRegionAdDiffusionPricingDto {
   @IsOptional()
@@ -48,6 +51,10 @@ export class UpdateRegionAdDiffusionPricingDto {
 }
 
 export class UpdateRegionAdNotificationPricingDto {
+  @IsOptional()
+  @IsEnum(AdNotificationPricingKindEnum)
+  kind?: AdNotificationPricingKindEnum;
+
   @IsOptional()
   @ValidateNested()
   @Type(() => UpdateAdNotificationChannelAvailabilityDto)

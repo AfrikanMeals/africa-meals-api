@@ -12,6 +12,7 @@ import { UserModel } from '@schemas/user.schema';
 import axios from 'axios';
 import { Model } from 'mongoose';
 import { CreateAddressDto, SearchAddressDto } from './dto/addresses.dto';
+import { osmSearchStructuredAddress } from '@common/osm-geocoding.util';
 
 /** Réponse enrichie pour éviter un `GET /auth/me` après chaque mutation (mobile). */
 export type UserAddressesMutationResult = {
@@ -99,6 +100,59 @@ export class AddressesService {
   }
 
   async search(args: SearchAddressDto, user: UserModel) {
+    const engine = String(
+      this._configService.get<string>('MAP_GEOCODING_ENGINE') ?? 'mapbox',
+    )
+      .trim()
+      .toLowerCase();
+    if (engine === 'osm') {
+      return this._searchWithOsm(args);
+    }
+    const mapboxToken = String(
+      this._configService.get<string>('MAPBOX_ACCESS_TOKEN') ?? '',
+    ).trim();
+    if (!mapboxToken) {
+      return this._searchWithOsm(args);
+    }
+    return this._searchWithMapbox(args);
+  }
+
+  private async _searchWithOsm(args: SearchAddressDto) {
+    const item = await osmSearchStructuredAddress(
+      {
+        address: args.address,
+        city: args.city,
+        country: args.country,
+        zipCode: args.zipCode,
+        countryCode: args.countryCode,
+      },
+      this._configService,
+    );
+    if (!item) {
+      throw new NotFoundException('address_not_found');
+    }
+    const formatPostalcode = (code: string) =>
+      code?.split('')?.join('')?.toLowerCase()?.trim();
+    if (
+      args.zipCode?.trim() &&
+      item.zipCode?.trim() &&
+      formatPostalcode(item.zipCode) !== formatPostalcode(args.zipCode)
+    ) {
+      throw new NotFoundException('invalid_zip_code');
+    }
+    return {
+      address:
+        item.address ||
+        `${args.address}, ${args.zipCode}, ${args.city}, ${args.country}`,
+      country: item.country || args.country,
+      countryCode: item.countryCode || args.countryCode || '',
+      zipCode: item.zipCode || args.zipCode,
+      city: item.city || args.city,
+      location: [item.longitude, item.latitude],
+    };
+  }
+
+  private async _searchWithMapbox(args: SearchAddressDto) {
     const q = encodeURIComponent(
       `${args.address}, ${args.zipCode}, ${args.city}, ${args.country}`,
     );
@@ -107,7 +161,6 @@ export class AddressesService {
     )}?q=${q}&proximity=ip&types=address&access_token=${this._configService.get<string>(
       'MAPBOX_ACCESS_TOKEN',
     )}&limit=1&autocomplete=true&language=fr`;
-    // console.log('🚀 ~ AddressesService ~ create ~ url:', url);
     const { data } = await axios.get(url);
 
     if (!data?.features?.length) {
@@ -123,7 +176,6 @@ export class AddressesService {
           formatPostalcode(add?.properties?.context?.postcode?.name) ===
           formatPostalcode(args.zipCode),
       ) ?? data?.features[0];
-    // console.log('🚀 ~ AddressesService ~ search ~ item:', JSON.stringify(item));
 
     if (
       formatPostalcode(item?.properties?.context?.postcode?.name) !==

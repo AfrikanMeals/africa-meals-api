@@ -34,6 +34,58 @@ export const RegionAdDiffusionPricingSchema = SchemaFactory.createForClass(
   RegionAdDiffusionPricingModel,
 );
 
+/** Tarifs par canal (livraison / interaction / conversion) — sans canaux activés. */
+@Schema({ _id: false })
+export class RegionAdNotificationChannelRatesModel {
+  @Prop({ type: Number, default: null, name: 'email_delivery' })
+  emailDelivery?: number | null;
+
+  @Prop({ type: Number, default: null, name: 'email_interaction' })
+  emailInteraction?: number | null;
+
+  @Prop({ type: Number, default: null, name: 'email_conversion' })
+  emailConversion?: number | null;
+
+  @Prop({ type: Number, default: null, name: 'push_delivery' })
+  pushDelivery?: number | null;
+
+  @Prop({ type: Number, default: null, name: 'push_interaction' })
+  pushInteraction?: number | null;
+
+  @Prop({ type: Number, default: null, name: 'push_conversion' })
+  pushConversion?: number | null;
+
+  @Prop({ type: Number, default: null, name: 'in_app_delivery' })
+  inAppDelivery?: number | null;
+
+  @Prop({ type: Number, default: null, name: 'in_app_interaction' })
+  inAppInteraction?: number | null;
+
+  @Prop({ type: Number, default: null, name: 'in_app_conversion' })
+  inAppConversion?: number | null;
+
+  @Prop({ type: Number, default: null, name: 'sms_delivery' })
+  smsDelivery?: number | null;
+
+  @Prop({ type: Number, default: null, name: 'sms_interaction' })
+  smsInteraction?: number | null;
+
+  @Prop({ type: Number, default: null, name: 'sms_conversion' })
+  smsConversion?: number | null;
+
+  @Prop({ type: Number, default: null, name: 'whatsapp_delivery' })
+  whatsappDelivery?: number | null;
+
+  @Prop({ type: Number, default: null, name: 'whatsapp_interaction' })
+  whatsappInteraction?: number | null;
+
+  @Prop({ type: Number, default: null, name: 'whatsapp_conversion' })
+  whatsappConversion?: number | null;
+}
+
+export const RegionAdNotificationChannelRatesSchema =
+  SchemaFactory.createForClass(RegionAdNotificationChannelRatesModel);
+
 /** Barème notifications Ads scoped par région. */
 @Schema({ _id: false })
 export class RegionAdNotificationPricingModel {
@@ -44,6 +96,19 @@ export class RegionAdNotificationPricingModel {
   })
   availableChannels?: AdNotificationChannelsModel | null;
 
+  @Prop({
+    type: RegionAdNotificationChannelRatesSchema,
+    default: null,
+  })
+  banner?: RegionAdNotificationChannelRatesModel | null;
+
+  @Prop({
+    type: RegionAdNotificationChannelRatesSchema,
+    default: null,
+  })
+  campaign?: RegionAdNotificationChannelRatesModel | null;
+
+  /** Legacy — repli banner/campagne tant que les blocs dédiés sont absents. */
   @Prop({ type: Number, default: null, name: 'email_delivery' })
   emailDelivery?: number | null;
 

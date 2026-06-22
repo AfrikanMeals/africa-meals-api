@@ -10,6 +10,7 @@ export const SSE_REDIS_CHANNELS = {
   job: (jobId: string) => `sse:ch:job:${jobId.trim()}`,
   checkout: (sessionId: string) => `sse:ch:checkout:${sessionId.trim()}`,
   requestStats: 'sse:ch:request-stats',
+  platformMaintenance: 'sse:ch:platform-maintenance',
 } as const;
 
 export const SSE_REDIS_LAST_KEYS = {
@@ -20,6 +21,7 @@ export const SSE_REDIS_LAST_KEYS = {
   job: (jobId: string) => `sse:last:job:${jobId.trim()}`,
   checkout: (sessionId: string) => `sse:last:checkout:${sessionId.trim()}`,
   requestStats: 'sse:last:request-stats',
+  platformMaintenance: 'sse:last:platform-maintenance',
 } as const;
 
 export function isSseHostOnWs(): boolean {

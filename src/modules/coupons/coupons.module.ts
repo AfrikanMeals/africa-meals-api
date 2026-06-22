@@ -5,6 +5,7 @@ import {
   StoreCouponSchema,
 } from '@schemas/store_coupon.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
+import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { CouponsController } from './coupons.controller';
 import { CouponsService } from './coupons.service';
 
@@ -14,6 +15,7 @@ import { CouponsService } from './coupons.service';
       { name: StoreCouponModel.name, schema: StoreCouponSchema },
       { name: StoreModel.name, schema: StoreSchema },
     ]),
+    SubscriptionsModule,
   ],
   controllers: [CouponsController],
   providers: [CouponsService],

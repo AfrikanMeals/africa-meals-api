@@ -40,6 +40,7 @@ const WS_NOTIFY_SUFFIX_TO_TOPIC = {
   'ad-manager/event': 'ad-manager/event',
   'chat/archive-order-delivery': 'chat/archive-order-delivery',
   'delivery-agent/presence': 'delivery-agent/presence',
+  'platform/maintenance': 'platform/maintenance',
 } as const;
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {

@@ -24,6 +24,7 @@ import {
   UpdateSubscriptionPlanDto,
 } from './dto/subscription-plan.dto';
 import { normalizePlanRegionOrderCommissions } from './dto/plan-region-order-commission.dto';
+import { normalizePlanRegionPricing } from './dto/plan-region-pricing.dto';
 import {
   isFreePlanName,
   isFreeSubscriptionPlan,
@@ -31,6 +32,8 @@ import {
 } from './subscription-plan.util';
 import { DEFAULT_SUBSCRIPTION_PLAN_SEEDS } from './subscription-plan.seed';
 import { VendorSubscriptionEmailService } from './vendor-subscription-email.service';
+import { SubscriptionPlanOrderCommissionService } from './subscription-plan-order-commission.service';
+import { SubscriptionAdCashService } from './subscription-ad-cash.service';
 
 function vendorStoreObjectIds(user: UserModel): Types.ObjectId[] {
   const rawStores = user.stores || [];
@@ -62,10 +65,37 @@ function mapPlanCommissionRow(row: Record<string, unknown>) {
   };
 }
 
-function mapPlan(doc: Record<string, unknown>) {
-  const commissionRows = Array.isArray(doc.orderCommissionsByRegion)
-    ? doc.orderCommissionsByRegion
+function mapPlanPricingRow(row: Record<string, unknown>) {
+  const regionCode = String(row.regionCode ?? '')
+    .trim()
+    .toUpperCase();
+  if (!regionCode) return null;
+  return {
+    regionCode,
+    priceMonthly: Math.max(0, Number(row.priceMonthly ?? 0)),
+    priceYearly: Math.max(0, Number(row.priceYearly ?? 0)),
+    currency: String(row.currency ?? 'CAD')
+      .trim()
+      .toUpperCase() || 'CAD',
+  };
+}
+
+function mapPlanRegionFeeRows(
+  rows: unknown,
+): ReturnType<typeof mapPlanCommissionRow>[] {
+  return Array.isArray(rows)
+    ? rows
         .map((row) => mapPlanCommissionRow(row as Record<string, unknown>))
+        .filter((row): row is NonNullable<typeof row> => row != null)
+    : [];
+}
+
+function mapPlan(doc: Record<string, unknown>) {
+  const commissionRows = mapPlanRegionFeeRows(doc.orderCommissionsByRegion);
+  const payoutFeeRows = mapPlanRegionFeeRows(doc.payoutFeesByRegion);
+  const pricingRows = Array.isArray(doc.pricingByRegion)
+    ? doc.pricingByRegion
+        .map((row) => mapPlanPricingRow(row as Record<string, unknown>))
         .filter((row): row is NonNullable<typeof row> => row != null)
     : [];
 
@@ -94,12 +124,20 @@ function mapPlan(doc: Record<string, unknown>) {
     storeSubscriptionEnabled: doc.storeSubscriptionEnabled === true,
     mealPreOrderEnabled: doc.mealPreOrderEnabled === true,
     pickupPayOnDeliveryEnabled: doc.pickupPayOnDeliveryEnabled === true,
+    marketingToolsEnabled: doc.marketingToolsEnabled === true,
+    mapEngineSwitcherEnabled: doc.mapEngineSwitcherEnabled === true,
+    selfDeliveryEnabled: doc.selfDeliveryEnabled === true,
+    maxDeliveryAgents: Math.max(0, Number(doc.maxDeliveryAgents ?? 0)),
     maxCatalogItems: Math.max(0, Number(doc.maxCatalogItems ?? 0)),
     maxDailyMenuItems: Math.max(0, Number(doc.maxDailyMenuItems ?? 0)),
     maxAdCampaignItems: Math.max(0, Number(doc.maxAdCampaignItems ?? 0)),
     maxActiveBanners: Math.max(0, Number(doc.maxActiveBanners ?? 0)),
     maxActiveCampaigns: Math.max(0, Number(doc.maxActiveCampaigns ?? 0)),
+    initialAdCashGift: Math.max(0, Number(doc.initialAdCashGift ?? 0)),
+    renewalAdCashGift: Math.max(0, Number(doc.renewalAdCashGift ?? 0)),
     orderCommissionsByRegion: commissionRows,
+    payoutFeesByRegion: payoutFeeRows,
+    pricingByRegion: pricingRows,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -196,6 +234,8 @@ export class SubscriptionsService implements OnModuleInit {
 
   constructor(
     private readonly subscriptionEmails: VendorSubscriptionEmailService,
+    private readonly planRegionalFees: SubscriptionPlanOrderCommissionService,
+    private readonly subscriptionAdCash: SubscriptionAdCashService,
   ) {}
 
   async onModuleInit() {
@@ -223,17 +263,52 @@ export class SubscriptionsService implements OnModuleInit {
       .sort({ sortOrder: 1, createdAt: 1 })
       .lean()
       .exec();
-    return (rows as Record<string, unknown>[]).map(mapPlan);
+    const plans = (rows as Record<string, unknown>[]).map(mapPlan);
+    if (user.type !== UserTypeEnum.VENDOR) {
+      return plans;
+    }
+    const storeIds = vendorStoreObjectIds(user);
+    if (!storeIds.length) return plans;
+    const storeId = String(storeIds[0]);
+    return Promise.all(
+      plans.map(async (plan) => {
+        const pricing = await this.planRegionalFees.resolvePlanPricingForStore(
+          storeId,
+          plan as unknown as Record<string, unknown>,
+        );
+        return {
+          ...plan,
+          priceMonthly: pricing.priceMonthly,
+          priceYearly: pricing.priceYearly,
+          currency: pricing.currency,
+        };
+      }),
+    );
   }
 
   /** Plans actifs pour la page tarifs publique (sans champs internes). */
-  async listPublicPlans() {
+  async listPublicPlans(regionCode?: string) {
     const rows = await this.planModel
       .find({ active: true })
       .sort({ sortOrder: 1, createdAt: 1 })
       .lean()
       .exec();
-    return (rows as Record<string, unknown>[]).map(mapPublicPlan);
+    const region = String(regionCode ?? '')
+      .trim()
+      .toUpperCase();
+    return (rows as Record<string, unknown>[]).map((doc) => {
+      const pricing = this.planRegionalFees.resolvePlanPricing(
+        doc,
+        region || null,
+      );
+      const pub = mapPublicPlan(doc);
+      return {
+        ...pub,
+        priceMonthly: pricing.priceMonthly,
+        priceYearly: pricing.priceYearly,
+        currency: pricing.currency,
+      };
+    });
   }
 
   private normalizeStoreObjectId(
@@ -342,6 +417,10 @@ export class SubscriptionsService implements OnModuleInit {
         storeSubscriptionEnabled: seed.storeSubscriptionEnabled === true,
         mealPreOrderEnabled: seed.mealPreOrderEnabled === true,
         pickupPayOnDeliveryEnabled: seed.pickupPayOnDeliveryEnabled === true,
+        marketingToolsEnabled: seed.marketingToolsEnabled === true,
+        mapEngineSwitcherEnabled: seed.mapEngineSwitcherEnabled === true,
+        selfDeliveryEnabled: seed.selfDeliveryEnabled === true,
+        maxDeliveryAgents: Math.max(0, Number(seed.maxDeliveryAgents ?? 0)),
         maxCatalogItems: Math.max(0, Number(seed.maxCatalogItems ?? 0)),
         maxDailyMenuItems: Math.max(0, Number(seed.maxDailyMenuItems ?? 0)),
         ...(seed.maxAdCampaignItems != null && {
@@ -352,6 +431,12 @@ export class SubscriptionsService implements OnModuleInit {
         }),
         ...(seed.maxActiveCampaigns != null && {
           maxActiveCampaigns: Math.max(0, Number(seed.maxActiveCampaigns)),
+        }),
+        ...(seed.initialAdCashGift != null && {
+          initialAdCashGift: Math.max(0, Number(seed.initialAdCashGift)),
+        }),
+        ...(seed.renewalAdCashGift != null && {
+          renewalAdCashGift: Math.max(0, Number(seed.renewalAdCashGift)),
         }),
       };
       if (existing) {
@@ -368,6 +453,18 @@ export class SubscriptionsService implements OnModuleInit {
           patch.maxActiveCampaigns = docFields.maxActiveCampaigns;
         }
         if (
+          existingDoc.initialAdCashGift == null &&
+          docFields.initialAdCashGift != null
+        ) {
+          patch.initialAdCashGift = docFields.initialAdCashGift;
+        }
+        if (
+          existingDoc.renewalAdCashGift == null &&
+          docFields.renewalAdCashGift != null
+        ) {
+          patch.renewalAdCashGift = docFields.renewalAdCashGift;
+        }
+        if (
           existingDoc.mealPreOrderEnabled == null &&
           docFields.mealPreOrderEnabled != null
         ) {
@@ -378,6 +475,32 @@ export class SubscriptionsService implements OnModuleInit {
           docFields.pickupPayOnDeliveryEnabled != null
         ) {
           patch.pickupPayOnDeliveryEnabled = docFields.pickupPayOnDeliveryEnabled;
+        }
+        if (
+          existingDoc.marketingToolsEnabled == null &&
+          docFields.marketingToolsEnabled != null
+        ) {
+          patch.marketingToolsEnabled = docFields.marketingToolsEnabled;
+        }
+        if (
+          existingDoc.mapEngineSwitcherEnabled == null &&
+          docFields.mapEngineSwitcherEnabled != null
+        ) {
+          patch.mapEngineSwitcherEnabled = docFields.mapEngineSwitcherEnabled;
+        }
+        if (
+          existingDoc.selfDeliveryEnabled == null &&
+          docFields.selfDeliveryEnabled != null
+        ) {
+          patch.selfDeliveryEnabled = docFields.selfDeliveryEnabled;
+        }
+        if (
+          (existingDoc.maxDeliveryAgents == null ||
+            Number(existingDoc.maxDeliveryAgents) === 0) &&
+          docFields.maxDeliveryAgents != null &&
+          Number(docFields.maxDeliveryAgents) > 0
+        ) {
+          patch.maxDeliveryAgents = docFields.maxDeliveryAgents;
         }
         if (
           (existingDoc.recommendationScore == null ||
@@ -1141,6 +1264,164 @@ export class SubscriptionsService implements OnModuleInit {
     return this.isPickupPayOnDeliveryEnabledForPlanName(planName);
   }
 
+  async isMarketingToolsEnabledForPlanName(planName: string): Promise<boolean> {
+    const name = String(planName ?? '').trim();
+    if (!name) return false;
+    const escaped = buildCaseInsensitiveExactRegex(name);
+    const doc = await this.planModel
+      .findOne({
+        name: { $regex: escaped },
+        active: { $ne: false },
+      })
+      .select('marketingToolsEnabled')
+      .lean()
+      .exec();
+    return (
+      (doc as { marketingToolsEnabled?: boolean } | null)
+        ?.marketingToolsEnabled === true
+    );
+  }
+
+  async isMarketingToolsEnabledForStore(storeId: string): Promise<boolean> {
+    const id = String(storeId ?? '').trim();
+    if (!Types.ObjectId.isValid(id)) return false;
+    const planByStore = await this.resolveActivePlanNamesByStoreIds([id]);
+    const planName = String(planByStore.get(id) ?? '').trim();
+    return this.isMarketingToolsEnabledForPlanName(planName);
+  }
+
+  async isMapEngineSwitcherEnabledForPlanName(
+    planName: string,
+  ): Promise<boolean> {
+    const name = String(planName ?? '').trim();
+    if (!name) return false;
+    const escaped = buildCaseInsensitiveExactRegex(name);
+    const doc = await this.planModel
+      .findOne({
+        name: { $regex: escaped },
+        active: { $ne: false },
+      })
+      .select('mapEngineSwitcherEnabled')
+      .lean()
+      .exec();
+    return (
+      (doc as { mapEngineSwitcherEnabled?: boolean } | null)
+        ?.mapEngineSwitcherEnabled === true
+    );
+  }
+
+  async isMapEngineSwitcherEnabledForStore(storeId: string): Promise<boolean> {
+    const id = String(storeId ?? '').trim();
+    if (!Types.ObjectId.isValid(id)) return false;
+    const planByStore = await this.resolveActivePlanNamesByStoreIds([id]);
+    const planName = String(planByStore.get(id) ?? '').trim();
+    return this.isMapEngineSwitcherEnabledForPlanName(planName);
+  }
+
+  async assertMarketingToolsEnabledForStore(
+    storeId: string,
+    user?: UserModel,
+  ): Promise<void> {
+    if (user?.type === UserTypeEnum.ADMIN) return;
+    const enabled = await this.isMarketingToolsEnabledForStore(storeId);
+    if (!enabled) {
+      throw new ForbiddenException('marketing_tools_not_enabled_for_plan');
+    }
+  }
+
+  async isSelfDeliveryRequiredForPlanName(planName: string): Promise<boolean> {
+    const name = String(planName ?? '').trim();
+    if (!name) return false;
+    const escaped = buildCaseInsensitiveExactRegex(name);
+    const doc = await this.planModel
+      .findOne({
+        name: { $regex: escaped },
+        active: { $ne: false },
+      })
+      .select('selfDeliveryEnabled')
+      .lean()
+      .exec();
+    return (
+      (doc as { selfDeliveryEnabled?: boolean } | null)?.selfDeliveryEnabled ===
+      true
+    );
+  }
+
+  async isSelfDeliveryRequiredForStore(storeId: string): Promise<boolean> {
+    const id = String(storeId ?? '').trim();
+    if (!Types.ObjectId.isValid(id)) return false;
+    const planByStore = await this.resolveActivePlanNamesByStoreIds([id]);
+    const planName = String(planByStore.get(id) ?? '').trim();
+    return this.isSelfDeliveryRequiredForPlanName(planName);
+  }
+
+  async resolveMaxDeliveryAgentsForPlanName(planName: string): Promise<number> {
+    const name = String(planName ?? '').trim();
+    if (!name) return 0;
+    const escaped = buildCaseInsensitiveExactRegex(name);
+    const doc = await this.planModel
+      .findOne({
+        name: { $regex: escaped },
+        active: { $ne: false },
+      })
+      .select('maxDeliveryAgents')
+      .lean()
+      .exec();
+    return Math.max(
+      0,
+      Number((doc as { maxDeliveryAgents?: number } | null)?.maxDeliveryAgents ?? 0),
+    );
+  }
+
+  async resolveMaxDeliveryAgentsForStore(storeId: string): Promise<number> {
+    const id = String(storeId ?? '').trim();
+    if (!Types.ObjectId.isValid(id)) return 0;
+    const planByStore = await this.resolveActivePlanNamesByStoreIds([id]);
+    const planName = String(planByStore.get(id) ?? '').trim();
+    return this.resolveMaxDeliveryAgentsForPlanName(planName);
+  }
+
+  async resolveSelfDeliveryRequiredByStoreIds(
+    storeIds: string[],
+  ): Promise<Map<string, boolean>> {
+    const out = new Map<string, boolean>();
+    const ids = storeIds.filter((id) => Types.ObjectId.isValid(id));
+    if (!ids.length) return out;
+    const planByStore = await this.resolveActivePlanNamesByStoreIds(ids);
+    const planNames = [
+      ...new Set(
+        [...planByStore.values()]
+          .map((n) => String(n ?? '').trim())
+          .filter(Boolean),
+      ),
+    ];
+    const planFlags = new Map<string, boolean>();
+    await Promise.all(
+      planNames.map(async (name) => {
+        planFlags.set(name, await this.isSelfDeliveryRequiredForPlanName(name));
+      }),
+    );
+    for (const id of ids) {
+      const planName = String(planByStore.get(id) ?? '').trim();
+      out.set(id, planFlags.get(planName) === true);
+    }
+    return out;
+  }
+
+  async resolveStoreDeliveryPolicy(storeId: string): Promise<{
+    selfDeliveryRequired: boolean;
+    maxDeliveryAgents: number;
+    platformPoolEnabled: boolean;
+  }> {
+    const selfDeliveryRequired = await this.isSelfDeliveryRequiredForStore(storeId);
+    const maxDeliveryAgents = await this.resolveMaxDeliveryAgentsForStore(storeId);
+    return {
+      selfDeliveryRequired,
+      maxDeliveryAgents,
+      platformPoolEnabled: !selfDeliveryRequired,
+    };
+  }
+
   /**
    * Liste des boutiques accessibles pour un propriétaire selon son quota courant.
    * En cas de downgrade, les boutiques excédentaires les plus récentes deviennent inaccessibles
@@ -1391,6 +1672,13 @@ export class SubscriptionsService implements OnModuleInit {
       storeSubscriptionEnabled: dto.storeSubscriptionEnabled === true,
       mealPreOrderEnabled: dto.mealPreOrderEnabled === true,
       pickupPayOnDeliveryEnabled: dto.pickupPayOnDeliveryEnabled === true,
+      marketingToolsEnabled: dto.marketingToolsEnabled === true,
+      mapEngineSwitcherEnabled: dto.mapEngineSwitcherEnabled === true,
+      selfDeliveryEnabled: dto.selfDeliveryEnabled === true,
+      maxDeliveryAgents: Math.max(
+        0,
+        Math.floor(Number(dto.maxDeliveryAgents ?? 0)),
+      ),
       maxCatalogItems: Math.max(
         0,
         Math.floor(Number(dto.maxCatalogItems ?? 0)),
@@ -1411,9 +1699,21 @@ export class SubscriptionsService implements OnModuleInit {
         0,
         Math.floor(Number(dto.maxActiveCampaigns ?? 0)),
       ),
+      initialAdCashGift: Math.max(
+        0,
+        Number(dto.initialAdCashGift ?? 0),
+      ),
+      renewalAdCashGift: Math.max(
+        0,
+        Number(dto.renewalAdCashGift ?? 0),
+      ),
       orderCommissionsByRegion: normalizePlanRegionOrderCommissions(
         dto.orderCommissionsByRegion,
       ),
+      payoutFeesByRegion: normalizePlanRegionOrderCommissions(
+        dto.payoutFeesByRegion,
+      ),
+      pricingByRegion: normalizePlanRegionPricing(dto.pricingByRegion),
     });
     return mapPlan(doc.toObject() as Record<string, unknown>);
   }
@@ -1460,6 +1760,21 @@ export class SubscriptionsService implements OnModuleInit {
     if (dto.pickupPayOnDeliveryEnabled != null) {
       patch.pickupPayOnDeliveryEnabled = dto.pickupPayOnDeliveryEnabled === true;
     }
+    if (dto.marketingToolsEnabled != null) {
+      patch.marketingToolsEnabled = dto.marketingToolsEnabled === true;
+    }
+    if (dto.mapEngineSwitcherEnabled != null) {
+      patch.mapEngineSwitcherEnabled = dto.mapEngineSwitcherEnabled === true;
+    }
+    if (dto.selfDeliveryEnabled != null) {
+      patch.selfDeliveryEnabled = dto.selfDeliveryEnabled === true;
+    }
+    if (dto.maxDeliveryAgents != null) {
+      patch.maxDeliveryAgents = Math.max(
+        0,
+        Math.floor(Number(dto.maxDeliveryAgents)),
+      );
+    }
     if (dto.maxCatalogItems != null) {
       patch.maxCatalogItems = Math.max(
         0,
@@ -1490,10 +1805,24 @@ export class SubscriptionsService implements OnModuleInit {
         Math.floor(Number(dto.maxActiveCampaigns)),
       );
     }
+    if (dto.initialAdCashGift != null) {
+      patch.initialAdCashGift = Math.max(0, Number(dto.initialAdCashGift));
+    }
+    if (dto.renewalAdCashGift != null) {
+      patch.renewalAdCashGift = Math.max(0, Number(dto.renewalAdCashGift));
+    }
     if (dto.orderCommissionsByRegion != null) {
       patch.orderCommissionsByRegion = normalizePlanRegionOrderCommissions(
         dto.orderCommissionsByRegion,
       );
+    }
+    if (dto.payoutFeesByRegion != null) {
+      patch.payoutFeesByRegion = normalizePlanRegionOrderCommissions(
+        dto.payoutFeesByRegion,
+      );
+    }
+    if (dto.pricingByRegion != null) {
+      patch.pricingByRegion = normalizePlanRegionPricing(dto.pricingByRegion);
     }
 
     if (
@@ -1573,11 +1902,22 @@ export class SubscriptionsService implements OnModuleInit {
     if (dto.pickupPayOnDeliveryEnabled != null) {
       fields.push('paiement à la collecte');
     }
+    if (dto.marketingToolsEnabled != null) fields.push('outils marketing');
+    if (dto.mapEngineSwitcherEnabled != null) fields.push('choix moteur carte');
+    if (dto.selfDeliveryEnabled != null) fields.push('livraison autonome');
+    if (dto.maxDeliveryAgents != null) fields.push('livreurs max');
     if (dto.maxCatalogItems != null) fields.push('catalogue');
     if (dto.maxDailyMenuItems != null) fields.push('menu du jour');
     if (dto.maxAdCampaignItems != null) fields.push('campagnes pub');
     if (dto.maxActiveBanners != null) fields.push('bannières');
     if (dto.maxActiveCampaigns != null) fields.push('campagnes actives');
+    if (dto.initialAdCashGift != null) fields.push('cadeau Ad Cash initial');
+    if (dto.renewalAdCashGift != null) fields.push('cadeau Ad Cash renouvellement');
+    if (dto.orderCommissionsByRegion != null) {
+      fields.push('commission commande');
+    }
+    if (dto.payoutFeesByRegion != null) fields.push('frais de versement');
+    if (dto.pricingByRegion != null) fields.push('tarifs par région');
     return fields;
   }
 
@@ -1869,6 +2209,18 @@ export class SubscriptionsService implements OnModuleInit {
           }`,
         );
       });
+    }
+
+    if (status === 'ACTIVE' && startsAt <= now && endsAt > now) {
+      void this.subscriptionAdCash
+        .applyForActivatedSubscription(String(created._id))
+        .catch((e) => {
+          this.logger.warn(
+            `Plan Ad Cash gift failed sub=${String(created._id)}: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
+        });
     }
 
     return mapVendorSubscription(created.toObject() as Record<string, unknown>, {

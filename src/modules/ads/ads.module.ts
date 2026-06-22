@@ -9,7 +9,7 @@ import { SupportedCountriesModule } from '@modules/supported-countries/supported
 import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { SmsModule } from '@modules/messaging/sms.module';
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import {

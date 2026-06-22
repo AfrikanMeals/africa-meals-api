@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { PlatformFeesService } from '@modules/platform-fees/platform-fees.service';
+import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
 import { AddressModel } from '@schemas/address.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
@@ -598,6 +599,7 @@ export class StripeConnectService {
   constructor(
     private readonly config: ConfigService,
     private readonly platformFees: PlatformFeesService,
+    private readonly planRegionalFees: SubscriptionPlanOrderCommissionService,
     @InjectModel(UserModel.name)
     private readonly userModel: Model<UserModel>,
     @InjectModel(StoreModel.name)
@@ -869,6 +871,25 @@ export class StripeConnectService {
       .lean()
       .exec();
     return store as (StoreModel & { address?: AddressModel }) | null;
+  }
+
+  private async computePayoutFeeForUser(
+    user: UserModel,
+    grossCents: number,
+    fallbackCurrency = 'cad',
+  ) {
+    const store = await this.primaryStoreForVendor(this.userId(user));
+    const storeId = store?._id ? String(store._id) : '';
+    if (storeId) {
+      return this.planRegionalFees.computePayoutFeeSplitForStore(
+        storeId,
+        grossCents,
+      );
+    }
+    return this.platformFees.computePayoutFeeFromSettings(
+      grossCents,
+      fallbackCurrency.toUpperCase(),
+    );
   }
 
   private async defaultAddressForUser(
@@ -1808,8 +1829,10 @@ export class StripeConnectService {
       return emptyEstimate();
     }
 
-    const split = await this.platformFees.computePayoutFeeFromSettings(
+    const split = await this.computePayoutFeeForUser(
+      user,
       availableCents,
+      payoutCurrency,
     );
     const payoutFeeCents = Math.max(0, split.platformFeeCents);
     const netPayoutCents = Math.max(0, split.payoutCents);
@@ -1874,8 +1897,10 @@ export class StripeConnectService {
       throw new BadRequestException('stripe_payout_no_balance');
     }
 
-    const payoutSplit = await this.platformFees.computePayoutFeeFromSettings(
+    const payoutSplit = await this.computePayoutFeeForUser(
+      user,
       availableCents,
+      payoutCurrency,
     );
     const payoutFeeCents = Math.max(0, payoutSplit.platformFeeCents);
     const payoutCents = Math.max(0, payoutSplit.payoutCents);

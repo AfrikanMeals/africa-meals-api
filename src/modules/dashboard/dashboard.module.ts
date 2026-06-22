@@ -70,6 +70,7 @@ import { TeamsModule } from '@modules/teams/teams.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { FleetModule } from '@modules/fleet/fleet.module';
+import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
 
 @Module({
@@ -82,6 +83,7 @@ import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain
     FleetModule,
     DomainEventHandlersModule,
     StoreDeliveryDriversModule,
+    SubscriptionsModule,
     forwardRef(() => DeliveryAgentModule),
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },

@@ -102,4 +102,14 @@ export class SseStreamController {
   publicCheckout(@Param('sessionId') sessionId: string): Observable<MessageEvent> {
     return this.sources.checkoutSessionStream(sessionId);
   }
+
+  @Get('public/platform-maintenance')
+  @Sse()
+  @Header('Cache-Control', SSE_HEADERS['Cache-Control'])
+  @Header('X-Accel-Buffering', SSE_HEADERS['X-Accel-Buffering'])
+  @Header('Connection', SSE_HEADERS.Connection)
+  @ApiOperation({ summary: 'SSE public — mode maintenance plateforme (mobile + admin)' })
+  publicPlatformMaintenance(): Observable<MessageEvent> {
+    return this.sources.platformMaintenanceStream();
+  }
 }

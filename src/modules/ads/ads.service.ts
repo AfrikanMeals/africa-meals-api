@@ -426,6 +426,41 @@ export type AdNotificationChannelAvailabilityPayload = {
 export type AdNotificationPricingPayload = {
   currency: string;
   availableChannels: AdNotificationChannelAvailabilityPayload;
+  kind?: 'banner' | 'campaign';
+  banner?: {
+    emailDeliveryCad: number;
+    emailInteractionCad: number;
+    emailConversionCad: number;
+    pushDeliveryCad: number;
+    pushInteractionCad: number;
+    pushConversionCad: number;
+    inAppDeliveryCad: number;
+    inAppInteractionCad: number;
+    inAppConversionCad: number;
+    smsDeliveryCad: number;
+    smsInteractionCad: number;
+    smsConversionCad: number;
+    whatsappDeliveryCad: number;
+    whatsappInteractionCad: number;
+    whatsappConversionCad: number;
+  };
+  campaign?: {
+    emailDeliveryCad: number;
+    emailInteractionCad: number;
+    emailConversionCad: number;
+    pushDeliveryCad: number;
+    pushInteractionCad: number;
+    pushConversionCad: number;
+    inAppDeliveryCad: number;
+    inAppInteractionCad: number;
+    inAppConversionCad: number;
+    smsDeliveryCad: number;
+    smsInteractionCad: number;
+    smsConversionCad: number;
+    whatsappDeliveryCad: number;
+    whatsappInteractionCad: number;
+    whatsappConversionCad: number;
+  };
   emailDeliveryCad: number;
   emailInteractionCad: number;
   emailConversionCad: number;
@@ -1704,9 +1739,13 @@ export class AdsService implements OnModuleInit {
   async getNotificationPricing(
     user: UserModel,
     countryCode?: string | null,
+    kind?: 'banner' | 'campaign' | null,
   ): Promise<AdNotificationPricingPayload> {
     this.assertVendorOrAdmin(user);
-    return this._regionPricing.getLegacyAdNotificationPricingPayload(countryCode);
+    return this._regionPricing.getLegacyAdNotificationPricingPayload(
+      countryCode,
+      kind === 'campaign' ? 'campaign' : 'banner',
+    );
   }
 
   async updateNotificationPricing(
@@ -2017,6 +2056,7 @@ export class AdsService implements OnModuleInit {
       const notifPricing =
         await this._regionPricing.getLegacyAdNotificationPricingPayload(
           billingRegion,
+          'campaign',
         );
       const notifMetrics =
         await this._adNotifications.aggregateMetricsForCampaign(campaignId);
@@ -2182,6 +2222,7 @@ export class AdsService implements OnModuleInit {
       const notifPricing =
         await this._regionPricing.getLegacyAdNotificationPricingPayload(
           billingRegion,
+          'banner',
         );
       const notifMetrics =
         await this._adNotifications.aggregateMetricsForAd(adId);
@@ -2373,6 +2414,7 @@ export class AdsService implements OnModuleInit {
       throw new BadRequestException('store_not_found');
     }
     await this.assertCanManageCampaignStore(user, storeId);
+    await this._subscriptions.assertMarketingToolsEnabledForStore(storeId, user);
     await this.assertActiveCampaignLimit(storeId, user);
     const requiresModeration = user.type === UserTypeEnum.VENDOR;
     const moderationStatus = requiresModeration
@@ -2459,6 +2501,12 @@ export class AdsService implements OnModuleInit {
     }
     const existingStoreId = String(existing.store);
     await this.assertCanManageCampaignStore(user, existingStoreId);
+    if (user.type === UserTypeEnum.VENDOR) {
+      await this._subscriptions.assertMarketingToolsEnabledForStore(
+        existingStoreId,
+        user,
+      );
+    }
     if (user.type === UserTypeEnum.VENDOR) {
       this.assertVendorAdNotBlocked(user, existing.moderationStatus);
       if (
@@ -4862,6 +4910,12 @@ export class AdsService implements OnModuleInit {
 
     if (storeOid) {
       await this.assertUserCanManageStore(user, storeOid.toString());
+      if (user.type === UserTypeEnum.VENDOR) {
+        await this._subscriptions.assertMarketingToolsEnabledForStore(
+          storeOid.toString(),
+          user,
+        );
+      }
     }
 
     const requiresModeration = this.vendorRequiresModeration(
@@ -4965,6 +5019,12 @@ export class AdsService implements OnModuleInit {
     const storeIdStr = storeRef != null ? String(storeRef) : null;
     if (storeIdStr) {
       await this.assertUserCanManageStore(user, storeIdStr);
+      if (user.type === UserTypeEnum.VENDOR) {
+        await this._subscriptions.assertMarketingToolsEnabledForStore(
+          storeIdStr,
+          user,
+        );
+      }
     } else if (user.type !== UserTypeEnum.ADMIN) {
       throw new ForbiddenException('global_ad_vendor_forbidden');
     }

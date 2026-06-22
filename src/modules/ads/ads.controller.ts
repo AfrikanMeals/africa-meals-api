@@ -321,10 +321,12 @@ export class AdsController {
   async getManageNotificationPricing(
     @Req() req: Request,
     @Query('countryCode') countryCode?: string,
+    @Query('kind') kind?: 'banner' | 'campaign',
   ) {
     return this.adsService.getNotificationPricing(
       req.user as UserModel,
       countryCode,
+      kind,
     );
   }
 

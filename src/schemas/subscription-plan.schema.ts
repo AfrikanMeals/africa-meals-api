@@ -4,6 +4,10 @@ import {
   PlanRegionOrderCommissionModel,
   PlanRegionOrderCommissionSchema,
 } from './plan-region-order-commission.schema';
+import {
+  PlanRegionPricingModel,
+  PlanRegionPricingSchema,
+} from './plan-region-pricing.schema';
 
 /** Offre d’abonnement vendeur (catalogue admin). */
 @Schema({ timestamps: true, collection: 'subscription_plans' })
@@ -22,6 +26,16 @@ export class SubscriptionPlanModel {
 
   @Prop({ type: String, default: 'CAD', trim: true })
   currency: string;
+
+  /**
+   * Tarifs par région (ISO2). Si absent pour une région → repli sur priceMonthly / priceYearly / currency.
+   */
+  @Prop({
+    type: [PlanRegionPricingSchema],
+    default: [],
+    name: 'pricing_by_region',
+  })
+  pricingByRegion: PlanRegionPricingModel[];
 
   /** Liste de fonctionnalités affichées (une entrée = une puce). */
   @Prop({ type: [String], default: [] })
@@ -68,6 +82,28 @@ export class SubscriptionPlanModel {
   @Prop({ type: Boolean, default: false })
   pickupPayOnDeliveryEnabled: boolean;
 
+  /** Autorise les outils marketing (coupons, campagnes pub, bannières). */
+  @Prop({ type: Boolean, default: false })
+  marketingToolsEnabled: boolean;
+
+  /** Permet au vendeur de choisir son moteur de carte (sinon moteur par défaut plateforme). */
+  @Prop({ type: Boolean, default: false })
+  mapEngineSwitcherEnabled: boolean;
+
+  /**
+   * Livraison autonome obligatoire : le vendeur doit gérer sa flotte (agents boutique).
+   * Hors pool plateforme. Si false, flotte optionnelle via fiche restaurant + pool plateforme.
+   */
+  @Prop({ type: Boolean, default: false })
+  selfDeliveryEnabled: boolean;
+
+  /**
+   * Nombre max de livreurs assignables à une boutique (invitations actives + en attente).
+   * 0 = illimité.
+   */
+  @Prop({ type: Number, default: 0, min: 0 })
+  maxDeliveryAgents: number;
+
   /**
    * Nombre max d’éléments catalogue (plats + boissons) pour la boutique.
    * 0 = illimité.
@@ -103,6 +139,14 @@ export class SubscriptionPlanModel {
   @Prop({ type: Number, default: 0, min: 0 })
   maxActiveCampaigns: number;
 
+  /** Cadeau Ad Cash à la première souscription (unités Ad Cash, 0 = aucun). */
+  @Prop({ type: Number, default: 0, min: 0 })
+  initialAdCashGift: number;
+
+  /** Cadeau Ad Cash à chaque renouvellement (unités Ad Cash, 0 = aucun). */
+  @Prop({ type: Number, default: 0, min: 0 })
+  renewalAdCashGift: number;
+
   /**
    * Commission plateforme sur commande par région (ISO2).
    * Si absent pour une région → repli sur le barème global `platform_fees_settings`.
@@ -113,6 +157,17 @@ export class SubscriptionPlanModel {
     name: 'order_commissions_by_region',
   })
   orderCommissionsByRegion: PlanRegionOrderCommissionModel[];
+
+  /**
+   * Frais de versement vendeur (payout) par région (ISO2).
+   * Si absent pour une région → repli sur le barème global `platform_fees_settings`.
+   */
+  @Prop({
+    type: [PlanRegionOrderCommissionSchema],
+    default: [],
+    name: 'payout_fees_by_region',
+  })
+  payoutFeesByRegion: PlanRegionOrderCommissionModel[];
 }
 
 export type SubscriptionPlanDocument = HydratedDocument<SubscriptionPlanModel>;

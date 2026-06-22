@@ -98,3 +98,41 @@ export function computeDeliveryNetCentsBeforeStripe(args: {
       : Math.round((Math.max(0, args.deliveryWithheldFeeFixed) || 0) * 100);
   return Math.max(0, ship - Math.min(withheld, ship));
 }
+
+/**
+ * Ramène goods/ship (unités Stripe mineures) à la part réelle encaissée quand
+ * le payout metadata dépasse le PaymentIntent (ex. XAF affiché vs charge CAD).
+ */
+export function scaleStorePayoutMinorToPaymentShare(args: {
+  goodsCents: number;
+  shipCents: number;
+  storePayoutGrossMinor?: number;
+  totalPayoutGrossMinor: number;
+  paymentTotalMinor: number;
+}): { goodsCents: number; shipCents: number } {
+  const goods = Math.max(0, Math.round(args.goodsCents));
+  const ship = Math.max(0, Math.round(args.shipCents));
+  const storeGross =
+    args.storePayoutGrossMinor != null && args.storePayoutGrossMinor > 0
+      ? Math.max(0, Math.round(args.storePayoutGrossMinor))
+      : goods + ship;
+  const totalGross = Math.max(
+    storeGross,
+    Math.max(0, Math.round(args.totalPayoutGrossMinor)),
+  );
+  const payment = Math.max(0, Math.round(args.paymentTotalMinor));
+  if (payment < 1 || totalGross <= payment || storeGross < 1) {
+    return { goodsCents: goods, shipCents: ship };
+  }
+  const storeShare = Math.max(
+    1,
+    Math.min(payment, Math.round(payment * (storeGross / totalGross))),
+  );
+  if (storeGross <= storeShare) {
+    return { goodsCents: goods, shipCents: ship };
+  }
+  const goodsScaled =
+    goods > 0 ? Math.max(0, Math.round(storeShare * (goods / storeGross))) : 0;
+  const shipScaled = Math.max(0, storeShare - goodsScaled);
+  return { goodsCents: goodsScaled, shipCents: shipScaled };
+}

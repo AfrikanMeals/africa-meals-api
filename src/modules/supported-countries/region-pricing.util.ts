@@ -10,6 +10,18 @@ import type { RegionVendorSmsPricingModel } from '@schemas/region-pricing.schema
 import type { AdNotificationPricingSettingsModel } from '@schemas/ad-notification-pricing-settings.schema';
 import type { AdPricingSettingsModel } from '@schemas/ad-pricing-settings.schema';
 import type { VendorNotificationPricingSettingsModel } from '@schemas/vendor-notification-pricing-settings.schema';
+import {
+  type AdNotificationChannelRatesCad,
+  type AdNotificationPricingKind,
+  adNotificationLegacyFlatFromGlobalDoc,
+  adNotificationRatesFromGlobalContextDoc,
+  adNotificationRatesFromRegionalChannelDoc,
+  emptyAdNotificationChannelRatesCad,
+  extractAdNotificationRatesFromDto,
+  mergeAdNotificationRatesPartial,
+  pickAdNotificationRatesForKind,
+  toRegionalChannelRatesDoc,
+} from './ad-notification-rates.util';
 
 export type RegionAdDiffusionPricingPayload = {
   regionCode: string;
@@ -28,23 +40,10 @@ export type RegionAdNotificationPricingPayload = {
   regionCode: string;
   currency: string;
   availableChannels: AdNotificationChannelAvailability;
-  emailDeliveryCad: number;
-  emailInteractionCad: number;
-  emailConversionCad: number;
-  pushDeliveryCad: number;
-  pushInteractionCad: number;
-  pushConversionCad: number;
-  inAppDeliveryCad: number;
-  inAppInteractionCad: number;
-  inAppConversionCad: number;
-  smsDeliveryCad: number;
-  smsInteractionCad: number;
-  smsConversionCad: number;
-  whatsappDeliveryCad: number;
-  whatsappInteractionCad: number;
-  whatsappConversionCad: number;
+  banner: AdNotificationChannelRatesCad;
+  campaign: AdNotificationChannelRatesCad;
   configuredOnRegion: boolean;
-};
+} & AdNotificationChannelRatesCad;
 
 export type RegionVendorSmsPricingPayload = {
   regionCode: string;
@@ -87,27 +86,20 @@ export function globalAdNotificationFromDoc(
   doc: AdNotificationPricingSettingsModel | null | undefined,
   currency: string,
 ): Omit<RegionAdNotificationPricingPayload, 'regionCode' | 'configuredOnRegion'> {
-  const n = (v: unknown) => nonNegativeNumber(v);
+  const legacyFlat = adNotificationLegacyFlatFromGlobalDoc(doc);
+  const banner = adNotificationRatesFromGlobalContextDoc(doc?.bannerRates, legacyFlat);
+  const campaign = adNotificationRatesFromGlobalContextDoc(
+    doc?.campaignRates,
+    legacyFlat,
+  );
   return {
     currency,
     availableChannels: parseAvailableChannelsFromDoc(
       doc as unknown as Record<string, unknown> | null | undefined,
     ),
-    emailDeliveryCad: n(doc?.emailDeliveryCad),
-    emailInteractionCad: n(doc?.emailInteractionCad),
-    emailConversionCad: n(doc?.emailConversionCad),
-    pushDeliveryCad: n(doc?.pushDeliveryCad),
-    pushInteractionCad: n(doc?.pushInteractionCad),
-    pushConversionCad: n(doc?.pushConversionCad),
-    inAppDeliveryCad: n(doc?.inAppDeliveryCad),
-    inAppInteractionCad: n(doc?.inAppInteractionCad),
-    inAppConversionCad: n(doc?.inAppConversionCad),
-    smsDeliveryCad: n(doc?.smsDeliveryCad),
-    smsInteractionCad: n(doc?.smsInteractionCad),
-    smsConversionCad: n(doc?.smsConversionCad),
-    whatsappDeliveryCad: n(doc?.whatsappDeliveryCad),
-    whatsappInteractionCad: n(doc?.whatsappInteractionCad),
-    whatsappConversionCad: n(doc?.whatsappConversionCad),
+    banner,
+    campaign,
+    ...banner,
   };
 }
 
@@ -157,6 +149,56 @@ export function mergeAdDiffusionPricing(
   };
 }
 
+function legacyRegionalFlatRates(
+  regional: RegionAdNotificationPricingModel,
+  globalFallback: AdNotificationChannelRatesCad,
+): AdNotificationChannelRatesCad {
+  return {
+    emailDeliveryCad: pickNumber(regional.emailDelivery, globalFallback.emailDeliveryCad),
+    emailInteractionCad: pickNumber(
+      regional.emailInteraction,
+      globalFallback.emailInteractionCad,
+    ),
+    emailConversionCad: pickNumber(
+      regional.emailConversion,
+      globalFallback.emailConversionCad,
+    ),
+    pushDeliveryCad: pickNumber(regional.pushDelivery, globalFallback.pushDeliveryCad),
+    pushInteractionCad: pickNumber(
+      regional.pushInteraction,
+      globalFallback.pushInteractionCad,
+    ),
+    pushConversionCad: pickNumber(regional.pushConversion, globalFallback.pushConversionCad),
+    inAppDeliveryCad: pickNumber(regional.inAppDelivery, globalFallback.inAppDeliveryCad),
+    inAppInteractionCad: pickNumber(
+      regional.inAppInteraction,
+      globalFallback.inAppInteractionCad,
+    ),
+    inAppConversionCad: pickNumber(
+      regional.inAppConversion,
+      globalFallback.inAppConversionCad,
+    ),
+    smsDeliveryCad: pickNumber(regional.smsDelivery, globalFallback.smsDeliveryCad),
+    smsInteractionCad: pickNumber(
+      regional.smsInteraction,
+      globalFallback.smsInteractionCad,
+    ),
+    smsConversionCad: pickNumber(regional.smsConversion, globalFallback.smsConversionCad),
+    whatsappDeliveryCad: pickNumber(
+      regional.whatsappDelivery,
+      globalFallback.whatsappDeliveryCad,
+    ),
+    whatsappInteractionCad: pickNumber(
+      regional.whatsappInteraction,
+      globalFallback.whatsappInteractionCad,
+    ),
+    whatsappConversionCad: pickNumber(
+      regional.whatsappConversion,
+      globalFallback.whatsappConversionCad,
+    ),
+  };
+}
+
 export function mergeAdNotificationPricing(
   regionCode: string,
   currency: string,
@@ -176,50 +218,21 @@ export function mergeAdNotificationPricing(
           >,
         })
       : global.availableChannels;
+  const legacyFlat = legacyRegionalFlatRates(regional, global.banner);
+  const banner = regional.banner
+    ? adNotificationRatesFromRegionalChannelDoc(regional.banner, global.banner)
+    : legacyFlat;
+  const campaign = regional.campaign
+    ? adNotificationRatesFromRegionalChannelDoc(regional.campaign, global.campaign)
+    : legacyFlat;
   return {
     regionCode,
     currency,
     configuredOnRegion,
     availableChannels,
-    emailDeliveryCad: pickNumber(regional.emailDelivery, global.emailDeliveryCad),
-    emailInteractionCad: pickNumber(
-      regional.emailInteraction,
-      global.emailInteractionCad,
-    ),
-    emailConversionCad: pickNumber(
-      regional.emailConversion,
-      global.emailConversionCad,
-    ),
-    pushDeliveryCad: pickNumber(regional.pushDelivery, global.pushDeliveryCad),
-    pushInteractionCad: pickNumber(
-      regional.pushInteraction,
-      global.pushInteractionCad,
-    ),
-    pushConversionCad: pickNumber(regional.pushConversion, global.pushConversionCad),
-    inAppDeliveryCad: pickNumber(regional.inAppDelivery, global.inAppDeliveryCad),
-    inAppInteractionCad: pickNumber(
-      regional.inAppInteraction,
-      global.inAppInteractionCad,
-    ),
-    inAppConversionCad: pickNumber(
-      regional.inAppConversion,
-      global.inAppConversionCad,
-    ),
-    smsDeliveryCad: pickNumber(regional.smsDelivery, global.smsDeliveryCad),
-    smsInteractionCad: pickNumber(regional.smsInteraction, global.smsInteractionCad),
-    smsConversionCad: pickNumber(regional.smsConversion, global.smsConversionCad),
-    whatsappDeliveryCad: pickNumber(
-      regional.whatsappDelivery,
-      global.whatsappDeliveryCad,
-    ),
-    whatsappInteractionCad: pickNumber(
-      regional.whatsappInteraction,
-      global.whatsappInteractionCad,
-    ),
-    whatsappConversionCad: pickNumber(
-      regional.whatsappConversion,
-      global.whatsappConversionCad,
-    ),
+    banner,
+    campaign,
+    ...banner,
   };
 }
 
@@ -265,6 +278,8 @@ export function toRegionAdNotificationDoc(
   payload: Partial<RegionAdNotificationPricingPayload>,
 ): RegionAdNotificationPricingModel {
   const channels = payload.availableChannels;
+  const banner = payload.banner ?? emptyAdNotificationChannelRatesCad();
+  const campaign = payload.campaign ?? banner;
   return {
     availableChannels: channels
       ? {
@@ -275,23 +290,14 @@ export function toRegionAdNotificationDoc(
           whatsapp: channels.whatsapp === true,
         }
       : null,
-    emailDelivery: nonNegativeNumber(payload.emailDeliveryCad),
-    emailInteraction: nonNegativeNumber(payload.emailInteractionCad),
-    emailConversion: nonNegativeNumber(payload.emailConversionCad),
-    pushDelivery: nonNegativeNumber(payload.pushDeliveryCad),
-    pushInteraction: nonNegativeNumber(payload.pushInteractionCad),
-    pushConversion: nonNegativeNumber(payload.pushConversionCad),
-    inAppDelivery: nonNegativeNumber(payload.inAppDeliveryCad),
-    inAppInteraction: nonNegativeNumber(payload.inAppInteractionCad),
-    inAppConversion: nonNegativeNumber(payload.inAppConversionCad),
-    smsDelivery: nonNegativeNumber(payload.smsDeliveryCad),
-    smsInteraction: nonNegativeNumber(payload.smsInteractionCad),
-    smsConversion: nonNegativeNumber(payload.smsConversionCad),
-    whatsappDelivery: nonNegativeNumber(payload.whatsappDeliveryCad),
-    whatsappInteraction: nonNegativeNumber(payload.whatsappInteractionCad),
-    whatsappConversion: nonNegativeNumber(payload.whatsappConversionCad),
+    banner: toRegionalChannelRatesDoc(banner),
+    campaign: toRegionalChannelRatesDoc(campaign),
+    ...toRegionalChannelRatesDoc(banner),
   };
 }
+
+export { pickAdNotificationRatesForKind };
+export type { AdNotificationChannelRatesCad, AdNotificationPricingKind };
 
 export function toRegionVendorSmsDoc(
   payload: Partial<RegionVendorSmsPricingPayload>,

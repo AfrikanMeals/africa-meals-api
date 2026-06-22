@@ -1,5 +1,6 @@
-import { forwardRef, Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { StoreAccessModule } from '@modules/teams/store-access.module';
 import {
   AdNotificationPricingSettingsModel,
   AdNotificationPricingSettingsSchema,
@@ -16,14 +17,14 @@ import {
   VendorNotificationPricingSettingsModel,
   VendorNotificationPricingSettingsSchema,
 } from '@schemas/vendor-notification-pricing-settings.schema';
-import { TeamsModule } from '@modules/teams/teams.module';
 import { SupportedCountriesController } from './supported-countries.controller';
 import { SupportedCountriesService } from './supported-countries.service';
 import { RegionPricingService } from './region-pricing.service';
 
+@Global()
 @Module({
   imports: [
-    forwardRef(() => TeamsModule),
+    StoreAccessModule,
     MongooseModule.forFeature([
       { name: SupportedCountryModel.name, schema: SupportedCountrySchema },
       { name: AdPricingSettingsModel.name, schema: AdPricingSettingsSchema },

@@ -1,5 +1,6 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import {
   PlatformRoleModel,
   PlatformRoleSchema,
@@ -11,14 +12,11 @@ import {
 import { StoreRoleModel, StoreRoleSchema } from '@schemas/store-role.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
-import { StoreAccessModule } from './store-access.module';
-import { TeamsController } from './teams.controller';
-import { TeamsService } from './teams.service';
-import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
+import { StoreAccessService } from './store-access.service';
 
+/** Accès boutique / permissions — isolé pour éviter la dépendance circulaire Teams ↔ SupportedCountries. */
 @Module({
   imports: [
-    StoreAccessModule,
     forwardRef(() => SubscriptionsModule),
     MongooseModule.forFeature([
       { name: StoreModel.name, schema: StoreSchema },
@@ -28,8 +26,7 @@ import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module
       { name: UserModel.name, schema: UserSchema },
     ]),
   ],
-  controllers: [TeamsController],
-  providers: [TeamsService],
-  exports: [TeamsService, StoreAccessModule],
+  providers: [StoreAccessService],
+  exports: [StoreAccessService],
 })
-export class TeamsModule {}
+export class StoreAccessModule {}

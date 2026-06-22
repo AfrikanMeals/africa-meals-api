@@ -15,6 +15,7 @@ import { Type } from 'class-transformer';
 import {
   PlanRegionOrderCommissionDto,
 } from './plan-region-order-commission.dto';
+import { PlanRegionPricingDto } from './plan-region-pricing.dto';
 
 export class CreateSubscriptionPlanDto {
   @IsString()
@@ -92,6 +93,23 @@ export class CreateSubscriptionPlanDto {
   pickupPayOnDeliveryEnabled?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  marketingToolsEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  mapEngineSwitcherEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  selfDeliveryEnabled?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxDeliveryAgents?: number;
+
+  @IsOptional()
   @IsInt()
   @Min(0)
   maxCatalogItems?: number;
@@ -117,10 +135,32 @@ export class CreateSubscriptionPlanDto {
   maxActiveCampaigns?: number;
 
   @IsOptional()
+  @IsNumber()
+  @Min(0)
+  initialAdCashGift?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  renewalAdCashGift?: number;
+
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => PlanRegionOrderCommissionDto)
   orderCommissionsByRegion?: PlanRegionOrderCommissionDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PlanRegionOrderCommissionDto)
+  payoutFeesByRegion?: PlanRegionOrderCommissionDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PlanRegionPricingDto)
+  pricingByRegion?: PlanRegionPricingDto[];
 }
 
 export class UpdateSubscriptionPlanDto {
@@ -202,6 +242,23 @@ export class UpdateSubscriptionPlanDto {
   pickupPayOnDeliveryEnabled?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  marketingToolsEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  mapEngineSwitcherEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  selfDeliveryEnabled?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  maxDeliveryAgents?: number;
+
+  @IsOptional()
   @IsInt()
   @Min(0)
   maxCatalogItems?: number;
@@ -227,10 +284,32 @@ export class UpdateSubscriptionPlanDto {
   maxActiveCampaigns?: number;
 
   @IsOptional()
+  @IsNumber()
+  @Min(0)
+  initialAdCashGift?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  renewalAdCashGift?: number;
+
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => PlanRegionOrderCommissionDto)
   orderCommissionsByRegion?: PlanRegionOrderCommissionDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PlanRegionOrderCommissionDto)
+  payoutFeesByRegion?: PlanRegionOrderCommissionDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PlanRegionPricingDto)
+  pricingByRegion?: PlanRegionPricingDto[];
 }
 
 export class SubscribeVendorDto {

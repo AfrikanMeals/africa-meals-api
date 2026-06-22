@@ -17,6 +17,7 @@ import {
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 
 export type StoreCouponApiRow = {
   id: string;
@@ -41,6 +42,7 @@ export class CouponsService {
     private readonly _couponModel: Model<StoreCouponModel>,
     @InjectModel(StoreModel.name)
     private readonly _storeModel: Model<StoreModel>,
+    private readonly _subscriptions: SubscriptionsService,
   ) {}
 
   /** Admin : toutes les boutiques. Vendeur : uniquement les siennes. */
@@ -243,6 +245,10 @@ export class CouponsService {
       throw new NotFoundException('store_not_found');
     }
     await this.assertUserCanManageStore(user, dto.storeId);
+    await this._subscriptions.assertMarketingToolsEnabledForStore(
+      dto.storeId,
+      user,
+    );
 
     const code = dto.code.trim().toUpperCase();
     try {
@@ -284,7 +290,14 @@ export class CouponsService {
       throw new NotFoundException('coupon_not_found');
     }
     const storeRef = existing.store as Types.ObjectId | { toString(): string };
-    await this.assertUserCanManageStore(user, String(storeRef));
+    const storeId = String(storeRef);
+    await this.assertUserCanManageStore(user, storeId);
+    if (user.type === UserTypeEnum.VENDOR) {
+      await this._subscriptions.assertMarketingToolsEnabledForStore(
+        storeId,
+        user,
+      );
+    }
 
     const nextType = dto.discountType ?? existing.discountType;
     const nextValue = dto.value ?? existing.value;

@@ -52,6 +52,60 @@ export class StoreShippingZoneDto {
   price: number;
 }
 
+export class StoreWorkingHoursSlotDto {
+  @ApiProperty({ example: '09:00', description: 'Heure d’ouverture (HH:mm, 24 h)' })
+  @IsString()
+  @IsNotEmpty()
+  open: string;
+
+  @ApiProperty({ example: '22:00', description: 'Heure de fermeture (HH:mm, 24 h)' })
+  @IsString()
+  @IsNotEmpty()
+  close: string;
+}
+
+export class StoreWorkingHoursDayDto {
+  @ApiProperty({ minimum: 0, maximum: 6, description: '0 = dimanche … 6 = samedi' })
+  @IsInt()
+  @Min(0)
+  @Max(6)
+  dayOfWeek: number;
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  closed?: boolean;
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  open24h?: boolean;
+
+  @ApiPropertyOptional({ type: () => [StoreWorkingHoursSlotDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => StoreWorkingHoursSlotDto)
+  slots?: StoreWorkingHoursSlotDto[];
+}
+
+export class StoreWorkingHoursDto {
+  @ApiPropertyOptional({
+    default: true,
+    description: 'Si faux, aucune restriction horaire (toujours ouvert).',
+  })
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @ApiPropertyOptional({ type: () => [StoreWorkingHoursDayDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => StoreWorkingHoursDayDto)
+  schedule?: StoreWorkingHoursDayDto[];
+}
+
 export class CreateStoreDto {
   @ApiProperty({ example: 'Le Bon Resto' })
   @IsNotEmpty()
@@ -178,6 +232,44 @@ export class CreateStoreDto {
   @ValidateIf((o) => (o.shippingZones?.length ?? 0) > 0)
   @ArrayMinSize(1)
   shippingZones?: StoreShippingZoneDto[];
+
+  @ApiPropertyOptional({
+    description: 'Fuseau horaire IANA (ex. Africa/Douala).',
+    example: 'Africa/Douala',
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    value == null || value === '' ? undefined : String(value).trim(),
+  )
+  @IsString()
+  @MaxLength(64)
+  timezone?: string;
+
+  @ApiPropertyOptional({ type: () => StoreWorkingHoursDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => StoreWorkingHoursDto)
+  workingHours?: StoreWorkingHoursDto;
+}
+
+/** Horaires d’ouverture et fuseau horaire (tous statuts sauf INACTIVE). */
+export class PatchVendorWorkingHoursDto {
+  @ApiPropertyOptional({
+    description: 'Fuseau horaire IANA (ex. Africa/Douala).',
+    example: 'Africa/Douala',
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    value == null || value === '' ? undefined : String(value).trim(),
+  )
+  @IsString()
+  @MaxLength(64)
+  timezone?: string;
+
+  @ApiProperty({ type: () => StoreWorkingHoursDto })
+  @ValidateNested()
+  @Type(() => StoreWorkingHoursDto)
+  workingHours: StoreWorkingHoursDto;
 }
 
 export class DailyMenuComplementAvailabilityDto {

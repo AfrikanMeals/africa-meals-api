@@ -30,6 +30,15 @@ export class SearchAddressDto {
   @IsNotEmpty()
   @Trim()
   zipCode: string;
+
+  @ApiPropertyOptional({
+    example: 'CA',
+    description: 'Code pays ISO — filtre géocodage (optionnel)',
+  })
+  @IsOptional()
+  @IsString()
+  @Trim()
+  countryCode?: string;
 }
 
 export class CreateAddressDto extends SearchAddressDto {

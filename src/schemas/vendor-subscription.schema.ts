@@ -91,6 +91,25 @@ export class VendorSubscriptionModel {
 
   @Prop({ type: String, trim: true, default: '' })
   offerNote?: string;
+
+  /** Cadeau Ad Cash plan annuel — total à répartir sur 12 mois. */
+  @Prop({ type: Number, default: 0, min: 0 })
+  adCashInstallmentTotal: number;
+
+  /** Unités Ad Cash déjà créditées pour cet abonnement. */
+  @Prop({ type: Number, default: 0, min: 0 })
+  adCashInstallmentGranted: number;
+
+  /** Versements mensuels restants (formule annuelle). */
+  @Prop({ type: Number, default: 0, min: 0 })
+  adCashInstallmentsRemaining: number;
+
+  @Prop({ type: Date, default: null })
+  adCashNextInstallmentAt?: Date | null;
+
+  /** Date d'application du cadeau Ad Cash (idempotence). */
+  @Prop({ type: Date, default: null })
+  adCashGiftStartedAt?: Date | null;
 }
 
 export type VendorSubscriptionDocument =

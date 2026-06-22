@@ -580,13 +580,13 @@ export class AuthService {
    * puis trouve ou crée l’utilisateur Mongo (googleId = identifiant Google dans le jeton).
    */
   async authWithGoogle(args: GoogleAuthDto, ctx?: LoginRequestContext) {
-    await this._authSettings.assertProviderEnabled('google');
+    await this._authSettings.assertProviderEnabled('google', 'mobile');
     return this._authWithGoogle(args, UserTypeEnum.USER, ctx);
   }
 
   /** Variante dashboard/admin : création sociale par défaut en VENDOR. */
   async authWithGoogleAsVendor(args: GoogleAuthDto, ctx?: LoginRequestContext) {
-    await this._authSettings.assertProviderEnabled('google');
+    await this._authSettings.assertProviderEnabled('google', 'admin');
     return this._authWithGoogle(args, UserTypeEnum.VENDOR, ctx);
   }
 
@@ -680,13 +680,13 @@ export class AuthService {
    * puis trouve ou crée l’utilisateur Mongo (appleId = identifiant Apple/Firebase).
    */
   async authWithApple(args: AppleAuthDto, ctx?: LoginRequestContext) {
-    await this._authSettings.assertProviderEnabled('apple');
+    await this._authSettings.assertProviderEnabled('apple', 'mobile');
     return this._authWithApple(args, UserTypeEnum.USER, ctx);
   }
 
   /** Variante dashboard/admin : création sociale par défaut en VENDOR. */
   async authWithAppleAsVendor(args: AppleAuthDto, ctx?: LoginRequestContext) {
-    await this._authSettings.assertProviderEnabled('apple');
+    await this._authSettings.assertProviderEnabled('apple', 'admin');
     return this._authWithApple(args, UserTypeEnum.VENDOR, ctx);
   }
 
@@ -784,13 +784,13 @@ export class AuthService {
    * puis trouve ou crée l’utilisateur Mongo (facebookId = identifiant Facebook/Firebase).
    */
   async authWithFacebook(args: FacebookAuthDto, ctx?: LoginRequestContext) {
-    await this._authSettings.assertProviderEnabled('facebook');
+    await this._authSettings.assertProviderEnabled('facebook', 'mobile');
     return this._authWithFacebook(args, UserTypeEnum.USER, ctx);
   }
 
   /** Variante dashboard/admin : création sociale par défaut en VENDOR. */
   async authWithFacebookAsVendor(args: FacebookAuthDto, ctx?: LoginRequestContext) {
-    await this._authSettings.assertProviderEnabled('facebook');
+    await this._authSettings.assertProviderEnabled('facebook', 'admin');
     return this._authWithFacebook(args, UserTypeEnum.VENDOR, ctx);
   }
 

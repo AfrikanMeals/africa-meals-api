@@ -16,11 +16,17 @@ export type SubscriptionPlanSeed = {
   storeSubscriptionEnabled?: boolean;
   mealPreOrderEnabled?: boolean;
   pickupPayOnDeliveryEnabled?: boolean;
+  marketingToolsEnabled?: boolean;
+  mapEngineSwitcherEnabled?: boolean;
+  selfDeliveryEnabled?: boolean;
+  maxDeliveryAgents?: number;
   maxCatalogItems?: number;
   maxDailyMenuItems?: number;
   maxAdCampaignItems?: number;
   maxActiveBanners?: number;
   maxActiveCampaigns?: number;
+  initialAdCashGift?: number;
+  renewalAdCashGift?: number;
 };
 
 export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
@@ -46,8 +52,14 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     maxStores: 1,
     mobileAccess: false,
     storeSubscriptionEnabled: false,
+    marketingToolsEnabled: false,
+    mapEngineSwitcherEnabled: false,
+    selfDeliveryEnabled: false,
+    maxDeliveryAgents: 0,
     maxCatalogItems: 10,
     maxDailyMenuItems: 0,
+    initialAdCashGift: 0,
+    renewalAdCashGift: 0,
   },
   {
     name: 'PRO',
@@ -73,7 +85,13 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     storeSubscriptionEnabled: true,
     mealPreOrderEnabled: true,
     pickupPayOnDeliveryEnabled: true,
+    marketingToolsEnabled: true,
+    mapEngineSwitcherEnabled: true,
+    selfDeliveryEnabled: false,
+    maxDeliveryAgents: 0,
     maxCatalogItems: 0,
     maxDailyMenuItems: 0,
+    initialAdCashGift: 100,
+    renewalAdCashGift: 50,
   },
 ];

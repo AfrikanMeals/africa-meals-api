@@ -1,4 +1,4 @@
-import { Controller, Get, Inject } from '@nestjs/common';
+import { Controller, Get, Inject, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { SubscriptionsService } from './subscriptions.service';
 
@@ -10,7 +10,7 @@ export class PlatformSubscriptionPlansController {
 
   /** Lecture publique : page tarifs du site vitrine. */
   @Get()
-  listPublic() {
-    return this.subscriptions.listPublicPlans();
+  listPublic(@Query('region') region?: string) {
+    return this.subscriptions.listPublicPlans(region);
   }
 }

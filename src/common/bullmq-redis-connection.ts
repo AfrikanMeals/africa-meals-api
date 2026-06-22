@@ -26,6 +26,13 @@ export type BullmqRedisConnection = {
   tls?: Record<string, unknown>;
 };
 
+export function formatBullmqRedisTarget(
+  connection: BullmqRedisConnection,
+): string {
+  const tls = connection.tls ? ' (TLS)' : '';
+  return `${connection.host}:${connection.port}${tls}`;
+}
+
 type RedisEnvGetter = (key: string) => string | undefined;
 
 function readBullmqRedisConnectionFromGetter(
