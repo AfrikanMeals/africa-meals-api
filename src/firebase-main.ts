@@ -25,21 +25,21 @@ const birdSecrets = [
   birdWhatsappChannelId,
 ];
 
-const region = process.env.FUNCTION_REGION || 'europe-west1';
+const region = process.env.APP_REGION || 'northamerica-northeast1';
 
 setGlobalOptions({
   region,
   // Chaque instance warm garde un pool Mongo (`MONGOOSE_MAX_POOL`) : trop
   // d’instances × pool ≈ limite Atlas M0 (~500 connexions cluster).
-  maxInstances: Number(process.env.FUNCTION_MAX_INSTANCES || 10),
+  maxInstances: Number(process.env.MAX_INSTANCES || 8),
   secrets: birdSecrets,
 });
 
 export const api = onRequest(
   {
-    timeoutSeconds: Number(process.env.FUNCTION_TIMEOUT_SEC || 120),
+    timeoutSeconds: Number(process.env.TIMEOUT_SEC || 120),
     memory:
-      (process.env.FUNCTION_MEMORY as '256MiB' | '512MiB' | '1GiB' | '2GiB') ||
+      (process.env.APP_MEMORY as '256MiB' | '512MiB' | '1GiB' | '2GiB') ||
       '1GiB',
     cors: false,
     secrets: birdSecrets,
