@@ -49,6 +49,7 @@ import { AdminAlertEmailQueueService } from './admin-alert-email-queue.service';
 import { AdminAlertEmailService } from './admin-alert-email.service';
 import { DbMaintenanceAdminController } from './db-maintenance-admin.controller';
 import { DbMaintenanceService } from './db-maintenance.service';
+import { MapSettingsModule } from '../map-settings/map-settings.module';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { DbMaintenanceService } from './db-maintenance.service';
     WsNotifyModule,
     MailerModule,
     OrdersModule,
+    MapSettingsModule,
     forwardRef(() => BillingModule),
     DomainEventHandlersModule,
     MongooseModule.forFeature([

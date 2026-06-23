@@ -65,7 +65,6 @@ import { getMessaging } from 'firebase-admin/messaging';
 import { getStorage } from 'firebase-admin/storage';
 import { loadFirebaseServiceAccount } from 'src/config/firebase-env';
 import { Connection, Model, Types } from 'mongoose';
-import * as nodemailer from 'nodemailer';
 import { StoreAccessService } from '../teams/store-access.service';
 import {
   OrderPaidInvoiceEmailService,
@@ -78,6 +77,8 @@ import { SendOrderEmailDebugDto } from './dto/send-order-email-debug.dto';
 import { buildSystemExchangeResponse } from './system-exchange.builder';
 import { probeMemcached, probeRedis } from './system-exchange.probes';
 import type { SystemExchangeResponse } from './system-exchange.types';
+import { MapSettingsService } from '@modules/map-settings/map-settings.service';
+import { osmForwardGeocode } from '@common/osm-geocoding.util';
 import Stripe = require('stripe');
 import { randomUUID } from 'crypto';
 import { AdminJobEmitterService } from '@modules/admin-jobs/admin-job-emitter.service';
@@ -311,12 +312,13 @@ export class DbMaintenanceService {
       key: 'map-engine-status',
       label: 'Map Engine Status',
       description:
-        'Vérifie la disponibilité des moteurs cartographiques (Mapbox, Google Maps).',
+        'Vérifie Mapbox, Google Maps et OpenStreetMap (Nominatim) + config plateforme.',
     },
     {
       key: 'mail-health-status',
       label: 'Mail health status',
-      description: 'Vérifie la configuration e-mail et la connectivité SMTP.',
+      description:
+        'Multimoteur email : config et santé de chaque moteur (SMTP, Bird, Resend, SendGrid, etc.).',
     },
     {
       key: 'firebase-services-status',
@@ -385,6 +387,7 @@ export class DbMaintenanceService {
     private readonly firebaseApp: App,
     private readonly wsNotifyDispatchQueue: WsNotifyDispatchQueueService,
     private readonly platformChannels: PlatformChannelsService,
+    private readonly mapSettings: MapSettingsService,
     private readonly orderPaidInvoiceEmail: OrderPaidInvoiceEmailService,
     @Inject(forwardRef(() => AdminJobEmitterService))
     @Optional()
@@ -3978,6 +3981,62 @@ export class DbMaintenanceService {
       });
     }
 
+    const geocodingEngine = String(
+      this.config.get<string>('MAP_GEOCODING_ENGINE') ?? 'mapbox',
+    )
+      .trim()
+      .toLowerCase();
+    const nominatimBase = String(
+      this.config.get<string>('OSM_NOMINATIM_BASE_URL') ??
+        'https://nominatim.openstreetmap.org',
+    ).trim();
+    let osmContexts: string[] = [];
+    let mapDefaults = '';
+    try {
+      const mapSettings = await this.mapSettings.getPublicSettings();
+      if (mapSettings.vendor.osmEnabled) osmContexts.push('vendor');
+      if (mapSettings.mobileUser.osmEnabled) osmContexts.push('mobileUser');
+      if (mapSettings.mobileDelivery.osmEnabled) {
+        osmContexts.push('mobileDelivery');
+      }
+      mapDefaults = `défauts vendor=${mapSettings.vendor.defaultMapEngine} user=${mapSettings.mobileUser.defaultMapEngine} delivery=${mapSettings.mobileDelivery.defaultMapEngine}`;
+    } catch (e) {
+      mapDefaults = `config carte: ${
+        e instanceof Error ? e.message : String(e)
+      }`;
+    }
+    const mapPlatformConfig = `contextes OSM: ${
+      osmContexts.length ? osmContexts.join('+') : 'aucun'
+    } · ${mapDefaults}`;
+    const osmAppsEnabled = osmContexts.length > 0 || geocodingEngine === 'osm';
+
+    try {
+      const results = await osmForwardGeocode('Montreal', this.config, {
+        limit: 1,
+      });
+      engines.push({
+        name: 'OpenStreetMap',
+        configured: true,
+        ok: results.length > 0,
+        detail:
+          (results.length > 0
+            ? `Nominatim joignable (${nominatimBase})`
+            : `Nominatim sans résultat (${nominatimBase})`) +
+          ` · MAP_GEOCODING_ENGINE=${geocodingEngine}` +
+          (osmAppsEnabled ? '' : ' · OSM non activé côté apps') +
+          ` · ${mapPlatformConfig}`,
+      });
+    } catch (e) {
+      engines.push({
+        name: 'OpenStreetMap',
+        configured: true,
+        ok: false,
+        detail: `${
+          e instanceof Error ? e.message : String(e)
+        } · MAP_GEOCODING_ENGINE=${geocodingEngine} · ${mapPlatformConfig}`,
+      });
+    }
+
     const configured = engines.filter((e) => e.configured);
     const okCount = configured.filter((e) => e.ok).length;
     let status: SystemHealthCheckResult['status'] = 'down';
@@ -4160,83 +4219,62 @@ export class DbMaintenanceService {
     const key = 'mail-health-status';
     const label = 'Mail health status';
 
-    const smtpHost = String(this.config.get<string>('SMTP_HOST') ?? '').trim();
-    const smtpPortRaw = Number(this.config.get<string>('SMTP_PORT') ?? '587');
-    const smtpPort = Number.isFinite(smtpPortRaw) ? smtpPortRaw : 587;
-    const smtpSecure =
-      String(this.config.get<string>('SMTP_SECURE') ?? 'false')
-        .trim()
-        .toLowerCase() === 'true';
-    const smtpUser = String(this.config.get<string>('SMTP_USER') ?? '').trim();
-    const smtpPass = String(
-      this.config.get<string>('SMTP_APP_PASSWORD') ??
-        this.config.get<string>('SMTP_PASS') ??
-        '',
-    ).trim();
-    const mailerApiKey = String(
-      this.config.get<string>('MAILER_API_KEY') ?? '',
-    ).trim();
-    const mailerSender = String(
-      this.config.get<string>('MAILER_SENDER') ?? '',
-    ).trim();
+    const snapshot = await this.platformChannels.getEmailEnginesHealthSnapshot();
 
-    const smtpConfigured = Boolean(smtpHost && smtpUser && smtpPass);
-    const mailerSendConfigured = Boolean(mailerApiKey && mailerSender);
+    const formatRow = (row: (typeof snapshot.rows)[number]): string => {
+      const cfg = row.configured ? 'config✓' : 'config✗';
+      let health = 'health—';
+      if (row.healthOk === true) health = 'health✓';
+      else if (row.healthOk === false) health = 'health✗';
+      const global = row.globalActive ? ' [global]' : '';
+      return `${row.label}${global}: ${cfg}, ${health} (${row.healthDetail})`;
+    };
 
-    if (!smtpConfigured && !mailerSendConfigured) {
+    const globalRouter = snapshot.rows.find(
+      (row) =>
+        row.globalActive &&
+        (row.engine === 'any' || row.engine === 'auto'),
+    );
+    if (globalRouter && !globalRouter.configured) {
       return this.normalizeHealthResult({
         key,
         label,
         startedAtMs,
         status: 'down',
-        details:
-          'Aucune config email active (SMTP_HOST/SMTP_USER/SMTP_APP_PASSWORD ou MAILER_API_KEY/MAILER_SENDER).',
+        details: `Moteur global « ${globalRouter.label} » non configuré · global=${snapshot.globalEngine} · ${snapshot.rows.map(formatRow).join(' · ')}`,
       });
     }
 
-    if (!smtpConfigured && mailerSendConfigured) {
-      return this.normalizeHealthResult({
-        key,
-        label,
-        startedAtMs,
-        status: 'degraded',
-        details:
-          'MailerSend configuré, SMTP absent. Vérification active SMTP non exécutée.',
-      });
+    const concreteConfigured = snapshot.rows.filter(
+      (row) =>
+        row.configured &&
+        row.engine !== 'any' &&
+        row.engine !== 'auto',
+    );
+    const withHealth = concreteConfigured.filter((row) => row.healthOk !== null);
+    const okCount = withHealth.filter((row) => row.healthOk === true).length;
+    const failCount = withHealth.filter((row) => row.healthOk === false).length;
+
+    let status: SystemHealthCheckResult['status'] = 'down';
+    if (concreteConfigured.length === 0) {
+      status = 'down';
+    } else if (failCount === 0 && okCount === withHealth.length) {
+      status = 'healthy';
+    } else if (okCount > 0) {
+      status = 'degraded';
+    } else {
+      status = 'down';
     }
 
-    try {
-      const transport = nodemailer.createTransport({
-        host: smtpHost,
-        port: smtpPort,
-        secure: smtpSecure,
-        auth: {
-          user: smtpUser,
-          pass: smtpPass,
-        },
-        connectionTimeout: 5000,
-        greetingTimeout: 5000,
-        socketTimeout: 5000,
-      });
-      await transport.verify();
-      return this.normalizeHealthResult({
-        key,
-        label,
-        startedAtMs,
-        status: 'healthy',
-        details: `SMTP reachable (${smtpHost}:${smtpPort}).`,
-      });
-    } catch (e) {
-      return this.normalizeHealthResult({
-        key,
-        label,
-        startedAtMs,
-        status: mailerSendConfigured ? 'degraded' : 'down',
-        details: `SMTP verify failed: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      });
-    }
+    const details = `global=${snapshot.globalEngine} · ${snapshot.rows.map(formatRow).join(' · ')}`;
+
+    return this.normalizeHealthResult({
+      key,
+      label,
+      startedAtMs,
+      status,
+      details,
+    });
   }
 
   private async runFirebaseServicesHealthCheck(): Promise<SystemHealthCheckResult> {
