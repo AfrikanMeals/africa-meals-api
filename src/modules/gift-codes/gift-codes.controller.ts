@@ -2,6 +2,7 @@ import {
   CreateGiftCodeDto,
   PatchGiftCodeDto,
 } from '@modules/gift-codes/dto/gift-code.dto';
+import { GiftCodeImageJsonDto } from '@modules/gift-codes/dto/gift-code-image.dto';
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import {
   Body,
@@ -53,6 +54,16 @@ export class GiftCodesController {
     body: CreateGiftCodeDto,
   ) {
     return this._giftCodes.create(req.user as UserModel, body);
+  }
+
+  @Post('image-json')
+  @UseGuards(JwtGuard)
+  async uploadPromoImage(
+    @Req() req: Request,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: GiftCodeImageJsonDto,
+  ) {
+    return this._giftCodes.uploadPromoImage(req.user as UserModel, body);
   }
 
   @Patch(':id')

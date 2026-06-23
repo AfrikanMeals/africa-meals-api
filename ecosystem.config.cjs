@@ -49,12 +49,12 @@ module.exports = {
       exp_backoff_restart_delay: 200,
       max_memory_restart: '1500M',
       env: {
-        NODE_ENV: 'production',
         ...apiPm2Env.prodEnvVars(),
         NODE_PORT: apiPort,
         PORT: apiPort,
         SERVER_URL: `http://localhost:${apiPort}`,
         AFRICA_MEALS_WS_INTERNAL_URL: `http://localhost:${wsPort}`,
+        NODE_ENV: 'production',
       },
     },
   ],

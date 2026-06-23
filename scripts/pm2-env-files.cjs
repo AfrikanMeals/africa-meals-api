@@ -40,8 +40,9 @@ function mergeEnvVars(...paths) {
   return merged;
 }
 
+/** Prod PM2 : `.env` uniquement (pas `.env.local`). */
 function prodEnvVars() {
-  return mergeEnvVars(prodEnvPath, localEnvPath);
+  return loadEnvVars(prodEnvPath);
 }
 
 function devEnvVars() {

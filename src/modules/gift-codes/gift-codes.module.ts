@@ -4,6 +4,7 @@ import { GiftCodeModel, GiftCodeSchema } from '@schemas/gift_code.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { TeamsModule } from '@modules/teams/teams.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
+import { MediasModule } from '@modules/medias/medias.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
@@ -21,6 +22,7 @@ import { GiftCodeActivationNotifierService } from './gift-code-activation-notifi
     ]),
     TeamsModule,
     SupportedCountriesModule,
+    MediasModule,
     MailerModule,
     NotificationsModule,
     WsNotifyModule,

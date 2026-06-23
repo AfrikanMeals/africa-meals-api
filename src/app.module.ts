@@ -187,11 +187,10 @@ function redactRedisUrl(url: string): string {
 @Module({
   imports: [
     ConfigModule.forRoot({
-      // `.env.local` en premier ; dev PM2 → `.env.develop`, prod → `.env`.
+      // Dev : `.env.local` + `.env.develop` puis `.env`. Prod : `.env` seulement.
       envFilePath: [
-        '.env.local',
         ...(process.env.NODE_ENV === 'development'
-          ? ['.env.develop']
+          ? ['.env.local', '.env.develop']
           : []),
         '.env',
         '../.env',

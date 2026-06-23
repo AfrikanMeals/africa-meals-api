@@ -2,7 +2,9 @@ import {
   CreateGiftCodeDto,
   PatchGiftCodeDto,
 } from '@modules/gift-codes/dto/gift-code.dto';
+import { GiftCodeImageJsonDto } from '@modules/gift-codes/dto/gift-code-image.dto';
 import { GiftCodeActivationNotifierService } from '@modules/gift-codes/gift-code-activation-notifier.service';
+import { MediasService } from '@modules/medias/medias.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
@@ -70,6 +72,7 @@ export class GiftCodesService {
     private readonly _storeAccess: StoreAccessService,
     private readonly _supportedCountries: SupportedCountriesService,
     private readonly _activationNotifier: GiftCodeActivationNotifierService,
+    private readonly _mediasService: MediasService,
   ) {}
 
   private async assertAdmin(user: UserModel): Promise<void> {
@@ -746,5 +749,53 @@ export class GiftCodesService {
       };
     }
     await this._giftCodeModel.updateOne({ _id: doc._id }, update).exec();
+  }
+
+  /** Image promo catalogue → moteur Paramètres → Stockage (`marketing/gift-codes`). */
+  async uploadPromoImage(
+    user: UserModel,
+    dto: GiftCodeImageJsonDto,
+  ): Promise<{ url: string }> {
+    await this.assertAdmin(user);
+    const raw = dto.imageBase64
+      .replace(/\s/g, '')
+      .replace(/^data:image\/[^;]+;base64,/i, '');
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(raw, 'base64');
+    } catch {
+      throw new BadRequestException('invalid_base64');
+    }
+    if (!buffer.length) {
+      throw new BadRequestException('empty_image');
+    }
+    const max = await this._mediasService.getMaxFileSizeBytes();
+    if (buffer.length > max) {
+      throw new BadRequestException('file_too_large');
+    }
+    const name = (dto.filename || 'gift-code-promo.jpg').trim() || 'gift-code-promo.jpg';
+    if (!/\.(jpe?g|png|webp)$/i.test(name)) {
+      throw new BadRequestException('invalid_file_type');
+    }
+    const lower = name.toLowerCase();
+    const mime = lower.endsWith('.png')
+      ? 'image/png'
+      : lower.endsWith('.webp')
+        ? 'image/webp'
+        : 'image/jpeg';
+    const file = {
+      buffer,
+      originalname: name,
+      mimetype: mime,
+      size: buffer.length,
+    } as Express.Multer.File;
+    const url = await this._mediasService.upload(
+      file,
+      user,
+      'marketing/gift-codes',
+    );
+    const resolved =
+      (await this._mediasService.resolvePublicMediaUrl(url)) ?? url;
+    return { url: resolved };
   }
 }
