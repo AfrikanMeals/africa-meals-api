@@ -120,6 +120,20 @@ export type EmailChannelSettingsResponse = {
   updatedAt: string | null;
 };
 
+export type EmailEngineHealthSnapshotRow = {
+  engine: string;
+  label: string;
+  configured: boolean;
+  globalActive: boolean;
+  healthOk: boolean | null;
+  healthDetail: string;
+};
+
+export type EmailEnginesHealthSnapshot = {
+  globalEngine: string;
+  rows: EmailEngineHealthSnapshotRow[];
+};
+
 function assertAdmin(user: UserModel): void {
   if (user.type !== UserTypeEnum.ADMIN) {
     throw new ForbiddenException('admin_only');
@@ -961,6 +975,91 @@ export class PlatformChannelsService {
     }
 
     return { ok: false, message: `Moteur email inconnu : ${engine}` };
+  }
+
+  async getEmailEnginesHealthSnapshot(): Promise<EmailEnginesHealthSnapshot> {
+    const doc = await this.ensureSettings();
+    const smtpConfigsRaw = doc.smtpConfigs ?? [];
+    const smtpConfigs = await this.buildSmtpConfigViews(smtpConfigsRaw);
+    const defaultSmtpConfigured = await this.isDefaultSmtpConfigured();
+    const birdEmailConfigured = await this.isBirdEmailConfigured();
+    const resendConfigured = await this.isResendConfigured();
+    const sendgridConfigured = await this.isSendgridConfigured();
+    const globalEngine = normalizeEmailEngine(doc.emailEngine, smtpConfigsRaw);
+    const ctx = await this.getEmailEngineRuntimeContext();
+    const engineOptions = buildEmailEngineOptions({
+      defaultSmtpConfigured,
+      birdEmailConfigured,
+      resendConfigured,
+      sendgridConfigured,
+      smtpConfigs,
+    });
+
+    const rows: EmailEngineHealthSnapshotRow[] = [];
+
+    const routerOptions = engineOptions.filter(
+      (opt) =>
+        opt.value === EMAIL_ENGINE_ANY || opt.value === EMAIL_ENGINE_AUTO,
+    );
+    for (const opt of routerOptions) {
+      rows.push({
+        engine: opt.value,
+        label: opt.label,
+        configured: opt.configured,
+        globalActive: globalEngine === opt.value,
+        healthOk: null,
+        healthDetail: opt.configured
+          ? 'routeur (pas de probe direct)'
+          : 'non configuré',
+      });
+    }
+
+    const concreteOptions = engineOptions.filter(
+      (opt) =>
+        opt.value !== EMAIL_ENGINE_ANY && opt.value !== EMAIL_ENGINE_AUTO,
+    );
+    const probed = await Promise.all(
+      concreteOptions.map(async (opt) => {
+        if (!opt.configured) {
+          return {
+            opt,
+            healthOk: null as boolean | null,
+            healthDetail: 'non configuré',
+          };
+        }
+        const probe = await this.probeEmailEngine(opt.value);
+        return {
+          opt,
+          healthOk: probe.ok,
+          healthDetail: probe.ok
+            ? probe.message.replace(/\.$/, '')
+            : probe.details ?? probe.message,
+        };
+      }),
+    );
+    for (const row of probed) {
+      rows.push({
+        engine: row.opt.value,
+        label: row.opt.label,
+        configured: row.opt.configured,
+        globalActive: globalEngine === row.opt.value,
+        healthOk: row.healthOk,
+        healthDetail: row.healthDetail,
+      });
+    }
+
+    rows.push({
+      engine: 'mailersend-legacy',
+      label: 'MailerSend (legacy env)',
+      configured: ctx.mailerSendConfigured,
+      globalActive: false,
+      healthOk: ctx.mailerSendConfigured ? true : null,
+      healthDetail: ctx.mailerSendConfigured
+        ? 'MAILER_API_KEY + MAILER_SENDER présents (pas de probe API)'
+        : 'non configuré',
+    });
+
+    return { globalEngine, rows };
   }
 
   private async probeSmtpProfile(

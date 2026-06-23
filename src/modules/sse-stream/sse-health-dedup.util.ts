@@ -17,7 +17,7 @@ export function sseHealthDedupKey(payload: Record<string, unknown>): string {
         })
         .join('|');
     }
-    return `snap:${checksKey}:${String(runtime?.redisManagerEnabled ?? '')}:${String(runtime?.mqBrokerEnabled ?? '')}:${String(payload.checkedAt ?? '')}`;
+    return `snap:${checksKey}:${String(runtime?.redisManagerEnabled ?? '')}:${String(runtime?.mqBrokerEnabled ?? '')}:${String(runtime?.grpcWsNotifyEnabled ?? '')}:${String(payload.checkedAt ?? '')}`;
   }
   return `other:${type}:${String(payload.checkedAt ?? '')}`;
 }

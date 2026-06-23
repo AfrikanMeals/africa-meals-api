@@ -6,4 +6,7 @@ export class UpdateInfraRuntimeSettingsDto {
 
   @IsBoolean()
   mqBrokerEnabled: boolean;
+
+  @IsBoolean()
+  grpcWsNotifyEnabled: boolean;
 }

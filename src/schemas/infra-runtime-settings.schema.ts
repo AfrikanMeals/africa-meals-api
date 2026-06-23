@@ -11,6 +11,13 @@ export class InfraRuntimeSettingsModel {
 
   @Prop({ type: Boolean, default: true, name: 'mq_broker_enabled' })
   mqBrokerEnabled: boolean;
+
+  /**
+   * Si true : dispatches API → WS via gRPC (voir docs/GRPC_INTEGRATION.md).
+   * Si false : HTTP interne + MQTT/BullMQ (comportement actuel).
+   */
+  @Prop({ type: Boolean, default: false, name: 'grpc_ws_notify_enabled' })
+  grpcWsNotifyEnabled: boolean;
 }
 
 export type InfraRuntimeSettingsDocument =

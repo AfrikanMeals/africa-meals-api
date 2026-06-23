@@ -211,3 +211,74 @@ export async function probeHttpHealth(
     clearTimeout(timer);
   }
 }
+
+function resolveMemcachedServers(config: ConfigService): string | null {
+  const direct =
+    config.get<string>('MEMCACHED_SERVERS')?.trim() ||
+    config.get<string>('MEMCACHED_URL')?.trim();
+  if (direct) return direct;
+  const host = config.get<string>('MEMCACHED_HOST')?.trim();
+  if (!host) return null;
+  const port = config.get<string>('MEMCACHED_PORT')?.trim() || '11211';
+  return `${host}:${port}`;
+}
+
+/** Ping Memcached (set/get) pour multicache engine + System Health. */
+export async function probeMemcached(
+  config: ConfigService,
+): Promise<ProbeResult> {
+  const servers = resolveMemcachedServers(config);
+  if (!servers) {
+    return {
+      status: 'disabled',
+      latencyMs: null,
+      details: 'MEMCACHED_SERVERS / MEMCACHED_HOST non configuré.',
+    };
+  }
+  const started = performance.now();
+  const Memcached = (await import('memcached')).default;
+  const client = new Memcached(servers, {
+    timeout: 2000,
+    retries: 1,
+    retry: 300,
+  });
+  const key = `__wise_eat_health_${Date.now()}`;
+  return new Promise((resolve) => {
+    client.set(key, '1', 10, (setErr) => {
+      if (setErr) {
+        client.end();
+        resolve({
+          status: 'down',
+          latencyMs: Math.round(performance.now() - started),
+          details: `SET échoué: ${setErr.message}`,
+        });
+        return;
+      }
+      client.get(key, (getErr, data) => {
+        client.end();
+        const latencyMs = Math.round(performance.now() - started);
+        if (getErr) {
+          resolve({
+            status: 'down',
+            latencyMs,
+            details: `GET échoué: ${getErr.message}`,
+          });
+          return;
+        }
+        if (String(data) !== '1') {
+          resolve({
+            status: 'degraded',
+            latencyMs,
+            details: `Round-trip inattendu (${servers}).`,
+          });
+          return;
+        }
+        resolve({
+          status: 'healthy',
+          latencyMs,
+          details: `SET/GET OK (${servers}).`,
+        });
+      });
+    });
+  });
+}

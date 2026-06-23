@@ -76,6 +76,7 @@ import { orderInvoiceRef } from '@modules/orders/order-invoice.util';
 import { InjectModel } from '@nestjs/mongoose';
 import { SendOrderEmailDebugDto } from './dto/send-order-email-debug.dto';
 import { buildSystemExchangeResponse } from './system-exchange.builder';
+import { probeMemcached, probeRedis } from './system-exchange.probes';
 import type { SystemExchangeResponse } from './system-exchange.types';
 import Stripe = require('stripe');
 import { randomUUID } from 'crypto';
@@ -147,7 +148,21 @@ export type SystemHealthCheckResult = {
 export type InfraRuntimeSettingsResponse = {
   redisManagerEnabled: boolean;
   mqBrokerEnabled: boolean;
+  grpcWsNotifyEnabled: boolean;
   updatedAt: string | null;
+};
+
+export type InfraCacheEngineLiveStatus = {
+  engine: 'redis' | 'memcached';
+  state: 'disabled' | 'healthy' | 'degraded' | 'down';
+  latencyMs: number | null;
+  details: string;
+};
+
+export type InfraCacheLiveStatusResponse = {
+  redis: InfraCacheEngineLiveStatus;
+  memcached: InfraCacheEngineLiveStatus;
+  checkedAt: string;
 };
 export type InfraMqttStatusResponse = {
   apiPublisher: MqttRuntimeStatus;
@@ -252,6 +267,18 @@ export class DbMaintenanceService {
       key: 'mongodb-status',
       label: 'MongoDB status',
       description: 'Vérifie la connectivité MongoDB via ping.',
+    },
+    {
+      key: 'redis-cache-status',
+      label: 'Redis cache status',
+      description:
+        'Vérifie Redis (multicache engine) via PING — cache module + BullMQ.',
+    },
+    {
+      key: 'memcached-status',
+      label: 'Memcached status',
+      description:
+        'Vérifie Memcached (multicache engine) via SET/GET test.',
     },
     {
       key: 'websocket-service-status',
@@ -608,6 +635,10 @@ export class DbMaintenanceService {
     switch (normalized) {
       case 'mongodb-status':
         return this.runMongoHealthCheck();
+      case 'redis-cache-status':
+        return this.runRedisCacheHealthCheck();
+      case 'memcached-status':
+        return this.runMemcachedHealthCheck();
       case 'websocket-service-status':
         return this.runWebsocketHealthCheck();
       case 'api-function-status':
@@ -659,7 +690,11 @@ export class DbMaintenanceService {
 
   async updateInfraRuntimeSettings(
     user: UserModel,
-    input: { redisManagerEnabled: boolean; mqBrokerEnabled: boolean },
+    input: {
+      redisManagerEnabled: boolean;
+      mqBrokerEnabled: boolean;
+      grpcWsNotifyEnabled: boolean;
+    },
   ): Promise<InfraRuntimeSettingsResponse> {
     await this.assertAdminSettingsPermission(user);
     const updated = await this.infraRuntimeSettingsModel
@@ -669,6 +704,7 @@ export class DbMaintenanceService {
           $set: {
             redisManagerEnabled: input.redisManagerEnabled === true,
             mqBrokerEnabled: input.mqBrokerEnabled === true,
+            grpcWsNotifyEnabled: input.grpcWsNotifyEnabled === true,
           },
           $setOnInsert: { key: INFRA_RUNTIME_SETTINGS_KEY },
         },
@@ -676,6 +712,44 @@ export class DbMaintenanceService {
       )
       .exec();
     return this.toInfraRuntimeSettingsResponse(updated);
+  }
+
+  async getInfraCacheLiveStatus(
+    user: UserModel,
+  ): Promise<InfraCacheLiveStatusResponse> {
+    await this.assertAdminSettingsPermission(user);
+    return this.getInfraCacheLiveStatusInternal();
+  }
+
+  /** Usage interne (dashboard admin / SSE). */
+  async getInfraCacheLiveStatusInternal(): Promise<InfraCacheLiveStatusResponse> {
+    const [redisProbe, memcachedProbe] = await Promise.all([
+      probeRedis(this.config),
+      probeMemcached(this.config),
+    ]);
+    const mapState = (
+      status: string,
+    ): InfraCacheEngineLiveStatus['state'] => {
+      if (status === 'healthy') return 'healthy';
+      if (status === 'degraded') return 'degraded';
+      if (status === 'disabled') return 'disabled';
+      return 'down';
+    };
+    return {
+      redis: {
+        engine: 'redis',
+        state: mapState(redisProbe.status),
+        latencyMs: redisProbe.latencyMs,
+        details: redisProbe.details,
+      },
+      memcached: {
+        engine: 'memcached',
+        state: mapState(memcachedProbe.status),
+        latencyMs: memcachedProbe.latencyMs,
+        details: memcachedProbe.details,
+      },
+      checkedAt: new Date().toISOString(),
+    };
   }
 
   async getInfraMqttStatus(user: UserModel): Promise<InfraMqttStatusResponse> {
@@ -729,6 +803,7 @@ export class DbMaintenanceService {
             key: INFRA_RUNTIME_SETTINGS_KEY,
             redisManagerEnabled: true,
             mqBrokerEnabled: true,
+            grpcWsNotifyEnabled: false,
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },
@@ -744,6 +819,7 @@ export class DbMaintenanceService {
     return {
       redisManagerEnabled: doc.redisManagerEnabled === true,
       mqBrokerEnabled: doc.mqBrokerEnabled === true,
+      grpcWsNotifyEnabled: doc.grpcWsNotifyEnabled === true,
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
   }
@@ -3527,6 +3603,43 @@ export class DbMaintenanceService {
         }`,
       });
     }
+  }
+
+  private probeToHealthStatus(
+    probeStatus: string,
+  ): 'healthy' | 'degraded' | 'down' {
+    if (probeStatus === 'healthy') return 'healthy';
+    if (probeStatus === 'degraded') return 'degraded';
+    if (probeStatus === 'disabled') return 'degraded';
+    return 'down';
+  }
+
+  private async runRedisCacheHealthCheck(): Promise<SystemHealthCheckResult> {
+    const startedAtMs = Date.now();
+    const key = 'redis-cache-status';
+    const label = 'Redis cache status';
+    const probe = await probeRedis(this.config);
+    return this.normalizeHealthResult({
+      key,
+      label,
+      startedAtMs,
+      status: this.probeToHealthStatus(probe.status),
+      details: probe.details,
+    });
+  }
+
+  private async runMemcachedHealthCheck(): Promise<SystemHealthCheckResult> {
+    const startedAtMs = Date.now();
+    const key = 'memcached-status';
+    const label = 'Memcached status';
+    const probe = await probeMemcached(this.config);
+    return this.normalizeHealthResult({
+      key,
+      label,
+      startedAtMs,
+      status: this.probeToHealthStatus(probe.status),
+      details: probe.details,
+    });
   }
 
   private async runWebsocketHealthCheck(): Promise<SystemHealthCheckResult> {

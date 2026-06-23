@@ -145,6 +145,16 @@ export class DbMaintenanceAdminController {
     return this._dbMaintenance.getInfraMqttStatus(req.user as UserModel);
   }
 
+  @Get('admin/runtime-services/cache-status')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Statut live multicache (Redis + Memcached) — ping / SET-GET test',
+  })
+  async getCacheStatus(@Req() req: Request) {
+    return this._dbMaintenance.getInfraCacheLiveStatus(req.user as UserModel);
+  }
+
   @Get('admin/system-exchange')
   @UseGuards(JwtGuard)
   @ApiOperation({

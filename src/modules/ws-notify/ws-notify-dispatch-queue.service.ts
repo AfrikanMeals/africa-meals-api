@@ -72,6 +72,7 @@ export class WsNotifyDispatchQueueService
   private infraSettingsCache = {
     redisManagerEnabled: true,
     mqBrokerEnabled: true,
+    grpcWsNotifyEnabled: false,
   };
   private infraSettingsReadAtMs = 0;
 
@@ -227,6 +228,7 @@ export class WsNotifyDispatchQueueService
   private async readInfraSettings(): Promise<{
     redisManagerEnabled: boolean;
     mqBrokerEnabled: boolean;
+    grpcWsNotifyEnabled: boolean;
   }> {
     const ttlMs = parsePositiveInt(
       this.config.get<string>('INFRA_RUNTIME_SETTINGS_CACHE_MS'),
@@ -246,11 +248,13 @@ export class WsNotifyDispatchQueueService
         this.infraSettingsCache = {
           redisManagerEnabled: true,
           mqBrokerEnabled: true,
+          grpcWsNotifyEnabled: false,
         };
       } else {
         this.infraSettingsCache = {
           redisManagerEnabled: doc.redisManagerEnabled !== false,
           mqBrokerEnabled: doc.mqBrokerEnabled !== false,
+          grpcWsNotifyEnabled: doc.grpcWsNotifyEnabled === true,
         };
       }
     } catch (error) {
