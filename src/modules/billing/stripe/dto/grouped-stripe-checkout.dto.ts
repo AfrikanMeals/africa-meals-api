@@ -70,4 +70,11 @@ export class GroupedStripeCheckoutDto {
   @IsInt()
   @Min(0)
   deliveryTipTotalCents?: number;
+
+  @ApiPropertyOptional({
+    description: 'Gift code plateforme appliqué au panier.',
+  })
+  @IsOptional()
+  @IsString()
+  giftCode?: string;
 }

@@ -32,6 +32,9 @@ export type OrderInvoiceSnapshot = {
   shouldShip?: boolean;
   currency?: string;
   couponCode?: string;
+  couponDiscountAmount?: number;
+  giftCode?: string;
+  giftCodeDiscountAmount?: number;
   pickupCode?: string;
   storeName: string;
   storeAddressLine?: string;

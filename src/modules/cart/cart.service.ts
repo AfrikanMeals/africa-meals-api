@@ -1,4 +1,6 @@
 import { CouponsService } from '@modules/coupons/coupons.service';
+import { GiftCodesService } from '@modules/gift-codes/gift-codes.service';
+import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
 import {
   DrinksService,
   maxDrinkOrderQuantity,
@@ -31,6 +33,7 @@ import {
   CartItemApiResponse,
   RemoveItemFromCartDto,
   ValidateCheckoutDto,
+  PreviewCartGiftCodeDto,
 } from './dto/cart.dto';
 import {
   dailyMenuStockRemainingForStoreProduct,
@@ -123,6 +126,9 @@ export class CartService {
 
   @Inject(CouponsService)
   private readonly _couponsService: CouponsService;
+
+  @Inject(GiftCodesService)
+  private readonly _giftCodesService: GiftCodesService;
 
   @Inject(ModuleCacheLayerService)
   private readonly _cacheLayer: ModuleCacheLayerService;
@@ -600,6 +606,92 @@ export class CartService {
     };
   }
 
+  /** Valide un gift code plateforme pour le panier multi-boutiques. */
+  async previewGiftCodeForCart(user: UserModel, dto: PreviewCartGiftCodeDto) {
+    const uid = new Types.ObjectId(user.id);
+    const rawItems = await this._cartItemModel.find({ user: uid }).lean().exec();
+    if (!rawItems?.length) {
+      throw new BadRequestException('cart_empty');
+    }
+
+    const byStore = new Map<string, typeof rawItems>();
+    for (const row of rawItems) {
+      const rawSt = (row as { store?: unknown }).store;
+      const sid =
+        rawSt != null && typeof rawSt === 'object' && '_id' in (rawSt as object)
+          ? String((rawSt as { _id: unknown })._id)
+          : String(rawSt ?? '');
+      if (!sid || sid === 'undefined') continue;
+      if (!byStore.has(sid)) byStore.set(sid, []);
+      byStore.get(sid)!.push(row);
+    }
+
+    const couponByStore = new Map(
+      (dto.coupons ?? []).map(
+        (c) =>
+          [String(c.storeId), String(c.code ?? '').trim()] as const,
+      ),
+    );
+
+    const storeInputs: Array<{
+      storeId: string;
+      storeName: string;
+      regionCode: string;
+      subtotal: number;
+      storeCouponDiscount: number;
+    }> = [];
+
+    for (const [storeId, lines] of byStore) {
+      const store = await this._storeModel
+        .findById(storeId)
+        .select('name region')
+        .lean()
+        .exec();
+      const storeName = String((store as { name?: string } | null)?.name ?? '');
+      const regionCode = normalizeCountryCode(
+        (store as { region?: string } | null)?.region,
+      );
+      const subtotal = lines.reduce(
+        (acc, line) =>
+          acc + Number(line.price) * Math.max(1, Number(line.quantity ?? 1)),
+        0,
+      );
+      let storeCouponDiscount = 0;
+      const couponCode = couponByStore.get(storeId);
+      if (couponCode) {
+        try {
+          const snap = await this.previewCouponForStore(
+            user,
+            storeId,
+            couponCode,
+          );
+          storeCouponDiscount = snap.discountAmount;
+        } catch {
+          storeCouponDiscount = 0;
+        }
+      }
+      storeInputs.push({
+        storeId,
+        storeName,
+        regionCode,
+        subtotal,
+        storeCouponDiscount,
+      });
+    }
+
+    return this._giftCodesService.previewForCart(user, dto.code, storeInputs);
+  }
+
+  async recordGiftCodeUsageAfterPayment(
+    userId: string,
+    rawCode: string,
+  ): Promise<void> {
+    await this._giftCodesService.recordUsageAfterSuccessfulPayment(
+      userId,
+      rawCode,
+    );
+  }
+
   /**
    * Avant paiement : vérifie stocks (menu du jour limité, boissons) et codes promo.
    * Ne modifie pas le panier.
@@ -639,6 +731,16 @@ export class CartService {
       discountAmount: number;
       totalAfterDiscount: number;
     }>;
+    giftCodeIssue: { code: string; errorKey: string } | null;
+    giftCodeWarning: {
+      code: string;
+      warningKey: string;
+      previousDiscountAmount?: number;
+      currentDiscountAmount: number;
+    } | null;
+    giftCodeSnapshot: Awaited<
+      ReturnType<CartService['previewGiftCodeForCart']>
+    > | null;
   }> {
     const uid = new Types.ObjectId(user.id);
     const rawItems = await this._cartItemModel
@@ -665,6 +767,9 @@ export class CartService {
         couponIssues: [],
         couponWarnings: [],
         couponSnapshots: [],
+        giftCodeIssue: null,
+        giftCodeWarning: null,
+        giftCodeSnapshot: null,
       };
     }
 
@@ -858,7 +963,53 @@ export class CartService {
       }
     }
 
-    const ok = stockIssues.length === 0 && couponIssues.length === 0;
+    let giftCodeIssue: { code: string; errorKey: string } | null = null;
+    let giftCodeWarning: {
+      code: string;
+      warningKey: string;
+      previousDiscountAmount?: number;
+      currentDiscountAmount: number;
+    } | null = null;
+    let giftCodeSnapshot: Awaited<
+      ReturnType<CartService['previewGiftCodeForCart']>
+    > | null = null;
+
+    const giftRaw = (dto.giftCode ?? '').trim();
+    if (giftRaw) {
+      try {
+        giftCodeSnapshot = await this.previewGiftCodeForCart(user, {
+          code: giftRaw,
+          coupons: dto.coupons,
+        });
+        if (
+          dto.expectedGiftCodeDiscountAmount != null &&
+          Number.isFinite(dto.expectedGiftCodeDiscountAmount)
+        ) {
+          const diff = Math.abs(
+            giftCodeSnapshot.discountAmount -
+              dto.expectedGiftCodeDiscountAmount,
+          );
+          if (diff > 0.015) {
+            giftCodeWarning = {
+              code: giftCodeSnapshot.code,
+              warningKey: 'gift_code_discount_amount_changed',
+              previousDiscountAmount: dto.expectedGiftCodeDiscountAmount,
+              currentDiscountAmount: giftCodeSnapshot.discountAmount,
+            };
+          }
+        }
+      } catch (e) {
+        giftCodeIssue = {
+          code: giftRaw.toUpperCase(),
+          errorKey: badRequestExceptionKey(e),
+        };
+      }
+    }
+
+    const ok =
+      stockIssues.length === 0 &&
+      couponIssues.length === 0 &&
+      giftCodeIssue == null;
 
     return {
       ok,
@@ -866,6 +1017,9 @@ export class CartService {
       couponIssues,
       couponWarnings,
       couponSnapshots,
+      giftCodeIssue,
+      giftCodeWarning,
+      giftCodeSnapshot,
     };
   }
 }

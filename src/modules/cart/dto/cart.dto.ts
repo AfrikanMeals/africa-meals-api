@@ -154,7 +154,7 @@ export class UpdateCartLineQuantityDto {
   quantity: number;
 }
 
-/** `POST /cart/coupon/preview` — valider un code promo pour le panier d’une boutique. */
+/** `POST /cart/coupon/preview` — valider un code promo pour le panier d'une boutique. */
 export class PreviewCartCouponDto {
   @ApiProperty({ example: '507f1f77bcf86cd799439011' })
   @IsNotEmpty()
@@ -189,6 +189,21 @@ export class CheckoutCouponCheckDto {
   expectedDiscountAmount?: number;
 }
 
+/** `POST /cart/gift-code/preview` — valider un gift code plateforme pour le panier. */
+export class PreviewCartGiftCodeDto {
+  @ApiProperty({ example: 'WELCOME2026' })
+  @IsNotEmpty()
+  @IsString()
+  code: string;
+
+  @ApiProperty({ type: [CheckoutCouponCheckDto], required: false })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CheckoutCouponCheckDto)
+  coupons?: CheckoutCouponCheckDto[];
+}
+
 /** `POST /cart/validate-checkout` — stocks menu du jour / boissons + codes promo. */
 export class ValidateCheckoutDto {
   @ApiProperty({ type: [CheckoutCouponCheckDto], required: false })
@@ -197,4 +212,16 @@ export class ValidateCheckoutDto {
   @ValidateNested({ each: true })
   @Type(() => CheckoutCouponCheckDto)
   coupons?: CheckoutCouponCheckDto[];
+
+  @ApiPropertyOptional({ description: 'Gift code plateforme (aperçu checkout).' })
+  @IsOptional()
+  @IsString()
+  giftCode?: string;
+
+  @ApiPropertyOptional({
+    description: 'Montant de réduction gift code attendu (contrôle pré-paiement).',
+  })
+  @IsOptional()
+  @IsNumber()
+  expectedGiftCodeDiscountAmount?: number;
 }

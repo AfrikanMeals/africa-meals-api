@@ -12,6 +12,7 @@ import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { DrinkModel } from '@schemas/drink.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { StoreCouponModel } from '@schemas/store_coupon.schema';
+import { GiftCodeModel } from '@schemas/gift_code.schema';
 import { StoreModel } from '@schemas/store.schema';
 import {
   VendorAnalyticsEventModel,
@@ -60,6 +61,10 @@ type VendorAnalyticsSummary = {
   couponsActive: number;
   couponsRedeemedOrders: number;
   couponsUniqueCodesRedeemed: number;
+  giftCodesTotal: number;
+  giftCodesActive: number;
+  giftCodesRedeemedOrders: number;
+  giftCodesUniqueCodesRedeemed: number;
 };
 
 type VendorAnalyticsSeriesRow = {
@@ -94,6 +99,12 @@ type VendorAnalyticsTopCouponRow = {
   revenue: number;
 };
 
+type VendorAnalyticsTopGiftCodeRow = {
+  code: string;
+  uses: number;
+  revenue: number;
+};
+
 const PAGE_VIEW_ROUTE_RE =
   /(\/shop-home|\/stores(?:\/|$)|\/store-menu(?:\/|$)|\/catalog(?:\/|$)|\/categories(?:\/|$)|\/offers(?:\/?$)|\/mobile\/store-menu)/i;
 const ITEM_VIEW_ROUTE_RE =
@@ -117,6 +128,8 @@ export class RequestStatsService {
     private readonly adEventModel: Model<AdEventModel>,
     @InjectModel(StoreCouponModel.name)
     private readonly couponModel: Model<StoreCouponModel>,
+    @InjectModel(GiftCodeModel.name)
+    private readonly giftCodeModel: Model<GiftCodeModel>,
     @InjectModel(VendorAnalyticsEventModel.name)
     private readonly vendorAnalyticsEventModel: Model<VendorAnalyticsEventModel>,
     @InjectModel(ProductModel.name)
@@ -574,6 +587,69 @@ export class RequestStatsService {
       }),
     );
 
+    const [giftCodesTotal, giftCodesActive, giftCodeOrdersRows] =
+      await Promise.all([
+        this.giftCodeModel.countDocuments({}).exec(),
+        this.giftCodeModel
+          .countDocuments({
+            enabled: true,
+            validFrom: { $lte: to },
+            validUntil: { $gte: from },
+          })
+          .exec(),
+        this.orderModel
+          .aggregate([
+            { $match: orderMatch },
+            {
+              $match: {
+                giftCode: { $exists: true, $ne: '' },
+                status: { $ne: OrderStatusEnum.CANCELLED },
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                count: { $sum: 1 },
+                uniqueCodes: { $addToSet: '$giftCode' },
+              },
+            },
+          ])
+          .exec(),
+      ]);
+    const giftCodesRedeemedOrders = Number(giftCodeOrdersRows?.[0]?.count ?? 0);
+    const giftCodesUniqueCodesRedeemed = Array.isArray(
+      giftCodeOrdersRows?.[0]?.uniqueCodes,
+    )
+      ? giftCodeOrdersRows[0].uniqueCodes.length
+      : 0;
+    const topGiftCodesAgg = (await this.orderModel
+      .aggregate([
+        { $match: orderMatch },
+        {
+          $match: {
+            giftCode: { $exists: true, $ne: '' },
+            status: { $ne: OrderStatusEnum.CANCELLED },
+          },
+        },
+        {
+          $group: {
+            _id: '$giftCode',
+            uses: { $sum: 1 },
+            revenue: { $sum: '$totalPrice' },
+          },
+        },
+        { $sort: { uses: -1, revenue: -1, _id: 1 } },
+        { $limit: 10 },
+      ])
+      .exec()) as Array<{ _id: string; uses: number; revenue: number }>;
+    const topGiftCodes: VendorAnalyticsTopGiftCodeRow[] = topGiftCodesAgg.map(
+      (r) => ({
+        code: String(r._id ?? '').trim(),
+        uses: Number(r.uses ?? 0),
+        revenue: Number(Number(r.revenue ?? 0).toFixed(2)),
+      }),
+    );
+
     const dateKeys = this.enumerateDates(from, to);
     const byDay = new Map<string, VendorAnalyticsSeriesRow>(
       dateKeys.map((d) => [
@@ -731,6 +807,10 @@ export class RequestStatsService {
       couponsActive: Number(couponsActive ?? 0),
       couponsRedeemedOrders,
       couponsUniqueCodesRedeemed,
+      giftCodesTotal: Number(giftCodesTotal ?? 0),
+      giftCodesActive: Number(giftCodesActive ?? 0),
+      giftCodesRedeemedOrders,
+      giftCodesUniqueCodesRedeemed,
     };
 
     return {
@@ -743,6 +823,7 @@ export class RequestStatsService {
       topPages,
       topItems,
       topCoupons,
+      topGiftCodes,
       topViewedCatalogItems: mobileStats.topViewedCatalogItems,
     };
   }

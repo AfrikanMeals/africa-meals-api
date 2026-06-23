@@ -17,6 +17,7 @@ import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import {
   PreviewCartCouponDto,
+  PreviewCartGiftCodeDto,
   UpdateCartLineQuantityDto,
   ValidateCheckoutDto,
 } from './dto/cart.dto';
@@ -45,6 +46,19 @@ export class CartController {
       req.user as UserModel,
       dto.storeId,
       dto.code,
+    );
+  }
+
+  @Post('gift-code/preview')
+  @UseGuards(JwtGuard)
+  async previewGiftCode(
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    dto: PreviewCartGiftCodeDto,
+    @Req() req: Request,
+  ) {
+    return this._cartService.previewGiftCodeForCart(
+      req.user as UserModel,
+      dto,
     );
   }
 

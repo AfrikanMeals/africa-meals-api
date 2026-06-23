@@ -338,6 +338,16 @@ export class OrderPaidInvoiceEmailService {
         typeof order.currency === 'string' ? order.currency : undefined,
       couponCode:
         typeof order.couponCode === 'string' ? order.couponCode : undefined,
+      couponDiscountAmount:
+        order.couponDiscountAmount != null
+          ? Number(order.couponDiscountAmount)
+          : undefined,
+      giftCode:
+        typeof order.giftCode === 'string' ? order.giftCode : undefined,
+      giftCodeDiscountAmount:
+        order.giftCodeDiscountAmount != null
+          ? Number(order.giftCodeDiscountAmount)
+          : undefined,
       pickupCode:
         typeof order.pickupCode === 'string' ? order.pickupCode : undefined,
       storeName,

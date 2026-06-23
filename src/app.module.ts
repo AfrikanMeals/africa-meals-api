@@ -19,6 +19,7 @@ import { SearchModule } from './modules/search/search.module';
 import { OffersModule } from './modules/offers/offers.module';
 import { CartModule } from './modules/cart/cart.module';
 import { CouponsModule } from './modules/coupons/coupons.module';
+import { GiftCodesModule } from './modules/gift-codes/gift-codes.module';
 import { AnnouncementsModule } from './modules/announcements/announcements.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { LoyaltyModule } from './modules/loyalty/loyalty.module';
@@ -307,6 +308,7 @@ function redactRedisUrl(url: string): string {
     OffersModule,
     CartModule,
     CouponsModule,
+    GiftCodesModule,
     AnnouncementsModule,
     BillingModule,
     LoyaltyModule,

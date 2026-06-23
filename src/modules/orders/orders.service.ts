@@ -1253,6 +1253,9 @@ export class OrdersService {
     opts?: {
       stripeParentPaymentId?: string;
       couponCode?: string;
+      couponDiscountAmount?: number;
+      giftCode?: string;
+      giftCodeDiscountAmount?: number;
       chargedGoodsCents?: number;
       chargedShipCents?: number;
       chargedTaxCents?: number;
@@ -1417,6 +1420,21 @@ export class OrdersService {
     }
     if (opts?.couponCode?.trim()) {
       $set['couponCode'] = opts.couponCode.trim().toUpperCase();
+    }
+    if (opts?.couponDiscountAmount != null) {
+      $set['couponDiscountAmount'] = Math.max(
+        0,
+        Number(opts.couponDiscountAmount) || 0,
+      );
+    }
+    if (opts?.giftCode?.trim()) {
+      $set['giftCode'] = opts.giftCode.trim().toUpperCase();
+    }
+    if (opts?.giftCodeDiscountAmount != null) {
+      $set['giftCodeDiscountAmount'] = Math.max(
+        0,
+        Number(opts.giftCodeDiscountAmount) || 0,
+      );
     }
     if (opts?.currency?.trim()) {
       $set['currency'] = opts.currency.trim().toUpperCase();

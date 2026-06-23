@@ -111,6 +111,9 @@ type GroupedStripeBuilt = {
   >;
   groups: CartGroup[];
   coupons: Array<{ storeId: string; code: string }>;
+  giftCode?: string;
+  giftDiscountByStore: Record<string, number>;
+  couponDiscountByStore: Record<string, number>;
   /** Adresse livraison choisie au checkout (si au moins une boutique en livraison). */
   checkoutAddressId?: string;
   deliveryTipTotalCents: number;
@@ -721,6 +724,25 @@ function parseCouponsFromStripeMetadata(
   return m;
 }
 
+function parseGiftDiscountFromStripeMetadata(
+  meta: Record<string, string | undefined | null>,
+): Record<string, number> {
+  const raw = meta['gift_discount_v1']?.trim();
+  if (!raw) return {};
+  try {
+    const obj = JSON.parse(raw) as unknown;
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      const n = Number(v);
+      if (k && Number.isFinite(n) && n > 0) out[k] = n;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 @Injectable()
 export class StripeGroupedCheckoutService {
   private readonly logger = new Logger(StripeGroupedCheckoutService.name);
@@ -1074,6 +1096,23 @@ export class StripeGroupedCheckoutService {
       coupons.map((c) => [c.storeId, c.code] as const),
     );
 
+    let giftPreview: Awaited<
+      ReturnType<CartService['previewGiftCodeForCart']>
+    > | null = null;
+    const giftDiscountByStore: Record<string, number> = {};
+    const couponDiscountByStore: Record<string, number> = {};
+    if (dto.giftCode?.trim()) {
+      giftPreview = await this.cartService.previewGiftCodeForCart(user, {
+        code: dto.giftCode.trim(),
+        coupons,
+      });
+      for (const row of giftPreview.storeBreakdown) {
+        if (row.giftCodeDiscount > 0) {
+          giftDiscountByStore[row.storeId] = row.giftCodeDiscount;
+        }
+      }
+    }
+
     for (const g of groups) {
       const storeId = storeMongoId(g.store);
       if (!storeId) continue;
@@ -1145,8 +1184,11 @@ export class StripeGroupedCheckoutService {
           storeId,
           code,
         );
+        couponDiscountByStore[storeId] = snap.discountAmount;
+        const giftDisc = giftDiscountByStore[storeId] ?? 0;
+        const afterGift = Math.max(0, snap.totalAfterDiscount - giftDisc);
         const targetGoodsCents = Math.round(
-          snap.totalAfterDiscount * amountFactor + Number.EPSILON,
+          afterGift * amountFactor + Number.EPSILON,
         );
         const shipC = shipCentsByStore[storeId] ?? 0;
         const totalCents = targetGoodsCents + shipC;
@@ -1201,6 +1243,108 @@ export class StripeGroupedCheckoutService {
             unitAmountCents: goodsC,
             lineKind: 'promo_goods',
             extraDescription: 'Panier (code promo)',
+          });
+          if (li) {
+            lineItems.push(li);
+            payoutByStore[storeId].goodsCents += goodsC;
+          }
+        }
+        if (
+          mode === 'delivery' &&
+          g.store?.supportsShipping &&
+          dto.addressId &&
+          shipC > 0
+        ) {
+          const shipLi = checkoutLineFromCartRow({
+            currency,
+            storeId,
+            storeName,
+            mode,
+            line: {
+              type: 'shipping_fee',
+              entity: { title: `Frais de livraison — ${storeName}` },
+            },
+            quantity: 1,
+            unitAmountCents: shipC,
+            lineKind: 'shipping',
+            extraDescription: 'Livraison estimée',
+          });
+          if (shipLi) lineItems.push(shipLi);
+        }
+        await this.appendOrderTaxLinesForStore({
+          user,
+          currency,
+          amountFactor,
+          storeId,
+          storeName,
+          store: g.store,
+          mode,
+          addressId: dto.addressId?.trim(),
+          lineItems,
+          payoutRow: payoutByStore[storeId],
+        });
+        continue;
+      }
+
+      const giftDisc = giftDiscountByStore[storeId] ?? 0;
+      if (giftDisc > 0 && cartLines.length) {
+        const grossPerLine = cartLines.map(
+          (line) =>
+            cartLineUnitCents(line, amountFactor) * cartLineQuantity(line),
+        );
+        const sumGross = grossPerLine.reduce((a, b) => a + b, 0);
+        const giftDiscCents = Math.round(
+          giftDisc * amountFactor + Number.EPSILON,
+        );
+        const targetGoodsCents = Math.max(0, sumGross - giftDiscCents);
+        const shipC = shipCentsByStore[storeId] ?? 0;
+        const totalCents = targetGoodsCents + shipC;
+        if (totalCents < stripeMinimumMinor) {
+          throw new BadRequestException({
+            message: 'amount_below_stripe_minimum',
+            storeId,
+            totalCents,
+          });
+        }
+        if (sumGross > 0) {
+          const capTarget = Math.min(targetGoodsCents, sumGross);
+          const allocated = distributeCentsByWeights(grossPerLine, capTarget);
+          for (let i = 0; i < cartLines.length; i++) {
+            const cents = allocated[i] ?? 0;
+            if (cents < 1) continue;
+            const line = cartLines[i];
+            const qtyOrig = cartLineQuantity(line);
+            const li = checkoutLineFromCartRow({
+              currency,
+              storeId,
+              storeName,
+              mode,
+              line,
+              quantity: 1,
+              unitAmountCents: cents,
+              lineKind: 'promo_goods',
+              extraDescription:
+                qtyOrig > 1
+                  ? `Qté ${qtyOrig} · prix avec gift code`
+                  : 'Prix avec gift code',
+            });
+            if (li) {
+              lineItems.push(li);
+              payoutByStore[storeId].goodsCents += cents;
+            }
+          }
+        } else {
+          const goodsC = Math.max(1, targetGoodsCents);
+          const li = checkoutLineFromCartRow({
+            currency,
+            storeId,
+            storeName,
+            mode,
+            line: { entity: { title: `Panier — ${storeName}` } },
+            quantity: 1,
+            unitAmountCents: goodsC,
+            lineKind: 'promo_goods',
+            extraDescription: 'Panier (gift code)',
           });
           if (li) {
             lineItems.push(li);
@@ -1392,6 +1536,9 @@ export class StripeGroupedCheckoutService {
       payoutByStore,
       groups,
       coupons,
+      giftCode: giftPreview?.code,
+      giftDiscountByStore,
+      couponDiscountByStore,
       checkoutAddressId: needsAddress ? dto.addressId?.trim() : undefined,
       deliveryTipTotalCents,
       tipCentsByStore,
@@ -1491,7 +1638,22 @@ export class StripeGroupedCheckoutService {
       ...base,
       ...this.payoutMetadataChunks(built.payoutByStore),
       ...this.couponsMetadataChunk(built.coupons),
+      ...this.giftCodeMetadataChunk(built),
     };
+  }
+
+  private giftCodeMetadataChunk(
+    built: GroupedStripeBuilt,
+  ): Record<string, string> {
+    if (!built.giftCode?.trim()) return {};
+    const out: Record<string, string> = {
+      gift_code_v1: built.giftCode.trim().toUpperCase(),
+    };
+    const disc = built.giftDiscountByStore ?? {};
+    if (Object.keys(disc).length) {
+      out.gift_discount_v1 = JSON.stringify(disc);
+    }
+    return out;
   }
 
   private async recheckBeforeStripe(
@@ -1761,6 +1923,8 @@ export class StripeGroupedCheckoutService {
     orderPaymentFeeCents?: number;
     totalPayoutGrossCents: number;
     paymentCurrency?: string;
+    giftCode?: string;
+    giftDiscountByStore: Record<string, number>;
   }): Promise<{
     breakdown: StripePerStoreBreakdownRow;
     orderId?: string;
@@ -1784,6 +1948,8 @@ export class StripeGroupedCheckoutService {
       orderPaymentFeeCents,
       totalPayoutGrossCents,
       paymentCurrency,
+      giftCode,
+      giftDiscountByStore,
     } = params;
 
     const paymentCap = Math.max(0, Math.round(amountTotalCents ?? 0));
@@ -1872,6 +2038,23 @@ export class StripeGroupedCheckoutService {
       shipCents = scaled.shipCents;
     }
     const couponCode = couponByStore.get(storeId);
+    const giftCodeForOrder = giftCode?.trim();
+    const giftCodeDiscountAmount = giftCodeForOrder
+      ? giftDiscountByStore[storeId] ?? 0
+      : 0;
+    let couponDiscountAmount = 0;
+    if (couponCode) {
+      try {
+        const snap = await this.cartService.previewCouponForStore(
+          user,
+          storeId,
+          couponCode,
+        );
+        couponDiscountAmount = snap.discountAmount;
+      } catch {
+        couponDiscountAmount = 0;
+      }
+    }
 
     const baseRow: StripePerStoreBreakdownRow = {
       storeId,
@@ -1924,6 +2107,11 @@ export class StripeGroupedCheckoutService {
         {
         stripeParentPaymentId: stripePaymentId,
         couponCode,
+        couponDiscountAmount:
+          couponDiscountAmount > 0 ? couponDiscountAmount : undefined,
+        giftCode: giftCodeForOrder || undefined,
+        giftCodeDiscountAmount:
+          giftCodeDiscountAmount > 0 ? giftCodeDiscountAmount : undefined,
         chargedGoodsCents: useStripeCents ? goodsCents : undefined,
         chargedShipCents: useStripeCents ? shipCents : undefined,
         subtotalBeforeTax:
@@ -2070,6 +2258,8 @@ export class StripeGroupedCheckoutService {
 
     const payoutMap = parsePayoutFromStripeMetadata(metadata);
     const couponByStore = parseCouponsFromStripeMetadata(metadata);
+    const giftCode = metadata?.gift_code_v1?.trim();
+    const giftDiscountByStore = parseGiftDiscountFromStripeMetadata(metadata);
     const checkoutAddressId = String(
       metadata?.addressId ?? metadata?.address_id ?? '',
     ).trim();
@@ -2239,6 +2429,8 @@ export class StripeGroupedCheckoutService {
           orderPaymentFeeCents: orderPaymentFeeByStore[storeId] ?? 0,
           totalPayoutGrossCents,
           paymentCurrency: paymentCurrency || undefined,
+          giftCode: giftCode || undefined,
+          giftDiscountByStore,
         }),
       ),
     );
@@ -2249,6 +2441,17 @@ export class StripeGroupedCheckoutService {
       }
       if (slot.error) {
         fulfillErrors.push(slot.error);
+      }
+    }
+    if (giftCode && orderIds.length > 0) {
+      try {
+        await this.cartService.recordGiftCodeUsageAfterPayment(uid, giftCode);
+      } catch (err) {
+        this.logger.warn(
+          `Gift code usage record failed ${giftCode}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
       }
     }
 

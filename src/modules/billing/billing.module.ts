@@ -1,6 +1,7 @@
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { CartModule } from '@modules/cart/cart.module';
 import { CouponsModule } from '@modules/coupons/coupons.module';
+import { GiftCodesModule } from '@modules/gift-codes/gift-codes.module';
 import { OrdersModule } from '@modules/orders/orders.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { PlatformFeesModule } from '@modules/platform-fees/platform-fees.module';
@@ -53,6 +54,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
     UsersModule,
     CartModule,
     CouponsModule,
+    GiftCodesModule,
     forwardRef(() => StoreModule),
     SubscriptionsModule,
     forwardRef(() => OrdersModule),

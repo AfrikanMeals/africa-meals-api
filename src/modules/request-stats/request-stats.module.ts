@@ -9,6 +9,7 @@ import {
   StoreCouponModel,
   StoreCouponSchema,
 } from '@schemas/store_coupon.schema';
+import { GiftCodeModel, GiftCodeSchema } from '@schemas/gift_code.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import {
   VendorAnalyticsEventModel,
@@ -36,6 +37,7 @@ import { VendorAnalyticsCollectService } from './vendor-analytics-collect.servic
       { name: AdModel.name, schema: AdSchema },
       { name: AdEventModel.name, schema: AdEventSchema },
       { name: StoreCouponModel.name, schema: StoreCouponSchema },
+      { name: GiftCodeModel.name, schema: GiftCodeSchema },
       { name: VendorAnalyticsEventModel.name, schema: VendorAnalyticsEventSchema },
       { name: ProductModel.name, schema: ProductSchema },
       { name: DrinkModel.name, schema: DrinkSchema },

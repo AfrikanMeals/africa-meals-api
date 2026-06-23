@@ -317,6 +317,18 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'coupon_code' })
   couponCode?: string;
 
+  /** Montant de la remise code promo boutique (devise commande). */
+  @Prop({ required: false, name: 'coupon_discount_amount' })
+  couponDiscountAmount?: number;
+
+  /** Gift code plateforme appliqué au moment du paiement (si présent). */
+  @Prop({ required: false, name: 'gift_code' })
+  giftCode?: string;
+
+  /** Part de la remise gift code imputée à cette commande (devise commande). */
+  @Prop({ required: false, name: 'gift_code_discount_amount' })
+  giftCodeDiscountAmount?: number;
+
   /** Horodatage d’envoi du reçu/facture client (idempotence e-mail post-paiement). */
   @Prop({ required: false, name: 'paid_receipt_emailed_at' })
   paidReceiptEmailedAt?: Date;

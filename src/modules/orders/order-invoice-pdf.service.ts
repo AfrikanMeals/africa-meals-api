@@ -149,6 +149,9 @@ export class OrderInvoicePdfService {
       if (snapshot.couponCode?.trim()) {
         doc.text(`Code promo : ${snapshot.couponCode.trim().toUpperCase()}`);
       }
+      if (snapshot.giftCode?.trim()) {
+        doc.text(`Gift code : ${snapshot.giftCode.trim().toUpperCase()}`);
+      }
 
       doc.moveDown(1);
       const tableTop = doc.y;
