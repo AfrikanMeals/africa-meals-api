@@ -65,7 +65,7 @@ export function readMemcachedConnectionFromConfig(
     config.get('MEMCACHED_TLS_SERVERNAME')?.trim() || first.host;
   const timeoutMs = parsePositiveInt(
     config.get('MEMCACHED_CONNECT_TIMEOUT_MS'),
-    5000,
+    15_000,
   );
   return {
     servers,

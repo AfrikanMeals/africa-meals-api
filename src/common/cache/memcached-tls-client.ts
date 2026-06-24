@@ -1,7 +1,10 @@
 import tls from 'node:tls';
 import type { MemcachedTlsConfig } from './memcached-connection.util';
 
-function readResponse(socket: tls.TLSSocket): Promise<string> {
+function readResponse(
+  socket: tls.TLSSocket,
+  timeoutMs: number,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     let buffer = '';
     const onData = (chunk: Buffer | string) => {
@@ -28,10 +31,13 @@ function readResponse(socket: tls.TLSSocket): Promise<string> {
       reject(new Error('Memcached TLS timeout'));
     };
     const cleanup = () => {
+      clearTimeout(commandTimer);
       socket.off('data', onData);
       socket.off('error', onError);
       socket.off('timeout', onTimeout);
     };
+    const commandTimer = setTimeout(onTimeout, timeoutMs);
+    socket.setTimeout(timeoutMs);
     socket.on('data', onData);
     socket.once('error', onError);
     socket.once('timeout', onTimeout);
@@ -46,13 +52,19 @@ async function connectTls(config: MemcachedTlsConfig): Promise<tls.TLSSocket> {
       servername: config.servername,
       rejectUnauthorized: config.rejectUnauthorized,
     });
-    socket.setTimeout(config.timeoutMs);
-    socket.once('secureConnect', () => resolve(socket));
-    socket.once('error', reject);
-    socket.once('timeout', () => {
+    const connectTimer = setTimeout(() => {
       socket.destroy();
       reject(new Error('Memcached TLS connect timeout'));
+    }, config.timeoutMs);
+    const onFail = (err: Error) => {
+      clearTimeout(connectTimer);
+      reject(err);
+    };
+    socket.once('secureConnect', () => {
+      clearTimeout(connectTimer);
+      resolve(socket);
     });
+    socket.once('error', onFail);
   });
 }
 
@@ -63,7 +75,7 @@ async function runCommand(
   const socket = await connectTls(config);
   try {
     socket.write(command);
-    return await readResponse(socket);
+    return await readResponse(socket, config.timeoutMs);
   } finally {
     socket.end();
   }
@@ -104,14 +116,36 @@ export async function tlsMemcachedDel(
   await runCommand(config, `delete ${key}\r\n`);
 }
 
+/** SET + GET + DEL sur une seule session TLS (évite 3 handshakes distants). */
 export async function tlsMemcachedPing(
   config: MemcachedTlsConfig,
 ): Promise<void> {
   const key = `__wise_eat_tls_${Date.now()}`;
-  await tlsMemcachedSet(config, key, '1', 10);
-  const val = await tlsMemcachedGet(config, key);
-  if (val !== '1') {
-    throw new Error('Memcached TLS ping mismatch');
+  const value = '1';
+  const socket = await connectTls(config);
+  try {
+    const setPayload = `set ${key} 0 10 ${Buffer.byteLength(value)}\r\n${value}\r\n`;
+    socket.write(setPayload);
+    const setRaw = await readResponse(socket, config.timeoutMs);
+    if (!setRaw.includes('STORED')) {
+      throw new Error('Memcached TLS set failed');
+    }
+    socket.write(`get ${key}\r\n`);
+    const getRaw = await readResponse(socket, config.timeoutMs);
+    const lines = getRaw.split('\r\n');
+    let got: string | undefined;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('VALUE ')) {
+        got = lines[i + 1];
+        break;
+      }
+    }
+    if (got !== value) {
+      throw new Error('Memcached TLS ping mismatch');
+    }
+    socket.write(`delete ${key}\r\n`);
+    await readResponse(socket, config.timeoutMs);
+  } finally {
+    socket.end();
   }
-  await tlsMemcachedDel(config, key);
 }
