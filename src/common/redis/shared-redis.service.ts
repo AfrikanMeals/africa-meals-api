@@ -6,7 +6,10 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
-import { readRedisConnectionFromConfig } from './redis-connection.util';
+import {
+  buildIoredisOptionsFromConnection,
+  readRedisConnectionFromConfig,
+} from './redis-connection.util';
 
 /** Connexion Redis partagée (OPT-007) — idempotence, compteurs SSE, etc. */
 @Injectable()
@@ -22,16 +25,11 @@ export class SharedRedisService implements OnModuleInit, OnModuleDestroy {
       this.logger.log('Shared Redis disabled (REDIS_* absent)');
       return;
     }
-    this.client = new Redis({
-      host: connection.host,
-      port: connection.port,
-      username: connection.username,
-      password: connection.password,
-      tls: connection.tls,
-      maxRetriesPerRequest: 2,
+    const opts = buildIoredisOptionsFromConnection(connection, {
       enableReadyCheck: true,
       lazyConnect: true,
     });
+    this.client = new Redis(opts);
     this.client.on('error', (err) => {
       this.logger.warn(`Shared Redis error: ${err.message}`);
     });

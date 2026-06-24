@@ -3,6 +3,7 @@ import {
   isBullmqRedisDedicated,
   readBullmqRedisConnectionFromConfig,
   readRedisConnectionFromConfig,
+  buildIoredisOptionsFromConnection,
 } from '../../common/redis/redis-connection.util';
 import type { ConfigService } from '@nestjs/config';
 import type { Connection } from 'mongoose';
@@ -193,16 +194,13 @@ async function probeRedisConnection(
   const started = performance.now();
   try {
     const { default: Redis } = await import('ioredis');
-    const client = new Redis({
-      host: conn.host,
-      port: conn.port,
-      username: conn.username,
-      password: conn.password,
-      tls: conn.tls,
-      connectTimeout: 4000,
-      maxRetriesPerRequest: 1,
-      lazyConnect: true,
-    });
+    const client = new Redis(
+      buildIoredisOptionsFromConnection(conn, {
+        connectTimeout: 4000,
+        maxRetriesPerRequest: 1,
+        lazyConnect: true,
+      }),
+    );
     await client.connect();
     const pong = await client.ping();
     await client.quit();

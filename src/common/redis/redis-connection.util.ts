@@ -73,6 +73,14 @@ function buildTlsOptions(
   return {};
 }
 
+function enrichTlsSni(connection: RedisConnectionConfig): RedisConnectionConfig {
+  if (!connection.tls) return connection;
+  return {
+    ...connection,
+    tls: { ...connection.tls, servername: connection.host },
+  };
+}
+
 function readRedisConnectionWithKeys(
   get: RedisEnvGetter,
   keys: RedisEnvKeySet,
@@ -81,7 +89,7 @@ function readRedisConnectionWithKeys(
   if (redisUrl) {
     try {
       const parsed = new URL(redisUrl);
-      return {
+      return enrichTlsSni({
         host: parsed.hostname,
         port: parsePositiveInt(
           parsed.port,
@@ -90,7 +98,7 @@ function readRedisConnectionWithKeys(
         username: parsed.username || undefined,
         password: parsed.password || undefined,
         tls: buildTlsOptions(get, keys, parsed.protocol === 'rediss:'),
-      };
+      });
     } catch {
       return null;
     }
@@ -98,13 +106,13 @@ function readRedisConnectionWithKeys(
 
   const host = get(keys.host)?.trim();
   if (!host) return null;
-  return {
+  return enrichTlsSni({
     host,
     port: parsePositiveInt(get(keys.port), 6379),
     username: get(keys.username)?.trim() || undefined,
     password: get(keys.password)?.trim() || undefined,
     tls: buildTlsOptions(get, keys, false),
-  };
+  });
 }
 
 /** Cache HTTP, pub/sub SSE, tokens partagés — `REDIS_*`. */
@@ -180,7 +188,11 @@ export function readRedisCacheStoreOptionsFromConfig(
   config: ConfigService,
 ): {
   url: string;
-  socket?: { tls: true; rejectUnauthorized?: boolean };
+  socket?: {
+    tls: true;
+    servername?: string;
+    rejectUnauthorized?: boolean;
+  };
 } | null {
   const url = readRedisUrlFromConfig(config);
   if (!url) return null;
@@ -192,9 +204,56 @@ export function readRedisCacheStoreOptionsFromConfig(
     url,
     socket: {
       tls: true,
+      servername: conn.host,
       ...(rejectUnauthorized === false ? { rejectUnauthorized: false } : {}),
     },
   };
+}
+
+/** Options ioredis — TLS Stunnel (`rediss://` ou `REDIS_TLS=true`) + SNI. */
+export type IoredisOptions = {
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
+  tls?: Record<string, unknown>;
+  maxRetriesPerRequest: number | null;
+  connectTimeout?: number;
+  lazyConnect?: boolean;
+  enableReadyCheck?: boolean;
+};
+
+export function buildIoredisOptionsFromConnection(
+  connection: RedisConnectionConfig,
+  overrides?: Partial<IoredisOptions>,
+): IoredisOptions {
+  return {
+    host: connection.host,
+    port: connection.port,
+    username: connection.username,
+    password: connection.password,
+    tls: connection.tls,
+    maxRetriesPerRequest: 2,
+    ...overrides,
+  };
+}
+
+export function readIoredisOptionsFromConfig(
+  config: ConfigService | { get: (key: string) => string | undefined },
+  overrides?: Partial<IoredisOptions>,
+): IoredisOptions | null {
+  const connection = readRedisConnectionFromConfig(config);
+  if (!connection) return null;
+  return buildIoredisOptionsFromConnection(connection, overrides);
+}
+
+export function readIoredisOptionsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  overrides?: Partial<IoredisOptions>,
+): IoredisOptions | null {
+  const connection = readRedisConnectionFromEnv(env);
+  if (!connection) return null;
+  return buildIoredisOptionsFromConnection(connection, overrides);
 }
 
 export function redactRedisUrl(url: string): string {
