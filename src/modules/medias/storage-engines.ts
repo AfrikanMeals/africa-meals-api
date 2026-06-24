@@ -428,3 +428,209 @@ export class S3StorageEngine implements IStorageEngine {
     }
   }
 }
+
+@Injectable()
+export class MinioStorageEngine implements IStorageEngine {
+  readonly id: StorageEngineId = 'minio';
+  private readonly logger = new Logger(MinioStorageEngine.name);
+  private s3Client: import('@aws-sdk/client-s3').S3Client | null = null;
+
+  constructor(private readonly config: ConfigService) {}
+
+  private bucket(): string {
+    return this.config.get<string>('MINIO_BUCKET')?.trim() || '';
+  }
+
+  private region(): string {
+    return this.config.get<string>('MINIO_REGION')?.trim() || 'us-east-1';
+  }
+
+  private endpoint(): string {
+    const raw = this.config.get<string>('MINIO_ENDPOINT')?.trim() || '';
+    if (!raw) return '';
+    return raw.startsWith('http') ? raw : `http://${raw}`;
+  }
+
+  private forcePathStyle(): boolean {
+    const raw = this.config.get<string>('MINIO_FORCE_PATH_STYLE')?.trim();
+    if (raw === 'false') return false;
+    return true;
+  }
+
+  isConfigured(): boolean {
+    const bucket = this.bucket();
+    const key = this.config.get<string>('MINIO_ACCESS_KEY')?.trim();
+    const secret = this.config.get<string>('MINIO_SECRET_KEY')?.trim();
+    const endpoint = this.endpoint();
+    return Boolean(bucket && key && secret && endpoint);
+  }
+
+  private async client() {
+    if (!this.s3Client) {
+      const { S3Client } = await import('@aws-sdk/client-s3');
+      this.s3Client = new S3Client({
+        region: this.region(),
+        endpoint: this.endpoint(),
+        forcePathStyle: this.forcePathStyle(),
+        credentials: {
+          accessKeyId: this.config.get<string>('MINIO_ACCESS_KEY')!.trim(),
+          secretAccessKey: this.config
+            .get<string>('MINIO_SECRET_KEY')!
+            .trim(),
+        },
+      });
+    }
+    return this.s3Client;
+  }
+
+  private publicUrl(path: string): string {
+    const customBase = this.config.get<string>('MINIO_PUBLIC_BASE_URL')?.trim();
+    const encoded = path
+      .split('/')
+      .map((s) => encodeURIComponent(s))
+      .join('/');
+    if (customBase) {
+      return `${customBase.replace(/\/+$/, '')}/${encoded}`;
+    }
+    const bucket = this.bucket();
+    const endpoint = this.endpoint().replace(/\/+$/, '');
+    if (this.forcePathStyle()) {
+      return `${endpoint}/${bucket}/${encoded}`;
+    }
+    try {
+      const u = new URL(endpoint);
+      return `${u.protocol}//${bucket}.${u.host}/${encoded}`;
+    } catch {
+      return `${endpoint}/${bucket}/${encoded}`;
+    }
+  }
+
+  private publicReadEnabled(): boolean {
+    return this.config.get<string>('MINIO_PUBLIC_READ')?.trim() !== 'false';
+  }
+
+  async upload(input: StorageUploadInput): Promise<StorageUploadResult> {
+    const { PutObjectCommand } = await import('@aws-sdk/client-s3');
+    const client = await this.client();
+    const putBase = {
+      Bucket: this.bucket(),
+      Key: input.path,
+      Body: input.buffer,
+      ContentType: input.contentType,
+      Metadata: { owner: input.owner },
+    };
+
+    if (this.publicReadEnabled()) {
+      try {
+        await client.send(
+          new PutObjectCommand({ ...putBase, ACL: 'public-read' }),
+        );
+      } catch (err) {
+        this.logger.warn(
+          `MinIO ACL public-read skipped for ${input.path}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        await client.send(new PutObjectCommand(putBase));
+      }
+    } else {
+      await client.send(new PutObjectCommand(putBase));
+    }
+
+    return {
+      url: this.publicUrl(input.path),
+      path: input.path,
+      engine: this.id,
+    };
+  }
+
+  async readObject(objectPath: string): Promise<StorageObjectStream> {
+    const { GetObjectCommand } = await import('@aws-sdk/client-s3');
+    const client = await this.client();
+    const out = await client.send(
+      new GetObjectCommand({
+        Bucket: this.bucket(),
+        Key: objectPath,
+      }),
+    );
+    if (!out.Body) {
+      throw new Error('minio_object_empty');
+    }
+    return {
+      body: out.Body as NodeJS.ReadableStream,
+      contentType:
+        typeof out.ContentType === 'string' ? out.ContentType : undefined,
+    };
+  }
+
+  async delete(pathOrUrl: string): Promise<void> {
+    const { DeleteObjectCommand } = await import('@aws-sdk/client-s3');
+    const client = await this.client();
+    await client.send(
+      new DeleteObjectCommand({
+        Bucket: this.bucket(),
+        Key: extractObjectPath(pathOrUrl),
+      }),
+    );
+  }
+
+  async deleteFilesWithPrefix(prefix: string): Promise<void> {
+    const { ListObjectsV2Command, DeleteObjectsCommand } = await import(
+      '@aws-sdk/client-s3'
+    );
+    const normalized = prefix.endsWith('/') ? prefix : `${prefix}/`;
+    try {
+      const client = await this.client();
+      const listed = await client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket(),
+          Prefix: normalized,
+        }),
+      );
+      const keys = (listed.Contents ?? [])
+        .map((o) => o.Key)
+        .filter((k): k is string => Boolean(k));
+      if (!keys.length) return;
+      await client.send(
+        new DeleteObjectsCommand({
+          Bucket: this.bucket(),
+          Delete: { Objects: keys.map((Key) => ({ Key })) },
+        }),
+      );
+    } catch (err) {
+      this.logger.error('deleteFilesWithPrefix', err);
+    }
+  }
+
+  async deleteFilesWithPrefixExcept(
+    prefix: string,
+    keepPathOrUrl: string,
+  ): Promise<void> {
+    const { ListObjectsV2Command, DeleteObjectsCommand } = await import(
+      '@aws-sdk/client-s3'
+    );
+    const keepPath = extractObjectPath(keepPathOrUrl);
+    const normalized = prefix.endsWith('/') ? prefix : `${prefix}/`;
+    try {
+      const client = await this.client();
+      const listed = await client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket(),
+          Prefix: normalized,
+        }),
+      );
+      const keys = (listed.Contents ?? [])
+        .map((o) => o.Key)
+        .filter((k): k is string => Boolean(k) && k !== keepPath);
+      if (!keys.length) return;
+      await client.send(
+        new DeleteObjectsCommand({
+          Bucket: this.bucket(),
+          Delete: { Objects: keys.map((Key) => ({ Key })) },
+        }),
+      );
+    } catch (err) {
+      this.logger.error('deleteFilesWithPrefixExcept', err);
+    }
+  }
+}

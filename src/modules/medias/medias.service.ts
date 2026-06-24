@@ -15,6 +15,7 @@ import { StorageEngineFactory } from './storage-engine.factory';
 import {
   extractObjectPath,
   isStorageObjectNotFoundError,
+  looksLikeMinioUrl,
   StorageEngineId,
   StorageObjectStream,
   StorageUploadResult,
@@ -22,7 +23,7 @@ import {
 import { StorageEngineMode } from '@schemas/storage-settings.schema';
 
 /**
- * Service de stockage multi-moteur (Firebase, GCS, S3) avec compression et limites admin.
+ * Service de stockage multi-moteur (Firebase, GCS, S3, MinIO) avec compression et limites admin.
  */
 @Injectable()
 export class MediasService {
@@ -68,12 +69,57 @@ export class MediasService {
       .join('/');
   }
 
-  private isDirectGcsOrS3Url(url: string): boolean {
+  private isDirectObjectStoreUrl(url: string): boolean {
     return (
       url.includes('storage.googleapis.com') ||
       url.includes('.s3.') ||
-      url.includes('s3.amazonaws.com')
+      url.includes('s3.amazonaws.com') ||
+      this.isDirectMinioUrl(url)
     );
+  }
+
+  private isDirectMinioUrl(url: string): boolean {
+    const publicBase = this.config.get<string>('MINIO_PUBLIC_BASE_URL')?.trim();
+    if (publicBase && url.startsWith(publicBase.replace(/\/+$/, ''))) {
+      return true;
+    }
+    const endpoint = this.config.get<string>('MINIO_ENDPOINT')?.trim();
+    if (endpoint) {
+      try {
+        const ep = new URL(
+          endpoint.startsWith('http') ? endpoint : `http://${endpoint}`,
+        );
+        const u = new URL(url);
+        return u.origin === ep.origin;
+      } catch {
+        return false;
+      }
+    }
+    return looksLikeMinioUrl(url);
+  }
+
+  private minioPublicUrl(objectPath: string): string {
+    const encoded = this.encodeObjectPath(objectPath);
+    const customBase = this.config.get<string>('MINIO_PUBLIC_BASE_URL')?.trim();
+    if (customBase) {
+      return `${customBase.replace(/\/+$/, '')}/${encoded}`;
+    }
+    const bucket = this.config.get<string>('MINIO_BUCKET')?.trim() || '';
+    const endpointRaw = this.config.get<string>('MINIO_ENDPOINT')?.trim() || '';
+    const endpoint = endpointRaw.startsWith('http')
+      ? endpointRaw
+      : `http://${endpointRaw}`;
+    const forcePathStyle =
+      this.config.get<string>('MINIO_FORCE_PATH_STYLE')?.trim() !== 'false';
+    if (forcePathStyle) {
+      return `${endpoint.replace(/\/+$/, '')}/${bucket}/${encoded}`;
+    }
+    try {
+      const u = new URL(endpoint);
+      return `${u.protocol}//${bucket}.${u.host}/${encoded}`;
+    } catch {
+      return `${endpoint.replace(/\/+$/, '')}/${bucket}/${encoded}`;
+    }
   }
 
   private isProxyUrl(url: string): boolean {
@@ -97,6 +143,9 @@ export class MediasService {
       }
       return `https://${bucket}.s3.${region}.amazonaws.com/${encoded}`;
     }
+    if (engine === 'minio') {
+      return this.minioPublicUrl(objectPath);
+    }
     const bucket =
       this.config.get<string>('GCS_BUCKET')?.trim() ||
       this.config.get<string>('GOOGLE_CLOUD_STORAGE_BUCKET')?.trim() ||
@@ -119,7 +168,7 @@ export class MediasService {
 
     if (useProxy) {
       if (this.isProxyUrl(raw)) return raw;
-      if (this.isDirectGcsOrS3Url(raw)) {
+      if (this.isDirectObjectStoreUrl(raw)) {
         return this.buildProxyPublicUrl(extractObjectPath(raw));
       }
       return raw;
@@ -132,6 +181,8 @@ export class MediasService {
       if (engine === 'auto') {
         if (this.config.get<string>('AWS_S3_BUCKET')?.trim()) {
           engine = 's3';
+        } else if (this.config.get<string>('MINIO_BUCKET')?.trim()) {
+          engine = 'minio';
         } else if (
           this.config.get<string>('GCS_BUCKET')?.trim() ||
           this.config.get<string>('GOOGLE_CLOUD_STORAGE_BUCKET')?.trim()
@@ -141,7 +192,7 @@ export class MediasService {
           engine = 'firebase';
         }
       }
-      if (engine === 'gcs' || engine === 's3') {
+      if (engine === 'gcs' || engine === 's3' || engine === 'minio') {
         return this.directUrlForObjectPath(objectPath, engine);
       }
     }
@@ -155,7 +206,9 @@ export class MediasService {
     const useProxy = await this.isMediaProxyEnabled();
     if (
       useProxy &&
-      (result.engine === 'gcs' || result.engine === 's3')
+      (result.engine === 'gcs' ||
+        result.engine === 's3' ||
+        result.engine === 'minio')
     ) {
       return this.buildProxyPublicUrl(result.path);
     }
@@ -170,6 +223,7 @@ export class MediasService {
     const settings = await this.storageSettings.getPublicSettings();
     const engines = this.engineFactory.enginesToTryForRead(
       settings.storageEngine,
+      settings.enginesEnabled,
     );
 
     for (const engine of engines) {
@@ -213,7 +267,10 @@ export class MediasService {
     try {
       const prepared = await this.prepareForUpload(file);
       const settings = await this.storageSettings.getPublicSettings();
-      const engine = this.engineFactory.resolve(settings.storageEngine);
+      const engine = this.engineFactory.resolve(
+        settings.storageEngine,
+        settings.enginesEnabled,
+      );
       const path =
         basePath.length > 0
           ? `${basePath}/${uuid()}${extname(prepared.originalname)}`
@@ -244,7 +301,10 @@ export class MediasService {
     if (args.buffer.length > maxBytes) {
       throw new BadRequestException('file_too_large');
     }
-    const engine = this.engineFactory.resolve(settings.storageEngine);
+    const engine = this.engineFactory.resolve(
+      settings.storageEngine,
+      settings.enginesEnabled,
+    );
     const ext =
       args.extension ??
       (args.contentType.includes('png')
@@ -298,7 +358,10 @@ export class MediasService {
 
   async deleteFilesWithPrefix(prefix: string): Promise<void> {
     const settings = await this.storageSettings.getPublicSettings();
-    const engine = this.engineFactory.resolve(settings.storageEngine);
+    const engine = this.engineFactory.resolve(
+      settings.storageEngine,
+      settings.enginesEnabled,
+    );
     await engine.deleteFilesWithPrefix(prefix);
   }
 
@@ -307,7 +370,10 @@ export class MediasService {
     keepPathOrUrl: string,
   ): Promise<void> {
     const settings = await this.storageSettings.getPublicSettings();
-    const engine = this.engineFactory.resolve(settings.storageEngine);
+    const engine = this.engineFactory.resolve(
+      settings.storageEngine,
+      settings.enginesEnabled,
+    );
     await engine.deleteFilesWithPrefixExcept(prefix, keepPathOrUrl);
   }
 }

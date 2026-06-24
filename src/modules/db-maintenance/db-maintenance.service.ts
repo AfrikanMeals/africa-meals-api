@@ -4212,6 +4212,56 @@ export class DbMaintenanceService {
       });
     }
 
+    const minioBucket = String(this.config.get<string>('MINIO_BUCKET') ?? '').trim();
+    const minioKey = String(this.config.get<string>('MINIO_ACCESS_KEY') ?? '').trim();
+    const minioSecret = String(
+      this.config.get<string>('MINIO_SECRET_KEY') ?? '',
+    ).trim();
+    const minioEndpoint = String(
+      this.config.get<string>('MINIO_ENDPOINT') ?? '',
+    ).trim();
+    if (minioBucket && minioKey && minioSecret && minioEndpoint) {
+      try {
+        const { HeadBucketCommand, S3Client } = await import('@aws-sdk/client-s3');
+        const region =
+          String(this.config.get<string>('MINIO_REGION') ?? '').trim() ||
+          'us-east-1';
+        const endpoint = minioEndpoint.startsWith('http')
+          ? minioEndpoint
+          : `http://${minioEndpoint}`;
+        const forcePathStyle =
+          String(this.config.get<string>('MINIO_FORCE_PATH_STYLE') ?? '').trim() !==
+          'false';
+        const client = new S3Client({
+          region,
+          endpoint,
+          forcePathStyle,
+          credentials: { accessKeyId: minioKey, secretAccessKey: minioSecret },
+        });
+        await client.send(new HeadBucketCommand({ Bucket: minioBucket }));
+        engines.push({
+          name: 'MinIO',
+          configured: true,
+          ok: true,
+          detail: 'joignable',
+        });
+      } catch (e) {
+        engines.push({
+          name: 'MinIO',
+          configured: true,
+          ok: false,
+          detail: e instanceof Error ? e.message : String(e),
+        });
+      }
+    } else {
+      engines.push({
+        name: 'MinIO',
+        configured: false,
+        ok: false,
+        detail: 'non configuré',
+      });
+    }
+
     const configured = engines.filter((e) => e.configured);
     const okCount = configured.filter((e) => e.ok).length;
     let status: SystemHealthCheckResult['status'] = 'down';

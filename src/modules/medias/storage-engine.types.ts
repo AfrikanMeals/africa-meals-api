@@ -1,4 +1,4 @@
-export type StorageEngineId = 'firebase' | 'gcs' | 's3';
+export type StorageEngineId = 'firebase' | 'gcs' | 's3' | 'minio';
 
 export type StorageEngineMode = StorageEngineId | 'auto';
 
@@ -33,6 +33,23 @@ export interface IStorageEngine {
   ): Promise<void>;
 }
 
+export function looksLikeMinioUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (/minio/i.test(u.hostname)) return true;
+    if (
+      u.port === '9000' &&
+      !u.hostname.includes('amazonaws.com') &&
+      !u.hostname.includes('googleapis.com')
+    ) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 export function extractObjectPath(pathOrUrl: string): string {
   const url = pathOrUrl.trim();
   if (!url.startsWith('http')) return url;
@@ -54,6 +71,19 @@ export function extractObjectPath(pathOrUrl: string): string {
   if (s3Match) {
     return decodeURIComponent(s3Match[1].replace(/\+/g, ' '));
   }
+  if (looksLikeMinioUrl(url)) {
+    try {
+      const u = new URL(url);
+      const parts = u.pathname.replace(/^\/+/, '').split('/');
+      if (parts.length >= 2) {
+        return decodeURIComponent(
+          parts.slice(1).join('/').replace(/\+/g, ' '),
+        );
+      }
+    } catch {
+      /* fall through */
+    }
+  }
   return url;
 }
 
@@ -63,6 +93,7 @@ export function detectEngineFromUrl(pathOrUrl: string): StorageEngineId | null {
   if (url.includes('firebasestorage.googleapis.com')) return 'firebase';
   if (url.includes('/medias/public/')) return null;
   if (url.includes('.s3.') || url.includes('s3.amazonaws.com')) return 's3';
+  if (looksLikeMinioUrl(url)) return 'minio';
   if (url.includes('storage.googleapis.com')) return 'gcs';
   return null;
 }

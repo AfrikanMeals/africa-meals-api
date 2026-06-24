@@ -1,12 +1,16 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import {
+  DEFAULT_STORAGE_ENGINES_ENABLED,
+  StorageEnginesEnabled,
   StorageSettingsDocument,
   StorageSettingsModel,
   StorageEngineMode,
+  StorageEngineId,
 } from '@schemas/storage-settings.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
@@ -20,8 +24,38 @@ export type StorageSettingsResponse = {
   maxFileSizeMb: number;
   storageEngine: StorageEngineMode;
   mediaProxyEnabled: boolean;
+  enginesEnabled: StorageEnginesEnabled;
   updatedAt: string | null;
 };
+
+function normalizeEnginesEnabled(raw: unknown): StorageEnginesEnabled {
+  const o =
+    raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  return {
+    firebase: o.firebase !== false,
+    gcs: o.gcs !== false,
+    s3: o.s3 !== false,
+    minio: o.minio !== false,
+  };
+}
+
+function assertEnginesEnabledSettings(args: {
+  storageEngine: StorageEngineMode;
+  enginesEnabled: StorageEnginesEnabled;
+}) {
+  const enabledIds = (
+    ['firebase', 'gcs', 's3', 'minio'] as StorageEngineId[]
+  ).filter((id) => args.enginesEnabled[id]);
+  if (enabledIds.length === 0) {
+    throw new BadRequestException('storage_engine_none_enabled');
+  }
+  if (
+    args.storageEngine !== 'auto' &&
+    !args.enginesEnabled[args.storageEngine as StorageEngineId]
+  ) {
+    throw new BadRequestException('storage_engine_disabled');
+  }
+}
 
 function assertAdmin(user: UserModel) {
   if (user.type !== UserTypeEnum.ADMIN) {
@@ -50,6 +84,7 @@ export class StorageSettingsService {
           : 5,
       storageEngine: (doc.storageEngine as StorageEngineMode) || 'firebase',
       mediaProxyEnabled: doc.mediaProxyEnabled === true,
+      enginesEnabled: normalizeEnginesEnabled(doc.enginesEnabled),
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
   }
@@ -74,6 +109,7 @@ export class StorageSettingsService {
             maxFileSizeMb: 5,
             storageEngine: 'firebase',
             mediaProxyEnabled: false,
+            enginesEnabled: { ...DEFAULT_STORAGE_ENGINES_ENABLED },
           },
         },
         { upsert: true, new: true, lean: true, setDefaultsOnInsert: true },
@@ -92,6 +128,11 @@ export class StorageSettingsService {
 
   async updateSettings(user: UserModel, dto: UpdateStorageSettingsDto) {
     assertAdmin(user);
+    const enginesEnabled = normalizeEnginesEnabled(dto.enginesEnabled);
+    assertEnginesEnabledSettings({
+      storageEngine: dto.storageEngine,
+      enginesEnabled,
+    });
     const updated = await this._settings
       .findOneAndUpdate(
         { key: SETTINGS_KEY },
@@ -101,6 +142,7 @@ export class StorageSettingsService {
             maxFileSizeMb: dto.maxFileSizeMb,
             storageEngine: dto.storageEngine,
             mediaProxyEnabled: dto.mediaProxyEnabled,
+            enginesEnabled,
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },

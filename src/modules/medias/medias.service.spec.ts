@@ -20,6 +20,7 @@ describe('MediasService', () => {
               maxFileSizeMb: 5,
               storageEngine: 's3',
               mediaProxyEnabled: false,
+              enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true },
             }),
             getMaxFileSizeBytes: jest.fn().mockResolvedValue(5 * 1024 * 1024),
           },
@@ -69,6 +70,7 @@ describe('MediasService', () => {
       maxFileSizeMb: 5,
       storageEngine: 's3',
       mediaProxyEnabled: true,
+      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true },
       updatedAt: null,
     });
     const url =

@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Inject } from '@nestjs/common';
 import { App } from 'firebase-admin/app';
-import { StorageEngineMode } from '@schemas/storage-settings.schema';
+import { StorageEngineMode, StorageEnginesEnabled } from '@schemas/storage-settings.schema';
 import {
   detectEngineFromUrl,
   IStorageEngine,
@@ -11,6 +11,7 @@ import {
 import {
   FirebaseStorageEngine,
   GcsStorageEngine,
+  MinioStorageEngine,
   S3StorageEngine,
 } from './storage-engines';
 
@@ -27,6 +28,7 @@ export class StorageEngineFactory {
       new FirebaseStorageEngine(firebaseApp, bucketName),
       new GcsStorageEngine(config),
       new S3StorageEngine(config),
+      new MinioStorageEngine(config),
     ];
   }
 
@@ -38,17 +40,44 @@ export class StorageEngineFactory {
     return engine;
   }
 
-  resolve(mode: StorageEngineMode): IStorageEngine {
+  private isEngineAllowed(
+    id: StorageEngineId,
+    enabled?: StorageEnginesEnabled,
+  ): boolean {
+    if (!enabled) return true;
+    return enabled[id] !== false;
+  }
+
+  private configuredAndAllowed(
+    enabled?: StorageEnginesEnabled,
+  ): IStorageEngine[] {
+    return this.engines.filter(
+      (e) => e.isConfigured() && this.isEngineAllowed(e.id, enabled),
+    );
+  }
+
+  resolve(
+    mode: StorageEngineMode,
+    enabled?: StorageEnginesEnabled,
+  ): IStorageEngine {
     if (mode === 'auto') {
-      const available = this.engines.filter((e) => e.isConfigured());
+      const available = this.configuredAndAllowed(enabled);
       if (!available.length) {
-        return this.byId('firebase');
+        const fallback = this.engines.find((e) =>
+          this.isEngineAllowed(e.id, enabled),
+        );
+        return fallback ?? this.byId('firebase');
       }
       return available[Math.floor(Math.random() * available.length)];
     }
+    if (!this.isEngineAllowed(mode, enabled)) {
+      const available = this.configuredAndAllowed(enabled);
+      if (available.length) return available[0];
+      return this.byId(mode);
+    }
     const picked = this.byId(mode);
     if (picked.isConfigured()) return picked;
-    const fallback = this.engines.find((e) => e.isConfigured());
+    const fallback = this.configuredAndAllowed(enabled)[0];
     return fallback ?? picked;
   }
 
@@ -60,14 +89,22 @@ export class StorageEngineFactory {
     return this.byId('firebase');
   }
 
-  /** Ordre de lecture proxy : moteur admin d’abord, puis les autres configurés. */
-  enginesToTryForRead(mode: StorageEngineMode): IStorageEngine[] {
-    const primary = this.resolve(mode);
+  /** Ordre de lecture proxy : moteur admin d’abord, puis les autres configurés et activés. */
+  enginesToTryForRead(
+    mode: StorageEngineMode,
+    enabled?: StorageEnginesEnabled,
+  ): IStorageEngine[] {
+    const primary = this.resolve(mode, enabled);
     const seen = new Set<StorageEngineId>();
     const ordered: IStorageEngine[] = [];
     for (const engine of [
       primary,
-      ...this.engines.filter((e) => e.id !== primary.id && e.isConfigured()),
+      ...this.engines.filter(
+        (e) =>
+          e.id !== primary.id &&
+          e.isConfigured() &&
+          this.isEngineAllowed(e.id, enabled),
+      ),
     ]) {
       if (seen.has(engine.id)) continue;
       seen.add(engine.id);

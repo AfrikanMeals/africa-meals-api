@@ -1,5 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsInt, Max, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsBoolean, IsIn, IsInt, Max, Min, ValidateNested } from 'class-validator';
+import { StorageEnginesEnabledDto } from './storage-engines-enabled.dto';
 
 export class UpdateStorageSettingsDto {
   @ApiProperty({ description: 'Compresse les images avant upload (JPEG/WebP)' })
@@ -14,10 +16,10 @@ export class UpdateStorageSettingsDto {
 
   @ApiProperty({
     description: 'Moteur de stockage',
-    enum: ['firebase', 'gcs', 's3', 'auto'],
+    enum: ['firebase', 'gcs', 's3', 'minio', 'auto'],
   })
-  @IsIn(['firebase', 'gcs', 's3', 'auto'])
-  storageEngine: 'firebase' | 'gcs' | 's3' | 'auto';
+  @IsIn(['firebase', 'gcs', 's3', 'minio', 'auto'])
+  storageEngine: 'firebase' | 'gcs' | 's3' | 'minio' | 'auto';
 
   @ApiProperty({
     description:
@@ -25,4 +27,11 @@ export class UpdateStorageSettingsDto {
   })
   @IsBoolean()
   mediaProxyEnabled: boolean;
+
+  @ApiProperty({
+    description: 'Activation par moteur (Firebase, GCS, S3)',
+  })
+  @ValidateNested()
+  @Type(() => StorageEnginesEnabledDto)
+  enginesEnabled: StorageEnginesEnabledDto;
 }
