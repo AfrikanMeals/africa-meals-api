@@ -2125,6 +2125,68 @@ export class StripeConnectService {
       store?.partnerBadgeCode ?? user.partnerBadgeCode,
     );
   }
+
+  /**
+   * Admin : déconnecte Stripe Connect (suppression du compte Express si possible)
+   * pour permettre un nouvel onboarding vendeur.
+   */
+  async resetConnectForReonboarding(params: {
+    userId: Types.ObjectId;
+    storeId?: Types.ObjectId;
+  }): Promise<{
+    previousAccountId: string;
+    deletedOnStripe: boolean;
+  }> {
+    const user = await this.userModel.findById(params.userId).exec();
+    if (!user) {
+      throw new BadRequestException('user_not_found');
+    }
+
+    const accountId = String(user.stripeConnectAccountId ?? '').trim();
+    if (!accountId) {
+      throw new BadRequestException('stripe_connect_not_linked');
+    }
+
+    let deletedOnStripe = false;
+    try {
+      await this.stripe().accounts.del(accountId);
+      deletedOnStripe = true;
+    } catch (e) {
+      this.logger.warn(
+        `Stripe Connect account delete skipped for ${accountId}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+
+    await this.clearStaleConnectAccount(params.userId);
+
+    if (params.storeId) {
+      await this.storeModel
+        .updateOne(
+          { _id: params.storeId },
+          { $set: { stripeConnectAccountId: null } },
+        )
+        .exec();
+    }
+
+    this.pushConnectStatusRealtime(params.userId, {
+      accountId: null,
+      chargesEnabled: false,
+      payoutsEnabled: false,
+      detailsSubmitted: false,
+      onboardingComplete: false,
+      status: 'not_created',
+      businessType: resolveConnectBusinessType(user),
+      country: null,
+      defaultCurrency: null,
+      requirementsDue: [],
+      requirementsPastDue: [],
+      disabledReason: null,
+    });
+
+    return { previousAccountId: accountId, deletedOnStripe };
+  }
 }
 
 function balanceAvailableRow(

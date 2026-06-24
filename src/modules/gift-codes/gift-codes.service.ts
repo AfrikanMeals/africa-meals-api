@@ -303,39 +303,46 @@ export class GiftCodesService {
       .lean()
       .exec();
 
+    const rows = await Promise.all(
+      docs.map(async (raw) => {
+        const doc = raw as Record<string, unknown>;
+        const scopeType = doc.scopeType as GiftCodeScopeTypeEnum;
+        const discountType = doc.discountType as GiftCodeDiscountTypeEnum;
+        const value = Number(doc.value ?? 0);
+        const code = String(doc.code ?? '').trim();
+        const vu = doc.validUntil as Date | string;
+        return {
+          id: String(doc._id ?? ''),
+          code,
+          promoType:
+            (doc.promoType as GiftCodePromoTypeEnum | undefined) ??
+            GiftCodePromoTypeEnum.DISCOUNT,
+          title: String(doc.title ?? code).trim() || code,
+          subtitle: String(doc.subtitle ?? '').trim(),
+          imageUrl: await this.resolveImageUrl(doc.imageUrl),
+          discountLabel: this.formatDiscountLabel(discountType, value),
+          validUntil:
+            vu instanceof Date ? vu.toISOString() : String(vu ?? ''),
+          scopeType,
+          regionCodes: ((doc.regionCodes as string[] | undefined) ?? []).map(
+            (c) => normalizeCountryCode(c),
+          ),
+        };
+      }),
+    );
+
     const out: PublicGiftCodeRow[] = [];
-    for (const raw of docs) {
-      const doc = raw as Record<string, unknown>;
-      const scopeType = doc.scopeType as GiftCodeScopeTypeEnum;
-      const regionCodes = ((doc.regionCodes as string[] | undefined) ?? []).map(
-        (c) => normalizeCountryCode(c),
-      );
+    for (const row of rows) {
       if (
-        scopeType === GiftCodeScopeTypeEnum.REGION &&
+        row.scopeType === GiftCodeScopeTypeEnum.REGION &&
         regionCode &&
-        regionCodes.length > 0 &&
-        !regionCodes.includes(regionCode)
+        row.regionCodes.length > 0 &&
+        !row.regionCodes.includes(regionCode)
       ) {
         continue;
       }
-      const discountType = doc.discountType as GiftCodeDiscountTypeEnum;
-      const value = Number(doc.value ?? 0);
-      const code = String(doc.code ?? '').trim();
-      const vu = doc.validUntil as Date | string;
-      out.push({
-        id: String(doc._id ?? ''),
-        code,
-        promoType:
-          (doc.promoType as GiftCodePromoTypeEnum | undefined) ??
-          GiftCodePromoTypeEnum.DISCOUNT,
-        title: String(doc.title ?? code).trim() || code,
-        subtitle: String(doc.subtitle ?? '').trim(),
-        imageUrl: await this.resolveImageUrl(doc.imageUrl),
-        discountLabel: this.formatDiscountLabel(discountType, value),
-        validUntil:
-          vu instanceof Date ? vu.toISOString() : String(vu ?? ''),
-        scopeType,
-      });
+      const { regionCodes: _rc, ...pub } = row;
+      out.push(pub);
     }
     return out;
   }

@@ -344,6 +344,19 @@ export class StoreController {
     );
   }
 
+  /** Déconnecte Stripe Connect du vendeur — nouvel onboarding requis. */
+  @Post('admin/vendors/:storeId/reset-stripe-connect')
+  @UseGuards(JwtGuard)
+  async resetVendorStripeConnect(
+    @Param('storeId') storeId: string,
+    @Req() req: Request,
+  ) {
+    return this._storeService.resetVendorStripeConnectForAdmin(
+      storeId,
+      req.user as UserModel,
+    );
+  }
+
   /** Suppression d’une boutique — le vendeur peut soumettre une nouvelle fiche. */
   @Delete('admin/vendors/:storeId')
   @UseGuards(JwtGuard)

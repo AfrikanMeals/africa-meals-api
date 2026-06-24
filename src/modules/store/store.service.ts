@@ -3495,6 +3495,104 @@ export class StoreService {
     return this.getVendorStoreDetailForAdmin(storeId, admin);
   }
 
+  /** Déconnecte Stripe Connect du propriétaire pour permettre un nouvel onboarding. */
+  async resetVendorStripeConnectForAdmin(storeId: string, admin: UserModel) {
+    await this._assertAdminVendorPermission(admin);
+    if (!Types.ObjectId.isValid(storeId)) {
+      throw new NotFoundException('store_not_found');
+    }
+
+    const doc = await this._storeModel
+      .findById(storeId)
+      .select('_id name status owner')
+      .exec();
+    if (!doc) {
+      throw new NotFoundException('store_not_found');
+    }
+
+    const openOrders = await this._orderModel
+      .countDocuments({
+        store: doc._id,
+        status: {
+          $in: [
+            OrderStatusEnum.PAIED,
+            OrderStatusEnum.APPROVED,
+            OrderStatusEnum.SHIPPED,
+          ],
+        },
+      })
+      .exec();
+    if (openOrders > 0) {
+      throw new ConflictException('stripe_reset_has_open_orders');
+    }
+
+    const ownerId = (() => {
+      const o = doc.owner as unknown;
+      if (o && typeof o === 'object' && '_id' in o) {
+        return String((o as { _id: { toString(): string } })._id);
+      }
+      if (
+        o != null &&
+        typeof (o as { toString?: () => string }).toString === 'function'
+      ) {
+        return String(o);
+      }
+      return '';
+    })();
+    if (!ownerId || !Types.ObjectId.isValid(ownerId)) {
+      throw new BadRequestException('store_owner_missing');
+    }
+
+    const owner = await this._userModel
+      .findById(ownerId)
+      .select('stripeConnectAccountId')
+      .exec();
+    if (!String(owner?.stripeConnectAccountId ?? '').trim()) {
+      throw new BadRequestException('stripe_connect_not_linked');
+    }
+
+    const resetResult = await this._stripeConnect.resetConnectForReonboarding({
+      userId: new Types.ObjectId(ownerId),
+      storeId: doc._id as Types.ObjectId,
+    });
+
+    this._dashboardAudit.recordPlatformEvent(admin, {
+      action: 'ADMIN_VENDOR_STRIPE_CONNECT_RESET',
+      category: 'vendors',
+      path: `/vendeurs/${storeId}`,
+      storeId,
+      resource: 'vendor_stripe_connect',
+      resourceId: ownerId,
+      metadata: {
+        storeName: String(doc.name ?? ''),
+        previousAccountId: resetResult.previousAccountId,
+        deletedOnStripe: resetResult.deletedOnStripe,
+      },
+    });
+
+    this._wsInboxNotify.notifyUserInboxRefresh(ownerId);
+
+    const lean = await this._storeModel
+      .findById(storeId)
+      .populate({
+        path: 'owner',
+        select:
+          'fullName email stripeConnectAccountId stripeConnectChargesEnabled stripeConnectPayoutsEnabled stripeConnectDetailsSubmitted stripeConnectDisabledReason stripeConnectRequirementsDue stripeConnectRequirementsPastDue',
+      })
+      .populate({
+        path: 'address',
+        select: 'address city country countryCode zipCode',
+      })
+      .lean()
+      .exec();
+    const planByStore = await this._resolveSubscriptionPlanByStoreIds([
+      storeId,
+    ]);
+    return this._mapStoreToAdminVendorRow(lean as Record<string, unknown>, {
+      subscriptionPlan: planByStore.get(storeId),
+    });
+  }
+
   /** Supprime une boutique (admin) pour permettre au vendeur de recommencer sa fiche. */
   async deleteVendorStoreForAdmin(storeId: string, admin: UserModel) {
     if (admin.type !== UserTypeEnum.ADMIN) {
