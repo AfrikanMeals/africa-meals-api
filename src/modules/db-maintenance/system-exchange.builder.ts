@@ -12,9 +12,12 @@ import {
   readRedisUrlFromConfig,
 } from '../../common/redis/redis-connection.util';
 import {
+  grpcEnvFlag,
   mqttToExchange,
   probeBullmqRedis,
   probeCacheRedis,
+  probeGrpcApiInternal,
+  probeGrpcWsNotify,
   probeHttpHealth,
   probeMongoDb,
   probeSseStream,
@@ -29,7 +32,11 @@ type BuildSystemExchangeInput = {
     apiPublisher: MqttRuntimeStatus;
     wsSubscriber: MqttRuntimeStatus;
   };
-  runtime: { redisManagerEnabled: boolean; mqBrokerEnabled: boolean };
+  runtime: {
+    redisManagerEnabled: boolean;
+    mqBrokerEnabled: boolean;
+    grpcWsNotifyEnabled: boolean;
+  };
   firebaseMessagingOk: boolean;
 };
 
@@ -127,6 +134,17 @@ export async function buildSystemExchangeResponse(
   const wsHealthUrl = `${wsInternal.replace(/\/$/, '')}/api/health`;
   const wsSsePublicUrl = `${wsInternal.replace(/\/$/, '')}/api/sse/public/status`;
   const apiHealthUrl = resolveApiHealthProbeUrl(apiPublic);
+  const grpcWsHost = input.config.get<string>('GRPC_WS_HOST')?.trim() || '127.0.0.1';
+  const grpcWsPort = String(
+    input.config.get<string>('GRPC_WS_PORT')?.trim() || '50051',
+  );
+  const grpcApiPort = String(
+    input.config.get<string>('GRPC_API_PORT')?.trim() || '50052',
+  );
+  const grpcWsEndpoint = `${grpcWsHost}:${grpcWsPort}`;
+  const grpcApiHost =
+    input.config.get<string>('GRPC_API_BIND_HOST')?.trim() || '127.0.0.1';
+  const grpcApiEndpoint = `${grpcApiHost}:${grpcApiPort}`;
 
   const [
     mongoProbe,
@@ -136,6 +154,8 @@ export async function buildSystemExchangeResponse(
     wsProbe,
     sseProbe,
     webProbe,
+    grpcWsProbe,
+    grpcApiProbe,
   ] = await Promise.all([
     probeMongoDb(input.connection),
     probeCacheRedis(input.config),
@@ -144,6 +164,8 @@ export async function buildSystemExchangeResponse(
     probeHttpHealth(wsHealthUrl),
     probeSseStream(wsSsePublicUrl, 12000),
     probeHttpHealth(webPublic, 5000),
+    probeGrpcWsNotify(input.config),
+    probeGrpcApiInternal(input.config),
   ]);
 
   const sseResolved: ProbeResult =
@@ -218,6 +240,22 @@ export async function buildSystemExchangeResponse(
     platform('api', 'API REST', 'service', 'NestJS — logique métier, webhooks, SSE publish', apiProbe, apiPublic),
     platform('ws', 'WebSocket (WS)', 'service', 'Socket.IO chat, commandes temps réel, SSE HTTP', wsProbe, wsPublic),
     platform(
+      'grpc-ws',
+      'gRPC WS (Notify)',
+      'service',
+      'NotifyService · Health · Fleet stream (:50051)',
+      grpcWsProbe,
+      grpcWsEndpoint,
+    ),
+    platform(
+      'grpc-api',
+      'gRPC API (interne)',
+      'service',
+      'InboxFeed · ChatPush — WS → API (:50052)',
+      grpcApiProbe,
+      grpcApiEndpoint,
+    ),
+    platform(
       'sse',
       'SSE (WS)',
       'service',
@@ -281,6 +319,11 @@ export async function buildSystemExchangeResponse(
     platforms.map((p) => [p.id, p.status]),
   ) as Record<string, SystemExchangeStatus>;
   byId.sse = sseResolved.status;
+  byId['grpc-ws'] = grpcWsProbe.status;
+  byId['grpc-api'] = grpcApiProbe.status;
+
+  const grpcNotifyActive = input.runtime.grpcWsNotifyEnabled;
+  const grpcWsToApiActive = grpcEnvFlag(input.config, 'GRPC_WS_TO_API_ENABLED', false);
 
   const links: SystemExchangeLink[] = [
     communication(
@@ -417,11 +460,39 @@ export async function buildSystemExchangeResponse(
       'api',
       'ws',
       'HTTP interne',
-      'API → WS (fallback)',
+      grpcNotifyActive ? 'API → WS (HTTP fallback)' : 'API → WS (notify)',
       byId.api,
       byId.ws,
-      'Notify direct si MQTT/Redis indisponible',
+      grpcNotifyActive
+        ? 'Repli HTTP si gRPC indisponible (GRPC_HTTP_FALLBACK_ENABLED).'
+        : 'Canal principal notify API → WS (HTTP interne).',
       wsProbe.latencyMs,
+    ),
+    communication(
+      'api-ws-grpc',
+      'api',
+      'grpc-ws',
+      'gRPC (NotifyService)',
+      'API → WS (gRPC)',
+      byId.api,
+      grpcNotifyActive ? byId['grpc-ws'] : 'disabled',
+      grpcNotifyActive
+        ? `NotifyService :50051 · ${grpcWsProbe.details}`
+        : 'Désactivé (runtime grpcWsNotifyEnabled=false) — HTTP/MQTT actifs.',
+      grpcWsProbe.latencyMs,
+    ),
+    communication(
+      'ws-api-grpc',
+      'ws',
+      'grpc-api',
+      'gRPC (InboxFeed / ChatPush)',
+      'WS → API (gRPC)',
+      byId.ws,
+      grpcWsToApiActive ? byId['grpc-api'] : 'disabled',
+      grpcWsToApiActive
+        ? `InboxFeed · ChatPush :50052 · ${grpcApiProbe.details}`
+        : 'Désactivé (GRPC_WS_TO_API_ENABLED=false) — repli HTTP interne WS.',
+      grpcApiProbe.latencyMs,
     ),
     communication(
       'api-sse-redis',

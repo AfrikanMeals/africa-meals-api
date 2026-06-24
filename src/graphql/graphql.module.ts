@@ -23,6 +23,7 @@ import { StoreMenuResolver } from './store-menu.resolver';
       useGlobalPrefix: true,
       path: 'graphql',
       bodyParserConfig: false,
+      cache: 'bounded',
       context: ({ req, res }) => ({ req, res }),
       playground: isGraphqlPlaygroundEnabled(),
       introspection: isGraphqlPlaygroundEnabled(),

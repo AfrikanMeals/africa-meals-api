@@ -49,6 +49,7 @@ import { AdminAlertEmailQueueService } from './admin-alert-email-queue.service';
 import { AdminAlertEmailService } from './admin-alert-email.service';
 import { DbMaintenanceAdminController } from './db-maintenance-admin.controller';
 import { DbMaintenanceService } from './db-maintenance.service';
+import { GrpcModule } from '@modules/grpc/grpc.module';
 import { MapSettingsModule } from '../map-settings/map-settings.module';
 
 @Module({
@@ -60,6 +61,7 @@ import { MapSettingsModule } from '../map-settings/map-settings.module';
     MailerModule,
     OrdersModule,
     MapSettingsModule,
+    GrpcModule,
     forwardRef(() => BillingModule),
     DomainEventHandlersModule,
     MongooseModule.forFeature([

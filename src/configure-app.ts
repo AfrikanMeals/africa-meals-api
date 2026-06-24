@@ -1,3 +1,4 @@
+import { acmeChallengeMiddleware } from './common/http/acme-challenge.middleware';
 import { fieldSelectionMiddleware } from './common/field-selection/field-selection.middleware';
 import { buildApiCorsOptions } from './common/cors/cors-options';
 import { wiseEatCorsEarlyMiddleware } from './common/cors/wise-eat-cors.middleware';
@@ -84,6 +85,7 @@ export async function configureApplication(
     }),
   );
 
+  app.use(acmeChallengeMiddleware());
   app.use(httpRequestLogMiddleware());
 
   const prefix = options?.globalPrefix ?? 'api';

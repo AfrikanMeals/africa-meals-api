@@ -74,10 +74,14 @@ import {
 import { orderInvoiceRef } from '@modules/orders/order-invoice.util';
 import { InjectModel } from '@nestjs/mongoose';
 import { SendOrderEmailDebugDto } from './dto/send-order-email-debug.dto';
+import { GrpcWsNotifyMetricsService } from '@modules/grpc/grpc-ws-notify.metrics.service';
 import { buildSystemExchangeResponse } from './system-exchange.builder';
 import {
+  grpcEnvFlag,
   probeBullmqRedis,
   probeCacheRedis,
+  probeGrpcApiInternal,
+  probeGrpcWsNotify,
   probeMemcached,
   resolveMinioHealthProbeSkipReason,
 } from './system-exchange.probes';
@@ -298,6 +302,18 @@ export class DbMaintenanceService {
       description: 'Vérifie la disponibilité du service WS (/api/health).',
     },
     {
+      key: 'grpc-ws-notify-status',
+      label: 'gRPC WS Notify status',
+      description:
+        'Ping NotifyService sur africa-meals-ws (:50051) — canal API → WS gRPC.',
+    },
+    {
+      key: 'grpc-api-internal-status',
+      label: 'gRPC API internal status',
+      description:
+        'Sonde InboxFeedService sur l’API (:50052) — canal WS → API gRPC.',
+    },
+    {
       key: 'api-function-status',
       label: 'API Function Status',
       description: 'Vérifie l’état global de l’API (uptime + ping DB).',
@@ -400,6 +416,7 @@ export class DbMaintenanceService {
     private readonly platformChannels: PlatformChannelsService,
     private readonly mapSettings: MapSettingsService,
     private readonly orderPaidInvoiceEmail: OrderPaidInvoiceEmailService,
+    private readonly grpcWsNotifyMetrics: GrpcWsNotifyMetricsService,
     @Inject(forwardRef(() => AdminJobEmitterService))
     @Optional()
     private readonly adminJobEmitter?: AdminJobEmitterService,
@@ -657,6 +674,10 @@ export class DbMaintenanceService {
         return this.runMemcachedHealthCheck();
       case 'websocket-service-status':
         return this.runWebsocketHealthCheck();
+      case 'grpc-ws-notify-status':
+        return this.runGrpcWsNotifyHealthCheck();
+      case 'grpc-api-internal-status':
+        return this.runGrpcApiInternalHealthCheck();
       case 'api-function-status':
         return this.runApiFunctionHealthCheck();
       case 'stripe-payment-status':
@@ -3713,6 +3734,80 @@ export class DbMaintenanceService {
         }`,
       });
     }
+  }
+
+  private async runGrpcWsNotifyHealthCheck(): Promise<SystemHealthCheckResult> {
+    const startedAtMs = Date.now();
+    const key = 'grpc-ws-notify-status';
+    const label = 'gRPC WS Notify status';
+    const [probe, runtime] = await Promise.all([
+      probeGrpcWsNotify(this.config),
+      this.ensureInfraRuntimeSettings().then((doc) =>
+        this.toInfraRuntimeSettingsResponse(doc),
+      ),
+    ]);
+    const metrics = this.grpcWsNotifyMetrics.snapshot();
+    let details = probe.details;
+    if (metrics.count > 0) {
+      details += ` · dispatches n=${metrics.count}, p95=${metrics.p95Ms}ms, fallback=${(metrics.fallbackRate * 100).toFixed(1)}%`;
+    }
+    if (runtime.grpcWsNotifyEnabled) {
+      details += ' · runtime grpcWsNotifyEnabled=ON';
+    } else {
+      details += ' · runtime grpcWsNotifyEnabled=OFF (HTTP/MQTT)';
+    }
+    let status = this.probeToHealthStatus(probe.status);
+    if (
+      runtime.grpcWsNotifyEnabled &&
+      probe.status !== 'healthy' &&
+      probe.status !== 'disabled'
+    ) {
+      status = 'down';
+    } else if (
+      !runtime.grpcWsNotifyEnabled &&
+      probe.status === 'healthy'
+    ) {
+      status = 'healthy';
+    } else if (
+      !runtime.grpcWsNotifyEnabled &&
+      probe.status === 'disabled'
+    ) {
+      status = 'degraded';
+    }
+    return this.normalizeHealthResult({
+      key,
+      label,
+      startedAtMs,
+      status,
+      details,
+    });
+  }
+
+  private async runGrpcApiInternalHealthCheck(): Promise<SystemHealthCheckResult> {
+    const startedAtMs = Date.now();
+    const key = 'grpc-api-internal-status';
+    const label = 'gRPC API internal status';
+    const probe = await probeGrpcApiInternal(this.config);
+    const wsToApiEnabled = grpcEnvFlag(
+      this.config,
+      'GRPC_WS_TO_API_ENABLED',
+      false,
+    );
+    let details = probe.details;
+    details += wsToApiEnabled
+      ? ' · GRPC_WS_TO_API_ENABLED=ON'
+      : ' · GRPC_WS_TO_API_ENABLED=OFF (repli HTTP WS→API)';
+    let status = this.probeToHealthStatus(probe.status);
+    if (wsToApiEnabled && probe.status !== 'healthy' && probe.status !== 'disabled') {
+      status = 'down';
+    }
+    return this.normalizeHealthResult({
+      key,
+      label,
+      startedAtMs,
+      status,
+      details,
+    });
   }
 
   private async runApiFunctionHealthCheck(): Promise<SystemHealthCheckResult> {

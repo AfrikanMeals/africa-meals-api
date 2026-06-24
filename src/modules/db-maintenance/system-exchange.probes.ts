@@ -13,6 +13,14 @@ import {
   readMemcachedConnectionFromConfig,
 } from '../../common/cache/memcached-connection.util';
 import { tlsMemcachedPing } from '../../common/cache/memcached-tls-client';
+import {
+  getProtoServiceClientConstructor,
+  grpc,
+  grpcInternalMetadata,
+  loadInboxV1,
+  loadNotifyV1,
+  parsePositiveInt,
+} from '@africa-meals/proto';
 
 export type ProbeResult = {
   status: SystemExchangeStatus;
@@ -371,6 +379,170 @@ export async function probeMemcached(
           latencyMs,
           details: `SET/GET OK (${servers}).`,
         });
+      });
+    });
+  });
+}
+
+export function grpcEnvFlag(config: ConfigService, key: string, defaultOn = true): boolean {
+  const raw = (config.get<string>(key) ?? (defaultOn ? 'true' : 'false'))
+    .trim()
+    .toLowerCase();
+  return raw !== '0' && raw !== 'false' && raw !== 'no' && raw !== 'off';
+}
+
+function resolveGrpcInternalSecret(config: ConfigService): string {
+  return (
+    config.get<string>('INTERNAL_NOTIFY_SECRET')?.trim() ||
+    config.get<string>('INTERNAL_WS_NOTIFY_SECRET')?.trim() ||
+    config.get<string>('GRPC_INTERNAL_SECRET')?.trim() ||
+    ''
+  );
+}
+
+/** Ping `NotifyService` sur africa-meals-ws (:50051). */
+export async function probeGrpcWsNotify(
+  config: ConfigService,
+): Promise<ProbeResult> {
+  if (!grpcEnvFlag(config, 'GRPC_WS_SERVER_ENABLED', true)) {
+    return {
+      status: 'disabled',
+      latencyMs: null,
+      details: 'Serveur gRPC WS désactivé (GRPC_WS_SERVER_ENABLED=false).',
+    };
+  }
+  const secret = resolveGrpcInternalSecret(config);
+  if (!secret) {
+    return {
+      status: 'disabled',
+      latencyMs: null,
+      details: 'INTERNAL_NOTIFY_SECRET absent — gRPC WS non testable.',
+    };
+  }
+  const host = config.get<string>('GRPC_WS_HOST')?.trim() || '127.0.0.1';
+  const port = parsePositiveInt(config.get<string>('GRPC_WS_PORT'), 50051);
+  const deadlineMs = parsePositiveInt(config.get<string>('GRPC_DEADLINE_MS'), 5000);
+  const started = performance.now();
+
+  const pkg = loadNotifyV1();
+  const ctor = getProtoServiceClientConstructor(
+    pkg,
+    'wiseeat',
+    'notify',
+    'v1',
+    'NotifyService',
+  );
+  if (!ctor) {
+    return {
+      status: 'down',
+      latencyMs: null,
+      details: 'Proto NotifyService introuvable.',
+    };
+  }
+
+  const client = new ctor(
+    `${host}:${port}`,
+    grpc.credentials.createInsecure(),
+  ) as unknown as {
+    Ping: (
+      req: Record<string, never>,
+      md: grpc.Metadata,
+      opts: grpc.CallOptions,
+      cb: (err: grpc.ServiceError | null, res?: { service?: string }) => void,
+    ) => void;
+  };
+
+  return new Promise((resolve) => {
+    const md = grpcInternalMetadata(secret);
+    const deadline = new Date(Date.now() + deadlineMs);
+    client.Ping({}, md, { deadline }, (err, res) => {
+      const latencyMs = Math.round(performance.now() - started);
+      if (err || !res?.service) {
+        resolve({
+          status: 'down',
+          latencyMs,
+          details: err?.message ?? 'Ping gRPC WS sans réponse.',
+        });
+        return;
+      }
+      resolve({
+        status: 'healthy',
+        latencyMs,
+        details: `${res.service} @ ${host}:${port}`,
+      });
+    });
+  });
+}
+
+/** Sonde liveness serveur gRPC API (:50052) via InboxFeedService. */
+export async function probeGrpcApiInternal(
+  config: ConfigService,
+): Promise<ProbeResult> {
+  if (!grpcEnvFlag(config, 'GRPC_API_SERVER_ENABLED', true)) {
+    return {
+      status: 'disabled',
+      latencyMs: null,
+      details: 'Serveur gRPC API désactivé (GRPC_API_SERVER_ENABLED=false).',
+    };
+  }
+  const secret = resolveGrpcInternalSecret(config);
+  if (!secret) {
+    return {
+      status: 'disabled',
+      latencyMs: null,
+      details: 'INTERNAL_NOTIFY_SECRET absent — gRPC API non testable.',
+    };
+  }
+  const host = config.get<string>('GRPC_API_BIND_HOST')?.trim() || '127.0.0.1';
+  const port = parsePositiveInt(config.get<string>('GRPC_API_PORT'), 50052);
+  const deadlineMs = parsePositiveInt(config.get<string>('GRPC_DEADLINE_MS'), 5000);
+  const started = performance.now();
+
+  const pkg = loadInboxV1();
+  const ctor = getProtoServiceClientConstructor(
+    pkg,
+    'wiseeat',
+    'inbox',
+    'v1',
+    'InboxFeedService',
+  );
+  if (!ctor) {
+    return {
+      status: 'down',
+      latencyMs: null,
+      details: 'Proto InboxFeedService introuvable.',
+    };
+  }
+
+  const client = new ctor(
+    `${host}:${port}`,
+    grpc.credentials.createInsecure(),
+  ) as unknown as {
+    GetVendorFeed: (
+      req: { userId: string },
+      md: grpc.Metadata,
+      opts: grpc.CallOptions,
+      cb: (err: grpc.ServiceError | null, res?: { feedJson?: string }) => void,
+    ) => void;
+  };
+
+  return new Promise((resolve) => {
+    const md = grpcInternalMetadata(secret);
+    const deadline = new Date(Date.now() + deadlineMs);
+    client.GetVendorFeed({ userId: '__health__' }, md, { deadline }, (err) => {
+      const latencyMs = Math.round(performance.now() - started);
+      if (err) {
+        resolve({
+          status: 'down',
+          latencyMs,
+          details: err.message,
+        });
+        return;
+      }
+      resolve({
+        status: 'healthy',
+        latencyMs,
+        details: `InboxFeedService @ ${host}:${port}`,
       });
     });
   });

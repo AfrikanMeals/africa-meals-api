@@ -5,9 +5,10 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as grpc from '@grpc/grpc-js';
 import {
   assertGrpcInternalSecret,
+  getProtoServiceDefinition,
+  grpc,
   loadChatV1,
   loadInboxV1,
   parsePositiveInt,
@@ -50,31 +51,33 @@ export class GrpcApiServerService implements OnModuleInit, OnModuleDestroy {
     const host = this.config.get<string>('GRPC_API_BIND_HOST')?.trim() || '0.0.0.0';
     const maxMb = parsePositiveInt(this.config.get<string>('GRPC_MAX_RECV_MB'), 4);
 
-    const inboxPkg = loadInboxV1() as Record<string, unknown>;
-    const chatPkg = loadChatV1() as Record<string, unknown>;
-    const inboxService = (inboxPkg.wiseeat as Record<string, unknown>)?.inbox as
-      | Record<string, unknown>
-      | undefined;
-    const chatService = (chatPkg.wiseeat as Record<string, unknown>)?.chat as
-      | Record<string, unknown>
-      | undefined;
+    const inboxPkg = loadInboxV1();
+    const chatPkg = loadChatV1();
+    const inboxDef = getProtoServiceDefinition(
+      inboxPkg,
+      'wiseeat',
+      'inbox',
+      'v1',
+      'InboxFeedService',
+    );
+    const chatDef = getProtoServiceDefinition(
+      chatPkg,
+      'wiseeat',
+      'chat',
+      'v1',
+      'ChatPushService',
+    );
 
     const server = new grpc.Server({
       'grpc.max_receive_message_length': maxMb * 1024 * 1024,
       'grpc.max_send_message_length': maxMb * 1024 * 1024,
     });
 
-    if (inboxService?.v1?.InboxFeedService?.service) {
-      server.addService(
-        inboxService.v1.InboxFeedService.service as grpc.ServiceDefinition,
-        this.buildInboxHandlers() as InboxServer,
-      );
+    if (inboxDef) {
+      server.addService(inboxDef, this.buildInboxHandlers() as InboxServer);
     }
-    if (chatService?.v1?.ChatPushService?.service) {
-      server.addService(
-        chatService.v1.ChatPushService.service as grpc.ServiceDefinition,
-        this.buildChatHandlers() as ChatServer,
-      );
+    if (chatDef) {
+      server.addService(chatDef, this.buildChatHandlers() as ChatServer);
     }
 
     await new Promise<void>((resolve, reject) => {
@@ -86,7 +89,6 @@ export class GrpcApiServerService implements OnModuleInit, OnModuleDestroy {
             reject(err);
             return;
           }
-          server.start();
           resolve();
         },
       );

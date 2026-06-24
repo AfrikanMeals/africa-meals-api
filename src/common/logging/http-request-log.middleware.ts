@@ -1,4 +1,5 @@
 import { redactSensitiveJsonForLog } from './redact-sensitive.util';
+import { isAcmeChallengePath } from '../http/acme-challenge.middleware';
 import {
   formatHttpRequestLogLine,
   httpLogEnvironmentLabel,
@@ -28,6 +29,7 @@ function shouldSkipHttpRequestLog(path: string): boolean {
   if (p === '/health' || p.startsWith('/health/')) return true;
   if (p === '/wise-eat' || p.startsWith('/wise-eat/')) return true;
   if (p === '/favicon.ico') return true;
+  if (isAcmeChallengePath(p)) return true;
   return false;
 }
 

@@ -1,7 +1,8 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as grpc from '@grpc/grpc-js';
 import {
+  getProtoServiceClientConstructor,
+  grpc,
   grpcInternalMetadata,
   loadNotifyV1,
   parsePositiveInt,
@@ -106,13 +107,17 @@ export class GrpcWsNotifyClientService implements OnModuleDestroy {
     );
     const target = `${host}:${port}`;
 
-    const pkg = loadNotifyV1() as Record<string, unknown>;
-    const notifyCtor = (pkg.wiseeat as Record<string, unknown>)?.notify as
-      | Record<string, unknown>
-      | undefined;
-    if (!notifyCtor?.v1?.NotifyService) return false;
+    const pkg = loadNotifyV1();
+    const notifyCtor = getProtoServiceClientConstructor(
+      pkg,
+      'wiseeat',
+      'notify',
+      'v1',
+      'NotifyService',
+    );
+    if (!notifyCtor) return false;
 
-    this.client = new (notifyCtor.v1.NotifyService as grpc.ServiceClientConstructor)(
+    this.client = new notifyCtor(
       target,
       grpc.credentials.createInsecure(),
     ) as unknown as NotifyClient;

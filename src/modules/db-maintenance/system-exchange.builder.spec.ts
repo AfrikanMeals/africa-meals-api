@@ -39,12 +39,15 @@ describe('system-exchange.builder', () => {
           lastMessageAt: new Date().toISOString(),
         },
       },
-      runtime: { redisManagerEnabled: true, mqBrokerEnabled: true },
+      runtime: { redisManagerEnabled: true, mqBrokerEnabled: true, grpcWsNotifyEnabled: false },
       firebaseMessagingOk: true,
     });
 
     expect(result.platforms.length).toBeGreaterThan(5);
     expect(result.links.some((l) => l.id === 'api-mqtt')).toBe(true);
+    expect(result.links.some((l) => l.id === 'api-ws-grpc')).toBe(true);
+    expect(result.links.some((l) => l.id === 'ws-api-grpc')).toBe(true);
+    expect(result.platforms.some((p) => p.id === 'grpc-ws')).toBe(true);
     expect(result.summary.healthy).toBeGreaterThan(0);
   });
 });
