@@ -41,6 +41,45 @@ export function mqttToExchange(state?: MqttRuntimeStatus['state']): SystemExchan
 }
 
 /** Nest local : `/api/health` — hôtes API dédiés (Cloud Run / api.*) : `/health`. */
+/**
+ * MinIO en path-style envoie `HEAD /{bucket}/` (ex. `/wise-eat/`).
+ * Si MINIO_ENDPOINT pointe sur le même port que l’API Nest (PM2 prod local :9000),
+ * la sonde frappe l’API et pollue les logs — pas un proxy vitrine.
+ */
+export function resolveMinioHealthProbeSkipReason(
+  config: ConfigService,
+): string | null {
+  if (config.get<string>('MINIO_HEALTH_CHECK')?.trim() === 'false') {
+    return 'sonde désactivée (MINIO_HEALTH_CHECK=false)';
+  }
+  if (config.get<string>('MINIO_ENABLED')?.trim() === 'false') {
+    return 'MinIO désactivé (MINIO_ENABLED=false)';
+  }
+
+  const endpoint = config.get<string>('MINIO_ENDPOINT')?.trim() ?? '';
+  if (!endpoint) return null;
+
+  const apiPort = String(
+    config.get<string>('PORT') ?? config.get<string>('NODE_PORT') ?? '',
+  ).trim();
+  if (!apiPort) return null;
+
+  try {
+    const url = new URL(
+      endpoint.startsWith('http') ? endpoint : `http://${endpoint}`,
+    );
+    const host = url.hostname.toLowerCase();
+    if (host !== 'localhost' && host !== '127.0.0.1') return null;
+    const port = url.port || (url.protocol === 'https:' ? '443' : '80');
+    if (port === apiPort) {
+      return `MINIO_ENDPOINT (${endpoint}) partage le port ${port} avec l’API — sonde ignorée`;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 export function resolveApiHealthProbeUrl(serverUrl: string): string {
   const raw = serverUrl.trim().replace(/\/+$/, '').replace(/\/api\/health$/, '');
   if (!raw) return 'http://localhost:9000/api/health';

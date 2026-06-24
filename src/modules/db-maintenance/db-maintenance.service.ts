@@ -75,7 +75,12 @@ import { orderInvoiceRef } from '@modules/orders/order-invoice.util';
 import { InjectModel } from '@nestjs/mongoose';
 import { SendOrderEmailDebugDto } from './dto/send-order-email-debug.dto';
 import { buildSystemExchangeResponse } from './system-exchange.builder';
-import { probeBullmqRedis, probeCacheRedis, probeMemcached } from './system-exchange.probes';
+import {
+  probeBullmqRedis,
+  probeCacheRedis,
+  probeMemcached,
+  resolveMinioHealthProbeSkipReason,
+} from './system-exchange.probes';
 import type { SystemExchangeResponse } from './system-exchange.types';
 import { MapSettingsService } from '@modules/map-settings/map-settings.service';
 import { osmForwardGeocode } from '@common/osm-geocoding.util';
@@ -4220,7 +4225,15 @@ export class DbMaintenanceService {
     const minioEndpoint = String(
       this.config.get<string>('MINIO_ENDPOINT') ?? '',
     ).trim();
-    if (minioBucket && minioKey && minioSecret && minioEndpoint) {
+    const minioProbeSkip = resolveMinioHealthProbeSkipReason(this.config);
+    if (minioProbeSkip) {
+      engines.push({
+        name: 'MinIO',
+        configured: false,
+        ok: false,
+        detail: minioProbeSkip,
+      });
+    } else if (minioBucket && minioKey && minioSecret && minioEndpoint) {
       try {
         const { HeadBucketCommand, S3Client } = await import('@aws-sdk/client-s3');
         const region =

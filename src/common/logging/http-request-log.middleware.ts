@@ -26,6 +26,7 @@ function shouldSkipHttpRequestLog(path: string): boolean {
   const p = (path.split('?')[0] ?? path).trim();
   if (!p || p === '/') return true;
   if (p === '/health' || p.startsWith('/health/')) return true;
+  if (p === '/wise-eat' || p.startsWith('/wise-eat/')) return true;
   if (p === '/favicon.ico') return true;
   return false;
 }

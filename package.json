@@ -18,7 +18,7 @@
     "start:prod": "node -r tsconfig-paths/register dist/main.js",
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:start:dev": "pm2 start ecosystem.dev.config.cjs",
-    "pm2:reload": "npm run build && pm2 reload africa-meals-api --update-env",
+    "pm2:reload": "npm run build && pm2 reload ../ecosystem.config.cjs --only africa-meals-api --update-env && pm2 save",
     "serve:functions": "npm run build && npx firebase emulators:start --only functions",
     "functions": "npx firebase deploy --only functions",
     "deploy": "npx firebase deploy",
