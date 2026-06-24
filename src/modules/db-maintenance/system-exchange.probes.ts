@@ -9,6 +9,10 @@ import type { ConfigService } from '@nestjs/config';
 import type { Connection } from 'mongoose';
 import type { MqttRuntimeStatus } from '@modules/ws-notify/ws-notify-dispatch-queue.service';
 import type { SystemExchangeStatus } from './system-exchange.types';
+import {
+  readMemcachedConnectionFromConfig,
+} from '../../common/cache/memcached-connection.util';
+import { tlsMemcachedPing } from '../../common/cache/memcached-tls-client';
 
 export type ProbeResult = {
   status: SystemExchangeStatus;
@@ -293,30 +297,38 @@ export async function probeHttpHealth(
   }
 }
 
-function resolveMemcachedServers(config: ConfigService): string | null {
-  const direct =
-    config.get<string>('MEMCACHED_SERVERS')?.trim() ||
-    config.get<string>('MEMCACHED_URL')?.trim();
-  if (direct) return direct;
-  const host = config.get<string>('MEMCACHED_HOST')?.trim();
-  if (!host) return null;
-  const port = config.get<string>('MEMCACHED_PORT')?.trim() || '11211';
-  return `${host}:${port}`;
-}
-
 /** Ping Memcached (set/get) pour multicache engine + System Health. */
 export async function probeMemcached(
   config: ConfigService,
 ): Promise<ProbeResult> {
-  const servers = resolveMemcachedServers(config);
-  if (!servers) {
+  const connection = readMemcachedConnectionFromConfig(config);
+  if (!connection) {
     return {
       status: 'disabled',
       latencyMs: null,
       details: 'MEMCACHED_SERVERS / MEMCACHED_HOST non configuré.',
     };
   }
+  const servers = connection.servers;
   const started = performance.now();
+
+  if (connection.tls) {
+    try {
+      await tlsMemcachedPing(connection.tls);
+      return {
+        status: 'healthy',
+        latencyMs: Math.round(performance.now() - started),
+        details: `SET/GET OK TLS (${servers}).`,
+      };
+    } catch (e) {
+      return {
+        status: 'down',
+        latencyMs: Math.round(performance.now() - started),
+        details: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }
+
   const Memcached = (await import('memcached')).default;
   const client = new Memcached(servers, {
     timeout: 2000,

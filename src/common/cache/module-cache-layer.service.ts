@@ -6,6 +6,7 @@ import {
   type ModuleEngineMap,
 } from '@common/cache/cache-engine.types';
 import { createMemcachedStore } from '@common/cache/memcached-cache-store.util';
+import { readMemcachedConnectionFromConfig } from '@common/cache/memcached-connection.util';
 import {
   bustCacheKey,
   bustCacheKeysByPrefix,
@@ -89,15 +90,15 @@ export class ModuleCacheLayerService implements OnModuleInit {
       }
     }
 
-    const servers = memcachedServers(this._config);
-    if (servers) {
+    const memcachedConn = readMemcachedConnectionFromConfig(this._config);
+    if (memcachedConn) {
       try {
         this._memcachedCache = await caching(
-          () => createMemcachedStore({ servers }),
+          () => createMemcachedStore({ connection: memcachedConn }),
           { ttl: 0 },
         );
         this._logger.log(
-          `Module cache layer: Memcached store ready (${servers})`,
+          `Module cache layer: Memcached store ready (${memcachedConn.servers}${memcachedConn.tls ? ' TLS' : ''})`,
         );
       } catch (err) {
         this._logger.warn(
