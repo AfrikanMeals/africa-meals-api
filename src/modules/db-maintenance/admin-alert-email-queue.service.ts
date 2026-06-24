@@ -11,8 +11,8 @@ import {
   bullmqJobId,
   logBullmqDisabledReason,
   parsePositiveInt,
-  readBullmqQueueBaseOptionsFromConfig,
 } from '../../common/bullmq-redis-connection';
+import { BullmqRedisConnectionsService } from '../../common/redis/bullmq-redis-connections.service';
 import { randomUUID } from 'crypto';
 import { JobsOptions, Queue, Worker } from 'bullmq';
 import { AdminAlertEmailService } from './admin-alert-email.service';
@@ -32,6 +32,7 @@ export class AdminAlertEmailQueueService
 
   constructor(
     private readonly config: ConfigService,
+    private readonly bullRedis: BullmqRedisConnectionsService,
     @Inject(forwardRef(() => AdminAlertEmailService))
     private readonly alertEmail: AdminAlertEmailService,
     @Inject(forwardRef(() => AdminJobEmitterService))
@@ -43,8 +44,7 @@ export class AdminAlertEmailQueueService
   }
 
   async onModuleInit(): Promise<void> {
-    const queueOpts = readBullmqQueueBaseOptionsFromConfig(this.config);
-    if (!queueOpts) {
+    if (!this.bullRedis.isEnabled()) {
       logBullmqDisabledReason();
       this.logger.log('admin-alert-email — envoi synchrone par lots');
       return;
@@ -58,7 +58,10 @@ export class AdminAlertEmailQueueService
       4,
     );
 
-    this.queue = new Queue<AdminAlertEmailBatchJob>(queueName, queueOpts);
+    this.queue = new Queue<AdminAlertEmailBatchJob>(
+      queueName,
+      this.bullRedis.queueOpts(),
+    );
     this.worker = new Worker<AdminAlertEmailBatchJob, void>(
       queueName,
       async (job) => {
@@ -67,7 +70,7 @@ export class AdminAlertEmailQueueService
         await this.alertEmail.processBatchJob(data);
         await this.emitBatchProgress(data);
       },
-      { ...queueOpts, concurrency },
+      this.bullRedis.workerOpts('admin-alert-email', { concurrency }),
     );
 
     const onFailed = (
@@ -83,11 +86,6 @@ export class AdminAlertEmailQueueService
       }
     };
     this.worker.on('failed', onFailed);
-    const onRedisError = (err: Error) => {
-      this.logger.warn(`BullMQ Redis error: ${err.message}`);
-    };
-    this.queue.on('error', onRedisError);
-    this.worker.on('error', onRedisError);
 
     this.enabled = true;
     this.logger.log(

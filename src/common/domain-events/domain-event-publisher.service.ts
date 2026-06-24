@@ -18,8 +18,8 @@ import {
   bullmqJobId,
   logBullmqDisabledReason,
   parsePositiveInt,
-  readBullmqQueueBaseOptionsFromConfig,
 } from '../bullmq-redis-connection';
+import { BullmqRedisConnectionsService } from '../redis/bullmq-redis-connections.service';
 import { DomainEventIdempotencyStore } from './domain-event-idempotency.store';
 import { DomainEventRegistryService } from './domain-event-registry.service';
 import {
@@ -89,6 +89,7 @@ export class DomainEventPublisherService
 
   constructor(
     private readonly config: ConfigService,
+    private readonly bullRedis: BullmqRedisConnectionsService,
     private readonly registry: DomainEventRegistryService,
     private readonly idempotency: DomainEventIdempotencyStore,
     @InjectModel(InfraRuntimeSettingsModel.name)
@@ -97,8 +98,7 @@ export class DomainEventPublisherService
 
   async onModuleInit(): Promise<void> {
     this.initMqttClient();
-    const queueOpts = readBullmqQueueBaseOptionsFromConfig(this.config);
-    if (!queueOpts) {
+    if (!this.bullRedis.isEnabled()) {
       logBullmqDisabledReason();
       this.logger.log('Domain events -> direct MQTT / log mode');
       return;
@@ -112,7 +112,10 @@ export class DomainEventPublisherService
       10,
     );
 
-    this.queue = new Queue<DomainEventQueueJob>(queueName, queueOpts);
+    this.queue = new Queue<DomainEventQueueJob>(
+      queueName,
+      this.bullRedis.queueOpts(),
+    );
     this.worker = new Worker<DomainEventQueueJob, void>(
       queueName,
       async (job) => {
@@ -122,18 +125,13 @@ export class DomainEventPublisherService
           'worker',
         );
       },
-      { ...queueOpts, concurrency },
+      this.bullRedis.workerOpts('domain-events', { concurrency }),
     );
     this.worker.on('failed', (job, error) => {
       const id = job?.id ?? 'unknown';
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.warn(`domain-events job failed id=${id}: ${msg}`);
     });
-    const onRedisError = (err: Error) => {
-      this.logger.warn(`domain-events BullMQ Redis error: ${err.message}`);
-    };
-    this.queue.on('error', onRedisError);
-    this.worker.on('error', onRedisError);
     this.queueEnabled = true;
     this.logger.log(`Domain events BullMQ queue enabled: ${queueName}`);
 
@@ -146,22 +144,22 @@ export class DomainEventPublisherService
     );
     this.handlersQueue = new Queue<DomainEventHandlerQueueJob>(
       handlersQueueName,
-      queueOpts,
+      this.bullRedis.queueOpts(),
     );
     this.handlersWorker = new Worker<DomainEventHandlerQueueJob, void>(
       handlersQueueName,
       async (job) => {
         await this.runInProcessHandler(job.data.envelope);
       },
-      { ...queueOpts, concurrency: handlersConcurrency },
+      this.bullRedis.workerOpts('domain-events-handlers', {
+        concurrency: handlersConcurrency,
+      }),
     );
     this.handlersWorker.on('failed', (job, error) => {
       const id = job?.id ?? 'unknown';
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.warn(`domain-events-handlers job failed id=${id}: ${msg}`);
     });
-    this.handlersQueue.on('error', onRedisError);
-    this.handlersWorker.on('error', onRedisError);
     this.handlersQueueEnabled = true;
     this.logger.log(
       `Domain events handlers BullMQ queue enabled: ${handlersQueueName}`,

@@ -51,6 +51,7 @@ import { FieldSelectionModule } from './common/field-selection/field-selection.m
 import { DomainEventsModule } from './common/domain-events/domain-events.module';
 import { ModuleCacheLayerModule } from './common/cache/module-cache-layer.module';
 import { RedisSharedModule } from './common/redis/redis-shared.module';
+import { BullmqRedisModule } from './common/redis/bullmq-redis-connections.service';
 import { AppCacheBustSubscriber } from './common/app-cache-bust.subscriber';
 import { registerAppCacheBustRedis } from './common/redis-app-cache';
 import {
@@ -177,6 +178,7 @@ async function readRedisManagerEnabledAtBootstrap(
       isGlobal: true,
     }),
     RedisSharedModule,
+    BullmqRedisModule,
     SseRedisModule,
     CacheModule.registerAsync({
       isGlobal: true,

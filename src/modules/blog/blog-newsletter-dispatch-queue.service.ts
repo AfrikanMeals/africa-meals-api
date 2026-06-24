@@ -11,8 +11,8 @@ import {
   bullmqJobId,
   logBullmqDisabledReason,
   parsePositiveInt,
-  readBullmqQueueBaseOptionsFromConfig,
 } from '../../common/bullmq-redis-connection';
+import { BullmqRedisConnectionsService } from '../../common/redis/bullmq-redis-connections.service';
 import { randomUUID } from 'crypto';
 import { JobsOptions, Queue, Worker } from 'bullmq';
 import { BlogNewsletterDispatchService } from './blog-newsletter-dispatch.service';
@@ -31,6 +31,7 @@ export class BlogNewsletterDispatchQueueService
 
   constructor(
     private readonly config: ConfigService,
+    private readonly bullRedis: BullmqRedisConnectionsService,
     @Inject(forwardRef(() => BlogNewsletterDispatchService))
     private readonly dispatch: BlogNewsletterDispatchService,
   ) {}
@@ -40,8 +41,7 @@ export class BlogNewsletterDispatchQueueService
   }
 
   async onModuleInit(): Promise<void> {
-    const queueOpts = readBullmqQueueBaseOptionsFromConfig(this.config);
-    if (!queueOpts) {
+    if (!this.bullRedis.isEnabled()) {
       logBullmqDisabledReason();
       this.logger.log('blog-newsletter — envoi synchrone par lots');
       return;
@@ -55,14 +55,14 @@ export class BlogNewsletterDispatchQueueService
       4,
     );
 
-    this.queue = new Queue(queueName, queueOpts);
+    this.queue = new Queue(queueName, this.bullRedis.queueOpts());
     this.worker = new Worker<BlogNewsletterBatchJob, void>(
       queueName,
       async (job) => {
         if (job.name !== JOB_BATCH) return;
         await this.dispatch.processBatchJob(job.data);
       },
-      { ...queueOpts, concurrency },
+      this.bullRedis.workerOpts('blog-newsletter', { concurrency }),
     );
 
     const onFailed = (job: { id?: string } | undefined, err: Error) => {
@@ -71,11 +71,6 @@ export class BlogNewsletterDispatchQueueService
       );
     };
     this.worker.on('failed', onFailed);
-    const onRedisError = (err: Error) => {
-      this.logger.warn(`BullMQ Redis error: ${err.message}`);
-    };
-    this.queue.on('error', onRedisError);
-    this.worker.on('error', onRedisError);
 
     this.enabled = true;
     this.logger.log(

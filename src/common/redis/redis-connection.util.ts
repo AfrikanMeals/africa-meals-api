@@ -221,6 +221,7 @@ export type IoredisOptions = {
   connectTimeout?: number;
   lazyConnect?: boolean;
   enableReadyCheck?: boolean;
+  retryStrategy?: (times: number) => number | null;
 };
 
 export function buildIoredisOptionsFromConnection(
@@ -234,8 +235,19 @@ export function buildIoredisOptionsFromConnection(
     password: connection.password,
     tls: connection.tls,
     maxRetriesPerRequest: 2,
+    connectTimeout: parsePositiveInt(
+      process.env.REDIS_CONNECT_TIMEOUT_MS,
+      15_000,
+    ),
+    retryStrategy: redisRetryStrategy,
     ...overrides,
   };
+}
+
+/** Reconnexion ioredis — limite les ETIMEDOUT en rafale (BullMQ + clients partagés). */
+export function redisRetryStrategy(times: number): number | null {
+  if (times > 30) return null;
+  return Math.min(times * 500, 5_000);
 }
 
 export function readIoredisOptionsFromConfig(

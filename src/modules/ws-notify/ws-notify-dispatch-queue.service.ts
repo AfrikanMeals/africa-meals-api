@@ -11,8 +11,9 @@ import { JobsOptions, Queue, Worker } from 'bullmq';
 import {
   formatBullmqRedisTarget,
   logBullmqDisabledReason,
-  readBullmqQueueBaseOptionsFromConfig,
+  readBullmqRedisConnectionFromConfig,
 } from '../../common/bullmq-redis-connection';
+import { BullmqRedisConnectionsService } from '../../common/redis/bullmq-redis-connections.service';
 import {
   connect as mqttConnect,
   type IClientOptions,
@@ -82,6 +83,7 @@ export class WsNotifyDispatchQueueService
 
   constructor(
     private readonly config: ConfigService,
+    private readonly bullRedis: BullmqRedisConnectionsService,
     private readonly secrets: SecretManagerService,
     @InjectModel(InfraRuntimeSettingsModel.name)
     private readonly infraRuntimeSettingsModel: Model<InfraRuntimeSettingsModel>,
@@ -89,8 +91,7 @@ export class WsNotifyDispatchQueueService
 
   async onModuleInit(): Promise<void> {
     this.initMqttClient();
-    const queueOpts = readBullmqQueueBaseOptionsFromConfig(this.config);
-    if (!queueOpts) {
+    if (!this.bullRedis.isEnabled()) {
       logBullmqDisabledReason();
       return;
     }
@@ -101,27 +102,25 @@ export class WsNotifyDispatchQueueService
       20,
     );
 
-    this.queue = new Queue<WsNotifyQueueJob>(queueName, queueOpts);
+    this.queue = new Queue<WsNotifyQueueJob>(queueName, this.bullRedis.queueOpts());
     this.worker = new Worker<WsNotifyQueueJob, void>(
       queueName,
       async (job) => {
         await this.postInternal(job.data.pathSuffix, job.data.payload);
       },
-      { ...queueOpts, concurrency },
+      this.bullRedis.workerOpts('ws-notify', { concurrency }),
     );
     this.worker.on('failed', (job, error) => {
       const id = job?.id ?? 'unknown';
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.warn(`ws notify queue job failed id=${id}: ${msg}`);
     });
-    const onRedisError = (err: Error) => {
-      this.logger.warn(`BullMQ Redis error: ${err.message}`);
-    };
-    this.queue.on('error', onRedisError);
-    this.worker.on('error', onRedisError);
     this.queueEnabled = true;
+    const bullTarget = readBullmqRedisConnectionFromConfig(this.config);
     this.logger.log(
-      `BullMQ queue enabled: ${queueName} @ ${formatBullmqRedisTarget(queueOpts.connection)}`,
+      `BullMQ queue enabled: ${queueName} @ ${
+        bullTarget ? formatBullmqRedisTarget(bullTarget) : 'unknown'
+      }`,
     );
   }
 

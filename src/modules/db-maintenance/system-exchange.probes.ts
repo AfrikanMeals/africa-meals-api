@@ -201,6 +201,7 @@ async function probeRedisConnection(
         lazyConnect: true,
       }),
     );
+    client.on('error', () => undefined);
     await client.connect();
     const pong = await client.ping();
     await client.quit();

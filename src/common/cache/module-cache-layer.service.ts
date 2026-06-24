@@ -25,7 +25,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Cache, caching } from 'cache-manager';
 import {
-  readRedisUrlFromConfig,
+  readRedisCacheStoreOptionsFromConfig,
 } from '@common/redis/redis-connection.util';
 
 function memcachedServers(config: ConfigService): string | null {
@@ -72,12 +72,12 @@ export class ModuleCacheLayerService implements OnModuleInit {
       this._redisCache = this._defaultCache;
       this._logger.log('Module cache layer: reusing global Redis store');
     } else {
-      const redisUrl = readRedisUrlFromConfig(this._config);
-      if (redisUrl) {
+      const redisOpts = readRedisCacheStoreOptionsFromConfig(this._config);
+      if (redisOpts) {
         try {
           const { redisStore } = await import('cache-manager-redis-yet');
           this._redisCache = await caching(redisStore, {
-            url: redisUrl,
+            ...redisOpts,
             ttl: 0,
           });
           this._logger.log('Module cache layer: dedicated Redis store ready');
