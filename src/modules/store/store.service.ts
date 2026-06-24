@@ -1084,6 +1084,10 @@ export class StoreService {
       await this._marketingToolsEnabledForStore(targetId);
     const mapEngineSwitcherPlanEnabled =
       await this._mapEngineSwitcherEnabledForStore(targetId);
+    const planMapEngines =
+      await this._subscriptionsService.resolveMapEngineAvailabilityForStore(
+        targetId,
+      );
     const deliveryPlanExtras = await this._deliveryPlanExtrasForStore(targetId);
 
     return {
@@ -1104,6 +1108,9 @@ export class StoreService {
         pickupPayOnDeliveryPlanEnabled,
         marketingToolsPlanEnabled,
         mapEngineSwitcherPlanEnabled,
+        mapEngineMapboxPlanEnabled: planMapEngines.mapbox,
+        mapEngineGooglePlanEnabled: planMapEngines.google,
+        mapEngineOsmPlanEnabled: planMapEngines.osm,
         ...deliveryPlanExtras,
         vendorManagesDeliveryDrivers: !!doc.vendorManagesDeliveryDrivers,
         deliveryAssignmentMode: String(

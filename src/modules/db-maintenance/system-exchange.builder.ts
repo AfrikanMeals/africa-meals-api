@@ -8,10 +8,15 @@ import type {
   SystemExchangeStatus,
 } from './system-exchange.types';
 import {
+  isBullmqRedisDedicated,
+  readRedisUrlFromConfig,
+} from '../../common/redis/redis-connection.util';
+import {
   mqttToExchange,
+  probeBullmqRedis,
+  probeCacheRedis,
   probeHttpHealth,
   probeMongoDb,
-  probeRedis,
   probeSseStream,
   resolveApiHealthProbeUrl,
   type ProbeResult,
@@ -125,14 +130,16 @@ export async function buildSystemExchangeResponse(
 
   const [
     mongoProbe,
-    redisProbe,
+    redisCacheProbe,
+    redisBullmqProbe,
     apiProbe,
     wsProbe,
     sseProbe,
     webProbe,
   ] = await Promise.all([
     probeMongoDb(input.connection),
-    probeRedis(input.config),
+    probeCacheRedis(input.config),
+    probeBullmqRedis(input.config),
     probeHttpHealth(apiHealthUrl),
     probeHttpHealth(wsHealthUrl),
     probeSseStream(wsSsePublicUrl, 12000),
@@ -156,7 +163,9 @@ export async function buildSystemExchangeResponse(
 
   const redisRuntimeStatus: SystemExchangeStatus = !input.runtime.redisManagerEnabled
     ? 'disabled'
-    : redisProbe.status;
+    : redisCacheProbe.status;
+
+  const bullmqRedisStatus: SystemExchangeStatus = redisBullmqProbe.status;
 
   const mqttRuntimeStatus: SystemExchangeStatus = !input.runtime.mqBrokerEnabled
     ? 'disabled'
@@ -169,14 +178,27 @@ export async function buildSystemExchangeResponse(
   const platforms: SystemExchangePlatform[] = [
     platform('mongodb', 'MongoDB', 'data', 'Base de données principale', mongoProbe, null),
     platform(
-      'redis',
-      'Redis',
+      'redis-cache',
+      'Redis cache / SSE',
       'data',
-      'Files BullMQ, cache SSE, domain events',
+      'Cache HTTP multicache, pub/sub SSE, tokens partagés (REDIS_*)',
       input.runtime.redisManagerEnabled
-        ? redisProbe
+        ? redisCacheProbe
         : { status: 'disabled', latencyMs: null, details: 'Redis Manager désactivé (runtime).' },
-      input.config.get<string>('REDIS_URL')?.trim() || null,
+      readRedisUrlFromConfig(input.config),
+    ),
+    platform(
+      'redis-bullmq',
+      'Redis BullMQ',
+      'data',
+      isBullmqRedisDedicated(input.config)
+        ? 'Files jobs asynchrones (BULLMQ_REDIS_*)'
+        : 'Files jobs — instance partagée (repli REDIS_*)',
+      { status: bullmqRedisStatus, latencyMs: redisBullmqProbe.latencyMs, details: redisBullmqProbe.details },
+      input.config.get<string>('BULLMQ_REDIS_URL')?.trim() ||
+        (isBullmqRedisDedicated(input.config)
+          ? null
+          : readRedisUrlFromConfig(input.config)),
     ),
     platform(
       'mqtt-broker',
@@ -349,15 +371,26 @@ export async function buildSystemExchangeResponse(
       mongoProbe.latencyMs,
     ),
     communication(
-      'api-redis',
+      'api-redis-cache',
       'api',
-      'redis',
+      'redis-cache',
       'Redis protocol',
-      'API → Redis',
+      'API → Redis cache',
       byId.api,
       redisRuntimeStatus,
-      'BullMQ, SSE publish, idempotency',
-      redisProbe.latencyMs,
+      'Cache multicache, SSE publish, tokens',
+      redisCacheProbe.latencyMs,
+    ),
+    communication(
+      'api-redis-bullmq',
+      'api',
+      'redis-bullmq',
+      'Redis protocol',
+      'API → Redis BullMQ',
+      byId.api,
+      bullmqRedisStatus,
+      'Files ws-notify, domain events, alertes',
+      redisBullmqProbe.latencyMs,
     ),
     communication(
       'api-mqtt',
@@ -393,17 +426,17 @@ export async function buildSystemExchangeResponse(
     communication(
       'api-sse-redis',
       'api',
-      'redis',
+      'redis-cache',
       'Redis pub/sub',
       'API → Redis → SSE',
       byId.api,
       redisRuntimeStatus,
       'Publication canaux sse:ch:*',
-      redisProbe.latencyMs,
+      redisCacheProbe.latencyMs,
     ),
     communication(
       'sse-redis-ws',
-      'redis',
+      'redis-cache',
       'sse',
       'Redis pub/sub',
       'Redis → WS SSE',

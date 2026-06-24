@@ -112,7 +112,7 @@ export class MapSettingsService {
           $setOnInsert: {
             key: SETTINGS_KEY,
             vendorMapboxEnabled: true,
-            vendorGoogleEnabled: true,
+            vendorGoogleEnabled: false,
             vendorOsmEnabled: true,
             vendorDefaultMapEngine: 'mapbox',
             mobileUserMapboxEnabled: true,
@@ -128,7 +128,23 @@ export class MapSettingsService {
         { upsert: true, new: true, lean: true, setDefaultsOnInsert: true },
       )
       .exec();
-    return this._toResponse(doc as MapSettingsModel);
+    const base = this._toResponse(doc as MapSettingsModel);
+    // Client & livreur mobile : tous les moteurs d’affichage (formule boutique sans effet).
+    return {
+      ...base,
+      mobileUser: {
+        ...base.mobileUser,
+        mapboxEnabled: true,
+        googleEnabled: true,
+        osmEnabled: true,
+      },
+      mobileDelivery: {
+        ...base.mobileDelivery,
+        mapboxEnabled: true,
+        googleEnabled: true,
+        osmEnabled: true,
+      },
+    };
   }
 
   async updateSettings(user: UserModel, dto: UpdateMapSettingsDto) {

@@ -24,24 +24,9 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cache, caching } from 'cache-manager';
-
-function buildRedisUrl(config: ConfigService): string | null {
-  const direct = config.get<string>('REDIS_URL')?.trim();
-  if (direct) return direct;
-
-  const host = config.get<string>('REDIS_HOST')?.trim();
-  if (!host) return null;
-  const portRaw = config.get<string>('REDIS_PORT')?.trim();
-  const port = portRaw && /^\d+$/.test(portRaw) ? portRaw : '6379';
-  const username = config.get<string>('REDIS_USERNAME')?.trim() ?? '';
-  const password = config.get<string>('REDIS_PASSWORD')?.trim() ?? '';
-  const auth = password
-    ? `${encodeURIComponent(username || 'default')}:${encodeURIComponent(
-        password,
-      )}@`
-    : '';
-  return `redis://${auth}${host}:${port}`;
-}
+import {
+  readRedisUrlFromConfig,
+} from '@common/redis/redis-connection.util';
 
 function memcachedServers(config: ConfigService): string | null {
   const direct =
@@ -87,7 +72,7 @@ export class ModuleCacheLayerService implements OnModuleInit {
       this._redisCache = this._defaultCache;
       this._logger.log('Module cache layer: reusing global Redis store');
     } else {
-      const redisUrl = buildRedisUrl(this._config);
+      const redisUrl = readRedisUrlFromConfig(this._config);
       if (redisUrl) {
         try {
           const { redisStore } = await import('cache-manager-redis-yet');

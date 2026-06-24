@@ -43,12 +43,15 @@ export class SubscriptionsController {
   listPlans(
     @Req() req: Request,
     @Query('includeInactive') includeInactive?: string,
+    @Query('storeId') storeId?: string,
   ) {
     const all =
       includeInactive === '1' ||
       includeInactive === 'true' ||
       includeInactive === 'yes';
-    return this.subscriptions.listPlans(req.user as UserModel, all);
+    return this.subscriptions.listPlans(req.user as UserModel, all, {
+      storeId: storeId?.trim() || undefined,
+    });
   }
 
   @Post('plans')

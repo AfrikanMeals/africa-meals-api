@@ -1,11 +1,24 @@
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  formatRedisTarget,
+  parsePositiveInt,
+  readBullmqRedisConnectionFromConfig,
+  readBullmqRedisConnectionFromEnv,
+  readBullmqRedisConnectionFromGetter,
+  type RedisConnectionConfig,
+} from './redis/redis-connection.util';
 
 const logger = new Logger('BullmqRedis');
 
-export function parsePositiveInt(raw: string | undefined, fallback: number): number {
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : fallback;
+export type BullmqRedisConnection = RedisConnectionConfig;
+
+export { parsePositiveInt, readBullmqRedisConnectionFromConfig, readBullmqRedisConnectionFromEnv };
+
+export function formatBullmqRedisTarget(
+  connection: BullmqRedisConnection,
+): string {
+  return formatRedisTarget(connection);
 }
 
 /** BullMQ interdit les « : » dans les identifiants de job personnalisés. */
@@ -13,77 +26,44 @@ export function bullmqJobId(...parts: Array<string | number>): string {
   return parts.map((part) => String(part).replace(/:/g, '-')).join('-');
 }
 
-function toBool(raw: string | undefined): boolean {
-  const v = (raw ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
-}
-
-export type BullmqRedisConnection = {
-  host: string;
-  port: number;
-  username?: string;
-  password?: string;
-  tls?: Record<string, unknown>;
+export type BullmqQueueBaseOptions = {
+  connection: BullmqRedisConnection;
+  prefix?: string;
 };
 
-export function formatBullmqRedisTarget(
-  connection: BullmqRedisConnection,
-): string {
-  const tls = connection.tls ? ' (TLS)' : '';
-  return `${connection.host}:${connection.port}${tls}`;
-}
-
-type RedisEnvGetter = (key: string) => string | undefined;
-
-function readBullmqRedisConnectionFromGetter(
-  get: RedisEnvGetter,
-): BullmqRedisConnection | null {
-  const redisUrl = get('REDIS_URL')?.trim();
-  if (redisUrl) {
-    try {
-      const parsed = new URL(redisUrl);
-      return {
-        host: parsed.hostname,
-        port: parsePositiveInt(
-          parsed.port,
-          parsed.protocol === 'rediss:' ? 6380 : 6379,
-        ),
-        username: parsed.username || undefined,
-        password: parsed.password || undefined,
-        tls:
-          parsed.protocol === 'rediss:' || toBool(get('REDIS_TLS'))
-            ? {}
-            : undefined,
-      };
-    } catch {
-      logger.warn('Invalid REDIS_URL — BullMQ disabled');
-      return null;
-    }
-  }
-
-  const host = get('REDIS_HOST')?.trim();
-  if (!host) return null;
-  return {
-    host,
-    port: parsePositiveInt(get('REDIS_PORT'), 6379),
-    username: get('REDIS_USERNAME')?.trim() || undefined,
-    password: get('REDIS_PASSWORD')?.trim() || undefined,
-    tls: toBool(get('REDIS_TLS')) ? {} : undefined,
-  };
-}
-
-/** Connexion Redis partagée pour les files BullMQ (process.env). */
-export function readBullmqRedisConnection(
-  env: NodeJS.ProcessEnv = process.env,
-): BullmqRedisConnection | null {
-  return readBullmqRedisConnectionFromGetter((key) => env[key]);
-}
-
-/** Connexion Redis BullMQ via Nest `ConfigService` (.env chargé par ConfigModule). */
-export function readBullmqRedisConnectionFromConfig(
+/** Options communes Queue/Worker BullMQ (connexion dédiée + prefix cluster). */
+export function readBullmqQueueBaseOptionsFromConfig(
   config: ConfigService,
-): BullmqRedisConnection | null {
-  return readBullmqRedisConnectionFromGetter((key) =>
-    config.get<string>(key),
+): BullmqQueueBaseOptions | null {
+  const connection = readBullmqRedisConnectionFromConfig(config);
+  if (!connection) {
+    return null;
+  }
+  const prefix = config.get<string>('BULLMQ_PREFIX')?.trim();
+  if (prefix) {
+    return { connection, prefix };
+  }
+  return { connection };
+}
+
+export function readBullmqQueueBaseOptionsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): BullmqQueueBaseOptions | null {
+  const connection = readBullmqRedisConnectionFromEnv(env);
+  if (!connection) {
+    return null;
+  }
+  const prefix = env.BULLMQ_PREFIX?.trim();
+  if (prefix) {
+    return { connection, prefix };
+  }
+  return { connection };
+}
+
+export function logBullmqDisabledReason(): void {
+  logger.log(
+    'BullMQ disabled (BULLMQ_REDIS_* / REDIS_* absent) -> direct / sync mode',
   );
 }
+
+export { readBullmqRedisConnectionFromGetter };

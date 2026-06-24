@@ -508,6 +508,15 @@ export class SearchService {
           title: 1,
           bio: 1,
           originCountry: { $ifNull: ['$originCountry', ''] },
+          estimatedCookingTime: {
+            $ifNull: ['$estimated_cooking_time', '$estimatedCookingTime'],
+          },
+          estimatedCookingTimeUnit: {
+            $ifNull: [
+              '$estimated_cooking_time_unit',
+              '$estimatedCookingTimeUnit',
+            ],
+          },
           price: 1,
           discountPrice: { $ifNull: ['$discountPrice', 0] },
           currency: { $ifNull: ['$currency', 'CAD'] },
@@ -1160,6 +1169,27 @@ export class SearchService {
   }
 
   /** Normalise une ligne d’agrégation « home feed » / menu boutique (JSON client, sans BSON). */
+  private _cookingTimeFieldsFromDoc(
+    doc: Record<string, unknown>,
+  ): {
+    estimatedCookingTime?: number;
+    estimatedCookingTimeUnit?: string;
+  } {
+    const n = Number(
+      doc.estimatedCookingTime ?? doc.estimated_cooking_time,
+    );
+    const rawUnit =
+      doc.estimatedCookingTimeUnit ?? doc.estimated_cooking_time_unit;
+    const u = typeof rawUnit === 'string' ? rawUnit.trim() : '';
+    if (!Number.isFinite(n) || n < 1 || !['s', 'm', 'h'].includes(u)) {
+      return {};
+    }
+    return {
+      estimatedCookingTime: Math.floor(n),
+      estimatedCookingTimeUnit: u,
+    };
+  }
+
   private _mapHomeFeedLeanDoc(
     doc: Record<string, unknown>,
   ): Record<string, unknown> {
@@ -1282,6 +1312,7 @@ export class SearchService {
       title: String(doc.title ?? ''),
       bio: String(doc.bio ?? ''),
       originCountry: String(doc.originCountry ?? ''),
+      ...this._cookingTimeFieldsFromDoc(doc),
       price: Number(doc.price ?? 0),
       discountPrice: Number(doc.discountPrice ?? 0),
       currency: String(doc.currency ?? 'CAD'),
@@ -1511,6 +1542,15 @@ export class SearchService {
           title: 1,
           bio: 1,
           originCountry: { $ifNull: ['$originCountry', ''] },
+          estimatedCookingTime: {
+            $ifNull: ['$estimated_cooking_time', '$estimatedCookingTime'],
+          },
+          estimatedCookingTimeUnit: {
+            $ifNull: [
+              '$estimated_cooking_time_unit',
+              '$estimatedCookingTimeUnit',
+            ],
+          },
           price: 1,
           discountPrice: { $ifNull: ['$discountPrice', 0] },
           currency: { $ifNull: ['$currency', 'CAD'] },
@@ -2001,6 +2041,8 @@ export class SearchService {
                 updatedAt: 1,
                 __v: 1,
                 likedBy: { $ifNull: ['$likedBy', []] },
+                timezone: 1,
+                working_hours: 1,
                 averageRating: 1,
                 owner: {
                   $convert: {

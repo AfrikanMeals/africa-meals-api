@@ -143,6 +143,14 @@ export class GiftCodesService {
     return `${amt % 1 === 0 ? amt.toFixed(0) : amt.toFixed(2)} OFF`;
   }
 
+  private async resolveImageUrl(raw: unknown): Promise<string | null> {
+    if (typeof raw !== 'string' || !raw.trim()) return null;
+    const url = raw.trim();
+    const resolved =
+      (await this._mediasService.resolvePublicMediaUrl(url)) ?? url;
+    return resolved.trim() || null;
+  }
+
   private async toRow(doc: Record<string, unknown>): Promise<GiftCodeApiRow> {
     const id = String(doc._id ?? doc.id ?? '');
     const rawIds = (doc.storeIds as Types.ObjectId[] | undefined) ?? [];
@@ -168,10 +176,7 @@ export class GiftCodesService {
         GiftCodePromoTypeEnum.DISCOUNT,
       title: String(doc.title ?? doc.code ?? '').trim(),
       subtitle: String(doc.subtitle ?? '').trim(),
-      imageUrl:
-        typeof doc.imageUrl === 'string' && doc.imageUrl.trim()
-          ? doc.imageUrl.trim()
-          : null,
+      imageUrl: await this.resolveImageUrl(doc.imageUrl),
       value: Number(doc.value ?? 0),
       validFrom: vf instanceof Date ? vf.toISOString() : String(vf),
       validUntil: vu instanceof Date ? vu.toISOString() : String(vu),
@@ -325,10 +330,7 @@ export class GiftCodesService {
           GiftCodePromoTypeEnum.DISCOUNT,
         title: String(doc.title ?? code).trim() || code,
         subtitle: String(doc.subtitle ?? '').trim(),
-        imageUrl:
-          typeof doc.imageUrl === 'string' && doc.imageUrl.trim()
-            ? doc.imageUrl.trim()
-            : null,
+        imageUrl: await this.resolveImageUrl(doc.imageUrl),
         discountLabel: this.formatDiscountLabel(discountType, value),
         validUntil:
           vu instanceof Date ? vu.toISOString() : String(vu ?? ''),

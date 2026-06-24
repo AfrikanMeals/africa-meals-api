@@ -18,6 +18,9 @@ export type SubscriptionPlanSeed = {
   pickupPayOnDeliveryEnabled?: boolean;
   marketingToolsEnabled?: boolean;
   mapEngineSwitcherEnabled?: boolean;
+  mapEngineMapboxEnabled?: boolean;
+  mapEngineGoogleEnabled?: boolean;
+  mapEngineOsmEnabled?: boolean;
   selfDeliveryEnabled?: boolean;
   maxDeliveryAgents?: number;
   maxCatalogItems?: number;
@@ -54,6 +57,9 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     storeSubscriptionEnabled: false,
     marketingToolsEnabled: false,
     mapEngineSwitcherEnabled: false,
+    mapEngineMapboxEnabled: false,
+    mapEngineGoogleEnabled: false,
+    mapEngineOsmEnabled: true,
     selfDeliveryEnabled: false,
     maxDeliveryAgents: 0,
     maxCatalogItems: 10,
@@ -87,6 +93,9 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     pickupPayOnDeliveryEnabled: true,
     marketingToolsEnabled: true,
     mapEngineSwitcherEnabled: true,
+    mapEngineMapboxEnabled: true,
+    mapEngineGoogleEnabled: true,
+    mapEngineOsmEnabled: true,
     selfDeliveryEnabled: false,
     maxDeliveryAgents: 0,
     maxCatalogItems: 0,

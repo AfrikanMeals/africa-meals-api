@@ -1,5 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ProductStatusEnum } from '@schemas/product.schema';
+import {
+  EstimatedCookingTimeUnitEnum,
+  ProductStatusEnum,
+} from '@schemas/product.schema';
 import { Trim } from 'class-sanitizer';
 import { Transform, Type } from 'class-transformer';
 import {
@@ -8,11 +11,13 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
@@ -198,6 +203,24 @@ export class CreateProductDto {
   @Trim()
   originCountry: string;
 
+  @ApiPropertyOptional({
+    example: 30,
+    description: 'Temps de cuisson estimé (valeur entière positive).',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  estimatedCookingTime?: number;
+
+  @ApiPropertyOptional({
+    enum: EstimatedCookingTimeUnitEnum,
+    example: EstimatedCookingTimeUnitEnum.MINUTE,
+    description: 'Unité du temps de cuisson estimé (s | m | h).',
+  })
+  @ValidateIf((o) => o.estimatedCookingTime != null && o.estimatedCookingTime > 0)
+  @IsIn(Object.values(EstimatedCookingTimeUnitEnum))
+  estimatedCookingTimeUnit?: EstimatedCookingTimeUnitEnum;
+
   @ApiProperty({ example: 12.99, type: Number })
   @IsNotEmpty()
   @IsNumber()
@@ -331,6 +354,26 @@ export class PatchProductDto {
   @IsNotEmpty()
   @Trim()
   originCountry?: string;
+
+  @ApiPropertyOptional({
+    example: 30,
+    description:
+      'Temps de cuisson estimé (valeur entière positive). Null pour effacer.',
+  })
+  @IsOptional()
+  @ValidateIf((_, v) => v != null)
+  @IsNumber()
+  @Min(1)
+  estimatedCookingTime?: number | null;
+
+  @ApiPropertyOptional({
+    enum: EstimatedCookingTimeUnitEnum,
+    description: 'Unité du temps de cuisson estimé (s | m | h). Null pour effacer.',
+  })
+  @IsOptional()
+  @ValidateIf((_, v) => v != null)
+  @IsIn(Object.values(EstimatedCookingTimeUnitEnum))
+  estimatedCookingTimeUnit?: EstimatedCookingTimeUnitEnum | null;
 
   @ApiPropertyOptional()
   @IsOptional()

@@ -9,8 +9,9 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   bullmqJobId,
+  logBullmqDisabledReason,
   parsePositiveInt,
-  readBullmqRedisConnectionFromConfig,
+  readBullmqQueueBaseOptionsFromConfig,
 } from '../../common/bullmq-redis-connection';
 import { randomUUID } from 'crypto';
 import { JobsOptions, Queue, Worker } from 'bullmq';
@@ -39,11 +40,10 @@ export class BlogNewsletterDispatchQueueService
   }
 
   async onModuleInit(): Promise<void> {
-    const connection = readBullmqRedisConnectionFromConfig(this.config);
-    if (!connection) {
-      this.logger.log(
-        'BullMQ blog-newsletter disabled (REDIS_* absent) — envoi synchrone par lots',
-      );
+    const queueOpts = readBullmqQueueBaseOptionsFromConfig(this.config);
+    if (!queueOpts) {
+      logBullmqDisabledReason();
+      this.logger.log('blog-newsletter — envoi synchrone par lots');
       return;
     }
 
@@ -55,14 +55,14 @@ export class BlogNewsletterDispatchQueueService
       4,
     );
 
-    this.queue = new Queue(queueName, { connection });
+    this.queue = new Queue(queueName, queueOpts);
     this.worker = new Worker<BlogNewsletterBatchJob, void>(
       queueName,
       async (job) => {
         if (job.name !== JOB_BATCH) return;
         await this.dispatch.processBatchJob(job.data);
       },
-      { connection, concurrency },
+      { ...queueOpts, concurrency },
     );
 
     const onFailed = (job: { id?: string } | undefined, err: Error) => {

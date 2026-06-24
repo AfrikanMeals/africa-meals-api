@@ -23,6 +23,7 @@ import { SubscriptionsService } from './subscriptions.service';
 import { SubscriptionPlanOrderCommissionService } from './subscription-plan-order-commission.service';
 import { SubscriptionAdCashService } from './subscription-ad-cash.service';
 import { VendorSubscriptionEmailService } from './vendor-subscription-email.service';
+import { resolveVendorCheckoutStoreId } from './subscription-vendor-store.util';
 
 type StripeClient = InstanceType<typeof Stripe>;
 
@@ -37,22 +38,6 @@ type PendingSubscriptionContext = {
   unitAmountCents: number;
   meta: Record<string, string>;
 };
-
-function vendorStoreObjectIds(user: UserModel): Types.ObjectId[] {
-  const rawStores = user.stores || [];
-  const ids: Types.ObjectId[] = [];
-  for (const s of rawStores) {
-    if (typeof s === 'object' && s !== null && '_id' in s) {
-      const id = (s as { _id: unknown })._id;
-      ids.push(
-        id instanceof Types.ObjectId ? id : new Types.ObjectId(String(id)),
-      );
-    } else if (s) {
-      ids.push(new Types.ObjectId(String(s)));
-    }
-  }
-  return ids;
-}
 
 function dollarsToCents(amount: number): number {
   return Math.round(amount * 100);
@@ -147,11 +132,6 @@ export class SubscriptionsStripeCheckoutService {
     if (user.type !== UserTypeEnum.VENDOR) {
       throw new BadRequestException('vendor_only');
     }
-    const storeIds = vendorStoreObjectIds(user);
-    if (!storeIds.length) {
-      throw new BadRequestException('no_store');
-    }
-    const storeId = storeIds[0];
 
     if (!Types.ObjectId.isValid(dto.planId)) {
       throw new NotFoundException('plan_not_found');
@@ -166,6 +146,12 @@ export class SubscriptionsStripeCheckoutService {
       .lean()
       .exec();
     if (!plan) throw new NotFoundException('plan_not_found');
+
+    const storeId = resolveVendorCheckoutStoreId(
+      user,
+      dto.storeId,
+      (plan as { storeId?: unknown }).storeId,
+    );
 
     const now = new Date();
     const activeExisting = await this.vendorSubModel

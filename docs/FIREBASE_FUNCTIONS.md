@@ -133,6 +133,21 @@ Variables utiles (alignées sur l’existant) :
 | `AD_NOTIFICATION_WHATSAPP_TEMPLATE_PROJECT_ID` | UUID template Bird Studio (mode template) |
 | `API_PUBLIC_BASE_URL` | URL publique API (liens trackés SMS / WhatsApp ads) |
 
+### Redis (Mode A-lite — VPS Stunnel, prod)
+
+L’API Cloud Functions rejoint le Redis VPS via **Stunnel TLS** (`wise-eat.cloud:6381` / `:6382`), **sans Cloud NAT** (A-lite). Runbook : [../../docs/REDIS_VPS_PRODUCTION.md](../../docs/REDIS_VPS_PRODUCTION.md).
+
+| Variable | Exemple prod |
+|----------|----------------|
+| `REDIS_URL` | `rediss://wise-eat-cache:***@wise-eat.cloud:6381` |
+| `REDIS_TLS` | `true` |
+| `REDIS_TLS_REJECT_UNAUTHORIZED` | `true` ou omis avec **Certbot** ; `false` seulement si cert auto-signé |
+| `BULLMQ_REDIS_URL` | `rediss://wise-eat-bull:***@wise-eat.cloud:6382` |
+| `BULLMQ_REDIS_TLS_REJECT_UNAUTHORIZED` | idem |
+| `SSE_REDIS_BRIDGE_ENABLED` | `true` |
+
+Définir via Secret Manager / variables Firebase (comme MongoDB). Redéployer après mise à jour : `npm run deploy:functions`.
+
 Les secrets **`BIRD_ACCESS_KEY`**, **`BIRD_WORKSPACE_ID`**, **`BIRD_SMS_CHANNEL_ID`** et **`BIRD_WHATSAPP_CHANNEL_ID`** sont liés automatiquement à la fonction `api` dans **`src/firebase-main.ts`** (`defineSecret` + option `secrets`). Créez-les avec `firebase functions:secrets:set` avant le premier déploiement post-migration Bird.
 
 Guide complet Bird (prod, template, migration Twilio/Meta) : **[docs/BIRD_CHANNELS.md](BIRD_CHANNELS.md)**.

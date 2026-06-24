@@ -34,22 +34,10 @@ import { DEFAULT_SUBSCRIPTION_PLAN_SEEDS } from './subscription-plan.seed';
 import { VendorSubscriptionEmailService } from './vendor-subscription-email.service';
 import { SubscriptionPlanOrderCommissionService } from './subscription-plan-order-commission.service';
 import { SubscriptionAdCashService } from './subscription-ad-cash.service';
-
-function vendorStoreObjectIds(user: UserModel): Types.ObjectId[] {
-  const rawStores = user.stores || [];
-  const ids: Types.ObjectId[] = [];
-  for (const s of rawStores) {
-    if (typeof s === 'object' && s !== null && '_id' in s) {
-      const id = (s as { _id: unknown })._id;
-      ids.push(
-        id instanceof Types.ObjectId ? id : new Types.ObjectId(String(id)),
-      );
-    } else if (s) {
-      ids.push(new Types.ObjectId(String(s)));
-    }
-  }
-  return ids;
-}
+import {
+  resolveVendorCheckoutStoreId,
+  vendorStoreObjectIds,
+} from './subscription-vendor-store.util';
 
 function mapPlanCommissionRow(row: Record<string, unknown>) {
   const regionCode = String(row.regionCode ?? '')
@@ -126,6 +114,9 @@ function mapPlan(doc: Record<string, unknown>) {
     pickupPayOnDeliveryEnabled: doc.pickupPayOnDeliveryEnabled === true,
     marketingToolsEnabled: doc.marketingToolsEnabled === true,
     mapEngineSwitcherEnabled: doc.mapEngineSwitcherEnabled === true,
+    mapEngineMapboxEnabled: doc.mapEngineMapboxEnabled !== false,
+    mapEngineGoogleEnabled: doc.mapEngineGoogleEnabled !== false,
+    mapEngineOsmEnabled: doc.mapEngineOsmEnabled !== false,
     selfDeliveryEnabled: doc.selfDeliveryEnabled === true,
     maxDeliveryAgents: Math.max(0, Number(doc.maxDeliveryAgents ?? 0)),
     maxCatalogItems: Math.max(0, Number(doc.maxCatalogItems ?? 0)),
@@ -138,6 +129,8 @@ function mapPlan(doc: Record<string, unknown>) {
     orderCommissionsByRegion: commissionRows,
     payoutFeesByRegion: payoutFeeRows,
     pricingByRegion: pricingRows,
+    storeId: doc.storeId ? String(doc.storeId) : undefined,
+    isCustomStorePlan: doc.storeId != null && String(doc.storeId).length > 0,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -253,10 +246,26 @@ export class SubscriptionsService implements OnModuleInit {
     }
   }
 
-  async listPlans(user: UserModel, includeInactive = false) {
+  async listPlans(
+    user: UserModel,
+    includeInactive = false,
+    options?: { storeId?: string },
+  ) {
     const filter: Record<string, unknown> = {};
     if (user.type !== UserTypeEnum.ADMIN || !includeInactive) {
       filter.active = true;
+    }
+    if (user.type === UserTypeEnum.VENDOR) {
+      const storeIds = vendorStoreObjectIds(user);
+      filter.$or = storeIds.length
+        ? [
+            { storeId: { $exists: false } },
+            { storeId: null },
+            { storeId: { $in: storeIds } },
+          ]
+        : [{ storeId: { $exists: false } }, { storeId: null }];
+    } else if (options?.storeId && Types.ObjectId.isValid(options.storeId)) {
+      filter.storeId = new Types.ObjectId(options.storeId);
     }
     const rows = await this.planModel
       .find(filter)
@@ -269,11 +278,16 @@ export class SubscriptionsService implements OnModuleInit {
     }
     const storeIds = vendorStoreObjectIds(user);
     if (!storeIds.length) return plans;
-    const storeId = String(storeIds[0]);
+    const defaultStoreId = String(storeIds[0]);
     return Promise.all(
       plans.map(async (plan) => {
+        const pricingStoreId =
+          plan.storeId &&
+          storeIds.some((id) => String(id) === String(plan.storeId))
+            ? String(plan.storeId)
+            : defaultStoreId;
         const pricing = await this.planRegionalFees.resolvePlanPricingForStore(
-          storeId,
+          pricingStoreId,
           plan as unknown as Record<string, unknown>,
         );
         return {
@@ -289,7 +303,10 @@ export class SubscriptionsService implements OnModuleInit {
   /** Plans actifs pour la page tarifs publique (sans champs internes). */
   async listPublicPlans(regionCode?: string) {
     const rows = await this.planModel
-      .find({ active: true })
+      .find({
+        active: true,
+        $or: [{ storeId: { $exists: false } }, { storeId: null }],
+      })
       .sort({ sortOrder: 1, createdAt: 1 })
       .lean()
       .exec();
@@ -419,6 +436,9 @@ export class SubscriptionsService implements OnModuleInit {
         pickupPayOnDeliveryEnabled: seed.pickupPayOnDeliveryEnabled === true,
         marketingToolsEnabled: seed.marketingToolsEnabled === true,
         mapEngineSwitcherEnabled: seed.mapEngineSwitcherEnabled === true,
+        mapEngineMapboxEnabled: seed.mapEngineMapboxEnabled !== false,
+        mapEngineGoogleEnabled: seed.mapEngineGoogleEnabled !== false,
+        mapEngineOsmEnabled: seed.mapEngineOsmEnabled !== false,
         selfDeliveryEnabled: seed.selfDeliveryEnabled === true,
         maxDeliveryAgents: Math.max(0, Number(seed.maxDeliveryAgents ?? 0)),
         maxCatalogItems: Math.max(0, Number(seed.maxCatalogItems ?? 0)),
@@ -487,6 +507,24 @@ export class SubscriptionsService implements OnModuleInit {
           docFields.mapEngineSwitcherEnabled != null
         ) {
           patch.mapEngineSwitcherEnabled = docFields.mapEngineSwitcherEnabled;
+        }
+        if (
+          existingDoc.mapEngineMapboxEnabled == null &&
+          docFields.mapEngineMapboxEnabled != null
+        ) {
+          patch.mapEngineMapboxEnabled = docFields.mapEngineMapboxEnabled;
+        }
+        if (
+          existingDoc.mapEngineGoogleEnabled == null &&
+          docFields.mapEngineGoogleEnabled != null
+        ) {
+          patch.mapEngineGoogleEnabled = docFields.mapEngineGoogleEnabled;
+        }
+        if (
+          existingDoc.mapEngineOsmEnabled == null &&
+          docFields.mapEngineOsmEnabled != null
+        ) {
+          patch.mapEngineOsmEnabled = docFields.mapEngineOsmEnabled;
         }
         if (
           existingDoc.selfDeliveryEnabled == null &&
@@ -1318,6 +1356,67 @@ export class SubscriptionsService implements OnModuleInit {
     return this.isMapEngineSwitcherEnabledForPlanName(planName);
   }
 
+  mapPlanMapEngineAvailability(
+    doc?: Record<string, unknown> | null,
+  ): { mapbox: boolean; google: boolean; osm: boolean } {
+    return {
+      mapbox:
+        (doc as { mapEngineMapboxEnabled?: boolean } | null)
+          ?.mapEngineMapboxEnabled !== false,
+      google:
+        (doc as { mapEngineGoogleEnabled?: boolean } | null)
+          ?.mapEngineGoogleEnabled !== false,
+      osm:
+        (doc as { mapEngineOsmEnabled?: boolean } | null)
+          ?.mapEngineOsmEnabled !== false,
+    };
+  }
+
+  private assertPlanMapEngineAvailability(flags: {
+    mapbox: boolean;
+    google: boolean;
+    osm: boolean;
+  }): void {
+    if (!flags.mapbox && !flags.google && !flags.osm) {
+      throw new BadRequestException('plan_map_engine_required');
+    }
+  }
+
+  async resolveMapEngineAvailabilityForPlanName(
+    planName: string,
+  ): Promise<{ mapbox: boolean; google: boolean; osm: boolean }> {
+    const name = String(planName ?? '').trim();
+    if (!name) {
+      return { mapbox: true, google: true, osm: true };
+    }
+    const escaped = buildCaseInsensitiveExactRegex(name);
+    const doc = await this.planModel
+      .findOne({
+        name: { $regex: escaped },
+        active: { $ne: false },
+      })
+      .select(
+        'mapEngineMapboxEnabled mapEngineGoogleEnabled mapEngineOsmEnabled',
+      )
+      .lean()
+      .exec();
+    return this.mapPlanMapEngineAvailability(
+      doc as Record<string, unknown> | null,
+    );
+  }
+
+  async resolveMapEngineAvailabilityForStore(
+    storeId: string,
+  ): Promise<{ mapbox: boolean; google: boolean; osm: boolean }> {
+    const id = String(storeId ?? '').trim();
+    if (!Types.ObjectId.isValid(id)) {
+      return { mapbox: true, google: true, osm: true };
+    }
+    const planByStore = await this.resolveActivePlanNamesByStoreIds([id]);
+    const planName = String(planByStore.get(id) ?? '').trim();
+    return this.resolveMapEngineAvailabilityForPlanName(planName);
+  }
+
   async assertMarketingToolsEnabledForStore(
     storeId: string,
     user?: UserModel,
@@ -1652,12 +1751,31 @@ export class SubscriptionsService implements OnModuleInit {
       trialDays: dto.trialDays,
       trialReminderDays: dto.trialReminderDays,
     });
+    this.assertPlanMapEngineAvailability({
+      mapbox: dto.mapEngineMapboxEnabled !== false,
+      google: dto.mapEngineGoogleEnabled !== false,
+      osm: dto.mapEngineOsmEnabled !== false,
+    });
+    let storeOid: Types.ObjectId | null = null;
+    if (dto.storeId?.trim()) {
+      if (!Types.ObjectId.isValid(dto.storeId)) {
+        throw new BadRequestException('invalid_store');
+      }
+      const store = await this.storeModel
+        .findById(dto.storeId.trim())
+        .select('_id')
+        .lean()
+        .exec();
+      if (!store) throw new NotFoundException('store_not_found');
+      storeOid = new Types.ObjectId(dto.storeId.trim());
+    }
     const doc = await this.planModel.create({
       name: dto.name.trim(),
       description: (dto.description ?? '').trim(),
       priceMonthly: dto.priceMonthly,
       priceYearly: dto.priceYearly,
       currency: (dto.currency ?? 'CAD').trim().toUpperCase() || 'CAD',
+      storeId: storeOid,
       features,
       active: dto.active !== false,
       sortOrder: dto.sortOrder ?? 0,
@@ -1674,6 +1792,9 @@ export class SubscriptionsService implements OnModuleInit {
       pickupPayOnDeliveryEnabled: dto.pickupPayOnDeliveryEnabled === true,
       marketingToolsEnabled: dto.marketingToolsEnabled === true,
       mapEngineSwitcherEnabled: dto.mapEngineSwitcherEnabled === true,
+      mapEngineMapboxEnabled: dto.mapEngineMapboxEnabled !== false,
+      mapEngineGoogleEnabled: dto.mapEngineGoogleEnabled !== false,
+      mapEngineOsmEnabled: dto.mapEngineOsmEnabled !== false,
       selfDeliveryEnabled: dto.selfDeliveryEnabled === true,
       maxDeliveryAgents: Math.max(
         0,
@@ -1766,6 +1887,15 @@ export class SubscriptionsService implements OnModuleInit {
     if (dto.mapEngineSwitcherEnabled != null) {
       patch.mapEngineSwitcherEnabled = dto.mapEngineSwitcherEnabled === true;
     }
+    if (dto.mapEngineMapboxEnabled != null) {
+      patch.mapEngineMapboxEnabled = dto.mapEngineMapboxEnabled === true;
+    }
+    if (dto.mapEngineGoogleEnabled != null) {
+      patch.mapEngineGoogleEnabled = dto.mapEngineGoogleEnabled === true;
+    }
+    if (dto.mapEngineOsmEnabled != null) {
+      patch.mapEngineOsmEnabled = dto.mapEngineOsmEnabled === true;
+    }
     if (dto.selfDeliveryEnabled != null) {
       patch.selfDeliveryEnabled = dto.selfDeliveryEnabled === true;
     }
@@ -1823,6 +1953,34 @@ export class SubscriptionsService implements OnModuleInit {
     }
     if (dto.pricingByRegion != null) {
       patch.pricingByRegion = normalizePlanRegionPricing(dto.pricingByRegion);
+    }
+
+    if (
+      dto.mapEngineMapboxEnabled != null ||
+      dto.mapEngineGoogleEnabled != null ||
+      dto.mapEngineOsmEnabled != null
+    ) {
+      const current = await this.planModel.findById(planId).lean().exec();
+      if (!current) throw new NotFoundException('plan_not_found');
+      const currentDoc = current as {
+        mapEngineMapboxEnabled?: boolean;
+        mapEngineGoogleEnabled?: boolean;
+        mapEngineOsmEnabled?: boolean;
+      };
+      this.assertPlanMapEngineAvailability({
+        mapbox:
+          dto.mapEngineMapboxEnabled != null
+            ? dto.mapEngineMapboxEnabled === true
+            : currentDoc.mapEngineMapboxEnabled !== false,
+        google:
+          dto.mapEngineGoogleEnabled != null
+            ? dto.mapEngineGoogleEnabled === true
+            : currentDoc.mapEngineGoogleEnabled !== false,
+        osm:
+          dto.mapEngineOsmEnabled != null
+            ? dto.mapEngineOsmEnabled === true
+            : currentDoc.mapEngineOsmEnabled !== false,
+      });
     }
 
     if (
@@ -1904,6 +2062,13 @@ export class SubscriptionsService implements OnModuleInit {
     }
     if (dto.marketingToolsEnabled != null) fields.push('outils marketing');
     if (dto.mapEngineSwitcherEnabled != null) fields.push('choix moteur carte');
+    if (
+      dto.mapEngineMapboxEnabled != null ||
+      dto.mapEngineGoogleEnabled != null ||
+      dto.mapEngineOsmEnabled != null
+    ) {
+      fields.push('moteurs carte formule');
+    }
     if (dto.selfDeliveryEnabled != null) fields.push('livraison autonome');
     if (dto.maxDeliveryAgents != null) fields.push('livreurs max');
     if (dto.maxCatalogItems != null) fields.push('catalogue');
@@ -1925,11 +2090,6 @@ export class SubscriptionsService implements OnModuleInit {
     if (user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('vendor_only');
     }
-    const storeIds = vendorStoreObjectIds(user);
-    if (!storeIds.length) {
-      throw new BadRequestException('no_store');
-    }
-    const storeId = storeIds[0];
     if (!Types.ObjectId.isValid(dto.planId)) {
       throw new NotFoundException('plan_not_found');
     }
@@ -1943,6 +2103,12 @@ export class SubscriptionsService implements OnModuleInit {
       .lean()
       .exec();
     if (!plan) throw new NotFoundException('plan_not_found');
+
+    const storeId = resolveVendorCheckoutStoreId(
+      user,
+      dto.storeId,
+      (plan as { storeId?: unknown }).storeId,
+    );
 
     const trial = resolvePlanTrialFields({
       name: String(plan.name ?? ''),

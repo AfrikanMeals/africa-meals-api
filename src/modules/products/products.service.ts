@@ -26,6 +26,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { ProductCategoryModel } from '@schemas/product-category.schema';
 import { productEmbeddedStoreOwnerStripeOnboardedStages } from '@modules/billing/stripe/stripe-connect-visibility';
 import {
+  EstimatedCookingTimeUnitEnum,
   ProductModel,
   ProductStatusEnum,
 } from '@schemas/product.schema';
@@ -505,6 +506,7 @@ export class ProductsService {
       ...obj,
       id: String(doc._id),
       dailyMenuToday,
+      ...this.cookingTimeForResponse(obj),
       complements: this.normalizeComplements(obj.complements),
       supplements: this.normalizeSupplements(obj.supplements),
       variants: this.normalizeVariants(obj.variants),
@@ -569,6 +571,48 @@ export class ProductsService {
   private normalizeFieldsets(raw: unknown): string[] {
     if (!Array.isArray(raw)) return [];
     return raw.map((v) => String(v ?? '').trim()).filter((v) => v.length > 0);
+  }
+
+  private normalizeCookingTime(
+    value: unknown,
+    unit: unknown,
+  ): {
+    estimatedCookingTime?: number;
+    estimatedCookingTimeUnit?: EstimatedCookingTimeUnitEnum;
+  } {
+    if (value == null || value === '') return {};
+    const n = Number(value);
+    const u = String(unit ?? '').trim() as EstimatedCookingTimeUnitEnum;
+    const allowed = new Set(Object.values(EstimatedCookingTimeUnitEnum));
+    if (!Number.isFinite(n) || n < 1 || !allowed.has(u)) {
+      return {};
+    }
+    return {
+      estimatedCookingTime: Math.floor(n),
+      estimatedCookingTimeUnit: u,
+    };
+  }
+
+  private cookingTimeForResponse(
+    p: Record<string, unknown>,
+  ): {
+    estimatedCookingTime?: number;
+    estimatedCookingTimeUnit?: EstimatedCookingTimeUnitEnum;
+  } {
+    const n = Number(p.estimatedCookingTime ?? p.estimated_cooking_time);
+    const rawUnit = p.estimatedCookingTimeUnit ?? p.estimated_cooking_time_unit;
+    const allowed = new Set(Object.values(EstimatedCookingTimeUnitEnum));
+    const u =
+      typeof rawUnit === 'string'
+        ? (rawUnit.trim() as EstimatedCookingTimeUnitEnum)
+        : ('' as EstimatedCookingTimeUnitEnum);
+    if (!Number.isFinite(n) || n < 1 || !allowed.has(u)) {
+      return {};
+    }
+    return {
+      estimatedCookingTime: Math.floor(n),
+      estimatedCookingTimeUnit: u,
+    };
   }
 
   private normalizeComplements(raw: unknown): Array<{
@@ -844,6 +888,7 @@ export class ProductsService {
       variantsLabel: String(p.variantsLabel ?? p.variants_label ?? ''),
       usesVariants: pricing.usesVariants,
       originCountry: String(p.originCountry ?? p.origin_country ?? ''),
+      ...this.cookingTimeForResponse(p as Record<string, unknown>),
       basePrice: pricing.basePrice,
       baseDiscountPrice: pricing.baseDiscountPrice,
       price: pricing.price,
@@ -1015,6 +1060,7 @@ export class ProductsService {
       variants: this.normalizeVariants(p.variants),
       variantsLabel: String(p.variantsLabel ?? p.variants_label ?? ''),
       usesVariants: this.normalizeVariants(p.variants).length > 0,
+      ...this.cookingTimeForResponse(p as Record<string, unknown>),
       ...this.effectivePriceFromVariants(
         Number(p.price ?? 0),
         Number(p.discountPrice ?? p.discount_price ?? 0),
@@ -1143,6 +1189,8 @@ export class ProductsService {
                 profileImage: 1,
                 bio: 1,
                 about: 1,
+                estimated_cooking_time: 1,
+                estimated_cooking_time_unit: 1,
                 category: 1,
                 averageRating: 1,
                 categoryTitle: {
@@ -1231,6 +1279,10 @@ export class ProductsService {
         variants: this.normalizeVariants(args.variants),
         variantsLabel: (args.variantsLabel ?? '').trim(),
         originCountry,
+        ...this.normalizeCookingTime(
+          args.estimatedCookingTime,
+          args.estimatedCookingTimeUnit ?? EstimatedCookingTimeUnitEnum.MINUTE,
+        ),
         price: listPrice,
         discountPrice: listDiscountPrice,
         listPrice,
@@ -1338,6 +1390,22 @@ export class ProductsService {
     }
     if (args.originCountry != null) {
       doc.originCountry = args.originCountry.trim();
+    }
+    if (
+      args.estimatedCookingTime !== undefined ||
+      args.estimatedCookingTimeUnit !== undefined
+    ) {
+      const cooking = this.normalizeCookingTime(
+        args.estimatedCookingTime,
+        args.estimatedCookingTimeUnit ?? EstimatedCookingTimeUnitEnum.MINUTE,
+      );
+      if (Object.keys(cooking).length === 0) {
+        doc.set('estimatedCookingTime', undefined);
+        doc.set('estimatedCookingTimeUnit', undefined);
+      } else {
+        doc.estimatedCookingTime = cooking.estimatedCookingTime;
+        doc.estimatedCookingTimeUnit = cooking.estimatedCookingTimeUnit;
+      }
     }
     if (args.listPrice !== undefined) {
       doc.listPrice = Number(args.listPrice);

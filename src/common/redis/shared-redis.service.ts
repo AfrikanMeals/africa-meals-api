@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
-import { readBullmqRedisConnectionFromConfig } from '../bullmq-redis-connection';
+import { readRedisConnectionFromConfig } from './redis-connection.util';
 
 /** Connexion Redis partagée (OPT-007) — idempotence, compteurs SSE, etc. */
 @Injectable()
@@ -17,7 +17,7 @@ export class SharedRedisService implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly config: ConfigService) {}
 
   onModuleInit(): void {
-    const connection = readBullmqRedisConnectionFromConfig(this.config);
+    const connection = readRedisConnectionFromConfig(this.config);
     if (!connection) {
       this.logger.log('Shared Redis disabled (REDIS_* absent)');
       return;

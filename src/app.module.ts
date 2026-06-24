@@ -53,6 +53,10 @@ import { ModuleCacheLayerModule } from './common/cache/module-cache-layer.module
 import { RedisSharedModule } from './common/redis/redis-shared.module';
 import { AppCacheBustSubscriber } from './common/app-cache-bust.subscriber';
 import { registerAppCacheBustRedis } from './common/redis-app-cache';
+import {
+  readRedisCacheStoreOptionsFromConfig,
+  redactRedisUrl,
+} from './common/redis/redis-connection.util';
 import { SseRedisModule } from './common/sse/sse-redis.module';
 import { AuthSettingsModule } from './modules/auth-settings/auth-settings.module';
 import { SecuritySettingsModule } from './modules/security-settings/security-settings.module';
@@ -77,10 +81,6 @@ import { DomainEventHandlersModule } from './modules/domain-event-handlers/domai
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : fallback;
-}
-
-function parseRedisPort(raw: string | undefined): number {
-  return parsePositiveInt(raw, 6379);
 }
 
 function buildMongoUriFromConfig(config: ConfigService): string | null {
@@ -163,27 +163,6 @@ async function readRedisManagerEnabledAtBootstrap(
   }
 }
 
-function buildRedisUrl(config: ConfigService): string | null {
-  const direct = config.get<string>('REDIS_URL')?.trim();
-  if (direct) return direct;
-
-  const host = config.get<string>('REDIS_HOST')?.trim();
-  if (!host) return null;
-  const port = parseRedisPort(config.get<string>('REDIS_PORT'));
-  const username = config.get<string>('REDIS_USERNAME')?.trim() ?? '';
-  const password = config.get<string>('REDIS_PASSWORD')?.trim() ?? '';
-  const auth = password
-    ? `${encodeURIComponent(username || 'default')}:${encodeURIComponent(
-        password,
-      )}@`
-    : '';
-  return `redis://${auth}${host}:${port}`;
-}
-
-function redactRedisUrl(url: string): string {
-  return url.replace(/:\/\/[^@]+@/, '://***:***@');
-}
-
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -222,9 +201,9 @@ function redactRedisUrl(url: string): string {
           );
           return { ttl, max };
         }
-        const redisUrl = buildRedisUrl(config);
+        const redisOpts = readRedisCacheStoreOptionsFromConfig(config);
 
-        if (!redisUrl) {
+        if (!redisOpts) {
           Logger.log('Cache store: memory (REDIS_* absent)', 'CacheModule');
           return { ttl, max };
         }
@@ -232,7 +211,7 @@ function redactRedisUrl(url: string): string {
         try {
           const { redisStore } = await import('cache-manager-redis-yet');
           const store = await redisStore({
-            url: redisUrl,
+            ...redisOpts,
             ttl,
           });
           const redisClient = (
@@ -251,7 +230,7 @@ function redactRedisUrl(url: string): string {
             );
           });
           Logger.log(
-            `Cache store: redis (${redactRedisUrl(redisUrl)})`,
+            `Cache store: redis (${redactRedisUrl(redisOpts.url)})`,
             'CacheModule',
           );
           registerAppCacheBustRedis(redisClient);

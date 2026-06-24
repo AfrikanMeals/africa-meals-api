@@ -9,8 +9,9 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   bullmqJobId,
+  logBullmqDisabledReason,
   parsePositiveInt,
-  readBullmqRedisConnectionFromConfig,
+  readBullmqQueueBaseOptionsFromConfig,
 } from '../../common/bullmq-redis-connection';
 import { randomUUID } from 'crypto';
 import { JobsOptions, Queue, Worker } from 'bullmq';
@@ -42,11 +43,10 @@ export class AdminAlertEmailQueueService
   }
 
   async onModuleInit(): Promise<void> {
-    const connection = readBullmqRedisConnectionFromConfig(this.config);
-    if (!connection) {
-      this.logger.log(
-        'BullMQ admin-alert-email disabled (REDIS_* absent) — envoi synchrone par lots',
-      );
+    const queueOpts = readBullmqQueueBaseOptionsFromConfig(this.config);
+    if (!queueOpts) {
+      logBullmqDisabledReason();
+      this.logger.log('admin-alert-email — envoi synchrone par lots');
       return;
     }
 
@@ -58,7 +58,7 @@ export class AdminAlertEmailQueueService
       4,
     );
 
-    this.queue = new Queue<AdminAlertEmailBatchJob>(queueName, { connection });
+    this.queue = new Queue<AdminAlertEmailBatchJob>(queueName, queueOpts);
     this.worker = new Worker<AdminAlertEmailBatchJob, void>(
       queueName,
       async (job) => {
@@ -67,7 +67,7 @@ export class AdminAlertEmailQueueService
         await this.alertEmail.processBatchJob(data);
         await this.emitBatchProgress(data);
       },
-      { connection, concurrency },
+      { ...queueOpts, concurrency },
     );
 
     const onFailed = (

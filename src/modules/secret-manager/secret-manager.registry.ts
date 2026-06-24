@@ -238,7 +238,13 @@ export const WS_SECRET_REGISTRY: SecretKeyDefinition[] = [
   {
     envVarName: 'REDIS_PASSWORD',
     label: 'Redis — mot de passe',
-    description: 'Mot de passe Redis pour le cache distribué.',
+    description: 'Mot de passe Redis cache / pub/sub SSE (REDIS_*).',
+    category: 'Cache',
+  },
+  {
+    envVarName: 'BULLMQ_REDIS_PASSWORD',
+    label: 'Redis BullMQ — mot de passe',
+    description: 'Mot de passe Redis dédié aux files BullMQ (BULLMQ_REDIS_*).',
     category: 'Cache',
   },
 ];

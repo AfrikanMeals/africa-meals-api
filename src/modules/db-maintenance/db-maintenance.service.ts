@@ -75,7 +75,7 @@ import { orderInvoiceRef } from '@modules/orders/order-invoice.util';
 import { InjectModel } from '@nestjs/mongoose';
 import { SendOrderEmailDebugDto } from './dto/send-order-email-debug.dto';
 import { buildSystemExchangeResponse } from './system-exchange.builder';
-import { probeMemcached, probeRedis } from './system-exchange.probes';
+import { probeBullmqRedis, probeCacheRedis, probeMemcached } from './system-exchange.probes';
 import type { SystemExchangeResponse } from './system-exchange.types';
 import { MapSettingsService } from '@modules/map-settings/map-settings.service';
 import { osmForwardGeocode } from '@common/osm-geocoding.util';
@@ -273,7 +273,13 @@ export class DbMaintenanceService {
       key: 'redis-cache-status',
       label: 'Redis cache status',
       description:
-        'Vérifie Redis (multicache engine) via PING — cache module + BullMQ.',
+        'Vérifie Redis cache + pub/sub SSE (REDIS_*) via PING.',
+    },
+    {
+      key: 'bullmq-redis-status',
+      label: 'Redis BullMQ status',
+      description:
+        'Vérifie Redis files BullMQ (BULLMQ_REDIS_* ou repli REDIS_*) via PING.',
     },
     {
       key: 'memcached-status',
@@ -640,6 +646,8 @@ export class DbMaintenanceService {
         return this.runMongoHealthCheck();
       case 'redis-cache-status':
         return this.runRedisCacheHealthCheck();
+      case 'bullmq-redis-status':
+        return this.runBullmqRedisHealthCheck();
       case 'memcached-status':
         return this.runMemcachedHealthCheck();
       case 'websocket-service-status':
@@ -727,7 +735,7 @@ export class DbMaintenanceService {
   /** Usage interne (dashboard admin / SSE). */
   async getInfraCacheLiveStatusInternal(): Promise<InfraCacheLiveStatusResponse> {
     const [redisProbe, memcachedProbe] = await Promise.all([
-      probeRedis(this.config),
+      probeCacheRedis(this.config),
       probeMemcached(this.config),
     ]);
     const mapState = (
@@ -1749,6 +1757,8 @@ export class DbMaintenanceService {
       'AD_SMTP_PASS',
       'REDIS_URL',
       'BULLMQ_REDIS_URL',
+      'BULLMQ_REDIS_HOST',
+      'BULLMQ_REDIS_PASSWORD',
       'REDIS_CONNECTION_URL',
       'AD_NOTIFICATION_SMS_ENABLED',
       'AD_NOTIFICATION_WHATSAPP_ENABLED',
@@ -3621,7 +3631,21 @@ export class DbMaintenanceService {
     const startedAtMs = Date.now();
     const key = 'redis-cache-status';
     const label = 'Redis cache status';
-    const probe = await probeRedis(this.config);
+    const probe = await probeCacheRedis(this.config);
+    return this.normalizeHealthResult({
+      key,
+      label,
+      startedAtMs,
+      status: this.probeToHealthStatus(probe.status),
+      details: probe.details,
+    });
+  }
+
+  private async runBullmqRedisHealthCheck(): Promise<SystemHealthCheckResult> {
+    const startedAtMs = Date.now();
+    const key = 'bullmq-redis-status';
+    const label = 'Redis BullMQ status';
+    const probe = await probeBullmqRedis(this.config);
     return this.normalizeHealthResult({
       key,
       label,

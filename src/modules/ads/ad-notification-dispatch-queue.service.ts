@@ -10,7 +10,8 @@ import { ConfigService } from '@nestjs/config';
 import {
   parsePositiveInt,
   bullmqJobId,
-  readBullmqRedisConnectionFromConfig,
+  logBullmqDisabledReason,
+  readBullmqQueueBaseOptionsFromConfig,
 } from '../../common/bullmq-redis-connection';
 import { randomUUID } from 'crypto';
 import { JobsOptions, Queue, Worker } from 'bullmq';
@@ -45,11 +46,10 @@ export class AdNotificationDispatchQueueService
   }
 
   async onModuleInit(): Promise<void> {
-    const connection = readBullmqRedisConnectionFromConfig(this.config);
-    if (!connection) {
-      this.logger.log(
-        'BullMQ ads-notify disabled (REDIS_* absent) — mode synchrone',
-      );
+    const queueOpts = readBullmqQueueBaseOptionsFromConfig(this.config);
+    if (!queueOpts) {
+      logBullmqDisabledReason();
+      this.logger.log('ads-notify — mode synchrone');
       return;
     }
 
@@ -65,7 +65,7 @@ export class AdNotificationDispatchQueueService
       8,
     );
 
-    this.queue = new Queue(queueName, { connection });
+    this.queue = new Queue(queueName, queueOpts);
 
     this.entityWorker = new Worker<AdNotifyEntityJob, void>(
       queueName,
@@ -73,7 +73,7 @@ export class AdNotificationDispatchQueueService
         if (job.name !== JOB_ENTITY) return;
         await this.adNotifications.processEntityDispatchJob(job.data);
       },
-      { connection, concurrency: entityConcurrency },
+      { ...queueOpts, concurrency: entityConcurrency },
     );
 
     this.batchWorker = new Worker<AdNotifyRecipientBatchJob, void>(
@@ -82,7 +82,7 @@ export class AdNotificationDispatchQueueService
         if (job.name !== JOB_RECIPIENT_BATCH) return;
         await this.adNotifications.processRecipientBatchJob(job.data);
       },
-      { connection, concurrency: batchConcurrency },
+      { ...queueOpts, concurrency: batchConcurrency },
     );
 
     const onFailed = (label: string) => (job: { id?: string } | undefined, err: Error) => {

@@ -30,10 +30,11 @@ function loadEnvVars(envPath) {
   }
 }
 
-/** Fusionne les fichiers env comme Nest ConfigModule (.env.local prioritaire). */
-function mergeEnvVars(...paths) {
+/** Fusionne comme Nest ConfigModule : le premier fichier de la liste a priorité. */
+function mergeEnvVars(...pathsInPriorityOrder) {
   const merged = {};
-  for (const envPath of paths) {
+  for (let i = pathsInPriorityOrder.length - 1; i >= 0; i--) {
+    const envPath = pathsInPriorityOrder[i];
     if (!fs.existsSync(envPath)) continue;
     Object.assign(merged, loadEnvVars(envPath));
   }
@@ -45,8 +46,9 @@ function prodEnvVars() {
   return loadEnvVars(prodEnvPath);
 }
 
+/** Dev PM2 : aligné sur Nest — `.env.local` > `.env.develop` > `.env`. */
 function devEnvVars() {
-  return mergeEnvVars(devEnvPath, prodEnvPath, localEnvPath);
+  return mergeEnvVars(localEnvPath, devEnvPath, prodEnvPath);
 }
 
 module.exports = {

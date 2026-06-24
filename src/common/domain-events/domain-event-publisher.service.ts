@@ -16,8 +16,9 @@ import {
 import { Model } from 'mongoose';
 import {
   bullmqJobId,
+  logBullmqDisabledReason,
   parsePositiveInt,
-  readBullmqRedisConnectionFromConfig,
+  readBullmqQueueBaseOptionsFromConfig,
 } from '../bullmq-redis-connection';
 import { DomainEventIdempotencyStore } from './domain-event-idempotency.store';
 import { DomainEventRegistryService } from './domain-event-registry.service';
@@ -96,11 +97,10 @@ export class DomainEventPublisherService
 
   async onModuleInit(): Promise<void> {
     this.initMqttClient();
-    const connection = readBullmqRedisConnectionFromConfig(this.config);
-    if (!connection) {
-      this.logger.log(
-        'Domain events queue disabled (REDIS_* absent) -> direct MQTT / log mode',
-      );
+    const queueOpts = readBullmqQueueBaseOptionsFromConfig(this.config);
+    if (!queueOpts) {
+      logBullmqDisabledReason();
+      this.logger.log('Domain events -> direct MQTT / log mode');
       return;
     }
 
@@ -112,7 +112,7 @@ export class DomainEventPublisherService
       10,
     );
 
-    this.queue = new Queue<DomainEventQueueJob>(queueName, { connection });
+    this.queue = new Queue<DomainEventQueueJob>(queueName, queueOpts);
     this.worker = new Worker<DomainEventQueueJob, void>(
       queueName,
       async (job) => {
@@ -122,7 +122,7 @@ export class DomainEventPublisherService
           'worker',
         );
       },
-      { connection, concurrency },
+      { ...queueOpts, concurrency },
     );
     this.worker.on('failed', (job, error) => {
       const id = job?.id ?? 'unknown';
@@ -146,14 +146,14 @@ export class DomainEventPublisherService
     );
     this.handlersQueue = new Queue<DomainEventHandlerQueueJob>(
       handlersQueueName,
-      { connection },
+      queueOpts,
     );
     this.handlersWorker = new Worker<DomainEventHandlerQueueJob, void>(
       handlersQueueName,
       async (job) => {
         await this.runInProcessHandler(job.data.envelope);
       },
-      { connection, concurrency: handlersConcurrency },
+      { ...queueOpts, concurrency: handlersConcurrency },
     );
     this.handlersWorker.on('failed', (job, error) => {
       const id = job?.id ?? 'unknown';

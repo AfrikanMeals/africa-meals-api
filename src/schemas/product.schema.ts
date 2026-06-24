@@ -12,6 +12,13 @@ export enum ProductStatusEnum {
   INACTIVE = 'INACTIVE',
 }
 
+/** Unité du temps de cuisson estimé affiché au client. */
+export enum EstimatedCookingTimeUnitEnum {
+  SECOND = 's',
+  MINUTE = 'm',
+  HOUR = 'h',
+}
+
 @Schema({
   timestamps: true,
   collection: 'product_extras',
@@ -157,6 +164,16 @@ export class ProductModel extends BaseSchema {
 
   @Prop({ required: false, name: 'origin_country' })
   originCountry?: string;
+
+  @Prop({ required: false, name: 'estimated_cooking_time' })
+  estimatedCookingTime?: number;
+
+  @Prop({
+    required: false,
+    name: 'estimated_cooking_time_unit',
+    enum: Object.values(EstimatedCookingTimeUnitEnum),
+  })
+  estimatedCookingTimeUnit?: EstimatedCookingTimeUnitEnum;
 
   @Prop({ required: true, name: 'price', default: 0 })
   price: number;

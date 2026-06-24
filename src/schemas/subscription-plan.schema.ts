@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Types } from 'mongoose';
+import { StoreModel } from './store.schema';
 import {
   PlanRegionOrderCommissionModel,
   PlanRegionOrderCommissionSchema,
@@ -26,6 +27,13 @@ export class SubscriptionPlanModel {
 
   @Prop({ type: String, default: 'CAD', trim: true })
   currency: string;
+
+  /**
+   * Formule privée réservée à une boutique (créée par l’admin).
+   * Absent ou null = formule catalogue globale.
+   */
+  @Prop({ type: Types.ObjectId, ref: StoreModel.name, default: null })
+  storeId?: Types.ObjectId | null;
 
   /**
    * Tarifs par région (ISO2). Si absent pour une région → repli sur priceMonthly / priceYearly / currency.
@@ -89,6 +97,16 @@ export class SubscriptionPlanModel {
   /** Permet au vendeur de choisir son moteur de carte (sinon moteur par défaut plateforme). */
   @Prop({ type: Boolean, default: false })
   mapEngineSwitcherEnabled: boolean;
+
+  /** Moteurs carte accessibles sur cette formule (intersection avec réglages plateforme). */
+  @Prop({ type: Boolean, default: true })
+  mapEngineMapboxEnabled: boolean;
+
+  @Prop({ type: Boolean, default: true })
+  mapEngineGoogleEnabled: boolean;
+
+  @Prop({ type: Boolean, default: true })
+  mapEngineOsmEnabled: boolean;
 
   /**
    * Livraison autonome obligatoire : le vendeur doit gérer sa flotte (agents boutique).

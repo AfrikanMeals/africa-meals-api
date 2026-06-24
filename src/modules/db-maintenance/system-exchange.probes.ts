@@ -1,4 +1,9 @@
-import { readBullmqRedisConnectionFromConfig } from '../../common/bullmq-redis-connection';
+import {
+  formatRedisTarget,
+  isBullmqRedisDedicated,
+  readBullmqRedisConnectionFromConfig,
+  readRedisConnectionFromConfig,
+} from '../../common/redis/redis-connection.util';
 import type { ConfigService } from '@nestjs/config';
 import type { Connection } from 'mongoose';
 import type { MqttRuntimeStatus } from '@modules/ws-notify/ws-notify-dispatch-queue.service';
@@ -133,13 +138,17 @@ export async function probeMongoDb(connection: Connection): Promise<ProbeResult>
   }
 }
 
-export async function probeRedis(config: ConfigService): Promise<ProbeResult> {
-  const conn = readBullmqRedisConnectionFromConfig(config);
+async function probeRedisConnection(
+  config: ConfigService,
+  conn: ReturnType<typeof readRedisConnectionFromConfig>,
+  label: string,
+  missingDetails: string,
+): Promise<ProbeResult> {
   if (!conn) {
     return {
       status: 'disabled',
       latencyMs: null,
-      details: 'REDIS_URL ou REDIS_HOST non configuré.',
+      details: missingDetails,
     };
   }
   const started = performance.now();
@@ -162,7 +171,7 @@ export async function probeRedis(config: ConfigService): Promise<ProbeResult> {
     return {
       status: pong === 'PONG' ? 'healthy' : 'degraded',
       latencyMs,
-      details: `PING → ${pong} (${conn.host}:${conn.port})`,
+      details: `${label} PING → ${pong} (${formatRedisTarget(conn)})`,
     };
   } catch (e) {
     return {
@@ -171,6 +180,40 @@ export async function probeRedis(config: ConfigService): Promise<ProbeResult> {
       details: e instanceof Error ? e.message : String(e),
     };
   }
+}
+
+/** Cache HTTP, pub/sub SSE, tokens — `REDIS_*`. */
+export async function probeCacheRedis(config: ConfigService): Promise<ProbeResult> {
+  return probeRedisConnection(
+    config,
+    readRedisConnectionFromConfig(config),
+    'Cache',
+    'REDIS_URL ou REDIS_HOST non configuré.',
+  );
+}
+
+/** Files BullMQ — `BULLMQ_REDIS_*` (repli `REDIS_*`). */
+export async function probeBullmqRedis(config: ConfigService): Promise<ProbeResult> {
+  const dedicated = isBullmqRedisDedicated(config);
+  const conn = readBullmqRedisConnectionFromConfig(config);
+  const probe = await probeRedisConnection(
+    config,
+    conn,
+    dedicated ? 'BullMQ (dedicated)' : 'BullMQ (shared fallback)',
+    'BULLMQ_REDIS_* / REDIS_* non configuré.',
+  );
+  if (probe.status === 'healthy' && !dedicated) {
+    return {
+      ...probe,
+      details: `${probe.details} — instance partagée (REDIS_*). Définir BULLMQ_REDIS_* pour séparer.`,
+    };
+  }
+  return probe;
+}
+
+/** @deprecated Préférer probeCacheRedis ou probeBullmqRedis. */
+export async function probeRedis(config: ConfigService): Promise<ProbeResult> {
+  return probeCacheRedis(config);
 }
 
 export async function probeHttpHealth(

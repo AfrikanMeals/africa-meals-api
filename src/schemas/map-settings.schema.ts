@@ -11,7 +11,7 @@ export class MapSettingsModel {
   @Prop({ type: Boolean, default: true })
   vendorMapboxEnabled: boolean;
 
-  @Prop({ type: Boolean, default: true })
+  @Prop({ type: Boolean, default: false })
   vendorGoogleEnabled: boolean;
 
   @Prop({ type: Boolean, default: true })

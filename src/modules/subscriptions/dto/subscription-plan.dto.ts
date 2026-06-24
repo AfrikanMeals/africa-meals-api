@@ -38,6 +38,12 @@ export class CreateSubscriptionPlanDto {
   @IsString()
   currency?: string;
 
+  /** Boutique cible pour une formule personnalisée (admin). */
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  storeId?: string;
+
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
@@ -99,6 +105,18 @@ export class CreateSubscriptionPlanDto {
   @IsOptional()
   @IsBoolean()
   mapEngineSwitcherEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  mapEngineMapboxEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  mapEngineGoogleEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  mapEngineOsmEnabled?: boolean;
 
   @IsOptional()
   @IsBoolean()
@@ -251,6 +269,18 @@ export class UpdateSubscriptionPlanDto {
 
   @IsOptional()
   @IsBoolean()
+  mapEngineMapboxEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  mapEngineGoogleEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  mapEngineOsmEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   selfDeliveryEnabled?: boolean;
 
   @IsOptional()
@@ -319,6 +349,12 @@ export class SubscribeVendorDto {
 
   @IsString()
   billingPeriod: 'MONTHLY' | 'YEARLY';
+
+  /** Boutique ciblée (requis si plusieurs boutiques ou formule personnalisée). */
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  storeId?: string;
 }
 
 /** Offre manuelle admin : formule + période personnalisée pour une boutique. */

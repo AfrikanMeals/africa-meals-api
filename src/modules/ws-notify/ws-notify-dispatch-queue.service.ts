@@ -8,7 +8,11 @@ import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { InfraRuntimeSettingsModel } from '@schemas/infra-runtime-settings.schema';
 import { JobsOptions, Queue, Worker } from 'bullmq';
-import { readBullmqRedisConnectionFromConfig } from '../../common/bullmq-redis-connection';
+import {
+  formatBullmqRedisTarget,
+  logBullmqDisabledReason,
+  readBullmqQueueBaseOptionsFromConfig,
+} from '../../common/bullmq-redis-connection';
 import {
   connect as mqttConnect,
   type IClientOptions,
@@ -85,9 +89,9 @@ export class WsNotifyDispatchQueueService
 
   async onModuleInit(): Promise<void> {
     this.initMqttClient();
-    const connection = readBullmqRedisConnectionFromConfig(this.config);
-    if (!connection) {
-      this.logger.log('BullMQ disabled (REDIS_* absent) -> direct notify mode');
+    const queueOpts = readBullmqQueueBaseOptionsFromConfig(this.config);
+    if (!queueOpts) {
+      logBullmqDisabledReason();
       return;
     }
     const queueName =
@@ -97,13 +101,13 @@ export class WsNotifyDispatchQueueService
       20,
     );
 
-    this.queue = new Queue<WsNotifyQueueJob>(queueName, { connection });
+    this.queue = new Queue<WsNotifyQueueJob>(queueName, queueOpts);
     this.worker = new Worker<WsNotifyQueueJob, void>(
       queueName,
       async (job) => {
         await this.postInternal(job.data.pathSuffix, job.data.payload);
       },
-      { connection, concurrency },
+      { ...queueOpts, concurrency },
     );
     this.worker.on('failed', (job, error) => {
       const id = job?.id ?? 'unknown';
@@ -116,7 +120,9 @@ export class WsNotifyDispatchQueueService
     this.queue.on('error', onRedisError);
     this.worker.on('error', onRedisError);
     this.queueEnabled = true;
-    this.logger.log(`BullMQ queue enabled: ${queueName}`);
+    this.logger.log(
+      `BullMQ queue enabled: ${queueName} @ ${formatBullmqRedisTarget(queueOpts.connection)}`,
+    );
   }
 
   async onModuleDestroy(): Promise<void> {
