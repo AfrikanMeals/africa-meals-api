@@ -217,23 +217,32 @@ export type IoredisOptions = {
   username?: string;
   password?: string;
   tls?: Record<string, unknown>;
+  family?: number;
   maxRetriesPerRequest: number | null;
   connectTimeout?: number;
   lazyConnect?: boolean;
   enableReadyCheck?: boolean;
   retryStrategy?: (times: number) => number | null;
+  reconnectOnError?: (err: Error) => boolean | 1 | 2;
 };
 
 export function buildIoredisOptionsFromConnection(
   connection: RedisConnectionConfig,
   overrides?: Partial<IoredisOptions>,
 ): IoredisOptions {
+  const tlsOpts = connection.tls
+    ? {
+        family: 4,
+        reconnectOnError: ioredisReconnectOnTlsError,
+      }
+    : {};
   return {
     host: connection.host,
     port: connection.port,
     username: connection.username,
     password: connection.password,
     tls: connection.tls,
+    ...tlsOpts,
     maxRetriesPerRequest: 2,
     connectTimeout: parsePositiveInt(
       process.env.REDIS_CONNECT_TIMEOUT_MS,
@@ -248,6 +257,21 @@ export function buildIoredisOptionsFromConnection(
 export function redisRetryStrategy(times: number): number | null {
   if (times > 30) return null;
   return Math.min(times * 500, 5_000);
+}
+
+/** Évite les rafales TLS Stunnel après alert decode / timeout (souvent bruit, pas fatal). */
+export function ioredisReconnectOnTlsError(err: Error): boolean | 1 | 2 {
+  const msg = err.message ?? '';
+  if (
+    msg.includes('decode error') ||
+    msg.includes('DECODE_ERROR') ||
+    msg.includes('ETIMEDOUT') ||
+    msg.includes('ECONNRESET') ||
+    msg.includes('ECONNREFUSED')
+  ) {
+    return 2;
+  }
+  return true;
 }
 
 export function readIoredisOptionsFromConfig(

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { SharedRedisService } from '../../common/redis/shared-redis.service';
 
@@ -13,11 +13,26 @@ export type OtpLinkPayload = {
 type MemoryRow = OtpLinkPayload & { expiresAt: number };
 
 @Injectable()
-export class OtpLinkTokenStore {
+export class OtpLinkTokenStore implements OnModuleInit {
   private readonly logger = new Logger(OtpLinkTokenStore.name);
   private readonly memory = new Map<string, MemoryRow>();
 
   constructor(private readonly sharedRedis: SharedRedisService) {}
+
+  onModuleInit(): void {
+    this.warnIfNoPersistentStore();
+  }
+
+  private redisClientOrWarn(): ReturnType<SharedRedisService['getClient']> {
+    if (!this.sharedRedis.isConfigured()) return null;
+    const client = this.sharedRedis.getClient();
+    if (!client) {
+      this.logger.error(
+        'OTP link token store: REDIS_* configured but client unavailable — refusing in-memory fallback',
+      );
+    }
+    return client;
+  }
 
   private redisKey(token: string): string {
     return `auth:otp-link:${token}`;
@@ -34,12 +49,13 @@ export class OtpLinkTokenStore {
       throw new Error('invalid_otp_link_payload');
     }
 
-    if (this.sharedRedis.isEnabled()) {
-      const client = this.sharedRedis.getClient();
-      if (client) {
-        await client.set(this.redisKey(token), JSON.stringify(row), 'EX', ttlSec);
-        return token;
-      }
+    const client = this.redisClientOrWarn();
+    if (client) {
+      await client.set(this.redisKey(token), JSON.stringify(row), 'EX', ttlSec);
+      return token;
+    }
+    if (this.sharedRedis.isConfigured()) {
+      throw new Error('otp_link_store_unavailable');
     }
 
     this.memory.set(token, { ...row, expiresAt: Date.now() + ttlSec * 1000 });
@@ -50,20 +66,19 @@ export class OtpLinkTokenStore {
     const token = tokenRaw.trim();
     if (!token) return null;
 
-    if (this.sharedRedis.isEnabled()) {
-      const client = this.sharedRedis.getClient();
-      if (client) {
-        const key = this.redisKey(token);
-        const raw = await client.get(key);
-        if (!raw) return null;
-        await client.del(key);
-        try {
-          return JSON.parse(raw) as OtpLinkPayload;
-        } catch {
-          return null;
-        }
+    const client = this.redisClientOrWarn();
+    if (client) {
+      const key = this.redisKey(token);
+      const raw = await client.get(key);
+      if (!raw) return null;
+      await client.del(key);
+      try {
+        return JSON.parse(raw) as OtpLinkPayload;
+      } catch {
+        return null;
       }
     }
+    if (this.sharedRedis.isConfigured()) return null;
 
     const row = this.memory.get(token);
     if (!row || row.expiresAt < Date.now()) {
@@ -79,7 +94,7 @@ export class OtpLinkTokenStore {
   }
 
   warnIfNoPersistentStore(): void {
-    if (!this.sharedRedis.isEnabled()) {
+    if (!this.sharedRedis.isConfigured()) {
       this.logger.warn(
         'OTP link tokens use in-memory store (REDIS_* absent) — not suitable for multi-instance production',
       );

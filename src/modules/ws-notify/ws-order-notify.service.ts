@@ -59,6 +59,31 @@ export class WsOrderNotifyService {
     this.postInternalStaff('order/staff-broadcast', payload);
   }
 
+  /** GRPC-112 — un RPC batch pour toutes les parties + staff. */
+  notifyOrderPartiesBatch(
+    tracking: OrderWsTrackingPayload,
+    userIds: string[],
+  ): void {
+    const orderId = tracking.orderId?.trim();
+    if (!orderId) return;
+    const uniqueIds = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))];
+    const items: Array<{ pathSuffix: string; payload: Record<string, unknown> }> =
+      uniqueIds.map((userId) => ({
+        pathSuffix: 'order/changed',
+        payload: { userId, ...tracking },
+      }));
+    items.push({
+      pathSuffix: 'order/staff-broadcast',
+      payload: tracking as unknown as Record<string, unknown>,
+    });
+    try {
+      this.queue.batchDispatch(items);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`ws order batch notify failed: ${msg}`);
+    }
+  }
+
   private postInternal(
     pathSuffix: 'order/update' | 'order/tracking' | 'order/changed',
     userId: string,

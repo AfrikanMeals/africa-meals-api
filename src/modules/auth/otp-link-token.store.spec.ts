@@ -1,13 +1,14 @@
 import { OtpLinkTokenStore } from './otp-link-token.store';
 
 describe('OtpLinkTokenStore', () => {
-  const redis = {
+  const memoryRedis = {
+    isConfigured: () => false,
     isEnabled: () => false,
     getClient: () => null,
   } as never;
 
   it('issues and consumes a one-time OTP link token', async () => {
-    const store = new OtpLinkTokenStore(redis);
+    const store = new OtpLinkTokenStore(memoryRedis);
     const token = await store.issue(
       { email: 'user@test.com', code: 'AB12CD', flow: 'verify' },
       900,

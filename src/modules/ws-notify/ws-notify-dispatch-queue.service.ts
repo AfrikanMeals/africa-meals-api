@@ -21,6 +21,8 @@ import {
 } from 'mqtt';
 import { Model } from 'mongoose';
 import { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
+import { GrpcWsNotifyClientService } from '@modules/grpc/grpc-ws-notify.client.service';
+import { GrpcWsNotifyMetricsService } from '@modules/grpc/grpc-ws-notify.metrics.service';
 
 type WsNotifyQueueJob = {
   pathSuffix: string;
@@ -85,6 +87,8 @@ export class WsNotifyDispatchQueueService
     private readonly config: ConfigService,
     private readonly bullRedis: BullmqRedisConnectionsService,
     private readonly secrets: SecretManagerService,
+    private readonly grpcWsNotify: GrpcWsNotifyClientService,
+    private readonly grpcMetrics: GrpcWsNotifyMetricsService,
     @InjectModel(InfraRuntimeSettingsModel.name)
     private readonly infraRuntimeSettingsModel: Model<InfraRuntimeSettingsModel>,
   ) {}
@@ -142,6 +146,29 @@ export class WsNotifyDispatchQueueService
     void this.dispatchAsync(pathSuffix, payload);
   }
 
+  batchDispatch(
+    items: Array<{ pathSuffix: string; payload: Record<string, unknown> }>,
+  ): void {
+    void this.batchDispatchAsync(items);
+  }
+
+  private async batchDispatchAsync(
+    items: Array<{ pathSuffix: string; payload: Record<string, unknown> }>,
+  ): Promise<void> {
+    if (!items.length) return;
+    const infraSettings = await this.readInfraSettings();
+    if (
+      this.grpcWsNotify.shouldUseGrpc(infraSettings.grpcWsNotifyEnabled)
+    ) {
+      const grpcOk = await this.grpcWsNotify.batchDispatch(items).catch(() => false);
+      if (grpcOk) return;
+      if (!this.grpcWsNotify.httpFallbackEnabled()) return;
+    }
+    for (const item of items) {
+      await this.dispatchAsync(item.pathSuffix, item.payload);
+    }
+  }
+
   getMqttStatus(): MqttRuntimeStatus {
     return {
       enabled: this.mqttClient != null,
@@ -162,6 +189,24 @@ export class WsNotifyDispatchQueueService
     if (!suffix) return;
     const normalizedPayload = { ...payload };
     const infraSettings = await this.readInfraSettings();
+
+    if (
+      this.grpcWsNotify.shouldUseGrpc(infraSettings.grpcWsNotifyEnabled)
+    ) {
+      const grpcOk = await this.grpcWsNotify
+        .dispatch(suffix, normalizedPayload)
+        .catch(() => false);
+      if (grpcOk) {
+        return;
+      }
+      if (!this.grpcWsNotify.httpFallbackEnabled()) {
+        this.grpcMetrics.record(0, false, false);
+        this.logger.warn(`gRPC dispatch failed (${suffix}) — fallback HTTP disabled`);
+        return;
+      }
+      this.grpcMetrics.record(0, false, true);
+    }
+
     const mirrorNotifyEventsOverHttp =
       suffix === 'inbox/refresh' ||
       suffix === 'order/staff-broadcast' ||

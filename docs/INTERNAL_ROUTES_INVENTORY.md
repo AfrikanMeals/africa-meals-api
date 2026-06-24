@@ -1,0 +1,38 @@
+# Inventaire routes internes API ↔ WS (GRPC-004)
+
+**Date :** 24 juin 2026
+
+## API → WS (`WsNotifyDispatchQueueService`)
+
+| Suffixe HTTP | gRPC | Payload clés | Socket.IO |
+|--------------|------|--------------|-----------|
+| `inbox/refresh` | `InboxRefresh` | `userId` | `inbox:feed:refresh` → `user:{id}` |
+| `order/update` | `OrderDispatch` | `userId`, tracking | `order:update` |
+| `order/tracking` | `OrderDispatch` | `userId`, tracking | `order:tracking` |
+| `order/changed` | `OrderDispatch` | `userId`, tracking | update + tracking |
+| `order/staff-broadcast` | `OrderDispatch` / batch | tracking | `orders:admin` |
+| `stripe/connect-status` | `GenericDispatch` | `userId`, `status` | connect status |
+| `ads-targeting/event` | `GenericDispatch` | event body | ads stream |
+| `ad-manager/event` | `GenericDispatch` | event body | ad manager stream |
+| `chat/archive-order-delivery` | `GenericDispatch` | `orderId`, `reason` | archive chats |
+| `delivery-agent/presence` | `GenericDispatch` | `userId` / `agentUserId` | presence |
+| `platform/maintenance` | `GenericDispatch` | maintenance body | platform event |
+
+**Canal legacy :** MQTT `africameals/internal/ws/{suffix}` → BullMQ `ws-notify` → HTTP POST.
+
+**Canal gRPC (flag) :** `NotifyService` sur WS `:50051` — fallback HTTP si `GRPC_HTTP_FALLBACK_ENABLED=true`.
+
+## WS → API
+
+| Route HTTP | gRPC | Service |
+|------------|------|---------|
+| `GET /internal/inbox/vendor-feed` | `InboxFeedService.GetVendorFeed` | Fil notifications vendeur |
+| `POST /internal/notifications/chat-message` | `ChatPushService.NotifyChatMessage` | Push FCM chat |
+| `GET /internal/mqtt/status` | — | Statut MQTT (HTTP only) |
+| `POST /internal/secret-manager/env-preview` | — | Aperçu secrets (HTTP only) |
+
+**Serveur gRPC API :** port `50052` (flag `GRPC_WS_TO_API_ENABLED` côté WS).
+
+## Domain events (bus MQTT)
+
+Topic : `africameals/domain/order.*` → `DomainEventWsRouterService` (WS) — pas de gRPC direct ; évite double dispatch API quand `DOMAIN_EVENTS_WS_VIA_BUS=true`.

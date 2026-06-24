@@ -19,6 +19,11 @@ export class SharedRedisService implements OnModuleInit, OnModuleDestroy {
 
   constructor(private readonly config: ConfigService) {}
 
+  /** `REDIS_*` présent — requis pour tokens auth / idempotence multi-instance. */
+  isConfigured(): boolean {
+    return readRedisConnectionFromConfig(this.config) != null;
+  }
+
   onModuleInit(): void {
     const connection = readRedisConnectionFromConfig(this.config);
     if (!connection) {

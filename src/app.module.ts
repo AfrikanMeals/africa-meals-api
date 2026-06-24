@@ -78,6 +78,7 @@ import { GoogleMerchantModule } from './modules/google-merchant/google-merchant.
 import { PublicSeoModule } from './modules/public-seo/public-seo.module';
 import { SseStreamModule } from './modules/sse-stream/sse-stream.module';
 import { DomainEventHandlersModule } from './modules/domain-event-handlers/domain-event-handlers.module';
+import { GrpcApiServerModule } from './modules/grpc/grpc-api-server.module';
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
@@ -167,12 +168,12 @@ async function readRedisManagerEnabledAtBootstrap(
 @Module({
   imports: [
     ConfigModule.forRoot({
-      // Dev : `.env.local` + `.env.develop` puis `.env`. Prod : `.env` seulement.
+      // Dev : dernier fichier gagne — `.env.local` > `.env.develop` > `.env`
       envFilePath: [
-        ...(process.env.NODE_ENV === 'development'
-          ? ['.env.local', '.env.develop']
-          : []),
         '.env',
+        ...(process.env.NODE_ENV === 'development'
+          ? ['.env.develop', '.env.local']
+          : []),
         '../.env',
       ],
       isGlobal: true,
@@ -334,6 +335,7 @@ async function readRedisManagerEnabledAtBootstrap(
     PublicSeoModule,
     SseStreamModule.register(),
     DomainEventHandlersModule,
+    GrpcApiServerModule,
     // SharedModule,
   ],
   controllers: [

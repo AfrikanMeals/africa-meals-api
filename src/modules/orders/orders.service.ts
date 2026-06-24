@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common';
 import { OrderDomainBridgeService } from '@modules/domain-event-handlers/order-domain-bridge.service';
 import { WsOrderNotifyHandler } from '@modules/domain-event-handlers/handlers/ws-order-notify.handler';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { AddressModel } from '@schemas/address.schema';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
@@ -88,6 +89,7 @@ import {
   readCourierGpsThrottleConfig,
 } from './courier-gps-throttle';
 import { domainEventIdFromCourierTracking } from '../../common/domain-events/domain-event-id.util';
+import { isDomainEventsWsViaBus } from '@modules/domain-event-handlers/domain-event-handlers.util';
 
 @Injectable()
 export class OrdersService {
@@ -169,6 +171,9 @@ export class OrdersService {
   @Inject(forwardRef(() => OrderDomainBridgeService))
   @Optional()
   private readonly _orderDomainBridge?: OrderDomainBridgeService;
+
+  @Inject(ConfigService)
+  private readonly _config: ConfigService;
 
   /** Expose l’adresse de livraison figée au paiement dans `user.addresses`. */
   static enrichOrdersWithDeliveryAddress(
@@ -2679,6 +2684,7 @@ export class OrdersService {
     extra?: Partial<OrderWsTrackingPayload>,
   ): void {
     if (!this._wsOrderNotifyHandler) return;
+    if (isDomainEventsWsViaBus(this._config)) return;
     if (typeof orderOrId === 'string') {
       void this._wsOrderNotifyHandler.notifyPartiesByOrderId(
         orderOrId,

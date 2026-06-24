@@ -22,23 +22,33 @@ export class RefreshTokenStore implements OnModuleInit {
     return `auth:refresh:jti:${jti}`;
   }
 
+  private redisClientOrWarn(): ReturnType<SharedRedisService['getClient']> {
+    if (!this.sharedRedis.isConfigured()) return null;
+    const client = this.sharedRedis.getClient();
+    if (!client) {
+      this.logger.error(
+        'Refresh token store: REDIS_* configured but client unavailable — refusing in-memory fallback',
+      );
+    }
+    return client;
+  }
+
   async register(jti: string, userId: string, ttlSec: number): Promise<void> {
     const id = jti.trim();
     const uid = userId.trim();
     if (!id || !uid || ttlSec <= 0) return;
 
-    if (this.sharedRedis.isEnabled()) {
-      const client = this.sharedRedis.getClient();
-      if (client) {
-        await client.set(
-          this.redisKey(id),
-          JSON.stringify({ userId: uid }),
-          'EX',
-          ttlSec,
-        );
-        return;
-      }
+    const client = this.redisClientOrWarn();
+    if (client) {
+      await client.set(
+        this.redisKey(id),
+        JSON.stringify({ userId: uid }),
+        'EX',
+        ttlSec,
+      );
+      return;
     }
+    if (this.sharedRedis.isConfigured()) return;
 
     this.memory.set(id, {
       userId: uid,
@@ -52,21 +62,20 @@ export class RefreshTokenStore implements OnModuleInit {
     const uid = expectedUserId.trim();
     if (!id || !uid) return false;
 
-    if (this.sharedRedis.isEnabled()) {
-      const client = this.sharedRedis.getClient();
-      if (client) {
-        const key = this.redisKey(id);
-        const raw = await client.get(key);
-        if (!raw) return false;
-        await client.del(key);
-        try {
-          const row = JSON.parse(raw) as { userId?: string };
-          return row.userId === uid;
-        } catch {
-          return false;
-        }
+    const client = this.redisClientOrWarn();
+    if (client) {
+      const key = this.redisKey(id);
+      const raw = await client.get(key);
+      if (!raw) return false;
+      await client.del(key);
+      try {
+        const row = JSON.parse(raw) as { userId?: string };
+        return row.userId === uid;
+      } catch {
+        return false;
       }
     }
+    if (this.sharedRedis.isConfigured()) return false;
 
     const row = this.memory.get(id);
     if (!row || row.expiresAt < Date.now()) {
@@ -78,7 +87,7 @@ export class RefreshTokenStore implements OnModuleInit {
   }
 
   warnIfNoPersistentStore(): void {
-    if (!this.sharedRedis.isEnabled()) {
+    if (!this.sharedRedis.isConfigured()) {
       this.logger.warn(
         'Refresh token rotation uses in-memory store (REDIS_* absent) — not suitable for multi-instance production',
       );

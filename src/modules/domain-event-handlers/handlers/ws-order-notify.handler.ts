@@ -94,22 +94,19 @@ export class WsOrderNotifyHandler {
       deliveryAgentId?: string;
     },
   ): void {
+    const targets: string[] = [];
     const customerId = parties.customerUserId?.trim();
-    if (customerId) {
-      this.wsOrderNotify.notifyCustomerOrderChanged(customerId, tracking);
-    }
+    if (customerId) targets.push(customerId);
     const vendorId = parties.vendorUserId?.trim();
-    if (vendorId && vendorId !== customerId) {
-      this.wsOrderNotify.notifyCustomerOrderChanged(vendorId, tracking);
-    }
+    if (vendorId && vendorId !== customerId) targets.push(vendorId);
     const deliveryAgentId = parties.deliveryAgentId?.trim();
     if (
       deliveryAgentId &&
       deliveryAgentId !== customerId &&
       deliveryAgentId !== vendorId
     ) {
-      this.wsOrderNotify.notifyCustomerOrderChanged(deliveryAgentId, tracking);
+      targets.push(deliveryAgentId);
     }
-    this.wsOrderNotify.notifyStaffOrderBroadcast(tracking);
+    this.wsOrderNotify.notifyOrderPartiesBatch(tracking, targets);
   }
 }
