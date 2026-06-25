@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import Redis from 'ioredis';
 
 export function parsePositiveInt(
   raw: string | undefined,
@@ -134,6 +135,72 @@ export function readRedisConnectionFromEnv(
   return readRedisConnectionFromGetter((key) => env[key]);
 }
 
+function readRedisConnectionFromUrlString(
+  redisUrl: string,
+  get: RedisEnvGetter,
+  keys: RedisEnvKeySet,
+): RedisConnectionConfig | null {
+  try {
+    const parsed = new URL(redisUrl);
+    return enrichTlsSni({
+      host: parsed.hostname,
+      port: parsePositiveInt(
+        parsed.port,
+        parsed.protocol === 'rediss:' ? 6380 : 6379,
+      ),
+      username: parsed.username || undefined,
+      password: parsed.password || undefined,
+      tls: buildTlsOptions(get, keys, parsed.protocol === 'rediss:'),
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** Réplicas `REDIS_REPLICA_N_URL` ou `REDIS_REPLICA_N_PORT` (même hôte/credentials que le primary). */
+function readRedisReplicasWithKeys(
+  get: RedisEnvGetter,
+  keys: RedisEnvKeySet,
+  envPrefix: string,
+  primary: RedisConnectionConfig,
+): RedisConnectionConfig[] {
+  const replicas: RedisConnectionConfig[] = [];
+  for (const n of [1, 2] as const) {
+    const url = get(`${envPrefix}_${n}_URL`)?.trim();
+    if (url) {
+      const conn = readRedisConnectionFromUrlString(url, get, keys);
+      if (conn) replicas.push(conn);
+      continue;
+    }
+    const portRaw = get(`${envPrefix}_${n}_PORT`)?.trim();
+    if (portRaw) {
+      replicas.push({
+        ...primary,
+        port: parsePositiveInt(portRaw, primary.port),
+      });
+    }
+  }
+  return replicas;
+}
+
+/** Primary + réplicas (ordre de tentative pour failover). */
+export function listRedisCacheConnectionsFromGetter(
+  get: RedisEnvGetter,
+): RedisConnectionConfig[] {
+  const primary = readRedisConnectionWithKeys(get, CACHE_REDIS_KEYS);
+  if (!primary) return [];
+  return [
+    primary,
+    ...readRedisReplicasWithKeys(get, CACHE_REDIS_KEYS, 'REDIS_REPLICA', primary),
+  ];
+}
+
+export function listRedisCacheConnectionsFromConfig(
+  config: ConfigService | { get: (key: string) => string | undefined },
+): RedisConnectionConfig[] {
+  return listRedisCacheConnectionsFromGetter((key) => config.get(key));
+}
+
 /** Instance dédiée BullMQ — `BULLMQ_REDIS_*`, repli sur `REDIS_*` si absent. */
 export function readBullmqRedisConnectionFromGetter(
   get: RedisEnvGetter,
@@ -154,6 +221,28 @@ export function readBullmqRedisConnectionFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): RedisConnectionConfig | null {
   return readBullmqRedisConnectionFromGetter((key) => env[key]);
+}
+
+/** Primary BullMQ + `BULLMQ_REDIS_REPLICA_N_*` (ordre de tentative pour failover). */
+export function listBullmqRedisConnectionsFromGetter(
+  get: RedisEnvGetter,
+): RedisConnectionConfig[] {
+  const dedicated = readRedisConnectionWithKeys(get, BULLMQ_REDIS_KEYS);
+  const primary =
+    dedicated ?? readRedisConnectionWithKeys(get, CACHE_REDIS_KEYS);
+  if (!primary) return [];
+  const keys = dedicated ? BULLMQ_REDIS_KEYS : CACHE_REDIS_KEYS;
+  const prefix = dedicated ? 'BULLMQ_REDIS_REPLICA' : 'REDIS_REPLICA';
+  return [
+    primary,
+    ...readRedisReplicasWithKeys(get, keys, prefix, primary),
+  ];
+}
+
+export function listBullmqRedisConnectionsFromConfig(
+  config: ConfigService | { get: (key: string) => string | undefined },
+): RedisConnectionConfig[] {
+  return listBullmqRedisConnectionsFromGetter((key) => config.get(key));
 }
 
 export function formatRedisTarget(connection: RedisConnectionConfig): string {
@@ -301,4 +390,27 @@ export function isBullmqRedisDedicated(config: ConfigService): boolean {
     Boolean(config.get<string>('BULLMQ_REDIS_URL')?.trim()) ||
     Boolean(config.get<string>('BULLMQ_REDIS_HOST')?.trim())
   );
+}
+
+/** Tente chaque candidat jusqu’à une connexion réussie (primary puis réplicas). */
+export async function connectIoredisWithFailover(
+  candidates: RedisConnectionConfig[],
+  overrides?: Partial<IoredisOptions>,
+): Promise<{ client: Redis; connection: RedisConnectionConfig } | null> {
+  for (const connection of candidates) {
+    const client = new Redis(
+      buildIoredisOptionsFromConnection(connection, {
+        enableReadyCheck: true,
+        lazyConnect: true,
+        ...overrides,
+      }),
+    );
+    try {
+      await client.connect();
+      return { client, connection };
+    } catch {
+      client.disconnect();
+    }
+  }
+  return null;
 }

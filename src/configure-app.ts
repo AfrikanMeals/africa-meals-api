@@ -24,6 +24,31 @@ export type ConfigureAppOptions = {
  * laissent alors le chemin complet `/api/billing/…` au lieu de `/billing/…` — ce
  * middleware aligne sur les routes Nest (`/billing`, `/auth`, …).
  */
+/**
+ * Proxies / webhooks Stripe configurés avec `…/api` + chemin `/api/…` arrivent en
+ * `/${prefix}/${prefix}/…` alors que Nest n’expose qu’un seul préfixe global.
+ */
+function collapseRepeatedGlobalPrefix(globalPrefix: string) {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    const raw = req.url ?? '';
+    const q = raw.indexOf('?');
+    const pathOriginal = q === -1 ? raw : raw.slice(0, q);
+    const query = q === -1 ? '' : raw.slice(q);
+    const segment = `/${globalPrefix}`;
+    let pathOnly = pathOriginal;
+    while (
+      pathOnly.startsWith(`${segment}${segment}/`) ||
+      pathOnly === `${segment}${segment}`
+    ) {
+      pathOnly = segment + pathOnly.slice(segment.length * 2);
+    }
+    if (pathOnly !== pathOriginal) {
+      req.url = pathOnly + query;
+    }
+    next();
+  };
+}
+
 function stripLeadingApiPathWhenNoNestPrefix() {
   return (req: Request, _res: Response, next: NextFunction) => {
     const raw = req.url ?? '';
@@ -90,6 +115,7 @@ export async function configureApplication(
 
   const prefix = options?.globalPrefix ?? 'api';
   if (prefix.length > 0) {
+    app.use(collapseRepeatedGlobalPrefix(prefix));
     app.use(legacyUnprefixedPathRewrite(prefix));
     app.setGlobalPrefix(prefix);
   } else {

@@ -5,10 +5,11 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import Redis from 'ioredis';
+import type Redis from 'ioredis';
 import {
-  buildIoredisOptionsFromConnection,
-  readRedisConnectionFromConfig,
+  connectIoredisWithFailover,
+  formatRedisTarget,
+  listRedisCacheConnectionsFromConfig,
 } from './redis-connection.util';
 
 /** Connexion Redis partagée (OPT-007) — idempotence, compteurs SSE, etc. */
@@ -21,32 +22,41 @@ export class SharedRedisService implements OnModuleInit, OnModuleDestroy {
 
   /** `REDIS_*` présent — requis pour tokens auth / idempotence multi-instance. */
   isConfigured(): boolean {
-    return readRedisConnectionFromConfig(this.config) != null;
+    return listRedisCacheConnectionsFromConfig(this.config).length > 0;
   }
 
   onModuleInit(): void {
-    const connection = readRedisConnectionFromConfig(this.config);
-    if (!connection) {
+    const candidates = listRedisCacheConnectionsFromConfig(this.config);
+    if (!candidates.length) {
       this.logger.log('Shared Redis disabled (REDIS_* absent)');
       return;
     }
-    const opts = buildIoredisOptionsFromConnection(connection, {
+    void connectIoredisWithFailover(candidates, {
       enableReadyCheck: true,
       lazyConnect: true,
-    });
-    this.client = new Redis(opts);
-    this.client.on('error', (err) => {
-      this.logger.warn(`Shared Redis error: ${err.message}`);
-    });
-    void this.client.connect().then(() => {
-      this.logger.log(
-        `Shared Redis connected (${connection.host}:${connection.port})`,
-      );
-    }).catch((err: Error) => {
-      this.logger.warn(`Shared Redis connect failed: ${err.message}`);
-      this.client?.disconnect();
-      this.client = null;
-    });
+    })
+      .then((result) => {
+        if (!result) {
+          this.logger.warn(
+            `Shared Redis connect failed (${candidates.map(formatRedisTarget).join(' → ')})`,
+          );
+          return;
+        }
+        const { client, connection } = result;
+        this.client = client;
+        this.client.on('error', (err) => {
+          this.logger.warn(`Shared Redis error: ${err.message}`);
+        });
+        const role =
+          connection === candidates[0] ? 'primary' : 'replica failover';
+        this.logger.log(
+          `Shared Redis connected (${formatRedisTarget(connection)}, ${role})`,
+        );
+      })
+      .catch((err: Error) => {
+        this.logger.warn(`Shared Redis connect failed: ${err.message}`);
+        this.client = null;
+      });
   }
 
   async onModuleDestroy(): Promise<void> {

@@ -50,6 +50,13 @@ export function readMemcachedConnectionFromConfig(
 ): MemcachedConnectionConfig | null {
   const servers = resolveMemcachedServersFromConfig(config);
   if (!servers) return null;
+  return buildMemcachedConnectionFromServers(config, servers);
+}
+
+function buildMemcachedConnectionFromServers(
+  config: ConfigService | { get: (key: string) => string | undefined },
+  servers: string,
+): MemcachedConnectionConfig | null {
   const tlsEnabled = toBool(config.get('MEMCACHED_TLS'));
   if (!tlsEnabled) {
     return { servers };
@@ -77,4 +84,25 @@ export function readMemcachedConnectionFromConfig(
       timeoutMs,
     },
   };
+}
+
+/** Primary + `MEMCACHED_REPLICA_N_SERVERS` (pools standby — ordre de tentative). */
+export function listMemcachedConnectionsFromConfig(
+  config: ConfigService | { get: (key: string) => string | undefined },
+): MemcachedConnectionConfig[] {
+  const primary = readMemcachedConnectionFromConfig(config);
+  if (!primary) return [];
+  const results = [primary];
+  for (const n of [1, 2] as const) {
+    const servers = config.get(`MEMCACHED_REPLICA_${n}_SERVERS`)?.trim();
+    if (!servers) continue;
+    const replicaTls = toBool(config.get(`MEMCACHED_REPLICA_${n}_TLS`));
+    if (replicaTls) {
+      const conn = buildMemcachedConnectionFromServers(config, servers);
+      if (conn) results.push(conn);
+    } else {
+      results.push({ servers });
+    }
+  }
+  return results;
 }
