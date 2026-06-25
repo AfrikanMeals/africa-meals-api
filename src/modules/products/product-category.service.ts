@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
   OnModuleInit,
+  BadRequestException,
 } from '@nestjs/common';
 import { productCategoriesCacheTtlMs } from '@common/redis-app-cache';
 import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
@@ -21,8 +22,10 @@ import {
   CreateProductCategoryDto,
   PatchProductCategoryDto,
 } from './dto/product-category.dto';
+import { ProductCategoryImageJsonDto } from './dto/product-category-image.dto';
 import { mapInChunks } from '@utils/map-in-chunks';
 import { productDailyMenuListingPipelineStages } from '@utils/product-daily-menu-listing.pipeline';
+import { MediasService } from '@modules/medias/medias.service';
 
 /** Ligne JSON renvoyée par [filter] / REST / GraphQL public. */
 export type PublicProductCategoryRow = {
@@ -30,6 +33,7 @@ export type PublicProductCategoryRow = {
   _id: string;
   title: string;
   icon: string;
+  image?: string;
   kind: ProductCategoryKindEnum;
   isEnabled: boolean;
   productCount: number;
@@ -42,10 +46,13 @@ export class ProductCategoryService implements OnModuleInit {
   private readonly _logger = new Logger(ProductCategoryService.name);
 
   /** Cache liste publique catégories (invalidé à chaque mutation admin). */
-  private static readonly _publicListCacheKey = 'product-categories:public:v4';
+  private static readonly _publicListCacheKey = 'product-categories:public:v5';
 
   @Inject(ModuleCacheLayerService)
   private readonly _cacheLayer: ModuleCacheLayerService;
+
+  @Inject(MediasService)
+  private readonly _mediasService: MediasService;
 
   @InjectModel(ProductCategoryModel.name)
   private readonly _productCategoryModel: Model<ProductCategoryModel>;
@@ -163,11 +170,17 @@ export class ProductCategoryService implements OnModuleInit {
   }
 
   private mapLeanCategory(cat: Record<string, unknown>, productCount: number) {
+    const imageRaw = cat.image ?? cat.category_image;
+    const image =
+      typeof imageRaw === 'string' && imageRaw.trim().length > 0
+        ? imageRaw.trim()
+        : undefined;
     return {
       id: cat._id,
       _id: cat._id,
       title: cat.title,
       icon: cat.icon,
+      ...(image ? { image } : {}),
       kind: this.resolveKind(cat),
       isEnabled: (cat.is_enabled as boolean) ?? true,
       productCount,
@@ -193,6 +206,7 @@ export class ProductCategoryService implements OnModuleInit {
     const doc = await this._productCategoryModel.create({
       title,
       icon: args.icon.trim(),
+      ...(args.image?.trim() ? { image: args.image.trim() } : {}),
       kind: args.kind ?? ProductCategoryKindEnum.FOOD,
       isEnabled: args.isEnabled ?? true,
     });
@@ -234,6 +248,10 @@ export class ProductCategoryService implements OnModuleInit {
     }
     if (args.isEnabled !== undefined) {
       existing.isEnabled = args.isEnabled;
+    }
+    if (args.image !== undefined) {
+      const trimmed = args.image.trim();
+      existing.image = trimmed.length > 0 ? trimmed : undefined;
     }
     await existing.save();
     await this._bustPublicCategoriesCache();
@@ -389,11 +407,17 @@ export class ProductCategoryService implements OnModuleInit {
     doc: Record<string, unknown>,
   ): PublicProductCategoryRow {
     const id = String(doc._id ?? '');
+    const imageRaw = doc.image ?? doc.category_image;
+    const image =
+      typeof imageRaw === 'string' && imageRaw.trim().length > 0
+        ? imageRaw.trim()
+        : undefined;
     return {
       id,
       _id: id,
       title: String(doc.title ?? ''),
       icon: String(doc.icon ?? ''),
+      ...(image ? { image } : {}),
       kind: this.resolveKind(doc),
       isEnabled: Boolean(doc.is_enabled ?? doc.isEnabled ?? true),
       productCount: Number(doc.productCount ?? 0),
@@ -448,5 +472,54 @@ export class ProductCategoryService implements OnModuleInit {
         await cat.save();
       }
     }
+  }
+
+  /** Illustration catalogue → moteur Paramètres → Stockage (`catalog/categories`). */
+  async uploadCategoryImage(
+    user: UserModel,
+    dto: ProductCategoryImageJsonDto,
+  ): Promise<{ url: string }> {
+    this.assertCanManageCategories(user);
+    const raw = dto.imageBase64
+      .replace(/\s/g, '')
+      .replace(/^data:image\/[^;]+;base64,/i, '');
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(raw, 'base64');
+    } catch {
+      throw new BadRequestException('invalid_base64');
+    }
+    if (!buffer.length) {
+      throw new BadRequestException('empty_image');
+    }
+    const max = await this._mediasService.getMaxFileSizeBytes();
+    if (buffer.length > max) {
+      throw new BadRequestException('file_too_large');
+    }
+    const name =
+      (dto.filename || 'category.jpg').trim() || 'category.jpg';
+    if (!/\.(jpe?g|png|webp)$/i.test(name)) {
+      throw new BadRequestException('invalid_file_type');
+    }
+    const lower = name.toLowerCase();
+    const mime = lower.endsWith('.png')
+      ? 'image/png'
+      : lower.endsWith('.webp')
+        ? 'image/webp'
+        : 'image/jpeg';
+    const file = {
+      buffer,
+      originalname: name,
+      mimetype: mime,
+      size: buffer.length,
+    } as Express.Multer.File;
+    const url = await this._mediasService.upload(
+      file,
+      user,
+      'catalog/categories',
+    );
+    const resolved =
+      (await this._mediasService.resolvePublicMediaUrl(url)) ?? url;
+    return { url: resolved };
   }
 }

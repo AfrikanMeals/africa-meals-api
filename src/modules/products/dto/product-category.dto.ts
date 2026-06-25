@@ -23,6 +23,13 @@ export class CreateProductCategoryDto {
   @IsOptional()
   @IsBoolean()
   isEnabled?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'URL illustration (upload via POST /product-categories/image-json)',
+  })
+  @IsOptional()
+  @Trim()
+  image?: string;
 }
 
 export class PatchProductCategoryDto {
@@ -47,4 +54,9 @@ export class PatchProductCategoryDto {
   @IsOptional()
   @IsBoolean()
   isEnabled?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Trim()
+  image?: string;
 }

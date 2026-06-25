@@ -20,6 +20,7 @@ import {
   CreateProductCategoryDto,
   PatchProductCategoryDto,
 } from './dto/product-category.dto';
+import { ProductCategoryImageJsonDto } from './dto/product-category-image.dto';
 import { slimProductCategoryForPublicClient } from '@utils/public-client-shapes';
 import { ProductCategoryService } from './product-category.service';
 
@@ -48,6 +49,19 @@ export class ProductCategoryController {
     @Req() req: Request,
   ) {
     return this._productCategoryService.create(body, req.user as UserModel);
+  }
+
+  @Post('image-json')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  async uploadImage(
+    @Body(ValidationPipe) body: ProductCategoryImageJsonDto,
+    @Req() req: Request,
+  ) {
+    return this._productCategoryService.uploadCategoryImage(
+      req.user as UserModel,
+      body,
+    );
   }
 
   @Patch(':id')

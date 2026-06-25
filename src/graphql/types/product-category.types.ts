@@ -20,6 +20,9 @@ export class ProductCategoryPublicGql {
   @Field()
   icon!: string;
 
+  @Field({ nullable: true })
+  image?: string;
+
   @Field(() => ProductCategoryKindEnum)
   kind!: ProductCategoryKindEnum;
 

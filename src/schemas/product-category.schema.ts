@@ -21,6 +21,10 @@ export class ProductCategoryModel extends BaseSchema {
   @Prop({ required: true, name: 'icon' })
   icon: string;
 
+  /** Illustration catalogue (URL MinIO / proxy API). */
+  @Prop({ name: 'image' })
+  image?: string;
+
   @Prop({ default: true, name: 'is_enabled' })
   isEnabled: boolean;
 

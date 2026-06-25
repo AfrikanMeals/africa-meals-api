@@ -159,6 +159,9 @@ export function slimProductCategoryForPublicClient(
     _id: id,
     title: String(row['title'] ?? ''),
     icon: String(row['icon'] ?? ''),
+    ...(typeof row['image'] === 'string' && row['image'].trim()
+      ? { image: row['image'].trim() }
+      : {}),
     kind: row['kind'] === 'drink' ? 'drink' : 'food',
     isEnabled: row['isEnabled'] ?? row['is_enabled'] ?? true,
     productCount: Number(row['productCount'] ?? row['product_count'] ?? 0),
