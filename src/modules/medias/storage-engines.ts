@@ -16,6 +16,10 @@ import {
   normalizeMinioEndpoint,
   parseMinioEndpoints,
 } from './minio-endpoints.util';
+import {
+  isObjectAclUnsupportedError,
+  storageObjectAclEnabled,
+} from './storage-object-acl.util';
 
 @Injectable()
 export class FirebaseStorageEngine implements IStorageEngine {
@@ -108,6 +112,7 @@ export class GcsStorageEngine implements IStorageEngine {
   readonly id: StorageEngineId = 'gcs';
   private readonly logger = new Logger(GcsStorageEngine.name);
   private storageClient: import('@google-cloud/storage').Storage | null = null;
+  private objectAclUnsupported = false;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -163,15 +168,25 @@ export class GcsStorageEngine implements IStorageEngine {
       metadata: { metadata: { owner: input.owner } },
     });
 
-    if (this.config.get<string>('GCS_PUBLIC_READ')?.trim() !== 'false') {
+    if (
+      !this.objectAclUnsupported &&
+      storageObjectAclEnabled(this.config, 'GCS_PUBLIC_READ')
+    ) {
       try {
         await file.makePublic();
       } catch (err) {
-        this.logger.warn(
-          `GCS makePublic skipped for gs://${bucket}/${input.path}: ${
-            err instanceof Error ? err.message : String(err)
-          } (bucket IAM allUsers:objectViewer required if UBLA)`,
-        );
+        if (isObjectAclUnsupportedError(err)) {
+          this.objectAclUnsupported = true;
+          this.logger.debug(
+            `GCS makePublic indisponible (UBLA / IAM bucket) — uploads sans ACL objet`,
+          );
+        } else {
+          this.logger.warn(
+            `GCS makePublic skipped for gs://${bucket}/${input.path}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
       }
     }
 
@@ -250,6 +265,7 @@ export class S3StorageEngine implements IStorageEngine {
   readonly id: StorageEngineId = 's3';
   private readonly logger = new Logger(S3StorageEngine.name);
   private s3Client: import('@aws-sdk/client-s3').S3Client | null = null;
+  private objectAclUnsupported = false;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -298,7 +314,8 @@ export class S3StorageEngine implements IStorageEngine {
   }
 
   private publicReadEnabled(): boolean {
-    return this.config.get<string>('AWS_S3_PUBLIC_READ')?.trim() !== 'false';
+    if (this.objectAclUnsupported) return false;
+    return storageObjectAclEnabled(this.config, 'AWS_S3_PUBLIC_READ');
   }
 
   async upload(input: StorageUploadInput): Promise<StorageUploadResult> {
@@ -318,12 +335,20 @@ export class S3StorageEngine implements IStorageEngine {
           new PutObjectCommand({ ...putBase, ACL: 'public-read' }),
         );
       } catch (err) {
-        this.logger.warn(
-          `S3 ACL public-read skipped for ${input.path}: ${
-            err instanceof Error ? err.message : String(err)
-          } (configure bucket policy s3:GetObject for Principal "*", or enable ACLs on bucket)`,
-        );
-        await client.send(new PutObjectCommand(putBase));
+        if (isObjectAclUnsupportedError(err)) {
+          this.objectAclUnsupported = true;
+          this.logger.debug(
+            `S3 ACL public-read indisponible (bucket policy) — uploads sans ACL objet`,
+          );
+          await client.send(new PutObjectCommand(putBase));
+        } else {
+          this.logger.warn(
+            `S3 ACL public-read skipped for ${input.path}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          await client.send(new PutObjectCommand(putBase));
+        }
       }
     } else {
       await client.send(new PutObjectCommand(putBase));
@@ -442,6 +467,7 @@ export class MinioStorageEngine implements IStorageEngine {
     string,
     import('@aws-sdk/client-s3').S3Client
   >();
+  private objectAclUnsupported = false;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -509,7 +535,8 @@ export class MinioStorageEngine implements IStorageEngine {
   }
 
   private publicReadEnabled(): boolean {
-    return this.config.get<string>('MINIO_PUBLIC_READ')?.trim() !== 'false';
+    if (this.objectAclUnsupported) return false;
+    return storageObjectAclEnabled(this.config, 'MINIO_PUBLIC_READ');
   }
 
   async upload(input: StorageUploadInput): Promise<StorageUploadResult> {
@@ -529,12 +556,20 @@ export class MinioStorageEngine implements IStorageEngine {
           new PutObjectCommand({ ...putBase, ACL: 'public-read' }),
         );
       } catch (err) {
-        this.logger.warn(
-          `MinIO ACL public-read skipped for ${input.path}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-        await client.send(new PutObjectCommand(putBase));
+        if (isObjectAclUnsupportedError(err)) {
+          this.objectAclUnsupported = true;
+          this.logger.debug(
+            `MinIO ACL public-read indisponible — uploads sans ACL objet`,
+          );
+          await client.send(new PutObjectCommand(putBase));
+        } else {
+          this.logger.warn(
+            `MinIO ACL public-read skipped for ${input.path}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          await client.send(new PutObjectCommand(putBase));
+        }
       }
     } else {
       await client.send(new PutObjectCommand(putBase));
