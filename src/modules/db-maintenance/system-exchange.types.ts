@@ -27,6 +27,18 @@ export type SystemExchangeLink = {
   details: string;
 };
 
+/** État gRPC WS→API lu via `GET /api/internal/grpc/status` sur le service WS. */
+export type WsGrpcRuntimeStatus = {
+  wsToApiEnabled: boolean;
+  wsServerEnabled: boolean;
+  apiHost: string;
+  apiPort: number;
+  clientsReady: boolean;
+  httpFallbackEnabled: boolean;
+  lastError: string | null;
+  source: 'ws-internal' | 'unknown';
+};
+
 export type SystemExchangeResponse = {
   checkedAt: string;
   environment: string;

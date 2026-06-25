@@ -6,6 +6,7 @@ import type {
   SystemExchangePlatform,
   SystemExchangeResponse,
   SystemExchangeStatus,
+  WsGrpcRuntimeStatus,
 } from './system-exchange.types';
 import {
   isBullmqRedisDedicated,
@@ -37,6 +38,7 @@ type BuildSystemExchangeInput = {
     mqBrokerEnabled: boolean;
     grpcWsNotifyEnabled: boolean;
   };
+  wsGrpc: WsGrpcRuntimeStatus;
   firebaseMessagingOk: boolean;
 };
 
@@ -323,7 +325,18 @@ export async function buildSystemExchangeResponse(
   byId['grpc-api'] = grpcApiProbe.status;
 
   const grpcNotifyActive = input.runtime.grpcWsNotifyEnabled;
-  const grpcWsToApiActive = grpcEnvFlag(input.config, 'GRPC_WS_TO_API_ENABLED', false);
+  const wsGrpc = input.wsGrpc;
+  const grpcWsToApiActive =
+    wsGrpc.source === 'ws-internal'
+      ? wsGrpc.wsToApiEnabled
+      : grpcEnvFlag(input.config, 'GRPC_WS_TO_API_ENABLED', false);
+  const wsToApiDetails = grpcWsToApiActive
+    ? `InboxFeed · ChatPush ${wsGrpc.apiHost}:${wsGrpc.apiPort}${
+        wsGrpc.clientsReady ? '' : ' · clients WS non prêts'
+      }${wsGrpc.lastError ? ` — ${wsGrpc.lastError}` : ''} · ${grpcApiProbe.details}`
+    : wsGrpc.source === 'unknown'
+      ? 'Désactivé ou statut WS indisponible — repli HTTP interne WS.'
+      : 'Désactivé (GRPC_WS_TO_API_ENABLED=false côté WS) — repli HTTP interne WS.';
 
   const links: SystemExchangeLink[] = [
     communication(
@@ -489,9 +502,7 @@ export async function buildSystemExchangeResponse(
       'WS → API (gRPC)',
       byId.ws,
       grpcWsToApiActive ? byId['grpc-api'] : 'disabled',
-      grpcWsToApiActive
-        ? `InboxFeed · ChatPush :50052 · ${grpcApiProbe.details}`
-        : 'Désactivé (GRPC_WS_TO_API_ENABLED=false) — repli HTTP interne WS.',
+      wsToApiDetails,
       grpcApiProbe.latencyMs,
     ),
     communication(

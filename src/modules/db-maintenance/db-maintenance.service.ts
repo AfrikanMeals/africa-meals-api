@@ -85,7 +85,7 @@ import {
   probeMemcached,
   resolveMinioHealthProbeSkipReason,
 } from './system-exchange.probes';
-import type { SystemExchangeResponse } from './system-exchange.types';
+import type { SystemExchangeResponse, WsGrpcRuntimeStatus } from './system-exchange.types';
 import { MapSettingsService } from '@modules/map-settings/map-settings.service';
 import { osmForwardGeocode } from '@common/osm-geocoding.util';
 import Stripe = require('stripe');
@@ -809,18 +809,20 @@ export class DbMaintenanceService {
     user: UserModel,
   ): Promise<SystemExchangeResponse> {
     await this.assertAdminSettingsPermission(user);
-    const [mqtt, runtime, firebaseMessagingOk] = await Promise.all([
+    const [mqtt, runtime, firebaseMessagingOk, wsGrpc] = await Promise.all([
       this.getInfraMqttStatusInternal(),
       this.ensureInfraRuntimeSettings().then((doc) =>
         this.toInfraRuntimeSettingsResponse(doc),
       ),
       this.isFirebaseMessagingReady(),
+      this.fetchWsGrpcStatus(),
     ]);
     return buildSystemExchangeResponse({
       config: this.config,
       connection: this.connection,
       mqtt,
       runtime,
+      wsGrpc,
       firebaseMessagingOk,
     });
   }
@@ -921,6 +923,75 @@ export class DbMaintenanceService {
       const hint =
         msg === 'fetch failed'
           ? `ws_status_unreachable (${raw}) — vérifiez que we-ws-dev écoute sur ce port`
+          : msg;
+      return {
+        ...fallback,
+        lastError: hint,
+      };
+    }
+  }
+
+  private async fetchWsGrpcStatus(): Promise<WsGrpcRuntimeStatus> {
+    const fallback: WsGrpcRuntimeStatus = {
+      wsToApiEnabled: false,
+      wsServerEnabled: false,
+      apiHost: '127.0.0.1',
+      apiPort: 50052,
+      clientsReady: false,
+      httpFallbackEnabled: true,
+      lastError: 'ws_grpc_status_unreachable',
+      source: 'unknown',
+    };
+    const raw = this.config.get<string>('AFRICA_MEALS_WS_INTERNAL_URL')?.trim();
+    const secret =
+      this.config.get<string>('INTERNAL_NOTIFY_SECRET')?.trim() ||
+      this.config.get<string>('INTERNAL_WS_NOTIFY_SECRET')?.trim();
+    if (!raw || !secret) return fallback;
+    const base = raw.replace(/\/+$/, '');
+    const path = base.endsWith('/api')
+      ? `${base}/internal/grpc/status`
+      : `${base}/api/internal/grpc/status`;
+    try {
+      const response = await this.fetchWithTimeout(path, 5000, {
+        method: 'GET',
+        headers: {
+          'X-Internal-Secret': secret,
+        },
+      });
+      if (!response.ok) {
+        return {
+          ...fallback,
+          lastError: `ws_grpc_status_http_${response.status}`,
+        };
+      }
+      const data = (await response.json().catch(() => ({}))) as Record<
+        string,
+        unknown
+      >;
+      return {
+        wsToApiEnabled: data.wsToApiEnabled === true,
+        wsServerEnabled: data.wsServerEnabled === true,
+        apiHost:
+          typeof data.apiHost === 'string' && data.apiHost.trim()
+            ? data.apiHost.trim()
+            : '127.0.0.1',
+        apiPort:
+          typeof data.apiPort === 'number' && Number.isFinite(data.apiPort)
+            ? data.apiPort
+            : 50052,
+        clientsReady: data.clientsReady === true,
+        httpFallbackEnabled: data.httpFallbackEnabled !== false,
+        lastError:
+          typeof data.lastError === 'string' && data.lastError.trim()
+            ? data.lastError.trim()
+            : null,
+        source: 'ws-internal',
+      };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      const hint =
+        msg === 'fetch failed'
+          ? `ws_grpc_status_unreachable (${raw}) — vérifiez que le WS écoute sur ce port`
           : msg;
       return {
         ...fallback,
@@ -3788,15 +3859,18 @@ export class DbMaintenanceService {
     const key = 'grpc-api-internal-status';
     const label = 'gRPC API internal status';
     const probe = await probeGrpcApiInternal(this.config);
-    const wsToApiEnabled = grpcEnvFlag(
-      this.config,
-      'GRPC_WS_TO_API_ENABLED',
-      false,
-    );
+    const wsGrpc = await this.fetchWsGrpcStatus();
+    const wsToApiEnabled =
+      wsGrpc.source === 'ws-internal'
+        ? wsGrpc.wsToApiEnabled
+        : grpcEnvFlag(this.config, 'GRPC_WS_TO_API_ENABLED', false);
     let details = probe.details;
     details += wsToApiEnabled
-      ? ' · GRPC_WS_TO_API_ENABLED=ON'
+      ? ` · GRPC_WS_TO_API_ENABLED=ON (WS → ${wsGrpc.apiHost}:${wsGrpc.apiPort})`
       : ' · GRPC_WS_TO_API_ENABLED=OFF (repli HTTP WS→API)';
+    if (wsGrpc.lastError && wsToApiEnabled) {
+      details += ` · ${wsGrpc.lastError}`;
+    }
     let status = this.probeToHealthStatus(probe.status);
     if (wsToApiEnabled && probe.status !== 'healthy' && probe.status !== 'disabled') {
       status = 'down';

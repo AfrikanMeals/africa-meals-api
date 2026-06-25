@@ -40,6 +40,16 @@ describe('system-exchange.builder', () => {
         },
       },
       runtime: { redisManagerEnabled: true, mqBrokerEnabled: true, grpcWsNotifyEnabled: false },
+      wsGrpc: {
+        wsToApiEnabled: true,
+        wsServerEnabled: true,
+        apiHost: '127.0.0.1',
+        apiPort: 50052,
+        clientsReady: true,
+        httpFallbackEnabled: true,
+        lastError: null,
+        source: 'ws-internal',
+      },
       firebaseMessagingOk: true,
     });
 
