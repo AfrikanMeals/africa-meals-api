@@ -114,13 +114,11 @@ export class SeedService implements OnModuleInit {
   }
 
   private async ensureCategories() {
-    const existing = await this.categoryModel.find().exec();
-    const toCreate = DEFAULT_CATEGORIES.filter(
-      (d) => !existing.some((e) => e.title === d.title),
-    );
-    if (toCreate.length) {
-      await this.categoryModel.insertMany(toCreate);
-      console.log(`Seed: Created ${toCreate.length} product categories.`);
+    const count = await this.categoryModel.countDocuments().exec();
+    if (count > 0) {
+      return;
     }
+    await this.categoryModel.insertMany(DEFAULT_CATEGORIES);
+    console.log(`Seed: Created ${DEFAULT_CATEGORIES.length} product categories.`);
   }
 }

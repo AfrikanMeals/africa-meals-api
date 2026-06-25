@@ -459,19 +459,18 @@ export class ProductCategoryService implements OnModuleInit {
   }
 
   private async _seed() {
-    const data = DEFAULT_CATEGORIES;
     const existing = await this._productCategoryModel.find().exec();
-    const toCreate = data.filter(
-      (d) => !existing.find((e) => e.title === d.title),
-    );
 
-    if (toCreate.length) {
-      await this._productCategoryModel.insertMany(toCreate);
-      console.log(`🚀 ~ Seeded ${toCreate.length} categories`);
+    if (existing.length === 0) {
+      await this._productCategoryModel.insertMany(DEFAULT_CATEGORIES);
+      this._logger.log(
+        `Seeded ${DEFAULT_CATEGORIES.length} default categories (empty collection)`,
+      );
+      return;
     }
 
     const kindByTitle = new Map(
-      data.map((d) => [d.title, d.kind] as const),
+      DEFAULT_CATEGORIES.map((d) => [d.title, d.kind] as const),
     );
     for (const cat of existing) {
       const expected =
