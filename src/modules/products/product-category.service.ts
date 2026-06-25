@@ -17,7 +17,7 @@ import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { StoreStatusEnum } from '@schemas/store.schema';
 import { Model, PipelineStage, Types } from 'mongoose';
-import { DEFAULT_CATEGORIES, DRINK_CATEGORY_ICONS } from './data/categories';
+import { DEFAULT_CATEGORIES, DRINK_CATEGORY_ICONS, defaultCategoryIconForKind } from './data/categories';
 import {
   CreateProductCategoryDto,
   PatchProductCategoryDto,
@@ -210,11 +210,15 @@ export class ProductCategoryService implements OnModuleInit {
     if (dup) {
       throw new ConflictException('category_title_exists');
     }
+    const kind = args.kind ?? ProductCategoryKindEnum.FOOD;
+    const icon =
+      args.icon?.trim() ||
+      defaultCategoryIconForKind(kind);
     const doc = await this._productCategoryModel.create({
       title,
-      icon: args.icon.trim(),
+      icon,
       ...(args.image?.trim() ? { image: args.image.trim() } : {}),
-      kind: args.kind ?? ProductCategoryKindEnum.FOOD,
+      kind,
       isEnabled: args.isEnabled ?? true,
     });
     await this._bustPublicCategoriesCache();

@@ -1,5 +1,18 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
+import {
+  DEFAULT_MODULE_STORAGE_ENGINES,
+  StorageModuleEngines,
+} from './storage-module.constants';
+
+export {
+  DEFAULT_MODULE_STORAGE_ENGINES,
+  STORAGE_MODULES,
+  STORAGE_MODULE_LABELS,
+  StorageModuleEngines,
+  StorageModuleEngineSetting,
+  StorageModuleId,
+} from './storage-module.constants';
 
 export type StorageEngineMode = 'firebase' | 'gcs' | 's3' | 'minio' | 'auto';
 
@@ -48,6 +61,39 @@ export class StorageSettingsModel {
     default: () => ({ ...DEFAULT_STORAGE_ENGINES_ENABLED }),
   })
   enginesEnabled: StorageEnginesEnabled;
+
+  /** Moteur par module ; `default` = moteur global (`storageEngine`). */
+  @Prop({
+    type: {
+      catalog: {
+        type: String,
+        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'auto'],
+        default: 'default',
+      },
+      profile: {
+        type: String,
+        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'auto'],
+        default: 'default',
+      },
+      marketing: {
+        type: String,
+        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'auto'],
+        default: 'default',
+      },
+      chat: {
+        type: String,
+        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'auto'],
+        default: 'default',
+      },
+      system: {
+        type: String,
+        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'auto'],
+        default: 'default',
+      },
+    },
+    default: () => ({ ...DEFAULT_MODULE_STORAGE_ENGINES }),
+  })
+  moduleStorageEngines: StorageModuleEngines;
 }
 
 export type StorageSettingsDocument =

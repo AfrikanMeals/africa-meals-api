@@ -40,6 +40,13 @@ export const DRINK_CATEGORY_ICONS = new Set([
   'wine',
 ]);
 
+/** Icône legacy par défaut si aucune illustration n’est fournie. */
+export function defaultCategoryIconForKind(
+  kind: ProductCategoryKindEnum,
+): string {
+  return kind === ProductCategoryKindEnum.DRINK ? 'natural_drink' : 'meals';
+}
+
 /** Type effectif d’une catégorie (aligné admin + seed). */
 export function resolveProductCategoryKind(
   raw: Record<string, unknown>,

@@ -21,6 +21,7 @@ import {
   StorageUploadResult,
 } from './storage-engine.types';
 import { StorageEngineMode } from '@schemas/storage-settings.schema';
+import { inferStorageModuleFromBasePath } from '@schemas/storage-module.constants';
 
 /**
  * Service de stockage multi-moteur (Firebase, GCS, S3, MinIO) avec compression et limites admin.
@@ -244,6 +245,16 @@ export class MediasService {
     return this.storageSettings.getMaxFileSizeBytes();
   }
 
+  private async resolveUploadEngine(basePath: string) {
+    const settings = await this.storageSettings.getPublicSettings();
+    const module = inferStorageModuleFromBasePath(basePath);
+    const engineMode = this.storageSettings.resolveEngineForModuleFromSettings(
+      module,
+      settings,
+    );
+    return this.engineFactory.resolve(engineMode, settings.enginesEnabled);
+  }
+
   private async prepareForUpload(
     file: Express.Multer.File,
   ): Promise<Express.Multer.File> {
@@ -266,11 +277,7 @@ export class MediasService {
   async upload(file: Express.Multer.File, user: UserModel, basePath = '') {
     try {
       const prepared = await this.prepareForUpload(file);
-      const settings = await this.storageSettings.getPublicSettings();
-      const engine = this.engineFactory.resolve(
-        settings.storageEngine,
-        settings.enginesEnabled,
-      );
+      const engine = await this.resolveUploadEngine(basePath);
       const path =
         basePath.length > 0
           ? `${basePath}/${uuid()}${extname(prepared.originalname)}`
@@ -301,10 +308,7 @@ export class MediasService {
     if (args.buffer.length > maxBytes) {
       throw new BadRequestException('file_too_large');
     }
-    const engine = this.engineFactory.resolve(
-      settings.storageEngine,
-      settings.enginesEnabled,
-    );
+    const engine = await this.resolveUploadEngine(args.basePath);
     const ext =
       args.extension ??
       (args.contentType.includes('png')

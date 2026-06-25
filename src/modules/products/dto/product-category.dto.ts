@@ -9,10 +9,13 @@ export class CreateProductCategoryDto {
   @Trim()
   title: string;
 
-  @ApiProperty({ example: 'meals' })
-  @IsNotEmpty()
+  @ApiPropertyOptional({
+    example: 'meals',
+    description: 'Legacy — dérivé automatiquement du type si absent.',
+  })
+  @IsOptional()
   @Trim()
-  icon: string;
+  icon?: string;
 
   @ApiPropertyOptional({ enum: ProductCategoryKindEnum, default: ProductCategoryKindEnum.FOOD })
   @IsOptional()

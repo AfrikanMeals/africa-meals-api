@@ -12,6 +12,14 @@ import {
   StorageEngineMode,
   StorageEngineId,
 } from '@schemas/storage-settings.schema';
+import {
+  DEFAULT_MODULE_STORAGE_ENGINES,
+  StorageModuleEngines,
+  StorageModuleEngineSetting,
+  StorageModuleId,
+  STORAGE_MODULES,
+  normalizeModuleStorageEngines,
+} from '@schemas/storage-module.constants';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 import { UpdateStorageSettingsDto } from './dto/update-storage-settings.dto';
@@ -25,6 +33,7 @@ export type StorageSettingsResponse = {
   storageEngine: StorageEngineMode;
   mediaProxyEnabled: boolean;
   enginesEnabled: StorageEnginesEnabled;
+  moduleStorageEngines: StorageModuleEngines;
   updatedAt: string | null;
 };
 
@@ -42,6 +51,7 @@ function normalizeEnginesEnabled(raw: unknown): StorageEnginesEnabled {
 function assertEnginesEnabledSettings(args: {
   storageEngine: StorageEngineMode;
   enginesEnabled: StorageEnginesEnabled;
+  moduleStorageEngines?: StorageModuleEngines;
 }) {
   const enabledIds = (
     ['firebase', 'gcs', 's3', 'minio'] as StorageEngineId[]
@@ -54,6 +64,18 @@ function assertEnginesEnabledSettings(args: {
     !args.enginesEnabled[args.storageEngine as StorageEngineId]
   ) {
     throw new BadRequestException('storage_engine_disabled');
+  }
+  if (args.moduleStorageEngines) {
+    for (const module of STORAGE_MODULES) {
+      const mode = args.moduleStorageEngines[module];
+      if (
+        mode !== 'default' &&
+        mode !== 'auto' &&
+        !args.enginesEnabled[mode as StorageEngineId]
+      ) {
+        throw new BadRequestException('storage_module_engine_disabled');
+      }
+    }
   }
 }
 
@@ -85,6 +107,9 @@ export class StorageSettingsService {
       storageEngine: (doc.storageEngine as StorageEngineMode) || 'firebase',
       mediaProxyEnabled: doc.mediaProxyEnabled === true,
       enginesEnabled: normalizeEnginesEnabled(doc.enginesEnabled),
+      moduleStorageEngines: normalizeModuleStorageEngines(
+        doc.moduleStorageEngines,
+      ),
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
   }
@@ -110,6 +135,7 @@ export class StorageSettingsService {
             storageEngine: 'firebase',
             mediaProxyEnabled: false,
             enginesEnabled: { ...DEFAULT_STORAGE_ENGINES_ENABLED },
+            moduleStorageEngines: { ...DEFAULT_MODULE_STORAGE_ENGINES },
           },
         },
         { upsert: true, new: true, lean: true, setDefaultsOnInsert: true },
@@ -126,12 +152,36 @@ export class StorageSettingsService {
     return settings.maxFileSizeMb * 1024 * 1024;
   }
 
+  /** Moteur effectif pour un module (override ou moteur global). */
+  async resolveEngineForModule(
+    module: StorageModuleId,
+  ): Promise<StorageEngineMode> {
+    const settings = await this.getPublicSettings();
+    return this.resolveEngineForModuleFromSettings(module, settings);
+  }
+
+  resolveEngineForModuleFromSettings(
+    module: StorageModuleId,
+    settings: Pick<StorageSettingsResponse, 'storageEngine' | 'moduleStorageEngines'>,
+  ): StorageEngineMode {
+    const moduleEngine: StorageModuleEngineSetting =
+      settings.moduleStorageEngines?.[module] ?? 'default';
+    if (moduleEngine === 'default') {
+      return settings.storageEngine;
+    }
+    return moduleEngine;
+  }
+
   async updateSettings(user: UserModel, dto: UpdateStorageSettingsDto) {
     assertAdmin(user);
     const enginesEnabled = normalizeEnginesEnabled(dto.enginesEnabled);
+    const moduleStorageEngines = normalizeModuleStorageEngines(
+      dto.moduleStorageEngines,
+    );
     assertEnginesEnabledSettings({
       storageEngine: dto.storageEngine,
       enginesEnabled,
+      moduleStorageEngines,
     });
     const updated = await this._settings
       .findOneAndUpdate(
@@ -143,6 +193,7 @@ export class StorageSettingsService {
             storageEngine: dto.storageEngine,
             mediaProxyEnabled: dto.mediaProxyEnabled,
             enginesEnabled,
+            moduleStorageEngines,
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },

@@ -2,6 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsBoolean, IsIn, IsInt, Max, Min, ValidateNested } from 'class-validator';
 import { StorageEnginesEnabledDto } from './storage-engines-enabled.dto';
+import { StorageModuleEnginesDto } from './storage-module-engines.dto';
 
 export class UpdateStorageSettingsDto {
   @ApiProperty({ description: 'Compresse les images avant upload (JPEG/WebP)' })
@@ -34,4 +35,12 @@ export class UpdateStorageSettingsDto {
   @ValidateNested()
   @Type(() => StorageEnginesEnabledDto)
   enginesEnabled: StorageEnginesEnabledDto;
+
+  @ApiProperty({
+    description:
+      'Moteur par module (`default` = moteur global). Catalogue, profil, marketing, chat, système.',
+  })
+  @ValidateNested()
+  @Type(() => StorageModuleEnginesDto)
+  moduleStorageEngines: StorageModuleEnginesDto;
 }

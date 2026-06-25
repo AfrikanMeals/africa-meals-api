@@ -18,8 +18,8 @@ export class ProductCategoryModel extends BaseSchema {
   @Prop({ required: true, name: 'title' })
   title: string;
 
-  @Prop({ required: true, name: 'icon' })
-  icon: string;
+  @Prop({ name: 'icon', default: 'meals' })
+  icon?: string;
 
   /** Illustration catalogue (URL MinIO / proxy API). */
   @Prop({ name: 'image' })

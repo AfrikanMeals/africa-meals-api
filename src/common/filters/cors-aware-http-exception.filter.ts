@@ -12,9 +12,18 @@ import { isBrowserCorsOriginAllowed } from '../cors/cors-options';
 @Catch()
 export class CorsAwareHttpExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
+    // GraphQL : laisser Apollo formater la réponse (évite ERR_HTTP_HEADERS_SENT).
+    if (host.getType<string>() === 'graphql') {
+      return;
+    }
+
     const ctx = host.switchToHttp();
     const req = ctx.getRequest<Request>();
     const res = ctx.getResponse<Response>();
+
+    if (res.headersSent) {
+      return;
+    }
 
     const origin =
       typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
