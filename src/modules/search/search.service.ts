@@ -38,6 +38,10 @@ import {
   buildDailyMenuTodayForProduct,
   parseDailyMenuAddonsAvailability,
 } from '@utils/daily-menu-today-product.util';
+import {
+  jsDayOfWeekInTimezone,
+  resolveEffectiveTimezone,
+} from '@modules/supported-countries/region-timezone.util';
 import { mapInChunks } from '@utils/map-in-chunks';
 import {
   productDailyMenuEnrichmentPipelineStages,
@@ -189,8 +193,28 @@ export class SearchService {
   }
 
   /** Menu du jour uniquement, avec stock > 0 (ou illimité). */
-  private _productDailyMenuListingStages(): PipelineStage[] {
-    return productDailyMenuListingPipelineStages();
+  private async _productDailyMenuListingStagesAsync(): Promise<
+    PipelineStage[]
+  > {
+    const regionTimezoneMap =
+      await this._supportedCountries.getRegionTimezoneMap();
+    return productDailyMenuListingPipelineStages(regionTimezoneMap);
+  }
+
+  private async _productDailyMenuEnrichmentStagesAsync(): Promise<
+    PipelineStage[]
+  > {
+    const regionTimezoneMap =
+      await this._supportedCountries.getRegionTimezoneMap();
+    return productDailyMenuEnrichmentPipelineStages(regionTimezoneMap);
+  }
+
+  private async _storeArticlesAvailabilityStagesAsync(): Promise<
+    PipelineStage[]
+  > {
+    const regionTimezoneMap =
+      await this._supportedCountries.getRegionTimezoneMap();
+    return storeArticlesAvailabilityPipelineStages(regionTimezoneMap);
   }
 
   /** Filtre rayon + champ `distanceKm` (lookup adresse boutique). */
@@ -267,8 +291,50 @@ export class SearchService {
   }
 
   /** Avant facet boutiques : coords + distance + filtre rayon + tri menu du jour (nombre de plats du jour). */
-  private _storeDistanceAndMenuStages(args: SearchDto): PipelineStage[] {
-    const dow = new Date().getDay();
+  private async _storeDistanceAndMenuStages(
+    args: SearchDto,
+  ): Promise<PipelineStage[]> {
+    const regionTimezoneMap =
+      await this._supportedCountries.getRegionTimezoneMap();
+    const effectiveTzExpr = {
+      $let: {
+        vars: {
+          storeTz: {
+            $trim: {
+              input: { $ifNull: ['$timezone', ''] },
+            },
+          },
+        },
+        in: {
+          $cond: [
+            { $gt: [{ $strLenCP: '$$storeTz' }, 0] },
+            '$$storeTz',
+            {
+              $switch: {
+                branches: Object.entries(regionTimezoneMap).map(
+                  ([code, tz]) => ({
+                    case: { $eq: [{ $toUpper: '$region' }, code] },
+                    then: tz,
+                  }),
+                ),
+                default: 'America/Toronto',
+              },
+            },
+          ],
+        },
+      },
+    };
+    const jsDay = {
+      $subtract: [
+        {
+          $dayOfWeek: {
+            date: '$$NOW',
+            timezone: effectiveTzExpr,
+          },
+        },
+        1,
+      ],
+    };
     const stages: PipelineStage[] = [
       this._lookupAddressPipelineStage('$address', '_stGeoAddr'),
       {
@@ -319,7 +385,7 @@ export class SearchService {
                       $filter: {
                         input: { $ifNull: ['$dailyMenuByWeekday', []] },
                         as: 's',
-                        cond: { $eq: ['$$s.dayOfWeek', dow] },
+                        cond: { $eq: ['$$s.dayOfWeek', jsDay] },
                       },
                     },
                   },
@@ -931,6 +997,7 @@ export class SearchService {
         args.countryCode,
       ));
     const queryEsc = escapeMongoRegex(args.query ?? '');
+    const dailyMenuStages = await this._productDailyMenuListingStagesAsync();
     const pipeline = [
       {
         $lookup: {
@@ -982,7 +1049,7 @@ export class SearchService {
         },
       },
       ...this._clientMarketplaceProductStoreStages(),
-      ...this._productDailyMenuListingStages(),
+      ...dailyMenuStages,
       ...this._productGeoDistanceStages(args),
     ];
     const sortKeys = this._productSortKeys(args);
@@ -1122,6 +1189,7 @@ export class SearchService {
   private _buildDailyMenuTodayForProduct(
     storeRaw: Record<string, unknown> | null | undefined,
     productId: string,
+    timezone?: string,
   ): {
     onMenu: boolean;
     stockUnlimited: boolean;
@@ -1133,6 +1201,9 @@ export class SearchService {
       supplementIndexes?: number[];
     };
   } {
+    if (timezone) {
+      return buildDailyMenuTodayForProduct(storeRaw, productId, new Date(), timezone);
+    }
     const dow = new Date().getDay();
     const rows = Array.isArray(storeRaw?.['dailyMenuByWeekday'])
       ? (storeRaw!['dailyMenuByWeekday'] as Record<string, unknown>[])
@@ -1299,7 +1370,22 @@ export class SearchService {
                 }
               : {}),
           }
-        : buildDailyMenuTodayForProduct(st, productIdStr);
+        : buildDailyMenuTodayForProduct(
+            st,
+            productIdStr,
+            new Date(),
+            resolveEffectiveTimezone({
+              storeTimezone:
+                typeof st?.['timezone'] === 'string'
+                  ? String(st['timezone'])
+                  : undefined,
+              regionTimezone: undefined,
+              regionCode:
+                typeof st?.['region'] === 'string'
+                  ? String(st['region'])
+                  : undefined,
+            }),
+          );
     const distRaw = doc.distanceKm;
     const distanceKm =
       distRaw != null && Number.isFinite(Number(distRaw))
@@ -1446,6 +1532,7 @@ export class SearchService {
       (await this._supportedCountries.resolveClientCatalogRegion(user));
     /** Fenêtre récente avant `$lookup` stores — évite un scan joint sur toute la collection `products`. */
     const candidateCap = Math.min(900, Math.max(safeLimit * 12, 200));
+    const dailyMenuStages = await this._productDailyMenuListingStagesAsync();
     const pipeline: PipelineStage[] = [
       { $sort: { createdAt: -1 } },
       { $limit: candidateCap },
@@ -1479,7 +1566,7 @@ export class SearchService {
         },
       },
       ...this._clientMarketplaceProductStoreStages(),
-      ...this._productDailyMenuListingStages(),
+      ...dailyMenuStages,
       { $sort: { createdAt: -1 } },
       { $limit: safeLimit },
       {
@@ -1872,6 +1959,9 @@ export class SearchService {
           ],
         };
 
+    const dailyMenuStages = dailyMenuOnly
+      ? await this._productDailyMenuListingStagesAsync()
+      : await this._productDailyMenuEnrichmentStagesAsync();
     const pipeline: PipelineStage[] = [
       {
         $lookup: {
@@ -1903,9 +1993,7 @@ export class SearchService {
         },
       },
       ...productEmbeddedStoreOwnerStripeOnboardedStages(),
-      ...(dailyMenuOnly
-        ? this._productDailyMenuListingStages()
-        : productDailyMenuEnrichmentPipelineStages()),
+      ...dailyMenuStages,
       {
         $facet: {
           total: [{ $count: 'n' }],
@@ -1963,6 +2051,9 @@ export class SearchService {
         ],
       });
     }
+    const storeDistanceStages = await this._storeDistanceAndMenuStages(args);
+    const storeAvailabilityStages =
+      await this._storeArticlesAvailabilityStagesAsync();
     const pipeline: PipelineStage[] = [
       {
         $match: {
@@ -1970,8 +2061,8 @@ export class SearchService {
         },
       },
       ...storeOwnerStripeOnboardedPipelineStages(),
-      ...this._storeDistanceAndMenuStages(args),
-      ...storeArticlesAvailabilityPipelineStages(),
+      ...storeDistanceStages,
+      ...storeAvailabilityStages,
     ];
 
     const sortKeys = this._storeSortKeys(args);

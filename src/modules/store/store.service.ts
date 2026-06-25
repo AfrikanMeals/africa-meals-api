@@ -18,6 +18,10 @@ import { RatingsService } from '@modules/ratings/ratings.service';
 import { MailerService } from '@modules/mailer/mailer.service';
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
+import {
+  jsDayOfWeekInTimezone,
+  resolveEffectiveTimezone,
+} from '@modules/supported-countries/region-timezone.util';
 import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
 import { UsersService } from '@modules/users/users.service';
 import {
@@ -253,6 +257,23 @@ export class StoreService {
 
   @Inject(SupportedCountriesService)
   private readonly _supportedCountries: SupportedCountriesService;
+
+  private async resolveEffectiveTimezoneForStore(store: {
+    timezone?: string | null;
+    region?: string | null;
+  }): Promise<string> {
+    const regionCode = String(store.region ?? '')
+      .trim()
+      .toUpperCase();
+    const regionTz = regionCode
+      ? await this._supportedCountries.getTimezoneForCountry(regionCode)
+      : undefined;
+    return resolveEffectiveTimezone({
+      storeTimezone: store.timezone,
+      regionTimezone: regionTz,
+      regionCode,
+    });
+  }
 
   @Inject(RatingsService)
   private readonly _ratingsService: RatingsService;
@@ -790,6 +811,9 @@ export class StoreService {
       );
     const deliveryPlanExtras = await this._deliveryPlanExtrasForStore(id);
     const o = doc as unknown as Record<string, unknown>;
+    const effectiveTimezone = await this.resolveEffectiveTimezoneForStore(
+      doc as { timezone?: string; region?: string },
+    );
     const plain: Record<string, unknown> = {
       ...o,
       averageRating,
@@ -811,10 +835,7 @@ export class StoreService {
         pickupPayOnDeliveryPlanEnabled,
       ),
       mealPreOrderCatalogScope: this._docMealPreOrderCatalogScope(o),
-      timezone:
-        typeof o['timezone'] === 'string' && String(o['timezone']).trim()
-          ? String(o['timezone']).trim()
-          : undefined,
+      timezone: effectiveTimezone,
       workingHours: serializeStoreWorkingHoursForApi(
         o['workingHours'] as Record<string, unknown> | undefined,
       ),
@@ -1009,6 +1030,9 @@ export class StoreService {
     };
     const coords = addr?.location?.coordinates ?? [0, 0];
     const zones = (doc.shippingZones as Record<string, unknown>[]) ?? [];
+    const effectiveTimezone = await this.resolveEffectiveTimezoneForStore(
+      doc as { timezone?: string; region?: string },
+    );
     /** Fiche complète pour l’UI (lecture / édition selon canEditApplication). */
     const profile = {
       name: String(doc.name ?? ''),
@@ -1052,10 +1076,7 @@ export class StoreService {
         latitude: coords[1] ?? 0,
         longitude: coords[0] ?? 0,
       },
-      timezone:
-        typeof doc.timezone === 'string' && doc.timezone.trim()
-          ? String(doc.timezone).trim()
-          : undefined,
+      timezone: effectiveTimezone,
       workingHours: serializeStoreWorkingHoursForApi(
         doc.workingHours as Record<string, unknown> | undefined,
       ),
@@ -1544,8 +1565,9 @@ export class StoreService {
         soldOut: boolean;
       }>;
     }>,
+    dayOfWeek: number,
   ) {
-    const dow = new Date().getDay();
+    const dow = Math.min(6, Math.max(0, Math.floor(dayOfWeek)));
     const slot = rows.find((r) => r.dayOfWeek === dow);
     if (!slot?.items?.length) return null;
     return slot;
@@ -1559,7 +1581,7 @@ export class StoreService {
     if (args.type !== CartItemTypeEnum.PRODUCT) return;
     const doc = await this._storeModel
       .findById(storeId)
-      .select('dailyMenuByWeekday')
+      .select('dailyMenuByWeekday region timezone')
       .lean()
       .exec();
     const dailyMenuLimit =
@@ -1570,7 +1592,11 @@ export class StoreService {
       (doc?.dailyMenuByWeekday as Record<string, unknown>[]) ?? [],
       dailyMenuLimit,
     );
-    const slot = this.todayDailyMenuSlot(rows);
+    const tz = await this.resolveEffectiveTimezoneForStore(doc ?? {});
+    const slot = this.todayDailyMenuSlot(
+      rows,
+      jsDayOfWeekInTimezone(tz),
+    );
     if (!slot) {
       return;
     }
@@ -1612,7 +1638,11 @@ export class StoreService {
       Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [],
       dailyMenuLimit,
     );
-    const slot = this.todayDailyMenuSlot(rows);
+    const tz = await this.resolveEffectiveTimezoneForStore(store);
+    const slot = this.todayDailyMenuSlot(
+      rows,
+      jsDayOfWeekInTimezone(tz),
+    );
     if (!slot) {
       return;
     }
@@ -2143,7 +2173,7 @@ export class StoreService {
     if (args.tab === 'daily_menu') {
       const doc = await this._storeModel
         .findById(storeId)
-        .select('dailyMenuByWeekday')
+        .select('dailyMenuByWeekday region timezone')
         .lean()
         .exec();
       const dailyMenuLimit =
@@ -2154,7 +2184,8 @@ export class StoreService {
         (doc?.dailyMenuByWeekday as Record<string, unknown>[]) ?? [],
         dailyMenuLimit,
       );
-      const dayOfWeek = new Date().getDay();
+      const tz = await this.resolveEffectiveTimezoneForStore(doc ?? {});
+      const dayOfWeek = jsDayOfWeekInTimezone(tz);
       const slot = rows.find((r) => r.dayOfWeek === dayOfWeek);
       for (const it of slot?.items ?? []) {
         dailyMenuByProductId.set(it.productId, {
@@ -2614,7 +2645,8 @@ export class StoreService {
 
     await this.assertDailyMenuStockForCart(store, cart);
 
-    const dow = new Date().getDay();
+    const tz = await this.resolveEffectiveTimezoneForStore(store);
+    const dow = jsDayOfWeekInTimezone(tz);
     const consumed: { productId: string; qty: number }[] = [];
     const consumedDrinks: { drinkId: string; qty: number }[] = [];
 

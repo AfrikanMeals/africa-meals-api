@@ -13,6 +13,7 @@ import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import { isDemoProductRaterEmail } from '@modules/ratings/demo-product-rating-users';
 import { RatingsService } from '@modules/ratings/ratings.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
+import { resolveEffectiveTimezone } from '@modules/supported-countries/region-timezone.util';
 import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
 import {
   BadRequestException,
@@ -72,6 +73,23 @@ export class ProductsService {
 
   @Inject(SupportedCountriesService)
   private readonly _supportedCountries: SupportedCountriesService;
+
+  private async resolveProductDailyMenuTimezone(store: {
+    timezone?: string | null;
+    region?: string | null;
+  }): Promise<string> {
+    const regionCode = String(store.region ?? '')
+      .trim()
+      .toUpperCase();
+    const regionTz = regionCode
+      ? await this._supportedCountries.getTimezoneForCountry(regionCode)
+      : undefined;
+    return resolveEffectiveTimezone({
+      storeTimezone: store.timezone,
+      regionTimezone: regionTz,
+      regionCode,
+    });
+  }
 
   /** Incrémenté à chaque ajout/retrait favori : invalide les clés cache mémoire (TTL + génération). */
   private readonly _favoriteListRevision = new Map<string, number>();
@@ -474,7 +492,7 @@ export class ProductsService {
     if (storeId && Types.ObjectId.isValid(storeId)) {
       const storeLean = await this._storeModel
         .findById(storeId)
-        .select('region dailyMenuByWeekday')
+        .select('region timezone dailyMenuByWeekday')
         .lean()
         .exec();
       const storeRegion = normalizeCountryCode(
@@ -501,6 +519,10 @@ export class ProductsService {
     const dailyMenuToday = buildDailyMenuTodayForProduct(
       dailyMenuRows != null ? { dailyMenuByWeekday: dailyMenuRows } : null,
       String(doc._id),
+      new Date(),
+      storeId && storeLean
+        ? await this.resolveProductDailyMenuTimezone(storeLean)
+        : undefined,
     );
     return {
       ...obj,

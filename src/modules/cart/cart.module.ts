@@ -1,5 +1,6 @@
 import { CouponsModule } from '@modules/coupons/coupons.module';
 import { GiftCodesModule } from '@modules/gift-codes/gift-codes.module';
+import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { DrinksModule } from '@modules/drinks/drinks.module';
 import { OffersModule } from '@modules/offers/offers.module';
 import { ProductsModule } from '@modules/products/products.module';
@@ -19,6 +20,7 @@ import { CartService } from './cart.service';
     DrinksModule,
     CouponsModule,
     GiftCodesModule,
+    SupportedCountriesModule,
     MongooseModule.forFeature([
       { name: CartItemModel.name, schema: CartItemSchema },
       { name: StoreModel.name, schema: StoreSchema },

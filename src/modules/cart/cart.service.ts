@@ -1,6 +1,8 @@
 import { CouponsService } from '@modules/coupons/coupons.service';
 import { GiftCodesService } from '@modules/gift-codes/gift-codes.service';
 import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
+import { resolveEffectiveTimezone } from '@modules/supported-countries/region-timezone.util';
 import {
   DrinksService,
   maxDrinkOrderQuantity,
@@ -133,6 +135,26 @@ export class CartService {
   @Inject(ModuleCacheLayerService)
   private readonly _cacheLayer: ModuleCacheLayerService;
 
+  @Inject(SupportedCountriesService)
+  private readonly _supportedCountries: SupportedCountriesService;
+
+  private async resolveStoreEffectiveTimezone(store: {
+    timezone?: string | null;
+    region?: string | null;
+  }): Promise<string> {
+    const regionCode = String(store.region ?? '')
+      .trim()
+      .toUpperCase();
+    const regionTz = regionCode
+      ? await this._supportedCountries.getTimezoneForCountry(regionCode)
+      : undefined;
+    return resolveEffectiveTimezone({
+      storeTimezone: store.timezone,
+      regionTimezone: regionTz,
+      regionCode,
+    });
+  }
+
   /** Empreinte stable du panier pour clé cache pricing checkout. */
   async getCartPricingFingerprint(user: UserModel): Promise<string> {
     const rows = await this._cartItemModel
@@ -228,10 +250,16 @@ export class CartService {
       if (!product) {
         throw new NotFoundException('product_not_found');
       }
-      const st = item.store as { dailyMenuByWeekday?: unknown };
+      const st = item.store as {
+        dailyMenuByWeekday?: unknown;
+        timezone?: string;
+        region?: string;
+      };
+      const effectiveTz = await this.resolveStoreEffectiveTimezone(st);
       const dailyMenuStockRemaining = dailyMenuStockRemainingForStoreProduct(
-        st,
+        { ...st, timezone: effectiveTz },
         item.entityId,
+        effectiveTz,
       );
       return {
         ...item.toJSON(),
@@ -788,10 +816,15 @@ export class CartService {
     for (const [storeId, lines] of byStore) {
       const store = await this._storeModel
         .findById(storeId)
-        .select('dailyMenuByWeekday name')
+        .select('dailyMenuByWeekday name region timezone')
         .lean()
         .exec();
       const storeName = String((store as { name?: string } | null)?.name ?? '');
+      const effectiveTz = store
+        ? await this.resolveStoreEffectiveTimezone(
+            store as { timezone?: string; region?: string },
+          )
+        : undefined;
 
       const menuRows = Array.isArray(
         (store as { dailyMenuByWeekday?: unknown } | null)?.dailyMenuByWeekday,
@@ -814,7 +847,7 @@ export class CartService {
       }
 
       for (const [pid, qty] of productQty) {
-        const cap = resolveDailyMenuProductCap(menuRows, pid);
+        const cap = resolveDailyMenuProductCap(menuRows, pid, effectiveTz);
         if (cap.kind === 'unlimited' || cap.kind === 'no_menu_today') {
           continue;
         }

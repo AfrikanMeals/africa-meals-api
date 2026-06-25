@@ -193,6 +193,41 @@ export class SupportedCountriesService implements OnModuleInit {
     return String(doc.currency).toUpperCase();
   }
 
+  /** Fuseau IANA configuré pour une région (actif ou non). */
+  async getTimezoneForCountry(code: string): Promise<string> {
+    const c = String(code ?? '')
+      .trim()
+      .toUpperCase();
+    if (!/^[A-Z]{2}$/.test(c)) {
+      return defaultTimezoneForCountry(c);
+    }
+    const doc = await this._model.findOne({ code: c }).select('timezone').lean().exec();
+    return normalizeRegionTimezone(doc?.timezone, c);
+  }
+
+  /** Carte code région → fuseau IANA (toutes régions, pour agrégations Mongo). */
+  async getRegionTimezoneMap(): Promise<Record<string, string>> {
+    const now = Date.now();
+    if (
+      this._regionTimezoneMapCache &&
+      now - this._regionTimezoneMapCache.at <
+        SupportedCountriesService._LIST_ACTIVE_TTL_MS
+    ) {
+      return this._regionTimezoneMapCache.data;
+    }
+    const docs = await this._model.find({}).select('code timezone').lean().exec();
+    const data: Record<string, string> = {};
+    for (const doc of docs) {
+      const code = String(doc.code ?? '')
+        .trim()
+        .toUpperCase();
+      if (!/^[A-Z]{2}$/.test(code)) continue;
+      data[code] = normalizeRegionTimezone(doc.timezone, code);
+    }
+    this._regionTimezoneMapCache = { at: now, data };
+    return data;
+  }
+
   /** Override admin « montants entiers Stripe » pour une région (undefined = auto). */
   async getStripeZeroDecimalOverride(
     countryCode: string,
@@ -372,6 +407,7 @@ export class SupportedCountriesService implements OnModuleInit {
     doc.taxes = normalized as SupportedCountryModel['taxes'];
     await doc.save();
     this._listActiveCache = null;
+    this._regionTimezoneMapCache = null;
     return normalized;
   }
 
@@ -455,6 +491,7 @@ export class SupportedCountriesService implements OnModuleInit {
       phoneRegion: string;
       currency: string;
       active: boolean;
+      timezone?: string;
       stripeZeroDecimal?: boolean;
       adCashToCurrencyRate?: number;
     }>,
@@ -489,11 +526,16 @@ export class SupportedCountriesService implements OnModuleInit {
         throw new BadRequestException(`duplicate_country_code:${code}`);
       }
       seen.add(code);
+      const timezone = normalizeRegionTimezone(
+        row.timezone ?? defaultTimezoneForCountry(code),
+        code,
+      );
       const $set: Record<string, unknown> = {
         name,
         phoneRegion,
         currency,
         active: Boolean(row.active),
+        timezone,
       };
       if (row.stripeZeroDecimal != null) {
         $set.stripeZeroDecimal = Boolean(row.stripeZeroDecimal);
@@ -515,6 +557,7 @@ export class SupportedCountriesService implements OnModuleInit {
       );
     }
     this._listActiveCache = null;
+    this._regionTimezoneMapCache = null;
   }
 
   /**

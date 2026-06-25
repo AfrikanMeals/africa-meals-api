@@ -1,4 +1,9 @@
 import { NotificationsService } from '@modules/notifications/notifications.service';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
+import {
+  jsDayOfWeekInTimezone,
+  resolveEffectiveTimezone,
+} from '@modules/supported-countries/region-timezone.util';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import {
@@ -33,24 +38,16 @@ export class DailyMenuReminderService {
     @InjectModel(AppNotificationModel.name)
     private readonly _appNotificationModel: Model<AppNotificationModel>,
     private readonly _notifications: NotificationsService,
+    private readonly _supportedCountries: SupportedCountriesService,
   ) {}
 
-  private reminderTimezone(): string {
-    return process.env.DAILY_MENU_REMINDER_TZ?.trim() || 'America/Montreal';
-  }
-
   async runReminderPass(): Promise<DailyMenuReminderPassResult> {
-    const tz = this.reminderTimezone();
-    const now = dayjs().tz(tz);
-    const dayOfWeek = now.day();
-    const reminderDate = now.format('YYYY-MM-DD');
-
     const stores = await this._storeModel
       .find({
         status: StoreStatusEnum.ACTIVE,
         owner: { $exists: true, $ne: null },
       })
-      .select('name owner dailyMenuByWeekday')
+      .select('name owner dailyMenuByWeekday region timezone')
       .lean()
       .exec();
 
@@ -68,6 +65,21 @@ export class DailyMenuReminderService {
         result.skippedNoOwner++;
         continue;
       }
+
+      const regionCode = String(store.region ?? '')
+        .trim()
+        .toUpperCase();
+      const regionTz = regionCode
+        ? await this._supportedCountries.getTimezoneForCountry(regionCode)
+        : undefined;
+      const tz = resolveEffectiveTimezone({
+        storeTimezone: store.timezone,
+        regionTimezone: regionTz,
+        regionCode,
+      });
+      const now = dayjs().tz(tz);
+      const dayOfWeek = jsDayOfWeekInTimezone(tz, now.toDate());
+      const reminderDate = now.format('YYYY-MM-DD');
 
       if (storeHasDailyMenuForWeekday(store.dailyMenuByWeekday, dayOfWeek)) {
         result.skippedHasMenu++;

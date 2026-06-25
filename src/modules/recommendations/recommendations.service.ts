@@ -438,6 +438,8 @@ export class RecommendationsService {
 
     const preLimit = Math.max(limit * 6, 48);
 
+    const regionTimezoneMap =
+      await this._supportedCountries.getRegionTimezoneMap();
     const rows = await this._storeModel
       .aggregate([
         {
@@ -448,7 +450,7 @@ export class RecommendationsService {
           },
         },
         ...storeOwnerStripeOnboardedPipelineStages(),
-        ...storeArticlesAvailabilityPipelineStages(),
+        ...storeArticlesAvailabilityPipelineStages(regionTimezoneMap),
         { $sort: { averageRating: -1, updatedAt: -1 } },
         /** Borne avant `$lookup` commandes — coût O(n×orders) sinon sur tout le parc boutiques. */
         { $limit: preLimit },
