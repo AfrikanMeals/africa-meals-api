@@ -14,6 +14,17 @@ function toBool(raw: string | undefined): boolean {
   return v === '1' || v === 'true' || v === 'yes' || v === 'on';
 }
 
+/** 4 ou 6 — utile si l’IPv4 vers le VPS est bloquée (FAI) et seul l’AAAA répond. */
+export function readRedisIpFamily(
+  get: RedisEnvGetter = (key) => process.env[key],
+): 4 | 6 | undefined {
+  const raw = get('REDIS_IP_FAMILY')?.trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (n === 4 || n === 6) return n;
+  return undefined;
+}
+
 export type RedisConnectionConfig = {
   host: string;
   port: number;
@@ -281,6 +292,7 @@ export function readRedisCacheStoreOptionsFromConfig(
     tls: true;
     servername?: string;
     rejectUnauthorized?: boolean;
+    family?: number;
   };
 } | null {
   const url = readRedisUrlFromConfig(config);
@@ -289,11 +301,13 @@ export function readRedisCacheStoreOptionsFromConfig(
   if (!conn?.tls) return { url };
   const rejectUnauthorized =
     conn.tls.rejectUnauthorized !== false ? undefined : false;
+  const ipFamily = readRedisIpFamily((key) => config.get(key));
   return {
     url,
     socket: {
       tls: true,
       servername: conn.host,
+      ...(ipFamily != null ? { family: ipFamily } : {}),
       ...(rejectUnauthorized === false ? { rejectUnauthorized: false } : {}),
     },
   };
@@ -319,11 +333,9 @@ export function buildIoredisOptionsFromConnection(
   connection: RedisConnectionConfig,
   overrides?: Partial<IoredisOptions>,
 ): IoredisOptions {
+  const ipFamily = readRedisIpFamily();
   const tlsOpts = connection.tls
-    ? {
-        family: 4,
-        reconnectOnError: ioredisReconnectOnTlsError,
-      }
+    ? { reconnectOnError: ioredisReconnectOnTlsError }
     : {};
   return {
     host: connection.host,
@@ -331,6 +343,7 @@ export function buildIoredisOptionsFromConnection(
     username: connection.username,
     password: connection.password,
     tls: connection.tls,
+    ...(ipFamily != null ? { family: ipFamily } : {}),
     ...tlsOpts,
     maxRetriesPerRequest: 2,
     connectTimeout: parsePositiveInt(
