@@ -1,3 +1,5 @@
+import { jsDayOfWeekInTimezone } from '@modules/supported-countries/region-timezone.util';
+
 /** `dailyMenuToday` + `addonsAvailability` pour un plat (menu du jour du jour courant). */
 
 export type DailyMenuAddonsAvailabilityPayload = {
@@ -90,8 +92,11 @@ export function buildDailyMenuTodayForProduct(
   storeRaw: Record<string, unknown> | null | undefined,
   productId: string,
   at: Date = new Date(),
+  timezone?: string,
 ): DailyMenuTodayPayload {
-  const dow = at.getDay();
+  const dow = timezone
+    ? jsDayOfWeekInTimezone(timezone, at)
+    : at.getDay();
   const rows = Array.isArray(storeRaw?.['dailyMenuByWeekday'])
     ? (storeRaw!['dailyMenuByWeekday'] as Record<string, unknown>[])
     : [];

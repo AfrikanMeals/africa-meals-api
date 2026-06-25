@@ -1,3 +1,5 @@
+import { jsDayOfWeekInTimezone } from '@modules/supported-countries/region-timezone.util';
+
 /** Menu du jour normalisé (partagé panier + validation checkout). */
 
 export type DailyMenuNormalizedItem = {
@@ -74,10 +76,14 @@ export function normalizeDailyMenuForApi(
 
 export function todayDailyMenuSlot(
   rows: Array<Record<string, unknown>> | undefined | null,
-  dow = new Date().getDay(),
+  dow?: number,
+  timezone?: string,
 ): DailyMenuNormalizedSlot | null {
+  const day =
+    dow ??
+    (timezone ? jsDayOfWeekInTimezone(timezone) : new Date().getDay());
   const normalized = normalizeDailyMenuForApi(rows ?? []);
-  const slot = normalized.find((r) => r.dayOfWeek === dow);
+  const slot = normalized.find((r) => r.dayOfWeek === day);
   if (!slot?.items?.length) return null;
   return slot;
 }
@@ -85,9 +91,10 @@ export function todayDailyMenuSlot(
 export function resolveDailyMenuProductCap(
   rows: Array<Record<string, unknown>> | undefined | null,
   productId: string,
-  dow = new Date().getDay(),
+  timezone?: string,
+  dow?: number,
 ): DailyMenuProductCap {
-  const slot = todayDailyMenuSlot(rows, dow);
+  const slot = todayDailyMenuSlot(rows, dow, timezone);
   if (!slot) {
     return { kind: 'no_menu_today' };
   }
@@ -107,14 +114,16 @@ export function resolveDailyMenuProductCap(
 
 /** `null` = pas de plafond menu du jour (illimité ou pas de menu actif). */
 export function dailyMenuStockRemainingForStoreProduct(
-  store: { dailyMenuByWeekday?: unknown },
+  store: { dailyMenuByWeekday?: unknown; timezone?: string },
   productId: string,
+  timezone?: string,
 ): number | null {
   const cap = resolveDailyMenuProductCap(
     Array.isArray(store.dailyMenuByWeekday)
       ? (store.dailyMenuByWeekday as Record<string, unknown>[])
       : [],
     productId,
+    timezone ?? store.timezone,
   );
   if (cap.kind === 'unlimited' || cap.kind === 'no_menu_today') {
     return null;

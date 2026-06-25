@@ -48,6 +48,16 @@ export class AdminSupportedCountryItemDto {
   active: boolean;
 
   @ApiProperty({
+    example: 'America/Toronto',
+    required: false,
+    description: 'Fuseau IANA pour menu du jour et horaires régionaux.',
+  })
+  @IsOptional()
+  @IsString()
+  @Trim()
+  timezone?: string;
+
+  @ApiProperty({
     example: true,
     required: false,
     description:

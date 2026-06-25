@@ -61,6 +61,10 @@ export class SupportedCountryModel extends BaseSchema {
   @Prop({ default: true })
   active: boolean;
 
+  /** Fuseau IANA pour menu du jour, horaires et rappels (ex. America/Toronto). */
+  @Prop({ required: false, trim: true, type: String })
+  timezone?: string;
+
   @Prop({ type: [RegionTaxRuleSchema], default: [] })
   taxes: RegionTaxRuleModel[];
 

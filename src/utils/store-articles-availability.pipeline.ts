@@ -1,13 +1,25 @@
 import { PipelineStage } from 'mongoose';
+import {
+  mongoEffectiveStoreTimezoneExpr,
+  mongoJsDayOfWeekExpr,
+} from '@modules/supported-countries/region-timezone.util';
 
 /**
  * Étapes agrégation : exclut les boutiques sans article commandable aujourd’hui
  * (plat menu du jour avec stock, ou boisson `quantite` > 0).
  */
 export function storeArticlesAvailabilityPipelineStages(
-  dayOfWeek = new Date().getDay(),
+  regionTimezoneMap: Record<string, string>,
 ): PipelineStage[] {
+  const effectiveTz = mongoEffectiveStoreTimezoneExpr(regionTimezoneMap);
+  const jsDay = mongoJsDayOfWeekExpr(effectiveTz);
   return [
+    {
+      $addFields: {
+        __storeEffectiveTz: effectiveTz,
+        __storeJsDayOfWeek: jsDay,
+      },
+    },
     {
       $lookup: {
         from: 'drinks',
@@ -40,7 +52,9 @@ export function storeArticlesAvailabilityPipelineStages(
                         $filter: {
                           input: { $ifNull: ['$dailyMenuByWeekday', []] },
                           as: 's',
-                          cond: { $eq: ['$$s.dayOfWeek', dayOfWeek] },
+                          cond: {
+                            $eq: ['$$s.dayOfWeek', '$__storeJsDayOfWeek'],
+                          },
                         },
                       },
                     },

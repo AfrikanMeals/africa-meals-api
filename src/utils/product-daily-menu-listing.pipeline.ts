@@ -1,14 +1,30 @@
 import { PipelineStage } from 'mongoose';
+import {
+  mongoEffectiveStoreTimezoneExpr,
+  mongoJsDayOfWeekExpr,
+} from '@modules/supported-countries/region-timezone.util';
 
 /**
  * Calcule `__onDailyMenu`, `__menuItem`, `__menuSoldOut` à partir de
- * `store.dailyMenuByWeekday` (jour serveur).
+ * `store.dailyMenuByWeekday` (jour local boutique / région).
  *
  * Prérequis : `$store` est un document boutique (pas un tableau).
  */
-export function productDailyMenuEnrichmentPipelineStages(): PipelineStage[] {
-  const dow = new Date().getDay();
+export function productDailyMenuEnrichmentPipelineStages(
+  regionTimezoneMap: Record<string, string>,
+): PipelineStage[] {
+  const effectiveTz = mongoEffectiveStoreTimezoneExpr(regionTimezoneMap, {
+    storeTimezoneField: '$store.timezone',
+    regionField: '$store.region',
+  });
+  const jsDay = mongoJsDayOfWeekExpr(effectiveTz);
   return [
+    {
+      $addFields: {
+        __storeEffectiveTz: effectiveTz,
+        __storeJsDayOfWeek: jsDay,
+      },
+    },
     {
       $addFields: {
         __todaySlotItems: {
@@ -19,7 +35,7 @@ export function productDailyMenuEnrichmentPipelineStages(): PipelineStage[] {
                   $filter: {
                     input: { $ifNull: ['$store.dailyMenuByWeekday', []] },
                     as: 's',
-                    cond: { $eq: ['$$s.dayOfWeek', dow] },
+                    cond: { $eq: ['$$s.dayOfWeek', '$__storeJsDayOfWeek'] },
                   },
                 },
               },
@@ -94,9 +110,11 @@ export function productDailyMenuStrictListingMatchStage(): PipelineStage {
  *
  * Prérequis : `$store` est un document boutique (pas un tableau) avec `dailyMenuByWeekday`.
  */
-export function productDailyMenuListingPipelineStages(): PipelineStage[] {
+export function productDailyMenuListingPipelineStages(
+  regionTimezoneMap: Record<string, string>,
+): PipelineStage[] {
   return [
-    ...productDailyMenuEnrichmentPipelineStages(),
+    ...productDailyMenuEnrichmentPipelineStages(regionTimezoneMap),
     productDailyMenuStrictListingMatchStage(),
   ];
 }
