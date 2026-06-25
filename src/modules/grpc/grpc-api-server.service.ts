@@ -9,6 +9,7 @@ import {
   assertGrpcInternalSecret,
   getProtoServiceDefinition,
   grpc,
+  loadCartV1,
   loadChatV1,
   loadInboxV1,
   parsePositiveInt,
@@ -16,10 +17,15 @@ import {
 import { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { StoreService } from '@modules/store/store.service';
+import { CartService } from '@modules/cart/cart.service';
 import { GrpcVersionService } from './grpc-version.service';
+import { InjectModel } from '@nestjs/mongoose';
+import { UserModel } from '@schemas/user.schema';
+import { Model } from 'mongoose';
 
 type InboxServer = grpc.UntypedServiceImplementation;
 type ChatServer = grpc.UntypedServiceImplementation;
+type CartServer = grpc.UntypedServiceImplementation;
 
 @Injectable()
 export class GrpcApiServerService implements OnModuleInit, OnModuleDestroy {
@@ -33,6 +39,8 @@ export class GrpcApiServerService implements OnModuleInit, OnModuleDestroy {
     private readonly storeService: StoreService,
     private readonly notifications: NotificationsService,
     private readonly grpcVersion: GrpcVersionService,
+    private readonly cartService: CartService,
+    @InjectModel(UserModel.name) private readonly userModel: Model<UserModel>,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -55,6 +63,7 @@ export class GrpcApiServerService implements OnModuleInit, OnModuleDestroy {
 
     const inboxPkg = loadInboxV1();
     const chatPkg = loadChatV1();
+    const cartPkg = loadCartV1();
     const inboxDef = getProtoServiceDefinition(
       inboxPkg,
       'wiseeat',
@@ -69,6 +78,16 @@ export class GrpcApiServerService implements OnModuleInit, OnModuleDestroy {
       'v1',
       'ChatPushService',
     );
+    const cartDef =
+      this.isCartPreviewGrpcEnabled()
+        ? getProtoServiceDefinition(
+            cartPkg,
+            'wiseeat',
+            'cart',
+            'v1',
+            'CartPreviewService',
+          )
+        : undefined;
 
     const server = new grpc.Server({
       'grpc.max_receive_message_length': maxMb * 1024 * 1024,
@@ -80,6 +99,9 @@ export class GrpcApiServerService implements OnModuleInit, OnModuleDestroy {
     }
     if (chatDef) {
       server.addService(chatDef, this.buildChatHandlers() as ChatServer);
+    }
+    if (cartDef) {
+      server.addService(cartDef, this.buildCartHandlers() as CartServer);
     }
 
     await new Promise<void>((resolve, reject) => {
@@ -113,6 +135,22 @@ export class GrpcApiServerService implements OnModuleInit, OnModuleDestroy {
       .trim()
       .toLowerCase();
     return raw !== '0' && raw !== 'false' && raw !== 'no' && raw !== 'off';
+  }
+
+  private isCartPreviewGrpcEnabled(): boolean {
+    if (!this.grpcVersion.supportsPhase3() || !this.grpcVersion.hasPhase3Implementation()) {
+      return false;
+    }
+    const raw = (this.config.get<string>('GRPC_CART_PREVIEW_GRPC_ENABLED') ?? 'false')
+      .trim()
+      .toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+  }
+
+  private async resolveUser(userId: string): Promise<UserModel | null> {
+    const uid = userId.trim();
+    if (!uid) return null;
+    return this.userModel.findById(uid).exec();
   }
 
   private assertAuth(metadata: grpc.Metadata): boolean {
@@ -166,6 +204,60 @@ export class GrpcApiServerService implements OnModuleInit, OnModuleDestroy {
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           callback(null, { ok: false, error: msg });
+        }
+      },
+    };
+  }
+
+  private buildCartHandlers(): CartServer {
+    return {
+      PreviewCoupon: async (call, callback) => {
+        if (!this.assertAuth(call.metadata)) {
+          callback({ code: grpc.status.UNAUTHENTICATED, message: 'unauthorized' });
+          return;
+        }
+        try {
+          const userId = String(call.request.userId ?? '').trim();
+          const storeId = String(call.request.storeId ?? '').trim();
+          const code = String(call.request.code ?? '').trim();
+          const user = await this.resolveUser(userId);
+          if (!user) {
+            callback(null, { ok: false, resultJson: '', error: 'user_not_found' });
+            return;
+          }
+          const result = await this.cartService.previewCouponForStore(
+            user,
+            storeId,
+            code,
+          );
+          callback(null, { ok: true, resultJson: JSON.stringify(result), error: '' });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          callback(null, { ok: false, resultJson: '', error: msg });
+        }
+      },
+      PreviewGiftCode: async (call, callback) => {
+        if (!this.assertAuth(call.metadata)) {
+          callback({ code: grpc.status.UNAUTHENTICATED, message: 'unauthorized' });
+          return;
+        }
+        try {
+          const userId = String(call.request.userId ?? '').trim();
+          const user = await this.resolveUser(userId);
+          if (!user) {
+            callback(null, { ok: false, resultJson: '', error: 'user_not_found' });
+            return;
+          }
+          const dto = JSON.parse(String(call.request.payloadJson ?? '{}')) as {
+            code?: string;
+          };
+          const result = await this.cartService.previewGiftCodeForCart(user, {
+            code: String(dto.code ?? call.request.code ?? '').trim(),
+          });
+          callback(null, { ok: true, resultJson: JSON.stringify(result), error: '' });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          callback(null, { ok: false, resultJson: '', error: msg });
         }
       },
     };

@@ -44,13 +44,13 @@ export class GrpcVersionService implements OnModuleInit {
     return grpcVersionSupportsPhase4(this.version);
   }
 
-  /** À mettre à true quand GRPC-301+ seront livrés. */
+  /** GRPC-301–304 livrés derrière flags Phase 3. */
   hasPhase3Implementation(): boolean {
-    return false;
+    return true;
   }
 
-  /** À mettre à true quand GRPC-N01+ seront livrés. */
+  /** GRPC-N01–N05 — ponts internes derrière GRPC_VERSION=3 + flags. */
   hasPhase4Implementation(): boolean {
-    return false;
+    return true;
   }
 }

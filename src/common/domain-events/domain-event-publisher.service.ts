@@ -3,6 +3,7 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -35,6 +36,7 @@ import {
   DomainEventPublishMode,
   DomainEventPublishResult,
 } from './domain-event-publisher.types';
+import { GrpcDomainBusClientService } from '@modules/grpc/grpc-domain-bus.client.service';
 
 type DomainEventQueueJob = {
   envelope: DomainEventEnvelope;
@@ -94,6 +96,7 @@ export class DomainEventPublisherService
     private readonly idempotency: DomainEventIdempotencyStore,
     @InjectModel(InfraRuntimeSettingsModel.name)
     private readonly infraRuntimeSettingsModel: Model<InfraRuntimeSettingsModel>,
+    @Optional() private readonly grpcDomainBus?: GrpcDomainBusClientService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -446,6 +449,9 @@ export class DomainEventPublisherService
     topic: string,
     source: 'worker' | 'direct' | 'fallback',
   ): Promise<void> {
+    if (await this.tryPublishViaGrpcDomainBus(envelope, source)) {
+      return;
+    }
     const infra = await this.readInfraSettings();
     if (!infra.mqBrokerEnabled) {
       this.logger.debug(
@@ -471,6 +477,35 @@ export class DomainEventPublisherService
     this.logger.log(
       `Domain event published via MQTT (${source}) type=${envelope.type} id=${envelope.id} topic=${topic}`,
     );
+  }
+
+  private async tryPublishViaGrpcDomainBus(
+    envelope: DomainEventEnvelope,
+    source: 'worker' | 'direct' | 'fallback',
+  ): Promise<boolean> {
+    if (!this.grpcDomainBus?.isEnabled()) return false;
+    try {
+      const ok = await this.grpcDomainBus.publishDomainEvent(envelope);
+      if (ok) {
+        this.logger.log(
+          `Domain event published via gRPC domain bus (${source}) type=${envelope.type} id=${envelope.id}`,
+        );
+        return true;
+      }
+      if (!this.grpcDomainBus.mqttFallbackEnabled()) {
+        throw new Error('grpc_domain_bus_failed');
+      }
+      return false;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Domain event gRPC bus error id=${envelope.id}: ${msg}`,
+      );
+      if (!this.grpcDomainBus.mqttFallbackEnabled()) {
+        throw error;
+      }
+      return false;
+    }
   }
 
   private async readInfraSettings(): Promise<{

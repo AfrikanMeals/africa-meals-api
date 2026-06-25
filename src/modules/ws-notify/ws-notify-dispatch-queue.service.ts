@@ -107,6 +107,14 @@ export class WsNotifyDispatchQueueService
     );
 
     this.queue = new Queue<WsNotifyQueueJob>(queueName, this.bullRedis.queueOpts());
+    const externalWorker = this.isExternalWorkerEnabled();
+    if (externalWorker) {
+      this.queueEnabled = true;
+      this.logger.log(
+        `BullMQ queue enabled (external worker): ${queueName} — in-process worker skipped`,
+      );
+      return;
+    }
     this.worker = new Worker<WsNotifyQueueJob, void>(
       queueName,
       async (job) => {
@@ -140,6 +148,18 @@ export class WsNotifyDispatchQueueService
     this.worker = null;
     this.queue = null;
     this.queueEnabled = false;
+  }
+
+  private isExternalWorkerEnabled(): boolean {
+    const raw = (this.config.get<string>('WS_NOTIFY_WORKER_EXTERNAL') ?? 'false')
+      .trim()
+      .toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+  }
+
+  /** Exposé pour le worker externe GRPC-302. */
+  async processQueueJob(job: WsNotifyQueueJob): Promise<void> {
+    await this.postInternal(job.pathSuffix, job.payload);
   }
 
   dispatch(pathSuffix: string, payload: Record<string, unknown>): void {

@@ -1,4 +1,4 @@
-import { Global, Module } from '@nestjs/common';
+import { Global, Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -6,6 +6,7 @@ import {
   InfraRuntimeSettingsSchema,
 } from '@schemas/infra-runtime-settings.schema';
 import { RedisSharedModule } from '../redis/redis-shared.module';
+import { GrpcModule } from '@modules/grpc/grpc.module';
 import { DomainEventIdempotencyStore } from './domain-event-idempotency.store';
 import { DomainEventPublisherService } from './domain-event-publisher.service';
 import { DomainEventRegistryService } from './domain-event-registry.service';
@@ -15,6 +16,7 @@ import { DomainEventRegistryService } from './domain-event-registry.service';
   imports: [
     ConfigModule,
     RedisSharedModule,
+    forwardRef(() => GrpcModule),
     MongooseModule.forFeature([
       {
         name: InfraRuntimeSettingsModel.name,
