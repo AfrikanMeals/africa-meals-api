@@ -26,6 +26,7 @@ import { ProductCategoryImageJsonDto } from './dto/product-category-image.dto';
 import { mapInChunks } from '@utils/map-in-chunks';
 import { productDailyMenuListingPipelineStages } from '@utils/product-daily-menu-listing.pipeline';
 import { MediasService } from '@modules/medias/medias.service';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 
 /** Ligne JSON renvoyée par [filter] / REST / GraphQL public. */
 export type PublicProductCategoryRow = {
@@ -54,6 +55,9 @@ export class ProductCategoryService implements OnModuleInit {
   @Inject(MediasService)
   private readonly _mediasService: MediasService;
 
+  @Inject(SupportedCountriesService)
+  private readonly _supportedCountries: SupportedCountriesService;
+
   @InjectModel(ProductCategoryModel.name)
   private readonly _productCategoryModel: Model<ProductCategoryModel>;
 
@@ -76,7 +80,9 @@ export class ProductCategoryService implements OnModuleInit {
   }
 
   /** Plats « menu du jour » actifs pour une catégorie food (catalogue client). */
-  private _dailyMenuFoodCountLookupStages(): PipelineStage[] {
+  private async _dailyMenuFoodCountLookupStages(): Promise<PipelineStage[]> {
+    const regionTimezoneMap =
+      await this._supportedCountries.getRegionTimezoneMap();
     return [
       {
         $match: {
@@ -102,7 +108,7 @@ export class ProductCategoryService implements OnModuleInit {
           'store.acceptsOrders': true,
         },
       },
-      ...productDailyMenuListingPipelineStages(),
+      ...productDailyMenuListingPipelineStages(regionTimezoneMap),
       { $group: { _id: null, n: { $sum: 1 } } },
     ];
   }
@@ -110,13 +116,14 @@ export class ProductCategoryService implements OnModuleInit {
   private async _dailyMenuFoodCountForCategory(
     catId: unknown,
   ): Promise<number> {
+    const lookupStages = await this._dailyMenuFoodCountLookupStages();
     const pipeline: PipelineStage[] = [
       {
         $match: {
           category: catId,
         },
       },
-      ...this._dailyMenuFoodCountLookupStages(),
+      ...lookupStages,
     ];
     const rows = await this._productModel
       .aggregate(pipeline)
@@ -292,6 +299,7 @@ export class ProductCategoryService implements OnModuleInit {
     }
 
     try {
+      const dailyMenuLookupStages = await this._dailyMenuFoodCountLookupStages();
       const pipeline: PipelineStage[] = [
         { $sort: { createdAt: 1 } },
         {
@@ -304,7 +312,7 @@ export class ProductCategoryService implements OnModuleInit {
                   $expr: { $eq: ['$category', '$$catId'] },
                 },
               },
-              ...this._dailyMenuFoodCountLookupStages(),
+              ...dailyMenuLookupStages,
             ] as any[],
             as: '_cnt',
           },

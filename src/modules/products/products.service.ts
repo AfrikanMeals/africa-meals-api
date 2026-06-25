@@ -131,7 +131,11 @@ export class ProductsService {
    * Lookups catégorie + boutique + moyenne des notes (sans charger toutes les lignes `product_ratings`).
    */
   /** Lookup boutique + filtre menu du jour (stock > 0) avant pagination catalogue. */
-  private buildFavoriteProductsDailyMenuPreFilterStages(): PipelineStage[] {
+  private async buildFavoriteProductsDailyMenuPreFilterStages(): Promise<
+    PipelineStage[]
+  > {
+    const regionTimezoneMap =
+      await this._supportedCountries.getRegionTimezoneMap();
     return [
       {
         $lookup: {
@@ -153,7 +157,7 @@ export class ProductsService {
         },
       },
       ...productEmbeddedStoreOwnerStripeOnboardedStages(),
-      ...productDailyMenuListingPipelineStages(),
+      ...productDailyMenuListingPipelineStages(regionTimezoneMap),
     ];
   }
 
@@ -489,8 +493,14 @@ export class ProductsService {
           ).trim()
         : '';
     let dailyMenuRows: unknown = undefined;
+    let storeLean: {
+      region?: string;
+      timezone?: string;
+      dailyMenuByWeekday?: unknown;
+      daily_menu_by_weekday?: unknown;
+    } | null = null;
     if (storeId && Types.ObjectId.isValid(storeId)) {
-      const storeLean = await this._storeModel
+      storeLean = await this._storeModel
         .findById(storeId)
         .select('region timezone dailyMenuByWeekday')
         .lean()
@@ -1717,9 +1727,11 @@ export class ProductsService {
 
     return this.runWithFavoriteListDedupe(cacheKey, ttlMs, async () => {
       const skip = (page - 1) * take;
+      const dailyMenuStages =
+        await this.buildFavoriteProductsDailyMenuPreFilterStages();
       const pipeline: PipelineStage[] = [
         { $match: { likedBy: userId, status: ProductStatusEnum.ACTIVE } },
-        ...this.buildFavoriteProductsDailyMenuPreFilterStages(),
+        ...dailyMenuStages,
         {
           $facet: {
             meta: [{ $count: 'total' }],
@@ -2157,6 +2169,8 @@ export class ProductsService {
         },
       ];
 
+      const dailyMenuStages =
+        await this.buildFavoriteProductsDailyMenuPreFilterStages();
       const pipeline: PipelineStage[] = [
         {
           $match: {
@@ -2164,7 +2178,7 @@ export class ProductsService {
             status: ProductStatusEnum.ACTIVE,
           },
         },
-        ...this.buildFavoriteProductsDailyMenuPreFilterStages(),
+        ...dailyMenuStages,
         {
           $facet: {
             meta: [{ $count: 'total' }],
