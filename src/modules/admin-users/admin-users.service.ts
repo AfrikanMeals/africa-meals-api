@@ -212,12 +212,15 @@ export class AdminUsersService {
     if (dto.canMessaging != null) {
       update.canMessaging = dto.canMessaging === true;
       if (dto.canMessaging === true) {
-        update.messagingBanReason = undefined;
-      } else if (dto.messagingBanReason != null) {
-        const reason = dto.messagingBanReason.trim();
-        update.messagingBanReason = reason.length > 0 ? reason : undefined;
+        (update as Record<string, unknown>).messagingBanReason = null;
+      } else {
+        const reason = (dto.messagingBanReason ?? '').trim();
+        if (reason.length < 3) {
+          throw new BadRequestException('messaging_ban_reason_required');
+        }
+        update.messagingBanReason = reason;
       }
-    } else if (dto.messagingBanReason != null && dto.canMessaging == null) {
+    } else if (dto.messagingBanReason != null) {
       const reason = dto.messagingBanReason.trim();
       update.messagingBanReason = reason.length > 0 ? reason : undefined;
     }
