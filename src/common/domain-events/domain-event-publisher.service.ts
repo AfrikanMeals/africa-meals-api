@@ -21,6 +21,7 @@ import {
   parsePositiveInt,
 } from '../bullmq-redis-connection';
 import { BullmqRedisConnectionsService } from '../redis/bullmq-redis-connections.service';
+import { readMqttBrokerConfig } from '../mqtt/mqtt-broker-config.util';
 import { DomainEventIdempotencyStore } from './domain-event-idempotency.store';
 import { DomainEventRegistryService } from './domain-event-registry.service';
 import {
@@ -550,6 +551,9 @@ export class DomainEventPublisherService
       this.logger.log('Domain events MQTT disabled (MQTT_BROKER_* absent)');
       return;
     }
+    this.logger.log(
+      `Domain events MQTT connecting: ${cfg.url} (user=${cfg.options.username ?? '—'})`,
+    );
     const client = mqttConnect(cfg.url, cfg.options);
     client.on('connect', () => {
       this.mqttConnected = true;
@@ -579,34 +583,6 @@ export class DomainEventPublisherService
     url: string;
     options: IClientOptions;
   } | null {
-    const direct = this.config.get<string>('MQTT_BROKER_URL')?.trim();
-    const host = this.config.get<string>('MQTT_BROKER_HOST')?.trim();
-    if (!direct && !host) return null;
-    const port = parsePositiveInt(
-      this.config.get<string>('MQTT_BROKER_PORT'),
-      8883,
-    );
-    const protocol =
-      this.config.get<string>('MQTT_BROKER_PROTOCOL')?.trim() || 'mqtts';
-    const url = direct || `${protocol}://${host}:${port}`;
-    return {
-      url,
-      options: {
-        username: this.config.get<string>('MQTT_BROKER_USERNAME')?.trim(),
-        password: this.config.get<string>('MQTT_BROKER_PASSWORD')?.trim(),
-        connectTimeout: parsePositiveInt(
-          this.config.get<string>('MQTT_CONNECT_TIMEOUT_MS'),
-          8000,
-        ),
-        keepalive: parsePositiveInt(
-          this.config.get<string>('MQTT_KEEPALIVE_SEC'),
-          30,
-        ),
-        reconnectPeriod: parsePositiveInt(
-          this.config.get<string>('MQTT_RECONNECT_MS'),
-          2000,
-        ),
-      },
-    };
+    return readMqttBrokerConfig(this.config);
   }
 }
