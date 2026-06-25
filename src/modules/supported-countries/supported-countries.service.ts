@@ -19,6 +19,7 @@ import {
   defaultTimezoneForCountry,
   normalizeRegionTimezone,
 } from './region-timezone.util';
+import { normalizeCountryCode } from './client-market-region.util';
 import {
   resolveStripeZeroDecimal,
   stripeAmountFactor,
@@ -29,6 +30,7 @@ export type SupportedCountryPublicRow = {
   name: string;
   phoneRegion: string;
   currency: string;
+  timezone: string;
   stripeZeroDecimal: boolean;
   stripeAmountFactor: number;
 };
@@ -38,18 +40,21 @@ function mapSupportedCountryPublicRow(doc: {
   name?: string;
   phoneRegion?: string;
   currency?: string;
+  timezone?: string | null;
   stripeZeroDecimal?: boolean | null;
 }): SupportedCountryPublicRow {
   const currency = String(doc.currency ?? 'CAD').toUpperCase();
+  const code = String(doc.code ?? '').toUpperCase();
   const stripeZeroDecimal = resolveStripeZeroDecimal(
     currency,
     doc.stripeZeroDecimal,
   );
   return {
-    code: String(doc.code ?? '').toUpperCase(),
+    code,
     name: String(doc.name ?? ''),
     phoneRegion: String(doc.phoneRegion ?? '').toUpperCase(),
     currency,
+    timezone: normalizeRegionTimezone(doc.timezone, code),
     stripeZeroDecimal,
     stripeAmountFactor: stripeAmountFactor(currency, doc.stripeZeroDecimal),
   };
@@ -85,6 +90,10 @@ export class SupportedCountriesService implements OnModuleInit {
     at: number;
     data: SupportedCountryPublicRow[];
   } | null = null;
+  private _regionTimezoneMapCache: {
+    at: number;
+    data: Record<string, string>;
+  } | null = null;
 
   @InjectModel(SupportedCountryModel.name)
   private readonly _model: Model<SupportedCountryModel>;
@@ -92,6 +101,7 @@ export class SupportedCountriesService implements OnModuleInit {
   async onModuleInit() {
     const existingCount = await this._model.countDocuments({}).exec();
     if (existingCount > 0) {
+      await this._backfillDefaultTimezones();
       return;
     }
     for (const row of DEFAULT_SUPPORTED_COUNTRIES) {
@@ -102,6 +112,7 @@ export class SupportedCountriesService implements OnModuleInit {
             name: row.name,
             phoneRegion: row.phoneRegion,
             currency: row.currency,
+            timezone: defaultTimezoneForCountry(row.code),
             active: true,
           },
           $setOnInsert: { code: row.code },
@@ -110,6 +121,32 @@ export class SupportedCountriesService implements OnModuleInit {
       );
     }
     this._listActiveCache = null;
+    this._regionTimezoneMapCache = null;
+  }
+
+  private async _backfillDefaultTimezones(): Promise<void> {
+    const docs = await this._model
+      .find({
+        $or: [
+          { timezone: { $exists: false } },
+          { timezone: null },
+          { timezone: '' },
+        ],
+      })
+      .select('code')
+      .lean()
+      .exec();
+    for (const doc of docs) {
+      const code = String(doc.code ?? '')
+        .trim()
+        .toUpperCase();
+      if (!/^[A-Z]{2}$/.test(code)) continue;
+      await this._model.updateOne(
+        { code },
+        { $set: { timezone: defaultTimezoneForCountry(code) } },
+      );
+    }
+    this._regionTimezoneMapCache = null;
   }
 
   async listActive(): Promise<SupportedCountryPublicRow[]> {
