@@ -26,6 +26,9 @@ export class ImageCompressionService {
     }
     try {
       const sharp = (await import('sharp')).default;
+      const meta = await sharp(file.buffer, { failOn: 'none' }).metadata();
+      const hasAlpha = meta.hasAlpha === true;
+
       const pipeline = sharp(file.buffer, { failOn: 'none' })
         .rotate()
         .resize({
@@ -34,19 +37,37 @@ export class ImageCompressionService {
           fit: 'inside',
           withoutEnlargement: true,
         });
-      const output = await pipeline
-        .jpeg({ quality: 82, mozjpeg: true })
-        .toBuffer();
+
+      const base = file.originalname.replace(/\.[^.]+$/, '') || 'image';
+      let output: Buffer;
+      let mimetype: string;
+      let originalname: string;
+
+      if (hasAlpha) {
+        // JPEG flattening turns alpha into black — keep transparency (WebP).
+        output = await pipeline
+          .webp({ quality: 85, alphaQuality: 100, effort: 4 })
+          .toBuffer();
+        mimetype = 'image/webp';
+        originalname = `${base}.webp`;
+      } else {
+        output = await pipeline
+          .jpeg({ quality: 82, mozjpeg: true })
+          .toBuffer();
+        mimetype = 'image/jpeg';
+        originalname = `${base}.jpg`;
+      }
+
       if (!output.length || output.length >= file.buffer.length) {
         return file;
       }
-      const base = file.originalname.replace(/\.[^.]+$/, '') || 'image';
+
       return {
         ...file,
         buffer: output,
         size: output.length,
-        mimetype: 'image/jpeg',
-        originalname: `${base}.jpg`,
+        mimetype,
+        originalname,
       };
     } catch (err) {
       this.logger.warn(
