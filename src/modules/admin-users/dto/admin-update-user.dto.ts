@@ -31,4 +31,14 @@ export class AdminUpdateUserDto {
   @IsOptional()
   @IsBoolean()
   debug?: boolean;
+
+  /** Accès messagerie — false = bannissement avec motif optionnel. */
+  @IsOptional()
+  @IsBoolean()
+  canMessaging?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  messagingBanReason?: string;
 }

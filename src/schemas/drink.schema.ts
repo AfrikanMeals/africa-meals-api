@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Schema as MongooseSchema } from 'mongoose';
 import { BaseSchema } from './base.schema';
+import { AdModerationStatusEnum } from './ad.schema';
 import { ProductCategoryModel } from './product-category.schema';
 import { StoreModel } from './store.schema';
 
@@ -59,6 +60,30 @@ export class DrinkModel extends BaseSchema {
     name: 'store',
   })
   store: StoreModel;
+
+  /** Modération admin — blocage avec motif (contenu créé par vendeur). */
+  @Prop({
+    required: false,
+    enum: AdModerationStatusEnum,
+    default: AdModerationStatusEnum.APPROVED,
+    name: 'moderation_status',
+  })
+  moderationStatus?: AdModerationStatusEnum;
+
+  @Prop({ required: false, maxlength: 500, name: 'moderation_block_reason' })
+  moderationBlockReason?: string;
+
+  @Prop({ required: false, default: null, name: 'moderation_reviewed_at' })
+  moderationReviewedAt?: Date | null;
+
+  @Prop({
+    required: false,
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserModel',
+    default: null,
+    name: 'moderation_reviewed_by',
+  })
+  moderationReviewedBy?: MongooseSchema.Types.ObjectId | null;
 }
 
 export const DrinkSchema = SchemaFactory.createForClass(DrinkModel);

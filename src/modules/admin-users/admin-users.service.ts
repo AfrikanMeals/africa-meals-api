@@ -26,6 +26,8 @@ export type AdminUserRow = {
   emailVerified: boolean;
   disabled: boolean;
   debug: boolean;
+  canMessaging: boolean;
+  messagingBanReason: string | null;
   accountDisabledAt: string | null;
   deletionPending: boolean;
   accountDeletionRequestedAt: string | null;
@@ -35,7 +37,7 @@ export type AdminUserRow = {
 };
 
 const ADMIN_USER_SELECT =
-  'fullName email phoneNumber type appCountryCode emailVerifiedAt debug accountDisabledAt accountDeletionRequestedAt accountDeletionScheduledFor createdAt updatedAt';
+  'fullName email phoneNumber type appCountryCode emailVerifiedAt debug canMessaging messagingBanReason accountDisabledAt accountDeletionRequestedAt accountDeletionScheduledFor createdAt updatedAt';
 
 function toIso(value: unknown): string | null {
   if (value instanceof Date) return value.toISOString();
@@ -60,6 +62,11 @@ function serializeUser(doc: Record<string, unknown>): AdminUserRow {
     emailVerified: doc.emailVerifiedAt instanceof Date,
     disabled: disabledAt instanceof Date,
     debug: doc.debug === true,
+    canMessaging: doc.canMessaging !== false,
+    messagingBanReason:
+      typeof doc.messagingBanReason === 'string' && doc.messagingBanReason.trim()
+        ? doc.messagingBanReason.trim()
+        : null,
     accountDisabledAt: toIso(disabledAt),
     deletionPending:
       deletionRequestedAt instanceof Date && deletionScheduledFor instanceof Date,
@@ -202,6 +209,18 @@ export class AdminUsersService {
       update.email = email;
     }
     if (dto.debug != null) update.debug = dto.debug === true;
+    if (dto.canMessaging != null) {
+      update.canMessaging = dto.canMessaging === true;
+      if (dto.canMessaging === true) {
+        update.messagingBanReason = undefined;
+      } else if (dto.messagingBanReason != null) {
+        const reason = dto.messagingBanReason.trim();
+        update.messagingBanReason = reason.length > 0 ? reason : undefined;
+      }
+    } else if (dto.messagingBanReason != null && dto.canMessaging == null) {
+      const reason = dto.messagingBanReason.trim();
+      update.messagingBanReason = reason.length > 0 ? reason : undefined;
+    }
 
     if (Object.keys(update).length === 0) {
       return this.getUser(actor, userId);

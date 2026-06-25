@@ -120,6 +120,13 @@ export class UserModel extends BaseSchema {
   @Prop({ default: false, name: 'debug' })
   debug?: boolean;
 
+  /** Accès à la messagerie (client / vendeur / livreur). Désactivé = bannissement avec motif. */
+  @Prop({ default: true, name: 'can_messaging' })
+  canMessaging?: boolean;
+
+  @Prop({ required: false, maxlength: 500, name: 'messaging_ban_reason' })
+  messagingBanReason?: string;
+
   /** Points fidélité cumulés */
   @Prop({ default: 0, name: 'loyalty_points' })
   loyaltyPoints?: number;

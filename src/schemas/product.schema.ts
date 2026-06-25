@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Schema as MongooseSchema, Types } from 'mongoose';
 import { BaseSchema } from './base.schema';
+import { AdModerationStatusEnum } from './ad.schema';
 import { ProductCategoryModel } from './product-category.schema';
 import { ProductRatingModel } from './product_rating.schema';
 import { StoreModel } from './store.schema';
@@ -321,6 +322,30 @@ export class ProductModel extends BaseSchema {
   /** Libellé du groupe de variantes affiché au client (ex. « Taille », « Format »). */
   @Prop({ required: false, default: '', name: 'variants_label' })
   variantsLabel?: string;
+
+  /** Modération admin — blocage avec motif (contenu créé par vendeur). */
+  @Prop({
+    required: false,
+    enum: AdModerationStatusEnum,
+    default: AdModerationStatusEnum.APPROVED,
+    name: 'moderation_status',
+  })
+  moderationStatus?: AdModerationStatusEnum;
+
+  @Prop({ required: false, maxlength: 500, name: 'moderation_block_reason' })
+  moderationBlockReason?: string;
+
+  @Prop({ required: false, default: null, name: 'moderation_reviewed_at' })
+  moderationReviewedAt?: Date | null;
+
+  @Prop({
+    required: false,
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserModel',
+    default: null,
+    name: 'moderation_reviewed_by',
+  })
+  moderationReviewedBy?: Types.ObjectId | null;
 }
 
 export const ProductSchema = SchemaFactory.createForClass(ProductModel);

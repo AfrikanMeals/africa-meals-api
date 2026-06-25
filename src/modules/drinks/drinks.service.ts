@@ -1,5 +1,6 @@
 import { detectCatalogImageStorageKind } from '@common/media/detect-storage-engine.util';
 import { escapeMongoRegex } from '@common/mongo/escape-regex.util';
+import { catalogModerationNotBlockedFilter } from '@common/moderation/catalog-moderation.util';
 import { shouldApplyCatalogRegionFilter } from '@common/catalog-public-id.util';
 import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import {
@@ -449,6 +450,7 @@ export class DrinksService {
     const baseFilter: Record<string, unknown> = {
       store: new Types.ObjectId(storeId),
       ...DRINK_IN_STOCK_FILTER,
+      ...catalogModerationNotBlockedFilter(),
     };
     const q = searchQuery?.trim();
     if (q) {
@@ -633,6 +635,7 @@ export class DrinksService {
       .find({
         store: { $in: oids },
         ...DRINK_IN_STOCK_FILTER,
+        ...catalogModerationNotBlockedFilter(),
       })
       .populate('category', 'title kind isEnabled')
       .sort({ updatedAt: -1 })
