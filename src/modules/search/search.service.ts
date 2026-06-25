@@ -2052,8 +2052,6 @@ export class SearchService {
       });
     }
     const storeDistanceStages = await this._storeDistanceAndMenuStages(args);
-    const storeAvailabilityStages =
-      await this._storeArticlesAvailabilityStagesAsync();
     const pipeline: PipelineStage[] = [
       {
         $match: {
@@ -2062,7 +2060,6 @@ export class SearchService {
       },
       ...storeOwnerStripeOnboardedPipelineStages(),
       ...storeDistanceStages,
-      ...storeAvailabilityStages,
     ];
 
     const sortKeys = this._storeSortKeys(args);
