@@ -60,6 +60,15 @@ import {
   VendorCatalogProductsQueryDto,
 } from './dto/vendor-catalog-query.dto';
 import { StockItemsService } from '@modules/stock-items/stock-items.service';
+import { CatalogLibraryService } from '@modules/catalog-library/catalog-library.service';
+import {
+  CreateComplementLibraryDto,
+  CreateIngredientLibraryDto,
+  CreateSupplementLibraryDto,
+  PatchComplementLibraryDto,
+  PatchIngredientLibraryDto,
+  PatchSupplementLibraryDto,
+} from '@modules/catalog-library/dto/catalog-library.dto';
 import {
   AdminPatchVendorStoreDto,
   AdminVendorRequestRevisionDto,
@@ -211,6 +220,9 @@ export class StoreController {
 
   @Inject(StockItemsService)
   private readonly _stockItemsService: StockItemsService;
+
+  @Inject(CatalogLibraryService)
+  private readonly _catalogLibraryService: CatalogLibraryService;
 
   @Inject(DrinksService)
   private readonly _drinksService: DrinksService;
@@ -509,6 +521,177 @@ export class StoreController {
     @Req() req: Request,
   ) {
     await this._stockItemsService.deleteForStore(
+      id,
+      itemId,
+      req.user as UserModel,
+    );
+    return { ok: true };
+  }
+
+  /** Bibliothèque ingrédients réutilisables — boutique. */
+  @Get(':id/catalog-library/ingredients')
+  @UseGuards(JwtGuard)
+  async listIngredientLibrary(@Param('id') id: string, @Req() req: Request) {
+    return this._catalogLibraryService.listIngredients(
+      id,
+      req.user as UserModel,
+    );
+  }
+
+  @Post(':id/catalog-library/ingredients')
+  @UseGuards(JwtGuard)
+  async createIngredientLibrary(
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: CreateIngredientLibraryDto,
+    @Req() req: Request,
+  ) {
+    return this._catalogLibraryService.createIngredient(
+      id,
+      body,
+      req.user as UserModel,
+    );
+  }
+
+  @Patch(':id/catalog-library/ingredients/:itemId')
+  @UseGuards(JwtGuard)
+  async patchIngredientLibrary(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: PatchIngredientLibraryDto,
+    @Req() req: Request,
+  ) {
+    return this._catalogLibraryService.patchIngredient(
+      id,
+      itemId,
+      body,
+      req.user as UserModel,
+    );
+  }
+
+  @Delete(':id/catalog-library/ingredients/:itemId')
+  @UseGuards(JwtGuard)
+  async deleteIngredientLibrary(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Req() req: Request,
+  ) {
+    await this._catalogLibraryService.deleteIngredient(
+      id,
+      itemId,
+      req.user as UserModel,
+    );
+    return { ok: true };
+  }
+
+  /** Bibliothèque suppléments réutilisables — boutique. */
+  @Get(':id/catalog-library/supplements')
+  @UseGuards(JwtGuard)
+  async listSupplementLibrary(@Param('id') id: string, @Req() req: Request) {
+    return this._catalogLibraryService.listSupplements(
+      id,
+      req.user as UserModel,
+    );
+  }
+
+  @Post(':id/catalog-library/supplements')
+  @UseGuards(JwtGuard)
+  async createSupplementLibrary(
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: CreateSupplementLibraryDto,
+    @Req() req: Request,
+  ) {
+    return this._catalogLibraryService.createSupplement(
+      id,
+      body,
+      req.user as UserModel,
+    );
+  }
+
+  @Patch(':id/catalog-library/supplements/:itemId')
+  @UseGuards(JwtGuard)
+  async patchSupplementLibrary(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: PatchSupplementLibraryDto,
+    @Req() req: Request,
+  ) {
+    return this._catalogLibraryService.patchSupplement(
+      id,
+      itemId,
+      body,
+      req.user as UserModel,
+    );
+  }
+
+  @Delete(':id/catalog-library/supplements/:itemId')
+  @UseGuards(JwtGuard)
+  async deleteSupplementLibrary(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Req() req: Request,
+  ) {
+    await this._catalogLibraryService.deleteSupplement(
+      id,
+      itemId,
+      req.user as UserModel,
+    );
+    return { ok: true };
+  }
+
+  /** Bibliothèque compléments réutilisables — boutique. */
+  @Get(':id/catalog-library/complements')
+  @UseGuards(JwtGuard)
+  async listComplementLibrary(@Param('id') id: string, @Req() req: Request) {
+    return this._catalogLibraryService.listComplements(
+      id,
+      req.user as UserModel,
+    );
+  }
+
+  @Post(':id/catalog-library/complements')
+  @UseGuards(JwtGuard)
+  async createComplementLibrary(
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: CreateComplementLibraryDto,
+    @Req() req: Request,
+  ) {
+    return this._catalogLibraryService.createComplement(
+      id,
+      body,
+      req.user as UserModel,
+    );
+  }
+
+  @Patch(':id/catalog-library/complements/:itemId')
+  @UseGuards(JwtGuard)
+  async patchComplementLibrary(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: PatchComplementLibraryDto,
+    @Req() req: Request,
+  ) {
+    return this._catalogLibraryService.patchComplement(
+      id,
+      itemId,
+      body,
+      req.user as UserModel,
+    );
+  }
+
+  @Delete(':id/catalog-library/complements/:itemId')
+  @UseGuards(JwtGuard)
+  async deleteComplementLibrary(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Req() req: Request,
+  ) {
+    await this._catalogLibraryService.deleteComplement(
       id,
       itemId,
       req.user as UserModel,

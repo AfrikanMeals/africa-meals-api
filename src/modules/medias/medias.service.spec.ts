@@ -43,6 +43,10 @@ describe('MediasService', () => {
               if (key === 'AWS_S3_BUCKET') return 'wise-eat';
               if (key === 'AWS_REGION') return 'us-east-1';
               if (key === 'API_PUBLIC_BASE_URL') return 'https://api.wise-eat.com';
+              if (key === 'MINIO_PUBLIC_BASE_URL') {
+                return 'https://storage.wise-eat.com/wise-eat';
+              }
+              if (key === 'MINIO_ENDPOINT') return 'https://storage.wise-eat.com';
               return undefined;
             }),
           },
@@ -77,6 +81,29 @@ describe('MediasService', () => {
       'https://wise-eat.s3.amazonaws.com/stores/abc/profile/x.png';
     await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(
       'https://api.wise-eat.com/medias/public/stores/abc/profile/x.png',
+    );
+  });
+
+  it('keeps direct MinIO URLs when proxy disabled', async () => {
+    const url =
+      'https://storage.wise-eat.com/wise-eat/catalog/categories/abc.webp';
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(url);
+  });
+
+  it('rewrites legacy proxy URLs to direct MinIO when proxy disabled', async () => {
+    const storageSettings = service['storageSettings'] as StorageSettingsService;
+    jest.spyOn(storageSettings, 'getPublicSettings').mockResolvedValue({
+      compressionEnabled: false,
+      maxFileSizeMb: 5,
+      storageEngine: 'minio',
+      mediaProxyEnabled: false,
+      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true },
+      updatedAt: null,
+    });
+    const url =
+      'https://api.wise-eat.com/medias/public/catalog/categories/abc.webp';
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(
+      'https://storage.wise-eat.com/wise-eat/catalog/categories/abc.webp',
     );
   });
 });

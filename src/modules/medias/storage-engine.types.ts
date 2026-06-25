@@ -37,6 +37,9 @@ export function looksLikeMinioUrl(url: string): boolean {
   try {
     const u = new URL(url);
     if (/minio/i.test(u.hostname)) return true;
+    if (/^storage(?:-[a-z0-9-]+)?\.wise-eat\.com$/i.test(u.hostname)) {
+      return true;
+    }
     if (
       u.port === '9000' &&
       !u.hostname.includes('amazonaws.com') &&

@@ -652,6 +652,7 @@ export class ProductsService {
     firstOptionFree: boolean;
     multiChoice: boolean;
     required: boolean;
+    libraryGroupId?: string;
     options: Array<{ label: string; priceDelta: number; isDefault: boolean }>;
   }> {
     if (!Array.isArray(raw)) return [];
@@ -660,12 +661,18 @@ export class ProductsService {
       firstOptionFree: boolean;
       multiChoice: boolean;
       required: boolean;
+      libraryGroupId?: string;
       options: Array<{ label: string; priceDelta: number; isDefault: boolean }>;
     }> = [];
     for (const g of raw) {
       const row = (g ?? {}) as Record<string, unknown>;
       const title = String(row.title ?? '').trim();
       if (!title) continue;
+      const libraryRaw = row.libraryGroupId ?? row.library_group_id;
+      const libraryGroupId =
+        libraryRaw != null && String(libraryRaw).trim()
+          ? String(libraryRaw).trim()
+          : undefined;
       const firstOptionFree = Boolean(
         row.firstOptionFree ?? row.first_option_free ?? false,
       );
@@ -707,6 +714,7 @@ export class ProductsService {
         firstOptionFree,
         multiChoice,
         required,
+        ...(libraryGroupId ? { libraryGroupId } : {}),
         options: normalizedOptions,
       });
     }
@@ -715,7 +723,7 @@ export class ProductsService {
 
   private normalizeSupplements(
     raw: unknown,
-  ): Array<{ name: string; price: number }> {
+  ): Array<{ name: string; price: number; libraryItemId?: string }> {
     if (!Array.isArray(raw)) return [];
     return raw
       .map((s) => {
@@ -724,9 +732,28 @@ export class ProductsService {
         if (!name) return null;
         const numeric = Number(row.price ?? 0);
         const price = Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
-        return { name, price };
+        const libraryRaw = row.libraryItemId ?? row.library_item_id;
+        const libraryItemId =
+          libraryRaw != null && String(libraryRaw).trim()
+            ? String(libraryRaw).trim()
+            : undefined;
+        return {
+          name,
+          price,
+          ...(libraryItemId ? { libraryItemId } : {}),
+        };
       })
-      .filter((s): s is { name: string; price: number } => Boolean(s));
+      .filter(
+        (s): s is { name: string; price: number; libraryItemId?: string } =>
+          Boolean(s),
+      );
+  }
+
+  private normalizeIngredientLibraryIds(raw: unknown): string[] {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((id) => String(id ?? '').trim())
+      .filter((id) => id.length > 0);
   }
 
   normalizeVariants(raw: unknown): Array<{
@@ -914,6 +941,9 @@ export class ProductsService {
       bio: String(p.bio ?? ''),
       about: String(p.about ?? ''),
       fieldsets: this.normalizeFieldsets(p.fieldsets),
+      ingredientLibraryIds: this.normalizeIngredientLibraryIds(
+        p.ingredientLibraryIds ?? p.ingredient_library_ids,
+      ),
       complements: this.normalizeComplements(p.complements),
       supplements: this.normalizeSupplements(p.supplements),
       variants,
@@ -1306,6 +1336,9 @@ export class ProductsService {
         bio: args.bio,
         about: args.about,
         fieldsets: this.normalizeFieldsets(args.fieldsets),
+        ingredientLibraryIds: this.normalizeIngredientLibraryIds(
+          args.ingredientLibraryIds,
+        ),
         complements: this.normalizeComplements(args.complements),
         supplements: this.normalizeSupplements(args.supplements),
         variants: this.normalizeVariants(args.variants),
@@ -1407,6 +1440,12 @@ export class ProductsService {
     }
     if (args.fieldsets !== undefined) {
       doc.set('fieldsets', this.normalizeFieldsets(args.fieldsets));
+    }
+    if (args.ingredientLibraryIds !== undefined) {
+      doc.set(
+        'ingredientLibraryIds',
+        this.normalizeIngredientLibraryIds(args.ingredientLibraryIds),
+      );
     }
     if (args.complements !== undefined) {
       doc.set('complements', this.normalizeComplements(args.complements));

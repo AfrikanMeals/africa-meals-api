@@ -95,6 +95,11 @@ export class ProductComplementGroupDto {
   @ValidateNested({ each: true })
   @Type(() => ProductComplementOptionDto)
   options?: ProductComplementOptionDto[];
+
+  @ApiPropertyOptional({ description: 'Référence bibliothèque boutique' })
+  @IsOptional()
+  @Trim()
+  libraryGroupId?: string;
 }
 
 export class ProductVariantDto {
@@ -147,6 +152,11 @@ export class ProductSupplementDto {
   @IsNumber()
   @Min(0)
   price?: number;
+
+  @ApiPropertyOptional({ description: 'Référence bibliothèque boutique' })
+  @IsOptional()
+  @Trim()
+  libraryItemId?: string;
 }
 
 export class ProductDiscountScheduleDto {
@@ -261,6 +271,15 @@ export class CreateProductDto {
   @IsArray()
   @IsString({ each: true })
   fieldsets?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Ids bibliothèque ingrédients liés au plat.',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  ingredientLibraryIds?: string[];
 
   @ApiPropertyOptional({
     type: [ProductComplementGroupDto],
@@ -411,6 +430,15 @@ export class PatchProductDto {
   @IsArray()
   @IsString({ each: true })
   fieldsets?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Ids bibliothèque ingrédients liés au plat.',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  ingredientLibraryIds?: string[];
 
   @ApiPropertyOptional({
     type: [ProductComplementGroupDto],

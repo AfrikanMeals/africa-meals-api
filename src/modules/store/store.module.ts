@@ -7,6 +7,7 @@ import { ProductsModule } from '@modules/products/products.module';
 import { RatingsModule } from '@modules/ratings/ratings.module';
 import { DrinksModule } from '@modules/drinks/drinks.module';
 import { StockItemsModule } from '@modules/stock-items/stock-items.module';
+import { CatalogLibraryModule } from '@modules/catalog-library/catalog-library.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
@@ -79,6 +80,7 @@ import { StoreSubscribersModule } from '@modules/store-subscribers/store-subscri
     CartModule,
     OrdersModule,
     StockItemsModule,
+    CatalogLibraryModule,
     DrinksModule,
     forwardRef(() => BillingModule),
     VendorStatusEmailModule,

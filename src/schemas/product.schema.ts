@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Schema as MongooseSchema } from 'mongoose';
+import { Schema as MongooseSchema, Types } from 'mongoose';
 import { BaseSchema } from './base.schema';
 import { ProductCategoryModel } from './product-category.schema';
 import { ProductRatingModel } from './product_rating.schema';
@@ -86,6 +86,14 @@ export class ProductComplementGroupModel {
     default: [],
   })
   options: ProductComplementOptionModel[];
+
+  /** Lien vers un groupe de la bibliothèque boutique. */
+  @Prop({
+    required: false,
+    name: 'library_group_id',
+    type: MongooseSchema.Types.ObjectId,
+  })
+  libraryGroupId?: Types.ObjectId;
 }
 
 export const ProductComplementGroupSchema = SchemaFactory.createForClass(
@@ -99,6 +107,14 @@ export class ProductSupplementModel {
 
   @Prop({ required: false, name: 'price', default: 0 })
   price: number;
+
+  /** Lien vers un supplément de la bibliothèque boutique. */
+  @Prop({
+    required: false,
+    name: 'library_item_id',
+    type: MongooseSchema.Types.ObjectId,
+  })
+  libraryItemId?: Types.ObjectId;
 }
 
 export const ProductSupplementSchema =
@@ -161,6 +177,14 @@ export class ProductModel extends BaseSchema {
 
   @Prop({ type: [String], default: [], name: 'fieldsets' })
   fieldsets: string[];
+
+  /** Ingrédients liés à la bibliothèque (noms aussi dans fieldsets). */
+  @Prop({
+    type: [MongooseSchema.Types.ObjectId],
+    default: [],
+    name: 'ingredient_library_ids',
+  })
+  ingredientLibraryIds: Types.ObjectId[];
 
   @Prop({ required: false, name: 'origin_country' })
   originCountry?: string;

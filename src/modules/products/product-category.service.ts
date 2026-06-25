@@ -47,7 +47,7 @@ export class ProductCategoryService implements OnModuleInit {
   private readonly _logger = new Logger(ProductCategoryService.name);
 
   /** Cache liste publique catégories (invalidé à chaque mutation admin). */
-  private static readonly _publicListCacheKey = 'product-categories:public:v5';
+  private static readonly _publicListCacheKey = 'product-categories:public:v8';
 
   @Inject(ModuleCacheLayerService)
   private readonly _cacheLayer: ModuleCacheLayerService;
@@ -382,8 +382,10 @@ export class ProductCategoryService implements OnModuleInit {
         .option({ allowDiskUse: true })
         .exec();
 
-      const result = raw.map((doc: Record<string, unknown>) =>
-        this.serializeCategoryRow(doc),
+      const result = await mapInChunks(
+        raw,
+        10,
+        async (doc: Record<string, unknown>) => this.serializeCategoryRow(doc),
       );
       if (result.length > 0) {
         await categoriesCache.set(
@@ -415,21 +417,24 @@ export class ProductCategoryService implements OnModuleInit {
   }
 
   /** Objet JSON strict (ids string) pour éviter les soucis de sérialisation côté client. */
-  private serializeCategoryRow(
+  private async serializeCategoryRow(
     doc: Record<string, unknown>,
-  ): PublicProductCategoryRow {
+  ): Promise<PublicProductCategoryRow> {
     const id = String(doc._id ?? '');
     const imageRaw = doc.image ?? doc.category_image;
     const image =
       typeof imageRaw === 'string' && imageRaw.trim().length > 0
         ? imageRaw.trim()
         : undefined;
+    const resolvedImage = image
+      ? (await this._mediasService.resolvePublicMediaUrl(image)) ?? image
+      : undefined;
     return {
       id,
       _id: id,
       title: String(doc.title ?? ''),
       icon: String(doc.icon ?? ''),
-      ...(image ? { image } : {}),
+      ...(resolvedImage ? { image: resolvedImage } : {}),
       kind: this.resolveKind(doc),
       isEnabled: Boolean(doc.is_enabled ?? doc.isEnabled ?? true),
       productCount: Number(doc.productCount ?? 0),
