@@ -84,6 +84,7 @@ import {
   probeGrpcWsNotify,
   probeMemcached,
   resolveMinioHealthProbeSkipReason,
+  probeMinioStorageHealth,
 } from './system-exchange.probes';
 import { parseGrpcVersion } from '@africa-meals/proto';
 import type { SystemExchangeResponse, WsGrpcRuntimeStatus } from './system-exchange.types';
@@ -4417,38 +4418,13 @@ export class DbMaintenanceService {
         detail: minioProbeSkip,
       });
     } else if (minioBucket && minioKey && minioSecret && minioEndpoint) {
-      try {
-        const { HeadBucketCommand, S3Client } = await import('@aws-sdk/client-s3');
-        const region =
-          String(this.config.get<string>('MINIO_REGION') ?? '').trim() ||
-          'us-east-1';
-        const endpoint = minioEndpoint.startsWith('http')
-          ? minioEndpoint
-          : `http://${minioEndpoint}`;
-        const forcePathStyle =
-          String(this.config.get<string>('MINIO_FORCE_PATH_STYLE') ?? '').trim() !==
-          'false';
-        const client = new S3Client({
-          region,
-          endpoint,
-          forcePathStyle,
-          credentials: { accessKeyId: minioKey, secretAccessKey: minioSecret },
-        });
-        await client.send(new HeadBucketCommand({ Bucket: minioBucket }));
-        engines.push({
-          name: 'MinIO',
-          configured: true,
-          ok: true,
-          detail: 'joignable',
-        });
-      } catch (e) {
-        engines.push({
-          name: 'MinIO',
-          configured: true,
-          ok: false,
-          detail: e instanceof Error ? e.message : String(e),
-        });
-      }
+      const minioHealth = await probeMinioStorageHealth(this.config);
+      engines.push({
+        name: 'MinIO',
+        configured: minioHealth.configured,
+        ok: minioHealth.ok,
+        detail: minioHealth.detail,
+      });
     } else {
       engines.push({
         name: 'MinIO',

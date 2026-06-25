@@ -5,6 +5,10 @@ import {
   readRedisConnectionFromConfig,
   buildIoredisOptionsFromConnection,
 } from '../../common/redis/redis-connection.util';
+import {
+  buildMinioS3ClientConfig,
+  parseMinioEndpoints,
+} from '../medias/minio-endpoints.util';
 import type { ConfigService } from '@nestjs/config';
 import type { Connection } from 'mongoose';
 import type { MqttRuntimeStatus } from '@modules/ws-notify/ws-notify-dispatch-queue.service';
@@ -93,6 +97,74 @@ export function resolveMinioHealthProbeSkipReason(
     return null;
   }
   return null;
+}
+
+export type MinioStorageHealthProbe = {
+  configured: boolean;
+  ok: boolean;
+  detail: string;
+};
+
+/** Sonde HeadBucket sur primaire puis réplicas (failover lecture côté API). */
+export async function probeMinioStorageHealth(
+  config: ConfigService,
+): Promise<MinioStorageHealthProbe> {
+  const skip = resolveMinioHealthProbeSkipReason(config);
+  if (skip) {
+    return { configured: false, ok: false, detail: skip };
+  }
+
+  const bucket = String(config.get<string>('MINIO_BUCKET') ?? '').trim();
+  const key = String(config.get<string>('MINIO_ACCESS_KEY') ?? '').trim();
+  const secret = String(config.get<string>('MINIO_SECRET_KEY') ?? '').trim();
+  const endpoints = parseMinioEndpoints(config);
+  if (!bucket || !key || !secret || !endpoints.length) {
+    return { configured: false, ok: false, detail: 'non configuré' };
+  }
+
+  const { HeadBucketCommand, S3Client } = await import('@aws-sdk/client-s3');
+  const parts: string[] = [];
+  let primaryOk = false;
+  let replicaOk = 0;
+  const replicaTotal = Math.max(0, endpoints.length - 1);
+
+  for (let i = 0; i < endpoints.length; i++) {
+    const endpoint = endpoints[i];
+    const label = i === 0 ? 'primaire' : `réplica${i}`;
+    try {
+      const client = new S3Client(buildMinioS3ClientConfig(config, endpoint));
+      await client.send(new HeadBucketCommand({ Bucket: bucket }));
+      parts.push(`${label} OK`);
+      if (i === 0) primaryOk = true;
+      else replicaOk++;
+    } catch (e) {
+      parts.push(
+        `${label} KO (${endpoint}): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
+  const detail = parts.join(' · ');
+  if (primaryOk) {
+    return {
+      configured: true,
+      ok: replicaOk === replicaTotal,
+      detail:
+        replicaOk === replicaTotal
+          ? detail
+          : `${detail} — écritures OK, réplication partielle`,
+    };
+  }
+  if (replicaOk > 0) {
+    return {
+      configured: true,
+      ok: true,
+      detail: `${detail} — primaire KO, lectures via réplicas`,
+    };
+  }
+  return { configured: true, ok: false, detail };
 }
 
 export function resolveApiHealthProbeUrl(serverUrl: string): string {

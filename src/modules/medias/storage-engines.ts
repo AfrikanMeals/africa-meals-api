@@ -11,6 +11,11 @@ import {
   StorageUploadInput,
   StorageUploadResult,
 } from './storage-engine.types';
+import {
+  buildMinioS3ClientConfig,
+  normalizeMinioEndpoint,
+  parseMinioEndpoints,
+} from './minio-endpoints.util';
 
 @Injectable()
 export class FirebaseStorageEngine implements IStorageEngine {
@@ -433,7 +438,10 @@ export class S3StorageEngine implements IStorageEngine {
 export class MinioStorageEngine implements IStorageEngine {
   readonly id: StorageEngineId = 'minio';
   private readonly logger = new Logger(MinioStorageEngine.name);
-  private s3Client: import('@aws-sdk/client-s3').S3Client | null = null;
+  private readonly s3Clients = new Map<
+    string,
+    import('@aws-sdk/client-s3').S3Client
+  >();
 
   constructor(private readonly config: ConfigService) {}
 
@@ -441,14 +449,12 @@ export class MinioStorageEngine implements IStorageEngine {
     return this.config.get<string>('MINIO_BUCKET')?.trim() || '';
   }
 
-  private region(): string {
-    return this.config.get<string>('MINIO_REGION')?.trim() || 'us-east-1';
+  private endpoints(): string[] {
+    return parseMinioEndpoints(this.config);
   }
 
-  private endpoint(): string {
-    const raw = this.config.get<string>('MINIO_ENDPOINT')?.trim() || '';
-    if (!raw) return '';
-    return raw.startsWith('http') ? raw : `http://${raw}`;
+  private primaryEndpoint(): string {
+    return this.endpoints()[0] ?? '';
   }
 
   private forcePathStyle(): boolean {
@@ -461,26 +467,23 @@ export class MinioStorageEngine implements IStorageEngine {
     const bucket = this.bucket();
     const key = this.config.get<string>('MINIO_ACCESS_KEY')?.trim();
     const secret = this.config.get<string>('MINIO_SECRET_KEY')?.trim();
-    const endpoint = this.endpoint();
-    return Boolean(bucket && key && secret && endpoint);
+    return Boolean(bucket && key && secret && this.primaryEndpoint());
   }
 
-  private async client() {
-    if (!this.s3Client) {
+  /** Écritures et suppressions : site primaire uniquement (réplication MinIO côté serveur). */
+  private async primaryClient() {
+    return this.clientFor(this.primaryEndpoint());
+  }
+
+  private async clientFor(endpoint: string) {
+    const normalized = normalizeMinioEndpoint(endpoint);
+    let client = this.s3Clients.get(normalized);
+    if (!client) {
       const { S3Client } = await import('@aws-sdk/client-s3');
-      this.s3Client = new S3Client({
-        region: this.region(),
-        endpoint: this.endpoint(),
-        forcePathStyle: this.forcePathStyle(),
-        credentials: {
-          accessKeyId: this.config.get<string>('MINIO_ACCESS_KEY')!.trim(),
-          secretAccessKey: this.config
-            .get<string>('MINIO_SECRET_KEY')!
-            .trim(),
-        },
-      });
+      client = new S3Client(buildMinioS3ClientConfig(this.config, normalized));
+      this.s3Clients.set(normalized, client);
     }
-    return this.s3Client;
+    return client;
   }
 
   private publicUrl(path: string): string {
@@ -493,7 +496,7 @@ export class MinioStorageEngine implements IStorageEngine {
       return `${customBase.replace(/\/+$/, '')}/${encoded}`;
     }
     const bucket = this.bucket();
-    const endpoint = this.endpoint().replace(/\/+$/, '');
+    const endpoint = this.primaryEndpoint().replace(/\/+$/, '');
     if (this.forcePathStyle()) {
       return `${endpoint}/${bucket}/${encoded}`;
     }
@@ -511,7 +514,7 @@ export class MinioStorageEngine implements IStorageEngine {
 
   async upload(input: StorageUploadInput): Promise<StorageUploadResult> {
     const { PutObjectCommand } = await import('@aws-sdk/client-s3');
-    const client = await this.client();
+    const client = await this.primaryClient();
     const putBase = {
       Bucket: this.bucket(),
       Key: input.path,
@@ -546,26 +549,47 @@ export class MinioStorageEngine implements IStorageEngine {
 
   async readObject(objectPath: string): Promise<StorageObjectStream> {
     const { GetObjectCommand } = await import('@aws-sdk/client-s3');
-    const client = await this.client();
-    const out = await client.send(
-      new GetObjectCommand({
-        Bucket: this.bucket(),
-        Key: objectPath,
-      }),
-    );
-    if (!out.Body) {
-      throw new Error('minio_object_empty');
+    const endpoints = this.endpoints();
+    let lastError: unknown;
+    for (const endpoint of endpoints) {
+      try {
+        const client = await this.clientFor(endpoint);
+        const out = await client.send(
+          new GetObjectCommand({
+            Bucket: this.bucket(),
+            Key: objectPath,
+          }),
+        );
+        if (!out.Body) {
+          throw new Error('minio_object_empty');
+        }
+        if (endpoint !== this.primaryEndpoint()) {
+          this.logger.warn(
+            `MinIO lecture via réplica ${endpoint} (primaire indisponible ou objet absent)`,
+          );
+        }
+        return {
+          body: out.Body as NodeJS.ReadableStream,
+          contentType:
+            typeof out.ContentType === 'string' ? out.ContentType : undefined,
+        };
+      } catch (err) {
+        lastError = err;
+        this.logger.debug(
+          `MinIO GetObject échoué sur ${endpoint}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
-    return {
-      body: out.Body as NodeJS.ReadableStream,
-      contentType:
-        typeof out.ContentType === 'string' ? out.ContentType : undefined,
-    };
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('minio_read_failed');
   }
 
   async delete(pathOrUrl: string): Promise<void> {
     const { DeleteObjectCommand } = await import('@aws-sdk/client-s3');
-    const client = await this.client();
+    const client = await this.primaryClient();
     await client.send(
       new DeleteObjectCommand({
         Bucket: this.bucket(),
@@ -580,7 +604,7 @@ export class MinioStorageEngine implements IStorageEngine {
     );
     const normalized = prefix.endsWith('/') ? prefix : `${prefix}/`;
     try {
-      const client = await this.client();
+      const client = await this.primaryClient();
       const listed = await client.send(
         new ListObjectsV2Command({
           Bucket: this.bucket(),
@@ -612,7 +636,7 @@ export class MinioStorageEngine implements IStorageEngine {
     const keepPath = extractObjectPath(keepPathOrUrl);
     const normalized = prefix.endsWith('/') ? prefix : `${prefix}/`;
     try {
-      const client = await this.client();
+      const client = await this.primaryClient();
       const listed = await client.send(
         new ListObjectsV2Command({
           Bucket: this.bucket(),
