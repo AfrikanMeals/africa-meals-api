@@ -13,6 +13,7 @@ let cachedServer: express.Express | undefined;
 
 /**
  * Instance Express unique (réutilisée entre invocations Cloud Functions — warm start).
+ * `preserveRawBody: true` requis pour vérifier la signature Stripe (`Stripe-Signature`).
  */
 export async function getExpressServer(): Promise<express.Express> {
   if (cachedServer) {
@@ -21,7 +22,7 @@ export async function getExpressServer(): Promise<express.Express> {
   const expressApp = express();
   expressApp.use(httpRequestTimeoutMiddleware());
   expressApp.use(compressionMiddleware({ threshold: 1024 }));
-  expressApp.use(createRouteAwareJsonBodyParser({ preserveRawBody: false }));
+  expressApp.use(createRouteAwareJsonBodyParser({ preserveRawBody: true }));
   expressApp.use(
     express.urlencoded({
       extended: true,
