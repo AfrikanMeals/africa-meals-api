@@ -278,16 +278,20 @@ export class SubscriptionsService implements OnModuleInit {
     }
     const storeIds = vendorStoreObjectIds(user);
     if (!storeIds.length) return plans;
-    const defaultStoreId = String(storeIds[0]);
+    const pricingStoreId = await this.resolveVendorPricingStoreId(
+      user,
+      options?.storeId,
+    );
+    if (!pricingStoreId) return plans;
     return Promise.all(
       plans.map(async (plan) => {
-        const pricingStoreId =
+        const storeForPricing =
           plan.storeId &&
           storeIds.some((id) => String(id) === String(plan.storeId))
             ? String(plan.storeId)
-            : defaultStoreId;
+            : pricingStoreId;
         const pricing = await this.planRegionalFees.resolvePlanPricingForStore(
-          pricingStoreId,
+          storeForPricing,
           plan as unknown as Record<string, unknown>,
         );
         return {
@@ -298,6 +302,39 @@ export class SubscriptionsService implements OnModuleInit {
         };
       }),
     );
+  }
+
+  /** Boutique utilisée pour résoudre les tarifs régionaux (contexte vendeur). */
+  private async resolveVendorPricingStoreId(
+    user: UserModel,
+    explicitStoreId?: string,
+  ): Promise<string | null> {
+    const storeIds = vendorStoreObjectIds(user);
+    if (!storeIds.length) return null;
+
+    const trimmed = explicitStoreId?.trim() ?? '';
+    if (trimmed && Types.ObjectId.isValid(trimmed)) {
+      const owns = storeIds.some((id) => String(id) === trimmed);
+      if (owns) return trimmed;
+    }
+
+    const nowMs = Date.now();
+    const activeRows = await this.vendorSubModel
+      .find({ store: { $in: storeIds }, status: 'ACTIVE' })
+      .sort({ createdAt: -1 })
+      .select('store endsAt')
+      .lean()
+      .exec();
+
+    for (const row of activeRows as Record<string, unknown>[]) {
+      const endMs = new Date(String(row.endsAt ?? '')).getTime();
+      if (!Number.isNaN(endMs) && endMs > nowMs) {
+        const store = row.store;
+        if (store) return String(store);
+      }
+    }
+
+    return String(storeIds[0]);
   }
 
   /** Plans actifs pour la page tarifs publique (sans champs internes). */

@@ -76,6 +76,34 @@ function daysSince(date: Date | undefined | null): number {
   return Math.floor(ms / 86_400_000);
 }
 
+function guideProgressKey(slug: string, locale: string): string {
+  return `${slug}::${normalizeLocale(locale)}`;
+}
+
+function isDisplayableGuide(doc: VendorGuideArticleDocument): boolean {
+  const title = doc.title?.trim() ?? '';
+  if (!title) return false;
+  const html = doc.htmlContent?.trim() ?? '';
+  const image = doc.imageUrl?.trim() ?? '';
+  return Boolean(html || image);
+}
+
+function isGuideProgressBlocking(
+  record: {
+    guideSlug?: string;
+    locale?: string;
+    updatedAt?: Date;
+    createdAt?: Date;
+  },
+  redisplayAfterDays: number,
+): boolean {
+  const slug = String(record.guideSlug ?? '').trim();
+  if (!slug) return false;
+  if (redisplayAfterDays <= 0) return true;
+  const lastShownAt = record.updatedAt ?? record.createdAt;
+  return daysSince(lastShownAt) < redisplayAfterDays;
+}
+
 @Injectable()
 export class VendorGuidesService {
   constructor(
@@ -247,47 +275,59 @@ export class VendorGuidesService {
     const locale = normalizeLocale(args.locale);
     const userId = String(user._id);
     const progressRecords = await this.progress
-      .find({ userId, locale })
-      .select('guideSlug updatedAt createdAt')
+      .find({ userId })
+      .select('guideSlug locale updatedAt createdAt')
       .lean()
       .exec();
 
-    const blockedSlugs = new Set<string>();
+    const blockedGuideKeys = new Set<string>();
     for (const record of progressRecords) {
       const slug = String(record.guideSlug ?? '').trim();
       if (!slug) continue;
-      if (settings.redisplayAfterDays <= 0) {
-        blockedSlugs.add(slug);
-        continue;
-      }
-      const lastShownAt =
-        (record as { updatedAt?: Date; createdAt?: Date }).updatedAt ??
-        (record as { updatedAt?: Date; createdAt?: Date }).createdAt;
-      if (daysSince(lastShownAt) < settings.redisplayAfterDays) {
-        blockedSlugs.add(slug);
+      if (
+        isGuideProgressBlocking(
+          record as {
+            guideSlug?: string;
+            locale?: string;
+            updatedAt?: Date;
+            createdAt?: Date;
+          },
+          settings.redisplayAfterDays,
+        )
+      ) {
+        blockedGuideKeys.add(
+          guideProgressKey(slug, String(record.locale ?? 'fr')),
+        );
       }
     }
 
     const localeOrder =
-      locale === 'en' ? (['en', 'fr'] as const) : ([locale, 'en'] as const)
-    const candidates: VendorGuideArticleDocument[] = []
-    const usedSlugs = new Set<string>()
+      locale === 'en' ? (['en', 'fr'] as const) : ([locale, 'en'] as const);
+    const candidates: VendorGuideArticleDocument[] = [];
+    const usedSlugs = new Set<string>();
 
     for (const loc of localeOrder) {
-      if (candidates.length >= settings.articlesPerBatch) break
-      const remaining = settings.articlesPerBatch - candidates.length
+      if (candidates.length >= settings.articlesPerBatch) break;
       const batch = await this.guides
         .find({
           locale: loc,
           isActive: true,
-          slug: { $nin: [...blockedSlugs, ...usedSlugs] },
+          slug: { $nin: [...usedSlugs] },
         })
         .sort({ sortOrder: 1, createdAt: 1 })
-        .limit(remaining)
-        .exec()
+        .exec();
       for (const doc of batch) {
-        usedSlugs.add(doc.slug)
-        candidates.push(doc)
+        if (candidates.length >= settings.articlesPerBatch) break;
+        if (
+          blockedGuideKeys.has(
+            guideProgressKey(doc.slug, String(doc.locale ?? loc)),
+          )
+        ) {
+          continue;
+        }
+        if (!isDisplayableGuide(doc)) continue;
+        usedSlugs.add(doc.slug);
+        candidates.push(doc);
       }
     }
 
