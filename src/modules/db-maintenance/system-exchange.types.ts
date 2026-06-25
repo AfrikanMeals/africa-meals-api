@@ -29,6 +29,7 @@ export type SystemExchangeLink = {
 
 /** État gRPC WS→API lu via `GET /api/internal/grpc/status` sur le service WS. */
 export type WsGrpcRuntimeStatus = {
+  grpcVersion: number;
   wsToApiEnabled: boolean;
   wsServerEnabled: boolean;
   apiHost: string;

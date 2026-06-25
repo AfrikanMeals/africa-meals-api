@@ -9,6 +9,7 @@ import {
 } from '@africa-meals/proto';
 import { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
 import { GrpcWsNotifyMetricsService } from './grpc-ws-notify.metrics.service';
+import { GrpcVersionService } from './grpc-version.service';
 
 type NotifyClient = {
   Ping: (
@@ -61,6 +62,7 @@ export class GrpcWsNotifyClientService implements OnModuleDestroy {
     private readonly config: ConfigService,
     private readonly secrets: SecretManagerService,
     private readonly metrics: GrpcWsNotifyMetricsService,
+    private readonly grpcVersion: GrpcVersionService,
   ) {}
 
   onModuleDestroy(): void {
@@ -68,6 +70,7 @@ export class GrpcWsNotifyClientService implements OnModuleDestroy {
   }
 
   isEnvEnabled(): boolean {
+    if (!this.grpcVersion.supportsCoreInternal()) return false;
     const raw = (this.config.get<string>('GRPC_WS_NOTIFY_ENABLED') ?? 'false')
       .trim()
       .toLowerCase();
@@ -84,6 +87,7 @@ export class GrpcWsNotifyClientService implements OnModuleDestroy {
   }
 
   shouldUseGrpc(runtimeFlagEnabled: boolean): boolean {
+    if (!this.grpcVersion.supportsCoreInternal()) return false;
     if (!this.isEnvEnabled() && !runtimeFlagEnabled) return false;
     if (Date.now() < this.circuitOpenUntilMs) return false;
     return true;

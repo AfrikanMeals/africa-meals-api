@@ -20,6 +20,8 @@ import {
   loadInboxV1,
   loadNotifyV1,
   parsePositiveInt,
+  grpcVersionSupportsCoreInternal,
+  parseGrpcVersion,
 } from '@africa-meals/proto';
 
 export type ProbeResult = {
@@ -400,10 +402,30 @@ function resolveGrpcInternalSecret(config: ConfigService): string {
   );
 }
 
+function probeDisabledIfGrpcVersionTooLow(
+  config: ConfigService,
+): ProbeResult | null {
+  const version = parseGrpcVersion(config.get<string>('GRPC_VERSION'));
+  if (!grpcVersionSupportsCoreInternal(version)) {
+    return {
+      status: 'disabled',
+      latencyMs: null,
+      details: `GRPC_VERSION=${version} — Phases 0–2 internes bloquées (minimum 1).`,
+    };
+  }
+  return null;
+}
+
+function grpcVersionProbeSuffix(config: ConfigService): string {
+  return ` · GRPC_VERSION=${parseGrpcVersion(config.get<string>('GRPC_VERSION'))}`;
+}
+
 /** Ping `NotifyService` sur africa-meals-ws (:50051). */
 export async function probeGrpcWsNotify(
   config: ConfigService,
 ): Promise<ProbeResult> {
+  const versionBlock = probeDisabledIfGrpcVersionTooLow(config);
+  if (versionBlock) return versionBlock;
   if (!grpcEnvFlag(config, 'GRPC_WS_SERVER_ENABLED', true)) {
     return {
       status: 'disabled',
@@ -468,7 +490,7 @@ export async function probeGrpcWsNotify(
       resolve({
         status: 'healthy',
         latencyMs,
-        details: `${res.service} @ ${host}:${port}`,
+        details: `${res.service} @ ${host}:${port}${grpcVersionProbeSuffix(config)}`,
       });
     });
   });
@@ -478,6 +500,8 @@ export async function probeGrpcWsNotify(
 export async function probeGrpcApiInternal(
   config: ConfigService,
 ): Promise<ProbeResult> {
+  const versionBlock = probeDisabledIfGrpcVersionTooLow(config);
+  if (versionBlock) return versionBlock;
   if (!grpcEnvFlag(config, 'GRPC_API_SERVER_ENABLED', true)) {
     return {
       status: 'disabled',
@@ -542,7 +566,7 @@ export async function probeGrpcApiInternal(
       resolve({
         status: 'healthy',
         latencyMs,
-        details: `InboxFeedService @ ${host}:${port}`,
+        details: `InboxFeedService @ ${host}:${port}${grpcVersionProbeSuffix(config)}`,
       });
     });
   });

@@ -25,6 +25,7 @@ import {
   resolveApiHealthProbeUrl,
   type ProbeResult,
 } from './system-exchange.probes';
+import { parseGrpcVersion } from '@africa-meals/proto';
 
 type BuildSystemExchangeInput = {
   config: ConfigService;
@@ -326,17 +327,29 @@ export async function buildSystemExchangeResponse(
 
   const grpcNotifyActive = input.runtime.grpcWsNotifyEnabled;
   const wsGrpc = input.wsGrpc;
+  const apiGrpcVersion = parseGrpcVersion(
+    input.config.get<string>('GRPC_VERSION'),
+  );
+  const versionLabel =
+    wsGrpc.source === 'ws-internal'
+      ? `GRPC_VERSION API=${apiGrpcVersion} WS=${wsGrpc.grpcVersion}`
+      : `GRPC_VERSION API=${apiGrpcVersion}`;
+  const versionMismatch =
+    wsGrpc.source === 'ws-internal' &&
+    wsGrpc.grpcVersion !== apiGrpcVersion;
   const grpcWsToApiActive =
     wsGrpc.source === 'ws-internal'
       ? wsGrpc.wsToApiEnabled
       : grpcEnvFlag(input.config, 'GRPC_WS_TO_API_ENABLED', false);
   const wsToApiDetails = grpcWsToApiActive
-    ? `InboxFeed · ChatPush ${wsGrpc.apiHost}:${wsGrpc.apiPort}${
-        wsGrpc.clientsReady ? '' : ' · clients WS non prêts'
-      }${wsGrpc.lastError ? ` — ${wsGrpc.lastError}` : ''} · ${grpcApiProbe.details}`
+    ? `InboxFeed · ChatPush ${wsGrpc.apiHost}:${wsGrpc.apiPort} · ${versionLabel}${
+        versionMismatch ? ' · mismatch version API/WS' : ''
+      }${wsGrpc.clientsReady ? '' : ' · clients WS non prêts'}${
+        wsGrpc.lastError ? ` — ${wsGrpc.lastError}` : ''
+      } · ${grpcApiProbe.details}`
     : wsGrpc.source === 'unknown'
-      ? 'Désactivé ou statut WS indisponible — repli HTTP interne WS.'
-      : 'Désactivé (GRPC_WS_TO_API_ENABLED=false côté WS) — repli HTTP interne WS.';
+      ? `Désactivé ou statut WS indisponible — repli HTTP interne WS. · ${versionLabel}`
+      : `Désactivé (GRPC_WS_TO_API_ENABLED=false côté WS) — repli HTTP interne WS. · ${versionLabel}`;
 
   const links: SystemExchangeLink[] = [
     communication(

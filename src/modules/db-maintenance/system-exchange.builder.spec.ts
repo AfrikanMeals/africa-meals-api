@@ -41,6 +41,7 @@ describe('system-exchange.builder', () => {
       },
       runtime: { redisManagerEnabled: true, mqBrokerEnabled: true, grpcWsNotifyEnabled: false },
       wsGrpc: {
+        grpcVersion: 1,
         wsToApiEnabled: true,
         wsServerEnabled: true,
         apiHost: '127.0.0.1',

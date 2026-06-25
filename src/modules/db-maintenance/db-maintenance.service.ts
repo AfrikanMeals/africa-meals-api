@@ -85,6 +85,7 @@ import {
   probeMemcached,
   resolveMinioHealthProbeSkipReason,
 } from './system-exchange.probes';
+import { parseGrpcVersion } from '@africa-meals/proto';
 import type { SystemExchangeResponse, WsGrpcRuntimeStatus } from './system-exchange.types';
 import { MapSettingsService } from '@modules/map-settings/map-settings.service';
 import { osmForwardGeocode } from '@common/osm-geocoding.util';
@@ -933,6 +934,7 @@ export class DbMaintenanceService {
 
   private async fetchWsGrpcStatus(): Promise<WsGrpcRuntimeStatus> {
     const fallback: WsGrpcRuntimeStatus = {
+      grpcVersion: parseGrpcVersion(this.config.get<string>('GRPC_VERSION')),
       wsToApiEnabled: false,
       wsServerEnabled: false,
       apiHost: '127.0.0.1',
@@ -969,6 +971,10 @@ export class DbMaintenanceService {
         unknown
       >;
       return {
+        grpcVersion:
+          typeof data.grpcVersion === 'number' && Number.isFinite(data.grpcVersion)
+            ? parseGrpcVersion(String(Math.trunc(data.grpcVersion)))
+            : parseGrpcVersion(undefined),
         wsToApiEnabled: data.wsToApiEnabled === true,
         wsServerEnabled: data.wsServerEnabled === true,
         apiHost:
@@ -3865,6 +3871,14 @@ export class DbMaintenanceService {
         ? wsGrpc.wsToApiEnabled
         : grpcEnvFlag(this.config, 'GRPC_WS_TO_API_ENABLED', false);
     let details = probe.details;
+    const apiGrpcVersion = parseGrpcVersion(this.config.get<string>('GRPC_VERSION'));
+    details += ` · GRPC_VERSION API=${apiGrpcVersion}`;
+    if (wsGrpc.source === 'ws-internal') {
+      details += ` WS=${wsGrpc.grpcVersion}`;
+      if (wsGrpc.grpcVersion !== apiGrpcVersion) {
+        details += ' · mismatch version API/WS';
+      }
+    }
     details += wsToApiEnabled
       ? ` · GRPC_WS_TO_API_ENABLED=ON (WS → ${wsGrpc.apiHost}:${wsGrpc.apiPort})`
       : ' · GRPC_WS_TO_API_ENABLED=OFF (repli HTTP WS→API)';

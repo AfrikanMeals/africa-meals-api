@@ -16,6 +16,7 @@ import {
 import { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { StoreService } from '@modules/store/store.service';
+import { GrpcVersionService } from './grpc-version.service';
 
 type InboxServer = grpc.UntypedServiceImplementation;
 type ChatServer = grpc.UntypedServiceImplementation;
@@ -31,6 +32,7 @@ export class GrpcApiServerService implements OnModuleInit, OnModuleDestroy {
     private readonly secrets: SecretManagerService,
     private readonly storeService: StoreService,
     private readonly notifications: NotificationsService,
+    private readonly grpcVersion: GrpcVersionService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -106,6 +108,7 @@ export class GrpcApiServerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private isEnabled(): boolean {
+    if (!this.grpcVersion.supportsCoreInternal()) return false;
     const raw = (this.config.get<string>('GRPC_API_SERVER_ENABLED') ?? 'true')
       .trim()
       .toLowerCase();
