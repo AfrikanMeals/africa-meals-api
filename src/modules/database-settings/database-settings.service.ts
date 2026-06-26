@@ -34,6 +34,8 @@ import { RestoreBackupDto } from './dto/restore-backup.dto';
 import { TriggerBackupDto } from './dto/trigger-backup.dto';
 import { TriggerMigrationDto } from './dto/trigger-migration.dto';
 import { UpdateDatabaseSettingsDto } from './dto/update-database-settings.dto';
+import { TestDatabaseConnectionDto } from './dto/test-database-connection.dto';
+import type { DatabaseConnectionTestResult } from './database-operations.service';
 
 const SETTINGS_KEY = 'default';
 const MIGRATION_CONFIRM = 'MIGRER_AFRIKAMEALS';
@@ -183,6 +185,26 @@ export class DatabaseSettingsService {
     await this.assertAdminSettings(user);
     const doc = await this.ensureSettingsDoc();
     return this.toSettingsResponse(doc);
+  }
+
+  async testConnection(
+    user: UserModel,
+    dto?: TestDatabaseConnectionDto,
+  ): Promise<DatabaseConnectionTestResult> {
+    await this.assertAdminSettings(user);
+
+    const hasCustomTarget = Boolean(
+      String(dto?.uri ?? '').trim() ||
+        String(dto?.host ?? '').trim() ||
+        String(dto?.database ?? '').trim(),
+    );
+
+    if (!hasCustomTarget) {
+      return this.operations.testConnection();
+    }
+
+    const targetUri = buildMongoUriFromMigrationDto(dto ?? {});
+    return this.operations.testConnection(targetUri);
   }
 
   async updateSettings(

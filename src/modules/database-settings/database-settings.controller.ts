@@ -20,6 +20,7 @@ import { RestoreBackupDto } from './dto/restore-backup.dto';
 import { TriggerBackupDto } from './dto/trigger-backup.dto';
 import { TriggerMigrationDto } from './dto/trigger-migration.dto';
 import { UpdateDatabaseSettingsDto } from './dto/update-database-settings.dto';
+import { TestDatabaseConnectionDto } from './dto/test-database-connection.dto';
 
 @ApiTags('database-settings')
 @ApiBearerAuth('bearer')
@@ -35,6 +36,16 @@ export class DatabaseSettingsController {
   })
   getSettings(@Req() req: Request) {
     return this.service.getSettings(req.user as UserModel);
+  }
+
+  @Post('test-connection')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Teste la connexion MongoDB (base actuelle ou cible optionnelle, admin.settings)',
+  })
+  testConnection(@Req() req: Request, @Body() body: TestDatabaseConnectionDto) {
+    return this.service.testConnection(req.user as UserModel, body);
   }
 
   @Put()
