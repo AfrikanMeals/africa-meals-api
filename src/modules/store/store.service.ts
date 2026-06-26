@@ -1613,25 +1613,23 @@ export class StoreService {
   }
 
   private async assertDailyMenuProductAddAllowed(
-    storeId: string,
+    store: StoreModel,
     user: UserModel,
     args: AddItemToCartDto,
   ): Promise<void> {
     if (args.type !== CartItemTypeEnum.PRODUCT) return;
-    const doc = await this._storeModel
-      .findById(storeId)
-      .select('dailyMenuByWeekday region timezone')
-      .lean()
-      .exec();
+    const storeId = store.id?.toString?.() ?? String((store as { _id?: unknown })._id ?? '');
     const dailyMenuLimit =
       await this._subscriptionsService.resolveDailyMenuItemLimitForStore(
         storeId,
       );
     const rows = this.normalizeDailyMenuForApi(
-      (doc?.dailyMenuByWeekday as Record<string, unknown>[]) ?? [],
+      ((store as { dailyMenuByWeekday?: unknown }).dailyMenuByWeekday as
+        | Record<string, unknown>[]
+        | undefined) ?? [],
       dailyMenuLimit,
     );
-    const tz = await this.resolveEffectiveTimezoneForStore(doc ?? {});
+    const tz = await this.resolveEffectiveTimezoneForStore(store);
     const slot = this.todayDailyMenuSlot(
       rows,
       jsDayOfWeekInTimezone(tz),
@@ -2656,7 +2654,7 @@ export class StoreService {
 
     // Règle produit: en mode client, tous les rôles peuvent commander
     // (CUSTOMER / VENDOR / ADMIN / DELIVERY), y compris le propriétaire.
-    await this.assertDailyMenuProductAddAllowed(id, user, args);
+    await this.assertDailyMenuProductAddAllowed(store, user, args);
 
     return await this._cartService.addItemToCart(args, user, store);
   }

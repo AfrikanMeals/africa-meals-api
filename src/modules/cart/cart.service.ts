@@ -447,6 +447,13 @@ export class CartService {
     let priceForLine = args.price;
     const customization = this.resolveProductCustomization(args);
 
+    let item = await this.itemExistsInCart(
+      store,
+      args,
+      user,
+      customization.customizationKey,
+    );
+
     if (args.type === CartItemTypeEnum.DRINK) {
       const drink = await this._drinksService.findOneInStoreCatalog(
         store.id,
@@ -456,27 +463,16 @@ export class CartService {
         throw new NotFoundException('drink_not_found');
       }
       priceForLine = drink.priceCad;
-      const existing = await this.itemExistsInCart(
-        store,
-        args,
-        user,
-        customization.customizationKey,
-      );
-      const newTotalQty = (existing?.quantity ?? 0) + qtyReq;
+      const newTotalQty = (item?.quantity ?? 0) + qtyReq;
       const maxOrder = maxDrinkOrderQuantity(drink.quantite);
       if (newTotalQty > maxOrder) {
         throw new BadRequestException('drink_quantity_limit_exceeded');
       }
     }
 
-    let item = await this.itemExistsInCart(
-      store,
-      args,
-      user,
-      customization.customizationKey,
-    );
     if (item) {
-      await this.updateQuantity(item, (item.quantity ?? 0) + qtyReq);
+      const nextQty = (item.quantity ?? 0) + qtyReq;
+      await this.updateQuantity(item, nextQty);
       if (args.type === CartItemTypeEnum.DRINK) {
         await this._cartItemModel
           .updateOne({ _id: item.id }, { $set: { price: priceForLine } })
@@ -496,6 +492,8 @@ export class CartService {
           )
           .exec();
       }
+      item.quantity = nextQty;
+      item.price = priceForLine;
     } else {
       item = await this._cartItemModel.create({
         user: new Types.ObjectId(user.id),
@@ -514,8 +512,15 @@ export class CartService {
       });
     }
 
-    await this.bustCartPricingCache(user);
-    return await this.findOneByItemId(item.id, user);
+    void this.bustCartPricingCache(user);
+    return {
+      _id: item.id,
+      id: item.id,
+      entityId: args.itemId,
+      type: args.type,
+      quantity: item.quantity ?? qtyReq,
+      price: priceForLine,
+    };
   }
 
   async removeBy(args: RemoveItemFromCartDto): Promise<void> {
