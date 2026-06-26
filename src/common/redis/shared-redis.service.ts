@@ -9,7 +9,8 @@ import type Redis from 'ioredis';
 import {
   connectIoredisWithFailover,
   formatRedisTarget,
-  listRedisCacheConnectionsFromConfig,
+  listRedisCacheWriteConnectionsFromConfig,
+  redisConnectionEquals,
   type RedisConnectionConfig,
 } from './redis-connection.util';
 import { registerAppCacheBustRedis } from '../redis-app-cache';
@@ -25,7 +26,7 @@ export class SharedRedisService implements OnModuleInit, OnModuleDestroy {
 
   /** `REDIS_*` présent — requis pour tokens auth / idempotence multi-instance. */
   isConfigured(): boolean {
-    return listRedisCacheConnectionsFromConfig(this.config).length > 0;
+    return listRedisCacheWriteConnectionsFromConfig(this.config).length > 0;
   }
 
   onModuleInit(): void {
@@ -44,10 +45,11 @@ export class SharedRedisService implements OnModuleInit, OnModuleDestroy {
       };
       registerAppCacheBustRedis(bustClient);
     });
+    const primary = listRedisCacheWriteConnectionsFromConfig(this.config)[0];
     const role =
-      connection === listRedisCacheConnectionsFromConfig(this.config)[0]
+      primary && redisConnectionEquals(connection, primary)
         ? 'primary'
-        : 'replica failover';
+        : 'unexpected target';
     this.logger.log(
       `Shared Redis connected (${formatRedisTarget(connection)}, ${role})`,
     );
@@ -59,7 +61,7 @@ export class SharedRedisService implements OnModuleInit, OnModuleDestroy {
     if (this.connectPromise) return this.connectPromise;
 
     this.connectPromise = (async () => {
-      const candidates = listRedisCacheConnectionsFromConfig(this.config);
+      const candidates = listRedisCacheWriteConnectionsFromConfig(this.config);
       if (!candidates.length) {
         this.logger.log('Shared Redis disabled (REDIS_* absent)');
         return false;
@@ -76,6 +78,7 @@ export class SharedRedisService implements OnModuleInit, OnModuleDestroy {
         const result = await connectIoredisWithFailover(candidates, {
           enableReadyCheck: true,
           lazyConnect: true,
+          writeOnly: true,
         });
         if (!result) {
           this.logger.warn(

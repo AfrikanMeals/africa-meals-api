@@ -17,7 +17,8 @@ import {
 import {
   connectIoredisWithFailover,
   formatRedisTarget,
-  listBullmqRedisConnectionsFromConfig,
+  listBullmqRedisWriteConnectionsFromConfig,
+  redisConnectionEquals,
 } from './redis-connection.util';
 
 /** Une paire de connexions ioredis partagée par toutes les queues BullMQ (évite la tempête TLS au boot). */
@@ -38,7 +39,7 @@ export class BullmqRedisConnectionsService implements OnModuleDestroy {
     if (this.connectPromise) return this.connectPromise;
 
     this.connectPromise = (async () => {
-      const candidates = listBullmqRedisConnectionsFromConfig(this.config);
+      const candidates = listBullmqRedisWriteConnectionsFromConfig(this.config);
       if (!candidates.length) {
         logBullmqDisabledReason();
         return false;
@@ -61,6 +62,7 @@ export class BullmqRedisConnectionsService implements OnModuleDestroy {
           connectTimeout: timeout,
           enableReadyCheck: false,
           lazyConnect: true,
+          writeOnly: true,
         });
         if (!result) {
           this.logger.warn(
@@ -72,8 +74,11 @@ export class BullmqRedisConnectionsService implements OnModuleDestroy {
         attachRedisErrorLogging(this.queueConnection, 'bullmq');
         this.prefix =
           this.config.get<string>('BULLMQ_PREFIX')?.trim() || undefined;
+        const primary = candidates[0];
         const role =
-          result.connection === candidates[0] ? 'primary' : 'replica failover';
+          primary && redisConnectionEquals(result.connection, primary)
+            ? 'primary'
+            : 'unexpected target';
         this.logger.log(
           `BullMQ Redis connected (${formatBullmqRedisTarget(result.connection)}, ${role})`,
         );

@@ -194,7 +194,7 @@ function readRedisReplicasWithKeys(
   return replicas;
 }
 
-/** Primary + réplicas (ordre de tentative pour failover). */
+/** Primary + réplicas — lectures / failover read-only (pas BullMQ ni SSE publish). */
 export function listRedisCacheConnectionsFromGetter(
   get: RedisEnvGetter,
 ): RedisConnectionConfig[] {
@@ -234,20 +234,11 @@ export function readBullmqRedisConnectionFromEnv(
   return readBullmqRedisConnectionFromGetter((key) => env[key]);
 }
 
-/** Primary BullMQ + `BULLMQ_REDIS_REPLICA_N_*` (ordre de tentative pour failover). */
+/** @deprecated Préférer `listBullmqRedisWriteConnectionsFromConfig` — les réplicas sont READONLY. */
 export function listBullmqRedisConnectionsFromGetter(
   get: RedisEnvGetter,
 ): RedisConnectionConfig[] {
-  const dedicated = readRedisConnectionWithKeys(get, BULLMQ_REDIS_KEYS);
-  const primary =
-    dedicated ?? readRedisConnectionWithKeys(get, CACHE_REDIS_KEYS);
-  if (!primary) return [];
-  const keys = dedicated ? BULLMQ_REDIS_KEYS : CACHE_REDIS_KEYS;
-  const prefix = dedicated ? 'BULLMQ_REDIS_REPLICA' : 'REDIS_REPLICA';
-  return [
-    primary,
-    ...readRedisReplicasWithKeys(get, keys, prefix, primary),
-  ];
+  return listBullmqRedisWriteConnectionsFromGetter(get);
 }
 
 export function listBullmqRedisConnectionsFromConfig(
@@ -260,6 +251,71 @@ export function formatRedisTarget(connection: RedisConnectionConfig): string {
   const tls = connection.tls ? ' (TLS)' : '';
   return `${connection.host}:${connection.port}${tls}`;
 }
+
+/** Clé stable pour comparer deux cibles Redis (host + port). */
+export function redisConnectionKey(connection: RedisConnectionConfig): string {
+  return `${connection.host}:${connection.port}`;
+}
+
+export function redisConnectionEquals(
+  a: RedisConnectionConfig,
+  b: RedisConnectionConfig,
+): boolean {
+  return redisConnectionKey(a) === redisConnectionKey(b);
+}
+
+export function isRedisReadonlyError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  return msg.includes('READONLY');
+}
+
+/** Primary cache seul — clients écriture (SharedRedis, SSE publish, tokens). */
+export function listRedisCacheWriteConnectionsFromGetter(
+  get: RedisEnvGetter,
+): RedisConnectionConfig[] {
+  const primary = readRedisConnectionWithKeys(get, CACHE_REDIS_KEYS);
+  return primary ? [primary] : [];
+}
+
+export function listRedisCacheWriteConnectionsFromConfig(
+  config: ConfigService | { get: (key: string) => string | undefined },
+): RedisConnectionConfig[] {
+  return listRedisCacheWriteConnectionsFromGetter((key) => config.get(key));
+}
+
+/** Primary BullMQ seul — files d’attente (écritures Lua obligatoires). */
+export function listBullmqRedisWriteConnectionsFromGetter(
+  get: RedisEnvGetter,
+): RedisConnectionConfig[] {
+  const primary = readBullmqRedisConnectionFromGetter(get);
+  return primary ? [primary] : [];
+}
+
+export function listBullmqRedisWriteConnectionsFromConfig(
+  config: ConfigService | { get: (key: string) => string | undefined },
+): RedisConnectionConfig[] {
+  return listBullmqRedisWriteConnectionsFromGetter((key) => config.get(key));
+}
+
+async function probeRedisWriteAccess(client: Redis): Promise<boolean> {
+  const key = `__wise_eat:write_probe:${Date.now()}`;
+  try {
+    await client.set(key, '1', 'EX', 5);
+    await client.del(key);
+    return true;
+  } catch (err) {
+    return !isRedisReadonlyError(err);
+  }
+}
+
+export type ConnectIoredisFailoverOptions = Partial<IoredisOptions> & {
+  /**
+   * Primary uniquement + sonde SET/DEL — pas de bascule vers les réplicas READONLY.
+   * Réessaie le primary jusqu’à `writePrimaryAttempts` fois.
+   */
+  writeOnly?: boolean;
+  writePrimaryAttempts?: number;
+};
 
 export function buildRedisUrlFromConnection(
   connection: RedisConnectionConfig,
@@ -405,24 +461,46 @@ export function isBullmqRedisDedicated(config: ConfigService): boolean {
   );
 }
 
-/** Tente chaque candidat jusqu’à une connexion réussie (primary puis réplicas). */
+/** Tente chaque candidat jusqu’à une connexion réussie (primary puis réplicas en lecture). */
 export async function connectIoredisWithFailover(
   candidates: RedisConnectionConfig[],
-  overrides?: Partial<IoredisOptions>,
+  overrides?: ConnectIoredisFailoverOptions,
 ): Promise<{ client: Redis; connection: RedisConnectionConfig } | null> {
-  for (const connection of candidates) {
-    const client = new Redis(
-      buildIoredisOptionsFromConnection(connection, {
-        enableReadyCheck: true,
-        lazyConnect: true,
-        ...overrides,
-      }),
-    );
-    try {
-      await client.connect();
-      return { client, connection };
-    } catch {
-      client.disconnect();
+  const {
+    writeOnly = false,
+    writePrimaryAttempts = 3,
+    ...ioredisOverrides
+  } = overrides ?? {};
+  const list = writeOnly ? candidates.slice(0, 1) : candidates;
+  if (!list.length) return null;
+
+  const attempts = writeOnly ? Math.max(1, writePrimaryAttempts) : 1;
+
+  for (const connection of list) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const client = new Redis(
+        buildIoredisOptionsFromConnection(connection, {
+          enableReadyCheck: true,
+          lazyConnect: true,
+          ...ioredisOverrides,
+        }),
+      );
+      try {
+        await client.connect();
+        if (writeOnly) {
+          const writable = await probeRedisWriteAccess(client);
+          if (!writable) {
+            client.disconnect();
+            continue;
+          }
+        }
+        return { client, connection };
+      } catch {
+        client.disconnect();
+      }
+      if (writeOnly && attempt < attempts) {
+        await new Promise((r) => setTimeout(r, Math.min(attempt * 500, 2_000)));
+      }
     }
   }
   return null;
