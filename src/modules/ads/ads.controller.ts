@@ -39,6 +39,7 @@ import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { memoryStorage } from 'multer';
 import { slimAdForPublicClient } from '@utils/public-client-shapes';
+import { clientPlatformFromRequest } from '@common/catalog-public-id.util';
 import { AdsService } from './ads.service';
 
 @ApiTags('ads')
@@ -73,6 +74,7 @@ export class AdsController {
     const region = await this.adsService.resolvePublicClientRegion(
       req.user as UserModel | undefined,
       countryCode,
+      clientPlatformFromRequest(req),
     );
     return this.adsService.listCampaignsPublic(region);
   }
@@ -452,6 +454,7 @@ export class AdsController {
     const region = await this.adsService.resolvePublicClientRegion(
       req.user as UserModel | undefined,
       countryCode,
+      clientPlatformFromRequest(req),
     );
     const raw = await this.adsService.listPublic(region);
     const items = (raw as unknown as Record<string, unknown>[]).map((row) =>

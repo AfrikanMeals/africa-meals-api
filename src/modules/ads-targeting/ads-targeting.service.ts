@@ -663,6 +663,7 @@ export class AdsTargetingService {
       slot?: number;
       limit?: number;
       countryCode?: string;
+      clientPlatform?: string;
     },
   ): Promise<{ ads: RecommendResult[] }> {
     const fallbackUserId = requester?._id ? String(requester._id) : '';
@@ -672,6 +673,7 @@ export class AdsTargetingService {
     const clientRegion = await this.adsService.resolvePublicClientRegion(
       requester ?? undefined,
       query.countryCode,
+      query.clientPlatform,
     );
 
     await this.rebuildProfile(userKey);

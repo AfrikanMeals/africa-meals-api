@@ -17,6 +17,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
+import { clientPlatformFromRequest } from '@common/catalog-public-id.util';
 import {
   AdsTargetingIngestDto,
   AdsTargetingRecommendQueryDto,
@@ -64,6 +65,7 @@ export class AdsTargetingController {
       slot: query.slot,
       limit: query.limit,
       countryCode: query.countryCode,
+      clientPlatform: clientPlatformFromRequest(req),
     });
   }
 

@@ -568,6 +568,7 @@ export const AppCacheKeys = {
     const code = String(clientRegion ?? '')
       .trim()
       .toUpperCase();
+    if (code === 'ALL') return 'ads:public:v3-region:ALL';
     return `ads:public:v3-region:${/^[A-Z]{2}$/.test(code) ? code : 'CA'}`;
   },
   homeFeed: (scope: string, limit: number, clientRegion: string) => {

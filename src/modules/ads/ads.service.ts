@@ -607,12 +607,14 @@ export class AdsService implements OnModuleInit {
   }
 
   async resolvePublicClientRegion(
-    user?: Pick<UserModel, 'appCountryCode'> | null,
+    user?: Pick<UserModel, 'type' | 'appCountryCode'> | null,
     countryCode?: string | null,
-  ): Promise<string> {
-    return this._supportedCountries.resolveClientCatalogRegion(
+    clientPlatform?: string,
+  ): Promise<string | undefined> {
+    return this._supportedCountries.resolveOptionalClientCatalogRegion(
       user,
       countryCode,
+      clientPlatform,
     );
   }
 
@@ -622,7 +624,7 @@ export class AdsService implements OnModuleInit {
   }
 
   matchesPublicClientRegion(
-    clientRegion: string,
+    clientRegion: string | undefined,
     entityRegion?: string | null,
   ): boolean {
     return this._matchesClientRegion(clientRegion, entityRegion);
@@ -2709,9 +2711,7 @@ export class AdsService implements OnModuleInit {
   async listCampaignsPublic(
     clientRegion?: string,
   ): Promise<{ items: PublicAdCampaignRow[] }> {
-    const region =
-      clientRegion ??
-      (await this._supportedCountries.resolveClientCatalogRegion());
+    const filterRegion = normalizeCountryCode(clientRegion ?? '') || undefined;
     await this._autoArchiveExpiredCampaigns();
     const now = new Date();
     const docs = await this._adCampaignModel
@@ -2740,9 +2740,10 @@ export class AdsService implements OnModuleInit {
     ];
     const regionByStoreId = await this._storeRegionsById(storeIds);
     const filtered = rows.filter((row) => {
+      if (!filterRegion) return true;
       const storeRegion = regionByStoreId.get(row.storeId);
       if (!storeRegion) return false;
-      return this._matchesClientRegion(region, storeRegion);
+      return this._matchesClientRegion(filterRegion, storeRegion);
     });
     return {
       items: filtered.map((row) => ({
@@ -4686,14 +4687,13 @@ export class AdsService implements OnModuleInit {
    * Ordre renvoyé : au moins 2/3 de pubs **liées boutique** (`store` défini) quand le stock le permet.
    */
   async listPublic(clientRegion?: string): Promise<AdModel[]> {
-    const region =
-      clientRegion ??
-      (await this._supportedCountries.resolveClientCatalogRegion());
+    const filterRegion = normalizeCountryCode(clientRegion ?? '') || undefined;
+    const cacheRegion = filterRegion ?? 'ALL';
     return this._cacheLayer.getOrSet(
       'publicCatalog',
-      AppCacheKeys.adsPublic(region),
+      AppCacheKeys.adsPublic(cacheRegion),
       apiPublicCacheTtlMs(),
-      () => this._loadListPublic(region),
+      () => this._loadListPublic(filterRegion),
     );
   }
 
@@ -4728,12 +4728,13 @@ export class AdsService implements OnModuleInit {
   }
 
   private _matchesClientRegion(
-    clientRegion: string,
+    clientRegion: string | undefined,
     entityRegion?: string | null,
   ): boolean {
-    const target = normalizeCountryCode(clientRegion);
+    const target = normalizeCountryCode(clientRegion ?? '');
+    if (!target) return true;
     const source = normalizeCountryCode(entityRegion ?? '');
-    if (!target || !source) return false;
+    if (!source) return false;
     return source === target;
   }
 
@@ -4767,7 +4768,7 @@ export class AdsService implements OnModuleInit {
     return code;
   }
 
-  private async _loadListPublic(clientRegion: string): Promise<AdModel[]> {
+  private async _loadListPublic(filterRegion?: string): Promise<AdModel[]> {
     await this._autoArchiveExpiredAds();
     const raw = await this.adModel
       .find({
@@ -4789,13 +4790,15 @@ export class AdsService implements OnModuleInit {
           .map((id) => id.toString()),
       ),
     ].map((s) => new Types.ObjectId(s));
-    const paymentsReadyStoreIds = await resolveStoreIdsVisibleOnMobileApp(
-      this._storeModel,
-      shopStoreIds,
-    );
-    const regionByStoreId = await this._storeRegionsById(
-      [...paymentsReadyStoreIds],
-    );
+    const paymentsReadyStoreIds = filterRegion
+      ? await resolveStoreIdsVisibleOnMobileApp(
+          this._storeModel,
+          shopStoreIds,
+        )
+      : null;
+    const regionByStoreId = filterRegion
+      ? await this._storeRegionsById([...(paymentsReadyStoreIds ?? [])])
+      : new Map<string, string>();
     const t = new Date();
     const data = docs.filter((d) => {
       if (d.archivedAt != null && String(d.archivedAt).trim() !== '') {
@@ -4813,12 +4816,16 @@ export class AdsService implements OnModuleInit {
       const storeOid = this._storeIdFromAdDoc(d);
       if (storeOid == null) {
         const adRegion = String(d.region ?? '').trim();
-        return this._matchesClientRegion(clientRegion, adRegion);
+        return !filterRegion || this._matchesClientRegion(filterRegion, adRegion);
       }
-      if (!paymentsReadyStoreIds.has(storeOid.toString())) return false;
+      if (!filterRegion) {
+        const storePop = d.store as { status?: string } | null | undefined;
+        return storePop?.status === StoreStatusEnum.ACTIVE;
+      }
+      if (!paymentsReadyStoreIds?.has(storeOid.toString())) return false;
       const storeRegion = regionByStoreId.get(storeOid.toString());
       if (!storeRegion) return false;
-      return this._matchesClientRegion(clientRegion, storeRegion);
+      return this._matchesClientRegion(filterRegion, storeRegion);
     }) as unknown as AdModel[];
     const withMedia = await this.resolvePublicAdImageUrls(data);
     const planSorted = await this._sortPublicAdsByStorePlanScore(withMedia);
