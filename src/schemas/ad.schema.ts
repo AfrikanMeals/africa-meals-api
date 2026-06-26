@@ -5,6 +5,7 @@ import {
   AdNotificationAddonModel,
   AdNotificationAddonSchema,
 } from './ad-notification-addon.schema';
+import { AdModerationStatusEnum } from './ad-moderation-status.enum';
 import { ProductModel } from './product.schema';
 import { StoreModel } from './store.schema';
 
@@ -23,14 +24,7 @@ export enum AdArchiveReasonEnum {
   EXPIRED = 'EXPIRED',
 }
 
-/** Modération admin des bannières vendeur avant diffusion publique. */
-export enum AdModerationStatusEnum {
-  PENDING_REVIEW = 'PENDING_REVIEW',
-  APPROVED = 'APPROVED',
-  REJECTED = 'REJECTED',
-  /** Bloquée par l’admin : le vendeur ne peut plus modifier la publication. */
-  BLOCKED = 'BLOCKED',
-}
+export { AdModerationStatusEnum } from './ad-moderation-status.enum';
 
 @Schema({
   timestamps: true,

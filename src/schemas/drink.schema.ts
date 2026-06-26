@@ -1,7 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Schema as MongooseSchema } from 'mongoose';
 import { BaseSchema } from './base.schema';
-import { AdModerationStatusEnum } from './ad.schema';
+import { AdModerationStatusEnum } from './ad-moderation-status.enum';
 import { ProductCategoryModel } from './product-category.schema';
 import { StoreModel } from './store.schema';
 
