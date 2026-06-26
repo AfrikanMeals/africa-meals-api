@@ -487,6 +487,7 @@ export class DrinksService {
         _id: new Types.ObjectId(drinkId),
         store: new Types.ObjectId(storeId),
         ...DRINK_IN_STOCK_FILTER,
+        ...catalogModerationNotBlockedFilter(),
       })
       .lean()
       .exec();
@@ -494,6 +495,56 @@ export class DrinksService {
       return null;
     }
     return this.enrichDrinkMedia(mapDrinkDoc(row as Record<string, unknown>));
+  }
+
+  /** Boisson catalogue vitrine web (boutique visible + stock > 0). */
+  async findOneInStoreCatalogForWeb(
+    storeId: string,
+    drinkId: string,
+    clientPlatform?: string,
+    countryCode?: string,
+    user?: UserModel,
+  ): Promise<(ReturnType<typeof mapDrinkDoc> & { store?: { id: string; name: string } }) | null> {
+    if (!Types.ObjectId.isValid(storeId) || !Types.ObjectId.isValid(drinkId)) {
+      return null;
+    }
+    const clientRegion = shouldApplyCatalogRegionFilter(
+      clientPlatform,
+      countryCode,
+    )
+      ? await this._supportedCountries.resolveClientCatalogRegion(user, countryCode)
+      : undefined;
+    const storeLean = await this._storeModel
+      .findById(storeId)
+      .select('status region name')
+      .lean()
+      .exec();
+    if (
+      clientRegion &&
+      (!storeLean ||
+        normalizeCountryCode(storeLean.region) !==
+          normalizeCountryCode(clientRegion))
+    ) {
+      return null;
+    }
+    const visible =
+      clientPlatform === 'web'
+        ? await this.isStoreActiveForCatalog(storeId)
+        : await this.isStoreVisibleOnMobileApp(storeId);
+    if (!visible) {
+      return null;
+    }
+    const drink = await this.findOneInStoreCatalog(storeId, drinkId);
+    if (!drink) {
+      return null;
+    }
+    return {
+      ...drink,
+      store: {
+        id: storeId,
+        name: String(storeLean?.name ?? '').trim() || 'Restaurant',
+      },
+    };
   }
 
   /**

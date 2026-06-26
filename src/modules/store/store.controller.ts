@@ -943,6 +943,30 @@ export class StoreController {
     );
   }
 
+  /** Détail boisson catalogue client (sans auth) — page vitrine / SEO. */
+  @Get(':id/drinks-catalog/:drinkId')
+  @UseGuards(OptionalAuthGuard)
+  async getDrinkCatalog(
+    @Param('id') id: string,
+    @Param('drinkId') drinkId: string,
+    @Req() req: Request,
+    @Query('countryCode') countryCode?: string,
+  ) {
+    const storeId = resolveMongoIdFromPublicParam(id) ?? id;
+    const resolvedDrinkId = resolveMongoIdFromPublicParam(drinkId) ?? drinkId;
+    const drink = await this._drinksService.findOneInStoreCatalogForWeb(
+      storeId,
+      resolvedDrinkId,
+      clientPlatformFromRequest(req),
+      countryCode,
+      req.user as UserModel | undefined,
+    );
+    if (drink == null) {
+      throw new NotFoundException('drink_not_found');
+    }
+    return drink;
+  }
+
   @Get('/:id')
   @UseGuards(OptionalAuthGuard)
   async findOneById(
