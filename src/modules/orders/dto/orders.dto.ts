@@ -1,4 +1,5 @@
 import { OrderStatusEnum } from '@schemas/order.schema';
+import { FieldSelectionQueryDto } from '@common/field-selection/field-selection-query.dto';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
@@ -20,7 +21,7 @@ import {
   VENDOR_ORDER_CANCEL_REASON_CODES,
 } from '../order-cancel-reasons';
 
-export class FilterOrdersDto {
+export class FilterOrdersDto extends FieldSelectionQueryDto {
   @ApiPropertyOptional({ enum: OrderStatusEnum })
   @IsOptional()
   @IsEnum(OrderStatusEnum)
