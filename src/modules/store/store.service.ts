@@ -1044,6 +1044,20 @@ export class StoreService {
     const effectiveTimezone = await this.resolveEffectiveTimezoneForStore(
       doc as { timezone?: string; region?: string },
     );
+    const storeRegion = String(
+      doc.region ?? addr?.countryCode ?? '',
+    )
+      .trim()
+      .toUpperCase();
+    let effectiveCurrency = String(doc.currency ?? 'CAD');
+    if (/^[A-Z]{2}$/.test(storeRegion)) {
+      try {
+        effectiveCurrency =
+          await this._resolveCurrencyForCountryCode(storeRegion);
+      } catch {
+        /* conserver doc.currency si région non configurée */
+      }
+    }
     /** Fiche complète pour l’UI (lecture / édition selon canEditApplication). */
     const profile = {
       name: String(doc.name ?? ''),
@@ -1053,12 +1067,8 @@ export class StoreService {
         : undefined,
       email: String(doc.email ?? ''),
       phoneNumber: String(doc.phoneNumber ?? ''),
-      currency: String(doc.currency ?? 'CAD'),
-      region: String(
-        doc.region ?? addr?.countryCode ?? '',
-      )
-        .trim()
-        .toUpperCase(),
+      currency: effectiveCurrency,
+      region: storeRegion || '',
       supportsShipping: !!doc.supportsShipping,
       acceptsMealPreOrders: this._docAcceptsMealPreOrders(
         doc as Record<string, unknown>,
