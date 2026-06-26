@@ -122,7 +122,7 @@ export async function configureApplication(
     app.use(stripLeadingApiPathWhenNoNestPrefix());
   }
 
-  /** Query `includeFields` / `excludeField(s)` → filtre JSON (intercepteur global). */
+  /** Query `fields` / `include` / `exclude` / `fieldsRoot` (+ alias legacy) → filtre JSON. */
   app.use(fieldSelectionMiddleware());
 
   if (!isSwaggerEnabled()) {

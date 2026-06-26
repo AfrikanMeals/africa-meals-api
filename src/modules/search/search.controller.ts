@@ -13,12 +13,14 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { ApiFieldSelection } from '@common/field-selection/api-field-selection.decorator';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { SearchDto } from './dto/search.dto';
 import { SearchService } from './search.service';
 
 @ApiTags('search')
+@ApiFieldSelection()
 @Controller('search')
 export class SearchController {
   @Inject(SearchService)

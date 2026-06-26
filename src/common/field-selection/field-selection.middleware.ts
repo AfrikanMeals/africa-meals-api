@@ -8,8 +8,7 @@ type ReqWithSelection = Request & {
 };
 
 /**
- * Attache `includeFields` / `excludeField(s)` (query) à la requête pour l’intercepteur.
- * Le filtrage réel du JSON est fait dans {@link ResponseFieldFilterInterceptor}.
+ * Attache la spec de projection (query) à la requête pour l’intercepteur.
  */
 export function fieldSelectionMiddleware() {
   return (req: Request, _res: Response, next: NextFunction) => {

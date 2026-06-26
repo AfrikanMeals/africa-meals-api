@@ -4,13 +4,15 @@ export type AppCacheModuleKey =
   | 'publicCatalog'
   | 'favorites'
   | 'productCategories'
-  | 'checkoutPreview';
+  | 'checkoutPreview'
+  | 'fieldProjection';
 
 export const APP_CACHE_MODULE_KEYS: AppCacheModuleKey[] = [
   'publicCatalog',
   'favorites',
   'productCategories',
   'checkoutPreview',
+  'fieldProjection',
 ];
 
 export type ModuleEngineMap = Record<AppCacheModuleKey, CacheEngine>;
@@ -20,6 +22,7 @@ export const DEFAULT_MODULE_ENGINES: ModuleEngineMap = {
   favorites: 'redis',
   productCategories: 'redis',
   checkoutPreview: 'redis',
+  fieldProjection: 'redis',
 };
 
 export type CacheEngineAvailability = {
@@ -47,5 +50,9 @@ export const CACHE_MODULE_LABELS: Record<
   checkoutPreview: {
     label: 'Preview panier / checkout',
     description: 'Calcul pricing panier et checkout groupé.',
+  },
+  fieldProjection: {
+    label: 'Projection de champs',
+    description: 'Cache des réponses GET filtrées (`fields`, `include`, etc.).',
   },
 };

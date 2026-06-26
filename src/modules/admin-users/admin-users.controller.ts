@@ -14,6 +14,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiFieldSelection } from '@common/field-selection/api-field-selection.decorator';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { UsageTimeService } from '@modules/usage-time/usage-time.service';
@@ -33,6 +34,7 @@ export class AdminUsersController {
   ) {}
 
   @Get()
+  @ApiFieldSelection()
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({ summary: 'Liste paginée des comptes plateforme (admin.settings)' })
   list(@Req() req: Request, @Query() query: AdminListUsersQueryDto) {

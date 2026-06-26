@@ -17,11 +17,13 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiFieldSelection } from '@common/field-selection/api-field-selection.decorator';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { ProductsService } from './products.service';
 
 @ApiTags('products')
+@ApiFieldSelection()
 @Controller('products')
 export class ProductsController {
   @Inject(ProductsService)

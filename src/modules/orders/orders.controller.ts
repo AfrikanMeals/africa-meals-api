@@ -12,6 +12,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiFieldSelection } from '@common/field-selection/api-field-selection.decorator';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { BusinessReportsService } from '@modules/business-reports/business-reports.service';
@@ -78,6 +79,7 @@ export class OrdersController {
 
   /** Liste des commandes — doit être déclaré avant les routes `/:id`. */
   @Get()
+  @ApiFieldSelection()
   @UseGuards(JwtGuard)
   async filter(
     @Req() req: Request,

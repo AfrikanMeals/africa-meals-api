@@ -16,6 +16,7 @@ type RuntimeCacheTtlOverrides = {
   favoritesTtlMs?: number;
   productCategoriesTtlMs?: number;
   checkoutPreviewTtlMs?: number;
+  fieldProjectionTtlMs?: number;
 };
 
 let runtimeCacheTtlOverrides: RuntimeCacheTtlOverrides = {};
@@ -49,6 +50,12 @@ export function setRuntimeCacheTtlOverrides(
       overrides.checkoutPreviewTtlMs > 0
         ? Math.trunc(overrides.checkoutPreviewTtlMs)
         : undefined,
+    fieldProjectionTtlMs:
+      overrides.fieldProjectionTtlMs != null &&
+      Number.isFinite(overrides.fieldProjectionTtlMs) &&
+      overrides.fieldProjectionTtlMs > 0
+        ? Math.trunc(overrides.fieldProjectionTtlMs)
+        : undefined,
   };
 }
 
@@ -80,6 +87,16 @@ export function checkoutPreviewCacheTtlMs(raw?: string): number {
   return parseCacheTtlMs(
     raw ?? process.env.CHECKOUT_PREVIEW_CACHE_TTL_MS,
     30_000,
+  );
+}
+
+/** TTL cache réponses GET filtrées par projection de champs (ms). */
+export function fieldProjectionCacheTtlMs(raw?: string): number {
+  const override = runtimeCacheTtlOverrides.fieldProjectionTtlMs;
+  if (override != null) return override;
+  return parseCacheTtlMs(
+    raw ?? process.env.FIELD_PROJECTION_CACHE_TTL_MS,
+    120_000,
   );
 }
 
@@ -447,6 +464,7 @@ const PUBLIC_CATALOG_CACHE_PREFIXES = [
   'store-meta:v1:',
   'product-detail:v2:',
   'ads:public:v3-region:',
+  'field-projection:v1:',
 ] as const;
 
 const EXTENDED_PUBLIC_CACHE_PREFIXES = [

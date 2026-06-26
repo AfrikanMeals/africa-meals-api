@@ -21,6 +21,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { MediasService } from '@modules/medias/medias.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiFieldSelection } from '@common/field-selection/api-field-selection.decorator';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { isAllowedGzipUploadMime } from 'src/incoming-upload-file';
@@ -287,6 +288,7 @@ export class AuthController {
   }
 
   @Get('me')
+  @ApiFieldSelection()
   @ApiBearerAuth('bearer')
   @UseGuards(JwtGuard)
   async getMe(@Req() req: Request) {

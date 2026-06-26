@@ -20,6 +20,14 @@ export class CacheSettingsModel {
   @Prop({ type: Number, default: 120_000, min: 5_000, max: 3_600_000 })
   productCategoriesTtlMs: number;
 
+  /** TTL cache réponses filtrées (`fields`) — ms. */
+  @Prop({ type: Number, default: 120_000, min: 5_000, max: 3_600_000 })
+  fieldProjectionTtlMs: number;
+
+  /** Active le cache des réponses GET filtrées. */
+  @Prop({ type: Boolean, default: true })
+  fieldProjectionEnabled: boolean;
+
   /** Moteur cache par module applicatif. */
   @Prop({
     type: {
@@ -42,6 +50,11 @@ export class CacheSettingsModel {
         type: String,
         enum: ['redis', 'memcached', 'memory'],
         default: DEFAULT_MODULE_ENGINES.checkoutPreview,
+      },
+      fieldProjection: {
+        type: String,
+        enum: ['redis', 'memcached', 'memory'],
+        default: DEFAULT_MODULE_ENGINES.fieldProjection,
       },
     },
     default: () => ({ ...DEFAULT_MODULE_ENGINES }),

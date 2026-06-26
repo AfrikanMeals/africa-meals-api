@@ -2,6 +2,10 @@
 # yarn lockfile v1
 
 
+"@africa-meals/field-selection@file:../packages/africa-meals-field-selection":
+  version "1.0.0"
+  resolved "file:../packages/africa-meals-field-selection"
+
 "@africa-meals/proto@file:../packages/africa-meals-proto":
   version "1.0.0"
   resolved "file:../packages/africa-meals-proto"

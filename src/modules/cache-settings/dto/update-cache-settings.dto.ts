@@ -8,6 +8,7 @@ import {
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsIn,
   IsInt,
   IsObject,
@@ -35,6 +36,10 @@ export class ModuleEnginesDto implements ModuleEngineMap {
   @ApiProperty({ enum: CACHE_ENGINES })
   @IsIn(CACHE_ENGINES)
   checkoutPreview: CacheEngine;
+
+  @ApiProperty({ enum: CACHE_ENGINES })
+  @IsIn(CACHE_ENGINES)
+  fieldProjection: CacheEngine;
 }
 
 export class UpdateCacheSettingsDto {
@@ -55,6 +60,23 @@ export class UpdateCacheSettingsDto {
   @Min(5_000)
   @Max(3_600_000)
   productCategoriesTtlMs: number;
+
+  @ApiProperty({
+    example: 120_000,
+    description: 'TTL cache réponses filtrées (`fields`) (ms).',
+  })
+  @IsInt()
+  @Min(5_000)
+  @Max(3_600_000)
+  fieldProjectionTtlMs: number;
+
+  @ApiPropertyOptional({
+    description: 'Active le cache des réponses GET filtrées.',
+    default: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  fieldProjectionEnabled?: boolean;
 
   @ApiPropertyOptional({ type: ModuleEnginesDto })
   @IsOptional()

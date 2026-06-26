@@ -37,6 +37,7 @@
     "orders:fix-zero-decimal": "ts-node -r tsconfig-paths/register src/scripts/fix-zero-decimal-order-amounts.ts"
   },
   "dependencies": {
+    "@africa-meals/field-selection": "file:../packages/africa-meals-field-selection",
     "@africa-meals/proto": "file:../packages/africa-meals-proto",
     "@aws-sdk/client-s3": "^3.1068.0",
     "@google-cloud/storage": "^7.21.0",
