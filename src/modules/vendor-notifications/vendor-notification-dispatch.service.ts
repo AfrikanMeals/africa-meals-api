@@ -122,6 +122,7 @@ export class VendorNotificationDispatchService {
           title: args.push.title,
           body: args.push.body,
           orderId: args.push.orderId ?? '',
+          storeId: sid,
           storeName: args.push.storeName,
           reason: args.push.reason ?? args.category,
           status: args.push.status ?? '',

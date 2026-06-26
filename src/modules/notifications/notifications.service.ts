@@ -935,6 +935,7 @@ export class NotificationsService implements OnModuleInit {
     title: string;
     body: string;
     orderId: string;
+    storeId?: string;
     storeName?: string;
     reason: string;
     status?: string;
@@ -957,6 +958,7 @@ export class NotificationsService implements OnModuleInit {
           audience: 'vendor',
           reason: args.reason,
           orderId: args.orderId,
+          storeId: args.storeId,
           storeName: store,
           status: status || 'unknown',
           url: '/commandes',

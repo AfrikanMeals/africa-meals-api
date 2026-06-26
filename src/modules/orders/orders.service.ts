@@ -63,6 +63,7 @@ import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service
 import { DeliveryAgentService } from '@modules/delivery-agent/delivery-agent.service';
 import {
   buildVendorOrderCreatedInboxMessage,
+  buildVendorOrderCreatedPushBody,
   buildVendorOrderPaidInboxMessage,
   buildVendorOrderPaidPushBody,
   buildVendorOrderStatusInboxMessage,
@@ -923,7 +924,7 @@ export class OrdersService {
       inboxMessage: buildVendorOrderCreatedInboxMessage(msgArgs),
       push: {
         title: 'Nouvelle commande',
-        body: `${sname} : nouvelle commande (en attente de paiement).`,
+        body: buildVendorOrderCreatedPushBody(msgArgs),
         orderId: orderIdStr,
         storeName: sname,
         reason: 'new_order',
@@ -1186,7 +1187,9 @@ export class OrdersService {
         body:
           ctx.reason === 'order_paid'
             ? buildVendorOrderPaidPushBody(msgArgs)
-            : push.body,
+            : ctx.reason === 'new_order'
+              ? buildVendorOrderCreatedPushBody(msgArgs)
+              : push.body,
         orderId: orderIdStr,
         storeName,
         reason: push.reason,

@@ -237,6 +237,20 @@ export function buildVendorOrderStatusPush(args: {
   }
 }
 
+/** Corps court pour la notification push FCM vendeur — commande créée. */
+export function buildVendorOrderCreatedPushBody(
+  args: VendorOrderNotifyMessageArgs,
+): string {
+  const store = (args.storeName ?? '').trim() || 'Boutique';
+  const ref = orderRef(args.orderId);
+  const total = formatMoney(args.totalPrice, args.currency);
+  const itemCount = args.items.reduce(
+    (s, i) => s + Math.max(1, Math.round(Number(i.quantity) || 1)),
+    0,
+  );
+  return `${store} · #${ref} · ${itemCount} article${itemCount > 1 ? 's' : ''} · ${total} (en attente de paiement)`;
+}
+
 /** Corps court pour la notification push FCM vendeur. */
 export function buildVendorOrderPaidPushBody(
   args: VendorOrderNotifyMessageArgs,
