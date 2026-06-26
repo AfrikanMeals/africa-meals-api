@@ -517,12 +517,15 @@ export class DatabaseSettingsService {
       const result = await this.operations.exportBackup(
         type,
         runDir,
-        async (pct, label, phase) => {
+        async (pct, label, phase, meta) => {
           await this.adminJobEmitter?.emitProgress({
             jobId,
             pct,
             label,
             phase,
+            current: meta?.current,
+            total: meta?.total,
+            documentsCopied: meta?.documentsCopied,
           });
         },
         lastCounts,
@@ -588,12 +591,15 @@ export class DatabaseSettingsService {
       const result = await this.operations.migrateToTarget(
         targetUri,
         dropTargetCollections,
-        async (pct, label, phase) => {
+        async (pct, label, phase, meta) => {
           await this.adminJobEmitter?.emitProgress({
             jobId,
             pct,
             label,
             phase,
+            current: meta?.current,
+            total: meta?.total,
+            documentsCopied: meta?.documentsCopied,
           });
         },
       );
@@ -641,12 +647,15 @@ export class DatabaseSettingsService {
     try {
       const result = await this.operations.restoreFromBackup(
         storagePath,
-        async (pct, label, phase) => {
+        async (pct, label, phase, meta) => {
           await this.adminJobEmitter?.emitProgress({
             jobId,
             pct,
             label,
             phase,
+            current: meta?.current,
+            total: meta?.total,
+            documentsCopied: meta?.documentsCopied,
           });
         },
       );

@@ -25,6 +25,24 @@ export class JobProgressPayload {
   @IsString()
   @MaxLength(128)
   phase?: string;
+
+  /** Index courant (ex. collection 3/12). */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  current?: number;
+
+  /** Total d’étapes (ex. nombre de collections). */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  total?: number;
+
+  /** Documents copiés / traités cumulés. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  documentsCopied?: number;
 }
 
 export class JobCompletedPayload {

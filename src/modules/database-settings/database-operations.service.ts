@@ -28,7 +28,18 @@ export type DatabaseConnectionTestResult = {
   testedAt: string;
 };
 
-type ProgressCb = (pct: number, label: string, phase?: string) => Promise<void>;
+type ProgressMeta = {
+  current?: number;
+  total?: number;
+  documentsCopied?: number;
+};
+
+type ProgressCb = (
+  pct: number,
+  label: string,
+  phase?: string,
+  meta?: ProgressMeta,
+) => Promise<void>;
 
 @Injectable()
 export class DatabaseOperationsService {
@@ -200,24 +211,49 @@ export class DatabaseOperationsService {
       throw new Error('database_unavailable');
     }
 
+    await onProgress?.(0, 'Connexion à la cible…', 'connecting');
+
     const client = new MongoClient(targetUri, {
-      serverSelectionTimeoutMS: 15_000,
+      serverSelectionTimeoutMS: 30_000,
     });
 
     try {
       await client.connect();
       const targetDb = client.db();
+      const targetSummary = summarizeMongoUri(targetUri);
 
       const names = await this.listUserCollections();
-      const total = Math.max(names.length, 1);
+      const total = names.length;
       const copied: DatabaseBackupCollectionMeta[] = [];
+
+      if (total === 0) {
+        await onProgress?.(
+          100,
+          'Aucune collection à migrer (source vide)',
+          'done',
+          { current: 0, total: 0, documentsCopied: 0 },
+        );
+        return { collections: copied };
+      }
+
+      await onProgress?.(
+        2,
+        `${total} collection(s) · connexion OK (${targetSummary})`,
+        'preparing',
+        { current: 0, total, documentsCopied: 0 },
+      );
+
+      let documentsCopied = 0;
 
       for (let i = 0; i < names.length; i++) {
         const name = names[i]!;
         await onProgress?.(
-          Math.round((i / total) * 100),
-          `Copie ${name}`,
+          Math.max(3, Math.round((i / total) * 100)),
+          dropTargetCollections
+            ? `Copie ${name} (vidage cible)`
+            : `Copie ${name}`,
           name,
+          { current: i + 1, total, documentsCopied },
         );
 
         const sourceCol = sourceDb.collection(name);
@@ -235,18 +271,39 @@ export class DatabaseOperationsService {
           if (batch.length >= BATCH_SIZE) {
             await targetCol.insertMany(batch, { ordered: false });
             documentCount += batch.length;
+            documentsCopied += batch.length;
             batch = [];
+            if (documentCount % (BATCH_SIZE * 4) === 0) {
+              await onProgress?.(
+                Math.round(((i + 0.5) / total) * 100),
+                `Copie ${name} (${documentCount.toLocaleString('fr-FR')} docs)`,
+                name,
+                { current: i + 1, total, documentsCopied },
+              );
+            }
           }
         }
         if (batch.length) {
           await targetCol.insertMany(batch, { ordered: false });
           documentCount += batch.length;
+          documentsCopied += batch.length;
         }
 
         copied.push({ name, documentCount, fileName: '' });
+        await onProgress?.(
+          Math.round(((i + 1) / total) * 100),
+          `Copié ${name} (${documentCount.toLocaleString('fr-FR')} docs)`,
+          name,
+          { current: i + 1, total, documentsCopied },
+        );
       }
 
-      await onProgress?.(100, 'Migration terminée', 'done');
+      await onProgress?.(
+        100,
+        `Migration terminée · ${total} collection(s) · ${documentsCopied.toLocaleString('fr-FR')} document(s)`,
+        'done',
+        { current: total, total, documentsCopied },
+      );
       return { collections: copied };
     } finally {
       await client.close().catch(() => undefined);
