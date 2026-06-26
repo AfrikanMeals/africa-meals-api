@@ -1093,7 +1093,11 @@ export class SearchService {
       };
     }
 
-    const items = leanRows.map((doc) => this._mapHomeFeedLeanDoc(doc));
+    const regionTimezoneMap =
+      await this._supportedCountries.getRegionTimezoneMap();
+    const items = leanRows.map((doc) =>
+      this._mapHomeFeedLeanDoc(doc, regionTimezoneMap),
+    );
 
     return {
       items: items as unknown as ProductModel[],
@@ -1264,6 +1268,7 @@ export class SearchService {
 
   private _mapHomeFeedLeanDoc(
     doc: Record<string, unknown>,
+    regionTimezoneMap?: Record<string, string>,
   ): Record<string, unknown> {
     const toIso = (v: unknown): string => {
       if (v instanceof Date) return v.toISOString();
@@ -1380,7 +1385,15 @@ export class SearchService {
                 typeof st?.['timezone'] === 'string'
                   ? String(st['timezone'])
                   : undefined,
-              regionTimezone: undefined,
+              regionTimezone: (() => {
+                const code =
+                  typeof st?.['region'] === 'string'
+                    ? String(st['region']).trim().toUpperCase()
+                    : '';
+                return code && regionTimezoneMap?.[code]
+                  ? regionTimezoneMap[code]
+                  : undefined;
+              })(),
               regionCode:
                 typeof st?.['region'] === 'string'
                   ? String(st['region'])
@@ -1853,7 +1866,7 @@ export class SearchService {
       .exec();
 
     return (raw as Record<string, unknown>[]).map((doc) =>
-      this._mapHomeFeedLeanDoc(doc),
+      this._mapHomeFeedLeanDoc(doc, regionTimezoneMap),
     );
   }
 
@@ -1997,6 +2010,8 @@ export class SearchService {
     const dailyMenuStages = dailyMenuOnly
       ? await this._productDailyMenuListingStagesAsync()
       : await this._productDailyMenuEnrichmentStagesAsync();
+    const regionTimezoneMap =
+      await this._supportedCountries.getRegionTimezoneMap();
     const pipeline: PipelineStage[] = [
       {
         $lookup: {
@@ -2054,7 +2069,7 @@ export class SearchService {
     const total = bucket?.total?.[0]?.n ?? 0;
     const rows = bucket?.rows ?? [];
     return {
-      items: rows.map((d) => this._mapHomeFeedLeanDoc(d)),
+      items: rows.map((d) => this._mapHomeFeedLeanDoc(d, regionTimezoneMap)),
       total,
     };
   }
