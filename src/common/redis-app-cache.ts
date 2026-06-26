@@ -600,4 +600,10 @@ export const AppCacheKeys = {
   searchFilter: (hash: string) => `search-filter:v1:${hash}`,
   cartPricing: (userId: string, inputHash: string) =>
     `cart-pricing:v1:${userId}:${inputHash}`,
+  policiesPublicList: (locale: string) => `policies:public:v1:list:${locale}`,
+  policiesPublicDoc: (slug: string, locale: string) =>
+    `policies:public:v1:doc:${slug}:${locale}`,
+  policiesPublicConfig: (locale: string) => `policies:public:v1:config:${locale}`,
 } as const;
+
+export const POLICIES_PUBLIC_CACHE_PREFIX = 'policies:public:v1:';

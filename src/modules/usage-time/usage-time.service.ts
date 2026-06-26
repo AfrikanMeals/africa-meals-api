@@ -1,5 +1,6 @@
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -33,13 +34,64 @@ function emptySourceStats(): UsageTimeSourceStats {
 
 @Injectable()
 export class UsageTimeService {
-  @InjectModel(UserUsageSessionModel.name)
-  private readonly sessionModel!: Model<UserUsageSessionModel>;
+  constructor(
+    @InjectModel(UserUsageSessionModel.name)
+    private readonly sessionModel: Model<UserUsageSessionModel>,
+    @InjectModel(UserModel.name)
+    private readonly userModel: Model<UserModel>,
+    private readonly storeAccess: StoreAccessService,
+  ) {}
 
-  @InjectModel(UserModel.name)
-  private readonly userModel!: Model<UserModel>;
+  private userOid(user: UserModel): Types.ObjectId {
+    const raw =
+      (user as UserModel & { _id?: Types.ObjectId | string })._id ??
+      (user as { id?: string }).id;
+    if (raw instanceof Types.ObjectId) return raw;
+    const id = typeof raw === 'string' ? raw.trim() : String(raw ?? '').trim();
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('invalid_user');
+    }
+    return new Types.ObjectId(id);
+  }
 
-  constructor(private readonly storeAccess: StoreAccessService) {}
+  private isDuplicateKeyError(err: unknown): boolean {
+    if (!err || typeof err !== 'object') return false;
+    const code = (err as { code?: number }).code;
+    return code === 11000 || code === 11001;
+  }
+
+  private async upsertOpenSession(
+    userId: Types.ObjectId,
+    sessionId: string,
+    source: UserUsageSourceEnum,
+    now: Date,
+  ): Promise<void> {
+    try {
+      await this.sessionModel.updateOne(
+        { userId, sessionId },
+        {
+          $setOnInsert: {
+            userId,
+            sessionId,
+            source,
+            startedAt: now,
+          },
+          $set: { lastActiveAt: now },
+          $unset: { endedAt: '', durationSec: '' },
+        },
+        { upsert: true },
+      );
+    } catch (err) {
+      if (!this.isDuplicateKeyError(err)) throw err;
+      await this.sessionModel.updateOne(
+        { userId, sessionId },
+        {
+          $set: { lastActiveAt: now },
+          $unset: { endedAt: '', durationSec: '' },
+        },
+      );
+    }
+  }
 
   private async assertAdmin(actor: UserModel): Promise<void> {
     if (actor.type !== UserTypeEnum.ADMIN) {
@@ -52,26 +104,13 @@ export class UsageTimeService {
     user: UserModel,
     dto: RecordUsageSessionDto,
   ): Promise<{ ok: true }> {
-    const userId = user._id as Types.ObjectId;
+    const userId = this.userOid(user);
     const sessionId = dto.sessionId.trim();
     const now = new Date();
 
     if (dto.action === 'start') {
       await this.closeStaleOpenSessions(userId, dto.source, now);
-      await this.sessionModel.updateOne(
-        { userId, sessionId },
-        {
-          $setOnInsert: {
-            userId,
-            sessionId,
-            source: dto.source,
-            startedAt: now,
-          },
-          $set: { lastActiveAt: now, updatedAt: now },
-          $unset: { endedAt: '', durationSec: '' },
-        },
-        { upsert: true },
-      );
+      await this.upsertOpenSession(userId, sessionId, dto.source, now);
       return { ok: true };
     }
 
@@ -83,13 +122,7 @@ export class UsageTimeService {
 
     if (!existing) {
       if (dto.action === 'heartbeat') {
-        await this.sessionModel.create({
-          userId,
-          sessionId,
-          source: dto.source,
-          startedAt: now,
-          lastActiveAt: now,
-        });
+        await this.upsertOpenSession(userId, sessionId, dto.source, now);
       }
       return { ok: true };
     }
@@ -101,7 +134,7 @@ export class UsageTimeService {
     if (dto.action === 'heartbeat') {
       await this.sessionModel.updateOne(
         { _id: existing._id },
-        { $set: { lastActiveAt: now, updatedAt: now } },
+        { $set: { lastActiveAt: now } },
       );
       return { ok: true };
     }
@@ -121,7 +154,6 @@ export class UsageTimeService {
           endedAt,
           durationSec,
           lastActiveAt: endedAt,
-          updatedAt: now,
         },
       },
     );
@@ -189,7 +221,6 @@ export class UsageTimeService {
           $set: {
             endedAt: lastActiveAt,
             durationSec,
-            updatedAt: now,
           },
         },
       );

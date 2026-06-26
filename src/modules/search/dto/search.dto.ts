@@ -13,6 +13,7 @@ import {
   parseOptionalQueryNumber,
   trimOptionalQueryString,
 } from './search-query.util';
+import { FieldSelectionQueryDto } from '@common/field-selection/field-selection-query.dto';
 
 export enum SortBy {
   PRICE = 'price',
@@ -35,7 +36,7 @@ export enum SearchContent {
   OFFERS = 'offers',
 }
 
-export class SearchDto {
+export class SearchDto extends FieldSelectionQueryDto {
   @IsNotEmpty()
   @IsArray()
   @Transform(({ value }) => normalizeSearchContentQuery(value))

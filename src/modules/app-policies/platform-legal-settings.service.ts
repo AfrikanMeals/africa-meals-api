@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import {
   MobileAppSettingsDocument,
@@ -10,6 +10,12 @@ import {
 } from '@schemas/platform-legal-settings.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
+import {
+  AppCacheKeys,
+  apiPublicCacheTtlMs,
+  POLICIES_PUBLIC_CACHE_PREFIX,
+} from '@common/redis-app-cache';
 import { UpdatePlatformLegalSettingsDto } from './dto/update-platform-legal-settings.dto';
 
 const SETTINGS_KEY = 'default';
@@ -42,7 +48,15 @@ export class PlatformLegalSettingsService {
     private readonly _legal: Model<PlatformLegalSettingsDocument>,
     @InjectModel(MobileAppSettingsModel.name)
     private readonly _mobile: Model<MobileAppSettingsDocument>,
+    @Inject(ModuleCacheLayerService)
+    private readonly _cacheLayer: ModuleCacheLayerService,
   ) {}
+
+  /** Lecture seule — pas d’upsert (évite une écriture Mongo sur chaque GET public). */
+  private async readDoc(): Promise<PlatformLegalSettingsModel | null> {
+    const doc = await this._legal.findOne({ key: SETTINGS_KEY }).lean().exec();
+    return doc as PlatformLegalSettingsModel | null;
+  }
 
   private async ensureDoc(): Promise<PlatformLegalSettingsModel> {
     const doc = await this._legal
@@ -68,7 +82,7 @@ export class PlatformLegalSettingsService {
   /** Variables publiques pour interpolation des politiques (FR ou EN). */
   async resolveTemplateVars(localeRaw?: string): Promise<Record<string, string>> {
     const locale = trim(localeRaw).toLowerCase() === 'en' ? 'en' : 'fr';
-    const legal = await this.ensureDoc();
+    const legal = (await this.readDoc()) ?? ({} as PlatformLegalSettingsModel);
     const mobile = await this.mobileContact();
 
     const websiteUrl = trim(legal.websiteUrl) || 'https://wise-eat.com';
@@ -155,8 +169,18 @@ export class PlatformLegalSettingsService {
   }
 
   async getPublicConfig(localeRaw?: string) {
-    const vars = await this.resolveTemplateVars(localeRaw);
-    const legal = await this.ensureDoc();
+    const locale = trim(localeRaw).toLowerCase() === 'en' ? 'en' : 'fr';
+    return this._cacheLayer.getOrSet(
+      'publicCatalog',
+      AppCacheKeys.policiesPublicConfig(locale),
+      apiPublicCacheTtlMs(),
+      () => this.getPublicConfigUncached(locale),
+    );
+  }
+
+  private async getPublicConfigUncached(locale: string) {
+    const vars = await this.resolveTemplateVars(locale);
+    const legal = (await this.readDoc()) ?? ({} as PlatformLegalSettingsModel);
     const typed = legal as PlatformLegalSettingsModel & { updatedAt?: Date };
     return {
       ...vars,
@@ -230,6 +254,7 @@ export class PlatformLegalSettingsService {
         { upsert: true, new: true, setDefaultsOnInsert: true },
       )
       .exec();
+    await this._cacheLayer.bustPrefixOnAllStores(POLICIES_PUBLIC_CACHE_PREFIX);
     return this.getForAdmin(user);
   }
 }

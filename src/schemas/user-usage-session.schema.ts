@@ -49,6 +49,9 @@ export const UserUsageSessionSchema = SchemaFactory.createForClass(
 UserUsageSessionSchema.index({ userId: 1, source: 1, startedAt: -1 });
 UserUsageSessionSchema.index({ userId: 1, sessionId: 1 }, { unique: true });
 UserUsageSessionSchema.index(
-  { endedAt: 1, lastActiveAt: 1 },
-  { expireAfterSeconds: 90 * 24 * 60 * 60, partialFilterExpression: { endedAt: { $exists: true } } },
+  { endedAt: 1 },
+  {
+    expireAfterSeconds: 90 * 24 * 60 * 60,
+    partialFilterExpression: { endedAt: { $exists: true } },
+  },
 );

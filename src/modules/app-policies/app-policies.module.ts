@@ -9,6 +9,7 @@ import {
   MobileAppSettingsModel,
   MobileAppSettingsSchema,
 } from '@schemas/mobile-app-settings.schema';
+import { ModuleCacheLayerModule } from '@common/cache/module-cache-layer.module';
 import { MediasModule } from '@modules/medias/medias.module';
 import { AppPoliciesController } from './app-policies.controller';
 import { AppPoliciesService } from './app-policies.service';
@@ -25,6 +26,7 @@ import { PlatformLegalSettingsService } from './platform-legal-settings.service'
       { name: MobileAppSettingsModel.name, schema: MobileAppSettingsSchema },
     ]),
     MediasModule,
+    ModuleCacheLayerModule,
   ],
   controllers: [AppPoliciesController],
   providers: [AppPoliciesService, PlatformLegalSettingsService],

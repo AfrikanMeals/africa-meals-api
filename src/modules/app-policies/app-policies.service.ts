@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -16,6 +17,12 @@ import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 import { MediasService } from '@modules/medias/medias.service';
 import { interpolatePolicyFields } from '@common/policy-template.util';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
+import {
+  AppCacheKeys,
+  apiPublicCacheTtlMs,
+  POLICIES_PUBLIC_CACHE_PREFIX,
+} from '@common/redis-app-cache';
 import { UpsertAppPolicyDto } from './dto/upsert-app-policy.dto';
 import { PolicySectionImageJsonDto } from './dto/policy-section-image.dto';
 import { PlatformLegalSettingsService } from './platform-legal-settings.service';
@@ -71,7 +78,27 @@ export class AppPoliciesService {
     private readonly _policies: Model<AppPolicyDocument>,
     private readonly _mediasService: MediasService,
     private readonly _legalSettings: PlatformLegalSettingsService,
+    @Inject(ModuleCacheLayerService)
+    private readonly _cacheLayer: ModuleCacheLayerService,
   ) {}
+
+  private async bustPublicPolicyCaches(): Promise<void> {
+    await this._cacheLayer.bustPrefixOnAllStores(POLICIES_PUBLIC_CACHE_PREFIX);
+  }
+
+  private pickPublishedDocForLocale<
+    T extends { slug: string; locale: string },
+  >(
+    docs: T[],
+    slug: string,
+    locale: string,
+  ): T | undefined {
+    return (
+      docs.find((d) => d.slug === slug && d.locale === locale) ??
+      docs.find((d) => d.slug === slug && d.locale === 'fr') ??
+      docs.find((d) => d.slug === slug)
+    );
+  }
 
   async listForAdmin(user: UserModel) {
     assertAdmin(user);
@@ -145,24 +172,33 @@ export class AppPoliciesService {
     if (!doc) {
       throw new BadRequestException('policy_save_failed');
     }
+    await this.bustPublicPolicyCaches();
     return serializePolicy(doc);
   }
 
   async listPublishedPublic(localeRaw?: string) {
     const locale = normalizeLocale(localeRaw ?? 'fr');
+    return this._cacheLayer.getOrSet(
+      'publicCatalog',
+      AppCacheKeys.policiesPublicList(locale),
+      apiPublicCacheTtlMs(),
+      () => this.listPublishedPublicUncached(locale),
+    );
+  }
+
+  private async listPublishedPublicUncached(locale: string) {
     const vars = await this._legalSettings.resolveTemplateVars(locale);
     const published = await this._policies
       .find({ isPublished: true })
+      .select('slug locale title description updatedAt createdAt')
       .sort({ slug: 1, locale: 1 })
+      .lean()
       .exec();
 
     const slugs = [...new Set(published.map((d) => d.slug))].sort();
     return slugs
       .map((slug) => {
-        const doc =
-          published.find((d) => d.slug === slug && d.locale === locale) ??
-          published.find((d) => d.slug === slug && d.locale === 'fr') ??
-          published.find((d) => d.slug === slug);
+        const doc = this.pickPublishedDocForLocale(published, slug, locale);
         if (!doc) return null;
         const serialized = serializePolicy(doc);
         const interpolated = interpolatePolicyFields(serialized, vars);
@@ -186,6 +222,15 @@ export class AppPoliciesService {
       throw new NotFoundException('policy_not_found');
     }
     const locale = normalizeLocale(localeRaw ?? 'fr');
+    return this._cacheLayer.getOrSet(
+      'publicCatalog',
+      AppCacheKeys.policiesPublicDoc(slug, locale),
+      apiPublicCacheTtlMs(),
+      () => this.getPublishedPublicUncached(slug, locale),
+    );
+  }
+
+  private async getPublishedPublicUncached(slug: string, locale: string) {
     const vars = await this._legalSettings.resolveTemplateVars(locale);
     let doc = await this._policies
       .findOne({ slug, locale, isPublished: true })
