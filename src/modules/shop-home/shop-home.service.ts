@@ -20,6 +20,15 @@ export type ShopHomePayload = {
   products: Record<string, unknown>[];
 };
 
+/** Région catalogue effective (= marché client, sans repli cross-région). */
+export type ShopHomeLoadResult = ShopHomePayload & {
+  catalogRegion: string;
+};
+
+type ShopHomeCachePayload = ShopHomePayload & {
+  catalogRegion?: string;
+};
+
 @Injectable()
 export class ShopHomeService {
   private readonly _logger = new Logger(ShopHomeService.name);
@@ -58,7 +67,6 @@ export class ShopHomeService {
     return Number.isFinite(n) && n > 0 ? n : 90_000;
   }
 
-  /** Évite `JSON.parse(JSON.stringify)` sur les documents Mongoose (coûteux). */
   private _docsToPlainJson(docs: unknown[]): Record<string, unknown>[] {
     return docs.map((d) => {
       const toJson = (d as { toJSON?: () => Record<string, unknown> })?.toJSON;
@@ -69,49 +77,59 @@ export class ShopHomeService {
     });
   }
 
-  /** Cache hit vide alors que des catégories annoncent du contenu → recompute (Redis migré / TTL stale). */
-  private _isStaleEmptyShopHomeHit(hit: ShopHomePayload): boolean {
+  /** Ignore les hits vides ou issus d’un ancien repli cross-région (ex. CM → CA). */
+  private _isStaleShopHomeHit(
+    hit: ShopHomeCachePayload,
+    requestedRegion: string,
+  ): boolean {
+    const cachedRegion = String(hit.catalogRegion ?? requestedRegion)
+      .trim()
+      .toUpperCase();
+    if (cachedRegion !== requestedRegion) return true;
     if (!Array.isArray(hit.products) || hit.products.length > 0) {
       return false;
     }
-    return (hit.categories ?? []).some(
-      (row) => Number((row as { productCount?: number }).productCount ?? 0) > 0,
-    );
+    return true;
   }
 
   /**
    * Bundle accueil : annonces + pubs + catégories + produits (léger).
-   * Mis en cache par utilisateur (anon vs vendeur connecté).
+   * Catalogue strictement limité à la région client (pas de repli CA / autre marché).
    */
   async load(
     user?: UserModel,
     productsTake = 48,
     countryCode?: string,
-  ): Promise<ShopHomePayload> {
-    const clientRegion =
+  ): Promise<ShopHomeLoadResult> {
+    const catalogRegion =
       await this._supportedCountries.resolveClientCatalogRegion(
         user,
         countryCode,
       );
-    const key = this.cacheKey(user, clientRegion);
+    const key = this.cacheKey(user, catalogRegion);
     const cache = this._cacheLayer.cacheFor('publicCatalog');
-    const hit = await safeCacheGet<ShopHomePayload>(cache, key);
+    const hit = await safeCacheGet<ShopHomeCachePayload>(cache, key);
 
     const take = Math.min(120, Math.max(8, Math.floor(productsTake)));
 
     const mapAds = (adDocs: unknown[]) =>
       this._docsToPlainJson(adDocs).map((row) => slimAdForPublicClient(row));
 
-    if (hit != null && !this._isStaleEmptyShopHomeHit(hit)) {
-      const adDocs = await this._ads.listPublic(clientRegion);
-      return { ...hit, ads: mapAds(adDocs) };
+    if (hit != null && !this._isStaleShopHomeHit(hit, catalogRegion)) {
+      const adDocs = await this._ads.listPublic(catalogRegion);
+      const { catalogRegion: _cr, ...payload } = hit;
+      return {
+        ...payload,
+        ads: mapAds(adDocs),
+        catalogRegion,
+      };
     }
 
     const [announcementDocs, adDocs, categories, products] = await Promise.all([
       this._announcements.list(),
-      this._ads.listPublic(clientRegion),
+      this._ads.listPublic(catalogRegion),
       this._categories.filter(),
-      this._search.homeFeedProducts(user, take, clientRegion),
+      this._search.homeFeedProducts(user, take, catalogRegion),
     ]);
 
     const announcements = this._docsToPlainJson(announcementDocs).map((row) =>
@@ -129,17 +147,16 @@ export class ShopHomeService {
       products,
     };
 
-    await safeCacheSet(cache, key, payload, this.ttlMs());
-    return payload;
+    const cachePayload: ShopHomeCachePayload = { ...payload, catalogRegion };
+    await safeCacheSet(cache, key, cachePayload, this.ttlMs());
+    return { ...payload, catalogRegion };
   }
 
-  /** Invalide le cache accueil (toutes régions / utilisateurs) après reprise Redis. */
   async bustAllShopHomeCaches(): Promise<void> {
     await this._cacheLayer.bustPrefixOnAllStores('shophome:v3-region:');
     await this._cacheLayer.bustPrefixOnAllStores('shophome:v4-region:');
   }
 
-  /** Préchauffage cache (cron / tâche planifiée), utile après expiration TTL. */
   async warmAnonymousCache(productsTake = 48): Promise<void> {
     try {
       await this.load(undefined, productsTake);

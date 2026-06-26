@@ -46,12 +46,16 @@ export class ShopHomeResolver {
   ): Promise<ShopHomePayloadGql> {
     const take = productsTake ?? 48;
     const recTake = recommendationsTake ?? 24;
-    const data = await this._shopHome.load(user, take, countryCode);
+    const { catalogRegion, ...data } = await this._shopHome.load(
+      user,
+      take,
+      countryCode,
+    );
     const rec = await this._recommendations.getFeed(
       user,
       String(recTake),
       data.products,
-      countryCode,
+      catalogRegion,
     );
     return {
       ...data,

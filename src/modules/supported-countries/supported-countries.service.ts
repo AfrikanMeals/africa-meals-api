@@ -284,17 +284,18 @@ export class SupportedCountriesService implements OnModuleInit {
 
   /**
    * Région catalogue client : query explicite → profil utilisateur → région primaire active.
+   * Pas de repli vers un autre marché si le client demande CM (même catalogue vide).
    */
   async resolveClientCatalogRegion(
     user?: Pick<UserModel, 'appCountryCode'> | null,
     queryCountryCode?: string | null,
   ): Promise<string> {
     const fromQuery = normalizeCountryCode(queryCountryCode);
-    if (fromQuery && (await this.isActiveCode(fromQuery))) {
+    if (fromQuery) {
       return fromQuery;
     }
     const fromUser = normalizeCountryCode(user?.appCountryCode);
-    if (fromUser && (await this.isActiveCode(fromUser))) {
+    if (fromUser) {
       return fromUser;
     }
     const primary = await this.getPrimaryActiveRegion();
