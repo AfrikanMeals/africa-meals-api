@@ -79,7 +79,7 @@
     "libphonenumber-js": "^1.12.40",
     "mailersend": "^2.2.0",
     "memcached": "^2.2.2",
-    "mongodb": "^7.2.0",
+    "mongodb": "^6.6.2",
     "mongoose": "^8.4.1",
     "mqtt": "^5.15.1",
     "nodemailer": "^8.0.3",
