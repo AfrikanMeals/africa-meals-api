@@ -3625,7 +3625,10 @@ export class StoreService {
 
     if (openOrders.length > 0) {
       if (!options?.archiveOpenOrders) {
-        throw new ConflictException('stripe_reset_has_open_orders');
+        throw new ConflictException({
+        message: 'stripe_reset_has_open_orders',
+        canArchive: true,
+      });
       }
 
       const ownerId = this.stringifyIdLike(doc.owner);
