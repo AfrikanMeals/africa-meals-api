@@ -312,8 +312,8 @@ export class SearchService {
       {
         $match: {
           $expr: {
-            $and: [
-              { $ne: ['$distanceKm', null] },
+            $or: [
+              { $eq: ['$distanceKm', null] },
               { $lte: ['$distanceKm', maxKm] },
             ],
           },
@@ -443,8 +443,8 @@ export class SearchService {
       stages.push({
         $match: {
           $expr: {
-            $and: [
-              { $ne: ['$distanceKm', null] },
+            $or: [
+              { $eq: ['$distanceKm', null] },
               { $lte: ['$distanceKm', maxKm] },
             ],
           },
@@ -843,10 +843,23 @@ export class SearchService {
     }
   }
 
+  private _searchGeoCacheBucket(args: SearchDto): {
+    lat: number;
+    lng: number;
+    maxKm: number;
+  } | null {
+    if (!this._hasSearchGeo(args)) return null;
+    const lat = args.latitude as number;
+    const lng = args.longitude as number;
+    return {
+      lat: Math.round(lat * 50) / 50,
+      lng: Math.round(lng * 50) / 50,
+      maxKm: args.maxDistanceKm ?? 30,
+    };
+  }
+
   private _isSearchFilterCacheable(args: SearchDto): boolean {
     if (args.query?.trim()) return false;
-    if (args.latitude != null || args.longitude != null) return false;
-    if (args.sortBy === SortBy.DISTANCE) return false;
     return true;
   }
 
@@ -865,6 +878,7 @@ export class SearchService {
     this._normalizeSearchGeoArgs(args);
     if (this._isSearchFilterCacheable(args)) {
       const scope = cacheUserScope(user);
+      const geo = this._searchGeoCacheBucket(args);
       const hash = stableCacheHash({
         scope,
         clientRegion,
@@ -877,6 +891,9 @@ export class SearchService {
         sortDirection: args.sortDirection ?? null,
         page: args.page,
         take: args.take,
+        geoLat: geo?.lat ?? null,
+        geoLng: geo?.lng ?? null,
+        geoMaxKm: geo?.maxKm ?? null,
       });
       return this._cacheLayer.getOrSet(
         'publicCatalog',
