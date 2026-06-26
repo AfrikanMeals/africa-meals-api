@@ -16,6 +16,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
+import { UsageTimeService } from '@modules/usage-time/usage-time.service';
 import { AdminUsersService } from './admin-users.service';
 import { AdminListUsersQueryDto } from './dto/admin-list-users-query.dto';
 import { AdminSetUserDisabledDto } from './dto/admin-set-user-disabled.dto';
@@ -26,7 +27,10 @@ import { AdminUpdateUserDto } from './dto/admin-update-user.dto';
 @UseGuards(JwtGuard)
 @Controller('admin/users')
 export class AdminUsersController {
-  constructor(private readonly adminUsers: AdminUsersService) {}
+  constructor(
+    private readonly adminUsers: AdminUsersService,
+    private readonly usageTime: UsageTimeService,
+  ) {}
 
   @Get()
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
@@ -42,6 +46,15 @@ export class AdminUsersController {
   })
   getInterests(@Req() req: Request, @Param('userId') userId: string) {
     return this.adminUsers.getUserInterests(req.user as UserModel, userId);
+  }
+
+  @Get(':userId/usage-time')
+  @ApiOperation({
+    summary:
+      'Temps d’usage app mobile / admin — moyennes et pics de connexion (admin.settings)',
+  })
+  getUsageTime(@Req() req: Request, @Param('userId') userId: string) {
+    return this.usageTime.getUserUsageTime(req.user as UserModel, userId);
   }
 
   @Get(':userId')

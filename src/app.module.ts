@@ -42,6 +42,7 @@ import { DocumentationModule } from './modules/documentation/documentation.modul
 import { VendorGuidesModule } from './modules/vendor-guides/vendor-guides.module';
 import { BlogModule } from './modules/blog/blog.module';
 import { AdminUsersModule } from './modules/admin-users/admin-users.module';
+import { UsageTimeModule } from './modules/usage-time/usage-time.module';
 import { AdminCatalogModerationModule } from './modules/admin-catalog-moderation/admin-catalog-moderation.module';
 import { CronMonitorModule } from './modules/cron-monitor/cron-monitor.module';
 import { DbMaintenanceModule } from './modules/db-maintenance/db-maintenance.module';
@@ -261,6 +262,7 @@ async function readRedisManagerEnabledAtBootstrap(
     ScheduleModule.forRoot(),
     CronMonitorModule,
     AdminUsersModule,
+    UsageTimeModule,
     AdminCatalogModerationModule,
     MongooseModule.forRootAsync({
       imports: [ConfigModule],

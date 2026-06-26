@@ -33,6 +33,12 @@ const PAID_LIKE_ORDER_STATUSES: OrderStatusEnum[] = [
   OrderStatusEnum.COMPLETED,
 ];
 
+export type AdminUserAuthMethod =
+  | 'google'
+  | 'apple'
+  | 'facebook'
+  | 'email';
+
 export type AdminUserRow = {
   id: string;
   fullName: string;
@@ -41,6 +47,7 @@ export type AdminUserRow = {
   type: UserTypeEnum;
   appCountryCode: string | null;
   emailVerified: boolean;
+  authMethods: AdminUserAuthMethod[];
   disabled: boolean;
   debug: boolean;
   canMessaging: boolean;
@@ -54,7 +61,24 @@ export type AdminUserRow = {
 };
 
 const ADMIN_USER_SELECT =
-  'fullName email phoneNumber type appCountryCode emailVerifiedAt debug canMessaging messagingBanReason accountDisabledAt accountDeletionRequestedAt accountDeletionScheduledFor createdAt updatedAt';
+  'fullName email phoneNumber type appCountryCode emailVerifiedAt googleId appleId facebookId debug canMessaging messagingBanReason accountDisabledAt accountDeletionRequestedAt accountDeletionScheduledFor createdAt updatedAt';
+
+function deriveAuthMethods(doc: Record<string, unknown>): AdminUserAuthMethod[] {
+  const methods: AdminUserAuthMethod[] = [];
+  if (typeof doc.googleId === 'string' && doc.googleId.trim()) {
+    methods.push('google');
+  }
+  if (typeof doc.appleId === 'string' && doc.appleId.trim()) {
+    methods.push('apple');
+  }
+  if (typeof doc.facebookId === 'string' && doc.facebookId.trim()) {
+    methods.push('facebook');
+  }
+  if (methods.length === 0) {
+    methods.push('email');
+  }
+  return methods;
+}
 
 function toIso(value: unknown): string | null {
   if (value instanceof Date) return value.toISOString();
@@ -77,6 +101,7 @@ function serializeUser(doc: Record<string, unknown>): AdminUserRow {
     appCountryCode:
       typeof doc.appCountryCode === 'string' ? doc.appCountryCode : null,
     emailVerified: doc.emailVerifiedAt instanceof Date,
+    authMethods: deriveAuthMethods(doc),
     disabled: disabledAt instanceof Date,
     debug: doc.debug === true,
     canMessaging: doc.canMessaging !== false,

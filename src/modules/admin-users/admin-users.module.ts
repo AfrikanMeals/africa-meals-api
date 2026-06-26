@@ -1,6 +1,7 @@
 import { AuthModule } from '@modules/auth/auth.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { TeamsModule } from '@modules/teams/teams.module';
+import { UsageTimeModule } from '@modules/usage-time/usage-time.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -42,6 +43,7 @@ import { AdminUsersService } from './admin-users.service';
     TeamsModule,
     AuthModule,
     SupportedCountriesModule,
+    UsageTimeModule,
   ],
   controllers: [AdminUsersController],
   providers: [AdminUsersService],
