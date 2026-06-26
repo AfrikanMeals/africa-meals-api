@@ -73,6 +73,7 @@ export class WsNotifyDispatchQueueService
   private queueEnabled = false;
   private mqttClient: MqttClient | null = null;
   private mqttConnected = false;
+  private mqttAuthBlocked = false;
   private mqttState: MqttRuntimeStatus['state'] = 'disabled';
   private mqttLastError: string | null = null;
   private mqttLastPublishedTopic: string | null = null;
@@ -200,6 +201,16 @@ export class WsNotifyDispatchQueueService
         ? new Date(this.mqttLastPublishedAtMs).toISOString()
         : null,
     };
+  }
+
+  isMqttConnected(): boolean {
+    return this.mqttConnected;
+  }
+
+  recoverMqttAfterOutage(): void {
+    if (this.mqttAuthBlocked || this.mqttConnected) return;
+    if (this.mqttClient) return;
+    this.initMqttClient();
   }
 
   private async dispatchAsync(
@@ -401,6 +412,7 @@ export class WsNotifyDispatchQueueService
           'MQTT auth rejected; stopping reconnect loop until service restart or credential change.',
         );
         this.mqttConnected = false;
+        this.mqttAuthBlocked = true;
         client.end(true);
       }
     });

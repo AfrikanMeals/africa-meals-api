@@ -10,7 +10,7 @@ import {
   connectIoredisWithFailover,
   formatRedisTarget,
   listRedisCacheConnectionsFromConfig,
-  readRedisCacheStoreOptionsFromConfig,
+  type RedisConnectionConfig,
 } from './redis-connection.util';
 import { registerAppCacheBustRedis } from '../redis-app-cache';
 
@@ -32,7 +32,7 @@ export class SharedRedisService implements OnModuleInit, OnModuleDestroy {
     void this.ensureConnected();
   }
 
-  private _attachClient(client: Redis, connection: { url?: string }): void {
+  private _attachClient(client: Redis, connection: RedisConnectionConfig): void {
     this.client = client;
     this.client.on('error', (err) => {
       this.logger.warn(`Shared Redis error: ${err.message}`);

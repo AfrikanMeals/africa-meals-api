@@ -23,7 +23,6 @@ import {
   Inject,
   Injectable,
   Logger,
-  OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -48,7 +47,7 @@ function dedupeCaches(caches: Cache[]): Cache[] {
 }
 
 @Injectable()
-export class ModuleCacheLayerService implements OnModuleInit, OnModuleDestroy {
+export class ModuleCacheLayerService implements OnModuleInit {
   private readonly _logger = new Logger(ModuleCacheLayerService.name);
   private _memoryCache: Cache | null = null;
   private _redisCache: Cache | null = null;
@@ -66,10 +65,6 @@ export class ModuleCacheLayerService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit(): Promise<void> {
     await this._bootstrapStores();
     this._lastRedisEngineUp = await this.probeRedisEngine();
-  }
-
-  onModuleDestroy(): void {
-    /* noop */
   }
 
   /** Ping moteur Redis dédié (pas le fallback mémoire). */

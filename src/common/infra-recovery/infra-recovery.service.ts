@@ -121,6 +121,14 @@ export class InfraRecoveryService implements OnModuleInit, OnModuleDestroy {
         );
       }
     }
+    try {
+      const domain = this._moduleRef.get(DomainEventPublisherService, {
+        strict: false,
+      });
+      await domain?.recoverAfterInfraOutage?.();
+    } catch (_) {
+      /* optional */
+    }
   }
 
   private async _onMqttRecovered(): Promise<void> {

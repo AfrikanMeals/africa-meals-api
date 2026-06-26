@@ -82,6 +82,7 @@ export class DomainEventPublisherService
   private handlersQueueEnabled = false;
   private mqttClient: MqttClient | null = null;
   private mqttConnected = false;
+  private mqttAuthBlocked = false;
   private infraSettingsCache = {
     redisManagerEnabled: true,
     mqBrokerEnabled: true,
@@ -102,11 +103,36 @@ export class DomainEventPublisherService
 
   async onModuleInit(): Promise<void> {
     this.initMqttClient();
+    await this.ensureBullQueues();
+  }
+
+  isMqttConnected(): boolean {
+    return this.mqttConnected;
+  }
+
+  recoverMqttAfterOutage(): void {
+    if (this.mqttAuthBlocked || this.mqttConnected) return;
+    if (this.mqttClient) return;
+    this.initMqttClient();
+  }
+
+  /** Reconnexion Redis/BullMQ/MQTT après migration ou coupure infra. */
+  async recoverAfterInfraOutage(): Promise<void> {
+    await this.ensureBullQueues();
+    this.recoverMqttAfterOutage();
+  }
+
+  private async ensureBullQueues(): Promise<void> {
+    if (this.queueEnabled && this.queue) return;
     if (!this.bullRedis.isEnabled()) {
-      logBullmqDisabledReason();
-      this.logger.log('Domain events -> direct MQTT / log mode');
-      return;
+      const ok = await this.bullRedis.ensureConnected();
+      if (!ok) {
+        logBullmqDisabledReason();
+        this.logger.log('Domain events -> direct MQTT / log mode');
+        return;
+      }
     }
+    if (this.queue) return;
 
     const queueName =
       this.config.get<string>('DOMAIN_EVENTS_QUEUE_NAME')?.trim() ||
@@ -570,6 +596,7 @@ export class DomainEventPublisherService
           'Domain events MQTT auth rejected; stopping reconnect until restart.',
         );
         this.mqttConnected = false;
+        this.mqttAuthBlocked = true;
         client.end(true);
       }
     });

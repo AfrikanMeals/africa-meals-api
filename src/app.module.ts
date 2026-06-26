@@ -51,6 +51,7 @@ import { RequestStatsModule } from './modules/request-stats/request-stats.module
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
 import { DomainEventsModule } from './common/domain-events/domain-events.module';
 import { ModuleCacheLayerModule } from './common/cache/module-cache-layer.module';
+import { InfraRecoveryModule } from './common/infra-recovery/infra-recovery.module';
 import { RedisSharedModule } from './common/redis/redis-shared.module';
 import { BullmqRedisModule } from './common/redis/bullmq-redis-connections.service';
 import { AppCacheBustSubscriber } from './common/app-cache-bust.subscriber';
@@ -255,6 +256,7 @@ async function readRedisManagerEnabledAtBootstrap(
       },
     }),
     ModuleCacheLayerModule,
+    InfraRecoveryModule,
     ScheduleModule.forRoot(),
     CronMonitorModule,
     AdminUsersModule,
