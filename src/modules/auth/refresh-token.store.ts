@@ -22,12 +22,15 @@ export class RefreshTokenStore implements OnModuleInit {
     return `auth:refresh:jti:${jti}`;
   }
 
-  private redisClientOrWarn(): ReturnType<SharedRedisService['getClient']> {
+  private async redisClientOrWarn(): Promise<
+    ReturnType<SharedRedisService['getClient']>
+  > {
     if (!this.sharedRedis.isConfigured()) return null;
+    await this.sharedRedis.ensureConnected();
     const client = this.sharedRedis.getClient();
     if (!client) {
-      this.logger.error(
-        'Refresh token store: REDIS_* configured but client unavailable — refusing in-memory fallback',
+      this.logger.warn(
+        'Refresh token store: REDIS_* configured but client unavailable',
       );
     }
     return client;
@@ -38,15 +41,22 @@ export class RefreshTokenStore implements OnModuleInit {
     const uid = userId.trim();
     if (!id || !uid || ttlSec <= 0) return;
 
-    const client = this.redisClientOrWarn();
+    const client = await this.redisClientOrWarn();
     if (client) {
-      await client.set(
-        this.redisKey(id),
-        JSON.stringify({ userId: uid }),
-        'EX',
-        ttlSec,
-      );
-      return;
+      try {
+        await client.set(
+          this.redisKey(id),
+          JSON.stringify({ userId: uid }),
+          'EX',
+          ttlSec,
+        );
+        return;
+      } catch (err) {
+        this.logger.warn(
+          `Refresh token register failed (${(err as Error).message}) — login continues without persisted refresh jti`,
+        );
+        return;
+      }
     }
     if (this.sharedRedis.isConfigured()) return;
 
@@ -62,16 +72,23 @@ export class RefreshTokenStore implements OnModuleInit {
     const uid = expectedUserId.trim();
     if (!id || !uid) return false;
 
-    const client = this.redisClientOrWarn();
+    const client = await this.redisClientOrWarn();
     if (client) {
-      const key = this.redisKey(id);
-      const raw = await client.get(key);
-      if (!raw) return false;
-      await client.del(key);
       try {
-        const row = JSON.parse(raw) as { userId?: string };
-        return row.userId === uid;
-      } catch {
+        const key = this.redisKey(id);
+        const raw = await client.get(key);
+        if (!raw) return false;
+        await client.del(key);
+        try {
+          const row = JSON.parse(raw) as { userId?: string };
+          return row.userId === uid;
+        } catch {
+          return false;
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Refresh token consume failed (${(err as Error).message})`,
+        );
         return false;
       }
     }

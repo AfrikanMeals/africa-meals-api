@@ -5,6 +5,7 @@ describe('RefreshTokenStore (H-03)', () => {
     isConfigured: () => false,
     isEnabled: () => false,
     getClient: () => null,
+    ensureConnected: async () => false,
   };
 
   it('registers and consumes a jti once', async () => {
@@ -30,6 +31,7 @@ describe('RefreshTokenStore (H-03)', () => {
       isConfigured: () => true,
       isEnabled: () => false,
       getClient: () => client,
+      ensureConnected: async () => true,
     };
     const store = new RefreshTokenStore(redis as never);
     await store.register('jti-3', 'user-a', 60);
@@ -43,9 +45,24 @@ describe('RefreshTokenStore (H-03)', () => {
       isConfigured: () => true,
       isEnabled: () => false,
       getClient: () => null,
+      ensureConnected: async () => false,
     };
     const store = new RefreshTokenStore(redis as never);
     await store.register('jti-4', 'user-a', 60);
     await expect(store.consume('jti-4', 'user-a')).resolves.toBe(false);
+  });
+
+  it('does not throw when Redis set fails (auth login must succeed)', async () => {
+    const client = {
+      set: jest.fn().mockRejectedValue(new Error('read ETIMEDOUT')),
+    };
+    const redis = {
+      isConfigured: () => true,
+      isEnabled: () => true,
+      getClient: () => client,
+      ensureConnected: async () => true,
+    };
+    const store = new RefreshTokenStore(redis as never);
+    await expect(store.register('jti-5', 'user-a', 60)).resolves.toBeUndefined();
   });
 });
