@@ -523,6 +523,7 @@ export type DashboardRevenueSeriesPoint = {
   label: string;
   date: string;
   valeur: number;
+  revenueByCurrency?: Array<{ currency: string; amount: number }>;
 };
 
 export type DashboardRevenueSeriesPayload = {
@@ -538,6 +539,7 @@ export type DashboardTopStoreRow = {
   revenue: number;
   commandes: number;
   note: number | null;
+  currency: string;
 };
 
 /** Heure locale pour l’histogramme (Canada — aligné sur l’usage principal du dashboard). */
@@ -2570,18 +2572,33 @@ export class DashboardService {
     if (period === '12m') {
       const start = now.subtract(11, 'month').startOf('month').toDate();
       const endExclusive = now.add(1, 'month').startOf('month').toDate();
-      const monthly = await this.aggregateMonthlyRevenue(
+      const monthlyByCurrency = await this.aggregatePeriodRevenueByCurrency(
         start,
         endExclusive,
         storeIds,
+        'month',
       );
-      for (const row of monthly) {
-        const d = dayjs.tz(`${row.monthKey}-01`, z);
+      let cursor = dayjs(start).tz(z).startOf('month');
+      const endMonth = dayjs(endExclusive).tz(z).startOf('month');
+      while (cursor.isBefore(endMonth)) {
+        const monthKey = cursor.format('YYYY-MM');
+        const byCur = monthlyByCurrency.get(monthKey);
+        const revenueByCurrency = byCur
+          ? breakdownFromCurrencyMap(byCur)
+          : [];
+        const valeur = revenueByCurrency.reduce(
+          (acc, row) => acc + row.amount,
+          0,
+        );
         points.push({
-          label: this.revenueSeriesLabel(d, '12m'),
-          date: row.monthKey,
-          valeur: Math.round(row.revenue),
+          label: this.revenueSeriesLabel(cursor, '12m'),
+          date: monthKey,
+          valeur: Math.round(valeur),
+          revenueByCurrency: revenueByCurrency.length
+            ? revenueByCurrency
+            : undefined,
         });
+        cursor = cursor.add(1, 'month');
       }
       const total = points.reduce((a, p) => a + p.valeur, 0);
       return { period, timezone: z, total, points };
@@ -2593,18 +2610,28 @@ export class DashboardService {
       .startOf('day')
       .toDate();
     const endExclusive = now.add(1, 'day').startOf('day').toDate();
-    const daily = await this.aggregateDailyRevenue(
+    const dailyByCurrency = await this.aggregatePeriodRevenueByCurrency(
       start,
       endExclusive,
       storeIds,
+      'day',
     );
-    for (const row of daily) {
-      const d = dayjs.tz(row.date, z);
+    let dayCursor = dayjs(start).tz(z).startOf('day');
+    const endDay = dayjs(endExclusive).tz(z).startOf('day');
+    while (dayCursor.isBefore(endDay)) {
+      const dateKey = dayCursor.format('YYYY-MM-DD');
+      const byCur = dailyByCurrency.get(dateKey);
+      const revenueByCurrency = byCur ? breakdownFromCurrencyMap(byCur) : [];
+      const valeur = revenueByCurrency.reduce((acc, row) => acc + row.amount, 0);
       points.push({
-        label: this.revenueSeriesLabel(d, period),
-        date: row.date,
-        valeur: Math.round(row.revenue),
+        label: this.revenueSeriesLabel(dayCursor, period),
+        date: dateKey,
+        valeur: Math.round(valeur),
+        revenueByCurrency: revenueByCurrency.length
+          ? revenueByCurrency
+          : undefined,
       });
+      dayCursor = dayCursor.add(1, 'day');
     }
     const total = points.reduce((a, p) => a + p.valeur, 0);
     return { period, timezone: z, total, points };
@@ -2776,11 +2803,19 @@ export class DashboardService {
 
     const stores = await this.storeModel
       .find({ _id: { $in: storeIdList } })
-      .select('name')
+      .select('name currency')
       .lean()
       .exec();
     const nameById = new Map(
       stores.map((s) => [String(s._id), String(s.name ?? 'Boutique')]),
+    );
+    const currencyById = new Map(
+      stores.map((s) => {
+        const code = String(s.currency ?? 'CAD')
+          .trim()
+          .toUpperCase();
+        return [String(s._id), code || 'CAD'];
+      }),
     );
 
     const ratingAgg = await this.storeRatingModel
@@ -2806,6 +2841,7 @@ export class DashboardService {
         revenue: Math.round(row.revenue * 100) / 100,
         commandes: row.commandes ?? 0,
         note: ratingByStore.get(sid) ?? null,
+        currency: currencyById.get(sid) ?? 'CAD',
       };
     });
   }
@@ -2931,6 +2967,57 @@ export class DashboardService {
       (order.store as { currency?: unknown } | undefined)?.currency,
     );
     return storeCur ?? 'CAD';
+  }
+
+  private async aggregatePeriodRevenueByCurrency(
+    start: Date,
+    end: Date,
+    storeIds: Types.ObjectId[] | null,
+    bucket: 'day' | 'month',
+  ): Promise<Map<string, Map<string, number>>> {
+    const match: Record<string, unknown> = {
+      createdAt: { $gte: start, $lt: end },
+      status: { $in: ORDER_STATUSES_FOR_REVENUE },
+    };
+    if (storeIds?.length) {
+      match.store = { $in: storeIds };
+    }
+    const orders = await this.orderModel
+      .find(match)
+      .populate<{ store?: { currency?: string } }>('store', 'currency')
+      .select('totalPrice currency stripeParentPaymentId store createdAt')
+      .lean()
+      .exec();
+    const stripeCurrencyBySessionId = await this.stripeCurrencyBySessionIds(
+      orders.map((o) => String(o.stripeParentPaymentId ?? '')),
+    );
+    const z = PEAK_HOURS_TZ;
+    const out = new Map<string, Map<string, number>>();
+    for (const o of orders) {
+      const created = o.createdAt ? dayjs(o.createdAt).tz(z) : null;
+      if (!created?.isValid()) continue;
+      const bucketKey =
+        bucket === 'month'
+          ? created.format('YYYY-MM')
+          : created.format('YYYY-MM-DD');
+      const currency = this.resolveDashboardOrderCurrency(
+        {
+          currency: o.currency,
+          stripeParentPaymentId: o.stripeParentPaymentId,
+          store: o.store,
+        },
+        stripeCurrencyBySessionId,
+      );
+      const amount = Number(o.totalPrice);
+      const bucketMap = out.get(bucketKey) ?? new Map<string, number>();
+      pushCurrencyAmount(
+        bucketMap,
+        currency,
+        Number.isFinite(amount) ? amount : 0,
+      );
+      out.set(bucketKey, bucketMap);
+    }
+    return out;
   }
 
   private async revenueBreakdownInRange(

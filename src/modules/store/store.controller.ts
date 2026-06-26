@@ -250,6 +250,22 @@ export class StoreController {
     );
   }
 
+  /** Messages système d'une boutique (léger, temps réel via WS `inbox:feed:refresh`). */
+  @Get('vendor/messages')
+  @UseGuards(JwtGuard)
+  async getVendorStoreMessages(
+    @Req() req: Request,
+    @Query('storeId') storeId?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const parsedLimit = limit != null ? Number.parseInt(limit, 10) : undefined;
+    return this._storeService.findMyStoreMessages(
+      req.user as UserModel,
+      storeId,
+      Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+    );
+  }
+
   /** Fil unique : messages boutique (`stores.vendor_messages`) + fil user (`users.reward_history`). */
   @Get('vendor/notifications')
   @UseGuards(JwtGuard)

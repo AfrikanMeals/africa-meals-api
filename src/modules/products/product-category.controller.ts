@@ -7,6 +7,7 @@ import {
   Get,
   Header,
   Inject,
+  Logger,
   Param,
   Patch,
   Post,
@@ -27,18 +28,28 @@ import { ProductCategoryService } from './product-category.service';
 @ApiTags('products')
 @Controller('product-categories')
 export class ProductCategoryController {
+  private readonly _logger = new Logger(ProductCategoryController.name);
+
   @Inject(ProductCategoryService)
   private readonly _productCategoryService: ProductCategoryService;
 
   @Get('')
   @Header('Cache-Control', 'public, max-age=60, stale-while-revalidate=300')
   async filter() {
-    const rows = await this._productCategoryService.filter();
-    return rows.map((r) =>
-      slimProductCategoryForPublicClient(
-        r as unknown as Record<string, unknown>,
-      ),
-    );
+    try {
+      const rows = await this._productCategoryService.filter();
+      return rows.map((r) =>
+        slimProductCategoryForPublicClient(
+          r as unknown as Record<string, unknown>,
+        ),
+      );
+    } catch (e) {
+      this._logger.error(
+        `GET /product-categories failed: ${(e as Error).message}`,
+        (e as Error).stack,
+      );
+      return [];
+    }
   }
 
   @Post('')

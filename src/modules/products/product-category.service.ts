@@ -295,11 +295,17 @@ export class ProductCategoryService implements OnModuleInit {
    */
   async filter(): Promise<PublicProductCategoryRow[]> {
     const categoriesCache = this._cacheLayer.cacheFor('productCategories');
-    const cached = await categoriesCache.get<PublicProductCategoryRow[]>(
-      ProductCategoryService._publicListCacheKey,
-    );
-    if (cached != null && cached.length > 0) {
-      return cached;
+    try {
+      const cached = await categoriesCache.get<PublicProductCategoryRow[]>(
+        ProductCategoryService._publicListCacheKey,
+      );
+      if (cached != null && cached.length > 0) {
+        return cached;
+      }
+    } catch (e) {
+      this._logger.warn(
+        `categories cache read failed: ${(e as Error).message}`,
+      );
     }
 
     try {
@@ -388,11 +394,17 @@ export class ProductCategoryService implements OnModuleInit {
         async (doc: Record<string, unknown>) => this.serializeCategoryRow(doc),
       );
       if (result.length > 0) {
-        await categoriesCache.set(
-          ProductCategoryService._publicListCacheKey,
-          result,
-          this._categoriesListTtlMs(),
-        );
+        try {
+          await categoriesCache.set(
+            ProductCategoryService._publicListCacheKey,
+            result,
+            this._categoriesListTtlMs(),
+          );
+        } catch (e) {
+          this._logger.warn(
+            `categories cache write failed: ${(e as Error).message}`,
+          );
+        }
       }
       return result;
     } catch (e) {
@@ -400,11 +412,17 @@ export class ProductCategoryService implements OnModuleInit {
       try {
         const fallback = await this._filterWithCounts();
         if (fallback.length > 0) {
-          await categoriesCache.set(
-            ProductCategoryService._publicListCacheKey,
-            fallback,
-            this._categoriesListTtlMs(),
-          );
+          try {
+            await categoriesCache.set(
+              ProductCategoryService._publicListCacheKey,
+              fallback,
+              this._categoriesListTtlMs(),
+            );
+          } catch (e) {
+            this._logger.warn(
+              `categories cache write failed: ${(e as Error).message}`,
+            );
+          }
         }
         return fallback;
       } catch (e2) {
@@ -426,9 +444,18 @@ export class ProductCategoryService implements OnModuleInit {
       typeof imageRaw === 'string' && imageRaw.trim().length > 0
         ? imageRaw.trim()
         : undefined;
-    const resolvedImage = image
-      ? (await this._mediasService.resolvePublicMediaUrl(image)) ?? image
-      : undefined;
+    let resolvedImage: string | undefined;
+    if (image) {
+      try {
+        resolvedImage =
+          (await this._mediasService.resolvePublicMediaUrl(image)) ?? image;
+      } catch (e) {
+        this._logger.warn(
+          `category image resolve failed (${id}): ${(e as Error).message}`,
+        );
+        resolvedImage = image;
+      }
+    }
     return {
       id,
       _id: id,

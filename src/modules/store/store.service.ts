@@ -1031,7 +1031,7 @@ export class StoreService {
         select: 'address city country zipCode countryCode location',
       })
       .select(
-        'name bio businessType email phoneNumber currency region status vendorMessages acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders acceptsPickupPayOnDelivery mealPreOrderCatalogScope partnerBadgeCode timezone workingHours',
+        'name bio businessType email phoneNumber currency region status acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders acceptsPickupPayOnDelivery mealPreOrderCatalogScope partnerBadgeCode timezone workingHours',
       )
       .lean()
       .exec();
@@ -1043,12 +1043,6 @@ export class StoreService {
       String((store as { owner?: { toString(): string } }).owner ?? '') ===
         String(user._id);
     const doc = store as Record<string, unknown>;
-    const raw = (doc.vendorMessages as Record<string, unknown>[]) ?? [];
-    const messages = [...raw].sort(
-      (a, b) =>
-        new Date(String(b.createdAt)).getTime() -
-        new Date(String(a.createdAt)).getTime(),
-    );
     const st = doc.status as StoreStatusEnum;
     const canEditApplication =
       isOwner &&
@@ -1182,11 +1176,6 @@ export class StoreService {
         canEditApplication,
         profile,
         application: canEditApplication ? profile : null,
-        messages: messages.map((m) => ({
-          message: String(m.message ?? ''),
-          from: String(m.from ?? 'SYSTEM'),
-          createdAt: m.createdAt,
-        })),
         profileImage,
         dailyMenuByWeekday,
         partnerBadge: serializePartnerBadge(
@@ -1700,6 +1689,78 @@ export class StoreService {
         throw new BadRequestException('daily_menu_insufficient_stock');
       }
     }
+  }
+
+  /** Messages système boutique (`vendor_messages`) — endpoint léger + push WS `inbox:feed:refresh`. */
+  async findMyStoreMessages(
+    user: UserModel,
+    storeId?: string,
+    limitRaw?: number,
+  ) {
+    const access = await this._storeAccess.resolveStoreAccess(user);
+    const requested = storeId?.trim();
+    let targetId = requested;
+    if (!targetId) {
+      const owned =
+        access.find((a) => a.isOwner)?.storeId ?? access[0]?.storeId;
+      targetId = owned;
+    }
+    if (!targetId) {
+      return {
+        storeId: null as null,
+        messages: [] as Array<{
+          message: string;
+          from: string;
+          createdAt: string;
+        }>,
+      };
+    }
+    const row = access.find((a) => a.storeId === targetId);
+    if (!row) {
+      throw new ForbiddenException('store_not_found');
+    }
+
+    const limit = Math.min(
+      500,
+      Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw!) : 200),
+    );
+
+    const store = await this._storeModel
+      .findById(targetId)
+      .select('vendorMessages')
+      .lean()
+      .exec();
+    if (!store) {
+      return { storeId: targetId, messages: [] };
+    }
+
+    const raw =
+      (
+        store as {
+          vendorMessages?: Array<{
+            message?: string;
+            from?: string;
+            createdAt?: Date;
+          }>;
+        }
+      ).vendorMessages ?? [];
+    const messages = [...raw]
+      .sort(
+        (a, b) =>
+          new Date(String(b.createdAt ?? 0)).getTime() -
+          new Date(String(a.createdAt ?? 0)).getTime(),
+      )
+      .slice(0, limit)
+      .map((m) => ({
+        message: String(m.message ?? ''),
+        from: String(m.from ?? 'SYSTEM'),
+        createdAt:
+          m.createdAt instanceof Date
+            ? m.createdAt.toISOString()
+            : String(m.createdAt ?? new Date().toISOString()),
+      }));
+
+    return { storeId: targetId, messages };
   }
 
   /**
