@@ -82,6 +82,7 @@ import {
   StoreProfileImageJsonDto,
 } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
+import { ResetStripeConnectDto } from './dto/reset-stripe-connect.dto';
 import { StoreService } from './store.service';
 import { SetPartnerBadgeDto } from '@common/partner-badges/dto/set-partner-badge.dto';
 import { listPartnerBadgeDefinitions } from '@common/partner-badges/partner-badge.constants';
@@ -359,13 +360,16 @@ export class StoreController {
   /** Déconnecte Stripe Connect du vendeur — nouvel onboarding requis. */
   @Post('admin/vendors/:storeId/reset-stripe-connect')
   @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   async resetVendorStripeConnect(
     @Param('storeId') storeId: string,
     @Req() req: Request,
+    @Body() body: ResetStripeConnectDto,
   ) {
     return this._storeService.resetVendorStripeConnectForAdmin(
       storeId,
       req.user as UserModel,
+      { archiveOpenOrders: body.archiveOpenOrders === true },
     );
   }
 

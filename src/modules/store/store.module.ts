@@ -35,6 +35,10 @@ import { AddressModel, AddressSchema } from '@schemas/address.schema';
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
+import {
+  VendorStripeResetOrderArchiveModel,
+  VendorStripeResetOrderArchiveSchema,
+} from '@schemas/vendor-stripe-reset-order-archive.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import {
   VendorSubscriptionModel,
@@ -93,6 +97,10 @@ import { StoreSubscribersModule } from '@modules/store-subscribers/store-subscri
       { name: ProductModel.name, schema: ProductSchema },
       { name: ProductRatingModel.name, schema: ProductRatingSchema },
       { name: OrderModel.name, schema: OrderSchema },
+      {
+        name: VendorStripeResetOrderArchiveModel.name,
+        schema: VendorStripeResetOrderArchiveSchema,
+      },
       { name: AddressModel.name, schema: AddressSchema },
       {
         name: VendorSubscriptionModel.name,

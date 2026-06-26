@@ -49,6 +49,9 @@ import { ProductRatingModel } from '@schemas/product_rating.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import {
+  VendorStripeResetOrderArchiveModel,
+} from '@schemas/vendor-stripe-reset-order-archive.schema';
+import {
   MealPreOrderCatalogScopeEnum,
   StoreModel,
   StoreStatusEnum,
@@ -56,6 +59,7 @@ import {
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { VendorSubscriptionModel } from '@schemas/vendor-subscription.schema';
 import { Model, Types } from 'mongoose';
+import { randomUUID } from 'crypto';
 import {
   CreateStoreDto,
   DailyMenuItemDto,
@@ -236,6 +240,9 @@ export class StoreService {
 
   @InjectModel(OrderModel.name)
   private readonly _orderModel: Model<OrderModel>;
+
+  @InjectModel(VendorStripeResetOrderArchiveModel.name)
+  private readonly _stripeResetArchiveModel: Model<VendorStripeResetOrderArchiveModel>;
 
   @InjectModel(VendorSubscriptionModel.name)
   private readonly _vendorSubscriptionModel: Model<VendorSubscriptionModel>;
@@ -3527,8 +3534,58 @@ export class StoreService {
     return this.getVendorStoreDetailForAdmin(storeId, admin);
   }
 
+  private async _archiveOpenOrdersForStripeReset(params: {
+    resetBatchId: string;
+    storeId: Types.ObjectId;
+    ownerId: Types.ObjectId;
+    stripeConnectAccountId: string;
+    orders: Array<Record<string, unknown>>;
+    admin: UserModel;
+  }): Promise<number> {
+    if (!params.orders.length) return 0;
+
+    const docs = params.orders
+      .map((order) => {
+        const orderIdRaw = order._id;
+        const orderIdStr = this.stringifyIdLike(orderIdRaw);
+        if (!orderIdStr || !Types.ObjectId.isValid(orderIdStr)) {
+          return null;
+        }
+        const status = String(order.status ?? '').trim();
+        if (
+          ![
+            OrderStatusEnum.PAIED,
+            OrderStatusEnum.APPROVED,
+            OrderStatusEnum.SHIPPED,
+          ].includes(status as OrderStatusEnum)
+        ) {
+          return null;
+        }
+        return {
+          resetBatchId: params.resetBatchId,
+          storeId: params.storeId,
+          ownerId: params.ownerId,
+          orderId: new Types.ObjectId(orderIdStr),
+          stripeConnectAccountId: params.stripeConnectAccountId,
+          orderStatus: status as OrderStatusEnum,
+          orderSnapshot: order,
+          archivedByAdminId: params.admin._id,
+          archivedByAdminEmail: params.admin.email ?? '',
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row != null);
+
+    if (!docs.length) return 0;
+    await this._stripeResetArchiveModel.insertMany(docs, { ordered: false });
+    return docs.length;
+  }
+
   /** Déconnecte Stripe Connect du propriétaire pour permettre un nouvel onboarding. */
-  async resetVendorStripeConnectForAdmin(storeId: string, admin: UserModel) {
+  async resetVendorStripeConnectForAdmin(
+    storeId: string,
+    admin: UserModel,
+    options?: { archiveOpenOrders?: boolean },
+  ) {
     await this._assertAdminVendorPermission(admin);
     if (!Types.ObjectId.isValid(storeId)) {
       throw new NotFoundException('store_not_found');
@@ -3542,20 +3599,51 @@ export class StoreService {
       throw new NotFoundException('store_not_found');
     }
 
+    const openOrderStatuses = [
+      OrderStatusEnum.PAIED,
+      OrderStatusEnum.APPROVED,
+      OrderStatusEnum.SHIPPED,
+    ];
+
     const openOrders = await this._orderModel
-      .countDocuments({
+      .find({
         store: doc._id,
-        status: {
-          $in: [
-            OrderStatusEnum.PAIED,
-            OrderStatusEnum.APPROVED,
-            OrderStatusEnum.SHIPPED,
-          ],
-        },
+        status: { $in: openOrderStatuses },
       })
+      .lean()
       .exec();
-    if (openOrders > 0) {
-      throw new ConflictException('stripe_reset_has_open_orders');
+
+    let archivedOrdersCount = 0;
+    let resetBatchId: string | undefined;
+
+    if (openOrders.length > 0) {
+      if (!options?.archiveOpenOrders) {
+        throw new ConflictException('stripe_reset_has_open_orders');
+      }
+
+      const ownerId = this.stringifyIdLike(doc.owner);
+      if (!ownerId || !Types.ObjectId.isValid(ownerId)) {
+        throw new BadRequestException('store_owner_missing');
+      }
+
+      const owner = await this._userModel
+        .findById(ownerId)
+        .select('stripeConnectAccountId email')
+        .exec();
+      const stripeAccountId = String(owner?.stripeConnectAccountId ?? '').trim();
+      if (!stripeAccountId) {
+        throw new BadRequestException('stripe_connect_not_linked');
+      }
+
+      resetBatchId = randomUUID();
+      archivedOrdersCount = await this._archiveOpenOrdersForStripeReset({
+        resetBatchId,
+        storeId: doc._id as Types.ObjectId,
+        ownerId: new Types.ObjectId(ownerId),
+        stripeConnectAccountId: stripeAccountId,
+        orders: openOrders,
+        admin,
+      });
     }
 
     const ownerId = (() => {
@@ -3599,6 +3687,8 @@ export class StoreService {
         storeName: String(doc.name ?? ''),
         previousAccountId: resetResult.previousAccountId,
         deletedOnStripe: resetResult.deletedOnStripe,
+        archivedOrdersCount,
+        resetBatchId: resetBatchId ?? null,
       },
     });
 
