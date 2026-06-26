@@ -167,6 +167,8 @@ export class AdminUsersService {
     await this.assertAdmin(actor);
     const page = Math.max(1, query.page ?? 1);
     const limit = Math.min(100, Math.max(1, query.limit ?? 25));
+    const sortField = query.field ?? 'createdAt';
+    const sortDir = query.order === 'ASC' ? 1 : -1;
     const filter: FilterQuery<UserModel> = {};
 
     if (query.type) {
@@ -196,7 +198,7 @@ export class AdminUsersService {
       this.userModel
         .find(filter)
         .select(ADMIN_USER_SELECT)
-        .sort({ createdAt: -1 })
+        .sort({ [sortField]: sortDir })
         .skip((page - 1) * limit)
         .limit(limit)
         .lean()

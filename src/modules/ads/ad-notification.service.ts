@@ -118,6 +118,18 @@ type RecipientRow = {
   fullName: string;
 };
 
+export type FcmMulticastStats = {
+  sent: number;
+  failures: number;
+  deviceCount: number;
+};
+
+export type FcmMobileChannelResult = {
+  inboxCreated: boolean;
+  push?: FcmMulticastStats;
+  inAppFcm?: FcmMulticastStats;
+};
+
 @Injectable()
 export class AdNotificationService {
   private readonly logger = new Logger(AdNotificationService.name);
@@ -853,8 +865,8 @@ export class AdNotificationService {
     campaignItems?: AdNotificationItemPayload[];
     addon: NotificationAddonPayload;
     recipients: RecipientRow[];
-  }): Promise<void> {
-    if (!args.recipients.length) return;
+  }): Promise<FcmMobileChannelResult | undefined> {
+    if (!args.recipients.length) return undefined;
 
     let campaignItems = args.campaignItems ?? [];
     if (!campaignItems.length) {
@@ -876,18 +888,30 @@ export class AdNotificationService {
       appScheme: this.appScheme(),
     };
 
+    let merged: FcmMobileChannelResult | undefined;
+
     await this.mapPool(
       args.recipients,
       this.recipientParallel(),
       async (recipient) => {
-        await this.sendToRecipient({
+        const fcm = await this.sendToRecipient({
           ...args,
           campaignItems,
           recipient,
           linkBase,
         });
+        if (!fcm) return;
+        if (!merged) {
+          merged = { inboxCreated: fcm.inboxCreated };
+        } else {
+          merged.inboxCreated = merged.inboxCreated || fcm.inboxCreated;
+        }
+        if (fcm.push) merged.push = fcm.push;
+        if (fcm.inAppFcm) merged.inAppFcm = fcm.inAppFcm;
       },
     );
+
+    return merged;
   }
 
   private async sendToRecipient(args: {
@@ -903,7 +927,7 @@ export class AdNotificationService {
     addon: NotificationAddonPayload;
     recipient: RecipientRow;
     linkBase: Omit<Parameters<typeof buildAdNotificationAppDeepLink>[0], 'deliveryId'>;
-  }): Promise<void> {
+  }): Promise<FcmMobileChannelResult | undefined> {
     const { addon, recipient, linkBase } = args;
 
     const targetItem = await this.resolveTargetedCampaignItemForRecipient({
@@ -916,6 +940,7 @@ export class AdNotificationService {
     const channelArgs = { ...args, targetItem, targetLink };
 
     const tasks: Promise<void>[] = [];
+    let fcmResult: FcmMobileChannelResult | undefined;
 
     if (addon.channels.email && recipient.email) {
       tasks.push(
@@ -936,14 +961,12 @@ export class AdNotificationService {
       );
     }
     if (addon.channels.inApp || addon.channels.push) {
-      tasks.push(
-        this.sendFcmMobileChannels({
-          ...channelArgs,
-          linkBase,
-          inApp: addon.channels.inApp,
-          push: addon.channels.push,
-        }),
-      );
+      fcmResult = await this.sendFcmMobileChannels({
+        ...channelArgs,
+        linkBase,
+        inApp: addon.channels.inApp,
+        push: addon.channels.push,
+      });
     }
     if (addon.channels.whatsapp && recipient.phone) {
       tasks.push(
@@ -956,6 +979,7 @@ export class AdNotificationService {
     }
 
     await Promise.all(tasks);
+    return fcmResult;
   }
 
   private async recordDelivery(args: {
@@ -1138,12 +1162,13 @@ export class AdNotificationService {
     targetLink: AdNotificationTargetLinkParams;
     inApp: boolean;
     push: boolean;
-  }): Promise<void> {
+  }): Promise<FcmMobileChannelResult> {
     const pushBody = args.targetItem
       ? `${args.body} — ${args.targetItem.title}`.trim().slice(0, 500)
       : args.body;
     const deliveryIdInApp = args.inApp ? randomUUID() : '';
     const deliveryIdPush = args.push ? randomUUID() : '';
+    const result: FcmMobileChannelResult = { inboxCreated: false };
 
     let inboxNotificationId: string | undefined;
     if (args.inApp && deliveryIdInApp) {
@@ -1171,6 +1196,7 @@ export class AdNotificationService {
           sendPush: false,
         });
         inboxNotificationId = created.id;
+        result.inboxCreated = true;
         this.wsInboxNotify.notifyUserInboxRefresh(args.recipient.userId);
       } catch (e) {
         this.logger.warn(
@@ -1207,6 +1233,7 @@ export class AdNotificationService {
           androidChannelId: this.adFcmAndroidChannelId(),
         });
         this.logAdFcmResult('push', args.recipient.userId, res);
+        result.push = res;
       } catch (e) {
         this.logger.warn(
           `ad FCM push ${deliveryIdPush}: ${e instanceof Error ? e.message : String(e)}`,
@@ -1241,6 +1268,7 @@ export class AdNotificationService {
           dataOnly: true,
         });
         this.logAdFcmResult('in-app', args.recipient.userId, res);
+        result.inAppFcm = res;
       } catch (e) {
         this.logger.warn(
           `ad FCM in-app ${deliveryIdInApp}: ${e instanceof Error ? e.message : String(e)}`,
@@ -1283,6 +1311,7 @@ export class AdNotificationService {
       });
     }
     await this.recordDeliveriesBulk(deliveryRows);
+    return result;
   }
 
   private async sendEmailChannel(args: {
@@ -1892,6 +1921,7 @@ export class AdNotificationService {
     body: string;
     channelsRequested: string[];
     message: string;
+    fcm: FcmMobileChannelResult | null;
   }> {
     await this.assertAdminSettings(user);
     const targetUserId = dto.targetUserId?.trim();
@@ -1941,7 +1971,7 @@ export class AdNotificationService {
       payload.entityId,
     );
 
-    await this.sendRecipientBatch({
+    const fcmResult = await this.sendRecipientBatch({
       entityType: payload.entityType,
       entityId: payload.entityId,
       adId: payload.adId,
@@ -1954,6 +1984,35 @@ export class AdNotificationService {
       addon,
       recipients: [recipient],
     });
+
+    const deliveryHints: string[] = [];
+    if (addon.channels.inApp && fcmResult?.inboxCreated) {
+      deliveryHints.push('Inbox in-app créée (WS refresh).');
+    }
+    if (addon.channels.push) {
+      const push = fcmResult?.push;
+      if (!push || push.deviceCount === 0) {
+        deliveryHints.push(
+          'Push FCM : aucun jeton enregistré pour cet utilisateur sur cet environnement API (POST /auth/me/fcm-token depuis l’app connectée au même API).',
+        );
+      } else {
+        deliveryHints.push(
+          `Push FCM : ${push.sent}/${push.deviceCount} appareil(s)${push.failures > 0 ? ` (${push.failures} échec(s))` : ''}.`,
+        );
+      }
+    }
+    if (addon.channels.inApp && !addon.channels.push) {
+      const inApp = fcmResult?.inAppFcm;
+      if (!inApp || inApp.deviceCount === 0) {
+        deliveryHints.push(
+          'FCM in-app (data) : aucun jeton — l’app doit être ouverte ou reconnectée au même API.',
+        );
+      } else {
+        deliveryHints.push(
+          `FCM in-app : ${inApp.sent}/${inApp.deviceCount} appareil(s).`,
+        );
+      }
+    }
 
     this.logger.log(
       `[ad-notification-test] admin=${String(user._id)} → user=${recipient.userId} channels=${channelsRequested.join(',')} entity=${payload.entityType}/${payload.entityId}`,
@@ -1972,8 +2031,11 @@ export class AdNotificationService {
       title: payload.title,
       body: payload.body,
       channelsRequested,
+      fcm: fcmResult ?? null,
       message:
-        'Envoi terminé. Vérifiez la boîte mail, l’app (in-app / push) ou les logs API.',
+        deliveryHints.length > 0
+          ? deliveryHints.join(' ')
+          : 'Envoi terminé. Vérifiez la boîte mail, l’app (in-app / push) ou les logs API.',
     };
   }
 

@@ -20,6 +20,7 @@ import { Request } from 'express';
 import { UsageTimeService } from '@modules/usage-time/usage-time.service';
 import { AdminUsersService } from './admin-users.service';
 import { AdminListUsersQueryDto } from './dto/admin-list-users-query.dto';
+import { AdminSearchUsersBodyDto } from './dto/admin-search-users-body.dto';
 import { AdminSetUserDisabledDto } from './dto/admin-set-user-disabled.dto';
 import { AdminUpdateUserDto } from './dto/admin-update-user.dto';
 
@@ -39,6 +40,32 @@ export class AdminUsersController {
   @ApiOperation({ summary: 'Liste paginée des comptes plateforme (admin.settings)' })
   list(@Req() req: Request, @Query() query: AdminListUsersQueryDto) {
     return this.adminUsers.listUsers(req.user as UserModel, query);
+  }
+
+  @Post('search')
+  @ApiFieldSelection()
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: false,
+    }),
+  )
+  @ApiOperation({
+    summary:
+      'Recherche paginée des comptes (POST, compat admin — filtres dans le corps)',
+  })
+  search(
+    @Req() req: Request,
+    @Query() query: AdminListUsersQueryDto,
+    @Body() body: AdminSearchUsersBodyDto,
+  ) {
+    return this.adminUsers.listUsers(req.user as UserModel, {
+      ...query,
+      search: body.search ?? query.search,
+      type: body.type ?? query.type,
+      status: body.status ?? query.status,
+    });
   }
 
   @Get(':userId/interests')
