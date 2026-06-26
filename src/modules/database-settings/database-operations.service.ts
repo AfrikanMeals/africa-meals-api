@@ -219,8 +219,15 @@ export class DatabaseOperationsService {
 
     try {
       await client.connect();
-      const targetDb = client.db();
-      const targetSummary = summarizeMongoUri(targetUri);
+      const sourceDbName = sourceDb.databaseName;
+      const uriDbName = client.db().databaseName;
+      const targetDbName =
+        uriDbName && !['admin', 'local', 'config'].includes(uriDbName)
+          ? uriDbName
+          : sourceDbName;
+      const targetDb = client.db(targetDbName);
+      const hostPart = summarizeMongoUri(targetUri).replace(/\/[^/]+$/, '');
+      const targetSummary = `${hostPart}/${targetDbName}`;
 
       const names = await this.listUserCollections();
       const total = names.length;
@@ -236,12 +243,16 @@ export class DatabaseOperationsService {
         return { collections: copied };
       }
 
-      await onProgress?.(
-        2,
-        `${total} collection(s) · connexion OK (${targetSummary})`,
-        'preparing',
-        { current: 0, total, documentsCopied: 0 },
-      );
+      const preparingLabel =
+        targetDbName !== sourceDbName
+          ? `${total} collection(s) · ${sourceDbName} → ${targetDbName}`
+          : `${total} collection(s) · connexion OK (${targetSummary})`;
+
+      await onProgress?.(2, preparingLabel, 'preparing', {
+        current: 0,
+        total,
+        documentsCopied: 0,
+      });
 
       let documentsCopied = 0;
 
