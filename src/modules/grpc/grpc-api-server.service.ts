@@ -166,8 +166,26 @@ export class GrpcApiServerService implements OnModuleInit, OnModuleDestroy {
         }
         const userId = String(call.request.userId ?? '').trim();
         try {
-          const feed = await this.storeService.findNotificationFeedByUserId(userId);
-          callback(null, { feedJson: JSON.stringify(feed ?? { items: [] }) });
+          const [vendorFeed, appInbox] = await Promise.all([
+            this.storeService.findNotificationFeedByUserId(userId),
+            userId
+              ? this.notifications.listInboxForUser({
+                  userId,
+                  limit: 12,
+                })
+              : Promise.resolve({
+                  items: [],
+                  nextCursor: null,
+                  unreadCount: 0,
+                }),
+          ]);
+          callback(null, {
+            feedJson: JSON.stringify({
+              items: vendorFeed.items ?? [],
+              appInboxItems: appInbox.items,
+              appInboxUnreadCount: appInbox.unreadCount,
+            }),
+          });
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           callback(null, { feedJson: JSON.stringify({ items: [], error: msg }) });
