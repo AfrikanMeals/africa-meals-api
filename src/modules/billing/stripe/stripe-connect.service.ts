@@ -1,8 +1,10 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
+  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -18,6 +20,8 @@ import {
 } from 'libphonenumber-js';
 import { WsStripeConnectNotifyService } from '@modules/ws-notify/ws-stripe-connect-notify.service';
 import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-email.service';
+import { StoreLaunchNotifierService } from '@modules/store/store-launch-notifier.service';
+import { isStripeConnectOnboardingCompleteUser } from '@modules/billing/stripe/stripe-connect-visibility';
 import {
   getPartnerBadgeDefinition,
   partnerBadgePayoutMethod,
@@ -606,6 +610,8 @@ export class StripeConnectService {
     private readonly storeModel: Model<StoreModel>,
     private readonly wsStripeConnectNotify: WsStripeConnectNotifyService,
     private readonly vendorStatusEmail: VendorStatusEmailService,
+    @Inject(forwardRef(() => StoreLaunchNotifierService))
+    private readonly storeLaunchNotifier: StoreLaunchNotifierService,
   ) {}
 
   private stripe(): StripeClient {
@@ -1148,6 +1154,7 @@ export class StripeConnectService {
       .exec();
     if (!user) return;
     const uid = this.userId(user);
+    const wasOnboarded = isStripeConnectOnboardingCompleteUser(user);
     const previousStatus = this.statusFromAccount(
       this.cachedConnectAccountFromUser(user, accountId),
       user,
@@ -1158,6 +1165,14 @@ export class StripeConnectService {
     this.logger.log(
       `Stripe Connect account.updated synced for user ${uid} (status=${status.status})`,
     );
+    const isOnboarded = isConnectFullyActive(account);
+    if (
+      !wasOnboarded &&
+      isOnboarded &&
+      user.type === UserTypeEnum.VENDOR
+    ) {
+      this.storeLaunchNotifier.scheduleNotifyForOwnerStores(uid.toString());
+    }
     if (previousStatus !== status.status) {
       void this.emailConnectStatusChange(
         user,

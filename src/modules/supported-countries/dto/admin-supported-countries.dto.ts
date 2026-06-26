@@ -10,10 +10,15 @@ import {
   IsString,
   Length,
   Matches,
+  Max,
   Min,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+
+export const CATALOG_SEARCH_RADIUS_KM_MIN = 1;
+export const CATALOG_SEARCH_RADIUS_KM_MAX = 100;
+export const CATALOG_SEARCH_RADIUS_KM_DEFAULT = 30;
 
 export class AdminSupportedCountryItemDto {
   @ApiProperty({ example: 'CA' })
@@ -76,6 +81,18 @@ export class AdminSupportedCountryItemDto {
   @IsNumber()
   @Min(0.0001)
   adCashToCurrencyRate?: number;
+
+  @ApiProperty({
+    example: 30,
+    required: false,
+    description:
+      'Rayon de recherche catalogue (restaurants, produits) autour du client, en km.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(CATALOG_SEARCH_RADIUS_KM_MIN)
+  @Max(CATALOG_SEARCH_RADIUS_KM_MAX)
+  catalogSearchRadiusKm?: number;
 }
 
 export class AdminSupportedCountriesUpdateDto {

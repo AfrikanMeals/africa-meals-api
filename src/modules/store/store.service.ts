@@ -97,6 +97,7 @@ import { SubscriptionsService } from '@modules/subscriptions/subscriptions.servi
 import { BusinessTypesService } from '@modules/business-types/business-types.service';
 import { DashboardAuditService } from '@modules/dashboard-audit/dashboard-audit.service';
 import { SitemapDispatchService } from '@modules/public-seo/sitemap-dispatch.service';
+import { StoreLaunchNotifierService } from './store-launch-notifier.service';
 
 @Injectable()
 export class StoreService {
@@ -329,6 +330,9 @@ export class StoreService {
 
   @Inject(BusinessTypesService)
   private readonly _businessTypesService: BusinessTypesService;
+
+  @Inject(StoreLaunchNotifierService)
+  private readonly _storeLaunchNotifier: StoreLaunchNotifierService;
 
   private async _resolveVendorDeliveryDriverSettings(
     storeId: string | undefined,
@@ -3131,6 +3135,7 @@ export class StoreService {
       previousStatus !== StoreStatusEnum.ACTIVE
     ) {
       this._sitemapDispatch.requestRegenerate('store_activated');
+      this._storeLaunchNotifier.scheduleMaybeNotify(storeId);
     }
 
     const ownerIdForWs = (() => {

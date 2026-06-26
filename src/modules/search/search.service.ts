@@ -12,6 +12,7 @@ import {
   embeddedStoreRegionMatch,
   storeDirectRegionMatch,
 } from '@modules/supported-countries/client-market-region.util';
+import { isGeoPlausibleForCatalogRegion } from '@modules/supported-countries/catalog-geo-region.util';
 import {
   AppCacheKeys,
   apiPublicCacheTtlMs,
@@ -90,6 +91,33 @@ export class SearchService {
     const ln = args.longitude;
     return (
       la != null && ln != null && Number.isFinite(la) && Number.isFinite(ln)
+    );
+  }
+
+  /** Retire le geo client s'il est incompatible avec le marché catalogue (ex. GPS simulateur au Canada + countryCode CM). */
+  private _stripGeoIfOutsideCatalogRegion(
+    args: SearchDto,
+    region: string,
+  ): void {
+    if (!this._hasSearchGeo(args)) return;
+    const lat = args.latitude as number;
+    const lng = args.longitude as number;
+    if (isGeoPlausibleForCatalogRegion(lat, lng, region)) return;
+    args.latitude = undefined;
+    args.longitude = undefined;
+    args.maxDistanceKm = undefined;
+    if (args.sortBy === SortBy.DISTANCE) {
+      args.sortBy = SortBy.CREATED_AT;
+      args.sortDirection = SortOrder.DESC;
+    }
+  }
+
+  private _hasSearchGeoForRegion(args: SearchDto, region: string): boolean {
+    if (!this._hasSearchGeo(args)) return false;
+    return isGeoPlausibleForCatalogRegion(
+      args.latitude as number,
+      args.longitude as number,
+      region,
     );
   }
 
@@ -294,6 +322,7 @@ export class SearchService {
   /** Avant facet boutiques : coords + distance + filtre rayon + tri menu du jour (nombre de plats du jour). */
   private async _storeDistanceAndMenuStages(
     args: SearchDto,
+    region: string,
   ): Promise<PipelineStage[]> {
     const regionTimezoneMap =
       await this._supportedCountries.getRegionTimezoneMap();
@@ -399,7 +428,7 @@ export class SearchService {
       },
     ];
 
-    if (this._hasSearchGeo(args)) {
+    if (this._hasSearchGeoForRegion(args, region)) {
       const uLat = args.latitude as number;
       const uLon = args.longitude as number;
       const maxKm = args.maxDistanceKm ?? 30;
@@ -783,10 +812,17 @@ export class SearchService {
   @Inject(ModuleCacheLayerService)
   private readonly _cacheLayer: ModuleCacheLayerService;
 
-  private async _applyPlatformSearchSettings(args: SearchDto): Promise<void> {
+  private async _applyPlatformSearchSettings(
+    args: SearchDto,
+    regionCode?: string,
+  ): Promise<void> {
     const cfg = await this._searchSettings.getSearchRuntimeConfig();
     if (this._hasSearchGeo(args) && args.maxDistanceKm == null) {
-      args.maxDistanceKm = cfg.defaultMaxDistanceKm;
+      const regionalRadius =
+        regionCode != null
+          ? await this._supportedCountries.getCatalogSearchRadiusKm(regionCode)
+          : null;
+      args.maxDistanceKm = regionalRadius ?? cfg.defaultMaxDistanceKm;
     }
     const allowed = new Set<SearchContent>();
     if (cfg.searchProductsEnabled) allowed.add(SearchContent.PRODUCTS);
@@ -814,13 +850,14 @@ export class SearchService {
   async filter(args: SearchDto, user?: UserModel) {
     args.page = args.page ?? 1;
     args.take = args.take ?? 5;
-    await this._applyPlatformSearchSettings(args);
-    this._normalizeSearchGeoArgs(args);
     const clientRegion =
       await this._supportedCountries.resolveClientCatalogRegion(
         user,
         args.countryCode,
       );
+    await this._applyPlatformSearchSettings(args, clientRegion);
+    this._stripGeoIfOutsideCatalogRegion(args, clientRegion);
+    this._normalizeSearchGeoArgs(args);
     if (this._isSearchFilterCacheable(args)) {
       const scope = cacheUserScope(user);
       const hash = stableCacheHash({
@@ -2101,7 +2138,10 @@ export class SearchService {
         ],
       });
     }
-    const storeDistanceStages = await this._storeDistanceAndMenuStages(args);
+    const storeDistanceStages = await this._storeDistanceAndMenuStages(
+      args,
+      region,
+    );
     const pipeline: PipelineStage[] = [
       {
         $match: {

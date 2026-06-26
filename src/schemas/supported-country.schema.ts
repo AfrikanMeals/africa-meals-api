@@ -95,6 +95,12 @@ export class SupportedCountryModel extends BaseSchema {
    */
   @Prop({ required: false, default: 1, min: 0.0001 })
   adCashToCurrencyRate?: number;
+
+  /**
+   * Rayon de recherche catalogue (restaurants, produits) autour du client, en km.
+   */
+  @Prop({ required: false, default: 30, min: 1, max: 100 })
+  catalogSearchRadiusKm?: number;
 }
 
 export const SupportedCountrySchema = SchemaFactory.createForClass(

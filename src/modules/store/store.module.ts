@@ -49,6 +49,7 @@ import { DailyMenuReminderService } from './daily-menu-reminder.service';
 import { InternalSecretGuard } from '@modules/notifications/guards/internal-secret.guard';
 import { InternalInboxController } from './internal-inbox.controller';
 import { StoreController } from './store.controller';
+import { StoreLaunchNotifierService } from './store-launch-notifier.service';
 import { StoreRegionBackfillService } from './store-region-backfill.service';
 import { StoreService } from './store.service';
 import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/store-delivery-drivers.module';
@@ -59,6 +60,7 @@ import { StoreSubscribersModule } from '@modules/store-subscribers/store-subscri
   providers: [
     InternalSecretGuard,
     StoreService,
+    StoreLaunchNotifierService,
     DailyMenuReminderService,
     DailyMenuReminderCron,
     StoreRegionBackfillService,
@@ -108,6 +110,6 @@ import { StoreSubscribersModule } from '@modules/store-subscribers/store-subscri
       },
     ]),
   ],
-  exports: [StoreService, MongooseModule],
+  exports: [StoreService, StoreLaunchNotifierService, MongooseModule],
 })
 export class StoreModule {}

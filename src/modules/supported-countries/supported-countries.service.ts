@@ -25,6 +25,10 @@ import {
   stripeAmountFactor,
 } from '../../utils/stripe-currency-amount.util';
 
+export const CATALOG_SEARCH_RADIUS_KM_DEFAULT = 30;
+export const CATALOG_SEARCH_RADIUS_KM_MIN = 1;
+export const CATALOG_SEARCH_RADIUS_KM_MAX = 100;
+
 export type SupportedCountryPublicRow = {
   code: string;
   name: string;
@@ -33,7 +37,17 @@ export type SupportedCountryPublicRow = {
   timezone: string;
   stripeZeroDecimal: boolean;
   stripeAmountFactor: number;
+  catalogSearchRadiusKm: number;
 };
+
+function normalizeCatalogSearchRadiusKm(value: unknown): number {
+  const n = Number(value ?? CATALOG_SEARCH_RADIUS_KM_DEFAULT);
+  if (!Number.isFinite(n)) return CATALOG_SEARCH_RADIUS_KM_DEFAULT;
+  return Math.min(
+    CATALOG_SEARCH_RADIUS_KM_MAX,
+    Math.max(CATALOG_SEARCH_RADIUS_KM_MIN, Math.floor(n)),
+  );
+}
 
 function mapSupportedCountryPublicRow(doc: {
   code?: string;
@@ -42,6 +56,7 @@ function mapSupportedCountryPublicRow(doc: {
   currency?: string;
   timezone?: string | null;
   stripeZeroDecimal?: boolean | null;
+  catalogSearchRadiusKm?: number | null;
 }): SupportedCountryPublicRow {
   const currency = String(doc.currency ?? 'CAD').toUpperCase();
   const code = String(doc.code ?? '').toUpperCase();
@@ -57,6 +72,9 @@ function mapSupportedCountryPublicRow(doc: {
     timezone: normalizeRegionTimezone(doc.timezone, code),
     stripeZeroDecimal,
     stripeAmountFactor: stripeAmountFactor(currency, doc.stripeZeroDecimal),
+    catalogSearchRadiusKm: normalizeCatalogSearchRadiusKm(
+      doc.catalogSearchRadiusKm,
+    ),
   };
 }
 
@@ -349,6 +367,7 @@ export class SupportedCountriesService implements OnModuleInit {
       stripeZeroDecimal: boolean;
       stripeAmountFactor: number;
       adCashToCurrencyRate: number;
+      catalogSearchRadiusKm: number;
       taxes: RegionTaxRule[];
     }>
   > {
@@ -365,9 +384,29 @@ export class SupportedCountriesService implements OnModuleInit {
         active: Boolean(d.active),
         adCashToCurrencyRate:
           Number.isFinite(rate) && rate > 0 ? rate : 1,
+        catalogSearchRadiusKm: normalizeCatalogSearchRadiusKm(
+          d.catalogSearchRadiusKm,
+        ),
         taxes: normalizeRegionTaxRules(d.taxes),
       };
     });
+  }
+
+  /** Rayon catalogue (km) pour une région active ; défaut plateforme sinon. */
+  async getCatalogSearchRadiusKm(code: string): Promise<number> {
+    const c = String(code ?? '')
+      .trim()
+      .toUpperCase();
+    if (!/^[A-Z]{2}$/.test(c)) {
+      return CATALOG_SEARCH_RADIUS_KM_DEFAULT;
+    }
+    const doc = await this._model
+      .findOne({ code: c, active: true })
+      .select('catalogSearchRadiusKm')
+      .lean()
+      .exec();
+    if (!doc) return CATALOG_SEARCH_RADIUS_KM_DEFAULT;
+    return normalizeCatalogSearchRadiusKm(doc.catalogSearchRadiusKm);
   }
 
   async getTaxRulesForCountry(code: string): Promise<RegionTaxRule[]> {
@@ -495,6 +534,7 @@ export class SupportedCountriesService implements OnModuleInit {
       timezone?: string;
       stripeZeroDecimal?: boolean;
       adCashToCurrencyRate?: number;
+      catalogSearchRadiusKm?: number;
     }>,
   ): Promise<void> {
     const seen = new Set<string>();
@@ -547,6 +587,17 @@ export class SupportedCountriesService implements OnModuleInit {
           throw new BadRequestException(`invalid_ad_cash_rate:${code}`);
         }
         $set.adCashToCurrencyRate = rate;
+      }
+      if (row.catalogSearchRadiusKm != null) {
+        const radius = Number(row.catalogSearchRadiusKm);
+        if (
+          !Number.isFinite(radius) ||
+          radius < CATALOG_SEARCH_RADIUS_KM_MIN ||
+          radius > CATALOG_SEARCH_RADIUS_KM_MAX
+        ) {
+          throw new BadRequestException(`invalid_catalog_search_radius:${code}`);
+        }
+        $set.catalogSearchRadiusKm = Math.floor(radius);
       }
       await this._model.updateOne(
         { code },
