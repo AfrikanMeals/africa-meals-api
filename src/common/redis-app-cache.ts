@@ -245,6 +245,36 @@ function collectMemoryStoreKeys(
   return [...out];
 }
 
+/** Lecture cache : ne jamais faire échouer la requête API si Redis est indisponible. */
+export async function safeCacheGet<T>(
+  cache: Cache,
+  key: string,
+): Promise<T | undefined> {
+  try {
+    const cached = await cache.get<T>(key);
+    if (cached !== undefined && cached !== null) {
+      return cached;
+    }
+  } catch {
+    /* fallback factory Mongo */
+  }
+  return undefined;
+}
+
+/** Écriture cache best-effort (TTL ms). */
+export async function safeCacheSet<T>(
+  cache: Cache,
+  key: string,
+  value: T,
+  ttlMs: number,
+): Promise<void> {
+  try {
+    await cache.set(key, value, ttlMs);
+  } catch {
+    /* best-effort */
+  }
+}
+
 /** Lecture cache Redis/mémoire + déduplication requêtes parallèles (cache froid). */
 export async function getOrSetCache<T>(
   cache: Cache,
@@ -252,8 +282,8 @@ export async function getOrSetCache<T>(
   ttlMs: number,
   factory: () => Promise<T>,
 ): Promise<T> {
-  const cached = await cache.get<T>(key);
-  if (cached !== undefined && cached !== null) {
+  const cached = await safeCacheGet<T>(cache, key);
+  if (cached !== undefined) {
     return cached;
   }
   const pending = inflight.get(key);
@@ -266,7 +296,7 @@ export async function getOrSetCache<T>(
       const res = await factory();
       const genAtEnd = await readCacheBustGeneration();
       if (genAtStart === genAtEnd) {
-        await cache.set(key, res, ttlMs);
+        await safeCacheSet(cache, key, res, ttlMs);
       }
       return res;
     } finally {
@@ -380,12 +410,16 @@ export async function bustCatalogListingPublicCaches(
   const prefixes = [
     'search-filter:v1:',
     'home-feed:v3:',
+    'home-feed:v4:',
     'shophome:v3-region:',
+    'shophome:v4-region:',
   ];
   if (storeId?.trim()) {
     const sid = storeId.trim();
     prefixes.push(`store-menu-page:v1:${sid}:`);
+    prefixes.push(`store-menu-page:v2:${sid}:`);
     prefixes.push(`store-menu-bundle:v1:${sid}:`);
+    prefixes.push(`store-menu-bundle:v2:${sid}:`);
     bustInflightByPrefix(`store-meta:v1:${sid}`);
     await bustCacheKey(cache, AppCacheKeys.storeMeta(sid));
   }
@@ -403,9 +437,13 @@ export async function bustCatalogListingPublicCaches(
 const PUBLIC_CATALOG_CACHE_PREFIXES = [
   'search-filter:v1:',
   'home-feed:v3:',
+  'home-feed:v4:',
   'shophome:v3-region:',
+  'shophome:v4-region:',
   'store-menu-page:v1:',
+  'store-menu-page:v2:',
   'store-menu-bundle:v1:',
+  'store-menu-bundle:v2:',
   'store-meta:v1:',
   'product-detail:v2:',
   'ads:public:v3-region:',
@@ -518,7 +556,7 @@ export const AppCacheKeys = {
     const code = String(clientRegion ?? '')
       .trim()
       .toUpperCase();
-    return `home-feed:v3:${/^[A-Z]{2}$/.test(code) ? code : 'CA'}:${scope}:t${limit}`;
+    return `home-feed:v4:${/^[A-Z]{2}$/.test(code) ? code : 'CA'}:${scope}:t${limit}`;
   },
   storeMeta: (storeId: string) => `store-meta:v1:${storeId}`,
   storeMenuBundle: (

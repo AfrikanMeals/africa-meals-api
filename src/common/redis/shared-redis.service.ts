@@ -10,13 +10,16 @@ import {
   connectIoredisWithFailover,
   formatRedisTarget,
   listRedisCacheConnectionsFromConfig,
+  readRedisCacheStoreOptionsFromConfig,
 } from './redis-connection.util';
+import { registerAppCacheBustRedis } from '../redis-app-cache';
 
 /** Connexion Redis partagée (OPT-007) — idempotence, compteurs SSE, etc. */
 @Injectable()
 export class SharedRedisService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SharedRedisService.name);
   private client: Redis | null = null;
+  private connectPromise: Promise<boolean> | null = null;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -26,37 +29,74 @@ export class SharedRedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit(): void {
-    const candidates = listRedisCacheConnectionsFromConfig(this.config);
-    if (!candidates.length) {
-      this.logger.log('Shared Redis disabled (REDIS_* absent)');
-      return;
-    }
-    void connectIoredisWithFailover(candidates, {
-      enableReadyCheck: true,
-      lazyConnect: true,
-    })
-      .then((result) => {
+    void this.ensureConnected();
+  }
+
+  private _attachClient(client: Redis, connection: { url?: string }): void {
+    this.client = client;
+    this.client.on('error', (err) => {
+      this.logger.warn(`Shared Redis error: ${err.message}`);
+    });
+    this.client.on('ready', () => {
+      const bustClient = this.client as unknown as {
+        get: (key: string) => Promise<string | null>;
+        incr: (key: string) => Promise<number>;
+      };
+      registerAppCacheBustRedis(bustClient);
+    });
+    const role =
+      connection === listRedisCacheConnectionsFromConfig(this.config)[0]
+        ? 'primary'
+        : 'replica failover';
+    this.logger.log(
+      `Shared Redis connected (${formatRedisTarget(connection)}, ${role})`,
+    );
+  }
+
+  /** (Re)connexion idempotente — appelée au boot et après coupure Redis. */
+  async ensureConnected(): Promise<boolean> {
+    if (this.client?.status === 'ready') return true;
+    if (this.connectPromise) return this.connectPromise;
+
+    this.connectPromise = (async () => {
+      const candidates = listRedisCacheConnectionsFromConfig(this.config);
+      if (!candidates.length) {
+        this.logger.log('Shared Redis disabled (REDIS_* absent)');
+        return false;
+      }
+      if (this.client) {
+        try {
+          await this.client.quit();
+        } catch {
+          this.client.disconnect();
+        }
+        this.client = null;
+      }
+      try {
+        const result = await connectIoredisWithFailover(candidates, {
+          enableReadyCheck: true,
+          lazyConnect: true,
+        });
         if (!result) {
           this.logger.warn(
             `Shared Redis connect failed (${candidates.map(formatRedisTarget).join(' → ')})`,
           );
-          return;
+          return false;
         }
-        const { client, connection } = result;
-        this.client = client;
-        this.client.on('error', (err) => {
-          this.logger.warn(`Shared Redis error: ${err.message}`);
-        });
-        const role =
-          connection === candidates[0] ? 'primary' : 'replica failover';
-        this.logger.log(
-          `Shared Redis connected (${formatRedisTarget(connection)}, ${role})`,
+        this._attachClient(result.client, result.connection);
+        return true;
+      } catch (err) {
+        this.logger.warn(
+          `Shared Redis connect failed: ${(err as Error).message}`,
         );
-      })
-      .catch((err: Error) => {
-        this.logger.warn(`Shared Redis connect failed: ${err.message}`);
         this.client = null;
-      });
+        return false;
+      } finally {
+        this.connectPromise = null;
+      }
+    })();
+
+    return this.connectPromise;
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -76,19 +116,30 @@ export class SharedRedisService implements OnModuleInit, OnModuleDestroy {
   }
 
   async incrWithTtl(key: string, ttlSec: number): Promise<number> {
-    if (!this.client) return 0;
-    const n = await this.client.incr(key);
-    if (n === 1) {
-      await this.client.expire(key, ttlSec);
+    if (!this.client) {
+      await this.ensureConnected();
     }
-    return n;
+    if (!this.client) return 0;
+    try {
+      const n = await this.client.incr(key);
+      if (n === 1) {
+        await this.client.expire(key, ttlSec);
+      }
+      return n;
+    } catch {
+      return 0;
+    }
   }
 
   async decrFloorZero(key: string): Promise<void> {
     if (!this.client) return;
-    const n = await this.client.decr(key);
-    if (n <= 0) {
-      await this.client.del(key);
+    try {
+      const n = await this.client.decr(key);
+      if (n <= 0) {
+        await this.client.del(key);
+      }
+    } catch {
+      /* best-effort */
     }
   }
 }

@@ -118,3 +118,34 @@ export function productDailyMenuListingPipelineStages(
     productDailyMenuStrictListingMatchStage(),
   ];
 }
+
+/**
+ * Repli accueil : menu du jour strict, ou catalogue complet si la boutique n’a
+ * aucun plat planifié aujourd’hui (slot vide).
+ */
+export function productDailyMenuHomeFeedFallbackMatchStage(): PipelineStage {
+  return {
+    $match: {
+      $or: [
+        {
+          __onDailyMenu: true,
+          __menuSoldOut: { $ne: true },
+        },
+        {
+          $expr: {
+            $eq: [{ $size: { $ifNull: ['$__todaySlotItems', []] } }, 0],
+          },
+        },
+      ],
+    },
+  };
+}
+
+export function productDailyMenuHomeFeedFallbackPipelineStages(
+  regionTimezoneMap: Record<string, string>,
+): PipelineStage[] {
+  return [
+    ...productDailyMenuEnrichmentPipelineStages(regionTimezoneMap),
+    productDailyMenuHomeFeedFallbackMatchStage(),
+  ];
+}

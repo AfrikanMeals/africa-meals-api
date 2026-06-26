@@ -13,6 +13,8 @@ import {
   bustCartPricingCachesForUser,
   bustCatalogListingPublicCaches,
   bustProductDetailCachesForProduct,
+  bustPublicCatalogAppCaches,
+  clearInflightCache,
   detectCacheStoreKind,
   getOrSetCache,
 } from '@common/redis-app-cache';
@@ -21,6 +23,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -45,12 +48,14 @@ function dedupeCaches(caches: Cache[]): Cache[] {
 }
 
 @Injectable()
-export class ModuleCacheLayerService implements OnModuleInit {
+export class ModuleCacheLayerService implements OnModuleInit, OnModuleDestroy {
   private readonly _logger = new Logger(ModuleCacheLayerService.name);
   private _memoryCache: Cache | null = null;
   private _redisCache: Cache | null = null;
   private _memcachedCache: Cache | null = null;
   private _moduleEngines: ModuleEngineMap = { ...DEFAULT_MODULE_ENGINES };
+  private _lastRedisEngineUp = false;
+  private _redisRecoveryPending = false;
 
   constructor(
     @Inject(CACHE_MANAGER)
@@ -60,6 +65,100 @@ export class ModuleCacheLayerService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     await this._bootstrapStores();
+    this._lastRedisEngineUp = await this.probeRedisEngine();
+  }
+
+  onModuleDestroy(): void {
+    /* noop */
+  }
+
+  /** Ping moteur Redis dédié (pas le fallback mémoire). */
+  async probeRedisEngine(): Promise<boolean> {
+    if (!this._redisCache) return false;
+    if (detectCacheStoreKind(this._redisCache) !== 'redis') return false;
+    try {
+      const probeKey = `__infra:redis-probe:${process.pid}`;
+      await this._redisCache.set(probeKey, 1, 3000);
+      return (await this._redisCache.get(probeKey)) != null;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Tente de recréer le store Redis si absent ou mort. */
+  async reconnectRedisEngineIfNeeded(): Promise<boolean> {
+    if (await this.probeRedisEngine()) return true;
+
+    this._redisCache = null;
+    const defaultKind = detectCacheStoreKind(this._defaultCache);
+    if (defaultKind === 'redis' && (await this._probeCache(this._defaultCache))) {
+      this._redisCache = this._defaultCache;
+      this._logger.log('Module cache layer: reusing global Redis store (recovery)');
+      return true;
+    }
+
+    const redisOpts = readRedisCacheStoreOptionsFromConfig(this._config);
+    if (!redisOpts) return false;
+    try {
+      const { redisStore } = await import('cache-manager-redis-yet');
+      this._redisCache = await caching(redisStore, {
+        ...redisOpts,
+        ttl: 0,
+      });
+      this._logger.log('Module cache layer: Redis store reconnected');
+      return await this.probeRedisEngine();
+    } catch (err) {
+      this._logger.warn(
+        `Module cache layer: Redis reconnect failed (${(err as Error).message})`,
+      );
+      return false;
+    }
+  }
+
+  private async _probeCache(cache: Cache): Promise<boolean> {
+    try {
+      const probeKey = `__infra:cache-probe:${process.pid}`;
+      await cache.set(probeKey, 1, 3000);
+      return (await cache.get(probeKey)) != null;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Sonde + reconnexion ; retourne true si Redis est opérationnel. */
+  async refreshRedisEngineState(): Promise<boolean> {
+    const wasUp = this._lastRedisEngineUp;
+    await this.reconnectRedisEngineIfNeeded();
+    const up = await this.probeRedisEngine();
+    if (up && !wasUp) {
+      this._redisRecoveryPending = true;
+      this._logger.log('Module cache layer: Redis engine recovered');
+    } else if (!up && wasUp) {
+      this._logger.warn('Module cache layer: Redis engine lost');
+      clearInflightCache();
+    }
+    this._lastRedisEngineUp = up;
+    return up;
+  }
+
+  /** true une seule fois après une reprise Redis (down → up). */
+  consumeRedisRecoveryEdge(): boolean {
+    if (!this._redisRecoveryPending) return false;
+    this._redisRecoveryPending = false;
+    return true;
+  }
+
+  isRedisEngineUp(): boolean {
+    return this._lastRedisEngineUp;
+  }
+
+  async bustPublicCatalogCaches(): Promise<{ keysCleared: number }> {
+    let keysCleared = 0;
+    for (const cache of this.allStores()) {
+      const r = await bustPublicCatalogAppCaches(cache);
+      keysCleared += Math.max(0, r.keysCleared);
+    }
+    return { keysCleared };
   }
 
   private async _bootstrapStores(): Promise<void> {

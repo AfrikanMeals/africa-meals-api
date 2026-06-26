@@ -3,7 +3,7 @@ import { AnnouncementsService } from '@modules/announcements/announcements.servi
 import { ProductCategoryService } from '@modules/products/product-category.service';
 import { SearchService } from '@modules/search/search.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
-import { apiPublicCacheTtlMs } from '@common/redis-app-cache';
+import { safeCacheGet, safeCacheSet } from '@common/redis-app-cache';
 import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { UserModel } from '@schemas/user.schema';
@@ -50,7 +50,7 @@ export class ShopHomeService {
     const region = String(clientRegion ?? 'CA')
       .trim()
       .toUpperCase();
-    return `shophome:v3-region:${/^[A-Z]{2}$/.test(region) ? region : 'CA'}:${id || 'anon'}`;
+    return `shophome:v4-region:${/^[A-Z]{2}$/.test(region) ? region : 'CA'}:${id || 'anon'}`;
   }
 
   private ttlMs() {
@@ -69,6 +69,16 @@ export class ShopHomeService {
     });
   }
 
+  /** Cache hit vide alors que des catégories annoncent du contenu → recompute (Redis migré / TTL stale). */
+  private _isStaleEmptyShopHomeHit(hit: ShopHomePayload): boolean {
+    if (!Array.isArray(hit.products) || hit.products.length > 0) {
+      return false;
+    }
+    return (hit.categories ?? []).some(
+      (row) => Number((row as { productCount?: number }).productCount ?? 0) > 0,
+    );
+  }
+
   /**
    * Bundle accueil : annonces + pubs + catégories + produits (léger).
    * Mis en cache par utilisateur (anon vs vendeur connecté).
@@ -85,14 +95,14 @@ export class ShopHomeService {
       );
     const key = this.cacheKey(user, clientRegion);
     const cache = this._cacheLayer.cacheFor('publicCatalog');
-    const hit = await cache.get<ShopHomePayload>(key);
+    const hit = await safeCacheGet<ShopHomePayload>(cache, key);
 
     const take = Math.min(120, Math.max(8, Math.floor(productsTake)));
 
     const mapAds = (adDocs: unknown[]) =>
       this._docsToPlainJson(adDocs).map((row) => slimAdForPublicClient(row));
 
-    if (hit != null) {
+    if (hit != null && !this._isStaleEmptyShopHomeHit(hit)) {
       const adDocs = await this._ads.listPublic(clientRegion);
       return { ...hit, ads: mapAds(adDocs) };
     }
@@ -119,8 +129,14 @@ export class ShopHomeService {
       products,
     };
 
-    await cache.set(key, payload, this.ttlMs());
+    await safeCacheSet(cache, key, payload, this.ttlMs());
     return payload;
+  }
+
+  /** Invalide le cache accueil (toutes régions / utilisateurs) après reprise Redis. */
+  async bustAllShopHomeCaches(): Promise<void> {
+    await this._cacheLayer.bustPrefixOnAllStores('shophome:v3-region:');
+    await this._cacheLayer.bustPrefixOnAllStores('shophome:v4-region:');
   }
 
   /** Préchauffage cache (cron / tâche planifiée), utile après expiration TTL. */

@@ -45,6 +45,7 @@ import {
 import { mapInChunks } from '@utils/map-in-chunks';
 import {
   productDailyMenuEnrichmentPipelineStages,
+  productDailyMenuHomeFeedFallbackPipelineStages,
   productDailyMenuListingPipelineStages,
 } from '@utils/product-daily-menu-listing.pipeline';
 import { storeArticlesAvailabilityPipelineStages } from '@utils/store-articles-availability.pipeline';
@@ -1527,12 +1528,38 @@ export class SearchService {
     safeLimit = 48,
     clientRegion?: string,
   ): Promise<Record<string, unknown>[]> {
+    const strict = await this._aggregateHomeFeedProducts(
+      user,
+      safeLimit,
+      clientRegion,
+      'strict',
+    );
+    if (strict.length > 0) return strict;
+    return this._aggregateHomeFeedProducts(
+      user,
+      safeLimit,
+      clientRegion,
+      'fallback',
+    );
+  }
+
+  private async _aggregateHomeFeedProducts(
+    user?: UserModel,
+    safeLimit = 48,
+    clientRegion?: string,
+    mode: 'strict' | 'fallback' = 'strict',
+  ): Promise<Record<string, unknown>[]> {
     const region =
       clientRegion ??
       (await this._supportedCountries.resolveClientCatalogRegion(user));
     /** Fenêtre récente avant `$lookup` stores — évite un scan joint sur toute la collection `products`. */
     const candidateCap = Math.min(900, Math.max(safeLimit * 12, 200));
-    const dailyMenuStages = await this._productDailyMenuListingStagesAsync();
+    const regionTimezoneMap =
+      await this._supportedCountries.getRegionTimezoneMap();
+    const dailyMenuStages =
+      mode === 'strict'
+        ? productDailyMenuListingPipelineStages(regionTimezoneMap)
+        : productDailyMenuHomeFeedFallbackPipelineStages(regionTimezoneMap);
     const pipeline: PipelineStage[] = [
       { $sort: { createdAt: -1 } },
       { $limit: candidateCap },
@@ -1785,25 +1812,33 @@ export class SearchService {
           },
           dailyMenuToday: {
             $cond: [
-              { $eq: ['$__onDailyMenu', true] },
               {
-                onMenu: true,
-                stockUnlimited: {
-                  $ne: [
-                    { $ifNull: ['$__menuItem.stockUnlimited', true] },
-                    false,
-                  ],
-                },
-                stockRemaining: {
-                  $ifNull: ['$__menuItem.stockRemaining', 0],
-                },
-                soldOut: { $eq: ['$__menuSoldOut', true] },
+                $eq: [{ $size: { $ifNull: ['$__todaySlotItems', []] } }, 0],
               },
+              null,
               {
-                onMenu: false,
-                stockUnlimited: true,
-                stockRemaining: 0,
-                soldOut: false,
+                $cond: [
+                  { $eq: ['$__onDailyMenu', true] },
+                  {
+                    onMenu: true,
+                    stockUnlimited: {
+                      $ne: [
+                        { $ifNull: ['$__menuItem.stockUnlimited', true] },
+                        false,
+                      ],
+                    },
+                    stockRemaining: {
+                      $ifNull: ['$__menuItem.stockRemaining', 0],
+                    },
+                    soldOut: { $eq: ['$__menuSoldOut', true] },
+                  },
+                  {
+                    onMenu: false,
+                    stockUnlimited: true,
+                    stockRemaining: 0,
+                    soldOut: false,
+                  },
+                ],
               },
             ],
           },
