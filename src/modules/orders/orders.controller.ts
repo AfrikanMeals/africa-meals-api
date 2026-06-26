@@ -113,6 +113,14 @@ export class OrdersController {
     );
   }
 
+  /** Prise en charge vendeur — client notifié, statut reste `paied`. */
+  @Post(':id/accept')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Prendre en charge la commande (VENDOR / ADMIN)' })
+  async acceptOrder(@Req() req: Request, @Param('id') id: string) {
+    return this._ordersService.acceptOrder(id, req.user as UserModel);
+  }
+
   /** Prête pour livraison ou retrait (`approved`) + notification client. */
   @Post(':id/mark-ready')
   @UseGuards(JwtGuard)

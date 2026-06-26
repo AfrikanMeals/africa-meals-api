@@ -35,6 +35,7 @@ type EmailRecipient = { userId: string; email: string; name: string };
 export type VendorOrderEmailEvent =
   | 'new_order'
   | 'order_paid'
+  | 'order_accepted'
   | 'order_ready'
   | 'order_shipped'
   | 'order_cancelled'
@@ -627,6 +628,13 @@ export class VendorStatusEmailService {
           heading: 'Commande payée',
           body: `La commande ${args.orderRef} pour ${args.storeName} a été payée${amountPart}. Vous pouvez la préparer.`,
           statusLabel: args.statusLabel ?? 'Payée',
+        };
+      case 'order_accepted':
+        return {
+          subject: 'Commande prise en charge',
+          heading: 'Commande en préparation',
+          body: `La commande ${args.orderRef} pour ${args.storeName} a été prise en charge. Le client a été notifié.`,
+          statusLabel: args.statusLabel ?? 'En préparation',
         };
       case 'order_ready':
         return {

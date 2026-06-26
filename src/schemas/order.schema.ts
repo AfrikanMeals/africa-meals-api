@@ -187,6 +187,10 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'vendor_paid_notified_at' })
   vendorPaidNotifiedAt?: Date;
 
+  /** Vendeur a accepté la commande et la prépare (statut reste `paied`). */
+  @Prop({ required: false, name: 'vendor_accepted_at', type: Date })
+  vendorAcceptedAt?: Date;
+
   /** Date/heure de remise au client (retrait confirmé). */
   @Prop({ required: false, name: 'picked_up_at', type: Date })
   pickedUpAt?: Date;

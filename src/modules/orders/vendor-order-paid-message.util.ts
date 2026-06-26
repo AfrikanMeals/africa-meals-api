@@ -87,6 +87,7 @@ export function buildVendorOrderPaidInboxMessage(
 export type VendorOrderNotifyReason =
   | 'new_order'
   | 'order_paid'
+  | 'order_accepted'
   | 'order_ready'
   | 'order_shipped'
   | 'order_cancelled'
@@ -163,6 +164,7 @@ export function buildVendorOrderStatusPush(args: {
     const titles: Record<VendorOrderNotifyReason, string> = {
       new_order: 'Nouvelle commande',
       order_paid: 'Commande payée',
+      order_accepted: 'Commande en préparation',
       order_ready: 'Commande prête',
       order_shipped: 'Commande en livraison',
       order_cancelled: 'Commande annulée',
@@ -195,6 +197,12 @@ export function buildVendorOrderStatusPush(args: {
         title: 'Commande payée',
         body: `${store} : commande #${ref} payée${totalPart}.`,
         reason: 'order_paid',
+      };
+    case 'order_accepted':
+      return {
+        title: 'Commande en préparation',
+        body: `${store} : commande #${ref} prise en charge.`,
+        reason: 'order_accepted',
       };
     case 'order_ready': {
       const ready = args.isPickup ? 'prête pour retrait' : 'prête pour livraison';

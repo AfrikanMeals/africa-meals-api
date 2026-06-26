@@ -21,6 +21,8 @@ export type OrderWsTrackingPayload = {
   deliveryChatArchived?: boolean;
   /** Boutique concernée — salon WS `store:{storeId}` (équipe vendeur). */
   storeId?: string;
+  /** Prise en charge vendeur (préparation) — ISO8601. */
+  vendorAcceptedAt?: string;
 };
 
 /**

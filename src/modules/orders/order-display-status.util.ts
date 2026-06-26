@@ -41,6 +41,24 @@ export function readOrderPayOnPickup(order: Record<string, unknown>): boolean {
   return isPayOnPickupOrder(order);
 }
 
+export function readVendorAcceptedAt(
+  order: Record<string, unknown>,
+): string | null {
+  const raw = order['vendorAcceptedAt'] ?? order['vendor_accepted_at'];
+  if (raw instanceof Date) {
+    return raw.toISOString();
+  }
+  const s = String(raw ?? '').trim();
+  return s.length > 0 ? s : null;
+}
+
+export function isVendorAcceptedPreparingOrder(
+  order: Record<string, unknown>,
+): boolean {
+  const st = String(order['status'] ?? '').toLowerCase();
+  return st === OrderStatusEnum.PAIED && readVendorAcceptedAt(order) != null;
+}
+
 /** Paiement à la collecte encore dû (hors annulation). */
 export function isPayOnPickupUnsettled(order: Record<string, unknown>): boolean {
   if (!readOrderPayOnPickup(order)) return false;
@@ -59,6 +77,9 @@ export function publicOrderStatusLabelFr(
   const status = String(order['status'] ?? '').toLowerCase();
   switch (status) {
     case OrderStatusEnum.PAIED:
+      if (isVendorAcceptedPreparingOrder(order)) {
+        return 'En préparation';
+      }
       return 'Payée';
     case OrderStatusEnum.APPROVED:
       return 'Confirmée';

@@ -1948,6 +1948,84 @@ export class OrdersService {
   }
 
   /**
+   * Vendeur / admin : prise en charge — le restaurant accepte et prépare (`paied` + `vendorAcceptedAt`).
+   * Notifie le client ; distinct de `markOrderReady` (prête livraison / retrait → `approved`).
+   */
+  async acceptOrder(
+    orderId: string,
+    user: UserModel,
+  ): Promise<{
+    orderId: string;
+    status: OrderStatusEnum;
+    vendorAcceptedAt: string;
+  }> {
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const order = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .populate('store', 'name owner address')
+      .populate(OrdersService.orderUserWithAddressesPopulate)
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    await this.assertUserCanManageOrderStore(user, order);
+
+    const st = order.status as OrderStatusEnum;
+    if (st !== OrderStatusEnum.PAIED) {
+      throw new BadRequestException('order_accept_invalid_status');
+    }
+    if (order.vendorAcceptedAt) {
+      throw new BadRequestException('order_already_accepted');
+    }
+
+    const acceptedAt = new Date();
+    order.vendorAcceptedAt = acceptedAt;
+    await order.save();
+
+    const storeId = this.storeIdFromOrderDoc(order);
+    const customerId = this.userIdFromOrderDoc(order);
+    const storeName = this.storeNameFromPopulated(order.store);
+
+    if (customerId) {
+      void this._notificationsService
+        .pushCustomerOrderStatusChanged({
+          userId: customerId,
+          orderId: oid,
+          storeName,
+          storeId: storeId ?? undefined,
+          previousStatus: st,
+          newStatus: OrderStatusEnum.PAIED,
+          bodyOverride: 'Votre commande est en préparation.',
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `FCM order accept: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
+    }
+
+    this.notifyOrderPartiesRealtime(order, OrderStatusEnum.PAIED);
+    this.notifyStoreVendorsForOrderStatusChange(order, {
+      reason: 'order_accepted',
+      status: OrderStatusEnum.PAIED,
+      note: 'Prise en charge — en préparation',
+    });
+
+    return {
+      orderId: oid,
+      status: OrderStatusEnum.PAIED,
+      vendorAcceptedAt: acceptedAt.toISOString(),
+    };
+  }
+
+  /**
    * Vendeur / admin : commande payée → `approved` (prête livraison ou retrait).
    */
   async markOrderReady(
@@ -2435,7 +2513,19 @@ export class OrdersService {
     );
     const { distanceKm, destinationLine, originLine } =
       this.resolveOrderTrackingGeo(order, isPickup);
-    const progress = this.trackingProgressForStatus(status, isPickup);
+    const vendorAcceptedRaw =
+      (order as { vendorAcceptedAt?: Date | string }).vendorAcceptedAt ??
+      (order as { vendor_accepted_at?: Date | string }).vendor_accepted_at;
+    const vendorAcceptedAt =
+      vendorAcceptedRaw instanceof Date
+        ? vendorAcceptedRaw.toISOString()
+        : typeof vendorAcceptedRaw === 'string' && vendorAcceptedRaw.trim()
+          ? vendorAcceptedRaw.trim()
+          : undefined;
+    let progress = this.trackingProgressForStatus(status, isPickup);
+    if (status === OrderStatusEnum.PAIED && vendorAcceptedAt) {
+      progress = 0.22;
+    }
     return {
       orderId: oid,
       status,
@@ -2445,6 +2535,7 @@ export class OrdersService {
       destinationLine,
       originLine,
       storeId: this.storeIdFromOrderDoc(order as OrderModel) ?? undefined,
+      ...(vendorAcceptedAt ? { vendorAcceptedAt } : {}),
     };
   }
 
