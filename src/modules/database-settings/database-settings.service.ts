@@ -275,6 +275,13 @@ export class DatabaseSettingsService {
       startedAt: new Date(),
     });
 
+    await this.adminJobEmitter?.emitProgress({
+      jobId,
+      pct: 0,
+      label: 'Migration démarrée…',
+      phase: 'starting',
+    });
+
     void this.runMigrationJob(
       user,
       jobId,

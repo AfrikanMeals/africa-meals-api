@@ -37,20 +37,22 @@ export class AdminJobEmitterService {
   }
 
   private async emit(event: AdminJobEvent): Promise<void> {
+    const jobId = String(event.payload.jobId ?? '').trim();
+    // Toujours publier en synchrone (Redis + observe in-process) — ne pas attendre
+    // la file domain-events-handlers, sinon l’UI admin reste à 0 %.
+    if (jobId && this.adminJobProgress) {
+      if (event.type === 'job.progress') {
+        this.adminJobProgress.emitProgress(event.payload);
+      } else if (event.type === 'job.completed') {
+        this.adminJobProgress.emitCompleted(event.payload);
+      } else {
+        this.adminJobProgress.emitFailed(event.payload);
+      }
+    }
     if (this.domainBridge?.enabled()) {
       await this.domainBridge.emit(
         event as DomainEventDraft<DomainEventType>,
       );
-      return;
-    }
-    const jobId = String(event.payload.jobId ?? '').trim();
-    if (!jobId || !this.adminJobProgress) return;
-    if (event.type === 'job.progress') {
-      this.adminJobProgress.emitProgress(event.payload);
-    } else if (event.type === 'job.completed') {
-      this.adminJobProgress.emitCompleted(event.payload);
-    } else {
-      this.adminJobProgress.emitFailed(event.payload);
     }
   }
 }
