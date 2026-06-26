@@ -46,3 +46,12 @@ export function toFeatureModulesResponse(
     updatedAt: doc.updatedAt?.toISOString?.() ?? null,
   };
 }
+
+/** Réponse immédiate sans round-trip Mongo (cold start / doc absent). */
+export function defaultFeatureModulesResponse(): PlatformFeatureModulesResponse {
+  return {
+    admin: { ...DEFAULT_PLATFORM_SURFACE_MODULES },
+    mobile: { ...DEFAULT_PLATFORM_SURFACE_MODULES },
+    updatedAt: null,
+  };
+}

@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Put,
   Req,
   UseGuards,
@@ -21,6 +22,7 @@ export class PlatformFeatureModulesController {
   constructor(private readonly _service: PlatformFeatureModulesService) {}
 
   @Get()
+  @Header('Cache-Control', 'public, max-age=300, stale-while-revalidate=3600')
   @ApiOperation({
     summary:
       'Modules fonctionnels activés (portail admin et app mobile, lecture publique)',
@@ -30,6 +32,7 @@ export class PlatformFeatureModulesController {
   }
 
   @Put()
+  @Header('Cache-Control', 'no-store')
   @ApiBearerAuth('bearer')
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
