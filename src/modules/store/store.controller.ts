@@ -357,6 +357,37 @@ export class StoreController {
     );
   }
 
+  /** Archives commandes ouvertes avant reset Stripe Connect (lots par resetBatchId). */
+  @Get('admin/stripe-reset-archives/batches')
+  @UseGuards(JwtGuard)
+  async listStripeResetArchiveBatches(
+    @Req() req: Request,
+    @Query('limit') limit?: string,
+    @Query('skip') skip?: string,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this._storeService.listStripeResetArchiveBatchesForAdmin(
+      req.user as UserModel,
+      {
+        limit: limit ? Number(limit) : undefined,
+        skip: skip ? Number(skip) : undefined,
+        storeId,
+      },
+    );
+  }
+
+  @Get('admin/stripe-reset-archives/batches/:resetBatchId')
+  @UseGuards(JwtGuard)
+  async getStripeResetArchiveBatch(
+    @Param('resetBatchId') resetBatchId: string,
+    @Req() req: Request,
+  ) {
+    return this._storeService.getStripeResetArchiveBatchForAdmin(
+      req.user as UserModel,
+      resetBatchId,
+    );
+  }
+
   /** Déconnecte Stripe Connect du vendeur — nouvel onboarding requis. */
   @Post('admin/vendors/:storeId/reset-stripe-connect')
   @UseGuards(JwtGuard)

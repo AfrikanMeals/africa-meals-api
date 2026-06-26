@@ -3181,6 +3181,13 @@ export class StoreService {
     await this._storeAccess.assertAdminPermission(admin, 'admin.vendors');
   }
 
+  private async _assertAdminFinancesView(admin: UserModel): Promise<void> {
+    if (admin.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('admin_only');
+    }
+    await this._storeAccess.assertAdminPermission(admin, 'admin.finances.view');
+  }
+
   private _adminVendorProfileSnapshot(
     doc: Record<string, unknown>,
     addr?: Record<string, unknown> | null,
@@ -3713,6 +3720,191 @@ export class StoreService {
     return this._mapStoreToAdminVendorRow(lean as Record<string, unknown>, {
       subscriptionPlan: planByStore.get(storeId),
     });
+  }
+
+  async listStripeResetArchiveBatchesForAdmin(
+    admin: UserModel,
+    options?: { limit?: number; skip?: number; storeId?: string },
+  ): Promise<{
+    batches: Array<{
+      resetBatchId: string;
+      storeId: string;
+      storeName: string;
+      stripeConnectAccountId: string;
+      archivedByAdminEmail: string;
+      orderCount: number;
+      archivedAt: string;
+    }>;
+    total: number;
+  }> {
+    await this._assertAdminFinancesView(admin);
+
+    const limit = Math.min(Math.max(options?.limit ?? 50, 1), 200);
+    const skip = Math.max(options?.skip ?? 0, 0);
+    const match: Record<string, unknown> = {};
+    if (options?.storeId && Types.ObjectId.isValid(options.storeId)) {
+      match.storeId = new Types.ObjectId(options.storeId);
+    }
+
+    const grouped = await this._stripeResetArchiveModel
+      .aggregate<{
+        _id: string;
+        resetBatchId: string;
+        storeId: Types.ObjectId;
+        stripeConnectAccountId: string;
+        archivedByAdminEmail: string;
+        orderCount: number;
+        archivedAt: Date;
+      }>([
+        { $match: match },
+        {
+          $group: {
+            _id: '$resetBatchId',
+            resetBatchId: { $first: '$resetBatchId' },
+            storeId: { $first: '$storeId' },
+            stripeConnectAccountId: { $first: '$stripeConnectAccountId' },
+            archivedByAdminEmail: { $first: '$archivedByAdminEmail' },
+            orderCount: { $sum: 1 },
+            archivedAt: { $min: '$createdAt' },
+          },
+        },
+        { $sort: { archivedAt: -1 } },
+      ])
+      .exec();
+
+    const total = grouped.length;
+    const page = grouped.slice(skip, skip + limit);
+    const storeIds = [
+      ...new Set(page.map((row) => String(row.storeId))),
+    ].filter((id) => Types.ObjectId.isValid(id));
+    const stores = storeIds.length
+      ? await this._storeModel
+          .find({ _id: { $in: storeIds } })
+          .select('_id name')
+          .lean()
+          .exec()
+      : [];
+    const storeNameById = new Map(
+      stores.map((s) => [String(s._id), String(s.name ?? '')]),
+    );
+
+    return {
+      batches: page.map((row) => ({
+        resetBatchId: row.resetBatchId,
+        storeId: String(row.storeId),
+        storeName: storeNameById.get(String(row.storeId)) ?? '—',
+        stripeConnectAccountId: row.stripeConnectAccountId,
+        archivedByAdminEmail: row.archivedByAdminEmail || '—',
+        orderCount: row.orderCount,
+        archivedAt: row.archivedAt?.toISOString?.() ?? new Date().toISOString(),
+      })),
+      total,
+    };
+  }
+
+  async getStripeResetArchiveBatchForAdmin(
+    admin: UserModel,
+    resetBatchId: string,
+  ): Promise<{
+    batch: {
+      resetBatchId: string;
+      storeId: string;
+      storeName: string;
+      stripeConnectAccountId: string;
+      archivedByAdminEmail: string;
+      orderCount: number;
+      archivedAt: string;
+    };
+    orders: Array<{
+      id: string;
+      orderId: string;
+      orderStatus: string;
+      archivedAt: string;
+      orderTotal: number | null;
+      orderCurrency: string | null;
+      customerEmail: string | null;
+      stripeTransferId: string | null;
+    }>;
+  }> {
+    await this._assertAdminFinancesView(admin);
+
+    const batchId = String(resetBatchId ?? '').trim();
+    if (!batchId) {
+      throw new BadRequestException('reset_batch_id_required');
+    }
+
+    const rows = await this._stripeResetArchiveModel
+      .find({ resetBatchId: batchId })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+    if (!rows.length) {
+      throw new NotFoundException('stripe_reset_archive_batch_not_found');
+    }
+
+    const first = rows[0]!;
+    const store = await this._storeModel
+      .findById(first.storeId)
+      .select('_id name')
+      .lean()
+      .exec();
+
+    const orders = rows.map((row) => {
+      const snap = (row.orderSnapshot ?? {}) as Record<string, unknown>;
+      const totalRaw = snap.totalPrice ?? snap.total_price;
+      const total =
+        typeof totalRaw === 'number' && Number.isFinite(totalRaw)
+          ? totalRaw
+          : null;
+      const currencyRaw = snap.currency;
+      const currency =
+        typeof currencyRaw === 'string' && currencyRaw.trim()
+          ? currencyRaw.trim().toUpperCase()
+          : null;
+      const userRaw = snap.user;
+      let customerEmail: string | null = null;
+      if (userRaw && typeof userRaw === 'object') {
+        const email = (userRaw as Record<string, unknown>).email;
+        if (typeof email === 'string' && email.trim()) {
+          customerEmail = email.trim();
+        }
+      }
+      const transferRaw =
+        snap.stripeTransferId ?? snap.stripe_transfer_id ?? null;
+      const typed = row as unknown as { _id?: { toString(): string }; createdAt?: Date };
+      return {
+        id: typed._id?.toString?.() ?? '',
+        orderId: String(row.orderId),
+        orderStatus: String(row.orderStatus ?? ''),
+        archivedAt: typed.createdAt?.toISOString?.() ?? new Date().toISOString(),
+        orderTotal: total,
+        orderCurrency: currency,
+        customerEmail,
+        stripeTransferId:
+          typeof transferRaw === 'string' && transferRaw.trim()
+            ? transferRaw.trim()
+            : null,
+      };
+    });
+
+    const archivedAt = rows.reduce((min, row) => {
+      const typed = row as unknown as { createdAt?: Date };
+      const ts = typed.createdAt?.getTime?.() ?? Date.now();
+      return Math.min(min, ts);
+    }, Date.now());
+
+    return {
+      batch: {
+        resetBatchId: batchId,
+        storeId: String(first.storeId),
+        storeName: String(store?.name ?? '—'),
+        stripeConnectAccountId: String(first.stripeConnectAccountId ?? ''),
+        archivedByAdminEmail: String(first.archivedByAdminEmail ?? '—'),
+        orderCount: rows.length,
+        archivedAt: new Date(archivedAt).toISOString(),
+      },
+      orders,
+    };
   }
 
   /** Supprime une boutique (admin) pour permettre au vendeur de recommencer sa fiche. */
