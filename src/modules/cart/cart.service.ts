@@ -603,6 +603,7 @@ export class CartService {
     const coupon = await this._couponsService.getActiveCouponForStore(
       storeId,
       rawCode,
+      String(user.id),
     );
     const items = await this._cartItemModel
       .find({
@@ -953,7 +954,11 @@ export class CartService {
       if (!sid || !code) continue;
 
       try {
-        await this._couponsService.getActiveCouponForStore(sid, code);
+        await this._couponsService.getActiveCouponForStore(
+          sid,
+          code,
+          String(user.id),
+        );
       } catch (e) {
         couponIssues.push({
           storeId: sid,

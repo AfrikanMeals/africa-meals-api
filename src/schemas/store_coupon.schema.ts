@@ -48,6 +48,24 @@ export class StoreCouponModel extends BaseSchema {
 
   @Prop({ required: false })
   maxUses?: number;
+
+  /** Si true : chaque utilisateur ne peut utiliser ce coupon qu’une seule fois. */
+  @Prop({ default: false, name: 'limit_one_use_per_user' })
+  limitOneUsePerUser?: boolean;
+
+  /** Suivi des utilisations par userId (quota 1× / client). */
+  @Prop({
+    type: [
+      {
+        _id: false,
+        userId: { type: MongooseSchema.Types.ObjectId, required: true },
+        count: { type: Number, required: true, default: 0 },
+      },
+    ],
+    default: [],
+    name: 'user_usages',
+  })
+  userUsages: { userId: MongooseSchema.Types.ObjectId; count: number }[];
 }
 
 export const StoreCouponSchema = SchemaFactory.createForClass(StoreCouponModel);

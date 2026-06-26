@@ -63,6 +63,15 @@ export class CreateStoreCouponDto {
   @Min(1)
   @Max(1_000_000)
   maxUses?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Si true, chaque client ne peut utiliser ce coupon qu’une seule fois.',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  limitOneUsePerUser?: boolean;
 }
 
 export class PatchStoreCouponDto {
@@ -108,4 +117,9 @@ export class PatchStoreCouponDto {
   @Min(1)
   @Max(1_000_000)
   maxUses?: number | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  limitOneUsePerUser?: boolean;
 }

@@ -31,6 +31,7 @@ export type StoreCouponApiRow = {
   enabled: boolean;
   usedCount: number;
   maxUses: number | null;
+  limitOneUsePerUser: boolean;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -77,6 +78,7 @@ export class CouponsService {
   async getActiveCouponForStore(
     storeId: string,
     rawCode: string,
+    userId?: string,
   ): Promise<StoreCouponModel> {
     const code = (rawCode ?? '').trim().toUpperCase();
     if (!code) {
@@ -101,7 +103,21 @@ export class CouponsService {
     if (doc.maxUses != null && doc.usedCount >= doc.maxUses) {
       throw new BadRequestException('coupon_exhausted');
     }
+    if (userId) {
+      this.assertCouponUserQuota(doc, userId);
+    }
     return doc;
+  }
+
+  private assertCouponUserQuota(doc: StoreCouponModel, userId: string): void {
+    if (doc.limitOneUsePerUser !== true) return;
+    const uid = new Types.ObjectId(userId);
+    const row = (doc.userUsages ?? []).find(
+      (u) => String(u.userId) === String(uid),
+    );
+    if (row && row.count >= 1) {
+      throw new BadRequestException('coupon_user_limit_reached');
+    }
   }
 
   computeDiscountForSubtotal(
@@ -178,6 +194,7 @@ export class CouponsService {
       enabled: Boolean(doc.enabled),
       usedCount: Number(doc.usedCount ?? 0),
       maxUses: doc.maxUses == null ? null : Number(doc.maxUses),
+      limitOneUsePerUser: doc.limitOneUsePerUser === true,
       createdAt:
         doc.createdAt instanceof Date
           ? doc.createdAt.toISOString()
@@ -262,6 +279,8 @@ export class CouponsService {
         enabled: dto.enabled !== false,
         usedCount: 0,
         maxUses: dto.maxUses,
+        limitOneUsePerUser: dto.limitOneUsePerUser === true,
+        userUsages: [],
       });
       const populated = await this._couponModel
         .findById(created._id)
@@ -334,6 +353,9 @@ export class CouponsService {
     if (dto.maxUses !== undefined) {
       existing.maxUses = dto.maxUses === null ? undefined : dto.maxUses;
     }
+    if (dto.limitOneUsePerUser != null) {
+      existing.limitOneUsePerUser = dto.limitOneUsePerUser === true;
+    }
 
     try {
       await existing.save();
@@ -373,14 +395,17 @@ export class CouponsService {
    * et sous le plafond `maxUses` (lecture puis `$inc` pour éviter les dépassements).
    */
   async recordUsageAfterSuccessfulPayment(
+    userId: string,
     storeId: string,
     rawCode: string,
   ): Promise<void> {
     const code = (rawCode ?? '').trim().toUpperCase();
-    if (!code) return;
+    if (!code || !userId?.trim()) return;
     let oid: Types.ObjectId;
+    let uid: Types.ObjectId;
     try {
       oid = new Types.ObjectId(storeId);
+      uid = new Types.ObjectId(userId);
     } catch {
       return;
     }
@@ -391,8 +416,25 @@ export class CouponsService {
     const now = new Date();
     if (now < doc.validFrom || now > doc.validUntil) return;
     if (doc.maxUses != null && doc.usedCount >= doc.maxUses) return;
-    await this._couponModel
-      .updateOne({ _id: doc._id }, { $inc: { usedCount: 1 } })
-      .exec();
+
+    const usages = doc.userUsages ?? [];
+    const idx = usages.findIndex((u) => String(u.userId) === String(uid));
+    if (doc.limitOneUsePerUser === true) {
+      const count = idx >= 0 ? usages[idx]!.count : 0;
+      if (count >= 1) return;
+    }
+
+    const inc: Record<string, number> = { usedCount: 1 };
+    const update: Record<string, unknown> = { $inc: inc };
+    if (doc.limitOneUsePerUser === true) {
+      if (idx >= 0) {
+        update.$inc = { ...inc, [`userUsages.${idx}.count`]: 1 };
+      } else {
+        update.$push = {
+          userUsages: { userId: uid, count: 1 },
+        };
+      }
+    }
+    await this._couponModel.updateOne({ _id: doc._id }, update).exec();
   }
 }

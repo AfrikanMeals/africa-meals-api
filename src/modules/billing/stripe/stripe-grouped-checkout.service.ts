@@ -2139,6 +2139,7 @@ export class StripeGroupedCheckoutService {
       }
       if (couponCode) {
         await this.couponsService.recordUsageAfterSuccessfulPayment(
+          String(user._id ?? user.id),
           storeId,
           couponCode,
         );
@@ -3121,6 +3122,7 @@ export class StripeGroupedCheckoutService {
 
       if (couponCode) {
         await this.couponsService.recordUsageAfterSuccessfulPayment(
+          String(user._id ?? user.id),
           storeId,
           couponCode,
         );
