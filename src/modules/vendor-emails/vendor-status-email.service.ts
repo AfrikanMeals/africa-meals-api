@@ -192,6 +192,103 @@ export class VendorStatusEmailService {
     }
   }
 
+  static catalogModerationKindLabelFr(
+    kind: 'FOOD' | 'DRINK' | 'ITEM',
+  ): string {
+    switch (kind) {
+      case 'FOOD':
+        return 'Plat';
+      case 'DRINK':
+        return 'Boisson';
+      case 'ITEM':
+        return 'Article stock';
+      default:
+        return 'Article';
+    }
+  }
+
+  private static catalogModerationPushTitle(args: {
+    kind: 'FOOD' | 'DRINK' | 'ITEM';
+    newStatus: AdModerationStatusEnum;
+  }): string {
+    const entity = VendorStatusEmailService.catalogModerationKindLabelFr(args.kind);
+    switch (args.newStatus) {
+      case AdModerationStatusEnum.APPROVED:
+        return `${entity} débloqué`;
+      case AdModerationStatusEnum.BLOCKED:
+        return `${entity} bloqué`;
+      case AdModerationStatusEnum.REJECTED:
+        return `${entity} refusé`;
+      default:
+        return 'Modération catalogue';
+    }
+  }
+
+  /** Email + push vendeur lors d’un changement de statut de modération catalogue (plat, boisson, stock). */
+  async notifyCatalogModerationStatusChange(args: {
+    storeId: string;
+    kind: 'FOOD' | 'DRINK' | 'ITEM';
+    itemId: string;
+    itemTitle: string;
+    previousStatus: AdModerationStatusEnum;
+    newStatus: AdModerationStatusEnum;
+    blockReason?: string | null;
+  }): Promise<void> {
+    if (args.previousStatus === args.newStatus) return;
+
+    const storeName = await this.storeName(args.storeId);
+    const kindLabel = VendorStatusEmailService.catalogModerationKindLabelFr(
+      args.kind,
+    );
+    const title = args.itemTitle.trim() || 'Sans titre';
+    const next = VendorStatusEmailService.moderationStatusLabelFr(args.newStatus);
+    const reason = args.blockReason?.trim() ?? '';
+
+    let body: string;
+    if (args.newStatus === AdModerationStatusEnum.APPROVED) {
+      body = `Votre ${kindLabel.toLowerCase()} « ${title} » (${storeName}) a été débloqué par notre équipe et peut à nouveau être visible selon vos paramètres boutique.`;
+    } else if (args.newStatus === AdModerationStatusEnum.BLOCKED) {
+      body = `Votre ${kindLabel.toLowerCase()} « ${title} » (${storeName}) a été bloqué par modération plateforme.`;
+      if (reason) {
+        body += ` Motif : ${reason}`;
+      }
+    } else {
+      body = `Le statut de modération de votre ${kindLabel.toLowerCase()} « ${title} » (${storeName}) est maintenant « ${next} ».`;
+      if (reason) {
+        body += ` Motif : ${reason}`;
+      }
+    }
+
+    const infoRows: Array<{ label: string; value: string }> = [
+      { label: 'Type', value: kindLabel },
+      { label: 'Titre', value: title },
+      { label: 'Restaurant', value: storeName },
+      { label: 'Statut', value: next },
+    ];
+    if (reason) {
+      infoRows.push({ label: 'Motif', value: reason });
+    }
+
+    await this.sendToStoreRecipients({
+      storeId: args.storeId,
+      category: 'account',
+      subject: `Modération catalogue — ${next}`,
+      heading: 'Modération catalogue',
+      body,
+      infoRows,
+      pushTitle: VendorStatusEmailService.catalogModerationPushTitle({
+        kind: args.kind,
+        newStatus: args.newStatus,
+      }),
+      metadata: {
+        catalogKind: args.kind,
+        catalogItemId: args.itemId,
+        moderationStatus: args.newStatus,
+      },
+      logTag: `catalog_moderation store=${args.storeId} ${args.kind} ${args.itemId} ${args.previousStatus}->${args.newStatus}`,
+    });
+  }
+
   /** Email + push vendeur lors d’un changement de statut de modération (bannière ou campagne). */
   async notifyAdModerationStatusChange(args: {
     storeId: string;

@@ -1,4 +1,5 @@
 import { TeamsModule } from '@modules/teams/teams.module';
+import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { DrinkModel, DrinkSchema } from '@schemas/drink.schema';
@@ -15,6 +16,7 @@ import { AdminCatalogModerationService } from './admin-catalog-moderation.servic
       { name: StockItemModel.name, schema: StockItemSchema },
     ]),
     TeamsModule,
+    VendorStatusEmailModule,
   ],
   controllers: [AdminCatalogModerationController],
   providers: [AdminCatalogModerationService],

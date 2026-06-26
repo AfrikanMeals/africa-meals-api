@@ -3,6 +3,7 @@ import {
   moderationStatusFromDoc,
 } from '@common/moderation/catalog-moderation.util';
 import { StoreAccessService } from '@modules/teams/store-access.service';
+import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-email.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -47,7 +48,41 @@ export class AdminCatalogModerationService {
     @InjectModel(StockItemModel.name)
     private readonly stockItemModel: Model<StockItemModel>,
     private readonly storeAccess: StoreAccessService,
+    private readonly vendorStatusEmail: VendorStatusEmailService,
   ) {}
+
+  private storeIdFromDoc(doc: { store?: unknown }): string | null {
+    const store = doc.store;
+    if (!store) return null;
+    if (typeof store === 'object' && store !== null && '_id' in store) {
+      return String((store as { _id: unknown })._id);
+    }
+    return String(store);
+  }
+
+  private queueCatalogModerationNotify(args: {
+    storeId: string | null;
+    kind: CatalogModerationKindEnum;
+    itemId: string;
+    itemTitle: string;
+    previousStatus: AdModerationStatusEnum;
+    newStatus: AdModerationStatusEnum;
+    blockReason?: string | null;
+  }): void {
+    const sid = args.storeId?.trim();
+    if (!sid || !Types.ObjectId.isValid(sid)) return;
+    void this.vendorStatusEmail
+      .notifyCatalogModerationStatusChange({
+        storeId: sid,
+        kind: args.kind,
+        itemId: args.itemId,
+        itemTitle: args.itemTitle,
+        previousStatus: args.previousStatus,
+        newStatus: args.newStatus,
+        blockReason: args.blockReason,
+      })
+      .catch(() => undefined);
+  }
 
   private async assertAdmin(user: UserModel): Promise<void> {
     if (user.type !== UserTypeEnum.ADMIN) {
@@ -278,19 +313,28 @@ export class AdminCatalogModerationService {
     if (kind === CatalogModerationKindEnum.FOOD) {
       const existing = await this.productModel.findById(itemId).exec();
       if (!existing) throw new NotFoundException('catalog_item_not_found');
-      if (
-        moderationStatusFromDoc(
-          existing.toObject() as Record<string, unknown>,
-        ) === AdModerationStatusEnum.BLOCKED
-      ) {
+      const previousStatus = moderationStatusFromDoc(
+        existing.toObject() as Record<string, unknown>,
+      );
+      if (previousStatus === AdModerationStatusEnum.BLOCKED) {
         throw new BadRequestException('catalog_item_already_blocked');
       }
+      const storeId = this.storeIdFromDoc(existing);
       existing.moderationStatus = AdModerationStatusEnum.BLOCKED;
       existing.moderationBlockReason = reason;
       existing.moderationReviewedAt = reviewedAt;
       existing.set('moderationReviewedBy', reviewedBy);
       existing.status = ProductStatusEnum.INACTIVE;
       await existing.save();
+      this.queueCatalogModerationNotify({
+        storeId,
+        kind,
+        itemId,
+        itemTitle: String(existing.title ?? ''),
+        previousStatus,
+        newStatus: AdModerationStatusEnum.BLOCKED,
+        blockReason: reason,
+      });
       const lean = await this.productModel
         .findById(itemId)
         .populate('store', 'name')
@@ -302,18 +346,27 @@ export class AdminCatalogModerationService {
     if (kind === CatalogModerationKindEnum.DRINK) {
       const existing = await this.drinkModel.findById(itemId).exec();
       if (!existing) throw new NotFoundException('catalog_item_not_found');
-      if (
-        moderationStatusFromDoc(
-          existing.toObject() as Record<string, unknown>,
-        ) === AdModerationStatusEnum.BLOCKED
-      ) {
+      const previousStatus = moderationStatusFromDoc(
+        existing.toObject() as Record<string, unknown>,
+      );
+      if (previousStatus === AdModerationStatusEnum.BLOCKED) {
         throw new BadRequestException('catalog_item_already_blocked');
       }
+      const storeId = this.storeIdFromDoc(existing);
       existing.moderationStatus = AdModerationStatusEnum.BLOCKED;
       existing.moderationBlockReason = reason;
       existing.moderationReviewedAt = reviewedAt;
       existing.set('moderationReviewedBy', reviewedBy);
       await existing.save();
+      this.queueCatalogModerationNotify({
+        storeId,
+        kind,
+        itemId,
+        itemTitle: String(existing.name ?? ''),
+        previousStatus,
+        newStatus: AdModerationStatusEnum.BLOCKED,
+        blockReason: reason,
+      });
       const lean = await this.drinkModel
         .findById(itemId)
         .populate('store', 'name')
@@ -324,18 +377,27 @@ export class AdminCatalogModerationService {
 
     const existing = await this.stockItemModel.findById(itemId).exec();
     if (!existing) throw new NotFoundException('catalog_item_not_found');
-    if (
-      moderationStatusFromDoc(
-        existing.toObject() as Record<string, unknown>,
-      ) === AdModerationStatusEnum.BLOCKED
-    ) {
+    const previousStatus = moderationStatusFromDoc(
+      existing.toObject() as Record<string, unknown>,
+    );
+    if (previousStatus === AdModerationStatusEnum.BLOCKED) {
       throw new BadRequestException('catalog_item_already_blocked');
     }
+    const storeId = this.storeIdFromDoc(existing);
     existing.moderationStatus = AdModerationStatusEnum.BLOCKED;
     existing.moderationBlockReason = reason;
     existing.moderationReviewedAt = reviewedAt;
     existing.set('moderationReviewedBy', reviewedBy);
     await existing.save();
+    this.queueCatalogModerationNotify({
+      storeId,
+      kind,
+      itemId,
+      itemTitle: String(existing.produit ?? ''),
+      previousStatus,
+      newStatus: AdModerationStatusEnum.BLOCKED,
+      blockReason: reason,
+    });
     const lean = await this.stockItemModel
       .findById(itemId)
       .populate('store', 'name')
@@ -367,9 +429,21 @@ export class AdminCatalogModerationService {
     if (kind === CatalogModerationKindEnum.FOOD) {
       const existing = await this.productModel.findById(itemId).exec();
       if (!existing) throw new NotFoundException('catalog_item_not_found');
+      const previousStatus = moderationStatusFromDoc(
+        existing.toObject() as Record<string, unknown>,
+      );
+      const storeId = this.storeIdFromDoc(existing);
       Object.assign(existing, patch);
       existing.status = ProductStatusEnum.ACTIVE;
       await existing.save();
+      this.queueCatalogModerationNotify({
+        storeId,
+        kind,
+        itemId,
+        itemTitle: String(existing.title ?? ''),
+        previousStatus,
+        newStatus: AdModerationStatusEnum.APPROVED,
+      });
       const lean = await this.productModel
         .findById(itemId)
         .populate('store', 'name')
@@ -381,8 +455,20 @@ export class AdminCatalogModerationService {
     if (kind === CatalogModerationKindEnum.DRINK) {
       const existing = await this.drinkModel.findById(itemId).exec();
       if (!existing) throw new NotFoundException('catalog_item_not_found');
+      const previousStatus = moderationStatusFromDoc(
+        existing.toObject() as Record<string, unknown>,
+      );
+      const storeId = this.storeIdFromDoc(existing);
       Object.assign(existing, patch);
       await existing.save();
+      this.queueCatalogModerationNotify({
+        storeId,
+        kind,
+        itemId,
+        itemTitle: String(existing.name ?? ''),
+        previousStatus,
+        newStatus: AdModerationStatusEnum.APPROVED,
+      });
       const lean = await this.drinkModel
         .findById(itemId)
         .populate('store', 'name')
@@ -393,8 +479,20 @@ export class AdminCatalogModerationService {
 
     const existing = await this.stockItemModel.findById(itemId).exec();
     if (!existing) throw new NotFoundException('catalog_item_not_found');
+    const previousStatus = moderationStatusFromDoc(
+      existing.toObject() as Record<string, unknown>,
+    );
+    const storeId = this.storeIdFromDoc(existing);
     Object.assign(existing, patch);
     await existing.save();
+    this.queueCatalogModerationNotify({
+      storeId,
+      kind,
+      itemId,
+      itemTitle: String(existing.produit ?? ''),
+      previousStatus,
+      newStatus: AdModerationStatusEnum.APPROVED,
+    });
     const lean = await this.stockItemModel
       .findById(itemId)
       .populate('store', 'name')
