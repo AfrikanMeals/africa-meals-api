@@ -20,6 +20,7 @@ import {
   normalizeRegionTimezone,
 } from './region-timezone.util';
 import { normalizeCountryCode } from './client-market-region.util';
+import { shouldApplyCatalogRegionFilter } from '@common/catalog-public-id.util';
 import {
   resolveStripeZeroDecimal,
   stripeAmountFactor,
@@ -318,6 +319,26 @@ export class SupportedCountriesService implements OnModuleInit {
     }
     const primary = await this.getPrimaryActiveRegion();
     return primary?.code ?? 'CA';
+  }
+
+  /**
+   * Région catalogue si le filtre s'applique ; sinon `undefined` (web, admin God Mode).
+   */
+  async resolveOptionalClientCatalogRegion(
+    user?: Pick<UserModel, 'type' | 'appCountryCode'> | null,
+    queryCountryCode?: string | null,
+    clientPlatform?: string,
+  ): Promise<string | undefined> {
+    if (
+      !shouldApplyCatalogRegionFilter(
+        clientPlatform,
+        queryCountryCode ?? undefined,
+        user,
+      )
+    ) {
+      return undefined;
+    }
+    return this.resolveClientCatalogRegion(user, queryCountryCode);
   }
 
   /** Résumé public pour la page tarifs (devise, pays actifs, taxes région principale). */

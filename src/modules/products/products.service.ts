@@ -451,6 +451,7 @@ export class ProductsService {
     const clientRegion = shouldApplyCatalogRegionFilter(
       clientPlatform,
       countryCode,
+      user,
     )
       ? await this._supportedCountries.resolveClientCatalogRegion(
           user,

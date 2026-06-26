@@ -1,3 +1,4 @@
+import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Types } from 'mongoose';
 
 /** Extrait un ObjectId Mongo depuis un segment public (`id` ou `id-nom-slug`). */
@@ -21,10 +22,23 @@ export function clientPlatformFromRequest(
   return String(value ?? '').trim().toLowerCase();
 }
 
-/** Vitrine web publique : pas de filtre région (liens partagés multi-régions). */
+/** Compte plateforme Wise Eat (`UserTypeEnum.ADMIN`) — God Mode catalogue. */
+export function isPlatformAdminUser(
+  user?: Pick<UserModel, 'type'> | null,
+): boolean {
+  return String(user?.type ?? '').trim().toUpperCase() === UserTypeEnum.ADMIN;
+}
+
+/**
+ * Filtre région catalogue actif pour ce client ?
+ * - Vitrine web : non (liens partagés multi-régions).
+ * - Admin JWT : non (accès global mobile + web).
+ */
 export function shouldApplyCatalogRegionFilter(
   clientPlatform: string | undefined,
   _countryCode?: string | undefined,
+  user?: Pick<UserModel, 'type'> | null,
 ): boolean {
+  if (isPlatformAdminUser(user)) return false;
   return String(clientPlatform ?? '').toLowerCase() !== 'web';
 }

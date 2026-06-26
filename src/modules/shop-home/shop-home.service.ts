@@ -102,10 +102,10 @@ export class ShopHomeService {
     countryCode?: string,
   ): Promise<ShopHomeLoadResult> {
     const catalogRegion =
-      await this._supportedCountries.resolveClientCatalogRegion(
+      (await this._supportedCountries.resolveOptionalClientCatalogRegion(
         user,
         countryCode,
-      );
+      )) ?? '';
     const key = this.cacheKey(user, catalogRegion);
     const cache = this._cacheLayer.cacheFor('publicCatalog');
     const hit = await safeCacheGet<ShopHomeCachePayload>(cache, key);

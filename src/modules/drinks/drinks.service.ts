@@ -421,6 +421,7 @@ export class DrinksService {
     const clientRegion = shouldApplyCatalogRegionFilter(
       clientPlatform,
       countryCode,
+      user,
     )
       ? await this._supportedCountries.resolveClientCatalogRegion(
           user,
@@ -511,6 +512,7 @@ export class DrinksService {
     const clientRegion = shouldApplyCatalogRegionFilter(
       clientPlatform,
       countryCode,
+      user,
     )
       ? await this._supportedCountries.resolveClientCatalogRegion(user, countryCode)
       : undefined;

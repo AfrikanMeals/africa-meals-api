@@ -170,10 +170,10 @@ export class RecommendationsService {
     const take = Math.min(48, Math.max(4, parseInt(takeRaw ?? '24', 10) || 24));
     const poolLimit = Math.min(120, Math.max(take * 4, 60));
     const clientRegion =
-      await this._supportedCountries.resolveClientCatalogRegion(
+      (await this._supportedCountries.resolveOptionalClientCatalogRegion(
         user,
         countryCode,
-      );
+      )) ?? '';
 
     const userOid = this._userOid(user);
 

@@ -29,7 +29,7 @@ import {
   apiPublicCacheTtlMs,
 } from '@common/redis-app-cache';
 import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
-import { shouldApplyCatalogRegionFilter } from '@common/catalog-public-id.util';
+import { shouldApplyCatalogRegionFilter, isPlatformAdminUser } from '@common/catalog-public-id.util';
 import {
   BadRequestException,
   ConflictException,
@@ -608,7 +608,19 @@ export class StoreService {
     storeId: string,
     clientPlatform?: string,
     clientRegion?: string,
+    user?: UserModel,
   ): Promise<boolean> {
+    if (isPlatformAdminUser(user)) {
+      if (!Types.ObjectId.isValid(storeId)) {
+        return false;
+      }
+      const store = await this._storeModel
+        .findById(storeId)
+        .select('status')
+        .lean()
+        .exec();
+      return store?.status === StoreStatusEnum.ACTIVE;
+    }
     const base =
       clientPlatform === 'web'
         ? await this.isStoreVisibleOnPublicCatalog(storeId)
@@ -626,11 +638,13 @@ export class StoreService {
     storeId: string,
     clientPlatform?: string,
     clientRegion?: string,
+    user?: UserModel,
   ): Promise<void> {
     const ok = await this.isStoreVisibleForClient(
       storeId,
       clientPlatform,
       clientRegion,
+      user,
     );
     if (!ok) {
       throw new NotFoundException('store_not_found');
@@ -650,6 +664,7 @@ export class StoreService {
       const clientRegion = shouldApplyCatalogRegionFilter(
         options.clientPlatform,
         options.countryCode,
+        options.user,
       )
         ? await this._supportedCountries.resolveClientCatalogRegion(
             options.user,
@@ -660,6 +675,7 @@ export class StoreService {
         id,
         options.clientPlatform,
         clientRegion,
+        options.user,
       );
     }
     const store = await this._storeModel
@@ -746,6 +762,7 @@ export class StoreService {
     const clientRegion = shouldApplyCatalogRegionFilter(
       options?.clientPlatform,
       options?.countryCode,
+      options?.user,
     )
       ? await this._supportedCountries.resolveClientCatalogRegion(
           options?.user,
@@ -757,6 +774,7 @@ export class StoreService {
         id,
         options?.clientPlatform,
         clientRegion,
+        options?.user,
       ))
     ) {
       return null;

@@ -81,6 +81,10 @@ export class SearchController {
     )
     args: SearchDto,
   ) {
-    return this._searchService.filter(args, req.user as UserModel);
+    return this._searchService.filter(
+      args,
+      req.user as UserModel,
+      clientPlatformFromRequest(req),
+    );
   }
 }

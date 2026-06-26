@@ -1,5 +1,7 @@
+import { UserTypeEnum } from '@schemas/user.schema';
 import {
   clientPlatformFromRequest,
+  isPlatformAdminUser,
   resolveMongoIdFromPublicParam,
   shouldApplyCatalogRegionFilter,
 } from './catalog-public-id.util';
@@ -38,5 +40,16 @@ describe('catalog-public-id.util', () => {
   it('applies catalog region filter for non-web clients', () => {
     expect(shouldApplyCatalogRegionFilter('ios', undefined)).toBe(true);
     expect(shouldApplyCatalogRegionFilter(undefined, undefined)).toBe(true);
+  });
+
+  it('detects platform admin users', () => {
+    expect(isPlatformAdminUser({ type: UserTypeEnum.ADMIN })).toBe(true);
+    expect(isPlatformAdminUser({ type: UserTypeEnum.USER })).toBe(false);
+  });
+
+  it('never applies catalog region filter for platform admin', () => {
+    const admin = { type: UserTypeEnum.ADMIN };
+    expect(shouldApplyCatalogRegionFilter('ios', 'CM', admin)).toBe(false);
+    expect(shouldApplyCatalogRegionFilter(undefined, 'CA', admin)).toBe(false);
   });
 });

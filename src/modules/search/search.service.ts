@@ -20,7 +20,7 @@ import {
   stableCacheHash,
 } from '@common/redis-app-cache';
 import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
-import { shouldApplyCatalogRegionFilter } from '@common/catalog-public-id.util';
+import { shouldApplyCatalogRegionFilter, isPlatformAdminUser } from '@common/catalog-public-id.util';
 import { Inject, Injectable } from '@nestjs/common';
 import { OfferModel, OfferStatusEnum } from '@schemas/offer.schema';
 import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
@@ -98,7 +98,10 @@ export class SearchService {
   private _stripGeoIfOutsideCatalogRegion(
     args: SearchDto,
     region: string,
+    user?: UserModel,
   ): void {
+    if (isPlatformAdminUser(user)) return;
+    if (!region) return;
     if (!this._hasSearchGeo(args)) return;
     const lat = args.latitude as number;
     const lng = args.longitude as number;
@@ -847,16 +850,18 @@ export class SearchService {
     return true;
   }
 
-  async filter(args: SearchDto, user?: UserModel) {
+  async filter(args: SearchDto, user?: UserModel, clientPlatform?: string) {
     args.page = args.page ?? 1;
     args.take = args.take ?? 5;
-    const clientRegion =
-      await this._supportedCountries.resolveClientCatalogRegion(
+    const optionalRegion =
+      await this._supportedCountries.resolveOptionalClientCatalogRegion(
         user,
         args.countryCode,
+        clientPlatform,
       );
+    const clientRegion = optionalRegion ?? '';
     await this._applyPlatformSearchSettings(args, clientRegion);
-    this._stripGeoIfOutsideCatalogRegion(args, clientRegion);
+    this._stripGeoIfOutsideCatalogRegion(args, clientRegion, user);
     this._normalizeSearchGeoArgs(args);
     if (this._isSearchFilterCacheable(args)) {
       const scope = cacheUserScope(user);
@@ -886,14 +891,9 @@ export class SearchService {
   private async _filterUncached(
     args: SearchDto,
     user?: UserModel,
-    clientRegion?: string,
+    clientRegion = '',
   ) {
-    const region =
-      clientRegion ??
-      (await this._supportedCountries.resolveClientCatalogRegion(
-        user,
-        args.countryCode,
-      ));
+    const region = clientRegion;
     const searchContent = args.searchContent;
     // console.log('🚀 ~ SearchService ~ filter ~ args:', searchContent);
     const response: {
@@ -933,10 +933,11 @@ export class SearchService {
   ) {
     const region =
       clientRegion ??
-      (await this._supportedCountries.resolveClientCatalogRegion(
+      (await this._supportedCountries.resolveOptionalClientCatalogRegion(
         user,
         args.countryCode,
-      ));
+      )) ??
+      '';
     const ownerOid = this._userObjectId(user);
     const queryEsc = escapeMongoRegex(args.query ?? '');
     const pipeline: PipelineStage[] = [
@@ -1030,10 +1031,11 @@ export class SearchService {
   ): Promise<SearchResultDto<ProductModel>> {
     const region =
       clientRegion ??
-      (await this._supportedCountries.resolveClientCatalogRegion(
+      (await this._supportedCountries.resolveOptionalClientCatalogRegion(
         user,
         args.countryCode,
-      ));
+      )) ??
+      '';
     const queryEsc = escapeMongoRegex(args.query ?? '');
     const dailyMenuStages = await this._productDailyMenuListingStagesAsync();
     const pipeline = [
@@ -1564,7 +1566,8 @@ export class SearchService {
     const scope = cacheUserScope(user);
     const region =
       clientRegion ??
-      (await this._supportedCountries.resolveClientCatalogRegion(user));
+      (await this._supportedCountries.resolveOptionalClientCatalogRegion(user)) ??
+      '';
     return this._cacheLayer.getOrSet(
       'publicCatalog',
       AppCacheKeys.homeFeed(scope, safeLimit, region),
@@ -1601,7 +1604,8 @@ export class SearchService {
   ): Promise<Record<string, unknown>[]> {
     const region =
       clientRegion ??
-      (await this._supportedCountries.resolveClientCatalogRegion(user));
+      (await this._supportedCountries.resolveOptionalClientCatalogRegion(user)) ??
+      '';
     /** Fenêtre récente avant `$lookup` stores — évite un scan joint sur toute la collection `products`. */
     const candidateCap = Math.min(900, Math.max(safeLimit * 12, 200));
     const regionTimezoneMap =
@@ -1926,6 +1930,7 @@ export class SearchService {
     const clientRegion = shouldApplyCatalogRegionFilter(
       clientPlatform,
       countryCode,
+      user,
     )
       ? await this._supportedCountries.resolveClientCatalogRegion(
           user,
@@ -1937,6 +1942,7 @@ export class SearchService {
         storeId,
         clientPlatform,
         clientRegion,
+        user,
       ))
     ) {
       return { items: [], total: 0 };
@@ -2019,7 +2025,14 @@ export class SearchService {
     if (!Types.ObjectId.isValid(storeId)) {
       return { items: [], total: 0 };
     }
-    if (!(await this._storeService.isStoreVisibleForClient(storeId, clientPlatform))) {
+    if (
+      !(await this._storeService.isStoreVisibleForClient(
+        storeId,
+        clientPlatform,
+        undefined,
+        user,
+      ))
+    ) {
       return { items: [], total: 0 };
     }
     const storeOid = new Types.ObjectId(storeId);
@@ -2118,10 +2131,10 @@ export class SearchService {
   ): Promise<SearchResultDto<StoreModel>> {
     const region =
       clientRegion ??
-      (await this._supportedCountries.resolveClientCatalogRegion(
+      (await this._supportedCountries.resolveOptionalClientCatalogRegion(
         user,
-        args.countryCode,
-      ));
+      )) ??
+      '';
     const q = args.query?.trim();
     /** Catalogue client : ACTIVE + commandes + Stripe Connect + au moins un article commandable. */
     const andParts: Record<string, unknown>[] = [
