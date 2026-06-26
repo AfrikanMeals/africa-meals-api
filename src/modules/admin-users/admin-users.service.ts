@@ -9,12 +9,29 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { AdsTargetingProfileModel } from '@schemas/ads-targeting-profile.schema';
+import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
+import { ProductModel } from '@schemas/product.schema';
+import { StoreModel } from '@schemas/store.schema';
+import { UserRecommendationDigestModel } from '@schemas/user-recommendation-digest.schema';
+import {
+  UserRecommendationSignalKind,
+  UserRecommendationSignalModel,
+} from '@schemas/user-recommendation-signal.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { buildCaseInsensitiveExactRegex } from '@common/mongo/escape-regex.util';
 import { FilterQuery, Model, Types } from 'mongoose';
+import type { AdminUserInterestsResponse } from './admin-user-interests.types';
 import { AdminListUsersQueryDto } from './dto/admin-list-users-query.dto';
 import { AdminSetUserDisabledDto } from './dto/admin-set-user-disabled.dto';
 import { AdminUpdateUserDto } from './dto/admin-update-user.dto';
+
+const PAID_LIKE_ORDER_STATUSES: OrderStatusEnum[] = [
+  OrderStatusEnum.PAIED,
+  OrderStatusEnum.APPROVED,
+  OrderStatusEnum.SHIPPED,
+  OrderStatusEnum.COMPLETED,
+];
 
 export type AdminUserRow = {
   id: string;
@@ -82,6 +99,18 @@ export class AdminUsersService {
   constructor(
     @InjectModel(UserModel.name)
     private readonly userModel: Model<UserModel>,
+    @InjectModel(AdsTargetingProfileModel.name)
+    private readonly adsProfileModel: Model<AdsTargetingProfileModel>,
+    @InjectModel(UserRecommendationDigestModel.name)
+    private readonly digestModel: Model<UserRecommendationDigestModel>,
+    @InjectModel(UserRecommendationSignalModel.name)
+    private readonly signalModel: Model<UserRecommendationSignalModel>,
+    @InjectModel(ProductModel.name)
+    private readonly productModel: Model<ProductModel>,
+    @InjectModel(StoreModel.name)
+    private readonly storeModel: Model<StoreModel>,
+    @InjectModel(OrderModel.name)
+    private readonly orderModel: Model<OrderModel>,
     private readonly storeAccess: StoreAccessService,
     private readonly authService: AuthService,
     private readonly supportedCountries: SupportedCountriesService,
@@ -288,5 +317,273 @@ export class AdminUsersService {
       userId.trim(),
     );
     return this.getUser(actor, userId);
+  }
+
+  async getUserInterests(
+    actor: UserModel,
+    userId: string,
+  ): Promise<AdminUserInterestsResponse> {
+    await this.assertAdmin(actor);
+    const id = userId.trim();
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('invalid_user_id');
+    }
+    const userOid = new Types.ObjectId(id);
+    const userDoc = await this.userModel
+      .findById(userOid)
+      .select('fullName email type appCountryCode')
+      .lean()
+      .exec();
+    if (!userDoc) throw new NotFoundException('user_not_found');
+
+    const userKey = id;
+    const [
+      adsProfile,
+      digest,
+      recentSignals,
+      orderStats,
+      topCategoryRows,
+      topProductRows,
+    ] = await Promise.all([
+      this.adsProfileModel.findOne({ userKey }).lean().exec(),
+      this.digestModel.findOne({ user: userOid }).lean().exec(),
+      this.signalModel
+        .find({ user: userOid })
+        .sort({ createdAt: -1 })
+        .limit(40)
+        .lean()
+        .exec(),
+      this.orderModel
+        .aggregate<{ total: number; lastOrderAt: Date | null }>([
+          {
+            $match: {
+              user: userOid,
+              status: { $in: PAID_LIKE_ORDER_STATUSES },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: 1 },
+              lastOrderAt: { $max: '$createdAt' },
+            },
+          },
+        ])
+        .exec(),
+      this.orderModel
+        .aggregate<{ _id: string; count: number }>([
+          {
+            $match: {
+              user: userOid,
+              status: { $in: PAID_LIKE_ORDER_STATUSES },
+            },
+          },
+          { $unwind: '$items' },
+          {
+            $match: {
+              'items.categoryTitle': { $exists: true, $nin: [null, ''] },
+            },
+          },
+          {
+            $group: {
+              _id: { $trim: { input: '$items.categoryTitle' } },
+              count: { $sum: '$items.quantity' },
+            },
+          },
+          { $sort: { count: -1 } },
+          { $limit: 8 },
+        ])
+        .exec(),
+      this.orderModel
+        .aggregate<{ _id: string; label: string; count: number }>([
+          {
+            $match: {
+              user: userOid,
+              status: { $in: PAID_LIKE_ORDER_STATUSES },
+            },
+          },
+          { $unwind: '$items' },
+          {
+            $group: {
+              _id: {
+                $ifNull: [
+                  { $toString: '$items.entityId' },
+                  { $concat: ['label:', '$items.label'] },
+                ],
+              },
+              label: { $first: '$items.label' },
+              count: { $sum: '$items.quantity' },
+            },
+          },
+          { $sort: { count: -1 } },
+          { $limit: 8 },
+        ])
+        .exec(),
+    ]);
+
+    const productIds = new Set<string>();
+    const storeIds = new Set<string>();
+
+    for (const pid of digest?.topViewedProductIds ?? []) {
+      if (Types.ObjectId.isValid(pid)) productIds.add(String(pid));
+    }
+    for (const sid of digest?.topViewedStoreIds ?? []) {
+      if (Types.ObjectId.isValid(sid)) storeIds.add(String(sid));
+    }
+    for (const sig of recentSignals) {
+      if (sig.kind === UserRecommendationSignalKind.PRODUCT_VIEW) {
+        productIds.add(String(sig.refId));
+      } else if (sig.kind === UserRecommendationSignalKind.STORE_VIEW) {
+        storeIds.add(String(sig.refId));
+      }
+    }
+
+    const [products, stores] = await Promise.all([
+      productIds.size
+        ? this.productModel
+            .find({ _id: { $in: [...productIds].map((x) => new Types.ObjectId(x)) } })
+            .select('title store')
+            .populate('store', 'name')
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+      storeIds.size
+        ? this.storeModel
+            .find({ _id: { $in: [...storeIds].map((x) => new Types.ObjectId(x)) } })
+            .select('name')
+            .lean()
+            .exec()
+        : Promise.resolve([]),
+    ]);
+
+    const productById = new Map(
+      products.map((p) => {
+        const store = p.store as { name?: string } | Types.ObjectId | null;
+        const storeName =
+          store && typeof store === 'object' && 'name' in store
+            ? String(store.name ?? '')
+            : null;
+        return [
+          String(p._id),
+          {
+            id: String(p._id),
+            title: String(p.title ?? ''),
+            storeName: storeName?.trim() ? storeName : null,
+          },
+        ];
+      }),
+    );
+    const storeById = new Map(
+      stores.map((s) => [
+        String(s._id),
+        { id: String(s._id), name: String(s.name ?? '') },
+      ]),
+    );
+
+    const topViewedProducts = (digest?.topViewedProductIds ?? [])
+      .map((pid) => productById.get(String(pid)))
+      .filter((x): x is NonNullable<typeof x> => !!x);
+
+    const topViewedStores = (digest?.topViewedStoreIds ?? [])
+      .map((sid) => storeById.get(String(sid)))
+      .filter((x): x is NonNullable<typeof x> => !!x);
+
+    const recentSignalRows = recentSignals.map((sig) => {
+      const refId = String(sig.refId);
+      let label = refId;
+      if (sig.kind === UserRecommendationSignalKind.PRODUCT_VIEW) {
+        label = productById.get(refId)?.title ?? 'Produit inconnu';
+      } else if (sig.kind === UserRecommendationSignalKind.STORE_VIEW) {
+        label = storeById.get(refId)?.name ?? 'Boutique inconnue';
+      } else if (sig.kind === UserRecommendationSignalKind.SEARCH_QUERY) {
+        label = String(sig.searchTerm ?? 'Recherche');
+      }
+      return {
+        kind: sig.kind,
+        label,
+        searchTerm:
+          sig.kind === UserRecommendationSignalKind.SEARCH_QUERY
+            ? String(sig.searchTerm ?? '')
+            : null,
+        createdAt:
+          sig.createdAt instanceof Date ? sig.createdAt.toISOString() : null,
+      };
+    });
+
+    const stats = orderStats[0];
+
+    return {
+      user: {
+        id,
+        fullName: String(userDoc.fullName ?? ''),
+        email: String(userDoc.email ?? ''),
+        type: String(userDoc.type ?? UserTypeEnum.USER),
+        appCountryCode:
+          typeof userDoc.appCountryCode === 'string'
+            ? userDoc.appCountryCode
+            : null,
+      },
+      adsTargeting: adsProfile
+        ? {
+            segment: String(adsProfile.segment ?? 'new_user'),
+            topCategories: (adsProfile.topCategories ?? []).map(String),
+            interestScores: (adsProfile.interestScores ?? {}) as Record<
+              string,
+              number
+            >,
+            engagementRate: Number(adsProfile.engagementRate ?? 0),
+            conversionProbability: Number(
+              adsProfile.conversionProbability ?? 0,
+            ),
+            sessions30d: Number(adsProfile.sessions30d ?? 0),
+            lastActive:
+              adsProfile.lastActive instanceof Date
+                ? adsProfile.lastActive.toISOString()
+                : null,
+            lastComputedAt:
+              adsProfile.lastComputedAt instanceof Date
+                ? adsProfile.lastComputedAt.toISOString()
+                : null,
+            country:
+              typeof adsProfile.country === 'string'
+                ? adsProfile.country
+                : null,
+            language:
+              typeof adsProfile.language === 'string'
+                ? adsProfile.language
+                : null,
+          }
+        : null,
+      recommendationDigest: digest
+        ? {
+            computedAt:
+              digest.computedAt instanceof Date
+                ? digest.computedAt.toISOString()
+                : null,
+            topSearchTerms: (digest.topSearchTerms ?? []).map(String),
+          }
+        : null,
+      topViewedProducts,
+      topViewedStores,
+      recentSignals: recentSignalRows,
+      orderInsights: {
+        totalOrders: Number(stats?.total ?? 0),
+        lastOrderAt:
+          stats?.lastOrderAt instanceof Date
+            ? stats.lastOrderAt.toISOString()
+            : null,
+        topCategories: topCategoryRows.map((row) => ({
+          category: String(row._id ?? ''),
+          count: Number(row.count ?? 0),
+        })),
+        topProducts: topProductRows.map((row) => ({
+          entityId: String(row._id ?? '').startsWith('label:')
+            ? null
+            : String(row._id ?? ''),
+          label: String(row.label ?? ''),
+          count: Number(row.count ?? 0),
+        })),
+      },
+    };
   }
 }

@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { warnMongoUriReplicaSetConfig } from './mongoose-uri-diagnostics';
 
 /** Vrai si l’URI contient déjà un nom de base (`…/african_meals_db?…`). */
 function mongoUriHasDatabase(uri: string): boolean {
@@ -67,6 +68,7 @@ export function buildMongooseRootOptions(
       : '';
 
   const uri = fullUri.trim() || builtUri;
+  warnMongoUriReplicaSetConfig(uri, defaultAppName);
   const dbInUri = mongoUriHasDatabase(uri);
 
   const maxPoolSize = parsePositiveInt(

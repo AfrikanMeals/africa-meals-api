@@ -35,6 +35,15 @@ export class AdminUsersController {
     return this.adminUsers.listUsers(req.user as UserModel, query);
   }
 
+  @Get(':userId/interests')
+  @ApiOperation({
+    summary:
+      'Profil d’intérêts et préférences comportementales (admin.settings)',
+  })
+  getInterests(@Req() req: Request, @Param('userId') userId: string) {
+    return this.adminUsers.getUserInterests(req.user as UserModel, userId);
+  }
+
   @Get(':userId')
   @ApiOperation({ summary: 'Détail d’un compte (admin.settings)' })
   getOne(@Req() req: Request, @Param('userId') userId: string) {
