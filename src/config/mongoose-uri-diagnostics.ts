@@ -42,6 +42,50 @@ function isStunnelRemoteHost(hostPart: string): boolean {
 }
 
 /**
+ * Corrige les URI Stunnel (`db.wise-eat.com:27018`) : TLS + directConnection,
+ * sans replicaSet (les hôtes Docker du rs0 ne sont pas joignables depuis le Mac).
+ */
+export function normalizeMongoUriForDriver(uri: string): string {
+  const trimmed = uri.trim();
+  if (!trimmed || isAtlasUri(trimmed)) {
+    return trimmed;
+  }
+  const hostPart = mongoUriHostPart(trimmed);
+  if (!isStunnelRemoteHost(hostPart)) {
+    return trimmed;
+  }
+
+  const q = trimmed.indexOf('?');
+  const base = q >= 0 ? trimmed.slice(0, q) : trimmed;
+  const params = mongoUriQuery(trimmed);
+  params.set('tls', 'true');
+  params.set('directConnection', 'true');
+  params.delete('replicaSet');
+
+  const normalized = `${base}?${params.toString()}`;
+  if (
+    normalized !== trimmed &&
+    process.env.MONGODB_URI_DIAGNOSTICS !== '0'
+  ) {
+    log.log(
+      'MONGODB_URI ajustée pour Stunnel (tls=true, directConnection=true, replicaSet retiré).',
+    );
+  }
+  return normalized;
+}
+
+export function readMongoIpFamily(
+  get: (key: string) => string | undefined = (key) => process.env[key],
+): 4 | 6 | undefined {
+  const raw =
+    get('MONGODB_IP_FAMILY')?.trim() || get('REDIS_IP_FAMILY')?.trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (n === 4 || n === 6) return n;
+  return undefined;
+}
+
+/**
  * Avertissements au bootstrap si l’URI MongoDB n’est pas adaptée au replica set VPS.
  * Atlas (`mongodb+srv`) : aucun contrôle (découverte automatique).
  */
@@ -91,6 +135,12 @@ export function warnMongoUriReplicaSetConfig(
   if (stunnel && !directConnection && !replicaSet) {
     log.warn(
       `${tag} MONGODB_URI distante (Stunnel) sans directConnection ni replicaSet — utilisez directConnection=true (admin/migration) ou l’URI locale avec replicaSet=rs0 (PM2).`,
+    );
+  }
+
+  if (stunnel && replicaSet && !directConnection) {
+    log.warn(
+      `${tag} MONGODB_URI Stunnel avec replicaSet=${replicaSet} — découverte rs0 impossible via un seul endpoint (risque ECONNRESET).`,
     );
   }
 }

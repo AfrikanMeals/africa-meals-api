@@ -13,7 +13,7 @@ Wise Eat est une marketplace **multiculturelle** : africaine, asiatique, médite
 - **Timing** : envoi dans des fenêtres calmes, adaptées au fuseau utilisateur.
 - **Fréquence contrôlée** : plafonds journaliers / hebdomadaires, backoff après ignore.
 - **Copy convertissante** : texte généré ou enrichi par Llama (Ollama), validé par garde-fous.
-- **Mesure** : taux d’ouverture, conversion commande, désabonnements.
+- **Mesure** : taux d’ouverture, conversion commande, désabonnements — **dashboard admin Performances** (voir § 9).
 
 ---
 
@@ -32,8 +32,10 @@ Wise Eat est une marketplace **multiculturelle** : africaine, asiatique, médite
 | **Ollama** | `search-settings` (embeddings via `OLLAMA_BASE_URL`) | Base infra LLM locale |
 | **Promos push** | `gift-code-activation-notifier`, type `gift_code_promo` | Pattern batch + deep link |
 | **Marque / deep links** | `APP_NAME=Wise Eat`, schéma `wise-eat://` | Cohérence produit |
+| **Admin Performances** | À créer — menu **Performances** (voir § 9) | Suivi KPI push reco + comparaison newsletter |
+| **User Interest admin** | `GET /admin/users/:userId/interests` | Drill-down utilisateur depuis Performances |
 
-**Conclusion** : ne pas repartir de zéro. Ajouter une couche **Push Recommendation Orchestrator** au-dessus du module `recommendations` et de `notifications`.
+**Conclusion** : ne pas repartir de zéro. Ajouter une couche **Push Recommendation Orchestrator** au-dessus du module `recommendations` et de `notifications`, avec **instrumentation** alimentant le menu admin **Performances** (détail commun dans `NEWSLETTER.md` § 9).
 
 ---
 
@@ -79,6 +81,15 @@ flowchart TB
     Queue --> Guard
     Guard --> FCM
     Guard --> Inbox
+  end
+
+  subgraph perf [Performances — admin]
+    Events[engagement_performance_events]
+    Agg[Cron agrégation daily]
+    AdminUI[Menu Performances admin]
+    FCM --> Events
+    Mobile --> Events
+    Events --> Agg --> AdminUI
   end
 
   Candidates --> Scheduler
@@ -276,6 +287,11 @@ Réponds UNIQUEMENT en JSON: {"title":"...","body":"..."}
   skipReason?,       // 'cap_daily', 'quiet_hours', 'no_token', 'cuisine_cap'
   sentAt?,
   copy: { title, body, source: 'llama' | 'template', locale: 'fr' | 'en' },
+  /** Renseignés par le pipeline Performances (§ 9) */
+  openedAt?,
+  dismissedAt?,
+  clickedAt?,
+  orderId24h?,
 }
 ```
 
@@ -361,9 +377,10 @@ africa-meals-api/src/modules/push-recommendations/
 
 **Admin Wise Eat (phase 2)** :
 
-- Dashboard : volume, CTR, conversions, répartition par cuisine, top copy
+- Menu **Performances** (voir § 9) : KPI push, funnel, copy A/B, cuisine, skip reasons
 - Toggle global + caps éditables
 - Pause campagne par région ou par type de reco
+- Lien drill-down → User Interest (`/admin/user-management`)
 
 ---
 
@@ -407,6 +424,10 @@ PUSH_RECO_MIN_SCORE=62
 PUSH_RECO_CUISINE_DIVERSITY_MAX_PCT=70   # max même cuisine sur 7 jours
 DISABLE_PUSH_RECO=false
 PUSH_RECO_ROLLOUT_PCT=10
+
+# Performances (partagé push + newsletter — voir § 9)
+ENGAGEMENT_PERFORMANCE_AGGREGATION_CRON=0 2 * * *
+ENGAGEMENT_PERFORMANCE_EVENTS_TTL_DAYS=90
 ```
 
 **Infra** : Ollama sur VM dédiée ou sidecar Docker ; workers séparés (PM2 process ou conteneur worker) pour ne pas bloquer l’API Wise Eat.
@@ -423,25 +444,149 @@ PUSH_RECO_ROLLOUT_PCT=10
 
 ---
 
-## 9. Métriques & boucle d’apprentissage
+## 9. Performances — menu admin & suivi KPI
 
-**Events à enregistrer** :
+Le menu **Performances** est le **centre de pilotage** des campagnes d’engagement Wise Eat. Il couvre le **canal push reco** (ce document) et le **canal email newsletter** (`NEWSLETTER.md` § 9) dans une même interface à onglets.
 
-| Event | Usage |
+### 9.1 Emplacement admin
+
+| Élément | Valeur |
+|---------|--------|
+| **Menu sidebar** | Marketing → **Performances** |
+| **Route** | `/marketing/performances` |
+| **Permission** | `admin.marketing` (ou `admin.analytics` en lecture seule) |
+| **Composants** | `performances-panel.tsx`, onglets shadcn `Tabs` |
+
+**Structure UI** :
+
+```
+Performances
+├── [Vue d’ensemble]     KPI combinés push + email
+├── [Push reco]          Métriques RECOMMENDATION.md
+├── [Newsletter food]    Métriques NEWSLETTER.md
+└── Filtres globaux      période, région, rollout %, canal copy (llama/template)
+```
+
+### 9.2 KPI push reco (onglet « Push reco »)
+
+| KPI | Formule | Alerte si |
+|-----|---------|-----------|
+| **Envoyés** | `status=sent` sur fenêtre | — |
+| **Délivrabilité** | `delivered / sent` | < 92 % |
+| **CTR ouverture** | `open / delivered` | < 8 % (7 j glissants) |
+| **CTR clic** | `click / open` | < 25 % |
+| **Conversion 24 h** | `order_24h / sent` | objectif ≥ 2 % |
+| **Dismiss rate** | `dismiss / delivered` | > 35 % |
+| **Unsubscribe push** | désactivations catégorie reco / sent | > 1 % |
+| **Skipped (anti-spam)** | `status=skipped` par `skipReason` | pic anormal `cap_daily` |
+| **Revenu attribué** | Σ `order.totalPrice` liées `orderId24h` | — |
+
+**Dimensions de découpe** (filtres + tableaux) :
+
+- `candidateType` (REORDER_FAVORITE, DAILY_MENU_MATCH, …)
+- `cuisineTags` / `cuisineLabel`
+- `copy.source` (llama vs template)
+- Région (`appCountryCode`, timezone bucket)
+- Créneau horaire (meal window)
+- Segment utilisateur (`ads_targeting_profiles.segment`)
+
+**Graphiques suggérés** :
+
+- Série temporelle : sent / open / order_24h (7 j, 30 j, 90 j)
+- Entonnoir : planifié → envoyé → ouvert → clic → commande
+- Heatmap : CTR par heure locale × jour de semaine
+- Top 10 copy (title) par conversion
+
+### 9.3 Modèle d’events & agrégats
+
+**Collection** `engagement_performance_events` (canal-agnostique) :
+
+```typescript
+{
+  channel: 'push_reco' | 'email_newsletter',
+  event: 'sent' | 'delivered' | 'open' | 'click' | 'dismiss' | 'unsubscribe' | 'order_24h' | 'order_48h' | 'skipped',
+  userId?,
+  scheduleId,           // push_delivery_schedule | food_newsletter_schedule
+  campaignId,
+  candidateType?,
+  campaignType?,          // email only
+  refType?, refId?,
+  cuisineTags?: string[],
+  copySource?: 'llama' | 'template',
+  region?: string,
+  metadata?: Record<string, unknown>,
+  occurredAt: Date,
+}
+```
+
+**Collection** `engagement_performance_daily` (pré-agrégat cron 02:00 UTC) :
+
+```typescript
+{
+  date: 'YYYY-MM-DD',
+  channel: 'push_reco' | 'email_newsletter' | 'combined',
+  region?: string,
+  metrics: {
+    sent, delivered, opened, clicked, dismissed, unsubscribed,
+    orders24h, orders48h, revenueCad,
+    skippedByReason: Record<string, number>,
+  },
+  breakdowns: {
+    byCandidateType?: Record<string, { sent, open, order24h }>,
+    byCuisine?: Record<string, { sent, open, order24h }>,
+    byCopySource?: { llama: {...}, template: {...} },
+  },
+}
+```
+
+**Rétention** : events bruts 90 j ; agrégats daily 2 ans.
+
+### 9.4 API admin Performances
+
+| Méthode | Route | Usage |
+|---------|-------|-------|
+| `GET` | `/admin/engagement/performances/overview` | KPI cards + séries (query: `from`, `to`, `region`) |
+| `GET` | `/admin/engagement/performances/push-reco` | Détail push (dimensions, funnel, top copy) |
+| `GET` | `/admin/engagement/performances/newsletter` | Détail email (voir NEWSLETTER.md) |
+| `GET` | `/admin/engagement/performances/campaigns` | Liste campagnes / schedules avec stats |
+| `GET` | `/admin/engagement/performances/campaigns/:id` | Drill-down une campagne |
+| `GET` | `/admin/engagement/performances/export` | CSV (admin.marketing) |
+
+**Query params communs** : `from`, `to`, `region`, `channel`, `candidateType`, `copySource`.
+
+### 9.5 Instrumentation côté produit
+
+| Point | Event |
 |-------|-------|
-| `push_reco_sent` | Volume |
-| `push_reco_delivered` | FCM ack |
-| `push_reco_open` | CTR |
-| `push_reco_dismiss` | Fatigue |
-| `push_reco_order_24h` | Conversion |
-| `push_reco_by_cuisine` | Diversité & performance par culture |
+| Worker FCM après ack | `push_reco_delivered` |
+| Mobile `onMessageOpenedApp` + payload `reco_push` | `push_reco_open` |
+| Swipe dismiss tray (si trackable) | `push_reco_dismiss` |
+| Deep link landing + `POST /recommendations/track` kind `PUSH_OPEN` | `push_reco_click` |
+| Webhook commande ≤ 24 h avec `campaignId` | `push_reco_order_24h` |
+| Planner skip | `push_reco_skipped` + `skipReason` |
 
-**Feedback dans le classifier** :
+**Mobile** : inclure `campaignId` et `scheduleId` dans le payload FCM pour attribution fiable.
 
-- ↑ poids candidats ouverts + commandés (par cuisine et global)
-- ↓ poids types / cuisines ignorés 3× de suite
-- A/B test copy Llama vs template (50/50) sur 2 semaines
-- Mesurer si `CROSS_CUISINE_DISCOVERY` convertit sans augmenter les désabonnements
+### 9.6 Boucle d’apprentissage (alimentée par Performances)
+
+- ↑ poids candidats / cuisines avec **conversion 24 h** élevée (dashboard)
+- ↓ poids types avec **dismiss rate** > seuil 7 j
+- Pause auto campagne si **unsubscribe push** > 1,5 % sur 7 j (alerte admin)
+- A/B Llama vs template : lire `byCopySource` dans Performances
+- Export CSV pour revue copy hebdomadaire
+
+### 9.7 Events legacy (alignés Performances)
+
+| Event | Canal | Usage |
+|-------|-------|-------|
+| `push_reco_sent` | push | Volume |
+| `push_reco_delivered` | push | Délivrabilité |
+| `push_reco_open` | push | CTR |
+| `push_reco_dismiss` | push | Fatigue |
+| `push_reco_order_24h` | push | Conversion |
+| `push_reco_by_cuisine` | push | Diversité & performance par culture |
+
+Tous ces events **écrivent** dans `engagement_performance_events` pour alimenter le menu **Performances**.
 
 ---
 
@@ -451,6 +596,8 @@ PUSH_RECO_ROLLOUT_PCT=10
 
 - Sync préférences notification API ↔ mobile
 - Schémas Mongo + module squelette
+- Schémas `engagement_performance_events` + `engagement_performance_daily`
+- **Menu admin Performances** (squelette : vue d’ensemble vide + onglet Push)
 - Métriques + kill switch
 - Tags cuisine dans `contextSnapshot` (depuis catégories / boutique)
 
@@ -460,18 +607,21 @@ PUSH_RECO_ROLLOUT_PCT=10
 - Templates FR/EN statiques
 - Planner caps + quiet hours + règle diversité basique
 - 5–10 % utilisateurs actifs (`PUSH_RECO_ROLLOUT_PCT`)
+- **Performances** : onglet Push live (sent, open, skip reasons)
 
 ### Phase 2 — Llama copy (1 semaine)
 
 - `RecommendationCopyService` + cache + fallback multilingue
 - A/B Llama vs template
 - Prompts validés sur échantillon multiculturel (≥ 5 familles de cuisine)
+- **Performances** : breakdown `byCopySource` (llama vs template)
 
 ### Phase 3 — Enrichissement (2–3 semaines)
 
 - Types TRENDING, PROMO, NEARBY, CROSS_CUISINE_DISCOVERY
-- Admin dashboard Wise Eat
+- **Performances** : entonnoir complet, heatmap créneaux, top copy, alertes
 - Meal windows par région (`supported-countries`)
+- Onglet Newsletter food dans Performances (quand email live — `NEWSLETTER.md`)
 
 ### Phase 4 — Optimisation
 
@@ -492,6 +642,7 @@ PUSH_RECO_ROLLOUT_PCT=10
 | Préférences non sync | Bloquer envoi si pas de consent serveur |
 | Charge FCM | Jitter + BullMQ concurrency limitée |
 | Reco hors stock | Re-valider stock/menu du jour au delivery worker |
+| KPIs non fiables | `campaignId` obligatoire dans payload ; tests E2E attribution |
 
 ---
 
@@ -504,6 +655,7 @@ PUSH_RECO_ROLLOUT_PCT=10
 5. **11:47** — Worker FCM envoie `type: reco_push`, deep link `wise-eat://open/product/{id}`.
 6. User ouvre → track `PUSH_OPEN` → commande → `push_reco_order_24h`.
 7. **Semaine suivante** — push `CROSS_CUISINE_DISCOVERY` sushi (recherche récente, pas encore commandé).
+8. **Admin** — Marketing → **Performances** → onglet Push : CTR +1,2 pt, conversion 24 h 2,4 %, top type `REORDER_FAVORITE`.
 
 ---
 
@@ -514,6 +666,7 @@ PUSH_RECO_ROLLOUT_PCT=10
 3. **Langue copy** : locale app, région, ou profil utilisateur ?
 4. **Ollama** : self-hosted vs API compatible OpenAI en prod ?
 5. **Workers** : même process PM2 `africa-meals-api` ou worker BullMQ séparé (recommandé) ?
+6. **Performances** : alertes Slack/email admin ou uniquement badges in-app ?
 
 ---
 
@@ -525,8 +678,9 @@ Construire un **orchestrateur push Wise Eat** au-dessus du moteur `recommendatio
 2. **Llama (Ollama)** → copy convertissante, inclusive et multilingue, avec fallback template
 3. **Planner cron + BullMQ** → livraison lissée, caps, quiet hours, meal windows par région
 4. **FCM existant** → deep links `wise-eat://` + tracking pour boucle d’apprentissage
+5. **Menu Performances** → pilotage KPI push (+ email via `NEWSLETTER.md`), A/B copy, alertes anti-spam
 
-L’objectif n’est pas « plus de notifications », mais **moins de notifications, mieux ciblées, représentatives de la richesse du catalogue Wise Eat, et mieux rédigées**.
+L’objectif n’est pas « plus de notifications », mais **moins de notifications, mieux ciblées, représentatives de la richesse du catalogue Wise Eat, mieux rédigées — et mesurées**.
 
 ---
 
@@ -542,3 +696,5 @@ L’objectif n’est pas « plus de notifications », mais **moins de notificati
 | `src/modules/gift-codes/gift-code-activation-notifier.service.ts` | Pattern batch promo |
 | `src/modules/supported-countries/region-timezone.util.ts` | Fuseaux & régions |
 | `africa-meals-mobile/lib/push/user_notification_preferences.dart` | Opt-in client |
+| `docs/NEWSLETTER.md` | Canal email + Performances onglet Newsletter |
+| `africa-meals-admin/app/(alternative)/marketing/performances/` | UI menu **Performances** (à créer) |

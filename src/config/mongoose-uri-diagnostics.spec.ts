@@ -1,5 +1,8 @@
 import { Logger } from '@nestjs/common';
-import { warnMongoUriReplicaSetConfig } from './mongoose-uri-diagnostics';
+import {
+  normalizeMongoUriForDriver,
+  warnMongoUriReplicaSetConfig,
+} from './mongoose-uri-diagnostics';
 
 describe('warnMongoUriReplicaSetConfig', () => {
   let warnSpy: jest.SpyInstance;
@@ -57,5 +60,23 @@ describe('warnMongoUriReplicaSetConfig', () => {
       'test-api',
     );
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('normalizeMongoUriForDriver', () => {
+  it('ajuste URI Stunnel (tls, directConnection, sans replicaSet)', () => {
+    const raw =
+      'mongodb://u:p@db.wise-eat.com:27018/wise_eat_db?authSource=admin&replicaSet=rs0&retryWrites=true&w=majority';
+    const normalized = normalizeMongoUriForDriver(raw);
+    expect(normalized).toContain('tls=true');
+    expect(normalized).toContain('directConnection=true');
+    expect(normalized).not.toContain('replicaSet');
+    expect(normalized).toContain('retryWrites=true');
+  });
+
+  it('ne modifie pas Atlas mongodb+srv', () => {
+    const raw =
+      'mongodb+srv://u:p@cluster.mongodb.net/db?retryWrites=true';
+    expect(normalizeMongoUriForDriver(raw)).toBe(raw);
   });
 });

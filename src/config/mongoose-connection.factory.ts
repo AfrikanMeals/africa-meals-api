@@ -1,5 +1,9 @@
 import { ConfigService } from '@nestjs/config';
-import { warnMongoUriReplicaSetConfig } from './mongoose-uri-diagnostics';
+import {
+  normalizeMongoUriForDriver,
+  readMongoIpFamily,
+  warnMongoUriReplicaSetConfig,
+} from './mongoose-uri-diagnostics';
 
 /** Vrai si l’URI contient déjà un nom de base (`…/african_meals_db?…`). */
 function mongoUriHasDatabase(uri: string): boolean {
@@ -67,9 +71,11 @@ export function buildMongooseRootOptions(
         }retryWrites=true&w=majority&appName=${appName}`
       : '';
 
-  const uri = fullUri.trim() || builtUri;
+  const rawUri = fullUri.trim() || builtUri;
+  const uri = normalizeMongoUriForDriver(rawUri);
   warnMongoUriReplicaSetConfig(uri, defaultAppName);
   const dbInUri = mongoUriHasDatabase(uri);
+  const ipFamily = readMongoIpFamily((key) => config.get(key));
 
   const maxPoolSize = parsePositiveInt(
     config.get<string>('MONGOOSE_MAX_POOL'),
@@ -121,7 +127,7 @@ export function buildMongooseRootOptions(
   return {
     uri,
     ...(!dbInUri && dbName ? { dbName } : {}),
-    family: 4,
+    ...(ipFamily != null ? { family: ipFamily } : {}),
     maxPoolSize,
     minPoolSize,
     maxIdleTimeMS,
