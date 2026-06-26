@@ -15,8 +15,10 @@ import {
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 import { MediasService } from '@modules/medias/medias.service';
+import { interpolatePolicyFields } from '@common/policy-template.util';
 import { UpsertAppPolicyDto } from './dto/upsert-app-policy.dto';
 import { PolicySectionImageJsonDto } from './dto/policy-section-image.dto';
+import { PlatformLegalSettingsService } from './platform-legal-settings.service';
 
 function assertAdmin(user: UserModel) {
   if (user.type !== UserTypeEnum.ADMIN) {
@@ -68,6 +70,7 @@ export class AppPoliciesService {
     @InjectModel(AppPolicyModel.name)
     private readonly _policies: Model<AppPolicyDocument>,
     private readonly _mediasService: MediasService,
+    private readonly _legalSettings: PlatformLegalSettingsService,
   ) {}
 
   async listForAdmin(user: UserModel) {
@@ -147,6 +150,7 @@ export class AppPoliciesService {
 
   async listPublishedPublic(localeRaw?: string) {
     const locale = normalizeLocale(localeRaw ?? 'fr');
+    const vars = await this._legalSettings.resolveTemplateVars(locale);
     const published = await this._policies
       .find({ isPublished: true })
       .sort({ slug: 1, locale: 1 })
@@ -160,12 +164,14 @@ export class AppPoliciesService {
           published.find((d) => d.slug === slug && d.locale === 'fr') ??
           published.find((d) => d.slug === slug);
         if (!doc) return null;
+        const serialized = serializePolicy(doc);
+        const interpolated = interpolatePolicyFields(serialized, vars);
         const { updatedAt } = policyTimestamps(doc);
         return {
-          slug: doc.slug,
-          locale: doc.locale,
-          title: doc.title,
-          description: doc.description ?? '',
+          slug: interpolated.slug,
+          locale: interpolated.locale,
+          title: interpolated.title,
+          description: interpolated.description ?? '',
           updatedAt,
         };
       })
@@ -180,6 +186,7 @@ export class AppPoliciesService {
       throw new NotFoundException('policy_not_found');
     }
     const locale = normalizeLocale(localeRaw ?? 'fr');
+    const vars = await this._legalSettings.resolveTemplateVars(locale);
     let doc = await this._policies
       .findOne({ slug, locale, isPublished: true })
       .exec();
@@ -191,7 +198,7 @@ export class AppPoliciesService {
     if (!doc) {
       throw new NotFoundException('policy_not_found');
     }
-    return serializePolicy(doc);
+    return interpolatePolicyFields(serializePolicy(doc), vars);
   }
 
   async uploadSectionImage(

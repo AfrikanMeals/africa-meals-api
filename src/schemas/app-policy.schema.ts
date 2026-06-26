@@ -7,6 +7,12 @@ export const BUILTIN_POLICY_SLUGS = [
   'terms',
   'refund',
   'shipping',
+  'vendor',
+  'courier',
+  'payment',
+  'legal-notice',
+  'cookies',
+  'newsletter',
 ] as const;
 
 export const POLICY_SLUG_REGEX = /^[a-z][a-z0-9-]{0,63}$/;

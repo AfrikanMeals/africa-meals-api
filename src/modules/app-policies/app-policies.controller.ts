@@ -18,11 +18,25 @@ import { Request } from 'express';
 import { AppPoliciesService } from './app-policies.service';
 import { UpsertAppPolicyDto } from './dto/upsert-app-policy.dto';
 import { PolicySectionImageJsonDto } from './dto/policy-section-image.dto';
+import { UpdatePlatformLegalSettingsDto } from './dto/update-platform-legal-settings.dto';
+import { PlatformLegalSettingsService } from './platform-legal-settings.service';
 
 @ApiTags('policies')
 @Controller('policies')
 export class AppPoliciesController {
-  constructor(private readonly _policies: AppPoliciesService) {}
+  constructor(
+    private readonly _policies: AppPoliciesService,
+    private readonly _legalSettings: PlatformLegalSettingsService,
+  ) {}
+
+  @Get('public/config')
+  @ApiOperation({
+    summary:
+      'Configuration légale publique (variables de template FR/EN)',
+  })
+  getPublicLegalConfig(@Query('locale') locale?: string) {
+    return this._legalSettings.getPublicConfig(locale);
+  }
 
   @Get('public')
   @ApiOperation({ summary: 'Lister les politiques publiées (site / app)' })
@@ -79,5 +93,25 @@ export class AppPoliciesController {
       slug,
       locale ?? 'fr',
     );
+  }
+
+  @ApiBearerAuth('bearer')
+  @Get('admin/legal-config')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Configuration légale plateforme (ADMIN)' })
+  getLegalConfigAdmin(@Req() req: Request) {
+    return this._legalSettings.getForAdmin(req.user as UserModel);
+  }
+
+  @ApiBearerAuth('bearer')
+  @Put('admin/legal-config')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({ summary: 'Mettre à jour la configuration légale (ADMIN)' })
+  updateLegalConfigAdmin(
+    @Req() req: Request,
+    @Body() body: UpdatePlatformLegalSettingsDto,
+  ) {
+    return this._legalSettings.update(req.user as UserModel, body);
   }
 }
