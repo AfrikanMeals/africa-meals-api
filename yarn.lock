@@ -2,13 +2,13 @@
 # yarn lockfile v1
 
 
-"@africa-meals/field-selection@file:../africa-meals-project/packages/africa-meals-field-selection":
+"@africa-meals/field-selection@file:packages/africa-meals-field-selection":
   version "1.0.0"
-  resolved "file:../africa-meals-project/packages/africa-meals-field-selection"
+  resolved "file:packages/africa-meals-field-selection"
 
-"@africa-meals/proto@file:../africa-meals-project/packages/africa-meals-proto":
+"@africa-meals/proto@file:packages/africa-meals-proto":
   version "1.0.0"
-  resolved "file:../africa-meals-project/packages/africa-meals-proto"
+  resolved "file:packages/africa-meals-proto"
 
 "@ampproject/remapping@^2.2.0":
   version "2.3.0"
@@ -2855,7 +2855,7 @@
   dependencies:
     "@types/express" "*"
 
-"@types/node@*", "@types/node@^20.14.2", "@types/node@>=12.12.47", "@types/node@>=13.7.0":
+"@types/node@*", "@types/node@^20.14.0", "@types/node@^20.14.2", "@types/node@>=12.12.47", "@types/node@>=13.7.0":
   version "20.14.2"
   resolved "https://registry.npmjs.org/@types/node/-/node-20.14.2.tgz"
   integrity sha512-xyu6WAMVwv6AKFLB+e/7ySZVr/0zLCzOa7rSpq6jNwpqOrUbcACDWC+53d4n2QHOnDou0fbIsg8wZu/sxrnI4Q==
@@ -11169,6 +11169,11 @@ typescript@^5.0.0:
   version "5.4.5"
   resolved "https://registry.npmjs.org/typescript/-/typescript-5.4.5.tgz"
   integrity sha512-vcI4UpRgg81oIRUFwR0WSIHKt11nJ7SAVlYNIu+QpqeyXP+gpQJy/Z4+F0aGxSE4MqwjyXvW/TzgkLAx2AGHwQ==
+
+typescript@^5.5.4:
+  version "5.9.3"
+  resolved "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz"
+  integrity sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==
 
 typescript@4.9.5:
   version "4.9.5"
