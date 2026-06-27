@@ -1,6 +1,12 @@
 import type { ConfigService } from '@nestjs/config';
 import type { IClientOptions } from 'mqtt';
-import { checkServerIdentity as tlsCheckServerIdentity } from 'node:tls';
+import {
+  checkServerIdentity as tlsCheckServerIdentity,
+  type ConnectionOptions,
+} from 'node:tls';
+
+type MqttTlsClientOptions = IClientOptions &
+  Pick<ConnectionOptions, 'checkServerIdentity'>;
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
@@ -29,7 +35,7 @@ export function readMqttBrokerConfig(config: ConfigService): {
     config.get<string>('MQTT_BROKER_PROTOCOL')?.trim() || 'mqtts';
   const url = direct || `${protocol}://${host}:${port}`;
 
-  const options: IClientOptions = {
+  const options: MqttTlsClientOptions = {
     username: config.get<string>('MQTT_BROKER_USERNAME')?.trim(),
     password: config.get<string>('MQTT_BROKER_PASSWORD')?.trim(),
     connectTimeout: parsePositiveInt(
