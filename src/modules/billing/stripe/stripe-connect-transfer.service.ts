@@ -7,7 +7,8 @@ import {
 } from '@modules/billing/stripe/stripe-processing-fee.util';
 import { normalizeStripeCurrencyCode } from '@utils/stripe-currency-amount.util';
 import { PlatformFeesService } from '@modules/platform-fees/platform-fees.service';
-import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
+import { SubscriptionPlanOrderCommissionService, mapOrderLineItemsToCommissionLines } from '@modules/subscriptions/subscription-plan-order-commission.service';
+import { OrdeLineItem } from '@schemas/order.schema';
 import { PlatformShippingSettingsService } from '@modules/platform-shipping-settings/platform-shipping-settings.service';
 import {
   BadRequestException,
@@ -196,10 +197,25 @@ export class StripeConnectTransferService {
     }
     const orderGrossCents = goodsCents + shipCents;
 
+    const orderDoc = await this.orderModel
+      .findById(args.orderId)
+      .select('items currency')
+      .lean()
+      .exec();
+    const paymentCurrency = String(
+      args.paymentCurrency ?? orderDoc?.currency ?? 'CAD',
+    )
+      .trim()
+      .toUpperCase();
+    const lineItems = mapOrderLineItemsToCommissionLines(
+      orderDoc?.items as OrdeLineItem[] | undefined,
+      paymentCurrency,
+    );
+
     const split =
       await this.planOrderCommission.computeVendorTransferSplitForStore(
         args.storeId,
-        orderGrossCents,
+        { goodsCents, shipCents, lineItems },
       );
 
     const platformFeeOnGoods = allocatePlatformFeeToGoodsCents({

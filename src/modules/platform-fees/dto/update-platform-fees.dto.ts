@@ -1,13 +1,17 @@
 import { PLATFORM_FEE_MODES } from '@schemas/platform-fees-settings.schema';
+import { COMMISSION_TIER_BASIS } from '@schemas/plan-region-order-commission-tier.schema';
+import { PlanRegionOrderCommissionTierDto } from '@modules/subscriptions/dto/plan-region-order-commission.dto';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsIn,
   IsNumber,
   IsOptional,
   IsString,
   Max,
   Min,
+  ValidateNested,
 } from 'class-validator';
 
 export class UpdatePlatformFeesDto {
@@ -129,6 +133,38 @@ export class UpdatePlatformFeesDto {
   @Min(0)
   @Max(100)
   platformOrderFeePercent?: number;
+
+  @ApiPropertyOptional({ enum: COMMISSION_TIER_BASIS })
+  @IsOptional()
+  @IsIn(COMMISSION_TIER_BASIS)
+  platformOrderCommissionTierBasis?: (typeof COMMISSION_TIER_BASIS)[number];
+
+  @ApiPropertyOptional({ type: [PlanRegionOrderCommissionTierDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PlanRegionOrderCommissionTierDto)
+  platformOrderCommissionTiers?: PlanRegionOrderCommissionTierDto[];
+
+  @ApiPropertyOptional({ enum: PLATFORM_FEE_MODES })
+  @IsOptional()
+  @IsIn(PLATFORM_FEE_MODES)
+  platformOrderCommissionFallbackMode?: (typeof PLATFORM_FEE_MODES)[number];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  platformOrderCommissionFallbackFixed?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  platformOrderCommissionFallbackPercent?: number;
 
   @ApiPropertyOptional({ enum: PLATFORM_FEE_MODES })
   @IsOptional()

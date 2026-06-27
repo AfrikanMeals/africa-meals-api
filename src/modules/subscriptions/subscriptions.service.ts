@@ -24,6 +24,7 @@ import {
   UpdateSubscriptionPlanDto,
 } from './dto/subscription-plan.dto';
 import { normalizePlanRegionOrderCommissions } from './dto/plan-region-order-commission.dto';
+import { orderCommissionConfigFromRow } from '@modules/platform-fees/platform-order-commission.util';
 import { normalizePlanRegionPricing } from './dto/plan-region-pricing.dto';
 import {
   isFreePlanName,
@@ -44,12 +45,24 @@ function mapPlanCommissionRow(row: Record<string, unknown>) {
     .trim()
     .toUpperCase();
   if (!regionCode) return null;
-  const mode = row.mode === 'fixed' ? 'fixed' : 'percent';
+  const config = orderCommissionConfigFromRow(row);
+  const tiers = config.tiers.map((t) => ({
+    minPrice: t.minPrice,
+    maxPrice: t.maxPrice ?? undefined,
+    mode: t.mode,
+    fixed: t.fixed,
+    percent: t.percent,
+  }));
   return {
     regionCode,
-    mode: mode as 'fixed' | 'percent',
-    fixed: Math.max(0, Number(row.fixed ?? 0)),
-    percent: Math.max(0, Number(row.percent ?? 0)),
+    tierBasis: config.tierBasis,
+    tiers,
+    fallbackMode: config.fallbackMode,
+    fallbackFixed: config.fallbackFixed,
+    fallbackPercent: config.fallbackPercent,
+    mode: config.fallbackMode,
+    fixed: config.fallbackMode === 'fixed' ? config.fallbackFixed : 0,
+    percent: config.fallbackMode === 'percent' ? config.fallbackPercent : 0,
   };
 }
 
@@ -294,11 +307,28 @@ export class SubscriptionsService implements OnModuleInit {
           storeForPricing,
           plan as unknown as Record<string, unknown>,
         );
+        const regionCode =
+          await this.planRegionalFees.resolveStoreRegionCode(storeForPricing);
+        const orderCommission =
+          await this.planRegionalFees.resolveEffectiveOrderCommissionForPlan(
+            plan as unknown as Record<string, unknown>,
+            regionCode,
+          );
         return {
           ...plan,
           priceMonthly: pricing.priceMonthly,
           priceYearly: pricing.priceYearly,
           currency: pricing.currency,
+          orderCommission: {
+            tierBasis: orderCommission.config.tierBasis,
+            tiers: orderCommission.config.tiers,
+            fallbackMode: orderCommission.config.fallbackMode,
+            fallbackFixed: orderCommission.config.fallbackFixed,
+            fallbackPercent: orderCommission.config.fallbackPercent,
+            currency: orderCommission.currency,
+            source: orderCommission.source,
+            regionCode: orderCommission.regionCode,
+          },
         };
       }),
     );

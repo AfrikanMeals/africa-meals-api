@@ -10,6 +10,12 @@ import {
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
+import {
+  computeOrderCommissionCents,
+  orderCommissionConfigFromRow,
+  OrderCommissionConfig,
+  normalizeCommissionTiers,
+} from '@modules/platform-fees/platform-order-commission.util';
 import { UpdatePlatformFeesDto } from './dto/update-platform-fees.dto';
 
 const SETTINGS_KEY = 'default';
@@ -325,6 +331,22 @@ export class PlatformFeesService {
       platformOrderFeeMode,
       platformOrderFeeFixed: doc.platformOrderFeeFixed ?? 0,
       platformOrderFeePercent: doc.platformOrderFeePercent ?? 0,
+      platformOrderCommissionTierBasis:
+        doc.platformOrderCommissionTierBasis ?? 'unit_price',
+      platformOrderCommissionTiers: normalizeCommissionTiers(
+        doc.platformOrderCommissionTiers,
+      ),
+      platformOrderCommissionFallbackMode:
+        doc.platformOrderCommissionFallbackMode ??
+        platformOrderFeeMode,
+      platformOrderCommissionFallbackFixed:
+        doc.platformOrderCommissionFallbackFixed ??
+        doc.platformOrderFeeFixed ??
+        0,
+      platformOrderCommissionFallbackPercent:
+        doc.platformOrderCommissionFallbackPercent ??
+        doc.platformOrderFeePercent ??
+        0,
       payoutFeeMode,
       payoutFeeFixed: doc.payoutFeeFixed ?? 0,
       payoutFeePercent: doc.payoutFeePercent ?? 0,
@@ -373,22 +395,42 @@ export class PlatformFeesService {
   /** Commission plateforme + montant à transférer au vendeur Connect. */
   async computeVendorTransferSplitFromSettings(
     grossCents: number,
+    options?: { goodsCents?: number; shipCents?: number },
   ): Promise<VendorTransferSplit> {
     const settings = await this.getGlobalOrderCommissionSettings();
-    return computeVendorTransferSplit(
-      grossCents,
-      {
-        platformOrderFeeMode: settings.platformOrderFeeMode,
-        platformOrderFeeFixed: settings.platformOrderFeeFixed,
-        platformOrderFeePercent: settings.platformOrderFeePercent,
-      },
-      settings.currency,
+    const gross = Math.max(0, Math.round(grossCents));
+    const goods =
+      options?.goodsCents != null
+        ? Math.max(0, Math.round(options.goodsCents))
+        : gross;
+    const ship =
+      options?.shipCents != null
+        ? Math.max(0, Math.round(options.shipCents))
+        : Math.max(0, gross - goods);
+    const meta = computeOrderCommissionCents({
+      goodsMinor: goods,
+      shipMinor: ship,
+      config: settings.config,
+      currency: settings.currency,
+    });
+    const platformFeeCents = Math.max(
+      0,
+      Math.min(meta.platformFeeCents, gross),
     );
+    return {
+      grossCents: gross,
+      platformFeeCents,
+      transferCents: gross - platformFeeCents,
+      feeMode: meta.feeMode === 'tiered' ? 'percent' : meta.feeMode,
+      feePercent: meta.feePercent,
+      feeFixedCad: meta.feeFixedCad,
+    };
   }
 
   /** Barème global commission commande (repli si formule/région non configurés). */
   async getGlobalOrderCommissionSettings(): Promise<{
     currency: string;
+    config: OrderCommissionConfig;
     platformOrderFeeMode: PlatformFeeMode;
     platformOrderFeeFixed: number;
     platformOrderFeePercent: number;
@@ -396,8 +438,19 @@ export class PlatformFeesService {
     const doc = await this._ensureDoc();
     const settings = this._toResponse(doc);
     const storeCurrency = await this._resolveCurrencyFromStoreSettings();
+    const config = orderCommissionConfigFromRow({
+      tierBasis: settings.platformOrderCommissionTierBasis,
+      tiers: settings.platformOrderCommissionTiers,
+      fallbackMode: settings.platformOrderCommissionFallbackMode,
+      fallbackFixed: settings.platformOrderCommissionFallbackFixed,
+      fallbackPercent: settings.platformOrderCommissionFallbackPercent,
+      mode: settings.platformOrderFeeMode,
+      fixed: settings.platformOrderFeeFixed,
+      percent: settings.platformOrderFeePercent,
+    });
     return {
       currency: storeCurrency,
+      config,
       platformOrderFeeMode: settings.platformOrderFeeMode,
       platformOrderFeeFixed: settings.platformOrderFeeFixed,
       platformOrderFeePercent: settings.platformOrderFeePercent,
@@ -480,6 +533,14 @@ export class PlatformFeesService {
       platformOrderFeeMode: settings.platformOrderFeeMode,
       platformOrderFeeFixed: settings.platformOrderFeeFixed,
       platformOrderFeePercent: settings.platformOrderFeePercent,
+      platformOrderCommissionTierBasis: settings.platformOrderCommissionTierBasis,
+      platformOrderCommissionTiers: settings.platformOrderCommissionTiers,
+      platformOrderCommissionFallbackMode:
+        settings.platformOrderCommissionFallbackMode,
+      platformOrderCommissionFallbackFixed:
+        settings.platformOrderCommissionFallbackFixed,
+      platformOrderCommissionFallbackPercent:
+        settings.platformOrderCommissionFallbackPercent,
       payoutFeeMode: settings.payoutFeeMode,
       payoutFeeFixed: settings.payoutFeeFixed,
       payoutFeePercent: settings.payoutFeePercent,
@@ -597,6 +658,57 @@ export class PlatformFeesService {
       platformOrderFeeMode === 'fixed' ? platformOrderFeeFixed : 0;
     $set.platformOrderFeePercent =
       platformOrderFeeMode === 'percent' ? platformOrderFeePercent : 0;
+
+    const platformOrderCommissionFallbackMode = normalizeMode(
+      dto.platformOrderCommissionFallbackMode,
+      normalizeMode(
+        dto.platformOrderFeeMode,
+        inferMode(
+          current.platformOrderCommissionFallbackMode ??
+            current.platformOrderFeeMode,
+          current.platformOrderCommissionFallbackFixed ??
+            current.platformOrderFeeFixed ??
+            0,
+          current.platformOrderCommissionFallbackPercent ??
+            current.platformOrderFeePercent ??
+            0,
+          platformOrderFeeMode,
+        ),
+      ),
+    );
+    const platformOrderCommissionFallbackFixed =
+      dto.platformOrderCommissionFallbackFixed ??
+      dto.platformOrderFeeFixed ??
+      current.platformOrderCommissionFallbackFixed ??
+      current.platformOrderFeeFixed ??
+      0;
+    const platformOrderCommissionFallbackPercent =
+      dto.platformOrderCommissionFallbackPercent ??
+      dto.platformOrderFeePercent ??
+      current.platformOrderCommissionFallbackPercent ??
+      current.platformOrderFeePercent ??
+      0;
+    $set.platformOrderCommissionFallbackMode = platformOrderCommissionFallbackMode;
+    $set.platformOrderCommissionFallbackFixed =
+      platformOrderCommissionFallbackMode === 'fixed'
+        ? platformOrderCommissionFallbackFixed
+        : 0;
+    $set.platformOrderCommissionFallbackPercent =
+      platformOrderCommissionFallbackMode === 'percent'
+        ? platformOrderCommissionFallbackPercent
+        : 0;
+
+    if (dto.platformOrderCommissionTierBasis != null) {
+      $set.platformOrderCommissionTierBasis =
+        dto.platformOrderCommissionTierBasis === 'order_subtotal'
+          ? 'order_subtotal'
+          : 'unit_price';
+    }
+    if (dto.platformOrderCommissionTiers != null) {
+      $set.platformOrderCommissionTiers = normalizeCommissionTiers(
+        dto.platformOrderCommissionTiers,
+      );
+    }
 
     const payoutFeeFixed = dto.payoutFeeFixed ?? current.payoutFeeFixed ?? 0;
     const payoutFeePercent =

@@ -1,5 +1,11 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
+import {
+  COMMISSION_TIER_BASIS,
+  CommissionTierBasis,
+  PlanRegionOrderCommissionTierModel,
+  PlanRegionOrderCommissionTierSchema,
+} from '@schemas/plan-region-order-commission-tier.schema';
 
 export const PLATFORM_FEE_MODES = ['fixed', 'percent'] as const;
 export type PlatformFeeMode = (typeof PLATFORM_FEE_MODES)[number];
@@ -62,6 +68,24 @@ export class PlatformFeesSettingsModel {
   /** Commission plateforme sur commande : % du montant commande (hors livraison). */
   @Prop({ type: Number, default: 0 })
   platformOrderFeePercent: number;
+
+  @Prop({ type: String, enum: COMMISSION_TIER_BASIS, default: 'unit_price' })
+  platformOrderCommissionTierBasis: CommissionTierBasis;
+
+  @Prop({
+    type: [PlanRegionOrderCommissionTierSchema],
+    default: [],
+  })
+  platformOrderCommissionTiers: PlanRegionOrderCommissionTierModel[];
+
+  @Prop({ type: String, enum: PLATFORM_FEE_MODES, default: 'percent' })
+  platformOrderCommissionFallbackMode: PlatformFeeMode;
+
+  @Prop({ type: Number, default: 0 })
+  platformOrderCommissionFallbackFixed: number;
+
+  @Prop({ type: Number, default: 0 })
+  platformOrderCommissionFallbackPercent: number;
 
   @Prop({ type: String, enum: PLATFORM_FEE_MODES, default: 'fixed' })
   payoutFeeMode: PlatformFeeMode;

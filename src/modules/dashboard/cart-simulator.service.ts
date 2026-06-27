@@ -271,7 +271,15 @@ export class CartSimulatorService {
     const commissionSplit =
       await this.planOrderCommission.computeVendorTransferSplitForStore(
         storeId,
-        orderGrossCents,
+        {
+          goodsCents,
+          shipCents,
+          lineItems: lines.map((line) => ({
+            unitPrice: line.unitPrice,
+            quantity: line.quantity,
+            lineTotalMinor: displayToMinor(line.lineTotal, amountFactor),
+          })),
+        },
       );
     const platformFeeOnGoodsCents = allocatePlatformFeeToGoodsCents({
       platformFeeCents: commissionSplit.platformFeeCents,
@@ -313,6 +321,8 @@ export class CartSimulatorService {
         platformCommissionMode: commissionSplit.feeMode,
         platformCommissionPercent: commissionSplit.feePercent,
         platformCommissionFixed: commissionSplit.feeFixedCad,
+        platformCommissionTiered:
+          commissionSettings.config.tiers.length > 0,
         commissionSource: commissionSettings.source,
         netTransfer: minorToDisplay(vendorNetCents, amountFactor),
         note:

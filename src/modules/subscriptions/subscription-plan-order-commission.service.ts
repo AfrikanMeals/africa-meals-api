@@ -6,9 +6,18 @@ import {
   PayoutFeeSplit,
   VendorTransferSplit,
 } from '@modules/platform-fees/platform-fees.service';
+import {
+  CommissionLineItem,
+  computeOrderCommissionCents,
+  orderCommissionConfigFromRow,
+  OrderCommissionConfig,
+  OrderCommissionSplitMeta,
+} from '@modules/platform-fees/platform-order-commission.util';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { CartItemTypeEnum } from '@schemas/cart_item.schema';
+import { OrdeLineItem } from '@schemas/order.schema';
 import { PlanRegionOrderCommissionModel } from '@schemas/plan-region-order-commission.schema';
 import { PlanRegionPricingModel } from '@schemas/plan-region-pricing.schema';
 import { PlatformFeeMode } from '@schemas/platform-fees-settings.schema';
@@ -16,11 +25,13 @@ import { StoreModel } from '@schemas/store.schema';
 import { SubscriptionPlanModel } from '@schemas/subscription-plan.schema';
 import { VendorSubscriptionModel } from '@schemas/vendor-subscription.schema';
 import { Model, Types } from 'mongoose';
+import {
+  stripeAmountFactor,
+  toStripeMinorUnits,
+} from '../../utils/stripe-currency-amount.util';
 
 export type ResolvedOrderCommissionSettings = {
-  platformOrderFeeMode: PlatformFeeMode;
-  platformOrderFeeFixed: number;
-  platformOrderFeePercent: number;
+  config: OrderCommissionConfig;
   currency: string;
   source: 'plan_region' | 'global';
   regionCode?: string;
@@ -43,6 +54,12 @@ export type ResolvedPlanPricing = {
   currency: string;
   source: 'plan_region' | 'default';
   regionCode?: string;
+};
+
+export type ComputeVendorCommissionArgs = {
+  goodsCents: number;
+  shipCents: number;
+  lineItems?: CommissionLineItem[];
 };
 
 function readPlanDefaults(plan: Record<string, unknown>): ResolvedPlanPricing {
@@ -86,29 +103,27 @@ function mapRegionFeeRow(
     .trim()
     .toUpperCase();
   if (!regionCode) return null;
-  const mode: PlatformFeeMode = row.mode === 'fixed' ? 'fixed' : 'percent';
-  const fixed = Math.max(0, Number(row.fixed ?? 0));
-  const percent = Math.max(0, Number(row.percent ?? 0));
+  const config = orderCommissionConfigFromRow(
+    row as unknown as Record<string, unknown>,
+  );
+  const hasTiers = config.tiers.length > 0;
+  const hasFallback =
+    (config.fallbackMode === 'fixed' && config.fallbackFixed > 0) ||
+    (config.fallbackMode === 'percent' && config.fallbackPercent > 0);
+  if (!hasTiers && !hasFallback) return null;
+  if (hasTiers) {
+    return mapFields(
+      config.fallbackMode,
+      config.fallbackFixed,
+      config.fallbackPercent,
+    );
+  }
+  const mode = config.fallbackMode;
+  const fixed = config.fallbackFixed;
+  const percent = config.fallbackPercent;
   if (mode === 'fixed' && fixed <= 0) return null;
   if (mode === 'percent' && percent <= 0) return null;
   return mapFields(mode, fixed, percent);
-}
-
-function mapCommissionRow(
-  row: PlanRegionOrderCommissionModel,
-): Omit<
-  ResolvedOrderCommissionSettings,
-  'currency' | 'source' | 'regionCode' | 'planId'
-> | null {
-  const mapped = mapRegionFeeRow(row, (mode, fixed, percent) => ({
-    platformOrderFeeMode: mode,
-    platformOrderFeeFixed: mode === 'fixed' ? fixed : 0,
-    platformOrderFeePercent: mode === 'percent' ? percent : 0,
-  }));
-  return mapped as Omit<
-    ResolvedOrderCommissionSettings,
-    'currency' | 'source' | 'regionCode' | 'planId'
-  > | null;
 }
 
 function mapPayoutFeeRow(
@@ -126,6 +141,35 @@ function mapPayoutFeeRow(
     ResolvedPayoutFeeSettings,
     'currency' | 'source' | 'regionCode' | 'planId'
   > | null;
+}
+
+export function mapOrderLineItemsToCommissionLines(
+  items: OrdeLineItem[] | undefined,
+  currency: string,
+): CommissionLineItem[] {
+  if (!Array.isArray(items) || !items.length) return [];
+  const factor = stripeAmountFactor(currency);
+  const out: CommissionLineItem[] = [];
+  for (const item of items) {
+    const itemType = String(item.itemType ?? '');
+    if (
+      itemType !== CartItemTypeEnum.PRODUCT &&
+      itemType !== CartItemTypeEnum.DRINK &&
+      itemType !== CartItemTypeEnum.OFFER &&
+      itemType !== CartItemTypeEnum.PRODUCT_EXTRA
+    ) {
+      continue;
+    }
+    const unitPrice = Math.max(0, Number(item.price ?? 0));
+    const quantity = Math.max(1, Math.round(Number(item.quantity ?? 1)));
+    const lineTotalMinor =
+      factor >= 100
+        ? toStripeMinorUnits(unitPrice * quantity, currency)
+        : Math.round(unitPrice * quantity);
+    if (lineTotalMinor < 1) continue;
+    out.push({ unitPrice, quantity, lineTotalMinor });
+  }
+  return out;
 }
 
 @Injectable()
@@ -204,6 +248,59 @@ export class SubscriptionPlanOrderCommissionService {
     );
   }
 
+  resolveOrderCommissionFromPlanRow(
+    entry: PlanRegionOrderCommissionModel | Record<string, unknown> | undefined,
+    currency: string,
+    meta: { source: 'plan_region' | 'global'; regionCode?: string; planId?: string },
+  ): ResolvedOrderCommissionSettings {
+    return {
+      config: orderCommissionConfigFromRow(
+        entry as unknown as Record<string, unknown>,
+      ),
+      currency,
+      ...meta,
+    };
+  }
+
+  async resolveOrderCommissionForPlanRegion(
+    plan: Record<string, unknown>,
+    regionCode: string | null | undefined,
+  ): Promise<ResolvedOrderCommissionSettings | null> {
+    const code = String(regionCode ?? '')
+      .trim()
+      .toUpperCase();
+    if (!code) return null;
+    const rows = (
+      plan as { orderCommissionsByRegion?: PlanRegionOrderCommissionModel[] }
+    )?.orderCommissionsByRegion;
+    const entry = Array.isArray(rows)
+      ? rows.find(
+          (r) =>
+            String(r.regionCode ?? '')
+              .trim()
+              .toUpperCase() === code,
+        )
+      : undefined;
+    if (!entry) return null;
+    const config = orderCommissionConfigFromRow(
+      entry as unknown as Record<string, unknown>,
+    );
+    const hasTiers = config.tiers.length > 0;
+    const hasFallback =
+      (config.fallbackMode === 'fixed' && config.fallbackFixed > 0) ||
+      (config.fallbackMode === 'percent' && config.fallbackPercent > 0);
+    if (!hasTiers && !hasFallback) return null;
+    const currency =
+      (await this.supportedCountries.getCurrency(code)) ?? 'CAD';
+    return {
+      config,
+      currency,
+      source: 'plan_region',
+      regionCode: code,
+      planId: String(plan.id ?? plan._id ?? ''),
+    };
+  }
+
   async resolveOrderCommissionForStore(
     storeId: string,
   ): Promise<ResolvedOrderCommissionSettings> {
@@ -216,30 +313,12 @@ export class SubscriptionPlanOrderCommissionService {
         .select('orderCommissionsByRegion')
         .lean()
         .exec();
-      const rows = (
-        plan as { orderCommissionsByRegion?: PlanRegionOrderCommissionModel[] }
-      )?.orderCommissionsByRegion;
-      const entry = Array.isArray(rows)
-        ? rows.find(
-            (r) =>
-              String(r.regionCode ?? '')
-                .trim()
-                .toUpperCase() === regionCode,
-          )
-        : undefined;
-      if (entry) {
-        const mapped = mapCommissionRow(entry);
-        if (mapped) {
-          const currency =
-            (await this.supportedCountries.getCurrency(regionCode)) ?? 'CAD';
-          return {
-            ...mapped,
-            currency,
-            source: 'plan_region',
-            regionCode,
-            planId,
-          };
-        }
+      const resolved = await this.resolveOrderCommissionForPlanRegion(
+        plan as Record<string, unknown>,
+        regionCode,
+      );
+      if (resolved) {
+        return { ...resolved, planId };
       }
     }
 
@@ -252,9 +331,7 @@ export class SubscriptionPlanOrderCommissionService {
       'CAD';
 
     return {
-      platformOrderFeeMode: global.platformOrderFeeMode,
-      platformOrderFeeFixed: global.platformOrderFeeFixed,
-      platformOrderFeePercent: global.platformOrderFeePercent,
+      config: global.config,
       currency,
       source: 'global',
       regionCode: regionCode ?? undefined,
@@ -262,20 +339,64 @@ export class SubscriptionPlanOrderCommissionService {
     };
   }
 
+  computeVendorCommissionSplit(
+    settings: ResolvedOrderCommissionSettings,
+    args: ComputeVendorCommissionArgs,
+  ): VendorTransferSplit {
+    const goods = Math.max(0, Math.round(args.goodsCents));
+    const ship = Math.max(0, Math.round(args.shipCents));
+    const gross = goods + ship;
+    const meta = computeOrderCommissionCents({
+      goodsMinor: goods,
+      shipMinor: ship,
+      lineItems: args.lineItems,
+      config: settings.config,
+      currency: settings.currency,
+    });
+    return this.toVendorTransferSplit(gross, meta);
+  }
+
+  private toVendorTransferSplit(
+    grossCents: number,
+    meta: OrderCommissionSplitMeta,
+  ): VendorTransferSplit {
+    const gross = Math.max(0, Math.round(grossCents));
+    const platformFeeCents = Math.max(
+      0,
+      Math.min(meta.platformFeeCents, gross),
+    );
+    return {
+      grossCents: gross,
+      platformFeeCents,
+      transferCents: gross - platformFeeCents,
+      feeMode: meta.feeMode === 'tiered' ? 'percent' : meta.feeMode,
+      feePercent: meta.feePercent,
+      feeFixedCad: meta.feeFixedCad,
+    };
+  }
+
   async computeVendorTransferSplitForStore(
     storeId: string,
-    grossCents: number,
+    amounts: {
+      goodsCents: number;
+      shipCents: number;
+      lineItems?: CommissionLineItem[];
+    },
   ): Promise<VendorTransferSplit> {
     const settings = await this.resolveOrderCommissionForStore(storeId);
-    return computeVendorTransferSplit(
-      grossCents,
-      {
-        platformOrderFeeMode: settings.platformOrderFeeMode,
-        platformOrderFeeFixed: settings.platformOrderFeeFixed,
-        platformOrderFeePercent: settings.platformOrderFeePercent,
-      },
-      settings.currency,
-    );
+    return this.computeVendorCommissionSplit(settings, {
+      goodsCents: Math.max(0, Math.round(amounts.goodsCents)),
+      shipCents: Math.max(0, Math.round(amounts.shipCents)),
+      lineItems: amounts.lineItems,
+    });
+  }
+
+  async computeVendorCommissionForStore(
+    storeId: string,
+    args: ComputeVendorCommissionArgs,
+  ): Promise<VendorTransferSplit> {
+    const settings = await this.resolveOrderCommissionForStore(storeId);
+    return this.computeVendorCommissionSplit(settings, args);
   }
 
   async resolvePayoutFeeForStore(
@@ -350,6 +471,33 @@ export class SubscriptionPlanOrderCommissionService {
       },
       settings.currency,
     );
+  }
+
+  async resolveEffectiveOrderCommissionForPlan(
+    plan: Record<string, unknown>,
+    regionCode: string | null | undefined,
+  ): Promise<ResolvedOrderCommissionSettings> {
+    const fromPlan = await this.resolveOrderCommissionForPlanRegion(
+      plan,
+      regionCode,
+    );
+    if (fromPlan) return fromPlan;
+
+    const global = await this.platformFees.getGlobalOrderCommissionSettings();
+    const code = String(regionCode ?? '')
+      .trim()
+      .toUpperCase();
+    const currency =
+      (code ? await this.supportedCountries.getCurrency(code) : null) ??
+      global.currency;
+
+    return {
+      config: global.config,
+      currency,
+      source: 'global',
+      regionCode: code || undefined,
+      planId: String(plan.id ?? plan._id ?? ''),
+    };
   }
 
   resolvePlanPricing(
