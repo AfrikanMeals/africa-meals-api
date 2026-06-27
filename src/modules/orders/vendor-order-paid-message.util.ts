@@ -124,6 +124,11 @@ export function vendorOrderStatusLabelFr(
   switch (status) {
     case 'created':
       return 'Nouvelle commande (en attente de paiement)';
+    case 'awaiting_cash':
+      if (payOnPickup) {
+        return 'À payer à la collecte';
+      }
+      return 'En attente de paiement';
     case 'paied':
     case 'paid':
       if (payOnPickup) {

@@ -51,7 +51,9 @@ export function isVendorAcceptedPreparingOrder(
   order: Record<string, unknown>,
 ): boolean {
   const st = String(order['status'] ?? '').toLowerCase();
-  return st === OrderStatusEnum.PAIED && readVendorAcceptedAt(order) != null;
+  const preparingStatus =
+    st === OrderStatusEnum.PAIED || st === OrderStatusEnum.AWAITING_CASH;
+  return preparingStatus && readVendorAcceptedAt(order) != null;
 }
 
 /** Paiement à la collecte encore dû (hors annulation). */
@@ -71,6 +73,11 @@ export function publicOrderStatusLabelFr(
   }
   const status = String(order['status'] ?? '').toLowerCase();
   switch (status) {
+    case OrderStatusEnum.AWAITING_CASH:
+      if (isVendorAcceptedPreparingOrder(order)) {
+        return 'En préparation';
+      }
+      return PAY_ON_PICKUP_UNSETTLED_STATUS_LABEL;
     case OrderStatusEnum.PAIED:
       if (isVendorAcceptedPreparingOrder(order)) {
         return 'En préparation';

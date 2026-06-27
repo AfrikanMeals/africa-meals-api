@@ -1,4 +1,5 @@
 import { StripeConnectTransferService } from '@modules/billing/stripe/stripe-connect-transfer.service';
+import { StripeDeferredCaptureService } from '@modules/billing/stripe/stripe-deferred-capture.service';
 import { BusinessReportsService } from '@modules/business-reports/business-reports.service';
 import { AdsService } from '@modules/ads/ads.service';
 import { CartService } from '@modules/cart/cart.service';
@@ -45,6 +46,10 @@ import {
 } from 'src/utils/pickup-code';
 import { objectIdStringFromRef, mongoIdsEqual } from 'src/utils/mongoose-ref.util';
 import { enrichOrdersDisplayStatus, readOrderPayOnPickup } from './order-display-status.util';
+import {
+  isOrderStatusCancellablePayOnPickup,
+  isOrderStatusPaidForVendorWorkflow,
+} from './order-status-workflow.util';
 import {
   ConfirmPickupDto,
   CreateRefundRequestDto,
@@ -147,6 +152,9 @@ export class OrdersService {
 
   @Inject(StripeConnectTransferService)
   private readonly _stripeTransfers: StripeConnectTransferService;
+
+  @Inject(StripeDeferredCaptureService)
+  private readonly _stripeDeferredCapture: StripeDeferredCaptureService;
 
   @Inject(LoyaltyService)
   private readonly _loyaltyService: LoyaltyService;
@@ -614,7 +622,7 @@ export class OrdersService {
     const status = String(order['status'] ?? '');
     if (
       readOrderPayOnPickup(order) &&
-      this.isRefundRequestAllowedForStatus(status)
+      isOrderStatusCancellablePayOnPickup(status)
     ) {
       return {
         canRequestRefund: false,
@@ -1422,8 +1430,11 @@ export class OrdersService {
     }
 
     const isPickup = shippingStored <= 0;
+    const paidStatus = isPayOnPickup
+      ? OrderStatusEnum.AWAITING_CASH
+      : OrderStatusEnum.PAIED;
     const $set: Record<string, unknown> = {
-      status: OrderStatusEnum.PAIED,
+      status: paidStatus,
       shippingPrice: shippingStored,
       totalPrice,
       subtotalBeforeTax,
@@ -1536,7 +1547,7 @@ export class OrdersService {
       .updateOne({ _id: new Types.ObjectId(orderId) }, { $set })
       .exec();
 
-    if (prevStatus !== OrderStatusEnum.PAIED) {
+    if (prevStatus !== paidStatus) {
       const storeIdForEvent = objectIdStringFromRef(o.store);
       const customerIdForEvent = objectIdStringFromRef(o.user);
       const uid = customerIdForEvent;
@@ -1579,7 +1590,7 @@ export class OrdersService {
           storeId: storeIdForEvent,
           customerUserId: customerIdForEvent,
           fromStatus: prevStatus || undefined,
-          toStatus: OrderStatusEnum.PAIED,
+          toStatus: paidStatus,
           source: statusEventSource,
         });
         let storeName: string | undefined;
@@ -1599,7 +1610,7 @@ export class OrdersService {
               storeName,
               storeId: storeIdForCustomer,
               previousStatus: prevStatus,
-              newStatus: OrderStatusEnum.PAIED,
+              newStatus: paidStatus,
               bodyOverride: isPayOnPickup
                 ? 'Commande enregistrée — paiement à effectuer lors du retrait en boutique'
                 : undefined,
@@ -1614,7 +1625,7 @@ export class OrdersService {
         }
         void this._wsOrderNotifyHandler?.notifyPartiesByOrderId(
           orderId,
-          OrderStatusEnum.PAIED,
+          paidStatus,
         );
         if (!isPayOnPickup) {
           const storeIdForAds = storeIdForEvent;
@@ -1845,7 +1856,7 @@ export class OrdersService {
     const order = await this._orderModel
       .findOne({
         _id: new Types.ObjectId(oid),
-        status: OrderStatusEnum.PAIED,
+        status: OrderStatusEnum.AWAITING_CASH,
         payOnPickup: true,
         vendorPaidNotifiedAt: { $exists: false },
       })
@@ -2111,7 +2122,7 @@ export class OrdersService {
     await this.assertUserCanManageOrderStore(user, order);
 
     const st = order.status as OrderStatusEnum;
-    if (st !== OrderStatusEnum.PAIED) {
+    if (!isOrderStatusPaidForVendorWorkflow(st)) {
       throw new BadRequestException('order_accept_invalid_status');
     }
     if (order.vendorAcceptedAt) {
@@ -2193,7 +2204,7 @@ export class OrdersService {
     if (st === OrderStatusEnum.APPROVED) {
       throw new BadRequestException('order_already_ready');
     }
-    if (st !== OrderStatusEnum.PAIED) {
+    if (!isOrderStatusPaidForVendorWorkflow(st)) {
       throw new BadRequestException('order_ready_invalid_status');
     }
 
@@ -2264,6 +2275,16 @@ export class OrdersService {
       isPickup,
       note: isPickup ? 'Prête pour retrait' : 'Prête pour livraison',
     });
+
+    void this._stripeDeferredCapture
+      .captureOnOrderReady(oid)
+      .catch((err) =>
+        this.logger.warn(
+          `Stripe deferred capture order=${oid}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
 
     return { orderId: oid, status: OrderStatusEnum.APPROVED, isPickup };
   }
@@ -2535,28 +2556,32 @@ export class OrdersService {
     ).trim();
     const wasPaid =
       prevStatus === OrderStatusEnum.PAIED ||
-      prevStatus === OrderStatusEnum.APPROVED ||
-      prevStatus === OrderStatusEnum.SHIPPED ||
-      prevStatus === OrderStatusEnum.COMPLETED;
+      prevStatus === OrderStatusEnum.APPROVED;
     if (
       wasPaid &&
       parentId.length > 0 &&
       !this.hasActiveRefundRequest(order.refundRequestLog)
     ) {
-      const autoDetails =
-        source === 'vendor'
-          ? 'Annulation par le restaurant — remboursement client intégral (sans frais plateforme).'
-          : source === 'admin'
-          ? 'Annulation par l’administration — remboursement à traiter.'
-          : 'Annulation — remboursement à traiter.';
-      order.refundRequestLog = [
-        ...(order.refundRequestLog ?? []),
-        {
-          status: OrderRefundRequestEntryStatusEnum.PENDING,
-          details: autoDetails,
-          requestedAt: new Date(),
-        },
-      ];
+      const release =
+        await this._stripeDeferredCapture.cancelAuthorizationIfUncaptured(
+          parentId,
+        );
+      if (release !== 'cancelled') {
+        const autoDetails =
+          source === 'vendor'
+            ? 'Annulation par le restaurant — remboursement client intégral (sans frais plateforme).'
+            : source === 'admin'
+              ? 'Annulation par l’administration — remboursement à traiter.'
+              : 'Annulation — remboursement à traiter.';
+        order.refundRequestLog = [
+          ...(order.refundRequestLog ?? []),
+          {
+            status: OrderRefundRequestEntryStatusEnum.PENDING,
+            details: autoDetails,
+            requestedAt: new Date(),
+          },
+        ];
+      }
     }
 
     await order.save();
@@ -3648,7 +3673,9 @@ export class OrdersService {
     oid: string,
   ): Promise<{ orderId: string; status: OrderStatusEnum }> {
     const st = order.status as OrderStatusEnum;
-    this.assertRefundRequestApplicableToOrder(st);
+    if (!isOrderStatusCancellablePayOnPickup(st)) {
+      throw new BadRequestException('refund_not_applicable_status');
+    }
 
     try {
       assertOrderCancelReasonPayload({

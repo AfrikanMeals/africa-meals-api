@@ -12,6 +12,7 @@ import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import { StripeChargeFeeService } from './stripe-charge-fee.service';
 import { StripeConnectTransferService } from './stripe-connect-transfer.service';
+import { StripeDeferredCaptureService } from './stripe-deferred-capture.service';
 
 /** Transferts Connect (vendeur / livreur) sans dépendre de OrdersModule ni StoreModule. */
 @Module({
@@ -29,7 +30,15 @@ import { StripeConnectTransferService } from './stripe-connect-transfer.service'
       { name: UserModel.name, schema: UserSchema },
     ]),
   ],
-  providers: [StripeChargeFeeService, StripeConnectTransferService],
-  exports: [StripeChargeFeeService, StripeConnectTransferService],
+  providers: [
+    StripeChargeFeeService,
+    StripeConnectTransferService,
+    StripeDeferredCaptureService,
+  ],
+  exports: [
+    StripeChargeFeeService,
+    StripeConnectTransferService,
+    StripeDeferredCaptureService,
+  ],
 })
 export class StripeConnectTransferModule {}

@@ -13,6 +13,8 @@ import { StoreModel } from './store.schema';
 export enum OrderStatusEnum {
   CREATED = 'created', // WHEN ORDER IS CREATED
   PAIED = 'paied', // WHEN ORDER IS PAID
+  /** Paiement cash au retrait en boutique — en attente d’encaissement. */
+  AWAITING_CASH = 'awaiting_cash',
   APPROVED = 'approved', // WHEN ORDER IS APPROVED BY STORE
   CANCELLED = 'cancelled', // WHEN ORDER IS CANCELLED BY STORE
   SHIPPED = 'shipped', // WHEN ORDER IS SHIPPED BY STORE
@@ -312,6 +314,20 @@ export class OrderModel extends BaseSchema {
   /** `cs_…` ou `pi_…` du paiement Stripe groupé ayant déclenché la commande. */
   @Prop({ required: false, name: 'stripe_parent_payment_id' })
   stripeParentPaymentId?: string;
+
+  /**
+   * Capture Stripe différée (`STRIPE_DEFERRED_CAPTURE`, mono-boutique) :
+   * `authorized` → `captured` à la mise en prête, ou `cancelled` si annulation.
+   */
+  @Prop({
+    required: false,
+    name: 'stripe_capture_status',
+    enum: ['authorized', 'captured', 'cancelled'],
+  })
+  stripeCaptureStatus?: 'authorized' | 'captured' | 'cancelled';
+
+  @Prop({ required: false, name: 'stripe_captured_at', type: Date })
+  stripeCapturedAt?: Date;
 
   /**
    * Paiement cash au retrait en boutique (pickup / à emporter).

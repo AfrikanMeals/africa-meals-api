@@ -20,6 +20,7 @@ import {
 } from '@schemas/ad-credit-payment.schema';
 import { StripeConnectService } from './stripe-connect.service';
 import { StripeConnectTransferService } from './stripe-connect-transfer.service';
+import { StripeDeferredCaptureService } from './stripe-deferred-capture.service';
 import { scaleStorePayoutMinorToPaymentShare } from './stripe-processing-fee.util';
 import { OrdersService } from '@modules/orders/orders.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
@@ -770,6 +771,7 @@ export class StripeGroupedCheckoutService {
     private readonly couponsService: CouponsService,
     private readonly stripeConnect: StripeConnectService,
     private readonly stripeTransfers: StripeConnectTransferService,
+    private readonly deferredCapture: StripeDeferredCaptureService,
     private readonly platformFees: PlatformFeesService,
     private readonly supportedCountries: SupportedCountriesService,
     @InjectModel(StripeProcessedCheckoutModel.name)
@@ -1648,6 +1650,13 @@ export class StripeGroupedCheckoutService {
     if (built.orderPaymentFeeCents > 0) {
       base.payFeeCents = String(built.orderPaymentFeeCents);
     }
+    const stripeStoreCount = Object.keys(built.payoutByStore ?? {}).length;
+    Object.assign(
+      base,
+      this.deferredCapture.metadataFlag(
+        this.deferredCapture.shouldDeferForStripeStoreCount(stripeStoreCount),
+      ),
+    );
     const popEntries = Object.entries(built.payOnPickupByStoreId ?? {}).filter(
       ([, v]) => v === true,
     );
@@ -1757,6 +1766,9 @@ export class StripeGroupedCheckoutService {
     const pmcId = this.config
       .get<string>('STRIPE_PAYMENT_METHOD_CONFIGURATION')
       ?.trim();
+    const stripeStoreCount = Object.keys(built.payoutByStore).length;
+    const captureMethod =
+      this.deferredCapture.captureMethodForStripeStoreCount(stripeStoreCount);
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       currency: built.currency,
@@ -1775,6 +1787,7 @@ export class StripeGroupedCheckoutService {
       payment_intent_data: {
         description: piDescription,
         metadata: meta,
+        capture_method: captureMethod,
       },
     });
 
@@ -1839,11 +1852,15 @@ export class StripeGroupedCheckoutService {
     );
     const stripe = this.stripe();
     const idem = idempotencyKey?.trim().slice(0, 255);
+    const stripeStoreCount = Object.keys(built.payoutByStore).length;
+    const captureMethod =
+      this.deferredCapture.captureMethodForStripeStoreCount(stripeStoreCount);
     const pi = await stripe.paymentIntents.create(
       {
         amount: totalCents,
         currency: built.currency,
         automatic_payment_methods: { enabled: true },
+        capture_method: captureMethod,
         metadata: meta,
         receipt_email: user.email || undefined,
         description: piDescription,
@@ -1954,6 +1971,7 @@ export class StripeGroupedCheckoutService {
     paymentCurrency?: string;
     giftCode?: string;
     giftDiscountByStore: Record<string, number>;
+    deferCapture?: boolean;
   }): Promise<{
     breakdown: StripePerStoreBreakdownRow;
     orderId?: string;
@@ -1979,6 +1997,7 @@ export class StripeGroupedCheckoutService {
       paymentCurrency,
       giftCode,
       giftDiscountByStore,
+      deferCapture,
     } = params;
 
     const paymentCap = Math.max(0, Math.round(amountTotalCents ?? 0));
@@ -2006,23 +2025,25 @@ export class StripeGroupedCheckoutService {
         let transferCents = prior.transferCents;
         let platformFeeCents = prior.platformFeeCents;
         let transferSkippedReason = prior.transferSkippedReason;
-        try {
-          const tr = await this.stripeTransfers.transferForPaidOrder({
-            orderId: prior.orderId,
-            storeId,
-            goodsCents: g,
-            shipCents: s,
-            stripeParentPaymentId: stripePaymentId,
-            paymentTotalCents: amountTotalCents,
-            totalPayoutGrossCents,
-            paymentCurrency: paymentCurrency ?? currency,
-          });
-          transferId = tr.transferId ?? transferId;
-          transferCents = tr.transferCents;
-          platformFeeCents = tr.platformFeeCents;
-          transferSkippedReason = tr.skippedReason;
-        } catch {
-          /* garde les valeurs prior */
+        if (!deferCapture) {
+          try {
+            const tr = await this.stripeTransfers.transferForPaidOrder({
+              orderId: prior.orderId,
+              storeId,
+              goodsCents: g,
+              shipCents: s,
+              stripeParentPaymentId: stripePaymentId,
+              paymentTotalCents: amountTotalCents,
+              totalPayoutGrossCents,
+              paymentCurrency: paymentCurrency ?? currency,
+            });
+            transferId = tr.transferId ?? transferId;
+            transferCents = tr.transferCents;
+            platformFeeCents = tr.platformFeeCents;
+            transferSkippedReason = tr.skippedReason;
+          } catch {
+            /* garde les valeurs prior */
+          }
         }
         return {
           breakdown: {
@@ -2178,32 +2199,36 @@ export class StripeGroupedCheckoutService {
       let transferCents: number | undefined;
       let platformFeeCents: number | undefined;
       let transferSkippedReason: string | undefined;
-      try {
-        const tr = await this.stripeTransfers.transferForPaidOrder({
-          orderId: oid,
-          storeId,
-          goodsCents: goodsCents ?? 0,
-          shipCents,
-          stripeParentPaymentId: stripePaymentId,
-          paymentTotalCents: amountTotalCents,
-          totalPayoutGrossCents,
-          paymentCurrency: paymentCurrency ?? currency,
-        });
-        transferCents = tr.transferCents;
-        platformFeeCents = tr.platformFeeCents;
-        transferId = tr.transferId;
-        transferSkippedReason = tr.skippedReason;
-        if (!tr.transferred && tr.skippedReason) {
-          this.logger.warn(
-            `Connect transfer skipped store=${storeId} order=${oid}: ${tr.skippedReason}`,
+      if (!params.deferCapture) {
+        try {
+          const tr = await this.stripeTransfers.transferForPaidOrder({
+            orderId: oid,
+            storeId,
+            goodsCents: goodsCents ?? 0,
+            shipCents,
+            stripeParentPaymentId: stripePaymentId,
+            paymentTotalCents: amountTotalCents,
+            totalPayoutGrossCents,
+            paymentCurrency: paymentCurrency ?? currency,
+          });
+          transferCents = tr.transferCents;
+          platformFeeCents = tr.platformFeeCents;
+          transferId = tr.transferId;
+          transferSkippedReason = tr.skippedReason;
+          if (!tr.transferred && tr.skippedReason) {
+            this.logger.warn(
+              `Connect transfer skipped store=${storeId} order=${oid}: ${tr.skippedReason}`,
+            );
+          }
+        } catch (trErr) {
+          transferSkippedReason =
+            trErr instanceof Error ? trErr.message : String(trErr);
+          this.logger.error(
+            `Connect transfer error store=${storeId} order=${oid}: ${transferSkippedReason}`,
           );
         }
-      } catch (trErr) {
-        transferSkippedReason =
-          trErr instanceof Error ? trErr.message : String(trErr);
-        this.logger.error(
-          `Connect transfer error store=${storeId} order=${oid}: ${transferSkippedReason}`,
-        );
+      } else {
+        transferSkippedReason = 'deferred_capture_pending';
       }
 
       return {
@@ -2433,6 +2458,7 @@ export class StripeGroupedCheckoutService {
     const paymentCurrency = String(
       metadata?.checkoutCur ?? currency ?? '',
     ).trim();
+    const deferCapture = this.deferredCapture.isDeferredFromMetadata(metadata);
 
     const storeSlots = await Promise.all(
       storeIds.map((storeId) =>
@@ -2457,6 +2483,7 @@ export class StripeGroupedCheckoutService {
           paymentCurrency: paymentCurrency || undefined,
           giftCode: giftCode || undefined,
           giftDiscountByStore,
+          deferCapture,
         }),
       ),
     );
@@ -2468,6 +2495,9 @@ export class StripeGroupedCheckoutService {
       if (slot.error) {
         fulfillErrors.push(slot.error);
       }
+    }
+    if (deferCapture && fulfillErrors.length === 0) {
+      await this.deferredCapture.markOrdersAuthorized(stripePaymentId);
     }
     if (giftCode && orderIds.length > 0) {
       try {

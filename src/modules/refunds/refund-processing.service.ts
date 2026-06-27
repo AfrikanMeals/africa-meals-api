@@ -15,6 +15,7 @@ import { WsOrderNotifyHandler } from '@modules/domain-event-handlers/handlers/ws
 import { StripeChargeFeeService } from '@modules/billing/stripe/stripe-charge-fee.service';
 import { effectiveStripeProcessingFeeCents } from '@modules/billing/stripe/stripe-processing-fee.util';
 import { StripeConnectTransferService } from '@modules/billing/stripe/stripe-connect-transfer.service';
+import { StripeDeferredCaptureService } from '@modules/billing/stripe/stripe-deferred-capture.service';
 import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-email.service';
 import {
   PlatformFeesService,
@@ -189,6 +190,7 @@ export class RefundProcessingService {
     private readonly platformFeesService: PlatformFeesService,
     private readonly stripeFees: StripeChargeFeeService,
     private readonly stripeTransfers: StripeConnectTransferService,
+    private readonly stripeDeferredCapture: StripeDeferredCaptureService,
     private readonly vendorStatusEmail: VendorStatusEmailService,
   ) {}
 
@@ -980,6 +982,41 @@ export class RefundProcessingService {
       amount: netAmount,
       currency: refundCurrency,
     });
+
+    const authRelease =
+      await this.stripeDeferredCapture.cancelAuthorizationIfUncaptured(
+        parentId,
+      );
+    if (authRelease === 'cancelled') {
+      const completedNote =
+        'Autorisation de paiement annulée — aucun débit sur votre carte.';
+      this.patchLatestEntry(order, {
+        status: OrderRefundRequestEntryStatusEnum.COMPLETED,
+        resolutionNote: completedNote,
+        processedBy: args.processedBy,
+        adminUserId: args.admin ? String(args.admin.id) : entry.adminUserId,
+        customerRefundCents: 0,
+        refundGrossCents: 0,
+        platformRefundFeeCents: 0,
+        stripeProcessingFeeCents: 0,
+        stripeProcessingFeeOnCustomerCents: 0,
+        vendorPenaltyCents: 0,
+      });
+      await order.save();
+      await this.notifyRefundUpdate({
+        customer,
+        orderId: args.orderId,
+        storeName,
+        storeId,
+        kind: 'completed',
+        amount: 0,
+        currency: refundCurrency,
+      });
+      return {
+        orderId: args.orderId,
+        status: OrderRefundRequestEntryStatusEnum.COMPLETED,
+      };
+    }
 
     try {
       await this.stripeTransfers.reverseTransferForRefund({

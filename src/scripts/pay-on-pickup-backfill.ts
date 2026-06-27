@@ -54,6 +54,7 @@ function parseArgs(argv: string[]): CliOptions {
 function buildLegacyHeuristicMatch(): Record<string, unknown> {
   const activeStatuses = [
     OrderStatusEnum.PAIED,
+    OrderStatusEnum.AWAITING_CASH,
     OrderStatusEnum.APPROVED,
     OrderStatusEnum.SHIPPED,
     OrderStatusEnum.COMPLETED,
@@ -157,7 +158,12 @@ async function run() {
       const res = await orderModel
         .updateOne(
           { _id: new Types.ObjectId(oid) },
-          { $set: { payOnPickup: true } },
+          {
+            $set: {
+              payOnPickup: true,
+              status: OrderStatusEnum.AWAITING_CASH,
+            },
+          },
         )
         .exec();
       if (res.modifiedCount > 0) updated += 1;
