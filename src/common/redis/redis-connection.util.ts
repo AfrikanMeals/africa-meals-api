@@ -43,6 +43,7 @@ type RedisEnvKeySet = {
   password: string;
   tls: string;
   tlsRejectUnauthorized: string;
+  tlsServername: string;
 };
 
 const CACHE_REDIS_KEYS: RedisEnvKeySet = {
@@ -53,6 +54,7 @@ const CACHE_REDIS_KEYS: RedisEnvKeySet = {
   password: 'REDIS_PASSWORD',
   tls: 'REDIS_TLS',
   tlsRejectUnauthorized: 'REDIS_TLS_REJECT_UNAUTHORIZED',
+  tlsServername: 'REDIS_TLS_SERVERNAME',
 };
 
 const BULLMQ_REDIS_KEYS: RedisEnvKeySet = {
@@ -63,6 +65,7 @@ const BULLMQ_REDIS_KEYS: RedisEnvKeySet = {
   password: 'BULLMQ_REDIS_PASSWORD',
   tls: 'BULLMQ_REDIS_TLS',
   tlsRejectUnauthorized: 'BULLMQ_REDIS_TLS_REJECT_UNAUTHORIZED',
+  tlsServername: 'BULLMQ_REDIS_TLS_SERVERNAME',
 };
 
 /** Options TLS ioredis / node-redis — cert Stunnel auto-signé : `*_TLS_REJECT_UNAUTHORIZED=false`. */
@@ -85,11 +88,16 @@ function buildTlsOptions(
   return {};
 }
 
-function enrichTlsSni(connection: RedisConnectionConfig): RedisConnectionConfig {
+function enrichTlsSni(
+  connection: RedisConnectionConfig,
+  get: RedisEnvGetter,
+  keys: RedisEnvKeySet,
+): RedisConnectionConfig {
   if (!connection.tls) return connection;
+  const servername = get(keys.tlsServername)?.trim() || connection.host;
   return {
     ...connection,
-    tls: { ...connection.tls, servername: connection.host },
+    tls: { ...connection.tls, servername },
   };
 }
 
@@ -101,7 +109,7 @@ function readRedisConnectionWithKeys(
   if (redisUrl) {
     try {
       const parsed = new URL(redisUrl);
-      return enrichTlsSni({
+      const conn = {
         host: parsed.hostname,
         port: parsePositiveInt(
           parsed.port,
@@ -110,7 +118,8 @@ function readRedisConnectionWithKeys(
         username: parsed.username || undefined,
         password: parsed.password || undefined,
         tls: buildTlsOptions(get, keys, parsed.protocol === 'rediss:'),
-      });
+      };
+      return enrichTlsSni(conn, get, keys);
     } catch {
       return null;
     }
@@ -118,13 +127,14 @@ function readRedisConnectionWithKeys(
 
   const host = get(keys.host)?.trim();
   if (!host) return null;
-  return enrichTlsSni({
+  const conn = {
     host,
     port: parsePositiveInt(get(keys.port), 6379),
     username: get(keys.username)?.trim() || undefined,
     password: get(keys.password)?.trim() || undefined,
     tls: buildTlsOptions(get, keys, false),
-  });
+  };
+  return enrichTlsSni(conn, get, keys);
 }
 
 /** Cache HTTP, pub/sub SSE, tokens partagés — `REDIS_*`. */
@@ -153,7 +163,7 @@ function readRedisConnectionFromUrlString(
 ): RedisConnectionConfig | null {
   try {
     const parsed = new URL(redisUrl);
-    return enrichTlsSni({
+    const conn = {
       host: parsed.hostname,
       port: parsePositiveInt(
         parsed.port,
@@ -162,7 +172,8 @@ function readRedisConnectionFromUrlString(
       username: parsed.username || undefined,
       password: parsed.password || undefined,
       tls: buildTlsOptions(get, keys, parsed.protocol === 'rediss:'),
-    });
+    };
+    return enrichTlsSni(conn, get, keys);
   } catch {
     return null;
   }
@@ -362,7 +373,8 @@ export function readRedisCacheStoreOptionsFromConfig(
     url,
     socket: {
       tls: true,
-      servername: conn.host,
+      servername:
+        (conn.tls?.servername as string | undefined) || conn.host,
       ...(ipFamily != null ? { family: ipFamily } : {}),
       ...(rejectUnauthorized === false ? { rejectUnauthorized: false } : {}),
     },
