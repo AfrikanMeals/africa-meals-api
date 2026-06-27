@@ -31,6 +31,7 @@ function normalizePath(url: string): string {
 function isAppCheckExempt(method: string, path: string): boolean {
   if (method === 'OPTIONS') return true;
   if (path === '/health' || path.startsWith('/health/')) return true;
+  if (path === '/metrics' || path.startsWith('/metrics/')) return true;
   if (path.startsWith('/internal/')) return true;
   if (path.includes('/stripe/webhook')) return true;
   if (method === 'GET' && path.startsWith('/platform/')) return true;

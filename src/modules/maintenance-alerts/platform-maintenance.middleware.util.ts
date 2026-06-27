@@ -8,6 +8,7 @@ const WHITELIST_PREFIXES = [
   '/sse/public/platform-maintenance',
   '/auth/',
   '/health',
+  '/metrics',
   '/docs',
   '/swagger',
   '/internal/',

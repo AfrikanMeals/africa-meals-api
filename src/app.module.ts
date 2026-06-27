@@ -49,6 +49,7 @@ import { DbMaintenanceModule } from './modules/db-maintenance/db-maintenance.mod
 import { AdminOpsReportsModule } from './modules/admin-ops-reports/admin-ops-reports.module';
 import { MaintenanceAlertsModule } from './modules/maintenance-alerts/maintenance-alerts.module';
 import { RequestStatsModule } from './modules/request-stats/request-stats.module';
+import { MetricsModule } from './modules/metrics/metrics.module';
 import { FieldSelectionModule } from './common/field-selection/field-selection.module';
 import { DomainEventsModule } from './common/domain-events/domain-events.module';
 import { ModuleCacheLayerModule } from './common/cache/module-cache-layer.module';
@@ -321,6 +322,7 @@ async function readRedisManagerEnabledAtBootstrap(
     AdminOpsReportsModule,
     MaintenanceAlertsModule,
     RequestStatsModule,
+    MetricsModule,
     FieldSelectionModule,
     DomainEventsModule,
     AuthSettingsModule,
