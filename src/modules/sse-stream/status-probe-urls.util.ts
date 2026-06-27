@@ -74,7 +74,15 @@ export function resolveWebProbeEndpointUrl(config: ConfigService): string {
   return resolveWebProbeUrl(config);
 }
 
-/** URL HTTP utilisée pour sonder le WS (localhost en dev). */
+function isK8sInternalServiceUrl(url: string): boolean {
+  try {
+    return new URL(url).hostname.includes('.svc.cluster.local');
+  } catch {
+    return false;
+  }
+}
+
+/** URL HTTP utilisée pour sonder le WS (localhost en dev, service k8s en prod). */
 export function resolveWsProbeFetchUrl(config: ConfigService): string {
   const wsInternal = config
     .get<string>('AFRICA_MEALS_WS_INTERNAL_URL')
@@ -89,17 +97,23 @@ export function resolveWsProbeFetchUrl(config: ConfigService): string {
     return `http://localhost:${port}/api/health`;
   }
 
+  if (wsInternal && isK8sInternalServiceUrl(wsInternal)) {
+    return `${wsInternal}/api/health`;
+  }
+
   const base = config.get<string>('WS_BASE_URL')?.trim()?.replace(/\/+$/, '');
   if (base) return `${base}/api/health`;
   if (wsInternal) return `${wsInternal}/api/health`;
   return 'https://ws.wise-eat.com/api/health';
 }
 
-/** URL affichée dans le payload SSE (tunnel dev public). */
+/** URL affichée dans le payload SSE (tunnel dev public ou WS_BASE_URL prod). */
 export function resolveWsProbeEndpointUrl(config: ConfigService): string {
   if (isDevStatusProbeStack(config)) {
     return `${DEV_WS_PUBLIC}/api/health`;
   }
+  const base = config.get<string>('WS_BASE_URL')?.trim()?.replace(/\/+$/, '');
+  if (base) return `${base}/api/health`;
   return resolveWsProbeFetchUrl(config);
 }
 

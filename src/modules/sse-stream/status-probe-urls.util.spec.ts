@@ -84,6 +84,31 @@ describe('status-probe-urls.util', () => {
     ).toBe('https://admin.wise-eat.com/api/health');
   });
 
+  it('uses k8s internal WS for fetch and public WS_BASE_URL for endpoint', () => {
+    expect(
+      resolveWsProbeFetchUrl(
+        mockConfig({
+          NODE_ENV: 'production',
+          AFRICA_MEALS_WS_INTERNAL_URL:
+            'http://africa-meals-ws.wise-eat.svc.cluster.local:8000',
+          WS_BASE_URL: 'https://ws.wise-eat.com',
+        }),
+      ),
+    ).toBe(
+      'http://africa-meals-ws.wise-eat.svc.cluster.local:8000/api/health',
+    );
+    expect(
+      resolveWsProbeEndpointUrl(
+        mockConfig({
+          NODE_ENV: 'production',
+          AFRICA_MEALS_WS_INTERNAL_URL:
+            'http://africa-meals-ws.wise-eat.svc.cluster.local:8000',
+          WS_BASE_URL: 'https://ws.wise-eat.com',
+        }),
+      ),
+    ).toBe('https://ws.wise-eat.com/api/health');
+  });
+
   it('detects dev stack from SERVER_URL localhost', () => {
     expect(
       isDevStatusProbeStack(
