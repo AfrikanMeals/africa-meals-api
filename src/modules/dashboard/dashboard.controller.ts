@@ -34,6 +34,7 @@ import {
 } from './dto/revenue-series-query.dto';
 import { CartSimulatorPreviewDto } from './dto/cart-simulator-preview.dto';
 import { CartSimulatorService } from './cart-simulator.service';
+import { DashboardRegionQueryDto } from './dto/dashboard-region-query.dto';
 import { DashboardService } from './dashboard.service';
 
 @ApiTags('dashboard')
@@ -48,25 +49,36 @@ export class DashboardController {
 
   @Get('alerts')
   @UseGuards(JwtGuard)
-  alerts(@Req() req: Request) {
-    return this._dashboardService.getAlerts(req.user as UserModel);
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  alerts(@Req() req: Request, @Query() query: DashboardRegionQueryDto) {
+    return this._dashboardService.getAlerts(req.user as UserModel, query.region);
   }
 
   /** Répartition des commandes (totaux + statuts) selon le rôle connecté. */
   @Get('order-status-summary')
   @UseGuards(JwtGuard)
-  orderStatusSummary(@Req() req: Request) {
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  orderStatusSummary(
+    @Req() req: Request,
+    @Query() query: DashboardRegionQueryDto,
+  ) {
     return this._dashboardService.getDashboardOrderStatusSummary(
       req.user as UserModel,
+      query.region,
     );
   }
 
   /** CA mois en cours + tendance vs période comparable mois précédent — admin ou vendeur. */
   @Get('revenue-summary')
   @UseGuards(JwtGuard)
-  revenueSummary(@Req() req: Request) {
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  revenueSummary(
+    @Req() req: Request,
+    @Query() query: DashboardRegionQueryDto,
+  ) {
     return this._dashboardService.getDashboardRevenueSummary(
       req.user as UserModel,
+      query.region,
     );
   }
 
@@ -91,45 +103,62 @@ export class DashboardController {
   /** Top 5 plats (12 mois glissants) + tendance jour vs veille — vendeur ou admin. */
   @Get('top-plats-daily')
   @UseGuards(JwtGuard)
-  topPlatsDaily(@Req() req: Request) {
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  topPlatsDaily(
+    @Req() req: Request,
+    @Query() query: DashboardRegionQueryDto,
+  ) {
     return this._dashboardService.listDashboardTopPlatsDaily(
       req.user as UserModel,
+      query.region,
     );
   }
 
   /** Derniers clients + nouveaux du jour (1ère commande dans la boutique) — vendeur uniquement. */
   @Get('vendor/recent-customers')
   @UseGuards(JwtGuard)
-  vendorRecentCustomers(@Req() req: Request) {
-    return this._dashboardService.listVendorRecentCustomers(
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  vendorRecentCustomers(
+    @Req() req: Request,
+    @Query() query: DashboardRegionQueryDto,
+  ) {
+    return this._dashboardService.listVendorRecentCustomersForRegion(
       req.user as UserModel,
+      query.region,
     );
   }
 
   /** Histogramme 24 h sur les 30 derniers jours glissants (America/Toronto) : commandes + livraisons (admin = toute la plateforme). */
   @Get('peak-hours')
   @UseGuards(JwtGuard)
-  peakHours(@Req() req: Request) {
-    return this._dashboardService.listPeakHoursActivity(req.user as UserModel);
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  peakHours(@Req() req: Request, @Query() query: DashboardRegionQueryDto) {
+    return this._dashboardService.listPeakHoursActivity(
+      req.user as UserModel,
+      query.region,
+    );
   }
 
   /** Indicateurs agrégés (ADMIN uniquement) — alias de `daily-kpis`. */
   @Get('admin/kpis')
   @UseGuards(JwtGuard)
-  adminKpis(@Req() req: Request) {
-    return this._dashboardService.getAdminKpis(req.user as UserModel);
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  adminKpis(@Req() req: Request, @Query() query: DashboardRegionQueryDto) {
+    return this._dashboardService.getAdminKpis(req.user as UserModel, query.region);
   }
 
   /** KPIs du jour — admin (plateforme) ou vendeur (ses boutiques). */
   @Get('daily-kpis')
   @UseGuards(JwtGuard)
-  dailyKpis(@Req() req: Request) {
-    return this._dashboardService.getDailyKpis(req.user as UserModel);
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  dailyKpis(@Req() req: Request, @Query() query: DashboardRegionQueryDto) {
+    return this._dashboardService.getDailyKpis(req.user as UserModel, query.region);
   }
 
   /** Courbe de revenus (7j / 30j / 12m) — admin ou vendeur. */
   @Get('revenue-series')
   @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   revenueSeries(
     @Req() req: Request,
     @Query() query: DashboardRevenueSeriesQueryDto,
@@ -137,21 +166,36 @@ export class DashboardController {
     return this._dashboardService.getDashboardRevenueSeries(
       req.user as UserModel,
       parseRevenueSeriesPeriod(query.period),
+      query.region,
     );
   }
 
   /** Derniers clients + nouveaux du jour — admin (plateforme) ou vendeur. */
   @Get('recent-customers')
   @UseGuards(JwtGuard)
-  recentCustomers(@Req() req: Request) {
-    return this._dashboardService.listRecentCustomers(req.user as UserModel);
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  recentCustomers(
+    @Req() req: Request,
+    @Query() query: DashboardRegionQueryDto,
+  ) {
+    return this._dashboardService.listRecentCustomers(
+      req.user as UserModel,
+      query.region,
+    );
   }
 
   /** Top boutiques par CA du jour — admin ou vendeur. */
   @Get('top-stores-today')
   @UseGuards(JwtGuard)
-  topStoresToday(@Req() req: Request) {
-    return this._dashboardService.listTopStoresToday(req.user as UserModel);
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  topStoresToday(
+    @Req() req: Request,
+    @Query() query: DashboardRegionQueryDto,
+  ) {
+    return this._dashboardService.listTopStoresToday(
+      req.user as UserModel,
+      query.region,
+    );
   }
 
   /** Performance financière hebdomadaire par client / vendeur (Finances). */

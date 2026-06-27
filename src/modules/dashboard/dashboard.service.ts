@@ -1283,14 +1283,33 @@ export class DashboardService {
    * et total des **nouveaux** clients du jour : première commande non annulée dans **cette** boutique
    * (jour calendaire `America/Toronto`).
    */
-  async listVendorRecentCustomers(user: UserModel): Promise<{
+  async listVendorRecentCustomersForRegion(
+    user: UserModel,
+    regionCode?: string,
+  ): Promise<{
     newCustomersToday: number;
     clients: DashboardVendorRecentCustomerRow[];
   }> {
     if (user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('vendor_only');
     }
-    const storeIds = vendorStoreObjectIds(user);
+    const scope = await this.resolveDashboardStoreScope(user, regionCode);
+    if (scope.empty) {
+      return { newCustomersToday: 0, clients: [] };
+    }
+    return this.listVendorRecentCustomers(user, scope.storeIds ?? []);
+  }
+
+  async listVendorRecentCustomers(
+    user: UserModel,
+    storeIds: Types.ObjectId[],
+  ): Promise<{
+    newCustomersToday: number;
+    clients: DashboardVendorRecentCustomerRow[];
+  }> {
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_only');
+    }
     if (!storeIds.length) {
       return { newCustomersToday: 0, clients: [] };
     }
@@ -2882,27 +2901,35 @@ export class DashboardService {
    */
   async listRecentCustomers(
     user: UserModel,
+    regionCode?: string,
   ): Promise<DashboardRecentCustomersPayload> {
+    const scope = await this.resolveDashboardStoreScope(user, regionCode);
+    if (scope.empty) {
+      return { newCustomersToday: 0, clients: [] };
+    }
     if (user.type === UserTypeEnum.VENDOR) {
-      return this.listVendorRecentCustomers(user);
+      return this.listVendorRecentCustomers(user, scope.storeIds ?? []);
     }
     if (user.type === UserTypeEnum.ADMIN) {
-      return this.listAdminRecentCustomers(user);
+      return this.listAdminRecentCustomers(user, scope.storeIds);
     }
     throw new ForbiddenException('forbidden');
   }
 
   private async listAdminRecentCustomers(
     _user: UserModel,
+    storeIds: Types.ObjectId[] | null,
   ): Promise<DashboardRecentCustomersPayload> {
     const z = PEAK_HOURS_TZ;
     const start = dayjs().tz(z).startOf('day').toDate();
     const end = dayjs().tz(z).endOf('day').toDate();
 
-    const newClientsToday = await this.userModel.countDocuments({
-      type: UserTypeEnum.USER,
-      createdAt: { $gte: start, $lte: end },
-    });
+    const newClientsToday = storeIds?.length
+      ? await this.countNewClientsInRange(start, end, storeIds)
+      : await this.userModel.countDocuments({
+          type: UserTypeEnum.USER,
+          createdAt: { $gte: start, $lte: end },
+        });
 
     type PopUser = {
       _id: Types.ObjectId;
@@ -2916,7 +2943,10 @@ export class DashboardService {
     };
 
     const recentOrders = (await this.orderModel
-      .find({ status: { $ne: OrderStatusEnum.CANCELLED } })
+      .find({
+        status: { $ne: OrderStatusEnum.CANCELLED },
+        ...(storeIds?.length ? { store: { $in: storeIds } } : {}),
+      })
       .sort({ createdAt: -1 })
       .limit(80)
       .populate('user', 'fullName profileImage')
