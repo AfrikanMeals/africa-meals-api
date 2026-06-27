@@ -48,6 +48,18 @@ export class MapSettingsModel {
   /** Moteur par défaut — app mobile livreur (mapbox | google | osm). */
   @Prop({ type: String, default: 'mapbox', trim: true })
   mobileDeliveryDefaultMapEngine: string;
+
+  /** API géocodage — vendeur web (+ mobile vendeur). */
+  @Prop({ type: String, default: 'osm', trim: true })
+  vendorGeocodingEngine: string;
+
+  /** API géocodage — client mobile. */
+  @Prop({ type: String, default: 'osm', trim: true })
+  mobileUserGeocodingEngine: string;
+
+  /** API géocodage — livreur mobile. */
+  @Prop({ type: String, default: 'osm', trim: true })
+  mobileDeliveryGeocodingEngine: string;
 }
 
 export type MapSettingsDocument = HydratedDocument<MapSettingsModel>;

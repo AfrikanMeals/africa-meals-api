@@ -3,6 +3,7 @@ import { IsBoolean, IsIn, IsOptional, IsString } from 'class-validator';
 
 const VENDOR_ENGINES = ['mapbox', 'google', 'osm'] as const;
 const MOBILE_ENGINES = ['mapbox', 'google', 'osm'] as const;
+const GEOCODING_ENGINES = ['mapbox', 'google', 'osm'] as const;
 
 export class UpdateMapSettingsDto {
   @ApiProperty()
@@ -58,4 +59,22 @@ export class UpdateMapSettingsDto {
   @IsString()
   @IsIn(MOBILE_ENGINES)
   mobileDeliveryDefaultMapEngine?: string;
+
+  @ApiPropertyOptional({ enum: GEOCODING_ENGINES, default: 'osm' })
+  @IsOptional()
+  @IsString()
+  @IsIn(GEOCODING_ENGINES)
+  vendorGeocodingEngine?: string;
+
+  @ApiPropertyOptional({ enum: GEOCODING_ENGINES, default: 'osm' })
+  @IsOptional()
+  @IsString()
+  @IsIn(GEOCODING_ENGINES)
+  mobileUserGeocodingEngine?: string;
+
+  @ApiPropertyOptional({ enum: GEOCODING_ENGINES, default: 'osm' })
+  @IsOptional()
+  @IsString()
+  @IsIn(GEOCODING_ENGINES)
+  mobileDeliveryGeocodingEngine?: string;
 }

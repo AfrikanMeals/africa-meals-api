@@ -16,6 +16,7 @@ const SETTINGS_KEY = 'default';
 
 type VendorEngine = 'mapbox' | 'google' | 'osm';
 type MobileEngine = 'mapbox' | 'google' | 'osm';
+type GeocodingEngine = 'mapbox' | 'google' | 'osm';
 
 function assertAdmin(user: UserModel) {
   if (user.type !== UserTypeEnum.ADMIN) {
@@ -46,6 +47,13 @@ function normalizeMobileDefault(raw: unknown): MobileEngine {
   if (v === 'google') return 'google';
   if (v === 'osm') return 'osm';
   return 'mapbox';
+}
+
+function normalizeGeocodingEngine(raw: unknown): GeocodingEngine {
+  const v = String(raw ?? '').trim().toLowerCase();
+  if (v === 'google') return 'google';
+  if (v === 'mapbox') return 'mapbox';
+  return 'osm';
 }
 
 function assertDefaultEngineEnabled(
@@ -87,18 +95,23 @@ export class MapSettingsService {
         googleEnabled: doc.vendorGoogleEnabled !== false,
         osmEnabled: doc.vendorOsmEnabled !== false,
         defaultMapEngine: vendorDefault,
+        geocodingEngine: normalizeGeocodingEngine(doc.vendorGeocodingEngine),
       },
       mobileUser: {
         mapboxEnabled: doc.mobileUserMapboxEnabled !== false,
         googleEnabled: doc.mobileUserGoogleEnabled !== false,
         osmEnabled: doc.mobileUserOsmEnabled !== false,
         defaultMapEngine: mobileUserDefault,
+        geocodingEngine: normalizeGeocodingEngine(doc.mobileUserGeocodingEngine),
       },
       mobileDelivery: {
         mapboxEnabled: doc.mobileDeliveryMapboxEnabled !== false,
         googleEnabled: doc.mobileDeliveryGoogleEnabled !== false,
         osmEnabled: doc.mobileDeliveryOsmEnabled !== false,
         defaultMapEngine: mobileDeliveryDefault,
+        geocodingEngine: normalizeGeocodingEngine(
+          doc.mobileDeliveryGeocodingEngine,
+        ),
       },
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
@@ -123,6 +136,9 @@ export class MapSettingsService {
             mobileDeliveryGoogleEnabled: true,
             mobileDeliveryOsmEnabled: true,
             mobileDeliveryDefaultMapEngine: 'mapbox',
+            vendorGeocodingEngine: 'osm',
+            mobileUserGeocodingEngine: 'osm',
+            mobileDeliveryGeocodingEngine: 'osm',
           },
         },
         { upsert: true, new: true, lean: true, setDefaultsOnInsert: true },
@@ -185,6 +201,18 @@ export class MapSettingsService {
       dto.mobileDeliveryDefaultMapEngine ??
         (existing as MapSettingsModel | null)?.mobileDeliveryDefaultMapEngine,
     );
+    const vendorGeocoding = normalizeGeocodingEngine(
+      dto.vendorGeocodingEngine ??
+        (existing as MapSettingsModel | null)?.vendorGeocodingEngine,
+    );
+    const mobileUserGeocoding = normalizeGeocodingEngine(
+      dto.mobileUserGeocodingEngine ??
+        (existing as MapSettingsModel | null)?.mobileUserGeocodingEngine,
+    );
+    const mobileDeliveryGeocoding = normalizeGeocodingEngine(
+      dto.mobileDeliveryGeocodingEngine ??
+        (existing as MapSettingsModel | null)?.mobileDeliveryGeocodingEngine,
+    );
 
     assertDefaultEngineEnabled(
       vendorDefault,
@@ -225,6 +253,9 @@ export class MapSettingsService {
             mobileDeliveryGoogleEnabled: dto.mobileDeliveryGoogleEnabled,
             mobileDeliveryOsmEnabled: dto.mobileDeliveryOsmEnabled,
             mobileDeliveryDefaultMapEngine: mobileDeliveryDefault,
+            vendorGeocodingEngine: vendorGeocoding,
+            mobileUserGeocodingEngine: mobileUserGeocoding,
+            mobileDeliveryGeocodingEngine: mobileDeliveryGeocoding,
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },
