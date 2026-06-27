@@ -320,6 +320,20 @@ export class OrderModel extends BaseSchema {
   @Prop({ default: false, name: 'pay_on_pickup' })
   payOnPickup?: boolean;
 
+  /** Horodatage encaissement cash au retrait (commandes payOnPickup). */
+  @Prop({ required: false, name: 'cash_collected_at', type: Date })
+  cashCollectedAt?: Date;
+
+  /** Montant cash encaissé en boutique (devise commande). */
+  @Prop({ required: false, name: 'cash_collected_amount' })
+  cashCollectedAmount?: number;
+
+  /**
+   * Écart encaissement vs total dû (devise commande ; négatif = sous-paiement).
+   */
+  @Prop({ required: false, name: 'cash_collection_variance' })
+  cashCollectionVariance?: number;
+
   /** Code promo boutique appliqué au moment du paiement (si présent). */
   @Prop({ required: false, name: 'coupon_code' })
   couponCode?: string;

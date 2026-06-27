@@ -130,6 +130,12 @@ export class StoreModel extends BaseSchema {
   acceptsPickupPayOnDelivery?: boolean;
 
   /**
+   * Pré-sélectionne « payer à la collecte » au checkout retrait (si l’option est active).
+   */
+  @Prop({ default: false, name: 'default_pickup_pay_on_pickup' })
+  defaultPickupPayOnPickup?: boolean;
+
+  /**
    * Le restaurant gère sa propre flotte de livreurs (invitations, assignation).
    * Nécessite `supportsShipping`.
    */

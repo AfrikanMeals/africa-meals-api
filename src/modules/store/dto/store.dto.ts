@@ -186,6 +186,15 @@ export class CreateStoreDto {
 
   @ApiPropertyOptional({
     description:
+      'Pré-sélectionne le paiement cash au retrait pour les commandes pickup (si acceptsPickupPayOnDelivery).',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  defaultPickupPayOnPickup?: boolean;
+
+  @ApiPropertyOptional({
+    description:
       'Le restaurant gère ses propres livreurs (invitations, assignation).',
   })
   @IsOptional()
@@ -447,6 +456,14 @@ export class PatchVendorShippingZonesDto {
   @IsOptional()
   @IsBoolean()
   acceptsPickupPayOnDelivery?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Pré-sélectionne le paiement cash au retrait (pickup) si acceptsPickupPayOnDelivery est actif.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  defaultPickupPayOnPickup?: boolean;
 
   @ApiPropertyOptional({
     type: () => [StoreShippingZoneDto],

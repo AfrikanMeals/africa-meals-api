@@ -17,24 +17,18 @@ export function readOrderStripeParentPaymentId(
   ).trim();
 }
 
-/**
- * Commande « paiement cash au retrait en boutique » (pickup) — flag explicite ou absence
- * de paiement Stripe alors que le workflow commande a démarré (statut au-delà de `created`).
- * Ce n’est pas un paiement à la livraison à domicile.
- */
+/** Commande « paiement cash au retrait en boutique » (pickup) — flag explicite uniquement. */
 export function isPayOnPickupOrder(order: Record<string, unknown>): boolean {
-  if (order['payOnPickup'] === true || order['pay_on_pickup'] === true) {
-    return true;
-  }
-  if (readOrderStripeParentPaymentId(order).length > 0) {
-    return false;
-  }
-  const st = String(order['status'] ?? '').toLowerCase();
+  return order['payOnPickup'] === true || order['pay_on_pickup'] === true;
+}
+
+/** Incohérence : payOnPickup + référence Stripe parent sur la même commande. */
+export function isPayOnPickupStripeConflict(
+  order: Record<string, unknown>,
+): boolean {
   return (
-    st === OrderStatusEnum.PAIED ||
-    st === OrderStatusEnum.APPROVED ||
-    st === OrderStatusEnum.SHIPPED ||
-    st === OrderStatusEnum.COMPLETED
+    isPayOnPickupOrder(order) &&
+    readOrderStripeParentPaymentId(order).length > 0
   );
 }
 
@@ -120,9 +114,11 @@ export function enrichOrderDisplayStatus(
   row: Record<string, unknown>,
 ): Record<string, unknown> {
   const payOnPickup = readOrderPayOnPickup(row);
+  const payOnPickupStripeConflict = isPayOnPickupStripeConflict(row);
   return {
     ...row,
     payOnPickup,
+    payOnPickupStripeConflict,
     statusLabel: publicOrderStatusLabelFr(row),
     paymentStatusLabel: orderPaymentStatusLabelFr(row),
   };

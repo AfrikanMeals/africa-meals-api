@@ -428,6 +428,22 @@ export class StoreService {
     );
   }
 
+  private _normalizeDefaultPickupPayOnPickupFlag(
+    value: boolean | undefined,
+    acceptsPickupPayOnDelivery: boolean,
+  ): boolean {
+    if (!acceptsPickupPayOnDelivery) return false;
+    return value === true;
+  }
+
+  private _docDefaultPickupPayOnPickup(doc: Record<string, unknown>): boolean {
+    if (!this._docAcceptsPickupPayOnDelivery(doc)) return false;
+    return (
+      doc.defaultPickupPayOnPickup === true ||
+      doc.default_pickup_pay_on_pickup === true
+    );
+  }
+
   private async _pickupPayOnDeliveryEnabledForStore(
     storeId: string,
   ): Promise<boolean> {
@@ -863,6 +879,9 @@ export class StoreService {
         o,
         pickupPayOnDeliveryPlanEnabled,
       ),
+      defaultPickupPayOnPickup: this._docDefaultPickupPayOnPickup(
+        o as Record<string, unknown>,
+      ),
       mealPreOrderCatalogScope: this._docMealPreOrderCatalogScope(o),
       timezone: effectiveTimezone,
       workingHours: serializeStoreWorkingHoursForApi(
@@ -967,6 +986,10 @@ export class StoreService {
         args.mealPreOrderCatalogScope,
       ),
       acceptsPickupPayOnDelivery: wantsPickupPayOnDelivery,
+      defaultPickupPayOnPickup: this._normalizeDefaultPickupPayOnPickupFlag(
+        args.defaultPickupPayOnPickup,
+        wantsPickupPayOnDelivery,
+      ),
     });
 
     if (!store) {
@@ -1088,6 +1111,9 @@ export class StoreService {
       acceptsPickupPayOnDelivery: this._docAcceptsPickupPayOnDelivery(
         doc as Record<string, unknown>,
       ),
+      defaultPickupPayOnPickup: this._docDefaultPickupPayOnPickup(
+        doc as Record<string, unknown>,
+      ),
       mealPreOrderCatalogScope: this._docMealPreOrderCatalogScope(
         doc as Record<string, unknown>,
       ),
@@ -1156,6 +1182,9 @@ export class StoreService {
           doc as Record<string, unknown>,
         ),
         acceptsPickupPayOnDelivery: this._docAcceptsPickupPayOnDelivery(
+          doc as Record<string, unknown>,
+        ),
+        defaultPickupPayOnPickup: this._docDefaultPickupPayOnPickup(
           doc as Record<string, unknown>,
         ),
         mealPreOrderPlanEnabled,
@@ -1965,6 +1994,10 @@ export class StoreService {
       shippingZones,
       acceptsMealPreOrders: wantsPreOrders,
       acceptsPickupPayOnDelivery: wantsPickupPayOnDelivery,
+      defaultPickupPayOnPickup: this._normalizeDefaultPickupPayOnPickupFlag(
+        args.defaultPickupPayOnPickup,
+        wantsPickupPayOnDelivery,
+      ),
       mealPreOrderCatalogScope: this._normalizeMealPreOrderCatalogScope(
         args.mealPreOrderCatalogScope,
       ),
@@ -2085,6 +2118,18 @@ export class StoreService {
     }
     if (wantsPickupPayOnDelivery !== undefined) {
       updateFields.acceptsPickupPayOnDelivery = wantsPickupPayOnDelivery;
+    }
+    if (args.defaultPickupPayOnPickup !== undefined) {
+      const acceptsPickup =
+        wantsPickupPayOnDelivery ??
+        this._docAcceptsPickupPayOnDelivery(
+          store.toObject() as Record<string, unknown>,
+        );
+      updateFields.defaultPickupPayOnPickup =
+        this._normalizeDefaultPickupPayOnPickupFlag(
+          args.defaultPickupPayOnPickup,
+          acceptsPickup,
+        );
     }
     if (args.mealPreOrderCatalogScope !== undefined) {
       updateFields.mealPreOrderCatalogScope =
@@ -3515,6 +3560,10 @@ export class StoreService {
       shippingZones,
       acceptsMealPreOrders: wantsPreOrders,
       acceptsPickupPayOnDelivery: wantsPickupPayOnDelivery,
+      defaultPickupPayOnPickup: this._normalizeDefaultPickupPayOnPickupFlag(
+        args.defaultPickupPayOnPickup,
+        wantsPickupPayOnDelivery,
+      ),
       mealPreOrderCatalogScope: this._normalizeMealPreOrderCatalogScope(
         args.mealPreOrderCatalogScope,
       ),

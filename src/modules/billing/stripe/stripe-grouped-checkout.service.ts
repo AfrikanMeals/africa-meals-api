@@ -3217,6 +3217,23 @@ export class StripeGroupedCheckoutService {
     const couponByStore = new Map(
       coupons.map((c) => [c.storeId, c.code] as const),
     );
+
+    let giftPreview: Awaited<
+      ReturnType<CartService['previewGiftCodeForCart']>
+    > | null = null;
+    const giftDiscountByStore: Record<string, number> = {};
+    if (dto.giftCode?.trim()) {
+      giftPreview = await this.cartService.previewGiftCodeForCart(user, {
+        code: dto.giftCode.trim(),
+        coupons,
+      });
+      for (const row of giftPreview.storeBreakdown) {
+        if (row.giftCodeDiscount > 0) {
+          giftDiscountByStore[row.storeId] = row.giftCodeDiscount;
+        }
+      }
+    }
+
     const orderIds: string[] = [];
     const pickupStoreIds: string[] = [];
 
@@ -3250,6 +3267,8 @@ export class StripeGroupedCheckoutService {
       }
 
       const couponCode = couponByStore.get(storeId);
+      const giftDisc = giftDiscountByStore[storeId] ?? 0;
+      let couponDiscountAmount = 0;
 
       const amountFactor =
         await this.supportedCountries.resolveStripeAmountFactorForCheckout({
@@ -3266,8 +3285,10 @@ export class StripeGroupedCheckoutService {
           storeId,
           couponCode,
         );
+        couponDiscountAmount = snap.discountAmount;
+        const afterGift = Math.max(0, snap.totalAfterDiscount - giftDisc);
         goodsCents = Math.round(
-          snap.totalAfterDiscount * amountFactor + Number.EPSILON,
+          afterGift * amountFactor + Number.EPSILON,
         );
       } else {
         goodsCents = cartLines.reduce(
@@ -3276,6 +3297,12 @@ export class StripeGroupedCheckoutService {
             cartLineUnitCents(line, amountFactor) * cartLineQuantity(line),
           0,
         );
+        if (giftDisc > 0) {
+          const giftDiscCents = Math.round(
+            giftDisc * amountFactor + Number.EPSILON,
+          );
+          goodsCents = Math.max(0, goodsCents - giftDiscCents);
+        }
       }
 
       const shipCents = 0;
@@ -3284,16 +3311,37 @@ export class StripeGroupedCheckoutService {
         amountFactor,
       );
 
+      const taxCountryCode = await this.resolveOrderTaxCountryForStore(
+        user,
+        g.store,
+        dto.addressId?.trim(),
+      );
+      const taxBreakdown = await this.supportedCountries.computeTaxesForModule({
+        countryCode: taxCountryCode,
+        baseAmount: subtotalBeforeTax,
+        module: 'order',
+      });
+      const taxTotal = taxBreakdown.taxTotal;
+      const taxLines = taxBreakdown.lines;
+      const chargedTaxCents = Math.round(
+        taxTotal * amountFactor + Number.EPSILON,
+      );
+
       await this.ordersService.markOrderPaidWithShipping(oid, 0, {
         payOnPickup: true,
         couponCode,
+        couponDiscountAmount:
+          couponDiscountAmount > 0 ? couponDiscountAmount : undefined,
+        giftCode: dto.giftCode?.trim() || undefined,
+        giftCodeDiscountAmount: giftDisc > 0 ? giftDisc : undefined,
         currency: currency || undefined,
         chargedGoodsCents: goodsCents,
         chargedShipCents: shipCents,
-        chargedTaxCents: 0,
+        chargedTaxCents,
         subtotalBeforeTax,
-        taxTotal: 0,
-        taxLines: [],
+        taxTotal,
+        taxLines,
+        taxCountryCode: taxBreakdown.countryCode,
       });
 
       if (couponCode) {
@@ -3310,6 +3358,21 @@ export class StripeGroupedCheckoutService {
 
     if (!orderIds.length) {
       throw new BadRequestException('pickup_pay_on_delivery_no_stores');
+    }
+
+    if (dto.giftCode?.trim()) {
+      try {
+        await this.cartService.recordGiftCodeUsageAfterPayment(
+          String(user._id ?? user.id),
+          dto.giftCode.trim(),
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Gift code usage record failed ${dto.giftCode.trim()}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
 
     return { orderIds, pickupStoreIds };

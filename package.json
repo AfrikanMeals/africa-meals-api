@@ -34,7 +34,8 @@
     "bench:api": "node scripts/api-performance-report.mjs",
     "loyalty:backfill": "ts-node -r tsconfig-paths/register src/scripts/loyalty-backfill-paid-orders.ts",
     "stores:backfill-region": "ts-node -r tsconfig-paths/register src/scripts/store-region-backfill.ts",
-    "orders:fix-zero-decimal": "ts-node -r tsconfig-paths/register src/scripts/fix-zero-decimal-order-amounts.ts"
+    "orders:fix-zero-decimal": "ts-node -r tsconfig-paths/register src/scripts/fix-zero-decimal-order-amounts.ts",
+    "orders:pay-on-pickup-backfill": "ts-node -r tsconfig-paths/register src/scripts/pay-on-pickup-backfill.ts"
   },
   "dependencies": {
     "@africa-meals/field-selection": "file:../packages/africa-meals-field-selection",

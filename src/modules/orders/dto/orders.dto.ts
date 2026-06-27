@@ -94,6 +94,17 @@ export class ConfirmPickupDto {
   @MinLength(4)
   @MaxLength(12)
   code!: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Montant cash encaissé (devise commande). Par défaut = total dû. Commandes payOnPickup uniquement.',
+    example: 42.5,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  collectedAmount?: number;
 }
 
 export class CreateRefundRequestDto {
