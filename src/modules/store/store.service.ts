@@ -1006,7 +1006,7 @@ export class StoreService {
     return this.findOneById(store._id.toString());
   }
 
-  /** Résumé boutique pour l’écran vendeur (statut + messages + fiche éditable si PENDING/REVISION). */
+  /** Résumé boutique pour l'écran vendeur (statut + fiche éditable si PENDING/REVISION). Messages via `findMyStoreMessages` + WS. */
   async findMyStoreSummary(user: UserModel, storeId?: string) {
     const access = await this._storeAccess.resolveStoreAccess(user);
     const requested = storeId?.trim();
