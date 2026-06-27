@@ -1,4 +1,4 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module, forwardRef, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
   MaintenanceAlertSettingsModel,
@@ -17,6 +17,7 @@ import { PlatformMaintenancePublicController } from './platform-maintenance-publ
 import { PlatformMaintenanceEmailService } from './platform-maintenance-email.service';
 import { PlatformMaintenanceService } from './platform-maintenance.service';
 import { PlatformMaintenanceSseService } from './platform-maintenance-sse.service';
+import { PlatformMaintenanceMiddleware } from './platform-maintenance.middleware';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { PlatformMaintenanceSseService } from './platform-maintenance-sse.servic
     PlatformMaintenanceService,
     PlatformMaintenanceEmailService,
     PlatformMaintenanceSseService,
+    PlatformMaintenanceMiddleware,
   ],
   exports: [
     MaintenanceAlertSettingsService,
@@ -50,4 +52,8 @@ import { PlatformMaintenanceSseService } from './platform-maintenance-sse.servic
     PlatformMaintenanceService,
   ],
 })
-export class MaintenanceAlertsModule {}
+export class MaintenanceAlertsModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(PlatformMaintenanceMiddleware).forRoutes('*');
+  }
+}

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { DbMaintenanceService } from '@modules/db-maintenance/db-maintenance.service';
 import {
@@ -31,7 +31,7 @@ export type PlatformMaintenanceSettingsResponse = {
 };
 
 @Injectable()
-export class PlatformMaintenanceService {
+export class PlatformMaintenanceService implements OnModuleInit {
   private readonly logger = new Logger(PlatformMaintenanceService.name);
 
   constructor(
@@ -42,6 +42,15 @@ export class PlatformMaintenanceService {
     private readonly maintenanceSse: PlatformMaintenanceSseService,
     private readonly wsMaintenance: WsPlatformMaintenanceNotifyService,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.getPublicStatus();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Platform maintenance warm cache failed: ${msg}`);
+    }
+  }
 
   async getPublicStatus(): Promise<PublicPlatformMaintenanceResponse> {
     const doc = await this.ensureSettings();
