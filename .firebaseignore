@@ -1,19 +1,11 @@
-# Remplace .gitignore pour le deploy Functions — dist/ et packages/ doivent être uploadés.
+# Non utilisé par le CLI Functions (ignore = firebase.json uniquement).
+# Conservé pour référence / autres cibles Firebase.
+
 node_modules
 .git
 .firebase
-firebase-debug.log
-firebase-debug.*.log
 src
 test
 coverage
 scripts
 *.md
-Insomnia_*.yaml
-ecosystem*.cjs
-.firebase-package.json.bak
-.env.k8s.stash
-proxy.yml
-.env
-.env.*
-!.env.wise-eat-ca

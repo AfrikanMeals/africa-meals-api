@@ -10,29 +10,10 @@
 import { defineSecret } from 'firebase-functions/params';
 import { setGlobalOptions } from 'firebase-functions/v2/options';
 import { onRequest } from 'firebase-functions/v2/https';
-import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
 import { getExpressServer } from './firebase-bootstrap';
 
-/** Lit APP_REGION même quand le CLI Firebase analyse le code avant d’injecter process.env. */
-function readAppRegion(): string {
-  const fromEnv = process.env.APP_REGION?.trim();
-  if (fromEnv) return fromEnv;
-
-  const root = join(__dirname, '..');
-  for (const name of ['.env.wise-eat-ca', '.env.functions']) {
-    const file = join(root, name);
-    if (!existsSync(file)) continue;
-    for (const line of readFileSync(file, 'utf8').split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      if (!trimmed.startsWith('APP_REGION=')) continue;
-      const value = trimmed.slice('APP_REGION='.length).trim();
-      if (value) return value;
-    }
-  }
-  return 'us-east1';
-}
+/** Région prod Functions — us-east1 (Montréal clients + cohérence URL existante). */
+const FUNCTIONS_REGION = 'us-east1' as const;
 
 /** Secrets Bird — créer via `firebase functions:secrets:set <NAME>` avant deploy. */
 const birdAccessKey = defineSecret('BIRD_ACCESS_KEY');
@@ -47,10 +28,8 @@ const birdSecrets = [
   birdWhatsappChannelId,
 ];
 
-const region = readAppRegion();
-
 setGlobalOptions({
-  region,
+  region: FUNCTIONS_REGION,
   // Chaque instance warm garde un pool Mongo (`MONGOOSE_MAX_POOL`) : trop
   // d’instances × pool ≈ limite Atlas M0 (~500 connexions cluster).
   maxInstances: Number(process.env.MAX_INSTANCES || 8),
@@ -59,6 +38,7 @@ setGlobalOptions({
 
 export const api = onRequest(
   {
+    region: FUNCTIONS_REGION,
     timeoutSeconds: Number(process.env.TIMEOUT_SEC || 120),
     memory:
       (process.env.APP_MEMORY as '256MiB' | '512MiB' | '1GiB' | '2GiB') ||

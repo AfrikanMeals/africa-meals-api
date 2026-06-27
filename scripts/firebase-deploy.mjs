@@ -38,7 +38,7 @@ try {
     envStashed = true;
   }
 
-  execSync('npm run build', { cwd: apiRoot, stdio: 'inherit' });
+  execSync('rm -rf dist && npm run build', { cwd: apiRoot, stdio: 'inherit' });
   execSync(`npx firebase ${firebaseArgs.map((a) => JSON.stringify(a)).join(' ')}`, {
     cwd: apiRoot,
     stdio: 'inherit',

@@ -15,9 +15,9 @@ Le script `npm run deploy:functions` :
 3. Met **`.env` (k8s) de côté** temporairement (`.env.k8s.stash`) pour éviter qu’il écrase les variables Functions.
 4. Build + `firebase deploy`, puis restaure `.env` et nettoie les artefacts temporaires.
 
-**Upload** : `.firebaseignore` remplace `.gitignore` pour le deploy — `dist/` et `packages/` sont inclus (sinon l’archive ne pèse que quelques octets et Cloud Build échoue avec `function.js does not exist`).
+**Upload** : le champ `functions.ignore` de `firebase.json` utilise **minimatch** (pas la sémantique gitignore). **Ne jamais** y mettre de motifs `!…` — ils matchent tout et produisent une archive vide (~22 B). Lister explicitement ce qu’on exclut ; `dist/` et `packages/` ne doivent pas y figurer.
 
-**Région** : `APP_REGION=us-east1` dans `.env.functions` ; `firebase-main.ts` lit ce fichier à l’analyse du code (avant injection `process.env` par le CLI).
+**Région** : codée en dur `us-east1` dans `src/firebase-main.ts` (Cloud Functions Gen 2).
 
 **Créer / maintenir** `.env.functions` à la racine de `africa-meals-api` (gitignored). Ne jamais y mettre `host.k3s.internal` ni `VPS_LOCAL_HOST` — Cloud Functions n’atteint pas le réseau k3s.
 

@@ -13,17 +13,19 @@
       "coverage",
       "scripts",
       ".env",
-      ".env.*",
-      "!.env.wise-eat-ca",
-      "!.env.wise-eat-ca/**",
-      "!dist",
-      "!dist/**",
-      "!packages",
-      "!packages/**",
+      ".env.develop",
+      ".env.local",
+      ".env.prod",
+      ".env.functions",
+      ".env.k8s.stash",
       "*.md",
       "Insomnia_*.yaml",
+      "ecosystem.config.cjs",
+      "ecosystem.dev.config.cjs",
       ".firebase-package.json.bak",
-      ".env.k8s.stash"
+      "proxy.yml",
+      ".vscode",
+      ".idea"
     ]
   }
 }
