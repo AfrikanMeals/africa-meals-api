@@ -1617,15 +1617,6 @@ export class OrdersService {
           OrderStatusEnum.PAIED,
         );
         if (!isPayOnPickup) {
-          void this._loyaltyService
-            .creditOrderCompletion(orderId)
-            .catch((err) =>
-              this.logger.warn(
-                `Loyalty credit on paid order=${orderId}: ${
-                  err instanceof Error ? err.message : String(err)
-                }`,
-              ),
-            );
           const storeIdForAds = storeIdForEvent;
           if (uid && storeIdForAds && paidItemRefs.length > 0) {
             void this._adsService

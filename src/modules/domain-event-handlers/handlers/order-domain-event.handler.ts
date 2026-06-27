@@ -129,9 +129,6 @@ export class OrderDomainEventHandler {
         })
         .catch((err) => this.logWarn('FCM order paid', err));
       if (!payOnPickup) {
-        void this.loyalty
-          .creditOrderCompletion(payload.orderId)
-          .catch((err) => this.logWarn('loyalty credit', err));
         const itemRefs = Array.isArray(ctx.paidItemRefs)
           ? (ctx.paidItemRefs as { itemType: string; entityId: string }[])
           : [];

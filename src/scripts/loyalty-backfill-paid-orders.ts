@@ -53,12 +53,7 @@ function parseArgs(argv: string[]): CliOptions {
 
 async function run() {
   const opts = parseArgs(process.argv.slice(2));
-  const statuses = [
-    OrderStatusEnum.PAIED,
-    OrderStatusEnum.APPROVED,
-    OrderStatusEnum.SHIPPED,
-    OrderStatusEnum.COMPLETED,
-  ];
+  const statuses = [OrderStatusEnum.COMPLETED];
 
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['error', 'warn', 'log'],
