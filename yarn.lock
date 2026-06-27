@@ -2,13 +2,13 @@
 # yarn lockfile v1
 
 
-"@africa-meals/field-selection@file:../packages/africa-meals-field-selection":
+"@africa-meals/field-selection@file:../africa-meals-project/packages/africa-meals-field-selection":
   version "1.0.0"
-  resolved "file:../packages/africa-meals-field-selection"
+  resolved "file:../africa-meals-project/packages/africa-meals-field-selection"
 
-"@africa-meals/proto@file:../packages/africa-meals-proto":
+"@africa-meals/proto@file:../africa-meals-project/packages/africa-meals-proto":
   version "1.0.0"
-  resolved "file:../packages/africa-meals-proto"
+  resolved "file:../africa-meals-project/packages/africa-meals-proto"
 
 "@ampproject/remapping@^2.2.0":
   version "2.3.0"

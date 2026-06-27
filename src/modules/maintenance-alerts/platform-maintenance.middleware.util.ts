@@ -54,6 +54,14 @@ export function isMobileClientRequest(req: Request): boolean {
   return platform === 'mobile';
 }
 
+/** Dashboard admin web (vendeur ou admin) — hors périmètre maintenance mobile. */
+export function isAdminWebDashboardRequest(req: Request): boolean {
+  const client = String(req.headers['x-dashboard-client'] ?? '')
+    .trim()
+    .toLowerCase();
+  return client === 'admin-web';
+}
+
 export function isAdminJwtRequest(req: Request): boolean {
   const auth = String(req.headers.authorization ?? '').trim();
   if (!auth.toLowerCase().startsWith('bearer ')) return false;

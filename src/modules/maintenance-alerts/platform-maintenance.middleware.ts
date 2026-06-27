@@ -8,6 +8,7 @@ import { PlatformMaintenanceSseService } from './platform-maintenance-sse.servic
 import { PlatformMaintenanceService } from './platform-maintenance.service';
 import {
   isAdminJwtRequest,
+  isAdminWebDashboardRequest,
   isMobileClientRequest,
   isPlatformMaintenanceWhitelisted,
   maintenanceEntryForMode,
@@ -36,7 +37,7 @@ export class PlatformMaintenanceMiddleware implements NestMiddleware {
       return;
     }
 
-    if (isAdminJwtRequest(req)) {
+    if (isAdminJwtRequest(req) || isAdminWebDashboardRequest(req)) {
       next();
       return;
     }
