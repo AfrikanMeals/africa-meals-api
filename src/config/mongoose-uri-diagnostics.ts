@@ -37,8 +37,29 @@ function isSelfHostedLocalHost(hostPart: string): boolean {
 
 function isStunnelRemoteHost(hostPart: string): boolean {
   return (
-    hostPart.includes('db.wise-eat.com') || /(^|,)[^:]+:27018($|,)/.test(hostPart)
+    hostPart.includes('db.wise-eat.com') ||
+    hostPart.includes('host.k3s.internal') ||
+    /(^|,)[^:]+:27018($|,)/.test(hostPart)
   );
+}
+
+/** SNI TLS Stunnel quand l’URI pointe host.k3s.internal (cert LE = db.wise-eat.com). */
+export function readMongoTlsServername(
+  uri: string,
+  get: (key: string) => string | undefined = (key) => process.env[key],
+): string | undefined {
+  const explicit = get('MONGODB_TLS_SERVERNAME')?.trim();
+  if (explicit) return explicit;
+  if (isAtlasUri(uri)) return undefined;
+  const hostPart = mongoUriHostPart(uri);
+  if (!isStunnelRemoteHost(hostPart)) return undefined;
+  if (
+    hostPart.includes('host.k3s.internal') ||
+    isSelfHostedLocalHost(hostPart)
+  ) {
+    return 'db.wise-eat.com';
+  }
+  return undefined;
 }
 
 /**

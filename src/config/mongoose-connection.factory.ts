@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   normalizeMongoUriForDriver,
   readMongoIpFamily,
+  readMongoTlsServername,
   warnMongoUriReplicaSetConfig,
 } from './mongoose-uri-diagnostics';
 
@@ -124,10 +125,13 @@ export function buildMongooseRootOptions(
     8,
   );
 
+  const tlsServername = readMongoTlsServername(uri, (key) => config.get(key));
+
   return {
     uri,
     ...(!dbInUri && dbName ? { dbName } : {}),
     ...(ipFamily != null ? { family: ipFamily } : {}),
+    ...(tlsServername ? { tls: true, tlsServername } : {}),
     maxPoolSize,
     minPoolSize,
     maxIdleTimeMS,
