@@ -53,6 +53,14 @@ describe('warnMongoUriReplicaSetConfig', () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
+  it('ne warn pas si k8s local avec replicaSet=rs0', () => {
+    warnMongoUriReplicaSetConfig(
+      'mongodb://u:p@host.k3s.internal:27017,host.k3s.internal:27027,host.k3s.internal:27028/wise_eat_db?authSource=admin&replicaSet=rs0',
+      'test-api',
+    );
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
   it('respecte MONGODB_URI_DIAGNOSTICS=0', () => {
     process.env.MONGODB_URI_DIAGNOSTICS = '0';
     warnMongoUriReplicaSetConfig(
@@ -72,6 +80,12 @@ describe('normalizeMongoUriForDriver', () => {
     expect(normalized).toContain('directConnection=true');
     expect(normalized).not.toContain('replicaSet');
     expect(normalized).toContain('retryWrites=true');
+  });
+
+  it('ne modifie pas URI rs0 k8s (host.k3s.internal ports locaux)', () => {
+    const raw =
+      'mongodb://u:p@host.k3s.internal:27017,host.k3s.internal:27027,host.k3s.internal:27028/wise_eat_db?authSource=admin&replicaSet=rs0&retryWrites=true&w=majority';
+    expect(normalizeMongoUriForDriver(raw)).toBe(raw);
   });
 
   it('ne modifie pas Atlas mongodb+srv', () => {

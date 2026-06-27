@@ -1,5 +1,6 @@
 import type { ConfigService } from '@nestjs/config';
 import type { IClientOptions } from 'mqtt';
+import { checkServerIdentity as tlsCheckServerIdentity } from 'node:tls';
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
@@ -47,18 +48,30 @@ export function readMqttBrokerConfig(config: ConfigService): {
 
   const isTls = url.startsWith('mqtts://') || url.startsWith('wss://');
   if (isTls) {
-    let servername = host;
-    try {
-      servername = new URL(url).hostname;
-    } catch {
-      // garde host si URL invalide
+    const tlsServername = config.get<string>('MQTT_BROKER_TLS_SERVERNAME')?.trim();
+    let connectionHost = host;
+    if (!connectionHost) {
+      try {
+        connectionHost = new URL(url).hostname;
+      } catch {
+        connectionHost = '';
+      }
     }
+    const servername = tlsServername || connectionHost;
     options.rejectUnauthorized = parseBoolean(
       config.get<string>('MQTT_TLS_REJECT_UNAUTHORIZED'),
       true,
     );
     if (servername) {
       options.servername = servername;
+    }
+    if (
+      tlsServername &&
+      connectionHost &&
+      tlsServername !== connectionHost
+    ) {
+      options.checkServerIdentity = (_hostname, cert) =>
+        tlsCheckServerIdentity(tlsServername, cert);
     }
   }
 

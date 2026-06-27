@@ -28,17 +28,28 @@ function isSelfHostedLocalHost(hostPart: string): boolean {
   return hostPart.split(',').some((host) => {
     const h = host.trim();
     return (
-      /^(127\.0\.0\.1|localhost)(:27017)?$/.test(h) ||
+      /^(127\.0\.0\.1|localhost)(:27017|:27027|:27028)?$/.test(h) ||
       h === '127.0.0.1' ||
       h === 'localhost'
     );
   });
 }
 
+/** VPS rs0 local ou pods k8s via host.k3s.internal:27017|27027|27028 (pas Stunnel :27018). */
+function isMongoLocalReplicaUri(hostPart: string): boolean {
+  if (isSelfHostedLocalHost(hostPart)) return true;
+  return (
+    hostPart.includes('host.k3s.internal') &&
+    /:270(17|27|28)(,|$)/.test(hostPart) &&
+    !/:27018/.test(hostPart)
+  );
+}
+
 function isStunnelRemoteHost(hostPart: string): boolean {
+  if (isMongoLocalReplicaUri(hostPart)) return false;
   return (
     hostPart.includes('db.wise-eat.com') ||
-    hostPart.includes('host.k3s.internal') ||
+    (hostPart.includes('host.k3s.internal') && /:27018/.test(hostPart)) ||
     /(^|,)[^:]+:27018($|,)/.test(hostPart)
   );
 }
@@ -48,10 +59,11 @@ export function readMongoTlsServername(
   uri: string,
   get: (key: string) => string | undefined = (key) => process.env[key],
 ): string | undefined {
-  const explicit = get('MONGODB_TLS_SERVERNAME')?.trim();
-  if (explicit) return explicit;
   if (isAtlasUri(uri)) return undefined;
   const hostPart = mongoUriHostPart(uri);
+  if (isMongoLocalReplicaUri(hostPart)) return undefined;
+  const explicit = get('MONGODB_TLS_SERVERNAME')?.trim();
+  if (explicit) return explicit;
   if (!isStunnelRemoteHost(hostPart)) return undefined;
   if (
     hostPart.includes('host.k3s.internal') ||
@@ -126,7 +138,7 @@ export function warnMongoUriReplicaSetConfig(
   const hostPart = mongoUriHostPart(trimmed);
   const directConnection = isTruthyParam(params, 'directConnection');
   const replicaSet = params.get('replicaSet')?.trim();
-  const local = isSelfHostedLocalHost(hostPart);
+  const local = isMongoLocalReplicaUri(hostPart);
   const stunnel = isStunnelRemoteHost(hostPart);
   const isProd = process.env.NODE_ENV === 'production';
   const tag = `[${serviceName}]`;
