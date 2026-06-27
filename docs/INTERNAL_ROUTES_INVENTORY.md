@@ -36,3 +36,21 @@
 ## Domain events (bus MQTT)
 
 Topic : `africameals/domain/order.*` → `DomainEventWsRouterService` (WS) — pas de gRPC direct ; évite double dispatch API quand `DOMAIN_EVENTS_WS_VIA_BUS=true`.
+
+## STOMP (clients admin / mobile — dual-stack)
+
+Le pipeline API → WS (HTTP / gRPC / MQTT / BullMQ) est **inchangé**. `RealtimeDispatcherService` émet en parallèle Socket.IO et STOMP.
+
+Référence protocole : `africa-meals-ws/docs/STOMP_PROTOCOL.md`.
+
+| Socket.IO (legacy) | STOMP subscribe | STOMP SEND |
+|--------------------|-----------------|------------|
+| `inbox:feed:refresh` | `/user/queue/inbox-feed` | — |
+| `order:update` | `/user/queue/order-update` | — |
+| `order:tracking` | `/user/queue/order-tracking` | — |
+| `order:list:changed` | `/user/queue/order-list-changed` | — |
+| `message:new` | `/topic/conv/{id}/message` | `/app/chat/message/send` |
+| `join` / `leave` | ACK `/user/queue/ack` | `/app/chat/join`, `/app/chat/leave` |
+| `platform:maintenance` | `/topic/platform/maintenance` | — |
+
+**Flags clients :** admin `NEXT_PUBLIC_REALTIME_PROTOCOL` · mobile Remote Config `realtime_protocol`.
