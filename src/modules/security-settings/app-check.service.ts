@@ -3,6 +3,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { getAppCheck } from 'firebase-admin/app-check';
 import type { App } from 'firebase-admin/app';
@@ -13,9 +14,15 @@ export const APP_CHECK_HEADER = 'x-firebase-appcheck';
 export class AppCheckService {
   private readonly logger = new Logger(AppCheckService.name);
 
-  constructor(@Inject('FIREBASE_ADMIN') private readonly firebaseApp: App) {}
+  constructor(
+    @Optional() @Inject('FIREBASE_ADMIN') private readonly firebaseApp: App | null,
+  ) {}
 
   async verifyRequestToken(token: string | undefined): Promise<void> {
+    if (!this.firebaseApp) {
+      this.logger.warn('App Check ignoré — Firebase Admin absent');
+      return;
+    }
     const trimmed = token?.trim() ?? '';
     if (!trimmed) {
       throw new ForbiddenException('app_check_token_missing');

@@ -1,8 +1,6 @@
-import { readFileSync } from 'fs';
 import { Module, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
-  applicationDefault,
   cert,
   getApps,
   initializeApp,
@@ -21,12 +19,14 @@ const FIREBASE_APP_NAME = 'africa-meals-api';
 const firebaseBootstrapLog = new Logger('FirebaseAdmin');
 
 type FirebaseAdminInit = {
-  credential: ReturnType<typeof cert> | ReturnType<typeof applicationDefault>;
+  credential: ReturnType<typeof cert>;
   projectId: string;
   storageBucket: string;
 };
 
-function resolveFirebaseAdminInit(config: ConfigService): FirebaseAdminInit {
+function resolveFirebaseAdminInit(
+  config: ConfigService,
+): FirebaseAdminInit | null {
   const sa = loadFirebaseServiceAccount(config);
   const saProjectId = String(sa?.project_id ?? sa?.projectId ?? '').trim();
   const saEmail = String(sa?.client_email ?? sa?.clientEmail ?? '').trim();
@@ -45,16 +45,9 @@ function resolveFirebaseAdminInit(config: ConfigService): FirebaseAdminInit {
   }
 
   firebaseBootstrapLog.warn(
-    `Compte de service Firebase introuvable — repli sur applicationDefault() (FCM peut échouer en local). ${FIREBASE_SERVICE_ACCOUNT_ENV_HINT}`,
+    `Firebase Admin indisponible sans compte de service (FCM / Firebase Storage désactivés). ${FIREBASE_SERVICE_ACCOUNT_ENV_HINT}`,
   );
-  const projectId = getAmFirebaseProjectId(config)?.trim() ?? '';
-  return {
-    credential: applicationDefault(),
-    projectId,
-    storageBucket:
-      getAmFirebaseStorageBucket(config)?.trim() ||
-      (projectId ? `${projectId}.appspot.com` : ''),
-  };
+  return null;
 }
 
 function getOrCreateFirebaseApp(options: FirebaseAdminInit): App {
@@ -86,22 +79,36 @@ function getOrCreateFirebaseApp(options: FirebaseAdminInit): App {
     {
       provide: 'FIREBASE_ADMIN',
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => {
+      useFactory: (config: ConfigService): App | null => {
         const init = resolveFirebaseAdminInit(config);
-        if (!init.projectId) {
-          firebaseBootstrapLog.error(
-            `AM_FIREBASE_PROJECT_ID ou compte de service requis pour FCM. ${FIREBASE_SERVICE_ACCOUNT_ENV_HINT}`,
-          );
+        if (!init) {
+          return null;
         }
-        return getOrCreateFirebaseApp(init);
+        try {
+          return getOrCreateFirebaseApp(init);
+        } catch (err) {
+          firebaseBootstrapLog.warn(
+            `Firebase Admin init échoué: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          return null;
+        }
       },
     },
     {
       provide: 'FIREBASE_STORAGE_BUCKET',
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => {
+      useFactory: (config: ConfigService): string => {
         const init = resolveFirebaseAdminInit(config);
-        return init.storageBucket;
+        if (init?.storageBucket) {
+          return init.storageBucket;
+        }
+        const projectId = getAmFirebaseProjectId(config)?.trim() ?? '';
+        return (
+          getAmFirebaseStorageBucket(config)?.trim() ||
+          (projectId ? `${projectId}.appspot.com` : '')
+        );
       },
     },
   ],

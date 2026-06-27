@@ -4,6 +4,7 @@ import {
   Logger,
   NotFoundException,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { App } from 'firebase-admin/app';
@@ -35,7 +36,7 @@ export class NotificationsService implements OnModuleInit {
   private readonly logger = new Logger(NotificationsService.name);
 
   constructor(
-    @Inject('FIREBASE_ADMIN') private readonly firebaseApp: App,
+    @Optional() @Inject('FIREBASE_ADMIN') private readonly firebaseApp: App | null,
     @InjectModel(UserModel.name) private readonly userModel: Model<UserModel>,
     @InjectModel(AppNotificationModel.name)
     private readonly appNotificationModel: Model<AppNotificationModel>,
@@ -44,11 +45,11 @@ export class NotificationsService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    const projectId = this.firebaseApp.options.projectId;
+    const projectId = this.firebaseApp?.options?.projectId;
     if (!projectId) {
-      this.logger.error(
-        'FCM désactivé : Firebase Admin sans projectId. ' +
-          'Définissez AM_FIREBASE_PROJECT_ID et un compte de service (AM_FIREBASE_SERVICE_ACCOUNT_JSON ou AM_FIREBASE_SERVICE_ACCOUNT_PATH hors dépôt) puis redémarrez.',
+      this.logger.warn(
+        'FCM désactivé : Firebase Admin absent. ' +
+          'Ajoutez accounts.json (k8s) ou AM_FIREBASE_SERVICE_ACCOUNT_JSON.',
       );
       return;
     }
@@ -433,6 +434,10 @@ export class NotificationsService implements OnModuleInit {
     /** FCM data-only (sans bannière système) — utile pour déclencher l’UI in-app au premier plan. */
     dataOnly?: boolean;
   }): Promise<{ sent: number; failures: number; deviceCount: number }> {
+    if (!this.firebaseApp) {
+      return { sent: 0, failures: 0, deviceCount: 0 };
+    }
+
     const oids = args.recipientUserIds
       .filter((id) => Types.ObjectId.isValid(id))
       .map((id) => new Types.ObjectId(id));

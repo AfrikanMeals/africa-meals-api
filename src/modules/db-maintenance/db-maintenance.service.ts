@@ -413,7 +413,8 @@ export class DbMaintenanceService {
     @InjectModel(InfraRuntimeSettingsModel.name)
     private readonly infraRuntimeSettingsModel: Model<InfraRuntimeSettingsModel>,
     @Inject('FIREBASE_ADMIN')
-    private readonly firebaseApp: App,
+    @Optional()
+    private readonly firebaseApp: App | null,
     private readonly wsNotifyDispatchQueue: WsNotifyDispatchQueueService,
     private readonly platformChannels: PlatformChannelsService,
     private readonly mapSettings: MapSettingsService,

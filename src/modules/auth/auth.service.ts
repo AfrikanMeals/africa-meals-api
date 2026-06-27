@@ -9,6 +9,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -107,8 +108,9 @@ export class AuthService {
   @Inject(MediasService)
   private readonly _mediasService: MediasService;
 
+  @Optional()
   @Inject('FIREBASE_ADMIN')
-  private readonly _firebaseApp: App;
+  private readonly _firebaseApp: App | null;
 
   @Inject(LoyaltyService)
   private readonly _loyaltyService: LoyaltyService;
@@ -127,6 +129,13 @@ export class AuthService {
 
   @Inject(OtpLinkTokenStore)
   private readonly _otpLinkTokenStore: OtpLinkTokenStore;
+
+  private firebaseAuthApp(): App {
+    if (!this._firebaseApp) {
+      throw new ServiceUnavailableException('firebase_auth_unavailable');
+    }
+    return this._firebaseApp;
+  }
 
   private otpLinkTtlSeconds(variant: AuthOtpEmailVariant): number {
     const minutes =
@@ -597,7 +606,7 @@ export class AuthService {
   ) {
     let decoded: DecodedIdToken;
     try {
-      decoded = await getAuth(this._firebaseApp).verifyIdToken(args.idToken);
+      decoded = await getAuth(this.firebaseAuthApp()).verifyIdToken(args.idToken);
     } catch (err) {
       this.logger.warn(`verifyIdToken Google: ${String(err)}`);
       throw new UnauthorizedException('invalid_google_token');
@@ -697,7 +706,7 @@ export class AuthService {
   ) {
     let decoded: DecodedIdToken;
     try {
-      decoded = await getAuth(this._firebaseApp).verifyIdToken(args.idToken);
+      decoded = await getAuth(this.firebaseAuthApp()).verifyIdToken(args.idToken);
     } catch (err) {
       this.logger.warn(`verifyIdToken Apple: ${String(err)}`);
       throw new UnauthorizedException('invalid_apple_token');
@@ -801,7 +810,7 @@ export class AuthService {
   ) {
     let decoded: DecodedIdToken;
     try {
-      decoded = await getAuth(this._firebaseApp).verifyIdToken(args.idToken);
+      decoded = await getAuth(this.firebaseAuthApp()).verifyIdToken(args.idToken);
     } catch (err) {
       this.logger.warn(`verifyIdToken Facebook: ${String(err)}`);
       throw new UnauthorizedException('invalid_facebook_token');

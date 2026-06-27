@@ -1,6 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Inject } from '@nestjs/common';
 import { App } from 'firebase-admin/app';
 import { StorageEngineMode, StorageEnginesEnabled } from '@schemas/storage-settings.schema';
 import {
@@ -20,22 +19,34 @@ export class StorageEngineFactory {
   private readonly engines: IStorageEngine[];
 
   constructor(
-    @Inject('FIREBASE_ADMIN') firebaseApp: App,
+    @Optional() @Inject('FIREBASE_ADMIN') firebaseApp: App | null,
     @Inject('FIREBASE_STORAGE_BUCKET') bucketName: string,
     config: ConfigService,
   ) {
     this.engines = [
-      new FirebaseStorageEngine(firebaseApp, bucketName),
+      ...(firebaseApp && bucketName
+        ? [new FirebaseStorageEngine(firebaseApp, bucketName)]
+        : []),
       new GcsStorageEngine(config),
       new S3StorageEngine(config),
       new MinioStorageEngine(config),
     ];
+    if (!firebaseApp) {
+      Logger.warn(
+        'Moteur Firebase Storage indisponible (compte de service absent).',
+        StorageEngineFactory.name,
+      );
+    }
   }
 
   byId(id: StorageEngineId): IStorageEngine {
     const engine = this.engines.find((e) => e.id === id);
     if (!engine) {
-      return this.engines[0];
+      const fallback = this.engines[0];
+      if (!fallback) {
+        throw new Error('Aucun moteur de stockage configuré');
+      }
+      return fallback;
     }
     return engine;
   }
