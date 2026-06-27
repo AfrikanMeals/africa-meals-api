@@ -20,7 +20,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const apiRoot = path.join(__dirname, '..');
 
 const args = process.argv.slice(2);
-const firebaseArgs = args.length > 0 ? args : ['deploy', '--only', 'functions'];
+const firebaseArgs =
+  args.length > 0 ? args : ['deploy', '--only', 'functions'];
+if (firebaseArgs[0] === 'deploy' && !firebaseArgs.includes('--force')) {
+  firebaseArgs.push('--force');
+}
 
 const envPath = path.join(apiRoot, '.env');
 const envStashPath = path.join(apiRoot, '.env.k8s.stash');

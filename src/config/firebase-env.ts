@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs';
+import { readFileSync, statSync } from 'fs';
 import { resolve } from 'path';
 import { ConfigService } from '@nestjs/config';
 
@@ -31,11 +31,19 @@ export function getAmFirebaseServiceAccountPath(
   return config.get<string>('AM_FIREBASE_SERVICE_ACCOUNT_PATH');
 }
 
-function readServiceAccountFile(pathEnv: string): Record<string, unknown> {
+function readServiceAccountFile(pathEnv: string): Record<string, unknown> | null {
   const absolutePath = resolve(process.cwd(), pathEnv.trim());
-  process.env.GOOGLE_APPLICATION_CREDENTIALS = absolutePath;
-  const content = readFileSync(absolutePath, 'utf8');
-  return JSON.parse(content) as Record<string, unknown>;
+  try {
+    const st = statSync(absolutePath);
+    if (!st.isFile()) {
+      return null;
+    }
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = absolutePath;
+    const content = readFileSync(absolutePath, 'utf8');
+    return JSON.parse(content) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
 function buildServiceAccountFromDiscreteEnv(

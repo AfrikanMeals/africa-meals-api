@@ -15,6 +15,10 @@ Le script `npm run deploy:functions` :
 3. Met **`.env` (k8s) de côté** temporairement (`.env.k8s.stash`) pour éviter qu’il écrase les variables Functions.
 4. Build + `firebase deploy`, puis restaure `.env` et nettoie les artefacts temporaires.
 
+**Upload** : `.firebaseignore` remplace `.gitignore` pour le deploy — `dist/` et `packages/` sont inclus (sinon l’archive ne pèse que quelques octets et Cloud Build échoue avec `function.js does not exist`).
+
+**Région** : `APP_REGION=us-east1` dans `.env.functions` ; `firebase-main.ts` lit ce fichier à l’analyse du code (avant injection `process.env` par le CLI).
+
 **Créer / maintenir** `.env.functions` à la racine de `africa-meals-api` (gitignored). Ne jamais y mettre `host.k3s.internal` ni `VPS_LOCAL_HOST` — Cloud Functions n’atteint pas le réseau k3s.
 
 ## Prérequis
@@ -133,7 +137,7 @@ Variables utiles (alignées sur `.env.functions`) :
 | `MONGODB_APP_NAME` | Libellé client Atlas (défaut `africa-meals-api` si URI construite depuis `DB_*`) |
 | `MAX_INSTANCES` | Plafond d’instances HTTP concurrentes (défaut `8` dans le code — impact direct sur connexions Mongo cumulées) |
 | `DISABLE_SWAGGER` | `true` pour désactiver Swagger (cold start plus léger) |
-| `APP_REGION` | Région Cloud Functions (défaut `northamerica-northeast1` dans le code) |
+| `APP_REGION` | Région Cloud Functions (défaut `us-east1` — aligné `.env.functions`) |
 | `TIMEOUT_SEC`, `APP_MEMORY` | Surcharge optionnelle des options de la fonction (`APP_MEMORY` : `256MiB`, `512MiB`, `1GiB`, `2GiB`) |
 | `AM_FIREBASE_PROJECT_ID` | ID projet Firebase / GCP (Admin SDK) |
 | `AM_FIREBASE_STORAGE_BUCKET` | Bucket Storage (sinon `<project_id>.appspot.com`) |

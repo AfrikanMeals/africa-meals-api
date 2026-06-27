@@ -10,7 +10,29 @@
 import { defineSecret } from 'firebase-functions/params';
 import { setGlobalOptions } from 'firebase-functions/v2/options';
 import { onRequest } from 'firebase-functions/v2/https';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import { getExpressServer } from './firebase-bootstrap';
+
+/** Lit APP_REGION même quand le CLI Firebase analyse le code avant d’injecter process.env. */
+function readAppRegion(): string {
+  const fromEnv = process.env.APP_REGION?.trim();
+  if (fromEnv) return fromEnv;
+
+  const root = join(__dirname, '..');
+  for (const name of ['.env.wise-eat-ca', '.env.functions']) {
+    const file = join(root, name);
+    if (!existsSync(file)) continue;
+    for (const line of readFileSync(file, 'utf8').split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      if (!trimmed.startsWith('APP_REGION=')) continue;
+      const value = trimmed.slice('APP_REGION='.length).trim();
+      if (value) return value;
+    }
+  }
+  return 'us-east1';
+}
 
 /** Secrets Bird — créer via `firebase functions:secrets:set <NAME>` avant deploy. */
 const birdAccessKey = defineSecret('BIRD_ACCESS_KEY');
@@ -25,7 +47,7 @@ const birdSecrets = [
   birdWhatsappChannelId,
 ];
 
-const region = process.env.APP_REGION || 'northamerica-northeast1';
+const region = readAppRegion();
 
 setGlobalOptions({
   region,
