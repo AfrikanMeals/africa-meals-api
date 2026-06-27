@@ -131,7 +131,8 @@ export function buildMongooseRootOptions(
     uri,
     ...(!dbInUri && dbName ? { dbName } : {}),
     ...(ipFamily != null ? { family: ipFamily } : {}),
-    ...(tlsServername ? { tls: true, tlsServername } : {}),
+    // Driver MongoDB v6+ : option URI/client = servername (pas tlsServername).
+    ...(tlsServername ? { tls: true, servername: tlsServername } : {}),
     maxPoolSize,
     minPoolSize,
     maxIdleTimeMS,
