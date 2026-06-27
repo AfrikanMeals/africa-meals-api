@@ -189,6 +189,19 @@ function vendorStoreObjectIds(user: UserModel): Types.ObjectId[] {
   return ids;
 }
 
+type DashboardStoreScope = {
+  /** `null` = toutes les boutiques (admin sans filtre région). */
+  storeIds: Types.ObjectId[] | null;
+  empty: boolean;
+};
+
+function normalizeDashboardRegionCode(raw?: string): string | undefined {
+  const code = String(raw ?? '')
+    .trim()
+    .toUpperCase();
+  return /^[A-Z]{2}$/.test(code) ? code : undefined;
+}
+
 function orderDisplayRef(orderId: unknown): string {
   const hex = String(orderId);
   const tail = hex.slice(-6).toUpperCase();
@@ -390,6 +403,8 @@ export type DashboardTopPlatDailyRow = {
   commandesToday: number;
   commandesYesterday: number;
   trend: number;
+  /** Image principale du produit catalogue (URL ou data URI). */
+  imageUrl?: string;
 };
 
 /** Histogramme 0–23 h : activité = créations de commande + livraisons (heure locale Canada). */
@@ -631,7 +646,48 @@ export class DashboardService {
     private readonly subscriptionsService: SubscriptionsService,
   ) {}
 
-  async getAlerts(user: UserModel): Promise<{
+  /** Boutiques visibles pour les agrégats dashboard (admin / vendeur + filtre région). */
+  private async resolveDashboardStoreScope(
+    user: UserModel,
+    regionCode?: string,
+  ): Promise<DashboardStoreScope> {
+    const region = normalizeDashboardRegionCode(regionCode);
+
+    if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
+      return { storeIds: null, empty: true };
+    }
+
+    let candidateIds: Types.ObjectId[] | null = null;
+    if (user.type === UserTypeEnum.VENDOR) {
+      const vendorIds = vendorStoreObjectIds(user);
+      if (!vendorIds.length) {
+        return { storeIds: [], empty: true };
+      }
+      candidateIds = vendorIds;
+    }
+
+    if (!region) {
+      return { storeIds: candidateIds, empty: false };
+    }
+
+    const query: Record<string, unknown> = {
+      region: new RegExp(`^${escapeMongoRegex(region)}$`, 'i'),
+    };
+    if (candidateIds?.length) {
+      query._id = { $in: candidateIds };
+    }
+
+    const rows = await this.storeModel.find(query).select('_id').lean().exec();
+    const filtered = rows
+      .map((row) => row._id)
+      .filter((id): id is Types.ObjectId => id instanceof Types.ObjectId);
+    return { storeIds: filtered, empty: filtered.length === 0 };
+  }
+
+  async getAlerts(
+    user: UserModel,
+    regionCode?: string,
+  ): Promise<{
     delayedDeliveries: DelayedDeliveryAlert[];
     negativeReviewStores: NegativeReviewStoreAlert[];
     stockAlerts: StockAlertRow[];
@@ -644,8 +700,15 @@ export class DashboardService {
       };
     }
 
-    const vendorIds =
-      user.type === UserTypeEnum.VENDOR ? vendorStoreObjectIds(user) : null;
+    const vendorScope = await this.resolveDashboardStoreScope(user, regionCode);
+    if (vendorScope.empty) {
+      return {
+        delayedDeliveries: [],
+        negativeReviewStores: [],
+        stockAlerts: [],
+      };
+    }
+    const vendorIds = vendorScope.storeIds;
 
     if (user.type === UserTypeEnum.VENDOR && !vendorIds?.length) {
       return {
@@ -727,13 +790,17 @@ export class DashboardService {
    */
   async listPeakHoursActivity(
     user: UserModel,
+    regionCode?: string,
   ): Promise<DashboardPeakHourRow[]> {
     if (user.type !== UserTypeEnum.VENDOR && user.type !== UserTypeEnum.ADMIN) {
       return emptyPeakHourSlots();
     }
 
-    const storeIds =
-      user.type === UserTypeEnum.VENDOR ? vendorStoreObjectIds(user) : null;
+    const scope = await this.resolveDashboardStoreScope(user, regionCode);
+    if (scope.empty) {
+      return emptyPeakHourSlots();
+    }
+    const storeIds = scope.storeIds;
     if (user.type === UserTypeEnum.VENDOR && !storeIds?.length) {
       return emptyPeakHourSlots();
     }
@@ -981,8 +1048,14 @@ export class DashboardService {
    */
   async listDashboardTopPlatsDaily(
     user: UserModel,
+    regionCode?: string,
   ): Promise<DashboardTopPlatDailyRow[]> {
     if (user.type !== UserTypeEnum.VENDOR && user.type !== UserTypeEnum.ADMIN) {
+      return [];
+    }
+
+    const scope = await this.resolveDashboardStoreScope(user, regionCode);
+    if (scope.empty) {
       return [];
     }
 
@@ -1002,14 +1075,12 @@ export class DashboardService {
       .toDate();
 
     let allowedLc: Set<string> | null = null;
-    let storeFilter: Types.ObjectId[] | null = null;
+    let storeFilter: Types.ObjectId[] | null = scope.storeIds;
 
     if (user.type === UserTypeEnum.VENDOR) {
-      const storeIds = vendorStoreObjectIds(user);
-      if (!storeIds.length) return [];
-      storeFilter = storeIds;
+      if (!storeFilter?.length) return [];
       const products = await this.productModel
-        .find({ store: { $in: storeIds } })
+        .find({ store: { $in: storeFilter } })
         .select('title')
         .lean()
         .exec();
@@ -1021,6 +1092,19 @@ export class DashboardService {
         if (lc) allowedLc.add(lc);
       }
       if (!allowedLc.size) return [];
+    } else if (storeFilter?.length) {
+      const products = await this.productModel
+        .find({ store: { $in: storeFilter } })
+        .select('title')
+        .lean()
+        .exec();
+      allowedLc = new Set<string>();
+      for (const p of products) {
+        const lc = String(p.title ?? '')
+          .trim()
+          .toLowerCase();
+        if (lc) allowedLc.add(lc);
+      }
     }
 
     const match: Record<string, unknown> = {
@@ -1092,6 +1176,8 @@ export class DashboardService {
       .sort((a, b) => b.n - a.n)
       .slice(0, 5);
 
+    const imageByLc = await this.resolveTopPlatImages(storeFilter, ranked);
+
     const rows: DashboardTopPlatDailyRow[] = [];
     for (const { lc, title, n } of ranked) {
       const t = todayMap.get(lc)?.n ?? 0;
@@ -1103,10 +1189,93 @@ export class DashboardService {
         commandesToday: t,
         commandesYesterday: y,
         trend: t - y,
+        imageUrl: imageByLc.get(lc),
       });
     }
 
     return rows;
+  }
+
+  private static productImageFromLean(
+    p: Record<string, unknown>,
+  ): string | undefined {
+    const mime =
+      typeof p.image_mime_type === 'string'
+        ? p.image_mime_type
+        : typeof p.imageMimeType === 'string'
+          ? p.imageMimeType
+          : '';
+    const b64 =
+      typeof p.image_base64 === 'string'
+        ? p.image_base64
+        : typeof p.imageBase64 === 'string'
+          ? p.imageBase64
+          : '';
+    if (mime && b64) {
+      return `data:${mime};base64,${b64}`;
+    }
+    const url =
+      typeof p.profile_image === 'string'
+        ? p.profile_image
+        : typeof p.profileImage === 'string'
+          ? p.profileImage
+          : '';
+    if (url.trim()) return url.trim();
+    const gallery = p.gallery_images ?? p.galleryImages;
+    if (Array.isArray(gallery)) {
+      for (const g of gallery) {
+        if (typeof g !== 'object' || g === null) continue;
+        const row = g as Record<string, unknown>;
+        const gUrl =
+          typeof row.imageUrl === 'string'
+            ? row.imageUrl
+            : typeof row.image_url === 'string'
+              ? row.image_url
+              : '';
+        if (gUrl.trim()) return gUrl.trim();
+      }
+    }
+    return undefined;
+  }
+
+  /** Image catalogue par libellé plat (titre insensible à la casse). */
+  private async resolveTopPlatImages(
+    storeFilter: Types.ObjectId[] | null,
+    ranked: Array<{ lc: string; title: string }>,
+  ): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    if (!ranked.length) return map;
+
+    const filter: Record<string, unknown> = {
+      $or: ranked.map(({ title }) => ({
+        title: {
+          $regex: new RegExp(`^${escapeMongoRegex(title.trim())}$`, 'i'),
+        },
+      })),
+    };
+    if (storeFilter?.length) {
+      filter.store = { $in: storeFilter };
+    }
+
+    const products = await this.productModel
+      .find(filter)
+      .select(
+        'title profile_image image_base64 image_mime_type gallery_images galleryImages',
+      )
+      .lean()
+      .exec();
+
+    for (const p of products) {
+      const lc = String(p.title ?? '')
+        .trim()
+        .toLowerCase();
+      if (!lc || map.has(lc)) continue;
+      const url = DashboardService.productImageFromLean(
+        p as unknown as Record<string, unknown>,
+      );
+      if (url) map.set(lc, url);
+    }
+    return map;
   }
 
   /**
@@ -1247,7 +1416,10 @@ export class DashboardService {
    * Totaux commandes + répartition (livrées / en livraison / en attente / annulées).
    * Admin = plateforme, vendeur = ses boutiques, client = ses commandes ; autres rôles → zéros.
    */
-  async getDashboardOrderStatusSummary(user: UserModel): Promise<{
+  async getDashboardOrderStatusSummary(
+    user: UserModel,
+    regionCode?: string,
+  ): Promise<{
     total: number;
     livrees: number;
     enLivraison: number;
@@ -1267,11 +1439,15 @@ export class DashboardService {
     const baseMatch: Record<string, unknown> = {};
 
     if (user.type === UserTypeEnum.ADMIN) {
-      // toutes les commandes
+      const scope = await this.resolveDashboardStoreScope(user, regionCode);
+      if (scope.empty) return empty;
+      if (scope.storeIds?.length) {
+        baseMatch.store = { $in: scope.storeIds };
+      }
     } else if (user.type === UserTypeEnum.VENDOR) {
-      const storeIds = vendorStoreObjectIds(user);
-      if (!storeIds.length) return empty;
-      baseMatch.store = { $in: storeIds };
+      const scope = await this.resolveDashboardStoreScope(user, regionCode);
+      if (scope.empty || !scope.storeIds?.length) return empty;
+      baseMatch.store = { $in: scope.storeIds };
     } else if (user.type === UserTypeEnum.USER) {
       const rawId =
         (user as UserModel & { _id?: Types.ObjectId | string })._id ?? user.id;
@@ -2168,6 +2344,7 @@ export class DashboardService {
    */
   async getDashboardRevenueSummary(
     user: UserModel,
+    regionCode?: string,
   ): Promise<DashboardRevenueSummary> {
     const empty = (target: number): DashboardRevenueSummary => ({
       revenueMonthToDate: 0,
@@ -2182,10 +2359,17 @@ export class DashboardService {
 
     let storeIds: Types.ObjectId[] | null = null;
     if (user.type === UserTypeEnum.VENDOR) {
-      storeIds = vendorStoreObjectIds(user);
-      if (!storeIds.length) {
+      const scope = await this.resolveDashboardStoreScope(user, regionCode);
+      if (scope.empty || !scope.storeIds?.length) {
         return empty(DASHBOARD_CA_MONTHLY_TARGET_VENDOR);
       }
+      storeIds = scope.storeIds;
+    } else {
+      const scope = await this.resolveDashboardStoreScope(user, regionCode);
+      if (scope.empty) {
+        return empty(DASHBOARD_CA_MONTHLY_TARGET_ADMIN);
+      }
+      storeIds = scope.storeIds;
     }
 
     const z = PEAK_HOURS_TZ;
@@ -2231,11 +2415,14 @@ export class DashboardService {
    * KPIs agrégés plateforme — réservé aux administrateurs.
    * Fenêtres calendaires `America/Toronto` (aligné cartes CA / revenus).
    */
-  async getAdminKpis(user: UserModel): Promise<AdminDashboardKpis> {
+  async getAdminKpis(
+    user: UserModel,
+    regionCode?: string,
+  ): Promise<AdminDashboardKpis> {
     if (user.type !== UserTypeEnum.ADMIN) {
       throw new ForbiddenException('admin_only');
     }
-    return this.getDailyKpis(user);
+    return this.getDailyKpis(user, regionCode);
   }
 
   private emptyAdPerformance(): DashboardAdPerformancePayload {
@@ -2382,34 +2569,59 @@ export class DashboardService {
   /**
    * KPIs du jour — admin (plateforme) ou vendeur (ses boutiques).
    */
-  async getDailyKpis(user: UserModel): Promise<AdminDashboardKpis> {
+  async getDailyKpis(
+    user: UserModel,
+    regionCode?: string,
+  ): Promise<AdminDashboardKpis> {
     if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('forbidden');
     }
 
     let storeIds: Types.ObjectId[] | null = null;
-    if (user.type === UserTypeEnum.VENDOR) {
-      storeIds = vendorStoreObjectIds(user);
-      if (!storeIds.length) {
-        return {
-          revenueTodayFcfa: 0,
-          revenueYesterdayFcfa: 0,
-          revenueTrendPercent: null,
-          ordersToday: 0,
-          ordersYesterday: 0,
-          ordersTrendPercent: null,
-          ordersInProgress: 0,
-          newClientsToday: 0,
-          newClientsYesterday: 0,
-          newClientsTrendPercent: null,
-          avgDeliveryMinutesToday: null,
-          avgDeliveryMinutesYesterday: null,
-          deliveryDeltaMinutes: null,
-          revenueTargetFcfa: DASHBOARD_CA_MONTHLY_TARGET_VENDOR,
-          deliveryTargetMinutes: ADMIN_DELIVERY_TARGET_MIN,
-          adPerformance: this.emptyAdPerformance(),
-        };
-      }
+    const scope = await this.resolveDashboardStoreScope(user, regionCode);
+    if (scope.empty) {
+      return {
+        revenueTodayFcfa: 0,
+        revenueYesterdayFcfa: 0,
+        revenueTrendPercent: null,
+        ordersToday: 0,
+        ordersYesterday: 0,
+        ordersTrendPercent: null,
+        ordersInProgress: 0,
+        newClientsToday: 0,
+        newClientsYesterday: 0,
+        newClientsTrendPercent: null,
+        avgDeliveryMinutesToday: null,
+        avgDeliveryMinutesYesterday: null,
+        deliveryDeltaMinutes: null,
+        revenueTargetFcfa:
+          user.type === UserTypeEnum.ADMIN
+            ? ADMIN_REVENUE_TARGET_FCFA
+            : DASHBOARD_CA_MONTHLY_TARGET_VENDOR,
+        deliveryTargetMinutes: ADMIN_DELIVERY_TARGET_MIN,
+        adPerformance: this.emptyAdPerformance(),
+      };
+    }
+    storeIds = scope.storeIds;
+    if (user.type === UserTypeEnum.VENDOR && !storeIds?.length) {
+      return {
+        revenueTodayFcfa: 0,
+        revenueYesterdayFcfa: 0,
+        revenueTrendPercent: null,
+        ordersToday: 0,
+        ordersYesterday: 0,
+        ordersTrendPercent: null,
+        ordersInProgress: 0,
+        newClientsToday: 0,
+        newClientsYesterday: 0,
+        newClientsTrendPercent: null,
+        avgDeliveryMinutesToday: null,
+        avgDeliveryMinutesYesterday: null,
+        deliveryDeltaMinutes: null,
+        revenueTargetFcfa: DASHBOARD_CA_MONTHLY_TARGET_VENDOR,
+        deliveryTargetMinutes: ADMIN_DELIVERY_TARGET_MIN,
+        adPerformance: this.emptyAdPerformance(),
+      };
     }
 
     const z = PEAK_HOURS_TZ;
@@ -2547,22 +2759,30 @@ export class DashboardService {
   async getDashboardRevenueSeries(
     user: UserModel,
     period: '7d' | '30d' | '12m',
+    regionCode?: string,
   ): Promise<DashboardRevenueSeriesPayload> {
     if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('forbidden');
     }
 
     let storeIds: Types.ObjectId[] | null = null;
-    if (user.type === UserTypeEnum.VENDOR) {
-      storeIds = vendorStoreObjectIds(user);
-      if (!storeIds.length) {
-        return {
-          period,
-          timezone: PEAK_HOURS_TZ,
-          total: 0,
-          points: [],
-        };
-      }
+    const scope = await this.resolveDashboardStoreScope(user, regionCode);
+    if (scope.empty) {
+      return {
+        period,
+        timezone: PEAK_HOURS_TZ,
+        total: 0,
+        points: [],
+      };
+    }
+    storeIds = scope.storeIds;
+    if (user.type === UserTypeEnum.VENDOR && !storeIds?.length) {
+      return {
+        period,
+        timezone: PEAK_HOURS_TZ,
+        total: 0,
+        points: [],
+      };
     }
 
     const z = PEAK_HOURS_TZ;
@@ -2752,16 +2972,19 @@ export class DashboardService {
   /**
    * Top boutiques par CA du jour (fuseau Toronto) — admin ou vendeur (ses boutiques).
    */
-  async listTopStoresToday(user: UserModel): Promise<DashboardTopStoreRow[]> {
+  async listTopStoresToday(
+    user: UserModel,
+    regionCode?: string,
+  ): Promise<DashboardTopStoreRow[]> {
     if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('forbidden');
     }
 
     let storeIds: Types.ObjectId[] | null = null;
-    if (user.type === UserTypeEnum.VENDOR) {
-      storeIds = vendorStoreObjectIds(user);
-      if (!storeIds.length) return [];
-    }
+    const scope = await this.resolveDashboardStoreScope(user, regionCode);
+    if (scope.empty) return [];
+    storeIds = scope.storeIds;
+    if (user.type === UserTypeEnum.VENDOR && !storeIds?.length) return [];
 
     const z = PEAK_HOURS_TZ;
     const start = dayjs().tz(z).startOf('day').toDate();

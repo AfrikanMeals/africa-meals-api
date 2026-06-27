@@ -1,6 +1,11 @@
 import { detectCatalogImageStorageKind } from '@common/media/detect-storage-engine.util';
 import { escapeMongoRegex } from '@common/mongo/escape-regex.util';
-import { catalogModerationNotBlockedFilter } from '@common/moderation/catalog-moderation.util';
+import {
+  catalogModerationNotBlockedFilter,
+  moderationFieldsFromDoc,
+  moderationStatusFromDoc,
+} from '@common/moderation/catalog-moderation.util';
+import { AdModerationStatusEnum } from '@schemas/ad-moderation-status.enum';
 import { shouldApplyCatalogRegionFilter } from '@common/catalog-public-id.util';
 import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import {
@@ -48,6 +53,13 @@ export function maxDrinkOrderQuantity(quantite: number): number {
   return Math.max(0, Math.floor(Number(quantite)));
 }
 
+function assertDrinkNotAdminBlocked(doc: DrinkModel): void {
+  const lean = doc.toObject() as Record<string, unknown>;
+  if (moderationStatusFromDoc(lean) === AdModerationStatusEnum.BLOCKED) {
+    throw new ForbiddenException('catalog_item_blocked_by_admin');
+  }
+}
+
 /** Liste catalogue vendeur mobile (champs affichés uniquement). */
 function mapDrinkCatalogListRow(doc: Record<string, unknown>) {
   const img =
@@ -66,6 +78,7 @@ function mapDrinkCatalogListRow(doc: Record<string, unknown>) {
     quantite: Number(doc.quantite ?? 0),
     seuil: Number(doc.seuil ?? 0),
     statut: String(doc.statut ?? DrinkStatutEnum.OK),
+    ...moderationFieldsFromDoc(doc),
     ...(imageUrl ? { imageUrl } : {}),
   };
 }
@@ -92,6 +105,7 @@ function mapDrinkDoc(doc: Record<string, unknown>) {
     seuil: Number(doc.seuil ?? 0),
     priceCad: Number(doc.priceCad ?? doc.price_cad ?? 0),
     statut: String(doc.statut ?? DrinkStatutEnum.OK) as DrinkStatutEnum,
+    ...moderationFieldsFromDoc(doc),
     imageUrl:
       doc.imageUrl != null
         ? String(doc.imageUrl)
@@ -813,6 +827,7 @@ export class DrinksService {
     if (!found) {
       throw new NotFoundException('drink_not_found');
     }
+    assertDrinkNotAdminBlocked(found);
     const quantite =
       dto.quantite !== undefined ? Number(dto.quantite) : found.quantite;
     const seuil = dto.seuil !== undefined ? Number(dto.seuil) : found.seuil;
@@ -882,6 +897,7 @@ export class DrinksService {
     if (!doc) {
       throw new NotFoundException('drink_not_found');
     }
+    assertDrinkNotAdminBlocked(doc);
     if (doc.imageUrl) {
       await this._mediasService.delete(doc.imageUrl).catch(() => undefined);
     }

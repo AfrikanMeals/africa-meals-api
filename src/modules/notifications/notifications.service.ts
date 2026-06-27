@@ -592,7 +592,7 @@ export class NotificationsService implements OnModuleInit {
     storeName?: string;
     storeId?: string;
     body: string;
-    reason: 'created' | 'status_changed';
+    reason: 'created' | 'status_changed' | 'vendor_accepted';
     status: string;
   }): Promise<void> {
     try {
@@ -691,37 +691,47 @@ export class NotificationsService implements OnModuleInit {
     newStatus: string;
     /** Libellé court dans le corps du push (ex. prêt retrait / livraison). */
     bodyOverride?: string;
+    /** Raison métier (`vendor_accepted` autorise une notif même si le statut API est inchangé). */
+    reason?: string;
+    titleOverride?: string;
   }): Promise<void> {
     if (!Types.ObjectId.isValid(args.userId)) {
       return;
     }
     const prev = (args.previousStatus ?? '').trim().toLowerCase();
     const next = (args.newStatus ?? '').trim().toLowerCase();
-    if (!next || prev === next) {
+    const reason = (args.reason ?? 'status_changed').trim().toLowerCase();
+    const forceNotify =
+      reason === 'vendor_accepted' || Boolean(args.bodyOverride?.trim());
+    if (!next || (prev === next && !forceNotify)) {
       return;
     }
     const store = (args.storeName ?? '').trim() || 'Restaurant';
     const label =
       (args.bodyOverride ?? '').trim() ||
       NotificationsService.orderStatusLabelFr(next);
+    const title =
+      (args.titleOverride ?? '').trim() || 'Commande mise à jour';
+    const inboxReason: 'created' | 'status_changed' | 'vendor_accepted' =
+      reason === 'vendor_accepted' ? 'vendor_accepted' : 'status_changed';
     await this.persistCustomerOrderInbox({
       userId: args.userId,
       orderId: args.orderId,
       storeName: args.storeName,
       storeId: args.storeId,
       body: label,
-      reason: 'status_changed',
+      reason: inboxReason,
       status: next,
     });
 
     void this.sendMulticastNotification({
       recipientUserIds: [args.userId],
-      title: 'Commande mise à jour',
+      title,
       body: `${store} : ${label}`,
       data: {
         type: 'order_update',
         audience: 'customer',
-        reason: 'status_changed',
+        reason,
         orderId: args.orderId,
         storeName: store,
         status: next,

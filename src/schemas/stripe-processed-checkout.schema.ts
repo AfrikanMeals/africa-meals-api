@@ -38,6 +38,10 @@ export class StripeProcessedCheckoutModel {
   @Prop({ type: [String], default: [] })
   orderIds: string[];
 
+  /** Commandes cash à la collecte créées après le paiement Stripe (panier mixte). */
+  @Prop({ type: [String], default: [] })
+  pickupPayOrderIds?: string[];
+
   /** Montant total encaissé (centimes), tel que renvoyé par Stripe. */
   @Prop({ required: false })
   amountTotalCents?: number;

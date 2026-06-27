@@ -313,7 +313,10 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'stripe_parent_payment_id' })
   stripeParentPaymentId?: string;
 
-  /** Paiement différé à la collecte (pickup) — sans encaissement Stripe en ligne. */
+  /**
+   * Paiement cash au retrait en boutique (pickup / à emporter).
+   * Ce n’est pas un paiement à la livraison à domicile.
+   */
   @Prop({ default: false, name: 'pay_on_pickup' })
   payOnPickup?: boolean;
 

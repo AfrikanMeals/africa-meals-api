@@ -103,6 +103,7 @@ export class OrderDomainEventHandler {
     metadata?: DomainEventEnvelope['metadata'],
   ): Promise<void> {
     const ctx = metadata?.orderContext ?? {};
+    const payOnPickup = ctx.payOnPickup === true;
     const prevStatus = String(ctx.fromStatus ?? '');
     if (prevStatus !== OrderStatusEnum.PAIED) {
       await this.orderStatusEvents.record({
@@ -111,7 +112,9 @@ export class OrderDomainEventHandler {
         customerUserId: payload.customerUserId,
         fromStatus: prevStatus || undefined,
         toStatus: OrderStatusEnum.PAIED,
-        source: OrderStatusChangeSourceEnum.STRIPE,
+        source: payOnPickup
+          ? OrderStatusChangeSourceEnum.CHECKOUT
+          : OrderStatusChangeSourceEnum.STRIPE,
       });
       void this.notifications
         .pushCustomerOrderStatusChanged({
@@ -120,36 +123,44 @@ export class OrderDomainEventHandler {
           storeId: payload.storeId,
           previousStatus: prevStatus,
           newStatus: OrderStatusEnum.PAIED,
+          bodyOverride: payOnPickup
+            ? 'Commande enregistrée — paiement à effectuer lors du retrait en boutique'
+            : undefined,
         })
         .catch((err) => this.logWarn('FCM order paid', err));
-      void this.loyalty
-        .creditOrderCompletion(payload.orderId)
-        .catch((err) => this.logWarn('loyalty credit', err));
-      const itemRefs = Array.isArray(ctx.paidItemRefs)
-        ? (ctx.paidItemRefs as { itemType: string; entityId: string }[])
-        : [];
-      if (itemRefs.length > 0) {
-        void this.ads
-          .trackOrderConversions({
-            orderId: payload.orderId,
-            userId: payload.customerUserId,
-            storeId: payload.storeId,
-            items: itemRefs.filter(
-              (item) =>
-                (item.itemType === CartItemTypeEnum.PRODUCT ||
-                  item.itemType === CartItemTypeEnum.DRINK) &&
-                Types.ObjectId.isValid(item.entityId),
-            ),
-          })
-          .catch((err) => this.logWarn('ads conversion', err));
+      if (!payOnPickup) {
+        void this.loyalty
+          .creditOrderCompletion(payload.orderId)
+          .catch((err) => this.logWarn('loyalty credit', err));
+        const itemRefs = Array.isArray(ctx.paidItemRefs)
+          ? (ctx.paidItemRefs as { itemType: string; entityId: string }[])
+          : [];
+        if (itemRefs.length > 0) {
+          void this.ads
+            .trackOrderConversions({
+              orderId: payload.orderId,
+              userId: payload.customerUserId,
+              storeId: payload.storeId,
+              items: itemRefs.filter(
+                (item) =>
+                  (item.itemType === CartItemTypeEnum.PRODUCT ||
+                    item.itemType === CartItemTypeEnum.DRINK) &&
+                  Types.ObjectId.isValid(item.entityId),
+              ),
+            })
+            .catch((err) => this.logWarn('ads conversion', err));
+        }
       }
     }
-    void this.orders
-      .ensureVendorPaidOrderNotifications(payload.orderId)
-      .catch((err) => this.logWarn('vendor paid notify', err));
-    void this.invoiceEmail
-      .ensurePaidReceiptEmail(payload.orderId)
-      .catch((err) => this.logWarn('invoice email', err));
+    void (payOnPickup
+      ? this.orders.ensureVendorPayOnPickupOrderNotifications(payload.orderId)
+      : this.orders.ensureVendorPaidOrderNotifications(payload.orderId)
+    ).catch((err) => this.logWarn('vendor paid notify', err));
+    if (!payOnPickup) {
+      void this.invoiceEmail
+        .ensurePaidReceiptEmail(payload.orderId)
+        .catch((err) => this.logWarn('invoice email', err));
+    }
   }
 
   private async onApproved(

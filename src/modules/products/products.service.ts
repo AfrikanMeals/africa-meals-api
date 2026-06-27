@@ -1,6 +1,11 @@
 import { detectCatalogImageStorageKind } from '@common/media/detect-storage-engine.util';
 import { buildCaseInsensitiveExactRegex, escapeMongoRegex } from '@common/mongo/escape-regex.util';
 import { shouldApplyCatalogRegionFilter } from '@common/catalog-public-id.util';
+import {
+  moderationFieldsFromDoc,
+  moderationStatusFromDoc,
+} from '@common/moderation/catalog-moderation.util';
+import { AdModerationStatusEnum } from '@schemas/ad-moderation-status.enum';
 import { MediasService } from '@modules/medias/medias.service';
 import { prepareIncomingUploadFile } from 'src/incoming-upload-file';
 import {
@@ -850,6 +855,27 @@ export class ProductsService {
     };
   }
 
+  private assertVendorProductNotAdminBlocked(doc: ProductModel): void {
+    const lean = doc.toObject() as Record<string, unknown>;
+    if (
+      moderationStatusFromDoc(lean) === AdModerationStatusEnum.BLOCKED ||
+      doc.status === ProductStatusEnum.BLOCKED
+    ) {
+      throw new ForbiddenException('catalog_item_blocked_by_admin');
+    }
+  }
+
+  private vendorProductStatusForResponse(p: Record<string, unknown>): string {
+    const moderation = moderationFieldsFromDoc(p);
+    if (moderation.moderationStatus === AdModerationStatusEnum.BLOCKED) {
+      return ProductStatusEnum.BLOCKED;
+    }
+    const raw = String(p.status ?? ProductStatusEnum.PENDING);
+    return raw === ProductStatusEnum.BLOCKED
+      ? ProductStatusEnum.BLOCKED
+      : raw;
+  }
+
   private mapVendorProductRow(
     p: Record<string, unknown>,
     forcedCurrency?: string,
@@ -970,7 +996,8 @@ export class ProductsService {
         p.discountSchedules ?? p.discount_schedules,
       ),
       currency: String(forcedCurrency || p.currency || 'CAD'),
-      status: String(p.status ?? ProductStatusEnum.PENDING),
+      status: this.vendorProductStatusForResponse(p),
+      ...moderationFieldsFromDoc(p),
       categoryId: catId,
       categoryTitle: catTitle,
       profileImage: mainSrc,
@@ -1130,7 +1157,8 @@ export class ProductsService {
         p.variants,
       ),
       currency: String(forcedCurrency || p.currency || 'CAD'),
-      status: String(p.status ?? ProductStatusEnum.PENDING),
+      status: this.vendorProductStatusForResponse(p),
+      ...moderationFieldsFromDoc(p),
       categoryId: catId,
       categoryTitle: catTitle,
       averageRating: Number(p.averageRating ?? 0),
@@ -1407,6 +1435,8 @@ export class ProductsService {
       throw new NotFoundException('product_not_found');
     }
 
+    this.assertVendorProductNotAdminBlocked(doc);
+
     const previousStatus = doc.status;
 
     if (args.title != null && args.title.trim() !== doc.title) {
@@ -1516,6 +1546,9 @@ export class ProductsService {
     // Ignore toute devise envoyée par le client vendeur et garde la devise boutique.
     doc.currency = (store.currency || 'CAD') as string;
     if (args.status !== undefined) {
+      if (args.status === ProductStatusEnum.BLOCKED) {
+        throw new ForbiddenException('catalog_item_status_readonly');
+      }
       doc.status = args.status;
     }
 
@@ -1573,6 +1606,7 @@ export class ProductsService {
     if (!doc) {
       throw new NotFoundException('product_not_found');
     }
+    this.assertVendorProductNotAdminBlocked(doc);
     if (doc.profileImage?.startsWith('http')) {
       await this._mediasService.delete(doc.profileImage).catch(() => undefined);
     }

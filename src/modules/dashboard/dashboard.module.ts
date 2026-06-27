@@ -71,7 +71,9 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { FleetModule } from '@modules/fleet/fleet.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
+import { PlatformShippingSettingsModule } from '@modules/platform-shipping-settings/platform-shipping-settings.module';
 import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
+import { CartSimulatorService } from './cart-simulator.service';
 
 @Module({
   imports: [
@@ -84,6 +86,7 @@ import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain
     DomainEventHandlersModule,
     StoreDeliveryDriversModule,
     SubscriptionsModule,
+    PlatformShippingSettingsModule,
     forwardRef(() => DeliveryAgentModule),
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
@@ -130,6 +133,7 @@ import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain
   controllers: [DashboardController],
   providers: [
     DashboardService,
+    CartSimulatorService,
     DeliveryDriversSeedService,
     DeliveryDriversCityMigrationService,
   ],

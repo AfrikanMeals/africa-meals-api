@@ -44,6 +44,7 @@ import {
   normalizePickupCodeInput,
 } from 'src/utils/pickup-code';
 import { objectIdStringFromRef, mongoIdsEqual } from 'src/utils/mongoose-ref.util';
+import { enrichOrdersDisplayStatus, readOrderPayOnPickup } from './order-display-status.util';
 import {
   ConfirmPickupDto,
   CreateRefundRequestDto,
@@ -66,6 +67,8 @@ import {
   buildVendorOrderCreatedPushBody,
   buildVendorOrderPaidInboxMessage,
   buildVendorOrderPaidPushBody,
+  buildVendorOrderPayOnPickupInboxMessage,
+  buildVendorOrderPayOnPickupPushBody,
   buildVendorOrderStatusInboxMessage,
   buildVendorOrderStatusPush,
   vendorOrderStatusLabelFr,
@@ -270,7 +273,7 @@ export class OrdersService {
   /** Client + adresses de livraison (refs `addresses` peuplées). */
   private static readonly orderUserWithAddressesPopulate = {
     path: 'user',
-    select: 'fullName email profileImage addresses',
+    select: 'fullName email phoneNumber profileImage addresses',
     populate: { path: 'addresses' },
   } as const;
 
@@ -484,6 +487,10 @@ export class OrdersService {
       await this.ensureHandoffCodesForAdminSupport(enriched);
     }
 
+    if (asCustomerScope || user.type === UserTypeEnum.USER) {
+      enriched = enrichOrdersDisplayStatus(enriched);
+    }
+
     return { data: enriched as unknown as OrderModel[] };
   }
 
@@ -507,6 +514,18 @@ export class OrdersService {
       delete out.pickup_code;
       return out;
     });
+  }
+
+  /** Vendeur : nom + adresse livraison uniquement (pas e-mail / téléphone client). */
+  private static stripCustomerContactForVendor(
+    row: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const user = row['user'];
+    if (!user || typeof user !== 'object') return row;
+    const u = { ...(user as Record<string, unknown>) };
+    delete u['email'];
+    delete u['phoneNumber'];
+    return { ...row, user: u };
   }
 
   /** Remboursement : indicateurs pour le dashboard vendeur / admin. */
@@ -549,6 +568,7 @@ export class OrdersService {
         ...o,
         hasBusinessReport: reported.has(id),
         canRequestRefund: refund.canRequestRefund,
+        canCancelOrder: refund.canCancelOrder === true,
         refundRequestState: refund.refundRequestState,
         assignedDeliveryUserId: delivery.assignedDeliveryUserId,
         canMessageDeliveryAgent: delivery.canMessageDeliveryAgent,
@@ -589,8 +609,19 @@ export class OrdersService {
   clientRefundFlags(order: Record<string, unknown>): {
     canRequestRefund: boolean;
     refundRequestState: 'eligible' | 'pending' | 'processed' | 'unavailable';
+    canCancelOrder?: boolean;
   } {
     const status = String(order['status'] ?? '');
+    if (
+      readOrderPayOnPickup(order) &&
+      this.isRefundRequestAllowedForStatus(status)
+    ) {
+      return {
+        canRequestRefund: false,
+        refundRequestState: 'unavailable',
+        canCancelOrder: true,
+      };
+    }
     const log =
       ((order['refundRequestLog'] ?? order['refund_request_log']) as
         | Array<{ status?: string }>
@@ -661,6 +692,7 @@ export class OrdersService {
       .findOne(filter)
       .populate({
         path: 'store',
+        select: 'name currency profileImage address',
         populate: [
           {
             path: 'address',
@@ -696,7 +728,10 @@ export class OrdersService {
     const [withCurrency] = await this.enrichOrdersWithStripeCurrency([
       enriched,
     ]);
-    const out = withCurrency;
+    let out = withCurrency;
+    if (asCustomerScope || user.type === UserTypeEnum.USER) {
+      out = enrichOrdersDisplayStatus([out])[0];
+    }
     if (
       asCustomerScope ||
       user.type === UserTypeEnum.USER ||
@@ -704,8 +739,9 @@ export class OrdersService {
     ) {
       return out as unknown as typeof order;
     }
+    const vendorRow = OrdersService.stripCustomerContactForVendor(out);
     return this.stripPickupCodeForNonClients([
-      out,
+      vendorRow,
     ])[0] as unknown as typeof order;
   }
 
@@ -1531,17 +1567,22 @@ export class OrdersService {
           ? gC + sC + tC
           : Math.round((subtotalBeforeTax + taxTotal) * 100);
       const currency = opts?.currency?.trim()?.toUpperCase() || 'CAD';
+      const statusEventSource = isPayOnPickup
+        ? OrderStatusChangeSourceEnum.CHECKOUT
+        : OrderStatusChangeSourceEnum.STRIPE;
 
-      /** Reçu client : envoi idempotent (retry webhook / sync mobile). */
-      void this._orderPaidInvoiceEmail
-        .ensurePaidReceiptEmail(orderId)
-        .catch((err) =>
-          this.logger.warn(
-            `order paid invoice email order=${orderId}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          ),
-        );
+      if (!isPayOnPickup) {
+        /** Reçu client : envoi idempotent (retry webhook / sync mobile). */
+        void this._orderPaidInvoiceEmail
+          .ensurePaidReceiptEmail(orderId)
+          .catch((err) =>
+            this.logger.warn(
+              `order paid invoice email order=${orderId}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            ),
+          );
+      }
 
       const legacyPaidSideEffects = async (): Promise<void> => {
         await this._orderStatusEvents.record({
@@ -1550,7 +1591,7 @@ export class OrdersService {
           customerUserId: customerIdForEvent,
           fromStatus: prevStatus || undefined,
           toStatus: OrderStatusEnum.PAIED,
-          source: OrderStatusChangeSourceEnum.STRIPE,
+          source: statusEventSource,
         });
         let storeName: string | undefined;
         const rawStore = o.store as unknown;
@@ -1570,6 +1611,9 @@ export class OrdersService {
               storeId: storeIdForCustomer,
               previousStatus: prevStatus,
               newStatus: OrderStatusEnum.PAIED,
+              bodyOverride: isPayOnPickup
+                ? 'Commande enregistrée — paiement à effectuer lors du retrait en boutique'
+                : undefined,
             })
             .catch((err) =>
               this.logger.warn(
@@ -1583,33 +1627,38 @@ export class OrdersService {
           orderId,
           OrderStatusEnum.PAIED,
         );
-        void this._loyaltyService
-          .creditOrderCompletion(orderId)
-          .catch((err) =>
-            this.logger.warn(
-              `Loyalty credit on paid order=${orderId}: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            ),
-          );
-        const storeIdForAds = storeIdForEvent;
-        if (uid && storeIdForAds && paidItemRefs.length > 0) {
-          void this._adsService
-            .trackOrderConversions({
-              orderId,
-              userId: uid,
-              storeId: storeIdForAds,
-              items: paidItemRefs,
-            })
+        if (!isPayOnPickup) {
+          void this._loyaltyService
+            .creditOrderCompletion(orderId)
             .catch((err) =>
               this.logger.warn(
-                `Ads conversion tracking failed for order=${orderId}: ${
+                `Loyalty credit on paid order=${orderId}: ${
                   err instanceof Error ? err.message : String(err)
                 }`,
               ),
             );
+          const storeIdForAds = storeIdForEvent;
+          if (uid && storeIdForAds && paidItemRefs.length > 0) {
+            void this._adsService
+              .trackOrderConversions({
+                orderId,
+                userId: uid,
+                storeId: storeIdForAds,
+                items: paidItemRefs,
+              })
+              .catch((err) =>
+                this.logger.warn(
+                  `Ads conversion tracking failed for order=${orderId}: ${
+                    err instanceof Error ? err.message : String(err)
+                  }`,
+                ),
+              );
+          }
         }
-        void this.ensureVendorPaidOrderNotifications(orderId).catch((err) =>
+        void (isPayOnPickup
+          ? this.ensureVendorPayOnPickupOrderNotifications(orderId)
+          : this.ensureVendorPaidOrderNotifications(orderId)
+        ).catch((err) =>
           this.logger.warn(
             `vendor paid notify order=${orderId}: ${
               err instanceof Error ? err.message : String(err)
@@ -1640,6 +1689,7 @@ export class OrdersService {
                 orderContext: {
                   fromStatus: prevStatus,
                   paidItemRefs,
+                  payOnPickup: isPayOnPickup,
                   storeId: storeIdForEvent,
                   customerUserId: customerIdForEvent,
                   ...(wsDispatch ?? {}),
@@ -1657,16 +1707,21 @@ export class OrdersService {
         void legacyPaidSideEffects();
       }
     } else {
-      void this._orderPaidInvoiceEmail
-        .ensurePaidReceiptEmail(orderId)
-        .catch((err) =>
-          this.logger.warn(
-            `order paid invoice email retry order=${orderId}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          ),
-        );
-      void this.ensureVendorPaidOrderNotifications(orderId).catch((err) =>
+      if (!isPayOnPickup) {
+        void this._orderPaidInvoiceEmail
+          .ensurePaidReceiptEmail(orderId)
+          .catch((err) =>
+            this.logger.warn(
+              `order paid invoice email retry order=${orderId}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            ),
+          );
+      }
+      void (isPayOnPickup
+        ? this.ensureVendorPayOnPickupOrderNotifications(orderId)
+        : this.ensureVendorPaidOrderNotifications(orderId)
+      ).catch((err) =>
         this.logger.warn(
           `vendor paid notify order=${orderId}: ${
             err instanceof Error ? err.message : String(err)
@@ -1719,6 +1774,7 @@ export class OrdersService {
       .findOne({
         _id: new Types.ObjectId(oid),
         status: OrderStatusEnum.PAIED,
+        payOnPickup: { $ne: true },
         vendorPaidNotifiedAt: { $exists: false },
       })
       .populate('store', 'name')
@@ -1783,6 +1839,102 @@ export class OrdersService {
         statusLabel: vendorOrderStatusLabelFr(OrderStatusEnum.PAIED),
       },
       logTag: 'order_paid',
+    });
+
+    await this._orderModel
+      .updateOne(
+        {
+          _id: new Types.ObjectId(oid),
+          vendorPaidNotifiedAt: { $exists: false },
+        },
+        { $set: { vendorPaidNotifiedAt: new Date() } },
+      )
+      .exec();
+  }
+
+  /**
+   * Message inbox + push vendeur — commande retrait avec paiement cash à la collecte.
+   * Idempotent (`vendorPaidNotifiedAt`).
+   */
+  async ensureVendorPayOnPickupOrderNotifications(
+    orderId: string,
+  ): Promise<void> {
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) return;
+
+    const order = await this._orderModel
+      .findOne({
+        _id: new Types.ObjectId(oid),
+        status: OrderStatusEnum.PAIED,
+        payOnPickup: true,
+        vendorPaidNotifiedAt: { $exists: false },
+      })
+      .populate('store', 'name')
+      .lean()
+      .exec();
+    if (!order) {
+      return;
+    }
+
+    const storeId = objectIdStringFromRef(order.store);
+    if (!storeId) {
+      this.logger.warn(
+        `ensureVendorPayOnPickupOrderNotifications: storeId missing order=${oid}`,
+      );
+      return;
+    }
+
+    let storeName: string | undefined;
+    const rawStore = order.store as unknown;
+    if (rawStore && typeof rawStore === 'object' && 'name' in rawStore) {
+      const nm = (rawStore as { name?: unknown }).name;
+      if (typeof nm === 'string' && nm.trim()) {
+        storeName = nm.trim();
+      }
+    }
+
+    const msgArgs = {
+      orderId: oid,
+      items: (order.items ?? []) as OrdeLineItem[],
+      totalPrice: Number(order.totalPrice) || 0,
+      currency:
+        typeof order.currency === 'string' ? order.currency : undefined,
+      pickupCode:
+        typeof order.pickupCode === 'string' ? order.pickupCode : undefined,
+      storeName,
+    };
+
+    const itemCount = (order.items ?? []).reduce(
+      (s, i) => s + Math.max(1, Math.round(Number(i.quantity) || 1)),
+      0,
+    );
+    await this.notifyStoreVendorsForOrder({
+      storeId,
+      customerUserId: objectIdStringFromRef(order.user),
+      inboxMessage: buildVendorOrderPayOnPickupInboxMessage(msgArgs),
+      push: {
+        title: 'Commande à payer à la collecte',
+        body: buildVendorOrderPayOnPickupPushBody(msgArgs),
+        orderId: oid,
+        storeName,
+        reason: 'order_paid',
+        status: OrderStatusEnum.PAIED,
+      },
+      email: {
+        event: 'order_paid',
+        orderId: oid,
+        storeName,
+        totalPrice: Number(order.totalPrice) || 0,
+        currency:
+          typeof order.currency === 'string' ? order.currency : undefined,
+        itemCount,
+        statusLabel: vendorOrderStatusLabelFr(
+          OrderStatusEnum.PAIED,
+          true,
+          true,
+        ),
+      },
+      logTag: 'order_pay_on_pickup',
     });
 
     await this._orderModel
@@ -2003,6 +2155,8 @@ export class OrdersService {
           storeId: storeId ?? undefined,
           previousStatus: st,
           newStatus: OrderStatusEnum.PAIED,
+          reason: 'vendor_accepted',
+          titleOverride: 'Commande acceptée',
           bodyOverride: 'Votre commande est en préparation.',
         })
         .catch((err) =>
@@ -3088,6 +3242,10 @@ export class OrdersService {
     order.pickedUpAt = pickedUpAt;
     await order.save();
 
+    if (order.payOnPickup === true) {
+      void this.ensurePaidReceiptEmail(oid);
+    }
+
     const storeId = this.storeIdFromOrderDoc(order);
     const customerId = this.userIdFromOrderDoc(order);
     await this.recordOrderStatusChangeIfLegacy({
@@ -3491,6 +3649,86 @@ export class OrdersService {
     await this._storeAccess.assertStoreAccess(user, storeId, 'orders.manage');
   }
 
+  /** Client : annule une commande cash à la collecte (sans journal remboursement Stripe). */
+  private async cancelPayOnPickupOrderByClient(
+    order: OrderModel,
+    user: UserModel,
+    dto: CreateRefundRequestDto,
+    oid: string,
+  ): Promise<{ orderId: string; status: OrderStatusEnum }> {
+    const st = order.status as OrderStatusEnum;
+    this.assertRefundRequestApplicableToOrder(st);
+
+    try {
+      assertOrderCancelReasonPayload({
+        source: 'client',
+        reasonCode: dto.reasonCode,
+        customDetails: dto.details,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'cancel_reason_invalid';
+      throw new BadRequestException(msg);
+    }
+
+    const resolved = resolveOrderCancelReasonDisplay({
+      source: 'client',
+      reasonCode: dto.reasonCode,
+      customDetails: dto.details,
+    });
+
+    const prevStatus = st;
+    order.status = OrderStatusEnum.CANCELLED;
+    order.cancelReasonCode = resolved.code;
+    order.cancelReasonDetails = resolved.details;
+    order.cancelReasonSource = 'client';
+    await order.save();
+
+    const storeId = this.storeIdFromOrderDoc(order);
+    await this._orderStatusEvents.record({
+      orderId: oid,
+      storeId,
+      customerUserId: String(user.id),
+      fromStatus: prevStatus,
+      toStatus: OrderStatusEnum.CANCELLED,
+      source: OrderStatusChangeSourceEnum.SYSTEM,
+      actorUserId: String(user.id),
+      note: `Annulation client (collecte) : ${resolved.details}`.slice(0, 500),
+    });
+
+    void this._notificationsService
+      .pushCustomerOrderStatusChanged({
+        userId: String(user.id),
+        orderId: oid,
+        storeName: this.storeNameFromPopulated(order.store),
+        storeId: storeId ?? undefined,
+        previousStatus: prevStatus,
+        newStatus: OrderStatusEnum.CANCELLED,
+        bodyOverride: 'Commande annulée',
+      })
+      .catch((err) =>
+        this.logger.warn(
+          `FCM cancel pay-on-pickup: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
+
+    void this._wsOrderNotifyHandler?.notifyPartiesByOrderId(
+      oid,
+      OrderStatusEnum.CANCELLED,
+    );
+    this.notifyStoreVendorsForOrderStatusChange(order, {
+      reason: 'order_cancelled',
+      status: OrderStatusEnum.CANCELLED,
+      note: `Annulation client : ${resolved.details}`,
+    });
+
+    return {
+      orderId: oid,
+      status: OrderStatusEnum.CANCELLED,
+    };
+  }
+
   /**
    * Client : enregistre une demande de remboursement (historique sur la commande).
    * Refus si statut commande / livraison incompatible ou si une demande est déjà en cours / traitée.
@@ -3499,7 +3737,10 @@ export class OrdersService {
     orderId: string,
     user: UserModel,
     dto: CreateRefundRequestDto,
-  ): Promise<{ orderId: string; status: OrderRefundRequestEntryStatusEnum }> {
+  ): Promise<{
+    orderId: string;
+    status: OrderRefundRequestEntryStatusEnum | OrderStatusEnum;
+  }> {
     const oid = orderId.trim();
     if (!Types.ObjectId.isValid(oid)) {
       throw new NotFoundException('order_not_found');
@@ -3508,12 +3749,15 @@ export class OrdersService {
     const order = await this._orderModel
       .findOne({ _id: new Types.ObjectId(oid), user: uid })
       .select(
-        'status shouldShip refundRequestLog store items totalPrice currency pickupCode user',
+        'status shouldShip payOnPickup refundRequestLog store items totalPrice currency pickupCode user',
       )
       .populate('store', 'name')
       .exec();
     if (!order) {
       throw new NotFoundException('order_not_found');
+    }
+    if (order.payOnPickup === true) {
+      return this.cancelPayOnPickupOrderByClient(order, user, dto, oid);
     }
     const st = order.status as OrderStatusEnum;
     this.assertRefundRequestApplicableToOrder(st);

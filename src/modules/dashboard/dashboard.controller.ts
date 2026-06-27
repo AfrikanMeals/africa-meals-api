@@ -32,6 +32,8 @@ import {
   DashboardRevenueSeriesQueryDto,
   parseRevenueSeriesPeriod,
 } from './dto/revenue-series-query.dto';
+import { CartSimulatorPreviewDto } from './dto/cart-simulator-preview.dto';
+import { CartSimulatorService } from './cart-simulator.service';
 import { DashboardService } from './dashboard.service';
 
 @ApiTags('dashboard')
@@ -40,6 +42,9 @@ import { DashboardService } from './dashboard.service';
 export class DashboardController {
   @Inject(DashboardService)
   private readonly _dashboardService: DashboardService;
+
+  @Inject(CartSimulatorService)
+  private readonly _cartSimulatorService: CartSimulatorService;
 
   @Get('alerts')
   @UseGuards(JwtGuard)
@@ -63,6 +68,17 @@ export class DashboardController {
     return this._dashboardService.getDashboardRevenueSummary(
       req.user as UserModel,
     );
+  }
+
+  /** Simulation panier checkout (articles, livraison, taxes, commission). */
+  @Post('cart-simulator/preview')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  cartSimulatorPreview(
+    @Req() req: Request,
+    @Body() body: CartSimulatorPreviewDto,
+  ) {
+    return this._cartSimulatorService.preview(req.user as UserModel, body);
   }
 
   /** Top plats (commandes + notes) — vendeur uniquement. */

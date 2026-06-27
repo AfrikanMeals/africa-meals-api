@@ -11,6 +11,8 @@ export enum ProductStatusEnum {
   PENDING = 'PENDING',
   ACTIVE = 'ACTIVE',
   INACTIVE = 'INACTIVE',
+  /** Bloqué par l’administration (modération catalogue). */
+  BLOCKED = 'BLOCKED',
 }
 
 /** Unité du temps de cuisson estimé affiché au client. */

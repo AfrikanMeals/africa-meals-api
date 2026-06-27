@@ -324,7 +324,7 @@ export class AdminCatalogModerationService {
       existing.moderationBlockReason = reason;
       existing.moderationReviewedAt = reviewedAt;
       existing.set('moderationReviewedBy', reviewedBy);
-      existing.status = ProductStatusEnum.INACTIVE;
+      existing.status = ProductStatusEnum.BLOCKED;
       await existing.save();
       this.queueCatalogModerationNotify({
         storeId,

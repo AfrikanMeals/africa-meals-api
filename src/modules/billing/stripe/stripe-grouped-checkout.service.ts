@@ -127,6 +127,8 @@ type GroupedStripeBuilt = {
   orderPaymentFeeLabel?: string;
   totalCents: number;
   fulfillmentByStoreId: Record<string, 'pickup' | 'delivery'>;
+  /** Boutiques du panier en paiement cash au retrait (hors Stripe). */
+  payOnPickupByStoreId: Record<string, boolean>;
   deliveryMetaByStore: Record<
     string,
     {
@@ -204,10 +206,16 @@ export function cartPricingCacheInputHash(
       (a, b) =>
         a.storeId.localeCompare(b.storeId) || a.code.localeCompare(b.code),
     );
+  const payOnPickupByStoreId = Object.fromEntries(
+    Object.entries(dto.payOnPickupByStoreId ?? {}).filter(
+      ([storeId, enabled]) => Boolean(storeId.trim()) && enabled === true,
+    ),
+  );
   return stableCacheHash({
     v: 1,
     cartFingerprint,
     fulfillment,
+    payOnPickupByStoreId,
     addressId: String(dto.addressId ?? '').trim(),
     currency: String(dto.currency ?? '')
       .trim()
@@ -1078,6 +1086,11 @@ export class StripeGroupedCheckoutService {
     const stripeMinimumMinor = amountFactor === 1 ? 100 : 50;
 
     const fulfillment = dto.fulfillmentByStoreId ?? {};
+    const payOnPickupByStoreId = Object.fromEntries(
+      Object.entries(dto.payOnPickupByStoreId ?? {}).filter(
+        ([storeId, enabled]) => Boolean(storeId.trim()) && enabled === true,
+      ),
+    );
     const needsAddress = groups.some((g) => {
       const id = storeMongoId(g.store);
       const mode = fulfillment[id] ?? 'pickup';
@@ -1549,6 +1562,7 @@ export class StripeGroupedCheckoutService {
       orderPaymentFeeLabel,
       totalCents,
       fulfillmentByStoreId: fulfillment as Record<string, 'pickup' | 'delivery'>,
+      payOnPickupByStoreId,
       deliveryMetaByStore,
     };
   }
@@ -1633,6 +1647,21 @@ export class StripeGroupedCheckoutService {
     base.checkoutCur = built.currency.toLowerCase();
     if (built.orderPaymentFeeCents > 0) {
       base.payFeeCents = String(built.orderPaymentFeeCents);
+    }
+    const popEntries = Object.entries(built.payOnPickupByStoreId ?? {}).filter(
+      ([, v]) => v === true,
+    );
+    if (popEntries.length > 0) {
+      const popJson = JSON.stringify(Object.fromEntries(popEntries));
+      const popB64 = Buffer.from(popJson, 'utf8').toString('base64url');
+      if (popB64.length <= 490) {
+        base.pickupPayB64 = popB64;
+      }
+      const fulfillJson = JSON.stringify(built.fulfillmentByStoreId ?? {});
+      const fulfillB64 = Buffer.from(fulfillJson, 'utf8').toString('base64url');
+      if (fulfillB64.length <= 490) {
+        base.fulfillB64 = fulfillB64;
+      }
     }
     return {
       ...base,
@@ -2301,14 +2330,12 @@ export class StripeGroupedCheckoutService {
       this.logger.log(
         `Stripe fulfill: already complete for ${stripePaymentId}`,
       );
-      for (const oid of processed.orderIds ?? []) {
-        this.ordersService.ensurePaidReceiptEmail(oid);
-      }
-      return {
-        complete: true,
-        orderIds: processed.orderIds ?? [],
-        errors: [],
-      };
+      return this.finalizeStripeFulfillEarlyReturn({
+        uid,
+        stripePaymentId,
+        metadata,
+        processed,
+      });
     }
 
     if (!processed) {
@@ -2336,14 +2363,12 @@ export class StripeGroupedCheckoutService {
               stripePaymentId,
             ))
           ) {
-            for (const oid of processed.orderIds ?? []) {
-              this.ordersService.ensurePaidReceiptEmail(oid);
-            }
-            return {
-              complete: true,
-              orderIds: processed.orderIds ?? [],
-              errors: [],
-            };
+            return this.finalizeStripeFulfillEarlyReturn({
+              uid,
+              stripePaymentId,
+              metadata,
+              processed,
+            });
           }
           this.logger.warn(
             `Stripe fulfill: retry after concurrent insert ${stripePaymentId}`,
@@ -2485,7 +2510,158 @@ export class StripeGroupedCheckoutService {
       );
     }
 
+    const pickupIds = await this.fulfillPickupPayOrdersAfterStripePayment({
+      user,
+      metadata,
+      stripePaymentId,
+      existingPickupOrderIds: processed?.pickupPayOrderIds ?? [],
+    });
+    for (const pid of pickupIds) {
+      if (!orderIds.includes(pid)) {
+        orderIds.push(pid);
+      }
+    }
+    if (pickupIds.length > 0) {
+      await this.processedModel.updateOne(
+        { sessionId: stripePaymentId },
+        {
+          $addToSet: { orderIds: { $each: pickupIds } },
+          $set: { pickupPayOrderIds: pickupIds },
+        },
+      );
+    }
+
     return { complete, orderIds, errors: fulfillErrors };
+  }
+
+  private async finalizeStripeFulfillEarlyReturn(params: {
+    uid: string;
+    stripePaymentId: string;
+    metadata: Record<string, string | undefined | null>;
+    processed: { orderIds?: string[]; pickupPayOrderIds?: string[] };
+  }): Promise<StripeFulfillResult> {
+    for (const oid of params.processed.orderIds ?? []) {
+      this.ordersService.ensurePaidReceiptEmail(oid);
+    }
+    const orderIds = [...(params.processed.orderIds ?? [])];
+    const userDoc = await this.usersService.findById(params.uid);
+    if (userDoc) {
+      const pickupIds = await this.fulfillPickupPayOrdersAfterStripePayment({
+        user: userDoc as UserModel,
+        metadata: params.metadata,
+        stripePaymentId: params.stripePaymentId,
+        existingPickupOrderIds: params.processed.pickupPayOrderIds ?? [],
+      });
+      for (const pid of pickupIds) {
+        if (!orderIds.includes(pid)) {
+          orderIds.push(pid);
+        }
+      }
+    }
+    return { complete: true, orderIds, errors: [] };
+  }
+
+  private parsePayOnPickupByStoreFromMetadata(
+    metadata: Record<string, string | undefined | null>,
+  ): Record<string, boolean> {
+    const b64 = String(
+      metadata?.pickupPayB64 ?? metadata?.pickup_pay_b64 ?? '',
+    ).trim();
+    if (!b64) return {};
+    try {
+      const parsed = JSON.parse(
+        Buffer.from(b64, 'base64url').toString('utf8'),
+      ) as Record<string, boolean>;
+      return Object.fromEntries(
+        Object.entries(parsed).filter(([k, v]) => k.trim() && v === true),
+      );
+    } catch {
+      return {};
+    }
+  }
+
+  private parseFulfillmentByStoreFromMetadata(
+    metadata: Record<string, string | undefined | null>,
+  ): Record<string, 'pickup' | 'delivery'> {
+    const b64 = String(metadata?.fulfillB64 ?? metadata?.fulfill_b64 ?? '').trim();
+    if (!b64) return {};
+    try {
+      return JSON.parse(
+        Buffer.from(b64, 'base64url').toString('utf8'),
+      ) as Record<string, 'pickup' | 'delivery'>;
+    } catch {
+      return {};
+    }
+  }
+
+  private isPickupPayOnDeliveryAlreadyFulfilledError(
+    err: BadRequestException,
+  ): boolean {
+    const resp = err.getResponse();
+    const messages = new Set([
+      'pickup_pay_on_delivery_no_stores',
+      'cart_is_empty',
+    ]);
+    if (typeof resp === 'string') {
+      return messages.has(resp);
+    }
+    if (resp && typeof resp === 'object' && 'message' in resp) {
+      const msg = String((resp as { message?: unknown }).message ?? '');
+      return messages.has(msg);
+    }
+    return false;
+  }
+
+  /** Panier mixte : commandes retrait cash après succès Stripe (idempotent). */
+  private async fulfillPickupPayOrdersAfterStripePayment(params: {
+    user: UserModel;
+    metadata: Record<string, string | undefined | null>;
+    stripePaymentId: string;
+    existingPickupOrderIds?: string[];
+  }): Promise<string[]> {
+    const existing = params.existingPickupOrderIds ?? [];
+    if (existing.length > 0) {
+      return existing;
+    }
+
+    const payOnPickupByStoreId =
+      this.parsePayOnPickupByStoreFromMetadata(params.metadata);
+    if (!Object.values(payOnPickupByStoreId).some(Boolean)) {
+      return [];
+    }
+
+    const fulfillmentByStoreId = this.parseFulfillmentByStoreFromMetadata(
+      params.metadata,
+    );
+    const couponByStore = parseCouponsFromStripeMetadata(params.metadata);
+    const coupons = Object.entries(couponByStore).map(([storeId, code]) => ({
+      storeId,
+      code,
+    }));
+    const currency = String(params.metadata?.checkoutCur ?? '').trim();
+
+    try {
+      const result = await this.createPickupPayOnDeliveryCheckout(params.user, {
+        payOnPickupByStoreId,
+        fulfillmentByStoreId,
+        coupons,
+        ...(currency ? { currency: currency.toUpperCase() } : {}),
+      });
+      return result.orderIds;
+    } catch (err) {
+      if (
+        err instanceof BadRequestException &&
+        this.isPickupPayOnDeliveryAlreadyFulfilledError(err)
+      ) {
+        return existing;
+      }
+      this.logger.warn(
+        `Stripe fulfill: pickup-pay after ${params.stripePaymentId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return [];
+    }
   }
 
   /**

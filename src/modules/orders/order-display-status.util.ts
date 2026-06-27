@@ -1,6 +1,6 @@
 import { OrderStatusEnum } from '@schemas/order.schema';
 
-/** Libellé statut commande client — paiement cash à la collecte non encore encaissé. */
+/** Libellé statut commande client — paiement cash au retrait en boutique (pas livraison à domicile). */
 export const PAY_ON_PICKUP_UNSETTLED_STATUS_LABEL = 'À payer';
 
 /** Colonne paiement admin / finances — encaissement cash en attente. */
@@ -18,8 +18,9 @@ export function readOrderStripeParentPaymentId(
 }
 
 /**
- * Commande « paiement à la collecte » (cash) — flag explicite ou absence de paiement Stripe
- * alors que le workflow commande a démarré (statut au-delà de `created`).
+ * Commande « paiement cash au retrait en boutique » (pickup) — flag explicite ou absence
+ * de paiement Stripe alors que le workflow commande a démarré (statut au-delà de `created`).
+ * Ce n’est pas un paiement à la livraison à domicile.
  */
 export function isPayOnPickupOrder(order: Record<string, unknown>): boolean {
   if (order['payOnPickup'] === true || order['pay_on_pickup'] === true) {

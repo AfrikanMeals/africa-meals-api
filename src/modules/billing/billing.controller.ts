@@ -191,7 +191,7 @@ export class BillingController {
   @UseGuards(JwtGuard)
   @ApiOperation({
     summary:
-      'Commande à emporter avec paiement à la collecte (sans Stripe en ligne)',
+      'Commande à emporter (retrait boutique) avec paiement cash à la collecte — sans Stripe en ligne',
   })
   async pickupPayOnDeliveryCheckout(
     @Req() req: Request,

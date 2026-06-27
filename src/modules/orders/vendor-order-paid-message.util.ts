@@ -84,6 +84,29 @@ export function buildVendorOrderPaidInboxMessage(
   return lines.join('\n').slice(0, 4000);
 }
 
+/** Message inbox vendeur — commande retrait avec paiement cash à effectuer au retrait. */
+export function buildVendorOrderPayOnPickupInboxMessage(
+  args: VendorOrderNotifyMessageArgs,
+): string {
+  const ref = orderRef(args.orderId);
+  const total = formatMoney(args.totalPrice, args.currency);
+  const itemCount = args.items.reduce(
+    (s, i) => s + Math.max(1, Math.round(Number(i.quantity) || 1)),
+    0,
+  );
+  const lines: string[] = [
+    `Commande à payer à la collecte · #${ref} · ${itemCount} article${itemCount > 1 ? 's' : ''} · Total ${total}`,
+  ];
+  for (const item of args.items) {
+    lines.push(`• ${formatLineItem(item)}`);
+  }
+  const code = args.pickupCode?.trim();
+  if (code) {
+    lines.push(`Code retrait : ${code.toUpperCase()}`);
+  }
+  return lines.join('\n').slice(0, 4000);
+}
+
 export type VendorOrderNotifyReason =
   | 'new_order'
   | 'order_paid'
@@ -264,6 +287,24 @@ export function buildVendorOrderPaidPushBody(
   const code = args.pickupCode?.trim();
   const pickup = code ? ` · Code ${code.toUpperCase()}` : '';
   return `${store} : commande #${ref} payée (${total})${detail}${pickup}`.slice(
+    0,
+    240,
+  );
+}
+
+/** Corps court push vendeur — commande retrait, paiement cash attendu au retrait. */
+export function buildVendorOrderPayOnPickupPushBody(
+  args: VendorOrderNotifyMessageArgs,
+): string {
+  const store = (args.storeName ?? '').trim() || 'Boutique';
+  const ref = orderRef(args.orderId);
+  const total = formatMoney(args.totalPrice, args.currency);
+  const firstLine = args.items[0] ? formatLineItem(args.items[0]) : '';
+  const more = args.items.length > 1 ? ` (+${args.items.length - 1})` : '';
+  const detail = firstLine ? ` — ${firstLine}${more}` : '';
+  const code = args.pickupCode?.trim();
+  const pickup = code ? ` · Code ${code.toUpperCase()}` : '';
+  return `${store} : commande #${ref} à payer au retrait (${total})${detail}${pickup}`.slice(
     0,
     240,
   );
