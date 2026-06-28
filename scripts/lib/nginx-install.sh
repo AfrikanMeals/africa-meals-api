@@ -12,11 +12,47 @@ api_nginx_require_root() {
 
 api_nginx_site_path() {
   local domain="${1:?domain}"
+  # CWP7 : conf.d persistant (ne pas éditer vhosts/*.conf — rebuild CWP)
+  if [[ -d /usr/local/cwpsrv ]]; then
+    echo "/etc/nginx/conf.d/zz-wise-eat-api-${domain}.conf"
+    return
+  fi
   if [[ -d /etc/nginx/sites-available ]]; then
     echo "/etc/nginx/sites-available/${domain}.conf"
   else
     echo "/etc/nginx/conf.d/${domain}.conf"
   fi
+}
+
+api_nginx_is_cwp7() {
+  [[ -d /usr/local/cwpsrv ]]
+}
+
+api_nginx_default_webroot() {
+  if [[ -n "${CERTBOT_WEBROOT:-}" ]]; then
+    printf '%s\n' "${CERTBOT_WEBROOT}"
+    return
+  fi
+  if api_nginx_is_cwp7 && [[ -d /usr/local/apache/autossl_tmp ]]; then
+    printf '%s\n' "/usr/local/apache/autossl_tmp"
+    return
+  fi
+  printf '%s\n' "/var/www/certbot"
+}
+
+api_nginx_listen_ip() {
+  if [[ -n "${NGINX_LISTEN_IP:-}" ]]; then
+    printf '%s\n' "${NGINX_LISTEN_IP}"
+    return
+  fi
+  api_nginx_public_ipv4
+}
+
+api_nginx_cwp_reload() {
+  if [[ -x /scripts/cwp_api ]]; then
+    /scripts/cwp_api webservers rebuild_nginx 2>/dev/null || true
+  fi
+  api_nginx_reload
 }
 
 api_nginx_enable_site() {
@@ -121,17 +157,33 @@ api_nginx_cloudflare_proxy_likely() {
 
 api_nginx_acme_local_ok() {
   local domain="$1"
-  local webroot="${2:-/var/www/certbot}"
+  local webroot="${2:-$(api_nginx_default_webroot)}"
   local token="wise-eat-local-$$"
+  local vps_ip code host
+
   mkdir -p "${webroot}/.well-known/acme-challenge"
   echo "${token}" > "${webroot}/.well-known/acme-challenge/${token}"
   api_nginx_webroot_chown "${webroot}"
-  local code
-  code="$(curl -s -o /dev/null -w '%{http_code}' \
-    -H "Host: ${domain}" "http://127.0.0.1/.well-known/acme-challenge/${token}" \
-    --max-time 5 2>/dev/null || echo 000)"
+
+  vps_ip="$(api_nginx_listen_ip)"
+  for host in 127.0.0.1 "${vps_ip}"; do
+    [[ -n "${host}" ]] || continue
+    code="$(curl -s -o /dev/null -w '%{http_code}' \
+      -H "Host: ${domain}" "http://${host}/.well-known/acme-challenge/${token}" \
+      --max-time 8 2>/dev/null || echo 000)"
+    api_nginx_log "ACME local probe http://${host} Host=${domain} → HTTP ${code}"
+    if [[ "${code}" == "200" ]]; then
+      rm -f "${webroot}/.well-known/acme-challenge/${token}"
+      return 0
+    fi
+  done
+
   rm -f "${webroot}/.well-known/acme-challenge/${token}"
-  [[ "${code}" == "200" ]]
+  if api_nginx_is_cwp7; then
+    api_nginx_warn "CWP7 détecté — vérifier : nginx -T 2>/dev/null | grep -A3 '${domain}'"
+    api_nginx_warn "Fichier attendu : $(api_nginx_site_path "${domain}")"
+  fi
+  return 1
 }
 
 api_nginx_acme_public_ok() {
@@ -160,11 +212,14 @@ Correctifs (choisir un) :
      Attendre 2–5 min puis :
        STUNNEL_TLS_EMAIL=... ./scripts/enable-api-nginx-ssl.sh
 
-  B) Certbot DNS-01 Cloudflare (proxy orange OK) :
+  B) Certbot DNS-01 Cloudflare (proxy orange OK, recommandé CWP7) :
        export CLOUDFLARE_DNS_TOKEN=<token Zone.DNS Edit>
        STUNNEL_TLS_EMAIL=... ./scripts/enable-api-nginx-ssl-cloudflare-dns.sh
 
-  C) Certificat origine Cloudflare (15 ans) → nginx ssl_certificate
+  C) CWP7 Pro : SSL gratuit via panel (Domaines → AutoSSL)
+     puis ./scripts/install-api-nginx.sh (cert LE déjà présent)
+
+  D) Certificat origine Cloudflare (15 ans) → nginx ssl_certificate
      Dashboard Cloudflare → SSL/TLS → Origin Server
 
 VPS IP : $(api_nginx_public_ipv4 || echo '?')

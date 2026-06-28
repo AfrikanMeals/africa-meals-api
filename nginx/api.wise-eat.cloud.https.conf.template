@@ -2,6 +2,7 @@
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
+    listen ${NGINX_LISTEN_IP}:443 ssl http2;
     server_name ${API_WISE_EAT_DOMAIN};
 
     ssl_certificate /etc/letsencrypt/live/${API_WISE_EAT_DOMAIN}/fullchain.pem;
@@ -15,6 +16,12 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
     client_max_body_size 32m;
+
+    location /.well-known/acme-challenge/ {
+        root ${CERTBOT_WEBROOT};
+        default_type "text/plain";
+        allow all;
+    }
 
     location / {
         proxy_pass http://${API_BACKEND_HOST}:${API_BACKEND_PORT};
@@ -33,10 +40,13 @@ server {
 server {
     listen 80;
     listen [::]:80;
+    listen ${NGINX_LISTEN_IP}:80;
     server_name ${API_WISE_EAT_DOMAIN};
 
     location /.well-known/acme-challenge/ {
         root ${CERTBOT_WEBROOT};
+        default_type "text/plain";
+        allow all;
     }
 
     location / {

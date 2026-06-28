@@ -1,13 +1,17 @@
 # HTTP — africa-meals-api (Docker :9000) — api.wise-eat.cloud
+# CWP7 : NGINX_LISTEN_IP = IP publique VPS (listen explicite)
 server {
     listen 80;
     listen [::]:80;
+    listen ${NGINX_LISTEN_IP}:80;
     server_name ${API_WISE_EAT_DOMAIN};
 
     client_max_body_size 32m;
 
     location /.well-known/acme-challenge/ {
         root ${CERTBOT_WEBROOT};
+        default_type "text/plain";
+        allow all;
     }
 
     location / {

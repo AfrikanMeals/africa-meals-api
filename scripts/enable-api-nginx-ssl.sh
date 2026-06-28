@@ -21,8 +21,14 @@ api_nginx_log "=== HTTPS ${API_WISE_EAT_DOMAIN} ==="
 "${SCRIPT_DIR}/install-api-nginx.sh"
 
 if ! api_nginx_cert_exists "${API_WISE_EAT_DOMAIN}"; then
-  if ! api_nginx_acme_local_ok "${API_WISE_EAT_DOMAIN}"; then
-    api_nginx_die "webroot ACME injoignable en local — vérifier nginx + ${CERTBOT_WEBROOT:-/var/www/certbot}"
+  CERTBOT_WEBROOT="${CERTBOT_WEBROOT:-$(api_nginx_default_webroot)}"
+
+  if ! api_nginx_acme_local_ok "${API_WISE_EAT_DOMAIN}" "${CERTBOT_WEBROOT}"; then
+    if api_nginx_is_cwp7; then
+      api_nginx_print_cloudflare_acme_help "${API_WISE_EAT_DOMAIN}"
+      api_nginx_die "CWP7 : préférer ./scripts/enable-api-nginx-ssl-cloudflare-dns.sh (DNS-01)"
+    fi
+    api_nginx_die "webroot ACME injoignable — nginx + ${CERTBOT_WEBROOT}"
   fi
 
   if api_nginx_cloudflare_proxy_likely "${API_WISE_EAT_DOMAIN}" \
