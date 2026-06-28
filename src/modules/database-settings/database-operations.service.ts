@@ -7,7 +7,7 @@ import {
 } from '@schemas/database-backup-run.schema';
 import { createWriteStream, promises as fs } from 'fs';
 import { Connection } from 'mongoose';
-import { MongoClient } from 'mongodb';
+import { Collection, MongoClient } from 'mongodb';
 import * as path from 'path';
 import { EJSON } from 'bson';
 import { summarizeMongoUri } from './database-uri.util';
@@ -32,6 +32,7 @@ type ProgressMeta = {
   current?: number;
   total?: number;
   documentsCopied?: number;
+  indexesCopied?: number;
 };
 
 type ProgressCb = (
@@ -72,6 +73,52 @@ export class DatabaseOperationsService {
     const db = this.connection.db;
     if (!db) return 0;
     return db.collection(name).countDocuments();
+  }
+
+  /** Recrée sur la cible les index de la source (hors `_id_`). */
+  private async copyCollectionIndexes(
+    sourceCol: Collection,
+    targetCol: Collection,
+  ): Promise<number> {
+    let sourceIndexes: Awaited<ReturnType<Collection['indexes']>>;
+    try {
+      sourceIndexes = await sourceCol.indexes();
+    } catch {
+      return 0;
+    }
+
+    const toCreate = sourceIndexes.filter(
+      (idx) => idx.name && idx.name !== '_id_',
+    );
+    if (toCreate.length === 0) return 0;
+
+    try {
+      const targetIndexes = await targetCol.indexes();
+      for (const idx of targetIndexes) {
+        if (idx.name && idx.name !== '_id_') {
+          await targetCol.dropIndex(idx.name).catch(() => undefined);
+        }
+      }
+    } catch {
+      /* collection absente ou sans index secondaires */
+    }
+
+    let created = 0;
+    for (const idx of toCreate) {
+      const { key, v: _v, ns: _ns, ...options } = idx;
+      if (!key || typeof key !== 'object') continue;
+      try {
+        await targetCol.createIndex(key, options);
+        created++;
+      } catch (error) {
+        this.logger.warn(
+          `Index ${idx.name ?? '?'} sur ${sourceCol.collectionName}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+    return created;
   }
 
   async exportBackup(
@@ -204,6 +251,7 @@ export class DatabaseOperationsService {
   async migrateToTarget(
     targetUri: string,
     dropTargetCollections: boolean,
+    migrateIndexes: boolean,
     onProgress?: ProgressCb,
   ): Promise<{ collections: DatabaseBackupCollectionMeta[] }> {
     const sourceDb = this.connection.db;
@@ -255,6 +303,7 @@ export class DatabaseOperationsService {
       });
 
       let documentsCopied = 0;
+      let indexesCopied = 0;
 
       for (let i = 0; i < names.length; i++) {
         const name = names[i]!;
@@ -264,7 +313,7 @@ export class DatabaseOperationsService {
             ? `Copie ${name} (vidage cible)`
             : `Copie ${name}`,
           name,
-          { current: i + 1, total, documentsCopied },
+          { current: i + 1, total, documentsCopied, indexesCopied },
         );
 
         const sourceCol = sourceDb.collection(name);
@@ -289,7 +338,7 @@ export class DatabaseOperationsService {
                 Math.round(((i + 0.5) / total) * 100),
                 `Copie ${name} (${documentCount.toLocaleString('fr-FR')} docs)`,
                 name,
-                { current: i + 1, total, documentsCopied },
+                { current: i + 1, total, documentsCopied, indexesCopied },
               );
             }
           }
@@ -300,20 +349,36 @@ export class DatabaseOperationsService {
           documentsCopied += batch.length;
         }
 
+        if (migrateIndexes) {
+          await onProgress?.(
+            Math.round(((i + 0.85) / total) * 100),
+            `Index ${name}`,
+            `${name}:indexes`,
+            { current: i + 1, total, documentsCopied, indexesCopied },
+          );
+          indexesCopied += await this.copyCollectionIndexes(sourceCol, targetCol);
+        }
+
         copied.push({ name, documentCount, fileName: '' });
+        const copiedLabel = migrateIndexes
+          ? `Copié ${name} (${documentCount.toLocaleString('fr-FR')} docs · index)`
+          : `Copié ${name} (${documentCount.toLocaleString('fr-FR')} docs)`;
         await onProgress?.(
           Math.round(((i + 1) / total) * 100),
-          `Copié ${name} (${documentCount.toLocaleString('fr-FR')} docs)`,
+          copiedLabel,
           name,
-          { current: i + 1, total, documentsCopied },
+          { current: i + 1, total, documentsCopied, indexesCopied },
         );
       }
 
+      const doneLabel = migrateIndexes
+        ? `Migration terminée · ${total} collection(s) · ${documentsCopied.toLocaleString('fr-FR')} document(s) · ${indexesCopied.toLocaleString('fr-FR')} index`
+        : `Migration terminée · ${total} collection(s) · ${documentsCopied.toLocaleString('fr-FR')} document(s)`;
       await onProgress?.(
         100,
-        `Migration terminée · ${total} collection(s) · ${documentsCopied.toLocaleString('fr-FR')} document(s)`,
+        doneLabel,
         'done',
-        { current: total, total, documentsCopied },
+        { current: total, total, documentsCopied, indexesCopied },
       );
       return { collections: copied };
     } finally {

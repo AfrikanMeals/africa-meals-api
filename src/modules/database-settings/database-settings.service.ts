@@ -288,6 +288,7 @@ export class DatabaseSettingsService {
       String(run._id),
       targetUri,
       dto.dropTargetCollections === true,
+      dto.migrateIndexes === true,
     ).catch((error) => {
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.warn(`Migration job ${jobId} failed: ${msg}`);
@@ -593,11 +594,13 @@ export class DatabaseSettingsService {
     runDocId: string,
     targetUri: string,
     dropTargetCollections: boolean,
+    migrateIndexes: boolean,
   ): Promise<void> {
     try {
       const result = await this.operations.migrateToTarget(
         targetUri,
         dropTargetCollections,
+        migrateIndexes,
         async (pct, label, phase, meta) => {
           await this.adminJobEmitter?.emitProgress({
             jobId,

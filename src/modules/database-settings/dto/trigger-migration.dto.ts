@@ -56,6 +56,14 @@ export class TriggerMigrationDto {
   @IsBoolean()
   dropTargetCollections?: boolean;
 
+  @ApiPropertyOptional({
+    description:
+      'Recréer sur la cible les index MongoDB (unique, composés, TTL…) de chaque collection source.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  migrateIndexes?: boolean;
+
   @ApiProperty({
     description: 'Phrase de confirmation : MIGRER_AFRIKAMEALS',
   })
