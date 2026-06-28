@@ -76,5 +76,30 @@ fi
 docker run "${RUN_ARGS[@]}" "${DOCKER_IMAGE}"
 
 echo "OK — ${CONTAINER_NAME} (${DOCKER_IMAGE})"
-echo "  health : curl -s http://127.0.0.1:${HTTP_PORT}/api/health | jq ."
-echo "  logs   : docker logs -f ${CONTAINER_NAME}"
+
+if ss -tlnp 2>/dev/null | grep -qE ':9000\b'; then
+  echo "[docker-run-vps] port 9000 déjà occupé avant boot API :"
+  ss -tlnp | grep ':9000' || true
+fi
+
+echo "[docker-run-vps] attente /api/health (max 120s)..."
+ready=0
+for _ in $(seq 1 60); do
+  if curl -sf --max-time 3 "http://127.0.0.1:${HTTP_PORT}/api/health" >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 2
+done
+
+if [[ "${ready}" -eq 1 ]]; then
+  echo "[docker-run-vps] API prête — http://127.0.0.1:${HTTP_PORT}/api/health"
+  curl -s "http://127.0.0.1:${HTTP_PORT}/api/health" | head -c 200
+  echo ""
+else
+  echo "[docker-run-vps] WARN — API pas prête après 120s" >&2
+  echo "  ss -tlnp | grep 9000" >&2
+  echo "  docker logs ${CONTAINER_NAME} --tail 40" >&2
+fi
+
+echo "  logs : docker logs -f ${CONTAINER_NAME}"

@@ -3,7 +3,7 @@
 # SSL terminé par Cloudflare (origine HTTP:80) — pas de Let's Encrypt.
 set -euo pipefail
 
-api_nginx_log() { echo "[api-nginx] $*"; }
+api_nginx_log() { echo "[api-nginx] $*" >&2; }
 api_nginx_warn() { echo "[api-nginx] WARN: $*" >&2; }
 api_nginx_die() { echo "[api-nginx] ERROR: $*" >&2; exit 1; }
 

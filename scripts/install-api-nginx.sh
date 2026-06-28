@@ -56,8 +56,11 @@ else
 fi
 
 if curl -sf --max-time 10 -H "Host: ${API_WISE_EAT_DOMAIN}" \
-  "http://127.0.0.1/api/health" >/dev/null 2>&1; then
+  "http://127.0.0.1/api/health" 2>/dev/null | jq . >/dev/null 2>&1; then
   api_nginx_log "OK — nginx → Docker via Host ${API_WISE_EAT_DOMAIN}"
 else
-  api_nginx_warn "Test nginx local KO : curl -H 'Host: ${API_WISE_EAT_DOMAIN}' http://127.0.0.1/api/health"
+  api_nginx_warn "Test nginx local KO — réponse :"
+  curl -s --max-time 5 -H "Host: ${API_WISE_EAT_DOMAIN}" "http://127.0.0.1/api/health" | head -c 200 >&2 || true
+  echo >&2
+  api_nginx_warn "Vérifier : curl -s http://127.0.0.1:9000/api/health && ./scripts/docker-run-vps.sh"
 fi
