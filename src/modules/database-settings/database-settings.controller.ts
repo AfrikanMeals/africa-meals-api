@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Header,
+  Param,
   Post,
   Put,
   Query,
@@ -68,6 +69,15 @@ export class DatabaseSettingsController {
   ) {
     const parsed = limit ? Number(limit) : 50;
     return this.service.listBackupHistory(req.user as UserModel, parsed);
+  }
+
+  @Get('jobs/:jobId/progress')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
+  @ApiOperation({
+    summary: 'Progression job sauvegarde / migration (fallback polling)',
+  })
+  getJobProgress(@Req() req: Request, @Param('jobId') jobId: string) {
+    return this.service.getJobProgress(req.user as UserModel, jobId);
   }
 
   @Post('backup')

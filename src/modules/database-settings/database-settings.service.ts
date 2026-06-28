@@ -4,12 +4,14 @@ import {
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
   Optional,
   forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { AdminJobEmitterService } from '@modules/admin-jobs/admin-job-emitter.service';
+import { AdminJobProgressService } from '@modules/admin-jobs/admin-job-progress.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import {
   DatabaseBackupRunDocument,
@@ -89,6 +91,9 @@ export class DatabaseSettingsService {
     @Inject(forwardRef(() => AdminJobEmitterService))
     @Optional()
     private readonly adminJobEmitter?: AdminJobEmitterService,
+    @Inject(forwardRef(() => AdminJobProgressService))
+    @Optional()
+    private readonly adminJobProgress?: AdminJobProgressService,
   ) {}
 
   isDbBackupAllowed(): boolean {
@@ -240,6 +245,71 @@ export class DatabaseSettingsService {
       .limit(capped)
       .exec();
     return { runs: rows.map((r) => this.toRunResponse(r)) };
+  }
+
+  async getJobProgress(
+    user: UserModel,
+    jobId: string,
+  ): Promise<{
+    jobId: string;
+    pct: number;
+    label: string;
+    phase?: string;
+    running: boolean;
+    current?: number;
+    total?: number;
+    documentsCopied?: number;
+  }> {
+    await this.assertAdminBackup(user);
+    const id = jobId.trim();
+    if (!id) {
+      throw new BadRequestException('job_id_required');
+    }
+
+    const snap = this.adminJobProgress?.getSnapshot(id);
+    if (snap && snap.label !== 'idle') {
+      return {
+        jobId: id,
+        pct: snap.pct,
+        label: snap.label,
+        phase: snap.phase,
+        running: snap.running,
+        current: snap.current,
+        total: snap.total,
+        documentsCopied: snap.documentsCopied,
+      };
+    }
+
+    const run = await this.backupRunModel.findOne({ jobId: id }).exec();
+    if (run) {
+      if (run.status === 'completed') {
+        return {
+          jobId: id,
+          pct: 100,
+          label: 'complete',
+          phase: 'complete',
+          running: false,
+        };
+      }
+      if (run.status === 'failed') {
+        return {
+          jobId: id,
+          pct: 0,
+          label: run.errorMessage?.trim() || 'error',
+          phase: 'error',
+          running: false,
+        };
+      }
+      return {
+        jobId: id,
+        pct: 0,
+        label: 'En cours…',
+        phase: 'running',
+        running: true,
+      };
+    }
+
+    throw new NotFoundException('job_not_found');
   }
 
   async triggerBackupAsync(

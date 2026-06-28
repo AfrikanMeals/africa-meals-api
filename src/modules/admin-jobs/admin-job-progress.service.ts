@@ -40,6 +40,12 @@ export class AdminJobProgressService {
     });
   }
 
+  getSnapshot(jobId: string): AdminJobSnapshot | undefined {
+    const id = jobId.trim();
+    if (!id) return undefined;
+    return this.last.get(id);
+  }
+
   emitProgress(payload: JobProgressPayload): void {
     this.push({
       ...payload,
