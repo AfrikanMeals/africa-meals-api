@@ -17,12 +17,22 @@ echo "=== Health Docker ==="
 docker inspect "${CONTAINER}" --format 'health={{if .State.Health}}{{.State.Health.Status}}{{else}}n/a{{end}} restarts={{.RestartCount}} exit={{.State.ExitCode}}' 2>/dev/null || true
 echo ""
 
-echo "=== Port ${HTTP_PORT} ==="
+echo "=== Port ${HTTP_PORT} (hôte → API) ==="
 if curl -sf --max-time 5 "http://127.0.0.1:${HTTP_PORT}/api/health" | jq . 2>/dev/null; then
-  echo "OK /api/health"
+  echo "OK /api/health via 127.0.0.1:${HTTP_PORT}"
 else
-  echo "FAIL — API ne répond pas sur 127.0.0.1:${HTTP_PORT}"
-  echo "Causes fréquentes : Mongo/Redis TLS (.env.docker), crash au boot, healthcheck trop tôt"
+  echo "FAIL — curl 127.0.0.1:${HTTP_PORT} (502 nginx si docker-proxy / publish 127.0.0.1 cassé)"
+  if docker inspect "${CONTAINER}" >/dev/null 2>&1; then
+    net="$(docker inspect "${CONTAINER}" --format '{{.HostConfig.NetworkMode}}' 2>/dev/null || true)"
+    echo "  network_mode=${net:-?}"
+    if [[ "${net}" != "host" ]]; then
+      cip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${CONTAINER}" 2>/dev/null || true)"
+      if [[ -n "${cip}" ]]; then
+        echo "  bridge ${cip}:${HTTP_PORT} → $(curl -sf --max-time 3 "http://${cip}:${HTTP_PORT}/api/health" | head -c 80 || echo FAIL)"
+      fi
+      echo "  fix : git pull && ./scripts/docker-run-vps.sh  (DOCKER_NETWORK=host par défaut)"
+    fi
+  fi
 fi
 echo ""
 

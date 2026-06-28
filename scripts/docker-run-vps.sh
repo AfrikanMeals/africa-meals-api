@@ -14,6 +14,8 @@ DOCKER_IMAGE="${DOCKER_IMAGE:-borix102/africa-meals-api:docker}"
 CONTAINER_NAME="${CONTAINER_NAME:-africa-meals-api}"
 HTTP_PORT="${API_HTTP_PORT:-9000}"
 GRPC_PORT="${GRPC_API_PORT:-50052}"
+# host = pas de port-map Docker (évite RST/502 nginx→127.0.0.1:9000 sur CentOS/CWP)
+DOCKER_NETWORK="${DOCKER_NETWORK:-host}"
 
 [[ -f "${ENV_FILE}" ]] || { echo "Fichier absent : ${ENV_FILE}" >&2; exit 1; }
 
@@ -53,14 +55,25 @@ fi
 
 docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 
-docker run -d \
-  --name "${CONTAINER_NAME}" \
-  --restart unless-stopped \
-  -p "127.0.0.1:${HTTP_PORT}:9000" \
-  -p "127.0.0.1:${GRPC_PORT}:50052" \
-  --env-file "${RUNTIME_ENV}" \
-  --add-host "host.docker.internal:host-gateway" \
-  "${DOCKER_IMAGE}"
+RUN_ARGS=(
+  -d
+  --name "${CONTAINER_NAME}"
+  --restart unless-stopped
+  --env-file "${RUNTIME_ENV}"
+  --add-host "host.docker.internal:host-gateway"
+)
+
+if [[ "${DOCKER_NETWORK}" == "host" ]]; then
+  RUN_ARGS+=(--network host)
+  echo "[docker-run-vps] network=host — API sur 127.0.0.1:${HTTP_PORT} (pas de docker-proxy)"
+else
+  RUN_ARGS+=(
+    -p "127.0.0.1:${HTTP_PORT}:9000"
+    -p "127.0.0.1:${GRPC_PORT}:50052"
+  )
+fi
+
+docker run "${RUN_ARGS[@]}" "${DOCKER_IMAGE}"
 
 echo "OK — ${CONTAINER_NAME} (${DOCKER_IMAGE})"
 echo "  health : curl -s http://127.0.0.1:${HTTP_PORT}/api/health | jq ."

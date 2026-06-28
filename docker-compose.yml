@@ -17,11 +17,14 @@ services:
     image: ${DOCKER_IMAGE:-borix102/africa-meals-api:docker}
     container_name: africa-meals-api
     restart: unless-stopped
+    # host : évite 502 nginx→127.0.0.1:9000 sur CentOS/CWP (docker-proxy / 127.0.0.1 publish)
+    network_mode: ${DOCKER_NETWORK:-host}
     env_file:
       - ${ENV_FILE:-.env.docker}
-    ports:
-      - "127.0.0.1:${API_HTTP_PORT:-9000}:9000"
-      - "127.0.0.1:${GRPC_API_PORT:-50052}:50052"
+    # Sans network_mode: host — décommenter ports et retirer network_mode ci-dessus
+    # ports:
+    #   - "127.0.0.1:${API_HTTP_PORT:-9000}:9000"
+    #   - "127.0.0.1:${GRPC_API_PORT:-50052}:50052"
     # Firebase (optionnel) : décommenter si accounts.json présent sur le VPS
     # volumes:
     #   - ./accounts.json:/app/africa-meals-api/accounts.json:ro
