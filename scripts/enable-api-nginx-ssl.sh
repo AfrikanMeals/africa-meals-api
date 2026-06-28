@@ -21,6 +21,16 @@ api_nginx_log "=== HTTPS ${API_WISE_EAT_DOMAIN} ==="
 "${SCRIPT_DIR}/install-api-nginx.sh"
 
 if ! api_nginx_cert_exists "${API_WISE_EAT_DOMAIN}"; then
+  if ! api_nginx_acme_local_ok "${API_WISE_EAT_DOMAIN}"; then
+    api_nginx_die "webroot ACME injoignable en local — vérifier nginx + ${CERTBOT_WEBROOT:-/var/www/certbot}"
+  fi
+
+  if api_nginx_cloudflare_proxy_likely "${API_WISE_EAT_DOMAIN}" \
+    || ! api_nginx_acme_public_ok "${API_WISE_EAT_DOMAIN}"; then
+    api_nginx_print_cloudflare_acme_help "${API_WISE_EAT_DOMAIN}"
+    api_nginx_die "HTTP-01 impossible — voir options A/B/C ci-dessus"
+  fi
+
   api_nginx_issue_cert "${API_WISE_EAT_DOMAIN}"
 fi
 
