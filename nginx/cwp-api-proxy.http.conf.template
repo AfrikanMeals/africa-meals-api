@@ -1,24 +1,18 @@
-# CWP7 — proxy Docker API (remplace public_html / page test CWP)
-# Généré par scripts/install-api-nginx.sh — ne pas rebuild ce domaine dans CWP sans re-patch.
+# CWP7 — proxy Docker API (SSL Cloudflare uniquement, origine HTTP)
+# Généré par scripts/install-api-nginx.sh
 server {
     listen ${NGINX_LISTEN_IP}:80;
     server_name ${API_WISE_EAT_DOMAIN};
 
     client_max_body_size 32m;
 
-    location /.well-known/acme-challenge/ {
-        root ${CERTBOT_WEBROOT};
-        default_type "text/plain";
-        allow all;
-    }
-
     location / {
         proxy_pass http://${API_BACKEND_HOST}:${API_BACKEND_PORT};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Real-IP $http_cf_connecting_ip;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
         proxy_set_header X-Forwarded-Host $host;
         proxy_read_timeout 120s;
         proxy_send_timeout 120s;

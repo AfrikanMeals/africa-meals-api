@@ -1,5 +1,5 @@
-# HTTP — africa-meals-api (Docker :9000) — api.wise-eat.cloud
-# CWP7 : NGINX_LISTEN_IP = IP publique VPS (listen explicite)
+# HTTP — africa-meals-api (Docker) — SSL terminé par Cloudflare (mode Flexible)
+# Origine : port 80 uniquement — pas de certificat Let's Encrypt sur le VPS.
 server {
     listen 80;
     listen [::]:80;
@@ -8,19 +8,13 @@ server {
 
     client_max_body_size 32m;
 
-    location /.well-known/acme-challenge/ {
-        root ${CERTBOT_WEBROOT};
-        default_type "text/plain";
-        allow all;
-    }
-
     location / {
         proxy_pass http://${API_BACKEND_HOST}:${API_BACKEND_PORT};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Real-IP $http_cf_connecting_ip;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
         proxy_set_header X-Forwarded-Host $host;
         proxy_read_timeout 120s;
         proxy_send_timeout 120s;

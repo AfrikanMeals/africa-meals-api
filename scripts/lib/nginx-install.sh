@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Helpers nginx — déploiement Docker API (CentOS / Ubuntu).
+# Helpers nginx — déploiement Docker API (CentOS / Ubuntu, CWP7).
+# SSL terminé par Cloudflare (origine HTTP:80) — pas de Let's Encrypt.
 set -euo pipefail
 
 api_nginx_log() { echo "[api-nginx] $*"; }
@@ -12,7 +13,6 @@ api_nginx_require_root() {
 
 api_nginx_site_path() {
   local domain="${1:?domain}"
-  # CWP7 : conf.d persistant (ne pas éditer vhosts/*.conf — rebuild CWP)
   if [[ -d /usr/local/cwpsrv ]]; then
     echo "/etc/nginx/conf.d/zz-wise-eat-api-${domain}.conf"
     return
@@ -26,18 +26,6 @@ api_nginx_site_path() {
 
 api_nginx_is_cwp7() {
   [[ -d /usr/local/cwpsrv ]]
-}
-
-api_nginx_default_webroot() {
-  if [[ -n "${CERTBOT_WEBROOT:-}" ]]; then
-    printf '%s\n' "${CERTBOT_WEBROOT}"
-    return
-  fi
-  if api_nginx_is_cwp7 && [[ -d /usr/local/apache/autossl_tmp ]]; then
-    printf '%s\n' "/usr/local/apache/autossl_tmp"
-    return
-  fi
-  printf '%s\n' "/var/www/certbot"
 }
 
 api_nginx_listen_ip() {
@@ -69,7 +57,7 @@ api_nginx_cwp_vhost_ssl() {
   local domain="${1:?domain}"
   local dir="/etc/nginx/conf.d/vhosts"
   local f
-  for f in "${domain}_ssl.conf" "${domain}.ssl.conf" "${domain}_ssl.conf"; do
+  for f in "${domain}_ssl.conf" "${domain}.ssl.conf"; do
     if [[ -f "${dir}/${f}" ]]; then
       printf '%s\n' "${dir}/${f}"
       return 0
@@ -88,44 +76,44 @@ api_nginx_remove_zz_conf() {
   rm -f "/etc/nginx/conf.d/zz-wise-eat-api-${domain}.conf"
 }
 
+api_nginx_disable_cwp_ssl_vhost() {
+  local domain="$1"
+  local ssl_file disabled
+
+  ssl_file="$(api_nginx_cwp_vhost_ssl "${domain}" 2>/dev/null || true)"
+  [[ -n "${ssl_file}" ]] || return 0
+
+  disabled="${ssl_file}.wise-eat-cloudflare-ssl-off"
+  if [[ -f "${disabled}" ]]; then
+    api_nginx_log "Vhost SSL déjà désactivé : ${disabled}"
+    return 0
+  fi
+
+  mv "${ssl_file}" "${disabled}"
+  api_nginx_log "Vhost SSL CWP désactivé (Cloudflare termine HTTPS) : ${disabled}"
+}
+
 api_nginx_patch_cwp_vhosts() {
   local domain="$1"
   local ng_src="$2"
-  local http_file ssl_file backup_dir
+  local http_file backup_dir
 
   http_file="$(api_nginx_cwp_vhost_http "${domain}")"
   backup_dir="/root/wise-eat/nginx-backups/$(date +%Y%m%d%H%M%S)"
   mkdir -p "${backup_dir}"
 
   cp -a "${http_file}" "${backup_dir}/" 2>/dev/null || true
-  if ssl_file="$(api_nginx_cwp_vhost_ssl "${domain}" 2>/dev/null)"; then
+  if ssl_file="$(api_nginx_cwp_vhost_ssl "${domain}" 2>/dev/null || true)"; then
     cp -a "${ssl_file}" "${backup_dir}/" 2>/dev/null || true
-  else
-    ssl_file="${http_file%.conf}_ssl.conf"
-    if api_nginx_cert_exists "${domain}"; then
-      api_nginx_log "Création vhost SSL CWP : ${ssl_file}"
-    else
-      ssl_file=""
-    fi
   fi
 
   api_nginx_remove_zz_conf "${domain}"
+  api_nginx_disable_cwp_ssl_vhost "${domain}"
 
-  envsubst '${API_WISE_EAT_DOMAIN} ${API_BACKEND_HOST} ${API_BACKEND_PORT} ${CERTBOT_WEBROOT} ${NGINX_LISTEN_IP}' \
+  envsubst '${API_WISE_EAT_DOMAIN} ${API_BACKEND_HOST} ${API_BACKEND_PORT} ${NGINX_LISTEN_IP}' \
     < "${ng_src}/cwp-api-proxy.http.conf.template" > "${http_file}"
-  api_nginx_log "CWP vhost patché : ${http_file} (backup ${backup_dir})"
+  api_nginx_log "CWP vhost HTTP patché : ${http_file} (backup ${backup_dir})"
 
-  if api_nginx_cert_exists "${domain}" && [[ -n "${ssl_file}" ]]; then
-    api_nginx_ensure_tls_snippets
-    envsubst '${API_WISE_EAT_DOMAIN} ${API_BACKEND_HOST} ${API_BACKEND_PORT} ${CERTBOT_WEBROOT} ${NGINX_LISTEN_IP}' \
-      < "${ng_src}/cwp-api-proxy.https.conf.template" > "${ssl_file}"
-    api_nginx_log "CWP SSL patché : ${ssl_file}"
-  elif [[ -n "${ssl_file}" ]]; then
-    api_nginx_warn "Pas de cert LE — ${ssl_file} inchangé (Cloudflare 522 tant que HTTPS origine KO)"
-    api_nginx_warn "Lancer : CLOUDFLARE_DNS_TOKEN=... ./scripts/enable-api-nginx-ssl-cloudflare-dns.sh"
-  fi
-
-  # Empêcher CWP rebuild d'écraser — marqueur
   touch "/root/wise-eat/.cwp-api-proxy-${domain}"
 }
 
@@ -135,56 +123,6 @@ api_nginx_enable_site() {
   site="$(api_nginx_site_path "${domain}")"
   if [[ -d /etc/nginx/sites-enabled ]]; then
     ln -sf "${site}" "/etc/nginx/sites-enabled/${domain}.conf"
-  fi
-}
-
-api_nginx_webroot_chown() {
-  local webroot="${1:-/var/www/certbot}"
-  if id www-data &>/dev/null 2>&1; then
-    chown -R www-data:www-data "${webroot}" 2>/dev/null || true
-  elif id nginx &>/dev/null 2>&1; then
-    chown -R nginx:nginx "${webroot}" 2>/dev/null || true
-  fi
-}
-
-api_nginx_ensure_tls_snippets() {
-  if [[ ! -f /etc/letsencrypt/options-ssl-nginx.conf ]]; then
-    mkdir -p /etc/letsencrypt
-    curl -fsSL https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf \
-      -o /etc/letsencrypt/options-ssl-nginx.conf \
-      || api_nginx_warn "options-ssl-nginx.conf absent — certbot install recommandé"
-  fi
-  if [[ ! -f /etc/letsencrypt/ssl-dhparams.pem ]]; then
-    curl -fsSL https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem \
-      -o /etc/letsencrypt/ssl-dhparams.pem \
-      || openssl dhparam -out /etc/letsencrypt/ssl-dhparams.pem 2048
-  fi
-}
-
-api_nginx_cert_exists() {
-  local domain="$1"
-  [[ -f "/etc/letsencrypt/live/${domain}/fullchain.pem" \
-    && -f "/etc/letsencrypt/live/${domain}/privkey.pem" ]]
-}
-
-api_nginx_issue_cert() {
-  local domain="$1"
-  local email="${STUNNEL_TLS_EMAIL:-${CERTBOT_EMAIL:-}}"
-  local webroot="${CERTBOT_WEBROOT:-/var/www/certbot}"
-  [[ -n "${email}" ]] || api_nginx_die "STUNNEL_TLS_EMAIL ou CERTBOT_EMAIL requis"
-  command -v certbot >/dev/null 2>&1 || api_nginx_die "certbot absent — yum install certbot python3-certbot-nginx"
-
-  mkdir -p "${webroot}/.well-known/acme-challenge"
-  api_nginx_webroot_chown "${webroot}"
-
-  if api_nginx_cert_exists "${domain}"; then
-    certbot certonly --webroot -w "${webroot}" -d "${domain}" \
-      --cert-name "${domain}" --email "${email}" --agree-tos --non-interactive \
-      --keep-until-expiring --expand
-  else
-    certbot certonly --webroot -w "${webroot}" -d "${domain}" \
-      --cert-name "${domain}" --email "${email}" --agree-tos --non-interactive \
-      --keep-until-expiring
   fi
 }
 
@@ -203,132 +141,7 @@ api_nginx_public_ipv4() {
     || true
 }
 
-api_nginx_dns_a() {
-  local domain="$1"
-  dig +short A "${domain}" 2>/dev/null | grep -E '^[0-9]+\.' | head -1 || true
-}
-
-api_nginx_looks_like_cloudflare_ip() {
-  local ip="$1"
-  [[ -z "${ip}" ]] && return 1
-  [[ "${ip}" =~ ^104\.(1[6-9]|2[0-9]|3[01])\. ]] && return 0
-  [[ "${ip}" =~ ^172\.(6[4-9]|7[01])\. ]] && return 0
-  [[ "${ip}" =~ ^188\.114\. ]] && return 0
-  [[ "${ip}" =~ ^2606:4700: ]] && return 0
-  return 1
-}
-
-api_nginx_cloudflare_proxy_likely() {
-  local domain="$1"
-  local resolved vps_ip
-  resolved="$(api_nginx_dns_a "${domain}")"
-  vps_ip="$(api_nginx_public_ipv4)"
-  if api_nginx_looks_like_cloudflare_ip "${resolved}"; then
-    return 0
-  fi
-  [[ -n "${vps_ip}" && -n "${resolved}" && "${resolved}" != "${vps_ip}" ]]
-}
-
-api_nginx_acme_local_ok() {
-  local domain="$1"
-  local webroot="${2:-$(api_nginx_default_webroot)}"
-  local token="wise-eat-local-$$"
-  local vps_ip code host
-
-  mkdir -p "${webroot}/.well-known/acme-challenge"
-  echo "${token}" > "${webroot}/.well-known/acme-challenge/${token}"
-  api_nginx_webroot_chown "${webroot}"
-
-  vps_ip="$(api_nginx_listen_ip)"
-  for host in 127.0.0.1 "${vps_ip}"; do
-    [[ -n "${host}" ]] || continue
-    code="$(curl -s -o /dev/null -w '%{http_code}' \
-      -H "Host: ${domain}" "http://${host}/.well-known/acme-challenge/${token}" \
-      --max-time 8 2>/dev/null || echo 000)"
-    api_nginx_log "ACME local probe http://${host} Host=${domain} → HTTP ${code}"
-    if [[ "${code}" == "200" ]]; then
-      rm -f "${webroot}/.well-known/acme-challenge/${token}"
-      return 0
-    fi
-  done
-
-  rm -f "${webroot}/.well-known/acme-challenge/${token}"
-  if api_nginx_is_cwp7; then
-    api_nginx_warn "CWP7 détecté — vérifier : nginx -T 2>/dev/null | grep -A3 '${domain}'"
-    api_nginx_warn "Fichier attendu : $(api_nginx_site_path "${domain}")"
-  fi
-  return 1
-}
-
-api_nginx_acme_public_ok() {
-  local domain="$1"
-  local webroot="${2:-/var/www/certbot}"
-  local token="wise-eat-pub-$$"
-  mkdir -p "${webroot}/.well-known/acme-challenge"
-  echo "${token}" > "${webroot}/.well-known/acme-challenge/${token}"
-  api_nginx_webroot_chown "${webroot}"
-  local code
-  code="$(curl -s -o /dev/null -w '%{http_code}' \
-    "http://${domain}/.well-known/acme-challenge/${token}" \
-    --max-time 15 2>/dev/null || echo 000)"
-  rm -f "${webroot}/.well-known/acme-challenge/${token}"
-  [[ "${code}" == "200" ]]
-}
-
-api_nginx_print_cloudflare_acme_help() {
-  local domain="${1:-api.wise-eat.cloud}"
-  api_nginx_warn "Certbot HTTP-01 bloqué (souvent Cloudflare proxy orange)."
-  cat >&2 <<EOF
-
-Correctifs (choisir un) :
-
-  A) Cloudflare DNS — proxy OFF (nuage gris) pour ${domain}
-     Attendre 2–5 min puis :
-       STUNNEL_TLS_EMAIL=... ./scripts/enable-api-nginx-ssl.sh
-
-  B) Certbot DNS-01 Cloudflare (proxy orange OK, recommandé CWP7) :
-       export CLOUDFLARE_DNS_TOKEN=<token Zone.DNS Edit>
-       STUNNEL_TLS_EMAIL=... ./scripts/enable-api-nginx-ssl-cloudflare-dns.sh
-
-  C) CWP7 Pro : SSL gratuit via panel (Domaines → AutoSSL)
-     puis ./scripts/install-api-nginx.sh (cert LE déjà présent)
-
-  D) Certificat origine Cloudflare (15 ans) → nginx ssl_certificate
-     Dashboard Cloudflare → SSL/TLS → Origin Server
-
-VPS IP : $(api_nginx_public_ipv4 || echo '?')
-DNS A  : $(api_nginx_dns_a "${domain}" || echo '?')
-
-EOF
-}
-
-api_nginx_issue_cert_dns_cloudflare() {
-  local domain="$1"
-  local email="${STUNNEL_TLS_EMAIL:-${CERTBOT_EMAIL:-}}"
-  local creds="${CLOUDFLARE_CREDENTIALS_FILE:-/etc/letsencrypt/cloudflare.ini}"
-  [[ -n "${email}" ]] || api_nginx_die "STUNNEL_TLS_EMAIL ou CERTBOT_EMAIL requis"
-  [[ -n "${CLOUDFLARE_DNS_TOKEN:-}" ]] || api_nginx_die "CLOUDFLARE_DNS_TOKEN requis (Zone → DNS Edit)"
-
-  command -v certbot >/dev/null 2>&1 || api_nginx_die "certbot absent"
-  if ! certbot plugins 2>/dev/null | grep -q dns-cloudflare; then
-    api_nginx_log "Installation plugin certbot-dns-cloudflare..."
-    pip3 install --quiet certbot-dns-cloudflare 2>/dev/null \
-      || yum install -y python3-certbot-dns-cloudflare 2>/dev/null \
-      || api_nginx_die "Installer : pip3 install certbot-dns-cloudflare"
-  fi
-
-  install -d -m 0700 /etc/letsencrypt
-  cat > "${creds}" <<EOF
-dns_cloudflare_api_token = ${CLOUDFLARE_DNS_TOKEN}
-EOF
-  chmod 600 "${creds}"
-
-  certbot certonly --dns-cloudflare \
-    --dns-cloudflare-credentials "${creds}" \
-    -d "${domain}" \
-    --cert-name "${domain}" \
-    --email "${email}" \
-    --agree-tos \
-    --non-interactive \
-    --keep-until-expiring
+api_nginx_cloudflare_ssl_reminder() {
+  api_nginx_log "Cloudflare → SSL/TLS → mode **Flexible** (HTTPS client ↔ CF, HTTP CF ↔ origine :80)"
+  api_nginx_log "Éviter Full (strict) sans cert origine — sinon erreur 526"
 }
