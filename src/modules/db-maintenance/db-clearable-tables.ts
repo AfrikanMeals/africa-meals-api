@@ -9,7 +9,8 @@ export type DbClearableTableCategory =
   | 'platform'
   | 'support'
   | 'recommendations'
-  | 'websockets';
+  | 'websockets'
+  | 'orphan';
 
 export type DbClearableTableDef = {
   /** Identifiant envoyé par le client (stable). */
@@ -723,15 +724,66 @@ export const DB_CLEARABLE_TABLES: readonly DbClearableTableDef[] = [
 ] as const;
 
 const KEY_SET = new Set(DB_CLEARABLE_TABLES.map((t) => t.key));
+const KNOWN_COLLECTIONS = new Set(DB_CLEARABLE_TABLES.map((t) => t.collection));
+
+/** Préfixe stable pour collections MongoDB absentes du catalogue admin. */
+export const ORPHAN_TABLE_KEY_PREFIX = 'orphan:';
+
+const ORPHAN_COLLECTION_NAME = /^[a-zA-Z][a-zA-Z0-9_]{0,127}$/;
+const SYSTEM_COLLECTION_PREFIX = 'system.';
+
+export function getKnownClearableCollections(): ReadonlySet<string> {
+  return KNOWN_COLLECTIONS;
+}
+
+export function buildOrphanTableKey(collection: string): string {
+  return `${ORPHAN_TABLE_KEY_PREFIX}${collection}`;
+}
+
+export function isOrphanTableKey(key: string): boolean {
+  return key.startsWith(ORPHAN_TABLE_KEY_PREFIX);
+}
+
+export function parseOrphanTableKey(key: string): string {
+  return key.slice(ORPHAN_TABLE_KEY_PREFIX.length);
+}
+
+/** Nom de collection MongoDB autorisé pour une orpheline (hors system.*). */
+export function isValidOrphanCollectionName(name: string): boolean {
+  const n = String(name ?? '').trim();
+  if (!n || n.startsWith(SYSTEM_COLLECTION_PREFIX)) return false;
+  return ORPHAN_COLLECTION_NAME.test(n);
+}
 
 export function isClearableTableKey(key: string): boolean {
-  return KEY_SET.has(key);
+  if (KEY_SET.has(key)) return true;
+  if (!isOrphanTableKey(key)) return false;
+  return isValidOrphanCollectionName(parseOrphanTableKey(key));
 }
 
 export function getClearableTable(
   key: string,
 ): DbClearableTableDef | undefined {
   return DB_CLEARABLE_TABLES.find((t) => t.key === key);
+}
+
+/** Résout une clé catalogue ou orpheline (`orphan:<collection>`). */
+export function resolveClearableTable(
+  key: string,
+): DbClearableTableDef | undefined {
+  const known = getClearableTable(key);
+  if (known) return known;
+  if (!isOrphanTableKey(key)) return undefined;
+  const collection = parseOrphanTableKey(key);
+  if (!isValidOrphanCollectionName(collection)) return undefined;
+  if (KNOWN_COLLECTIONS.has(collection)) return undefined;
+  return {
+    key,
+    collection,
+    labelFr: `Orpheline — ${collection}`,
+    labelEn: `Orphan — ${collection}`,
+    category: 'orphan',
+  };
 }
 
 export const DB_CLEAR_CONFIRM_PHRASE = 'VIDER_AFRIKAMEALS';

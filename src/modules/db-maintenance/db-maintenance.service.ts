@@ -98,8 +98,10 @@ import {
   DB_CLEARABLE_TABLES,
   DbClearableTableCategory,
   DbClearableTableDef,
-  getClearableTable,
+  buildOrphanTableKey,
+  getKnownClearableCollections,
   isClearableTableKey,
+  resolveClearableTable,
 } from './db-clearable-tables';
 
 export type DbTableListItem = {
@@ -113,7 +115,12 @@ export type DbTableListItem = {
 };
 
 export type ClearDbTablesResult = {
-  cleared: Array<{ key: string; collection: string; deletedCount: number }>;
+  cleared: Array<{
+    key: string;
+    collection: string;
+    deletedCount: number;
+    action: 'clear' | 'drop';
+  }>;
 };
 
 export type IntegrityTestDefinition = {
@@ -462,7 +469,10 @@ export class DbMaintenanceService {
     await this.storeAccess.assertAdminPermission(user, 'admin.settings');
   }
 
-  async listTables(user: UserModel): Promise<{ tables: DbTableListItem[] }> {
+  async listTables(user: UserModel): Promise<{
+    tables: DbTableListItem[];
+    orphanCount: number;
+  }> {
     await this.assertAdminMaintainer(user);
     const db = this.connection.db;
     if (!db) {
@@ -474,7 +484,32 @@ export class DbMaintenanceService {
       const documentCount = await this.countCollection(db, def);
       tables.push(this.toListItem(def, documentCount));
     }
-    return { tables };
+
+    const orphanDefs = await this.listOrphanCollectionDefs(db);
+    for (const def of orphanDefs) {
+      const documentCount = await this.countCollection(db, def);
+      tables.push(this.toListItem(def, documentCount));
+    }
+
+    return { tables, orphanCount: orphanDefs.length };
+  }
+
+  private validateClearTableKeys(keys: string[]): void {
+    for (const key of keys) {
+      if (!isClearableTableKey(key)) {
+        throw new BadRequestException(`unknown_table:${key}`);
+      }
+      const def = resolveClearableTable(key);
+      if (!def) {
+        throw new BadRequestException(`unknown_table:${key}`);
+      }
+      if (
+        def.category === 'orphan' &&
+        getKnownClearableCollections().has(def.collection)
+      ) {
+        throw new BadRequestException(`orphan_is_known_table:${def.collection}`);
+      }
+    }
   }
 
   async clearTables(
@@ -487,11 +522,7 @@ export class DbMaintenanceService {
     if (!unique.length) {
       throw new BadRequestException('no_tables_selected');
     }
-    for (const key of unique) {
-      if (!isClearableTableKey(key)) {
-        throw new BadRequestException(`unknown_table:${key}`);
-      }
-    }
+    this.validateClearTableKeys(unique);
 
     const db = this.connection.db;
     if (!db) {
@@ -500,17 +531,8 @@ export class DbMaintenanceService {
 
     const cleared: ClearDbTablesResult['cleared'] = [];
     for (const key of unique) {
-      const def = getClearableTable(key)!;
-      const res = await db.collection(def.collection).deleteMany({});
-      const deletedCount = res.deletedCount ?? 0;
-      cleared.push({
-        key: def.key,
-        collection: def.collection,
-        deletedCount,
-      });
-      this.logger.warn(
-        `DB maintenance: ${user.id} cleared ${def.collection} (${deletedCount} doc(s))`,
-      );
+      const def = resolveClearableTable(key)!;
+      cleared.push(await this.clearOneCollection(db, user, def));
     }
 
     return { cleared };
@@ -525,11 +547,7 @@ export class DbMaintenanceService {
     if (!unique.length) {
       throw new BadRequestException('no_tables_selected');
     }
-    for (const key of unique) {
-      if (!isClearableTableKey(key)) {
-        throw new BadRequestException(`unknown_table:${key}`);
-      }
-    }
+    this.validateClearTableKeys(unique);
     const jobId = randomUUID();
     void this.runClearTablesJob(user, unique, jobId).catch((error) => {
       const msg = error instanceof Error ? error.message : String(error);
@@ -560,23 +578,14 @@ export class DbMaintenanceService {
     const cleared: ClearDbTablesResult['cleared'] = [];
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i]!;
-      const def = getClearableTable(key)!;
+      const def = resolveClearableTable(key)!;
       await this.adminJobEmitter?.emitProgress({
         jobId,
         pct: Math.round((i / total) * 100),
         label: def.labelFr,
         phase: key,
       });
-      const res = await db.collection(def.collection).deleteMany({});
-      const deletedCount = res.deletedCount ?? 0;
-      cleared.push({
-        key: def.key,
-        collection: def.collection,
-        deletedCount,
-      });
-      this.logger.warn(
-        `DB maintenance async: ${user.id} cleared ${def.collection} (${deletedCount} doc(s))`,
-      );
+      cleared.push(await this.clearOneCollection(db, user, def));
     }
 
     await this.adminJobEmitter?.emitCompleted({
@@ -4851,6 +4860,69 @@ export class DbMaintenanceService {
     );
     if (!Number.isFinite(raw)) return 2;
     return Math.max(1, Math.min(72, raw));
+  }
+
+  private async listOrphanCollectionDefs(
+    db: NonNullable<Connection['db']>,
+  ): Promise<DbClearableTableDef[]> {
+    const known = getKnownClearableCollections();
+    const rows = await db.listCollections().toArray();
+    const orphans = rows
+      .map((r) => r.name)
+      .filter(
+        (name): name is string =>
+          !!name &&
+          !name.startsWith('system.') &&
+          !known.has(name),
+      )
+      .sort();
+
+    return orphans.map((collection) => ({
+      key: buildOrphanTableKey(collection),
+      collection,
+      labelFr: `Orpheline — ${collection}`,
+      labelEn: `Orphan — ${collection}`,
+      category: 'orphan' as const,
+    }));
+  }
+
+  private async clearOneCollection(
+    db: NonNullable<Connection['db']>,
+    user: UserModel,
+    def: DbClearableTableDef,
+  ): Promise<ClearDbTablesResult['cleared'][number]> {
+    const col = db.collection(def.collection);
+    const documentCount = await col.countDocuments().catch(() => 0);
+    const dropCollection = def.category === 'orphan';
+
+    if (dropCollection) {
+      await col.drop().catch((error: unknown) => {
+        const code = (error as { code?: number })?.code;
+        if (code === 26) return; // NamespaceNotFound
+        throw error;
+      });
+      this.logger.warn(
+        `DB maintenance: ${user.id} dropped orphan collection ${def.collection} (${documentCount} doc(s))`,
+      );
+      return {
+        key: def.key,
+        collection: def.collection,
+        deletedCount: documentCount,
+        action: 'drop',
+      };
+    }
+
+    const res = await col.deleteMany({});
+    const deletedCount = res.deletedCount ?? 0;
+    this.logger.warn(
+      `DB maintenance: ${user.id} cleared ${def.collection} (${deletedCount} doc(s))`,
+    );
+    return {
+      key: def.key,
+      collection: def.collection,
+      deletedCount,
+      action: 'clear',
+    };
   }
 
   private toListItem(
