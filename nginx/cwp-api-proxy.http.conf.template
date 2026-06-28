@@ -1,6 +1,8 @@
-# CWP7 — proxy Docker API (SSL Cloudflare uniquement, origine HTTP)
-# Généré par scripts/install-api-nginx.sh
+# CWP7 / VPS — proxy Docker API (SSL Cloudflare, origine HTTP uniquement)
+# Remplace la page test CWP / public_html pour ce domaine.
 server {
+    listen 80;
+    listen [::]:80;
     listen ${NGINX_LISTEN_IP}:80;
     server_name ${API_WISE_EAT_DOMAIN};
 
