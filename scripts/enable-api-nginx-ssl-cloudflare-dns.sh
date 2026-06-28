@@ -27,5 +27,3 @@ api_nginx_ensure_tls_snippets
 "${SCRIPT_DIR}/install-api-nginx.sh"
 
 api_nginx_log "OK — https://${API_WISE_EAT_DOMAIN}/api/health"
-api_nginx_log "Cloudflare SSL mode recommandé : Full (strict)"
-api_nginx_log "Test : curl -sI https://${API_WISE_EAT_DOMAIN}/api/health | head -5"

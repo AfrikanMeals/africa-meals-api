@@ -55,6 +55,75 @@ api_nginx_cwp_reload() {
   api_nginx_reload
 }
 
+api_nginx_cwp_vhost_http() {
+  local domain="${1:?domain}"
+  local dir="/etc/nginx/conf.d/vhosts"
+  if [[ -f "${dir}/${domain}.conf" ]]; then
+    printf '%s\n' "${dir}/${domain}.conf"
+    return 0
+  fi
+  return 1
+}
+
+api_nginx_cwp_vhost_ssl() {
+  local domain="${1:?domain}"
+  local dir="/etc/nginx/conf.d/vhosts"
+  local f
+  for f in "${domain}_ssl.conf" "${domain}.ssl.conf" "${domain}_ssl.conf"; do
+    if [[ -f "${dir}/${f}" ]]; then
+      printf '%s\n' "${dir}/${f}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+api_nginx_cwp_has_domain() {
+  api_nginx_cwp_vhost_http "${1}" >/dev/null 2>&1 \
+    || grep -rq "server_name.*${1}" /etc/nginx/conf.d/vhosts/ 2>/dev/null
+}
+
+api_nginx_remove_zz_conf() {
+  local domain="$1"
+  rm -f "/etc/nginx/conf.d/zz-wise-eat-api-${domain}.conf"
+}
+
+api_nginx_patch_cwp_vhosts() {
+  local domain="$1"
+  local ng_src="$2"
+  local http_file ssl_file backup_dir
+
+  http_file="$(api_nginx_cwp_vhost_http "${domain}")"
+  backup_dir="/root/wise-eat/nginx-backups/$(date +%Y%m%d%H%M%S)"
+  mkdir -p "${backup_dir}"
+
+  cp -a "${http_file}" "${backup_dir}/" 2>/dev/null || true
+  if ssl_file="$(api_nginx_cwp_vhost_ssl "${domain}" 2>/dev/null)"; then
+    cp -a "${ssl_file}" "${backup_dir}/" 2>/dev/null || true
+  else
+    ssl_file=""
+  fi
+
+  api_nginx_remove_zz_conf "${domain}"
+
+  envsubst '${API_WISE_EAT_DOMAIN} ${API_BACKEND_HOST} ${API_BACKEND_PORT} ${CERTBOT_WEBROOT} ${NGINX_LISTEN_IP}' \
+    < "${ng_src}/cwp-api-proxy.http.conf.template" > "${http_file}"
+  api_nginx_log "CWP vhost patché : ${http_file} (backup ${backup_dir})"
+
+  if api_nginx_cert_exists "${domain}" && [[ -n "${ssl_file}" ]]; then
+    api_nginx_ensure_tls_snippets
+    envsubst '${API_WISE_EAT_DOMAIN} ${API_BACKEND_HOST} ${API_BACKEND_PORT} ${CERTBOT_WEBROOT} ${NGINX_LISTEN_IP}' \
+      < "${ng_src}/cwp-api-proxy.https.conf.template" > "${ssl_file}"
+    api_nginx_log "CWP SSL patché : ${ssl_file}"
+  elif [[ -n "${ssl_file}" ]]; then
+    api_nginx_warn "Pas de cert LE — ${ssl_file} inchangé (Cloudflare 522 tant que HTTPS origine KO)"
+    api_nginx_warn "Lancer : CLOUDFLARE_DNS_TOKEN=... ./scripts/enable-api-nginx-ssl-cloudflare-dns.sh"
+  fi
+
+  # Empêcher CWP rebuild d'écraser — marqueur
+  touch "/root/wise-eat/.cwp-api-proxy-${domain}"
+}
+
 api_nginx_enable_site() {
   local domain="$1"
   local site

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # nginx reverse-proxy api.wise-eat.cloud → Docker API (127.0.0.1:9000).
-# Compatible CWP7 Pro (conf.d/zz-wise-eat-api-*.conf + listen IP publique).
+# CWP7 : patch vhost existant (évite page test CWP + conflit server_name).
 #
 # Usage :
 #   sudo ./scripts/install-api-nginx.sh
-#   sudo API_WISE_EAT_DOMAIN=api.wise-eat.cloud API_BACKEND_PORT=9000 ./scripts/install-api-nginx.sh
+#   sudo NGINX_LISTEN_IP=193.203.169.34 ./scripts/install-api-nginx.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,40 +24,45 @@ NGINX_LISTEN_IP="${NGINX_LISTEN_IP:-$(api_nginx_listen_ip)}"
 
 [[ -n "${NGINX_LISTEN_IP}" ]] || api_nginx_die "NGINX_LISTEN_IP introuvable — export NGINX_LISTEN_IP=193.203.169.34"
 
-command -v nginx >/dev/null 2>&1 || api_nginx_die "nginx absent — yum install nginx / apt install nginx"
+command -v nginx >/dev/null 2>&1 || api_nginx_die "nginx absent"
 command -v envsubst >/dev/null 2>&1 || api_nginx_die "envsubst absent — yum install gettext"
-
-if api_nginx_is_cwp7; then
-  api_nginx_log "CWP7 Pro détecté — conf.d/zz-wise-eat-api (non écrasé par rebuild vhosts)"
-fi
 
 mkdir -p "${CERTBOT_WEBROOT}/.well-known/acme-challenge"
 api_nginx_webroot_chown "${CERTBOT_WEBROOT}"
 
-SITE="$(api_nginx_site_path "${API_WISE_EAT_DOMAIN}")"
 export API_WISE_EAT_DOMAIN API_BACKEND_HOST API_BACKEND_PORT CERTBOT_WEBROOT NGINX_LISTEN_IP
 SUBST_VARS='${API_WISE_EAT_DOMAIN} ${API_BACKEND_HOST} ${API_BACKEND_PORT} ${CERTBOT_WEBROOT} ${NGINX_LISTEN_IP}'
 
-if api_nginx_cert_exists "${API_WISE_EAT_DOMAIN}"; then
-  api_nginx_ensure_tls_snippets
-  envsubst "${SUBST_VARS}" \
-    < "${NGINX_SRC}/api.wise-eat.cloud.https.conf.template" > "${SITE}"
-  api_nginx_log "HTTPS → http://${API_BACKEND_HOST}:${API_BACKEND_PORT} (listen ${NGINX_LISTEN_IP})"
+if api_nginx_is_cwp7 && api_nginx_cwp_has_domain "${API_WISE_EAT_DOMAIN}"; then
+  api_nginx_log "CWP7 — domaine ${API_WISE_EAT_DOMAIN} déjà présent → patch vhost CWP (pas page test)"
+  api_nginx_patch_cwp_vhosts "${API_WISE_EAT_DOMAIN}" "${NGINX_SRC}"
+  SITE="$(api_nginx_cwp_vhost_http "${API_WISE_EAT_DOMAIN}")"
 else
-  envsubst "${SUBST_VARS}" \
-    < "${NGINX_SRC}/api.wise-eat.cloud.http.conf.template" > "${SITE}"
-  api_nginx_log "HTTP (webroot ${CERTBOT_WEBROOT}) → http://${API_BACKEND_HOST}:${API_BACKEND_PORT}"
+  if api_nginx_is_cwp7; then
+    api_nginx_log "CWP7 — pas de vhost CWP pour ${API_WISE_EAT_DOMAIN} → conf.d/zz-wise-eat-api"
+  fi
+  SITE="$(api_nginx_site_path "${API_WISE_EAT_DOMAIN}")"
+  if api_nginx_cert_exists "${API_WISE_EAT_DOMAIN}"; then
+    api_nginx_ensure_tls_snippets
+    envsubst "${SUBST_VARS}" \
+      < "${NGINX_SRC}/api.wise-eat.cloud.https.conf.template" > "${SITE}"
+  else
+    envsubst "${SUBST_VARS}" \
+      < "${NGINX_SRC}/api.wise-eat.cloud.http.conf.template" > "${SITE}"
+  fi
+  api_nginx_enable_site "${API_WISE_EAT_DOMAIN}"
 fi
 
-api_nginx_enable_site "${API_WISE_EAT_DOMAIN}"
-if api_nginx_is_cwp7; then
-  api_nginx_cwp_reload
-else
-  api_nginx_reload
-fi
+api_nginx_reload
 
-api_nginx_log "Actif — ${API_WISE_EAT_DOMAIN} → Docker :${API_BACKEND_PORT}"
+api_nginx_log "Actif — ${API_WISE_EAT_DOMAIN} → http://${API_BACKEND_HOST}:${API_BACKEND_PORT}"
 api_nginx_log "Fichier : ${SITE}"
+
+if ! curl -sf --max-time 5 "http://${API_BACKEND_HOST}:${API_BACKEND_PORT}/api/health" >/dev/null 2>&1; then
+  api_nginx_warn "Docker API ne répond pas sur :${API_BACKEND_PORT} — ./scripts/docker-diagnose-vps.sh"
+fi
+
 if ! api_nginx_cert_exists "${API_WISE_EAT_DOMAIN}"; then
-  api_nginx_log "HTTPS : sudo STUNNEL_TLS_EMAIL=... ./scripts/enable-api-nginx-ssl-cloudflare-dns.sh"
+  api_nginx_log "HTTPS origine : CLOUDFLARE_DNS_TOKEN=... ./scripts/enable-api-nginx-ssl-cloudflare-dns.sh"
+  api_nginx_log "Cloudflare SSL temporaire : mode Flexible (sinon 522 sans cert origine)"
 fi
