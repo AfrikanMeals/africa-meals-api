@@ -9,19 +9,14 @@ import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { InfraRuntimeSettingsModel } from '@schemas/infra-runtime-settings.schema';
 import { JobsOptions, Queue, Worker } from 'bullmq';
-import {
-  connect as mqttConnect,
-  type IClientOptions,
-  type MqttClient,
-} from 'mqtt';
+import { BullmqRedisConnectionsService } from '../redis/bullmq-redis-connections.service';
+import { SharedMqttPublisherService } from '../mqtt/shared-mqtt-publisher.service';
 import { Model } from 'mongoose';
 import {
   bullmqJobId,
   logBullmqDisabledReason,
   parsePositiveInt,
 } from '../bullmq-redis-connection';
-import { BullmqRedisConnectionsService } from '../redis/bullmq-redis-connections.service';
-import { readMqttBrokerConfig } from '../mqtt/mqtt-broker-config.util';
 import { DomainEventIdempotencyStore } from './domain-event-idempotency.store';
 import { DomainEventRegistryService } from './domain-event-registry.service';
 import {
@@ -62,13 +57,6 @@ function isHandlersAsyncEnabled(config: ConfigService): boolean {
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
 }
 
-function isMqttAuthError(message: string): boolean {
-  const m = message.toLowerCase();
-  return (
-    m.includes('not authorized') || m.includes('bad user name or password')
-  );
-}
-
 @Injectable()
 export class DomainEventPublisherService
   implements OnModuleInit, OnModuleDestroy
@@ -80,9 +68,6 @@ export class DomainEventPublisherService
   private handlersWorker: Worker<DomainEventHandlerQueueJob, void> | null = null;
   private queueEnabled = false;
   private handlersQueueEnabled = false;
-  private mqttClient: MqttClient | null = null;
-  private mqttConnected = false;
-  private mqttAuthBlocked = false;
   private infraSettingsCache = {
     redisManagerEnabled: true,
     mqBrokerEnabled: true,
@@ -94,6 +79,7 @@ export class DomainEventPublisherService
   constructor(
     private readonly config: ConfigService,
     private readonly bullRedis: BullmqRedisConnectionsService,
+    private readonly sharedMqtt: SharedMqttPublisherService,
     private readonly registry: DomainEventRegistryService,
     private readonly idempotency: DomainEventIdempotencyStore,
     @InjectModel(InfraRuntimeSettingsModel.name)
@@ -102,18 +88,15 @@ export class DomainEventPublisherService
   ) {}
 
   async onModuleInit(): Promise<void> {
-    this.initMqttClient();
     await this.ensureBullQueues();
   }
 
   isMqttConnected(): boolean {
-    return this.mqttConnected;
+    return this.sharedMqtt.isConnected();
   }
 
   recoverMqttAfterOutage(): void {
-    if (this.mqttAuthBlocked || this.mqttConnected) return;
-    if (this.mqttClient) return;
-    this.initMqttClient();
+    this.sharedMqtt.recoverAfterOutage();
   }
 
   /** Reconnexion Redis/BullMQ/MQTT après migration ou coupure infra. */
@@ -197,11 +180,6 @@ export class DomainEventPublisherService
   }
 
   async onModuleDestroy(): Promise<void> {
-    if (this.mqttClient) {
-      this.mqttClient.end(true);
-      this.mqttClient = null;
-      this.mqttConnected = false;
-    }
     await this.worker?.close();
     await this.queue?.close();
     await this.handlersWorker?.close();
@@ -276,8 +254,8 @@ export class DomainEventPublisherService
       infra.redisManagerEnabled && this.queueEnabled && this.queue != null;
     const canMqtt =
       infra.mqBrokerEnabled &&
-      this.mqttClient != null &&
-      this.mqttConnected;
+      this.sharedMqtt.getStatus().enabled &&
+      this.sharedMqtt.isConnected();
 
     if (!canQueue && !canMqtt) {
       this.logger.warn(
@@ -486,21 +464,13 @@ export class DomainEventPublisherService
       );
       return;
     }
-    if (!this.mqttClient || !this.mqttConnected) {
+    if (!this.sharedMqtt.isConnected()) {
       throw new Error('mqtt_not_connected');
     }
     const qosRaw = Number(this.config.get<string>('MQTT_QOS') ?? '1');
-    const qos = qosRaw === 2 ? 2 : qosRaw === 0 ? 0 : 1;
+    const qos = (qosRaw === 2 ? 2 : qosRaw === 0 ? 0 : 1) as 0 | 1 | 2;
     const body = JSON.stringify(envelope);
-    await new Promise<void>((resolve, reject) => {
-      this.mqttClient!.publish(topic, body, { qos, retain: false }, (error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve();
-      });
-    });
+    await this.sharedMqtt.publish(topic, body, qos);
     this.logger.log(
       `Domain event published via MQTT (${source}) type=${envelope.type} id=${envelope.id} topic=${topic}`,
     );
@@ -569,47 +539,5 @@ export class DomainEventPublisherService
       this.logger.warn(`infra settings read failed: ${msg}`);
     }
     return this.infraSettingsCache;
-  }
-
-  private initMqttClient(): void {
-    const cfg = this.mqttConfig();
-    if (!cfg) {
-      this.logger.log('Domain events MQTT disabled (MQTT_BROKER_* absent)');
-      return;
-    }
-    this.logger.log(
-      `Domain events MQTT connecting: ${cfg.url} (user=${cfg.options.username ?? '—'})`,
-    );
-    const client = mqttConnect(cfg.url, cfg.options);
-    client.on('connect', () => {
-      this.mqttConnected = true;
-      this.logger.log(`Domain events MQTT connected: ${cfg.url}`);
-    });
-    client.on('reconnect', () => {
-      this.logger.warn('Domain events MQTT reconnecting...');
-    });
-    client.on('error', (error) => {
-      const msg = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Domain events MQTT error: ${msg}`);
-      if (isMqttAuthError(msg)) {
-        this.logger.warn(
-          'Domain events MQTT auth rejected; stopping reconnect until restart.',
-        );
-        this.mqttConnected = false;
-        this.mqttAuthBlocked = true;
-        client.end(true);
-      }
-    });
-    client.on('close', () => {
-      this.mqttConnected = false;
-    });
-    this.mqttClient = client;
-  }
-
-  private mqttConfig(): {
-    url: string;
-    options: IClientOptions;
-  } | null {
-    return readMqttBrokerConfig(this.config);
   }
 }

@@ -81,10 +81,11 @@ class TlsMemcachedSession {
 
   private scheduleIdleClose(): void {
     this.clearIdleTimer();
+    // Réutiliser la session TLS Stunnel (aligné TIMEOUTidle Stunnel ≈120s).
     this.idleTimer = setTimeout(() => {
       this.socket?.destroy();
       this.socket = null;
-    }, 30_000);
+    }, 120_000);
   }
 
   private async ensureSocket(): Promise<tls.TLSSocket> {

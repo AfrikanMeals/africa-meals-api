@@ -56,6 +56,7 @@ import { ModuleCacheLayerModule } from './common/cache/module-cache-layer.module
 import { InfraRecoveryModule } from './common/infra-recovery/infra-recovery.module';
 import { RedisSharedModule } from './common/redis/redis-shared.module';
 import { BullmqRedisModule } from './common/redis/bullmq-redis-connections.service';
+import { SharedMqttModule } from './common/mqtt/shared-mqtt-publisher.service';
 import { AppCacheBustSubscriber } from './common/app-cache-bust.subscriber';
 import { registerAppCacheBustRedis } from './common/redis-app-cache';
 import {
@@ -185,6 +186,7 @@ async function readRedisManagerEnabledAtBootstrap(
     }),
     RedisSharedModule,
     BullmqRedisModule,
+    SharedMqttModule,
     SseRedisModule,
     CacheModule.registerAsync({
       isGlobal: true,

@@ -14,12 +14,7 @@ import {
   readBullmqRedisConnectionFromConfig,
 } from '../../common/bullmq-redis-connection';
 import { BullmqRedisConnectionsService } from '../../common/redis/bullmq-redis-connections.service';
-import { readMqttBrokerConfig } from '../../common/mqtt/mqtt-broker-config.util';
-import {
-  connect as mqttConnect,
-  type IClientOptions,
-  type MqttClient,
-} from 'mqtt';
+import { SharedMqttPublisherService } from '../../common/mqtt/shared-mqtt-publisher.service';
 import { Model } from 'mongoose';
 import { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
 import { GrpcWsNotifyClientService } from '@modules/grpc/grpc-ws-notify.client.service';
@@ -56,13 +51,6 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : fallback;
 }
 
-function isMqttAuthError(message: string): boolean {
-  const m = message.toLowerCase();
-  return (
-    m.includes('not authorized') || m.includes('bad user name or password')
-  );
-}
-
 @Injectable()
 export class WsNotifyDispatchQueueService
   implements OnModuleInit, OnModuleDestroy
@@ -71,11 +59,6 @@ export class WsNotifyDispatchQueueService
   private queue: Queue<WsNotifyQueueJob> | null = null;
   private worker: Worker<WsNotifyQueueJob, void> | null = null;
   private queueEnabled = false;
-  private mqttClient: MqttClient | null = null;
-  private mqttConnected = false;
-  private mqttAuthBlocked = false;
-  private mqttState: MqttRuntimeStatus['state'] = 'disabled';
-  private mqttLastError: string | null = null;
   private mqttLastPublishedTopic: string | null = null;
   private mqttLastPublishedAtMs: number | null = null;
   private infraSettingsCache = {
@@ -88,6 +71,7 @@ export class WsNotifyDispatchQueueService
   constructor(
     private readonly config: ConfigService,
     private readonly bullRedis: BullmqRedisConnectionsService,
+    private readonly sharedMqtt: SharedMqttPublisherService,
     private readonly secrets: SecretManagerService,
     private readonly grpcWsNotify: GrpcWsNotifyClientService,
     private readonly grpcMetrics: GrpcWsNotifyMetricsService,
@@ -96,7 +80,6 @@ export class WsNotifyDispatchQueueService
   ) {}
 
   async onModuleInit(): Promise<void> {
-    this.initMqttClient();
     if (!this.bullRedis.isEnabled()) {
       logBullmqDisabledReason();
       return;
@@ -139,12 +122,6 @@ export class WsNotifyDispatchQueueService
   }
 
   async onModuleDestroy(): Promise<void> {
-    if (this.mqttClient) {
-      this.mqttClient.end(true);
-      this.mqttClient = null;
-      this.mqttConnected = false;
-      this.mqttState = 'disabled';
-    }
     await this.worker?.close();
     await this.queue?.close();
     this.worker = null;
@@ -192,10 +169,11 @@ export class WsNotifyDispatchQueueService
   }
 
   getMqttStatus(): MqttRuntimeStatus {
+    const base = this.sharedMqtt.getStatus();
     return {
-      enabled: this.mqttClient != null,
-      state: this.mqttState,
-      lastError: this.mqttLastError,
+      enabled: base.enabled,
+      state: base.state,
+      lastError: base.lastError,
       lastTopicSeen: this.mqttLastPublishedTopic,
       lastMessageAt: this.mqttLastPublishedAtMs
         ? new Date(this.mqttLastPublishedAtMs).toISOString()
@@ -204,13 +182,11 @@ export class WsNotifyDispatchQueueService
   }
 
   isMqttConnected(): boolean {
-    return this.mqttConnected;
+    return this.sharedMqtt.isConnected();
   }
 
   recoverMqttAfterOutage(): void {
-    if (this.mqttAuthBlocked || this.mqttConnected) return;
-    if (this.mqttClient) return;
-    this.initMqttClient();
+    this.sharedMqtt.recoverAfterOutage();
   }
 
   private async dispatchAsync(
@@ -380,63 +356,11 @@ export class WsNotifyDispatchQueueService
     }
   }
 
-  private initMqttClient(): void {
-    const cfg = this.mqttConfig();
-    if (!cfg) {
-      this.logger.log('MQTT disabled (MQTT_BROKER_* absent)');
-      this.mqttState = 'disabled';
-      return;
-    }
-    this.mqttState = 'connecting';
-    this.logger.log(
-      `MQTT connecting: ${cfg.url} (user=${cfg.options.username ?? '—'})`,
-    );
-    const client = mqttConnect(cfg.url, cfg.options);
-    client.on('connect', () => {
-      this.mqttConnected = true;
-      this.mqttState = 'connected';
-      this.mqttLastError = null;
-      this.logger.log(`MQTT connected: ${cfg.url}`);
-    });
-    client.on('reconnect', () => {
-      this.mqttState = 'reconnecting';
-      this.logger.warn('MQTT reconnecting...');
-    });
-    client.on('error', (error) => {
-      const msg = error instanceof Error ? error.message : String(error);
-      this.mqttState = 'error';
-      this.mqttLastError = msg;
-      this.logger.warn(`MQTT error: ${msg}`);
-      if (isMqttAuthError(msg)) {
-        this.logger.warn(
-          'MQTT auth rejected; stopping reconnect loop until service restart or credential change.',
-        );
-        this.mqttConnected = false;
-        this.mqttAuthBlocked = true;
-        client.end(true);
-      }
-    });
-    client.on('close', () => {
-      this.mqttConnected = false;
-      if (this.mqttState !== 'error') {
-        this.mqttState = 'connecting';
-      }
-    });
-    this.mqttClient = client;
-  }
-
-  private mqttConfig(): {
-    url: string;
-    options: IClientOptions;
-  } | null {
-    return readMqttBrokerConfig(this.config);
-  }
-
   private async publishViaMqtt(
     pathSuffix: string,
     payload: Record<string, unknown>,
   ): Promise<boolean> {
-    if (!this.mqttClient || !this.mqttConnected) return false;
+    if (!this.sharedMqtt.isConnected()) return false;
     const topicSuffix =
       WS_NOTIFY_SUFFIX_TO_TOPIC[
         pathSuffix as keyof typeof WS_NOTIFY_SUFFIX_TO_TOPIC
@@ -447,23 +371,10 @@ export class WsNotifyDispatchQueueService
       'africameals/internal/ws';
     const topic = `${prefix}/${topicSuffix}`;
     const qosRaw = Number(this.config.get<string>('MQTT_QOS') ?? '1');
-    const qos = qosRaw === 2 ? 2 : qosRaw === 0 ? 0 : 1;
+    const qos = (qosRaw === 2 ? 2 : qosRaw === 0 ? 0 : 1) as 0 | 1 | 2;
     const body = JSON.stringify(payload);
     try {
-      await new Promise<void>((resolve, reject) => {
-        this.mqttClient!.publish(
-          topic,
-          body,
-          { qos, retain: false },
-          (error) => {
-            if (error) {
-              reject(error);
-              return;
-            }
-            resolve();
-          },
-        );
-      });
+      await this.sharedMqtt.publish(topic, body, qos);
       this.mqttLastPublishedTopic = topic;
       this.mqttLastPublishedAtMs = Date.now();
       return true;

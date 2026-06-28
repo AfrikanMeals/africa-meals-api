@@ -80,7 +80,7 @@ export function buildMongooseRootOptions(
 
   const maxPoolSize = parsePositiveInt(
     config.get<string>('MONGOOSE_MAX_POOL'),
-    20,
+    10,
     100,
   );
 
