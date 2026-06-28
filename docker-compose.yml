@@ -7,14 +7,14 @@
 #   ./scripts/docker-build.sh
 #   docker compose up -d
 #
-# Transfert image vers un autre VPS :
-#   docker save africa-meals/api:docker | gzip > africa-meals-api-docker.tar.gz
-#   scp africa-meals-api-docker.tar.gz .env.docker docker-compose.yml user@vps:/opt/africa-meals-api/
-#   ssh user@vps 'cd /opt/africa-meals-api && gunzip -c africa-meals-api-docker.tar.gz | docker load && docker compose up -d'
+# Pull Hub (VPS CentOS — sans build local) :
+#   docker pull borix102/africa-meals-api:docker
+#   scp docker-compose.yml .env.docker root@vps:/opt/wise-eat/
+#   docker compose --env-file .env.docker up -d
 
 services:
   api:
-    image: africa-meals/api:docker
+    image: ${DOCKER_IMAGE:-borix102/africa-meals-api:docker}
     container_name: africa-meals-api
     restart: unless-stopped
     env_file:
@@ -35,7 +35,7 @@ services:
         max-file: "5"
 
   ws-notify-worker:
-    image: africa-meals/api:docker
+    image: ${DOCKER_IMAGE:-borix102/africa-meals-api:docker}
     container_name: africa-meals-api-ws-notify-worker
     restart: unless-stopped
     env_file:
