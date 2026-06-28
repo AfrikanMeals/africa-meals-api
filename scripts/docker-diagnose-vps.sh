@@ -36,12 +36,16 @@ for host in db.wise-eat.com cache.wise-eat.com ws.wise-eat.com; do
     echo "  ${host} — DNS/réseau KO"
   fi
 done
-if grep -q '^REDIS_IP_FAMILY=6' .env.docker 2>/dev/null; then
+if grep -qE '^REDIS_IP_FAMILY=6' .env.docker 2>/dev/null; then
   echo ""
-  echo "ASTUCE : REDIS_IP_FAMILY=6 force IPv6 — sur VPS sans IPv6, mettre REDIS_IP_FAMILY=4"
-  echo "         et DNS_RESULT_ORDER=ipv4first dans .env.docker puis relancer docker-run-vps.sh"
+  echo "WARN : REDIS_IP_FAMILY=6 dans .env.docker — ./scripts/docker-run-vps.sh force IPv4 automatiquement"
+fi
+if docker inspect "${CONTAINER}" >/dev/null 2>&1; then
+  fam="$(docker exec "${CONTAINER}" printenv REDIS_IP_FAMILY 2>/dev/null || true)"
+  echo "  conteneur REDIS_IP_FAMILY=${fam:-?}"
 fi
 echo ""
+echo "=== .env.docker (lignes problématiques) ==="
 if [[ -f .env.docker ]]; then
   grep -nE ' = |^DASHBOARD_CA' .env.docker || echo "(aucune ligne ' = ' suspecte)"
 else

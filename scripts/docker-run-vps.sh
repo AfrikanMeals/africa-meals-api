@@ -19,6 +19,38 @@ GRPC_PORT="${GRPC_API_PORT:-50052}"
 
 bash "${SCRIPT_DIR}/docker-sanitize-env.sh" "${ENV_FILE}" -o "${RUNTIME_ENV}"
 
+# VPS sans IPv6 sortant : écrase REDIS_IP_FAMILY=6 hérité de .env.functions / ancien pull
+if [[ "${VPS_IPV4_ONLY:-1}" == "1" ]]; then
+  python3 - "${RUNTIME_ENV}" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8").splitlines()
+overrides = {
+    "REDIS_IP_FAMILY": "4",
+    "MONGODB_IP_FAMILY": "4",
+    "DNS_RESULT_ORDER": "ipv4first",
+}
+seen = set()
+out = []
+for line in lines:
+    m = re.match(r"^([^=+#]+)=", line)
+    if m and m.group(1).strip() in overrides:
+        key = m.group(1).strip()
+        out.append(f"{key}={overrides[key]}")
+        seen.add(key)
+    else:
+        out.append(line)
+for key, val in overrides.items():
+    if key not in seen:
+        out.append(f"{key}={val}")
+path.write_text("\n".join(out) + "\n", encoding="utf-8")
+print("[docker-run-vps] IPv4-only : REDIS_IP_FAMILY=4 MONGODB_IP_FAMILY=4 DNS_RESULT_ORDER=ipv4first")
+PY
+fi
+
 docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 
 docker run -d \
