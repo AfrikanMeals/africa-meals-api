@@ -20,8 +20,8 @@ services:
     env_file:
       - ${ENV_FILE:-.env.docker}
     ports:
-      - "${API_HTTP_PORT:-9000}:9000"
-      - "${GRPC_API_PORT:-50052}:50052"
+      - "127.0.0.1:${API_HTTP_PORT:-9000}:9000"
+      - "127.0.0.1:${GRPC_API_PORT:-50052}:50052"
     # Firebase (optionnel) : décommenter si accounts.json présent sur le VPS
     # volumes:
     #   - ./accounts.json:/app/africa-meals-api/accounts.json:ro

@@ -24,8 +24,8 @@ docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 docker run -d \
   --name "${CONTAINER_NAME}" \
   --restart unless-stopped \
-  -p "${HTTP_PORT}:9000" \
-  -p "${GRPC_PORT}:50052" \
+  -p "127.0.0.1:${HTTP_PORT}:9000" \
+  -p "127.0.0.1:${GRPC_PORT}:50052" \
   --env-file "${RUNTIME_ENV}" \
   --add-host "host.docker.internal:host-gateway" \
   "${DOCKER_IMAGE}"
