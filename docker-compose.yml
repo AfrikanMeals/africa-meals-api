@@ -1,0 +1,52 @@
+# Déploiement Docker standalone (CentOS / VPS).
+#
+# Prérequis : Docker Engine 24+ ou docker compose v2.
+#
+# Build + run :
+#   cp .env.docker .env.docker.local   # ajuster SERVER_URL / domaine du VPS
+#   ./scripts/docker-build.sh
+#   docker compose up -d
+#
+# Transfert image vers un autre VPS :
+#   docker save africa-meals/api:docker | gzip > africa-meals-api-docker.tar.gz
+#   scp africa-meals-api-docker.tar.gz .env.docker docker-compose.yml user@vps:/opt/africa-meals-api/
+#   ssh user@vps 'cd /opt/africa-meals-api && gunzip -c africa-meals-api-docker.tar.gz | docker load && docker compose up -d'
+
+services:
+  api:
+    image: africa-meals/api:docker
+    container_name: africa-meals-api
+    restart: unless-stopped
+    env_file:
+      - ${ENV_FILE:-.env.docker}
+    ports:
+      - "${API_HTTP_PORT:-9000}:9000"
+      - "${GRPC_API_PORT:-50052}:50052"
+    volumes:
+      # Firebase / GCS (optionnel — retirer si AM_FIREBASE_SERVICE_ACCOUNT_JSON ou ADC)
+      - ${GOOGLE_APPLICATION_CREDENTIALS_PATH:-./accounts.json}:/app/africa-meals-api/accounts.json:ro
+    extra_hosts:
+      # Résolution DNS hôte si besoin (Mongo/Redis TLS publics)
+      - "host.docker.internal:host-gateway"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  ws-notify-worker:
+    image: africa-meals/api:docker
+    container_name: africa-meals-api-ws-notify-worker
+    restart: unless-stopped
+    env_file:
+      - ${ENV_FILE:-.env.docker}
+    command: ["node", "dist/workers/ws-notify-worker.main.js"]
+    profiles:
+      - worker
+    volumes:
+      - ${GOOGLE_APPLICATION_CREDENTIALS_PATH:-./accounts.json}:/app/africa-meals-api/accounts.json:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      api:
+        condition: service_healthy

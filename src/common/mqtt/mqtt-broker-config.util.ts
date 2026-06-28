@@ -1,5 +1,6 @@
 import type { ConfigService } from '@nestjs/config';
 import type { IClientOptions } from 'mqtt';
+import { isIP } from 'node:net';
 import {
   checkServerIdentity as tlsCheckServerIdentity,
   type ConnectionOptions,
@@ -7,6 +8,21 @@ import {
 
 type MqttTlsClientOptions = IClientOptions &
   Pick<ConnectionOptions, 'checkServerIdentity'>;
+
+function resolveHostToIp(hostname: string): string | undefined {
+  if (isIP(hostname) !== 0) return hostname;
+  try {
+    const { lookupSync } = require('node:dns') as {
+      lookupSync: (
+        host: string,
+        options: { verbatim: true },
+      ) => { address: string; family: number };
+    };
+    return lookupSync(hostname, { verbatim: true }).address;
+  } catch {
+    return undefined;
+  }
+}
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
@@ -71,6 +87,7 @@ export function readMqttBrokerConfig(config: ConfigService): {
     if (servername) {
       options.servername = servername;
     }
+    // mqtt.js v5 écrase servername par host si host n'est pas une IP (lib/connect/tls.js).
     if (
       tlsServername &&
       connectionHost &&
@@ -78,6 +95,12 @@ export function readMqttBrokerConfig(config: ConfigService): {
     ) {
       options.checkServerIdentity = (_hostname, cert) =>
         tlsCheckServerIdentity(tlsServername, cert);
+      if (isIP(connectionHost) === 0) {
+        const connectIp = resolveHostToIp(connectionHost);
+        if (connectIp) {
+          options.host = connectIp;
+        }
+      }
     }
   }
 
