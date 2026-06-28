@@ -26,7 +26,22 @@ else
 fi
 echo ""
 
-echo "=== .env.docker (lignes problématiques) ==="
+echo "=== Réseau VPS → infra distante ==="
+for host in db.wise-eat.com cache.wise-eat.com ws.wise-eat.com; do
+  if timeout 3 bash -c "echo >/dev/tcp/${host}/443" 2>/dev/null; then
+    echo "  ${host}:443 OK"
+  elif getent ahosts "${host}" >/dev/null 2>&1; then
+    echo "  ${host} résolu ($(getent ahosts "${host}" | awk 'NR==1{print $1}'))"
+  else
+    echo "  ${host} — DNS/réseau KO"
+  fi
+done
+if grep -q '^REDIS_IP_FAMILY=6' .env.docker 2>/dev/null; then
+  echo ""
+  echo "ASTUCE : REDIS_IP_FAMILY=6 force IPv6 — sur VPS sans IPv6, mettre REDIS_IP_FAMILY=4"
+  echo "         et DNS_RESULT_ORDER=ipv4first dans .env.docker puis relancer docker-run-vps.sh"
+fi
+echo ""
 if [[ -f .env.docker ]]; then
   grep -nE ' = |^DASHBOARD_CA' .env.docker || echo "(aucune ligne ' = ' suspecte)"
 else

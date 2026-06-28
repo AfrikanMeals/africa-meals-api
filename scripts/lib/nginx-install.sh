@@ -101,7 +101,12 @@ api_nginx_patch_cwp_vhosts() {
   if ssl_file="$(api_nginx_cwp_vhost_ssl "${domain}" 2>/dev/null)"; then
     cp -a "${ssl_file}" "${backup_dir}/" 2>/dev/null || true
   else
-    ssl_file=""
+    ssl_file="${http_file%.conf}_ssl.conf"
+    if api_nginx_cert_exists "${domain}"; then
+      api_nginx_log "Création vhost SSL CWP : ${ssl_file}"
+    else
+      ssl_file=""
+    fi
   fi
 
   api_nginx_remove_zz_conf "${domain}"
