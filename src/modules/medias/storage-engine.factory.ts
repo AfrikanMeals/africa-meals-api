@@ -11,6 +11,7 @@ import {
   FirebaseStorageEngine,
   GcsStorageEngine,
   MinioStorageEngine,
+  R2StorageEngine,
   S3StorageEngine,
 } from './storage-engines';
 
@@ -30,6 +31,7 @@ export class StorageEngineFactory {
       new GcsStorageEngine(config),
       new S3StorageEngine(config),
       new MinioStorageEngine(config),
+      new R2StorageEngine(config),
     ];
     if (!firebaseApp) {
       Logger.warn(

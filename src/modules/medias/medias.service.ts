@@ -16,6 +16,7 @@ import {
   extractObjectPath,
   isStorageObjectNotFoundError,
   looksLikeMinioUrl,
+  looksLikeR2Url,
   StorageEngineId,
   StorageObjectStream,
   StorageUploadResult,
@@ -24,7 +25,7 @@ import { StorageEngineMode } from '@schemas/storage-settings.schema';
 import { inferStorageModuleFromBasePath } from '@schemas/storage-module.constants';
 
 /**
- * Service de stockage multi-moteur (Firebase, GCS, S3, MinIO) avec compression et limites admin.
+ * Service de stockage multi-moteur (Firebase, GCS, S3, MinIO, R2) avec compression et limites admin.
  */
 @Injectable()
 export class MediasService {
@@ -75,8 +76,17 @@ export class MediasService {
       url.includes('storage.googleapis.com') ||
       url.includes('.s3.') ||
       url.includes('s3.amazonaws.com') ||
+      this.isDirectR2Url(url) ||
       this.isDirectMinioUrl(url)
     );
+  }
+
+  private isDirectR2Url(url: string): boolean {
+    const publicBase = this.config.get<string>('R2_PUBLIC_BASE_URL')?.trim();
+    if (publicBase && url.startsWith(publicBase.replace(/\/+$/, ''))) {
+      return true;
+    }
+    return looksLikeR2Url(url);
   }
 
   private isDirectMinioUrl(url: string): boolean {
@@ -123,6 +133,24 @@ export class MediasService {
     }
   }
 
+  private r2PublicUrl(objectPath: string): string {
+    const encoded = this.encodeObjectPath(objectPath);
+    const customBase = this.config.get<string>('R2_PUBLIC_BASE_URL')?.trim();
+    if (customBase) {
+      return `${customBase.replace(/\/+$/, '')}/${encoded}`;
+    }
+    const bucket = this.config.get<string>('R2_BUCKET')?.trim() || '';
+    const endpoint =
+      this.config.get<string>('R2_ENDPOINT')?.trim()?.replace(/\/+$/, '') ||
+      (() => {
+        const accountId = this.config.get<string>('R2_ACCOUNT_ID')?.trim();
+        return accountId
+          ? `https://${accountId}.r2.cloudflarestorage.com`
+          : '';
+      })();
+    return `${endpoint}/${bucket}/${encoded}`;
+  }
+
   private isProxyUrl(url: string): boolean {
     return url.includes('/medias/public/');
   }
@@ -146,6 +174,9 @@ export class MediasService {
     }
     if (engine === 'minio') {
       return this.minioPublicUrl(objectPath);
+    }
+    if (engine === 'r2') {
+      return this.r2PublicUrl(objectPath);
     }
     const bucket =
       this.config.get<string>('GCS_BUCKET')?.trim() ||
@@ -182,6 +213,8 @@ export class MediasService {
       if (engine === 'auto') {
         if (this.config.get<string>('AWS_S3_BUCKET')?.trim()) {
           engine = 's3';
+        } else if (this.config.get<string>('R2_BUCKET')?.trim()) {
+          engine = 'r2';
         } else if (this.config.get<string>('MINIO_BUCKET')?.trim()) {
           engine = 'minio';
         } else if (
@@ -193,7 +226,7 @@ export class MediasService {
           engine = 'firebase';
         }
       }
-      if (engine === 'gcs' || engine === 's3' || engine === 'minio') {
+      if (engine === 'gcs' || engine === 's3' || engine === 'minio' || engine === 'r2') {
         return this.directUrlForObjectPath(objectPath, engine);
       }
     }
@@ -209,7 +242,8 @@ export class MediasService {
       useProxy &&
       (result.engine === 'gcs' ||
         result.engine === 's3' ||
-        result.engine === 'minio')
+        result.engine === 'minio' ||
+        result.engine === 'r2')
     ) {
       return this.buildProxyPublicUrl(result.path);
     }

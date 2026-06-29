@@ -17,4 +17,8 @@ export class StorageEnginesEnabledDto {
   @ApiProperty({ description: 'MinIO activé' })
   @IsBoolean()
   minio: boolean;
+
+  @ApiProperty({ description: 'Cloudflare R2 activé' })
+  @IsBoolean()
+  r2: boolean;
 }

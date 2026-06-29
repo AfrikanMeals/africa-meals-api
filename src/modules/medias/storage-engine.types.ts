@@ -1,4 +1,4 @@
-export type StorageEngineId = 'firebase' | 'gcs' | 's3' | 'minio';
+export type StorageEngineId = 'firebase' | 'gcs' | 's3' | 'minio' | 'r2';
 
 export type StorageEngineMode = StorageEngineId | 'auto';
 
@@ -31,6 +31,17 @@ export interface IStorageEngine {
     prefix: string,
     keepPathOrUrl: string,
   ): Promise<void>;
+}
+
+export function looksLikeR2Url(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (/\.r2\.cloudflarestorage\.com$/i.test(u.hostname)) return true;
+    if (/\.r2\.dev$/i.test(u.hostname)) return true;
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 export function looksLikeMinioUrl(url: string): boolean {
@@ -74,6 +85,22 @@ export function extractObjectPath(pathOrUrl: string): string {
   if (s3Match) {
     return decodeURIComponent(s3Match[1].replace(/\+/g, ' '));
   }
+  if (looksLikeR2Url(url)) {
+    try {
+      const u = new URL(url);
+      const parts = u.pathname.replace(/^\/+/, '').split('/');
+      if (/\.r2\.cloudflarestorage\.com$/i.test(u.hostname) && parts.length >= 2) {
+        return decodeURIComponent(
+          parts.slice(1).join('/').replace(/\+/g, ' '),
+        );
+      }
+      return decodeURIComponent(
+        parts.join('/').replace(/\+/g, ' '),
+      );
+    } catch {
+      /* fall through */
+    }
+  }
   if (looksLikeMinioUrl(url)) {
     try {
       const u = new URL(url);
@@ -96,6 +123,7 @@ export function detectEngineFromUrl(pathOrUrl: string): StorageEngineId | null {
   if (url.includes('firebasestorage.googleapis.com')) return 'firebase';
   if (url.includes('/medias/public/')) return null;
   if (url.includes('.s3.') || url.includes('s3.amazonaws.com')) return 's3';
+  if (looksLikeR2Url(url)) return 'r2';
   if (looksLikeMinioUrl(url)) return 'minio';
   if (url.includes('storage.googleapis.com')) return 'gcs';
   return null;

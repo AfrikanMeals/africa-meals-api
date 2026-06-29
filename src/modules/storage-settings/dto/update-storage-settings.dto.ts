@@ -17,14 +17,14 @@ export class UpdateStorageSettingsDto {
 
   @ApiProperty({
     description: 'Moteur de stockage',
-    enum: ['firebase', 'gcs', 's3', 'minio', 'auto'],
+    enum: ['firebase', 'gcs', 's3', 'minio', 'r2', 'auto'],
   })
-  @IsIn(['firebase', 'gcs', 's3', 'minio', 'auto'])
-  storageEngine: 'firebase' | 'gcs' | 's3' | 'minio' | 'auto';
+  @IsIn(['firebase', 'gcs', 's3', 'minio', 'r2', 'auto'])
+  storageEngine: 'firebase' | 'gcs' | 's3' | 'minio' | 'r2' | 'auto';
 
   @ApiProperty({
     description:
-      'Proxy API pour lire les médias GCS/S3 (GET /medias/public/…) au lieu des URLs directes',
+      'Proxy API pour lire les médias GCS/S3/R2/MinIO (GET /medias/public/…) au lieu des URLs directes',
   })
   @IsBoolean()
   mediaProxyEnabled: boolean;

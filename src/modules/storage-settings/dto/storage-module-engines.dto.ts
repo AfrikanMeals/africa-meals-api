@@ -8,6 +8,7 @@ const MODULE_ENGINE_VALUES = [
   'gcs',
   's3',
   'minio',
+  'r2',
   'auto',
 ] as const;
 

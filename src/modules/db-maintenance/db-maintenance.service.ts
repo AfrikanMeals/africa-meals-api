@@ -4457,6 +4457,54 @@ export class DbMaintenanceService {
       });
     }
 
+    const r2Bucket = String(this.config.get<string>('R2_BUCKET') ?? '').trim();
+    const r2Key = String(this.config.get<string>('R2_ACCESS_KEY_ID') ?? '').trim();
+    const r2Secret = String(
+      this.config.get<string>('R2_SECRET_ACCESS_KEY') ?? '',
+    ).trim();
+    const r2Endpoint =
+      String(this.config.get<string>('R2_ENDPOINT') ?? '').trim() ||
+      (() => {
+        const accountId = String(
+          this.config.get<string>('R2_ACCOUNT_ID') ?? '',
+        ).trim();
+        return accountId
+          ? `https://${accountId}.r2.cloudflarestorage.com`
+          : '';
+      })();
+    if (r2Bucket && r2Key && r2Secret && r2Endpoint) {
+      try {
+        const { HeadBucketCommand, S3Client } = await import('@aws-sdk/client-s3');
+        const client = new S3Client({
+          region: 'auto',
+          endpoint: r2Endpoint,
+          credentials: { accessKeyId: r2Key, secretAccessKey: r2Secret },
+          forcePathStyle: true,
+        });
+        await client.send(new HeadBucketCommand({ Bucket: r2Bucket }));
+        engines.push({
+          name: 'Cloudflare R2',
+          configured: true,
+          ok: true,
+          detail: 'joignable',
+        });
+      } catch (e) {
+        engines.push({
+          name: 'Cloudflare R2',
+          configured: true,
+          ok: false,
+          detail: e instanceof Error ? e.message : String(e),
+        });
+      }
+    } else {
+      engines.push({
+        name: 'Cloudflare R2',
+        configured: false,
+        ok: false,
+        detail: 'non configuré',
+      });
+    }
+
     const configured = engines.filter((e) => e.configured);
     const okCount = configured.filter((e) => e.ok).length;
     let status: SystemHealthCheckResult['status'] = 'down';

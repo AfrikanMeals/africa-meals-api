@@ -671,7 +671,166 @@ export class MinioStorageEngine implements IStorageEngine {
     const keepPath = extractObjectPath(keepPathOrUrl);
     const normalized = prefix.endsWith('/') ? prefix : `${prefix}/`;
     try {
-      const client = await this.primaryClient();
+      await client.send(
+        new DeleteObjectsCommand({
+          Bucket: this.bucket(),
+          Delete: { Objects: keys.map((Key) => ({ Key })) },
+        }),
+      );
+    } catch (err) {
+      this.logger.error('deleteFilesWithPrefixExcept', err);
+    }
+  }
+}
+
+@Injectable()
+export class R2StorageEngine implements IStorageEngine {
+  readonly id: StorageEngineId = 'r2';
+  private readonly logger = new Logger(R2StorageEngine.name);
+  private s3Client: import('@aws-sdk/client-s3').S3Client | null = null;
+
+  constructor(private readonly config: ConfigService) {}
+
+  private bucket(): string {
+    return this.config.get<string>('R2_BUCKET')?.trim() || '';
+  }
+
+  private endpoint(): string {
+    const custom = this.config.get<string>('R2_ENDPOINT')?.trim();
+    if (custom) return custom.replace(/\/+$/, '');
+    const accountId = this.config.get<string>('R2_ACCOUNT_ID')?.trim();
+    if (accountId) {
+      return `https://${accountId}.r2.cloudflarestorage.com`;
+    }
+    return '';
+  }
+
+  isConfigured(): boolean {
+    const bucket = this.bucket();
+    const key = this.config.get<string>('R2_ACCESS_KEY_ID')?.trim();
+    const secret = this.config.get<string>('R2_SECRET_ACCESS_KEY')?.trim();
+    return Boolean(bucket && key && secret && this.endpoint());
+  }
+
+  private async client() {
+    if (!this.s3Client) {
+      const { S3Client } = await import('@aws-sdk/client-s3');
+      this.s3Client = new S3Client({
+        region: 'auto',
+        endpoint: this.endpoint(),
+        credentials: {
+          accessKeyId: this.config.get<string>('R2_ACCESS_KEY_ID')!.trim(),
+          secretAccessKey: this.config
+            .get<string>('R2_SECRET_ACCESS_KEY')!
+            .trim(),
+        },
+        forcePathStyle: true,
+      });
+    }
+    return this.s3Client;
+  }
+
+  private publicUrl(path: string): string {
+    const encoded = path
+      .split('/')
+      .map((s) => encodeURIComponent(s))
+      .join('/');
+    const customBase = this.config.get<string>('R2_PUBLIC_BASE_URL')?.trim();
+    if (customBase) {
+      return `${customBase.replace(/\/+$/, '')}/${encoded}`;
+    }
+    const bucket = this.bucket();
+    return `${this.endpoint()}/${bucket}/${encoded}`;
+  }
+
+  async upload(input: StorageUploadInput): Promise<StorageUploadResult> {
+    const { PutObjectCommand } = await import('@aws-sdk/client-s3');
+    const client = await this.client();
+    await client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket(),
+        Key: input.path,
+        Body: input.buffer,
+        ContentType: input.contentType,
+        Metadata: { owner: input.owner },
+      }),
+    );
+    return {
+      url: this.publicUrl(input.path),
+      path: input.path,
+      engine: this.id,
+    };
+  }
+
+  async readObject(objectPath: string): Promise<StorageObjectStream> {
+    const { GetObjectCommand } = await import('@aws-sdk/client-s3');
+    const client = await this.client();
+    const out = await client.send(
+      new GetObjectCommand({
+        Bucket: this.bucket(),
+        Key: objectPath,
+      }),
+    );
+    if (!out.Body) {
+      throw new Error('r2_object_empty');
+    }
+    return {
+      body: out.Body as NodeJS.ReadableStream,
+      contentType:
+        typeof out.ContentType === 'string' ? out.ContentType : undefined,
+    };
+  }
+
+  async delete(pathOrUrl: string): Promise<void> {
+    const { DeleteObjectCommand } = await import('@aws-sdk/client-s3');
+    const client = await this.client();
+    await client.send(
+      new DeleteObjectCommand({
+        Bucket: this.bucket(),
+        Key: extractObjectPath(pathOrUrl),
+      }),
+    );
+  }
+
+  async deleteFilesWithPrefix(prefix: string): Promise<void> {
+    const { ListObjectsV2Command, DeleteObjectsCommand } = await import(
+      '@aws-sdk/client-s3'
+    );
+    const normalized = prefix.endsWith('/') ? prefix : `${prefix}/`;
+    try {
+      const client = await this.client();
+      const listed = await client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket(),
+          Prefix: normalized,
+        }),
+      );
+      const keys = (listed.Contents ?? [])
+        .map((o) => o.Key)
+        .filter((k): k is string => Boolean(k));
+      if (!keys.length) return;
+      await client.send(
+        new DeleteObjectsCommand({
+          Bucket: this.bucket(),
+          Delete: { Objects: keys.map((Key) => ({ Key })) },
+        }),
+      );
+    } catch (err) {
+      this.logger.error('deleteFilesWithPrefix', err);
+    }
+  }
+
+  async deleteFilesWithPrefixExcept(
+    prefix: string,
+    keepPathOrUrl: string,
+  ): Promise<void> {
+    const { ListObjectsV2Command, DeleteObjectsCommand } = await import(
+      '@aws-sdk/client-s3'
+    );
+    const keepPath = extractObjectPath(keepPathOrUrl);
+    const normalized = prefix.endsWith('/') ? prefix : `${prefix}/`;
+    try {
+      const client = await this.client();
       const listed = await client.send(
         new ListObjectsV2Command({
           Bucket: this.bucket(),

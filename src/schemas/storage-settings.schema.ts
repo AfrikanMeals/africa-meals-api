@@ -14,9 +14,9 @@ export {
   StorageModuleId,
 } from './storage-module.constants';
 
-export type StorageEngineMode = 'firebase' | 'gcs' | 's3' | 'minio' | 'auto';
+export type StorageEngineMode = 'firebase' | 'gcs' | 's3' | 'minio' | 'r2' | 'auto';
 
-export type StorageEngineId = 'firebase' | 'gcs' | 's3' | 'minio';
+export type StorageEngineId = 'firebase' | 'gcs' | 's3' | 'minio' | 'r2';
 
 export type StorageEnginesEnabled = Record<StorageEngineId, boolean>;
 
@@ -25,6 +25,7 @@ export const DEFAULT_STORAGE_ENGINES_ENABLED: StorageEnginesEnabled = {
   gcs: true,
   s3: true,
   minio: true,
+  r2: true,
 };
 
 /** Paramètres stockage fichiers (singleton `key=default`), pilotés depuis l’admin. */
@@ -41,7 +42,7 @@ export class StorageSettingsModel {
 
   @Prop({
     type: String,
-    enum: ['firebase', 'gcs', 's3', 'minio', 'auto'],
+    enum: ['firebase', 'gcs', 's3', 'minio', 'r2', 'auto'],
     default: 'firebase',
   })
   storageEngine: StorageEngineMode;
@@ -57,6 +58,7 @@ export class StorageSettingsModel {
       gcs: { type: Boolean, default: true },
       s3: { type: Boolean, default: true },
       minio: { type: Boolean, default: true },
+      r2: { type: Boolean, default: true },
     },
     default: () => ({ ...DEFAULT_STORAGE_ENGINES_ENABLED }),
   })
@@ -67,27 +69,27 @@ export class StorageSettingsModel {
     type: {
       catalog: {
         type: String,
-        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'auto'],
+        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'r2', 'auto'],
         default: 'default',
       },
       profile: {
         type: String,
-        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'auto'],
+        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'r2', 'auto'],
         default: 'default',
       },
       marketing: {
         type: String,
-        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'auto'],
+        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'r2', 'auto'],
         default: 'default',
       },
       chat: {
         type: String,
-        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'auto'],
+        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'r2', 'auto'],
         default: 'default',
       },
       system: {
         type: String,
-        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'auto'],
+        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'r2', 'auto'],
         default: 'default',
       },
     },

@@ -45,6 +45,7 @@ function normalizeEnginesEnabled(raw: unknown): StorageEnginesEnabled {
     gcs: o.gcs !== false,
     s3: o.s3 !== false,
     minio: o.minio !== false,
+    r2: o.r2 !== false,
   };
 }
 
@@ -54,7 +55,7 @@ function assertEnginesEnabledSettings(args: {
   moduleStorageEngines?: StorageModuleEngines;
 }) {
   const enabledIds = (
-    ['firebase', 'gcs', 's3', 'minio'] as StorageEngineId[]
+    ['firebase', 'gcs', 's3', 'minio', 'r2'] as StorageEngineId[]
   ).filter((id) => args.enginesEnabled[id]);
   if (enabledIds.length === 0) {
     throw new BadRequestException('storage_engine_none_enabled');

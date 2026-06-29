@@ -4,6 +4,7 @@ export type StorageModuleEngineSetting =
   | 'gcs'
   | 's3'
   | 'minio'
+  | 'r2'
   | 'auto';
 
 export const STORAGE_MODULES = [
@@ -120,6 +121,7 @@ export function normalizeModuleStorageEngines(
     'gcs',
     's3',
     'minio',
+    'r2',
     'auto',
   ];
   const result = { ...DEFAULT_MODULE_STORAGE_ENGINES };
