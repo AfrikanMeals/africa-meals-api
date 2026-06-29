@@ -13,6 +13,11 @@ import axios from 'axios';
 import { Model } from 'mongoose';
 import { CreateAddressDto, SearchAddressDto } from './dto/addresses.dto';
 import { osmSearchStructuredAddress } from '@common/osm-geocoding.util';
+import {
+  resolveMapboxGeocodeApiUrl,
+  resolveMapboxGeocodingToken,
+} from '@common/mapbox-geocoding.util';
+import { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
 
 /** Réponse enrichie pour éviter un `GET /auth/me` après chaque mutation (mobile). */
 export type UserAddressesMutationResult = {
@@ -30,6 +35,8 @@ export class AddressesService {
 
   @Inject(ConfigService)
   private readonly _configService: ConfigService;
+
+  constructor(private readonly secrets: SecretManagerService) {}
 
   /** Liste des adresses du client (populate léger, sans le reste du profil). */
   async listUserAddresses(userId: string): Promise<Record<string, unknown>[]> {
@@ -108,13 +115,14 @@ export class AddressesService {
     if (engine === 'osm') {
       return this._searchWithOsm(args);
     }
-    const mapboxToken = String(
-      this._configService.get<string>('MAPBOX_ACCESS_TOKEN') ?? '',
-    ).trim();
+    const mapboxToken = await resolveMapboxGeocodingToken(
+      this.secrets,
+      this._configService,
+    );
     if (!mapboxToken) {
       return this._searchWithOsm(args);
     }
-    return this._searchWithMapbox(args);
+    return this._searchWithMapbox(args, mapboxToken);
   }
 
   private async _searchWithOsm(args: SearchAddressDto) {
@@ -152,14 +160,12 @@ export class AddressesService {
     };
   }
 
-  private async _searchWithMapbox(args: SearchAddressDto) {
+  private async _searchWithMapbox(args: SearchAddressDto, mapboxToken: string) {
     const q = encodeURIComponent(
       `${args.address}, ${args.zipCode}, ${args.city}, ${args.country}`,
     );
-    const url = `${this._configService.get<string>(
-      'MAP_BOX_API_URL',
-    )}?q=${q}&proximity=ip&types=address&access_token=${this._configService.get<string>(
-      'MAPBOX_ACCESS_TOKEN',
+    const url = `${resolveMapboxGeocodeApiUrl(this._configService)}?q=${q}&proximity=ip&types=address&access_token=${encodeURIComponent(
+      mapboxToken,
     )}&limit=1&autocomplete=true&language=fr`;
     const { data } = await axios.get(url);
 

@@ -28,6 +28,15 @@ export class RecommendationTrainingSnapshotModel extends BaseSchema {
   @Prop({ type: [String], default: [], name: 'trend_store_ids' })
   trendStoreIds: string[];
 
+  /** Boutiques tendance par région ISO2 (ex. CM, CA). */
+  @Prop({
+    type: Map,
+    of: [String],
+    default: () => ({}),
+    name: 'trend_store_ids_by_region',
+  })
+  trendStoreIdsByRegion?: Map<string, string[]>;
+
   /** Boissons tendance (ids). */
   @Prop({ type: [String], default: [], name: 'trend_drink_ids' })
   trendDrinkIds: string[];

@@ -1,4 +1,8 @@
 import { SearchSettingsService } from '@modules/search-settings/search-settings.service';
+import {
+  normalizeCountryCode,
+  storeDirectRegionMatch,
+} from '@modules/supported-countries/client-market-region.util';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { DRINK_IN_STOCK_FILTER } from '@modules/drinks/drinks.service';
@@ -92,7 +96,23 @@ export class RecommendationTrainingService {
           },
           { $group: { _id: '$refId', c: { $sum: 1 } } },
           { $sort: { c: -1 } },
+          { $limit: 140 },
+          {
+            $lookup: {
+              from: 'stores',
+              localField: '_id',
+              foreignField: '_id',
+              as: '_store',
+            },
+          },
+          {
+            $match: {
+              '_store.0.status': StoreStatusEnum.ACTIVE,
+              '_store.0.acceptsOrders': { $ne: false },
+            },
+          },
           { $limit: 100 },
+          { $project: { _id: 1, c: 1 } },
         ])
         .exec(),
       this._productModel
@@ -178,11 +198,6 @@ export class RecommendationTrainingService {
       bump(String(row._id), 4 * Number(row.likes ?? 0) + (120 - i) * 0.15);
     });
 
-    const trendProductIds = [...productScore.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([id]) => id)
-      .slice(0, 220);
-
     const storeScore = new Map<string, number>();
     const bumpStore = (id: string, delta: number) => {
       if (!Types.ObjectId.isValid(id)) return;
@@ -198,10 +213,24 @@ export class RecommendationTrainingService {
       );
     });
 
-    const trendStoreIds = [...storeScore.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([id]) => id)
-      .slice(0, 80);
+    const trendStoreIds = await this._sanitizeActiveStoreIds(
+      [...storeScore.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([id]) => id),
+      80,
+    );
+
+    const trendStoreIdsByRegion = await this._buildTrendStoreIdsByRegion(
+      storeScore,
+      40,
+    );
+
+    const trendProductIds = await this._sanitizeActiveProductIds(
+      [...productScore.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([id]) => id),
+      220,
+    );
 
     const storeOidSet = trendStoreIds
       .filter((id) => Types.ObjectId.isValid(id))
@@ -280,6 +309,7 @@ export class RecommendationTrainingService {
           computedAt: new Date(),
           trendProductIds,
           trendStoreIds,
+          trendStoreIdsByRegion,
           trendDrinkIds,
           trendSearchQueries,
           runMeta: {
@@ -301,6 +331,127 @@ export class RecommendationTrainingService {
     this._logger.log(
       `recommendation training ok in ${durationMs}ms (products=${trendProductIds.length}, stores=${trendStoreIds.length}, drinks=${trendDrinkIds.length}, digests=${digestsWritten})`,
     );
+  }
+
+  /** Conserve l’ordre de pertinence ; exclut les ids invalides ou boutiques absentes / inactives. */
+  private async _sanitizeActiveStoreIds(
+    orderedIds: string[],
+    limit: number,
+  ): Promise<string[]> {
+    const candidates = orderedIds.filter((id) => Types.ObjectId.isValid(id));
+    if (!candidates.length) return [];
+    const found = await this._storeModel
+      .find({
+        _id: { $in: candidates.map((id) => new Types.ObjectId(id)) },
+        status: StoreStatusEnum.ACTIVE,
+        acceptsOrders: { $ne: false },
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    const foundSet = new Set(found.map((row) => String(row._id)));
+    return candidates.filter((id) => foundSet.has(id)).slice(0, limit);
+  }
+
+  private async _sanitizeActiveProductIds(
+    orderedIds: string[],
+    limit: number,
+  ): Promise<string[]> {
+    const candidates = orderedIds.filter((id) => Types.ObjectId.isValid(id));
+    if (!candidates.length) return [];
+    const found = await this._productModel
+      .find({
+        _id: { $in: candidates.map((id) => new Types.ObjectId(id)) },
+        status: ProductStatusEnum.ACTIVE,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    const foundSet = new Set(found.map((row) => String(row._id)));
+    return candidates.filter((id) => foundSet.has(id)).slice(0, limit);
+  }
+
+  /** Classements tendance par région ISO2 + complément catalogue local si peu de signaux. */
+  private async _buildTrendStoreIdsByRegion(
+    storeScore: Map<string, number>,
+    limitPerRegion: number,
+  ): Promise<Record<string, string[]>> {
+    const scoredIds = [...storeScore.keys()].filter((id) =>
+      Types.ObjectId.isValid(id),
+    );
+    const byRegion = new Map<string, string[]>();
+
+    if (scoredIds.length) {
+      const stores = await this._storeModel
+        .find({
+          _id: { $in: scoredIds.map((id) => new Types.ObjectId(id)) },
+          status: StoreStatusEnum.ACTIVE,
+          acceptsOrders: { $ne: false },
+        })
+        .select('_id region')
+        .lean()
+        .exec();
+
+      const grouped = new Map<string, Array<{ id: string; score: number }>>();
+      for (const row of stores) {
+        const region = normalizeCountryCode(String(row.region ?? ''));
+        if (!region) continue;
+        const id = String(row._id);
+        const score = storeScore.get(id) ?? 0;
+        const bucket = grouped.get(region) ?? [];
+        bucket.push({ id, score });
+        grouped.set(region, bucket);
+      }
+
+      for (const [region, rows] of grouped) {
+        rows.sort((a, b) => b.score - a.score);
+        byRegion.set(
+          region,
+          rows.map((row) => row.id).slice(0, limitPerRegion),
+        );
+      }
+    }
+
+    const activeRegions = await this._storeModel
+      .distinct('region', {
+        status: StoreStatusEnum.ACTIVE,
+        acceptsOrders: { $ne: false },
+        region: { $exists: true, $type: 'string', $nin: [null, ''] },
+      })
+      .exec();
+
+    for (const regionRaw of activeRegions) {
+      const region = normalizeCountryCode(String(regionRaw ?? ''));
+      if (!region) continue;
+      if ((byRegion.get(region)?.length ?? 0) >= 8) continue;
+
+      const topInRegion = await this._storeModel
+        .find({
+          status: StoreStatusEnum.ACTIVE,
+          acceptsOrders: { $ne: false },
+          ...storeDirectRegionMatch(region),
+        })
+        .sort({ averageRating: -1, updatedAt: -1 })
+        .limit(limitPerRegion)
+        .select('_id')
+        .lean()
+        .exec();
+
+      const merged = [...(byRegion.get(region) ?? [])];
+      const seen = new Set(merged);
+      for (const row of topInRegion) {
+        const id = String(row._id);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        merged.push(id);
+        if (merged.length >= limitPerRegion) break;
+      }
+      if (merged.length) {
+        byRegion.set(region, merged);
+      }
+    }
+
+    return Object.fromEntries(byRegion);
   }
 
   private async _refreshDigestForUser(
@@ -357,14 +508,23 @@ export class RecommendationTrainingService {
       .map((x) => String(x._id ?? '').trim())
       .filter((s) => s.length >= 2);
 
+    const topViewedProductIds = await this._sanitizeActiveProductIds(
+      prods.map((x) => String(x._id)),
+      28,
+    );
+    const topViewedStoreIds = await this._sanitizeActiveStoreIds(
+      stores.map((x) => String(x._id)),
+      16,
+    );
+
     await this._digestModel.updateOne(
       { user: userOid },
       {
         $set: {
           user: userOid,
           computedAt: new Date(),
-          topViewedProductIds: prods.map((x) => String(x._id)),
-          topViewedStoreIds: stores.map((x) => String(x._id)),
+          topViewedProductIds,
+          topViewedStoreIds,
           topSearchTerms,
         },
       },

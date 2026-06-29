@@ -133,7 +133,15 @@ export const API_SECRET_REGISTRY: SecretKeyDefinition[] = [
   {
     envVarName: 'MAPBOX_ACCESS_TOKEN',
     label: 'Mapbox — token',
-    description: 'Token d’accès Mapbox pour la géolocalisation.',
+    description:
+      'Token Mapbox pour le géocodage serveur. Préférer un token public (pk.) avec scope Geocoding ; un secret (sk.) sans ce scope renvoie HTTP 403.',
+    category: 'Cartographie',
+  },
+  {
+    envVarName: 'MAPBOX_PUBLIC_ACCESS_TOKEN',
+    label: 'Mapbox — token public (pk.)',
+    description:
+      'Token public Mapbox pour Geocoding API (prioritaire sur MAPBOX_ACCESS_TOKEN si les deux sont définis).',
     category: 'Cartographie',
   },
   {

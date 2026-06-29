@@ -5,7 +5,10 @@ import { StoreSubscribersService } from '@modules/store-subscribers/store-subscr
 import { SearchSettingsService } from '@modules/search-settings/search-settings.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
-import { storeDirectRegionMatch } from '@modules/supported-countries/client-market-region.util';
+import {
+  normalizeCountryCode,
+  storeDirectRegionMatch,
+} from '@modules/supported-countries/client-market-region.util';
 import { BadRequestException, Injectable, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
@@ -371,10 +374,10 @@ export class RecommendationsService {
       if (sid) storeIdsFromProducts.add(sid);
     }
 
-    const extraBoostStores = (snapshot?.trendStoreIds ?? [])
-      .map((x) => String(x))
-      .filter((id) => Types.ObjectId.isValid(id))
-      .slice(0, 28);
+    const extraBoostStores = await this._resolveTrendStoreBoostIds(
+      snapshot as Record<string, unknown> | null,
+      clientRegion,
+    );
 
     const stores = await this._trendingStores(
       12,
@@ -415,6 +418,63 @@ export class RecommendationsService {
     }
 
     return { products, stores, drinks };
+  }
+
+  private _readRegionalTrendStoreIds(
+    snapshot: Record<string, unknown> | null | undefined,
+    clientRegion: string,
+  ): string[] {
+    const code = normalizeCountryCode(clientRegion);
+    if (!code || !snapshot) return [];
+    const raw = snapshot.trendStoreIdsByRegion as
+      | Map<string, string[]>
+      | Record<string, string[]>
+      | undefined;
+    if (!raw) return [];
+    const list =
+      raw instanceof Map ? raw.get(code) : (raw as Record<string, string[]>)[code];
+    return (list ?? [])
+      .map((id) => String(id))
+      .filter((id) => Types.ObjectId.isValid(id))
+      .slice(0, 28);
+  }
+
+  private async _filterActiveStoreIdsForRegion(
+    storeIds: string[],
+    clientRegion?: string,
+    limit = 28,
+  ): Promise<string[]> {
+    const ordered = storeIds.filter((id) => Types.ObjectId.isValid(id));
+    if (!ordered.length) return [];
+    const query: Record<string, unknown> = {
+      _id: { $in: ordered.map((id) => new Types.ObjectId(id)) },
+      status: StoreStatusEnum.ACTIVE,
+      acceptsOrders: { $ne: false },
+    };
+    if (clientRegion) {
+      Object.assign(query, storeDirectRegionMatch(clientRegion));
+    }
+    const rows = await this._storeModel
+      .find(query)
+      .select('_id')
+      .lean()
+      .exec();
+    const found = new Set(rows.map((row) => String(row._id)));
+    return ordered.filter((id) => found.has(id)).slice(0, limit);
+  }
+
+  private async _resolveTrendStoreBoostIds(
+    snapshot: Record<string, unknown> | null | undefined,
+    clientRegion: string,
+  ): Promise<string[]> {
+    const regional = this._readRegionalTrendStoreIds(snapshot, clientRegion);
+    if (regional.length) {
+      return this._filterActiveStoreIdsForRegion(regional, clientRegion);
+    }
+    const global = ((snapshot?.trendStoreIds as string[] | undefined) ?? [])
+      .map((id) => String(id))
+      .filter((id) => Types.ObjectId.isValid(id));
+    return this._filterActiveStoreIdsForRegion(global, clientRegion);
   }
 
   private async _trendingStores(

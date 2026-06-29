@@ -90,6 +90,12 @@ import { parseGrpcVersion } from '@africa-meals/proto';
 import type { SystemExchangeResponse, WsGrpcRuntimeStatus } from './system-exchange.types';
 import { MapSettingsService } from '@modules/map-settings/map-settings.service';
 import { osmForwardGeocode } from '@common/osm-geocoding.util';
+import {
+  probeMapboxGeocodingApi,
+  resolveMapboxGeocodeApiUrl,
+  resolveMapboxGeocodingToken,
+} from '@common/mapbox-geocoding.util';
+import { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
 import Stripe = require('stripe');
 import { randomUUID } from 'crypto';
 import { AdminJobEmitterService } from '@modules/admin-jobs/admin-job-emitter.service';
@@ -427,6 +433,7 @@ export class DbMaintenanceService {
     private readonly mapSettings: MapSettingsService,
     private readonly orderPaidInvoiceEmail: OrderPaidInvoiceEmailService,
     private readonly grpcWsNotifyMetrics: GrpcWsNotifyMetricsService,
+    private readonly secrets: SecretManagerService,
     @Inject(forwardRef(() => AdminJobEmitterService))
     @Optional()
     private readonly adminJobEmitter?: AdminJobEmitterService,
@@ -4124,33 +4131,19 @@ export class DbMaintenanceService {
       detail: string;
     }> = [];
 
-    const mapboxUrl = String(
-      this.config.get<string>('MAP_BOX_API_URL') ?? '',
-    ).trim();
-    const mapboxToken = String(
-      this.config.get<string>('MAPBOX_ACCESS_TOKEN') ?? '',
-    ).trim();
-    if (mapboxUrl && mapboxToken) {
-      try {
-        const url = new URL(mapboxUrl);
-        url.searchParams.set('q', 'Montreal');
-        url.searchParams.set('limit', '1');
-        url.searchParams.set('access_token', mapboxToken);
-        const res = await this.fetchWithTimeout(url.toString(), 7000);
-        engines.push({
-          name: 'Mapbox',
-          configured: true,
-          ok: res.ok,
-          detail: res.ok ? 'joignable' : `HTTP ${res.status}`,
-        });
-      } catch (e) {
-        engines.push({
-          name: 'Mapbox',
-          configured: true,
-          ok: false,
-          detail: e instanceof Error ? e.message : String(e),
-        });
-      }
+    const mapboxUrl = resolveMapboxGeocodeApiUrl(this.config);
+    const mapboxToken = await resolveMapboxGeocodingToken(
+      this.secrets,
+      this.config,
+    );
+    if (mapboxToken) {
+      const probe = await probeMapboxGeocodingApi(mapboxToken, mapboxUrl);
+      engines.push({
+        name: 'Mapbox',
+        configured: true,
+        ok: probe.ok,
+        detail: probe.ok ? probe.message : probe.details ?? probe.message,
+      });
     } else {
       engines.push({
         name: 'Mapbox',
