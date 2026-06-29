@@ -37,6 +37,7 @@ import { RefundsModule } from './modules/refunds/refunds.module';
 import { PenaltiesModule } from './modules/penalties/penalties.module';
 import { PlatformShippingSettingsModule } from './modules/platform-shipping-settings/platform-shipping-settings.module';
 import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
+import { nestEnvFilePaths } from './config/nest-env-files';
 import { AppPoliciesModule } from './modules/app-policies/app-policies.module';
 import { DocumentationModule } from './modules/documentation/documentation.module';
 import { VendorGuidesModule } from './modules/vendor-guides/vendor-guides.module';
@@ -174,14 +175,7 @@ async function readRedisManagerEnabledAtBootstrap(
 @Module({
   imports: [
     ConfigModule.forRoot({
-      // Dev : dernier fichier gagne — `.env.local` > `.env.develop` > `.env`
-      envFilePath: [
-        '.env',
-        ...(process.env.NODE_ENV === 'development'
-          ? ['.env.develop', '.env.local']
-          : []),
-        '../.env',
-      ],
+      envFilePath: nestEnvFilePaths(),
       isGlobal: true,
     }),
     RedisSharedModule,
