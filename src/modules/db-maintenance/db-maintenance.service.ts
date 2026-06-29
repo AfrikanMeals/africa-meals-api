@@ -4131,6 +4131,12 @@ export class DbMaintenanceService {
       detail: string;
     }> = [];
 
+    const geocodingEngine = String(
+      this.config.get<string>('MAP_GEOCODING_ENGINE') ?? 'mapbox',
+    )
+      .trim()
+      .toLowerCase();
+
     const mapboxUrl = resolveMapboxGeocodeApiUrl(this.config);
     const mapboxToken = await resolveMapboxGeocodingToken(
       this.secrets,
@@ -4138,12 +4144,25 @@ export class DbMaintenanceService {
     );
     if (mapboxToken) {
       const probe = await probeMapboxGeocodingApi(mapboxToken, mapboxUrl);
-      engines.push({
-        name: 'Mapbox',
-        configured: true,
-        ok: probe.ok,
-        detail: probe.ok ? probe.message : probe.details ?? probe.message,
-      });
+      const mapboxOptionalForGeocoding =
+        geocodingEngine === 'osm' &&
+        !probe.ok &&
+        mapboxToken.startsWith('sk.');
+      if (mapboxOptionalForGeocoding) {
+        engines.push({
+          name: 'Mapbox',
+          configured: false,
+          ok: true,
+          detail: `optionnel (OSM actif) — ${probe.details ?? probe.message}`,
+        });
+      } else {
+        engines.push({
+          name: 'Mapbox',
+          configured: true,
+          ok: probe.ok,
+          detail: probe.ok ? probe.message : probe.details ?? probe.message,
+        });
+      }
     } else {
       engines.push({
         name: 'Mapbox',
@@ -4197,11 +4216,6 @@ export class DbMaintenanceService {
       });
     }
 
-    const geocodingEngine = String(
-      this.config.get<string>('MAP_GEOCODING_ENGINE') ?? 'mapbox',
-    )
-      .trim()
-      .toLowerCase();
     const nominatimBase = String(
       this.config.get<string>('OSM_NOMINATIM_BASE_URL') ??
         'https://nominatim.openstreetmap.org',
@@ -4267,7 +4281,13 @@ export class DbMaintenanceService {
     }
 
     const details = engines
-      .map((e) => `${e.name} : ${e.configured ? e.detail : 'non configuré'}`)
+      .map((e) => {
+        if (e.configured) return `${e.name} : ${e.detail}`;
+        if (e.ok && e.detail.startsWith('optionnel')) {
+          return `${e.name} : ${e.detail}`;
+        }
+        return `${e.name} : non configuré`;
+      })
       .join(' · ');
 
     return this.normalizeHealthResult({

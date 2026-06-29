@@ -39,10 +39,10 @@ export async function resolveMapboxGeocodingToken(
   ]);
   return pickMapboxGeocodingToken([
     publicDb,
-    accessDb,
     readMapboxEnvToken(config, 'MAPBOX_PUBLIC_ACCESS_TOKEN'),
-    readMapboxEnvToken(config, 'MAPBOX_ACCESS_TOKEN'),
     readMapboxEnvToken(config, 'NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN'),
+    accessDb,
+    readMapboxEnvToken(config, 'MAPBOX_ACCESS_TOKEN'),
   ]);
 }
 
