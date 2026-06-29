@@ -180,17 +180,35 @@ export function resolveApiHealthProbeUrl(serverUrl: string): string {
     if (host === 'localhost' || host === '127.0.0.1') {
       return `${url.origin}/api/health`;
     }
-    if (
-      /^api(-[a-z0-9-]+)?\.wise-eat\.com$/i.test(host) ||
-      host.endsWith('.cloudfunctions.net') ||
-      host.endsWith('.run.app')
-    ) {
+    // Façade Worker (clients mobile/admin/web) — /health → origin /api/health
+    if (host === 'apis.wise-eat.com') {
+      return `${url.origin}/health`;
+    }
+    // Origin VPS k8s (nginx → Nest global prefix /api)
+    if (/^api(-[a-z0-9-]+)?\.wise-eat\.com$/i.test(host)) {
+      return `${url.origin}/api/health`;
+    }
+    if (host.endsWith('.cloudfunctions.net') || host.endsWith('.run.app')) {
       return `${url.origin}/health`;
     }
     return `${url.origin}/api/health`;
   } catch {
     return `${raw}/api/health`;
   }
+}
+
+export function resolveApiHealthProbeUrlFromConfig(
+  config: ConfigService | { get: (key: string) => string | undefined },
+): string {
+  const direct = config.get<string>('STATUS_PROBE_API_URL')?.trim();
+  if (direct) return direct.replace(/\/+$/, '');
+  const publicBase =
+    config.get<string>('API_PUBLIC_BASE_URL')?.trim() ||
+    config.get<string>('SERVER_URL')?.trim();
+  if (publicBase) return resolveApiHealthProbeUrl(publicBase);
+  return resolveApiHealthProbeUrl(
+    `http://localhost:${config.get('NODE_PORT') ?? '9000'}`,
+  );
 }
 
 /** SSE = flux long ; on vérifie seulement les en-têtes HTTP (pas le corps). */

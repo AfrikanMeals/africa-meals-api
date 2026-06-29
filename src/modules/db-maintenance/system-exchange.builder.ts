@@ -22,7 +22,7 @@ import {
   probeHttpHealth,
   probeMongoDb,
   probeSseStream,
-  resolveApiHealthProbeUrl,
+  resolveApiHealthProbeUrlFromConfig,
   type ProbeResult,
 } from './system-exchange.probes';
 import { parseGrpcVersion } from '@africa-meals/proto';
@@ -124,6 +124,7 @@ export async function buildSystemExchangeResponse(
   ).trim();
 
   const apiPublic =
+    input.config.get<string>('API_PUBLIC_BASE_URL')?.trim() ||
     input.config.get<string>('SERVER_URL')?.trim() ||
     `http://localhost:${input.config.get('NODE_PORT') ?? '9000'}`;
   const wsInternal =
@@ -139,7 +140,7 @@ export async function buildSystemExchangeResponse(
 
   const wsHealthUrl = `${wsInternal.replace(/\/$/, '')}/api/health`;
   const wsSsePublicUrl = `${wsInternal.replace(/\/$/, '')}/api/sse/public/status`;
-  const apiHealthUrl = resolveApiHealthProbeUrl(apiPublic);
+  const apiHealthUrl = resolveApiHealthProbeUrlFromConfig(input.config);
   const grpcWsEndpoint = resolveGrpcWsDisplayEndpoint(input.config);
   const grpcApiEndpoint = resolveGrpcApiDisplayEndpoint(input.config);
 

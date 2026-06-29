@@ -50,13 +50,27 @@ describe('system-exchange.probes', () => {
       );
     });
 
-    it('uses /health on dedicated api host', () => {
+    it('uses /api/health on VPS k8s api host', () => {
       expect(resolveApiHealthProbeUrl('https://api.wise-eat.com')).toBe(
-        'https://api.wise-eat.com/health',
+        'https://api.wise-eat.com/api/health',
       );
       expect(resolveApiHealthProbeUrl('https://api-dev.wise-eat.com')).toBe(
-        'https://api-dev.wise-eat.com/health',
+        'https://api-dev.wise-eat.com/api/health',
       );
+    });
+
+    it('uses /health on Worker façade apis.wise-eat.com', () => {
+      expect(resolveApiHealthProbeUrl('https://apis.wise-eat.com')).toBe(
+        'https://apis.wise-eat.com/health',
+      );
+    });
+
+    it('uses /health on Cloud Functions host', () => {
+      expect(
+        resolveApiHealthProbeUrl(
+          'https://us-east1-wise-eat-ca.cloudfunctions.net/api',
+        ),
+      ).toBe('https://us-east1-wise-eat-ca.cloudfunctions.net/health');
     });
   });
 });
