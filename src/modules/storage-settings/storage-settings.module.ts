@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { MediasModule } from '@modules/medias/medias.module';
 import {
   StorageSettingsModel,
   StorageSettingsSchema,
@@ -12,6 +13,7 @@ import { StorageSettingsService } from './storage-settings.service';
     MongooseModule.forFeature([
       { name: StorageSettingsModel.name, schema: StorageSettingsSchema },
     ]),
+    forwardRef(() => MediasModule),
   ],
   controllers: [StorageSettingsController],
   providers: [StorageSettingsService],

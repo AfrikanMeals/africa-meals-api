@@ -671,6 +671,17 @@ export class MinioStorageEngine implements IStorageEngine {
     const keepPath = extractObjectPath(keepPathOrUrl);
     const normalized = prefix.endsWith('/') ? prefix : `${prefix}/`;
     try {
+      const client = await this.primaryClient();
+      const listed = await client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket(),
+          Prefix: normalized,
+        }),
+      );
+      const keys = (listed.Contents ?? [])
+        .map((o) => o.Key)
+        .filter((k): k is string => Boolean(k) && k !== keepPath);
+      if (!keys.length) return;
       await client.send(
         new DeleteObjectsCommand({
           Bucket: this.bucket(),
