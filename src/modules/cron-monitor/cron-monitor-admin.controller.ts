@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Patch,
+  Post,
   Req,
   UseGuards,
   UsePipes,
@@ -11,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
+import { CronJobRunnerService } from '@modules/cron-monitor/cron-job-runner.service';
 import { CronMonitorService } from '@modules/cron-monitor/cron-monitor.service';
 import { UpdateCronJobStateDto } from '@modules/cron-monitor/dto/update-cron-job-state.dto';
 import { UserModel } from '@schemas/user.schema';
@@ -21,7 +23,10 @@ import { Request } from 'express';
 @UseGuards(JwtGuard)
 @Controller('db-maintenance/admin/cron-jobs')
 export class CronMonitorAdminController {
-  constructor(private readonly cronMonitor: CronMonitorService) {}
+  constructor(
+    private readonly cronMonitor: CronMonitorService,
+    private readonly cronRunner: CronJobRunnerService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Liste des crons planifiés et leur statut (admin.settings)' })
@@ -42,5 +47,13 @@ export class CronMonitorAdminController {
       key,
       dto.paused,
     );
+  }
+
+  @Post(':key/run')
+  @ApiOperation({
+    summary: 'Exécute un cron manuellement (admin.settings, ignore pause / .env)',
+  })
+  run(@Req() req: Request, @Param('key') key: string) {
+    return this.cronRunner.runJob(req.user as UserModel, key);
   }
 }

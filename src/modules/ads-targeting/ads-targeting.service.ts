@@ -1183,17 +1183,26 @@ export class AdsTargetingService {
   @Cron(process.env.ADS_TARGETING_RETENTION_CRON ?? '0 2 * * *')
   async purgeOldData(): Promise<void> {
     await this.cronMonitor.execute('ads_targeting_retention', async () => {
-      const retention = this.retentionDays();
-      const cutoff = new Date(Date.now() - retention * 86_400_000);
-      const [eventsRes, logsRes] = await Promise.all([
-        this.eventModel.deleteMany({ timestamp: { $lt: cutoff } }).exec(),
-        this.auditLogModel.deleteMany({ createdAt: { $lt: cutoff } }).exec(),
-      ]);
-      this.logger.log(
-        `ads targeting retention purge done: events=${
-          eventsRes.deletedCount ?? 0
-        }, logs=${logsRes.deletedCount ?? 0}, days=${retention}`,
-      );
+      await this.runRetentionPurgePass();
     });
+  }
+
+  async runRetentionPurgePass(): Promise<{
+    eventsDeleted: number;
+    logsDeleted: number;
+    retentionDays: number;
+  }> {
+    const retention = this.retentionDays();
+    const cutoff = new Date(Date.now() - retention * 86_400_000);
+    const [eventsRes, logsRes] = await Promise.all([
+      this.eventModel.deleteMany({ timestamp: { $lt: cutoff } }).exec(),
+      this.auditLogModel.deleteMany({ createdAt: { $lt: cutoff } }).exec(),
+    ]);
+    const eventsDeleted = eventsRes.deletedCount ?? 0;
+    const logsDeleted = logsRes.deletedCount ?? 0;
+    this.logger.log(
+      `ads targeting retention purge done: events=${eventsDeleted}, logs=${logsDeleted}, days=${retention}`,
+    );
+    return { eventsDeleted, logsDeleted, retentionDays: retention };
   }
 }

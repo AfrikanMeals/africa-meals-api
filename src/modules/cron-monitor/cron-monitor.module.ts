@@ -6,6 +6,7 @@ import {
 } from '@schemas/infra-cron-job-state.schema';
 import { TeamsModule } from '@modules/teams/teams.module';
 import { CronMonitorAdminController } from './cron-monitor-admin.controller';
+import { CronJobRunnerService } from './cron-job-runner.service';
 import { CronMonitorService } from './cron-monitor.service';
 
 @Global()
@@ -17,7 +18,7 @@ import { CronMonitorService } from './cron-monitor.service';
     ]),
   ],
   controllers: [CronMonitorAdminController],
-  providers: [CronMonitorService],
+  providers: [CronMonitorService, CronJobRunnerService],
   exports: [CronMonitorService],
 })
 export class CronMonitorModule {}

@@ -185,6 +185,98 @@ export class CronMonitorService {
     }
   }
 
+  /**
+   * Exécution manuelle depuis l’admin : ignore pause / DISABLE_* env, journalise le run.
+   */
+  async executeManual(
+    key: string,
+    fn: () => Promise<void | string>,
+    options?: { adminUserId?: string },
+  ): Promise<{
+    status: CronJobLastRunStatusEnum;
+    message: string | null;
+    durationMs: number;
+  }> {
+    if (!isKnownCronJobKey(key)) {
+      throw new BadRequestException('unknown_cron_job');
+    }
+
+    const start = Date.now();
+    const manualTag = options?.adminUserId
+      ? `manual_run_by_admin:${options.adminUserId}`
+      : 'manual_run';
+
+    try {
+      const detail = await fn();
+      const durationMs = Date.now() - start;
+      const message =
+        typeof detail === 'string' && detail.trim()
+          ? `${manualTag} — ${detail.trim()}`
+          : manualTag;
+      await this.recordRun(key, {
+        status: CronJobLastRunStatusEnum.OK,
+        durationMs,
+        message,
+      });
+      return {
+        status: CronJobLastRunStatusEnum.OK,
+        message,
+        durationMs,
+      };
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      const durationMs = Date.now() - start;
+      await this.recordRun(key, {
+        status: CronJobLastRunStatusEnum.ERROR,
+        message: errMsg,
+        durationMs,
+      });
+      this.logger.warn(`[cron:${key}:manual] ${errMsg}`);
+      return {
+        status: CronJobLastRunStatusEnum.ERROR,
+        message: errMsg,
+        durationMs,
+      };
+    }
+  }
+
+  async getJobView(key: string): Promise<CronJobAdminView> {
+    const def = getCronJobDefinition(key);
+    if (!def) {
+      throw new BadRequestException('unknown_cron_job');
+    }
+    const doc = await this.stateModel.findOne({ key: def.key }).lean().exec();
+    return this.toView(def, (doc as InfraCronJobStateModel) ?? null);
+  }
+
+  async runJobManually(
+    user: UserModel,
+    key: string,
+    fn: () => Promise<void | string>,
+  ): Promise<{
+    ok: boolean;
+    key: string;
+    status: CronJobLastRunStatusEnum;
+    message: string | null;
+    durationMs: number;
+    job: CronJobAdminView;
+  }> {
+    await this.assertAdminSettings(user);
+    const normalized = key.trim();
+    const exec = await this.executeManual(normalized, fn, {
+      adminUserId: String(user._id),
+    });
+    const job = await this.getJobView(normalized);
+    return {
+      ok: exec.status === CronJobLastRunStatusEnum.OK,
+      key: normalized,
+      status: exec.status,
+      message: exec.message,
+      durationMs: exec.durationMs,
+      job,
+    };
+  }
+
   async listJobsForAdmin(user: UserModel): Promise<{ jobs: CronJobAdminView[] }> {
     await this.assertAdminSettings(user);
     const docs = await this.stateModel.find().lean().exec();
