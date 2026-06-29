@@ -66,6 +66,7 @@ import {
   buildEmailEngineAttemptChain,
   listConfiguredConcreteEngines,
 } from './email-engine-chain.util';
+import { probeSendgridApiKey } from './sendgrid-probe.util';
 import {
   buildSmsEngineOptions,
   normalizeSmsEngine,
@@ -1185,30 +1186,7 @@ export class PlatformChannelsService {
   private async probeSendgridApiKey(
     apiKey: string,
   ): Promise<{ ok: boolean; message: string; details?: string }> {
-    try {
-      const res = await fetch('https://api.sendgrid.com/v3/user/account', {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${apiKey.trim()}`,
-        },
-        signal: AbortSignal.timeout(10000),
-      });
-      const data = (await res.json().catch(() => ({}))) as { message?: string };
-      if (!res.ok) {
-        return {
-          ok: false,
-          message: 'SendGrid non valide.',
-          details: data.message ?? `SendGrid HTTP ${res.status}`,
-        };
-      }
-      return { ok: true, message: 'SendGrid configuré et valide.' };
-    } catch (e) {
-      return {
-        ok: false,
-        message: 'SendGrid non accessible.',
-        details: e instanceof Error ? e.message : String(e),
-      };
-    }
+    return probeSendgridApiKey(apiKey);
   }
 
   private async isResendConfigured(): Promise<boolean> {
