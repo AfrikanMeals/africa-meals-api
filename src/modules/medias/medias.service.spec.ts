@@ -19,6 +19,7 @@ describe('MediasService', () => {
               compressionEnabled: false,
               maxFileSizeMb: 5,
               storageEngine: 's3',
+              fallbackStorageEngine: null,
               mediaProxyEnabled: false,
               enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true },
             }),

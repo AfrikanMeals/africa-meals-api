@@ -83,6 +83,7 @@ import {
 } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { ResetStripeConnectDto } from './dto/reset-stripe-connect.dto';
+import { AssignStripeConnectDto } from './dto/assign-stripe-connect.dto';
 import { StoreService } from './store.service';
 import { SetPartnerBadgeDto } from '@common/partner-badges/dto/set-partner-badge.dto';
 import { listPartnerBadgeDefinitions } from '@common/partner-badges/partner-badge.constants';
@@ -417,6 +418,35 @@ export class StoreController {
       storeId,
       req.user as UserModel,
       { archiveOpenOrders: body.archiveOpenOrders === true },
+    );
+  }
+
+  /** Lie manuellement un compte Stripe Connect (acct_…) au propriétaire. */
+  @Post('admin/vendors/:storeId/assign-stripe-connect')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async assignVendorStripeConnect(
+    @Param('storeId') storeId: string,
+    @Req() req: Request,
+    @Body() body: AssignStripeConnectDto,
+  ) {
+    return this._storeService.assignVendorStripeConnectForAdmin(
+      storeId,
+      req.user as UserModel,
+      body.stripeAccountId,
+    );
+  }
+
+  /** Resynchronise le statut Stripe Connect depuis Stripe. */
+  @Post('admin/vendors/:storeId/sync-stripe-connect')
+  @UseGuards(JwtGuard)
+  async syncVendorStripeConnect(
+    @Param('storeId') storeId: string,
+    @Req() req: Request,
+  ) {
+    return this._storeService.syncVendorStripeConnectForAdmin(
+      storeId,
+      req.user as UserModel,
     );
   }
 

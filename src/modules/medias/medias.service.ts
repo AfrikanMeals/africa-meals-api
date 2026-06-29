@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -22,13 +23,17 @@ import {
   StorageUploadResult,
 } from './storage-engine.types';
 import { StorageEngineMode } from '@schemas/storage-settings.schema';
+import type { StorageSettingsResponse } from '@modules/storage-settings/storage-settings.service';
 import { inferStorageModuleFromBasePath } from '@schemas/storage-module.constants';
+import type { IStorageEngine, StorageUploadInput } from './storage-engine.types';
 
 /**
  * Service de stockage multi-moteur (Firebase, GCS, S3, MinIO, R2) avec compression et limites admin.
  */
 @Injectable()
 export class MediasService {
+  private readonly logger = new Logger(MediasService.name);
+
   constructor(
     private readonly storageSettings: StorageSettingsService,
     private readonly compression: ImageCompressionService,
@@ -289,6 +294,44 @@ export class MediasService {
     return this.engineFactory.resolve(engineMode, settings.enginesEnabled);
   }
 
+  private async uploadWithFallback(
+    primary: IStorageEngine,
+    settings: Pick<
+      StorageSettingsResponse,
+      'fallbackStorageEngine' | 'enginesEnabled'
+    >,
+    input: StorageUploadInput,
+  ): Promise<StorageUploadResult> {
+    try {
+      return await primary.upload(input);
+    } catch (primaryErr) {
+      const fallbackId = settings.fallbackStorageEngine;
+      if (
+        !fallbackId ||
+        fallbackId === primary.id ||
+        settings.enginesEnabled[fallbackId] === false
+      ) {
+        throw primaryErr;
+      }
+      const fallback = this.engineFactory.byId(fallbackId);
+      if (!fallback.isConfigured()) {
+        throw primaryErr;
+      }
+      this.logger.warn(
+        `Upload échoué sur ${primary.id}, repli vers ${fallbackId} (${input.path})`,
+      );
+      try {
+        return await fallback.upload(input);
+      } catch (fallbackErr) {
+        this.logger.error(
+          `Repli upload ${fallbackId} échoué (${input.path})`,
+          fallbackErr instanceof Error ? fallbackErr.stack : String(fallbackErr),
+        );
+        throw primaryErr;
+      }
+    }
+  }
+
   private async prepareForUpload(
     file: Express.Multer.File,
   ): Promise<Express.Multer.File> {
@@ -311,17 +354,22 @@ export class MediasService {
   async upload(file: Express.Multer.File, user: UserModel, basePath = '') {
     try {
       const prepared = await this.prepareForUpload(file);
+      const settings = await this.storageSettings.getPublicSettings();
       const engine = await this.resolveUploadEngine(basePath);
       const path =
         basePath.length > 0
           ? `${basePath}/${uuid()}${extname(prepared.originalname)}`
           : `${uuid()}${extname(prepared.originalname)}`;
-      const result = await engine.upload({
-        buffer: prepared.buffer,
-        path,
-        contentType: prepared.mimetype,
-        owner: user._id.toString(),
-      });
+      const result = await this.uploadWithFallback(
+        engine,
+        settings,
+        {
+          buffer: prepared.buffer,
+          path,
+          contentType: prepared.mimetype,
+          owner: user._id.toString(),
+        },
+      );
       return await this.resolveUploadPublicUrl(result);
     } catch (e) {
       if (e instanceof BadRequestException) throw e;
@@ -352,7 +400,7 @@ export class MediasService {
           : '.jpg');
     const base = args.basePath.replace(/^\/+|\/+$/g, '');
     const path = `${base}/${uuid()}${ext}`;
-    const result = await engine.upload({
+    const result = await this.uploadWithFallback(engine, settings, {
       buffer: args.buffer,
       path,
       contentType: args.contentType,

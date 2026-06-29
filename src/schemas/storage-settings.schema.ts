@@ -47,6 +47,17 @@ export class StorageSettingsModel {
   })
   storageEngine: StorageEngineMode;
 
+  /**
+   * Moteur de secours si l’écriture échoue sur le moteur principal (null = désactivé).
+   */
+  @Prop({
+    type: String,
+    enum: ['firebase', 'gcs', 's3', 'minio', 'r2'],
+    default: null,
+    required: false,
+  })
+  fallbackStorageEngine: StorageEngineId | null;
+
   /** Si true, URLs GCS/S3 servies via GET /medias/public/… (bucket privé). */
   @Prop({ type: Boolean, default: false })
   mediaProxyEnabled: boolean;

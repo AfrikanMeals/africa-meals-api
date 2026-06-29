@@ -1,5 +1,11 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { StockManagerSettingsService } from '@modules/stock-manager-settings/stock-manager-settings.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { StockItemModel, StockStatutEnum } from '@schemas/stock-item.schema';
 import { UserModel } from '@schemas/user.schema';
@@ -13,10 +19,23 @@ function computeStatut(quantite: number, seuil: number): StockStatutEnum {
   return quantite <= seuil ? StockStatutEnum.ALERTE : StockStatutEnum.OK;
 }
 
+function readActive(raw: unknown, fallback = true): boolean {
+  if (raw === false || raw === 'false' || raw === 0 || raw === '0') {
+    return false;
+  }
+  if (raw === true || raw === 'true' || raw === 1 || raw === '1') {
+    return true;
+  }
+  return fallback;
+}
+
 @Injectable()
 export class StockItemsService {
   @Inject(StoreAccessService)
   private readonly _storeAccess: StoreAccessService;
+
+  @Inject(StockManagerSettingsService)
+  private readonly _stockManagerSettings: StockManagerSettingsService;
 
   @InjectModel(StockItemModel.name)
   private readonly _stockItemModel: Model<StockItemModel>;
@@ -27,6 +46,20 @@ export class StockItemsService {
     permission: 'catalog.view' | 'catalog.edit',
   ) {
     await this._storeAccess.assertStoreAccess(user, storeId, permission);
+  }
+
+  private async assertStockFieldsAllowed(dto: PatchStockItemDto): Promise<void> {
+    const stockEnabled =
+      await this._stockManagerSettings.isIngredientStockManagementEnabled();
+    if (stockEnabled) return;
+    const hasStockFields =
+      dto.unite !== undefined ||
+      dto.quantite !== undefined ||
+      dto.seuil !== undefined ||
+      dto.prix !== undefined;
+    if (hasStockFields) {
+      throw new BadRequestException('stock_management_fields_not_allowed');
+    }
   }
 
   /** Compare `store` que ce soit un ObjectId ou une chaîne hex en base (imports manuels Mongo). */
@@ -55,6 +88,7 @@ export class StockItemsService {
       seuil,
       prix,
       statut,
+      active: readActive(p.active),
       createdAt:
         created instanceof Date
           ? created.toISOString()
@@ -116,18 +150,25 @@ export class StockItemsService {
     user: UserModel,
   ) {
     await this.assertStoreCatalogAccess(storeId, user, 'catalog.edit');
-    const quantite = Number(dto.quantite);
-    const seuil = Number(dto.seuil);
+    const stockEnabled =
+      await this._stockManagerSettings.isIngredientStockManagementEnabled();
+    const unite = String(dto.unite ?? 'kg').trim() || 'kg';
+    const quantite = stockEnabled ? Number(dto.quantite ?? 0) : 0;
+    const seuil = stockEnabled ? Number(dto.seuil ?? 0) : 0;
+    const prix = stockEnabled ? Number(dto.prix ?? 0) : 0;
+    const active = readActive(dto.active, true);
     const statut = computeStatut(quantite, seuil);
     const storeOid = Types.ObjectId.isValid(storeId)
       ? new Types.ObjectId(storeId)
       : storeId;
     const doc = await this._stockItemModel.create({
       produit: dto.produit.trim(),
-      unite: dto.unite.trim(),
+      unite,
       quantite,
       seuil,
+      prix,
       statut,
+      active,
       store: storeOid,
     });
     return this.mapRow(doc.toObject() as Record<string, unknown>);
@@ -171,24 +212,37 @@ export class StockItemsService {
     dto: PatchStockItemDto,
     user: UserModel,
   ) {
+    await this.assertStockFieldsAllowed(dto);
     await this.assertStoreCatalogAccess(storeId, user, 'catalog.edit');
+    const stockEnabled =
+      await this._stockManagerSettings.isIngredientStockManagementEnabled();
     const found = await this.findRawInStockCollections(storeId, itemId);
     if (!found) {
       throw new NotFoundException('stock_item_not_found');
     }
     const { collectionName, doc: hit } = found;
     const quantite =
-      dto.quantite !== undefined
+      stockEnabled && dto.quantite !== undefined
         ? Number(dto.quantite)
         : Number(hit.quantite ?? 0);
     const seuil =
-      dto.seuil !== undefined ? Number(dto.seuil) : Number(hit.seuil ?? 0);
+      stockEnabled && dto.seuil !== undefined
+        ? Number(dto.seuil)
+        : Number(hit.seuil ?? 0);
     const produit =
       dto.produit != null ? dto.produit.trim() : String(hit.produit ?? '');
     const unite =
-      dto.unite != null ? dto.unite.trim() : String(hit.unite ?? '');
+      stockEnabled && dto.unite != null
+        ? dto.unite.trim()
+        : String(hit.unite ?? '');
     const prix =
-      dto.prix !== undefined ? Number(dto.prix) : Number(hit.prix ?? 0);
+      stockEnabled && dto.prix !== undefined
+        ? Number(dto.prix)
+        : Number(hit.prix ?? 0);
+    const active =
+      dto.active !== undefined
+        ? readActive(dto.active, true)
+        : readActive(hit.active, true);
     const statut = computeStatut(quantite, seuil);
     await this._stockItemModel.db.collection(collectionName).updateOne(
       { _id: hit._id },
@@ -200,6 +254,7 @@ export class StockItemsService {
           seuil,
           prix,
           statut,
+          active,
           updatedAt: new Date(),
         },
       },

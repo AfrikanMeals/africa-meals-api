@@ -1,6 +1,16 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, Max, Min, ValidateNested } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  Max,
+  Min,
+  ValidateIf,
+  ValidateNested,
+} from 'class-validator';
+import { StorageEngineId } from '@schemas/storage-settings.schema';
 import { StorageEnginesEnabledDto } from './storage-engines-enabled.dto';
 import { StorageModuleEnginesDto } from './storage-module-engines.dto';
 
@@ -21,6 +31,18 @@ export class UpdateStorageSettingsDto {
   })
   @IsIn(['firebase', 'gcs', 's3', 'minio', 'r2', 'auto'])
   storageEngine: 'firebase' | 'gcs' | 's3' | 'minio' | 'r2' | 'auto';
+
+  @ApiProperty({
+    description:
+      'Moteur de secours si l’écriture échoue sur le moteur principal (null = aucun)',
+    enum: ['firebase', 'gcs', 's3', 'minio', 'r2'],
+    nullable: true,
+    required: false,
+  })
+  @IsOptional()
+  @ValidateIf((_, value) => value != null)
+  @IsIn(['firebase', 'gcs', 's3', 'minio', 'r2'])
+  fallbackStorageEngine?: StorageEngineId | null;
 
   @ApiProperty({
     description:

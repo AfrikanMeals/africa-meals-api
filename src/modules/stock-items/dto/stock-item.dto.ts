@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Trim } from 'class-sanitizer';
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -15,32 +16,43 @@ export class CreateStockItemDto {
   @Trim()
   produit: string;
 
-  @ApiProperty({ example: 'kg' })
+  @ApiPropertyOptional({ example: 'kg', default: 'kg' })
+  @IsOptional()
+  @ValidateIf((o) => o.unite !== undefined)
   @IsNotEmpty()
   @Trim()
-  unite: string;
+  unite?: string;
 
-  @ApiProperty({ example: 3, type: Number })
+  @ApiPropertyOptional({ example: 0, type: Number, default: 0 })
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(0)
-  quantite: number;
+  quantite?: number;
 
-  @ApiProperty({ example: 5, type: Number })
+  @ApiPropertyOptional({ example: 0, type: Number, default: 0 })
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(0)
-  seuil: number;
+  seuil?: number;
 
-  @ApiProperty({
-    example: 1500,
+  @ApiPropertyOptional({
+    example: 0,
     type: Number,
+    default: 0,
     description: 'Prix unitaire (ex. FCFA)',
   })
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(0)
-  prix: number;
+  prix?: number;
+
+  @ApiPropertyOptional({ example: true, default: true })
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
 }
 
 export class PatchStockItemDto {
@@ -78,4 +90,9 @@ export class PatchStockItemDto {
   @IsNumber()
   @Min(0)
   prix?: number;
+
+  @ApiPropertyOptional({ type: Boolean })
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
 }

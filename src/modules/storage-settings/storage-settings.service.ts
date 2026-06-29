@@ -31,6 +31,7 @@ export type StorageSettingsResponse = {
   compressionEnabled: boolean;
   maxFileSizeMb: number;
   storageEngine: StorageEngineMode;
+  fallbackStorageEngine: StorageEngineId | null;
   mediaProxyEnabled: boolean;
   enginesEnabled: StorageEnginesEnabled;
   moduleStorageEngines: StorageModuleEngines;
@@ -49,8 +50,31 @@ function normalizeEnginesEnabled(raw: unknown): StorageEnginesEnabled {
   };
 }
 
+function normalizeFallbackStorageEngine(raw: unknown): StorageEngineId | null {
+  const ids: StorageEngineId[] = ['firebase', 'gcs', 's3', 'minio', 'r2'];
+  return typeof raw === 'string' && ids.includes(raw as StorageEngineId)
+    ? (raw as StorageEngineId)
+    : null;
+}
+
+function assertFallbackStorageEngine(args: {
+  storageEngine: StorageEngineMode;
+  fallbackStorageEngine: StorageEngineId | null;
+  enginesEnabled: StorageEnginesEnabled;
+}) {
+  const fallback = args.fallbackStorageEngine;
+  if (!fallback) return;
+  if (!args.enginesEnabled[fallback]) {
+    throw new BadRequestException('storage_fallback_engine_disabled');
+  }
+  if (args.storageEngine !== 'auto' && args.storageEngine === fallback) {
+    throw new BadRequestException('storage_fallback_engine_same_as_primary');
+  }
+}
+
 function assertEnginesEnabledSettings(args: {
   storageEngine: StorageEngineMode;
+  fallbackStorageEngine?: StorageEngineId | null;
   enginesEnabled: StorageEnginesEnabled;
   moduleStorageEngines?: StorageModuleEngines;
 }) {
@@ -78,6 +102,11 @@ function assertEnginesEnabledSettings(args: {
       }
     }
   }
+  assertFallbackStorageEngine({
+    storageEngine: args.storageEngine,
+    fallbackStorageEngine: args.fallbackStorageEngine ?? null,
+    enginesEnabled: args.enginesEnabled,
+  });
 }
 
 function assertAdmin(user: UserModel) {
@@ -106,6 +135,9 @@ export class StorageSettingsService {
           ? Math.trunc(maxMb)
           : 5,
       storageEngine: (doc.storageEngine as StorageEngineMode) || 'firebase',
+      fallbackStorageEngine: normalizeFallbackStorageEngine(
+        doc.fallbackStorageEngine,
+      ),
       mediaProxyEnabled: doc.mediaProxyEnabled === true,
       enginesEnabled: normalizeEnginesEnabled(doc.enginesEnabled),
       moduleStorageEngines: normalizeModuleStorageEngines(
@@ -134,6 +166,7 @@ export class StorageSettingsService {
             compressionEnabled: false,
             maxFileSizeMb: 5,
             storageEngine: 'firebase',
+            fallbackStorageEngine: null,
             mediaProxyEnabled: false,
             enginesEnabled: { ...DEFAULT_STORAGE_ENGINES_ENABLED },
             moduleStorageEngines: { ...DEFAULT_MODULE_STORAGE_ENGINES },
@@ -179,8 +212,13 @@ export class StorageSettingsService {
     const moduleStorageEngines = normalizeModuleStorageEngines(
       dto.moduleStorageEngines,
     );
+    const fallbackStorageEngine =
+      dto.fallbackStorageEngine === undefined
+        ? null
+        : normalizeFallbackStorageEngine(dto.fallbackStorageEngine);
     assertEnginesEnabledSettings({
       storageEngine: dto.storageEngine,
+      fallbackStorageEngine,
       enginesEnabled,
       moduleStorageEngines,
     });
@@ -192,6 +230,7 @@ export class StorageSettingsService {
             compressionEnabled: dto.compressionEnabled,
             maxFileSizeMb: dto.maxFileSizeMb,
             storageEngine: dto.storageEngine,
+            fallbackStorageEngine,
             mediaProxyEnabled: dto.mediaProxyEnabled,
             enginesEnabled,
             moduleStorageEngines,

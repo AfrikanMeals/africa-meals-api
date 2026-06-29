@@ -39,6 +39,10 @@ export class StockItemModel extends BaseSchema {
   })
   statut: StockStatutEnum;
 
+  /** Disponibilité catalogue — utilisable sans gestion stock quantités. */
+  @Prop({ required: false, default: true })
+  active: boolean;
+
   @Prop({
     required: true,
     ref: StoreModel.name,

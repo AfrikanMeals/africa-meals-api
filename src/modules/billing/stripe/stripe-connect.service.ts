@@ -2142,6 +2142,122 @@ export class StripeConnectService {
   }
 
   /**
+   * Admin : lie manuellement un compte Stripe Connect existant au propriétaire
+   * d’une boutique, puis synchronise les flags depuis Stripe.
+   */
+  async assignConnectAccountForAdmin(params: {
+    userId: Types.ObjectId;
+    storeId: Types.ObjectId;
+    stripeAccountId: string;
+  }): Promise<StripeConnectStatus> {
+    if (!this.isConfigured()) {
+      throw new BadRequestException('stripe_not_configured');
+    }
+
+    const accountId = params.stripeAccountId.trim();
+    if (!/^acct_[A-Za-z0-9]+$/.test(accountId)) {
+      throw new BadRequestException('invalid_stripe_account_id');
+    }
+
+    const conflict = await this.userModel
+      .findOne({
+        stripeConnectAccountId: accountId,
+        _id: { $ne: params.userId },
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    if (conflict) {
+      throw new BadRequestException('stripe_account_already_linked');
+    }
+
+    let account: StripeConnectAccountRecord;
+    try {
+      account = await this.retrieveAccount(accountId);
+    } catch (e) {
+      if (isStripeConnectAccountUnavailableError(e)) {
+        throw new BadRequestException('stripe_account_not_found');
+      }
+      throw new BadRequestException('stripe_error_generic');
+    }
+
+    await this.syncAccountFlags(params.userId, account);
+    await this.storeModel
+      .updateOne(
+        { _id: params.storeId },
+        { $set: { stripeConnectAccountId: accountId } },
+      )
+      .exec();
+
+    const user = await this.userModel.findById(params.userId).exec();
+    if (!user) {
+      throw new BadRequestException('user_not_found');
+    }
+
+    const status = this.statusFromAccount(account, user);
+    this.pushConnectStatusRealtime(params.userId, status);
+
+    if (isConnectFullyActive(account) && user.type === UserTypeEnum.VENDOR) {
+      this.storeLaunchNotifier.scheduleNotifyForOwnerStores(
+        params.userId.toString(),
+      );
+    }
+
+    return status;
+  }
+
+  /**
+   * Admin : resynchronise le statut Connect depuis Stripe pour le propriétaire
+   * d’une boutique déjà liée.
+   */
+  async syncConnectAccountForAdmin(params: {
+    userId: Types.ObjectId;
+    storeId: Types.ObjectId;
+  }): Promise<StripeConnectStatus> {
+    if (!this.isConfigured()) {
+      throw new BadRequestException('stripe_not_configured');
+    }
+
+    const user = await this.userModel.findById(params.userId).exec();
+    if (!user) {
+      throw new BadRequestException('user_not_found');
+    }
+
+    const accountId = String(user.stripeConnectAccountId ?? '').trim();
+    if (!accountId) {
+      throw new BadRequestException('stripe_connect_not_linked');
+    }
+
+    try {
+      const account = await this.retrieveAccount(accountId);
+      await this.syncAccountFlags(params.userId, account);
+      await this.storeModel
+        .updateOne(
+          { _id: params.storeId },
+          { $set: { stripeConnectAccountId: accountId } },
+        )
+        .exec();
+      const status = this.statusFromAccount(account, user);
+      this.pushConnectStatusRealtime(params.userId, status);
+      return status;
+    } catch (e) {
+      if (isStripeConnectAccountUnavailableError(e)) {
+        await this.clearStaleConnectAccount(params.userId);
+        await this.storeModel
+          .updateOne(
+            { _id: params.storeId },
+            { $set: { stripeConnectAccountId: null } },
+          )
+          .exec();
+        const status = this.statusFromAccount(null, user);
+        this.pushConnectStatusRealtime(params.userId, status);
+        throw new BadRequestException('stripe_account_not_found');
+      }
+      throw new BadRequestException('stripe_error_generic');
+    }
+  }
+
+  /**
    * Admin : déconnecte Stripe Connect (suppression du compte Express si possible)
    * pour permettre un nouvel onboarding vendeur.
    */

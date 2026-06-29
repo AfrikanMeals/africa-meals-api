@@ -83,6 +83,7 @@ import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-e
 import {
   isStripeConnectOnboardingCompleteUser,
   resolveStripeOnboardingStatusLabel,
+  type StripeOnboardingCachedUser,
 } from '@modules/billing/stripe/stripe-connect-visibility';
 import {
   isPartnerBadgeCode,
@@ -2944,6 +2945,9 @@ export class StoreService {
       return undefined;
     };
     const stripeOnboardingStatus = resolveStripeOnboardingStatusLabel(owner);
+    const stripeConnectAccountId = owner
+      ? String(owner.stripeConnectAccountId ?? '').trim()
+      : '';
     const partnerBadgeCode = String(
       s.partnerBadgeCode ?? s.partner_badge_code ?? '',
     ).trim();
@@ -2963,6 +2967,11 @@ export class StoreService {
       latitude,
       longitude,
       stripeOnboardingStatus,
+      stripeConnectAccountId: stripeConnectAccountId || undefined,
+      stripeConnectLinked: Boolean(stripeConnectAccountId),
+      stripeConnectActive: isStripeConnectOnboardingCompleteUser(
+        owner as StripeOnboardingCachedUser | null | undefined,
+      ),
       partnerBadge: serializePartnerBadge(partnerBadgeCode || null),
       subscriptionPlan:
         String(options?.subscriptionPlan ?? '').trim() || 'FREE',
@@ -3864,6 +3873,130 @@ export class StoreService {
     return this._mapStoreToAdminVendorRow(lean as Record<string, unknown>, {
       subscriptionPlan: planByStore.get(storeId),
     });
+  }
+
+  private async _reloadAdminVendorRow(
+    storeId: string,
+  ): Promise<Record<string, unknown>> {
+    const lean = await this._storeModel
+      .findById(storeId)
+      .populate({
+        path: 'owner',
+        select:
+          'fullName email stripeConnectAccountId stripeConnectChargesEnabled stripeConnectPayoutsEnabled stripeConnectDetailsSubmitted stripeConnectDisabledReason stripeConnectRequirementsDue stripeConnectRequirementsPastDue',
+      })
+      .populate({
+        path: 'address',
+        select: 'address city country countryCode zipCode location',
+      })
+      .lean()
+      .exec();
+    if (!lean) {
+      throw new NotFoundException('store_not_found');
+    }
+    const planByStore = await this._resolveSubscriptionPlanByStoreIds([
+      storeId,
+    ]);
+    return this._mapStoreToAdminVendorRow(lean as Record<string, unknown>, {
+      subscriptionPlan: planByStore.get(storeId),
+    });
+  }
+
+  /** Admin : lie un compte Stripe Connect existant au propriétaire de la boutique. */
+  async assignVendorStripeConnectForAdmin(
+    storeId: string,
+    admin: UserModel,
+    stripeAccountId: string,
+  ) {
+    await this._assertAdminVendorPermission(admin);
+    if (!Types.ObjectId.isValid(storeId)) {
+      throw new NotFoundException('store_not_found');
+    }
+
+    const doc = await this._storeModel
+      .findById(storeId)
+      .select('_id name owner')
+      .exec();
+    if (!doc) {
+      throw new NotFoundException('store_not_found');
+    }
+
+    const ownerId = this.stringifyIdLike(doc.owner);
+    if (!ownerId || !Types.ObjectId.isValid(ownerId)) {
+      throw new BadRequestException('store_owner_missing');
+    }
+
+    const connectStatus = await this._stripeConnect.assignConnectAccountForAdmin(
+      {
+        userId: new Types.ObjectId(ownerId),
+        storeId: doc._id as Types.ObjectId,
+        stripeAccountId,
+      },
+    );
+
+    this._dashboardAudit.recordPlatformEvent(admin, {
+      action: 'ADMIN_VENDOR_STRIPE_CONNECT_ASSIGNED',
+      category: 'vendors',
+      path: `/vendeurs/${storeId}`,
+      storeId,
+      resource: 'vendor_stripe_connect',
+      resourceId: ownerId,
+      metadata: {
+        storeName: String(doc.name ?? ''),
+        stripeAccountId: connectStatus.accountId,
+        onboardingComplete: connectStatus.onboardingComplete,
+        connectStatus: connectStatus.status,
+      },
+    });
+
+    this._wsInboxNotify.notifyUserInboxRefresh(ownerId);
+
+    return this._reloadAdminVendorRow(storeId);
+  }
+
+  /** Admin : resynchronise le statut Stripe Connect depuis Stripe. */
+  async syncVendorStripeConnectForAdmin(storeId: string, admin: UserModel) {
+    await this._assertAdminVendorPermission(admin);
+    if (!Types.ObjectId.isValid(storeId)) {
+      throw new NotFoundException('store_not_found');
+    }
+
+    const doc = await this._storeModel
+      .findById(storeId)
+      .select('_id name owner')
+      .exec();
+    if (!doc) {
+      throw new NotFoundException('store_not_found');
+    }
+
+    const ownerId = this.stringifyIdLike(doc.owner);
+    if (!ownerId || !Types.ObjectId.isValid(ownerId)) {
+      throw new BadRequestException('store_owner_missing');
+    }
+
+    const connectStatus = await this._stripeConnect.syncConnectAccountForAdmin({
+      userId: new Types.ObjectId(ownerId),
+      storeId: doc._id as Types.ObjectId,
+    });
+
+    this._dashboardAudit.recordPlatformEvent(admin, {
+      action: 'ADMIN_VENDOR_STRIPE_CONNECT_SYNCED',
+      category: 'vendors',
+      path: `/vendeurs/${storeId}`,
+      storeId,
+      resource: 'vendor_stripe_connect',
+      resourceId: ownerId,
+      metadata: {
+        storeName: String(doc.name ?? ''),
+        stripeAccountId: connectStatus.accountId,
+        onboardingComplete: connectStatus.onboardingComplete,
+        connectStatus: connectStatus.status,
+      },
+    });
+
+    this._wsInboxNotify.notifyUserInboxRefresh(ownerId);
+
+    return this._reloadAdminVendorRow(storeId);
   }
 
   async listStripeResetArchiveBatchesForAdmin(
