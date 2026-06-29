@@ -13,6 +13,7 @@ export const EMAIL_ENGINE_DEFAULT = 'default';
 export const EMAIL_ENGINE_BIRD = 'bird';
 export const EMAIL_ENGINE_RESEND = 'resend';
 export const EMAIL_ENGINE_SENDGRID = 'sendgrid';
+export const EMAIL_ENGINE_MAILERSEND = 'mailersend';
 export const EMAIL_ENGINE_SMTP_PREFIX = 'smtp:';
 
 export type EmailEngineOption = {
@@ -79,7 +80,8 @@ export function normalizeEmailEngine(
     value === EMAIL_ENGINE_DEFAULT ||
     value === EMAIL_ENGINE_BIRD ||
     value === EMAIL_ENGINE_RESEND ||
-    value === EMAIL_ENGINE_SENDGRID
+    value === EMAIL_ENGINE_SENDGRID ||
+    value === EMAIL_ENGINE_MAILERSEND
   ) {
     return value;
   }
@@ -102,6 +104,7 @@ export function buildEmailEngineOptions(args: {
   birdEmailConfigured: boolean;
   resendConfigured: boolean;
   sendgridConfigured: boolean;
+  mailerSendConfigured: boolean;
   smtpConfigs: PlatformSmtpConfigView[];
 }): EmailEngineOption[] {
   const smtpConfiguredCount =
@@ -111,13 +114,14 @@ export function buildEmailEngineOptions(args: {
     smtpConfiguredCount +
     (args.birdEmailConfigured ? 1 : 0) +
     (args.resendConfigured ? 1 : 0) +
-    (args.sendgridConfigured ? 1 : 0);
+    (args.sendgridConfigured ? 1 : 0) +
+    (args.mailerSendConfigured ? 1 : 0);
 
   const options: EmailEngineOption[] = [
     {
       value: EMAIL_ENGINE_ANY,
       label: 'Any Engine',
-      hint: 'Choisit aléatoirement parmi tous les moteurs configurés (SMTP, Bird, Resend, SendGrid).',
+      hint: 'Choisit aléatoirement parmi tous les moteurs configurés (SMTP, Bird, Resend, SendGrid, MailerSend).',
       kind: 'builtin',
       configured: allConfiguredCount >= 2,
     },
@@ -169,6 +173,13 @@ export function buildEmailEngineOptions(args: {
       hint: 'API SendGrid (SENDGRID_API_KEY).',
       kind: 'builtin',
       configured: args.sendgridConfigured,
+    },
+    {
+      value: EMAIL_ENGINE_MAILERSEND,
+      label: 'MailerSend',
+      hint: 'API MailerSend (MAILER_API_KEY, MAILER_SENDER).',
+      kind: 'builtin',
+      configured: args.mailerSendConfigured,
     },
   );
 

@@ -35,6 +35,20 @@ export class UpdateEmailChannelSettingsDto {
   @IsOptional()
   @IsString()
   @MaxLength(8192)
+  mailerApiKey?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  mailerApiKeyUseDatabase?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  mailerSender?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(8192)
   birdAccessKey?: string;
 
   @IsOptional()
@@ -56,7 +70,7 @@ export class UpdateEmailChannelSettingsDto {
   @MaxLength(512)
   birdApiBaseUrl?: string;
 
-  /** moduleId → engine (any, auto, default, bird, resend, sendgrid, smtp:{id}). */
+  /** moduleId → engine (any, auto, default, bird, resend, sendgrid, mailersend, smtp:{id}). */
   @IsOptional()
   @IsObject()
   moduleEngines?: Record<string, string>;

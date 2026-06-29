@@ -125,6 +125,12 @@ export const API_SECRET_REGISTRY: SecretKeyDefinition[] = [
     category: 'E-mail',
   },
   {
+    envVarName: 'MAILER_API_KEY',
+    label: 'MailerSend — clé API',
+    description: 'Clé API MailerSend pour l’envoi d’e-mails transactionnels.',
+    category: 'E-mail',
+  },
+  {
     envVarName: 'MAPBOX_ACCESS_TOKEN',
     label: 'Mapbox — token',
     description: 'Token d’accès Mapbox pour la géolocalisation.',

@@ -35,6 +35,9 @@ export class PlatformChannelSettingsModel {
   @Prop({ type: String, default: null, trim: true, name: 'twilio_sms_from' })
   twilioSmsFrom?: string | null;
 
+  @Prop({ type: String, default: null, trim: true, name: 'mailer_send_sender' })
+  mailerSendSender?: string | null;
+
   @Prop({ type: String, default: null, trim: true, name: 'telegram_api_base_url' })
   telegramApiBaseUrl?: string | null;
 

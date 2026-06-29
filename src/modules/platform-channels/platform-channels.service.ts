@@ -48,6 +48,7 @@ import {
   EMAIL_ENGINE_BIRD,
   EMAIL_ENGINE_RESEND,
   EMAIL_ENGINE_SENDGRID,
+  EMAIL_ENGINE_MAILERSEND,
   normalizeEmailEngine,
   normalizeEmailModuleEngine,
   smtpConfigSecretKey,
@@ -150,9 +151,17 @@ export type EmailBirdCredentialsResponse = {
   configured: boolean;
 };
 
+export type EmailMailerSendCredentialsResponse = {
+  apiKey: ChannelCredentialField;
+  apiKeyUseDatabase: boolean;
+  sender: ChannelCredentialField;
+  configured: boolean;
+};
+
 export type EmailEngineCredentialsResponse = {
   resend: EmailProviderCredentialsResponse;
   sendgrid: EmailProviderCredentialsResponse;
+  mailersend: EmailMailerSendCredentialsResponse;
   bird: EmailBirdCredentialsResponse;
 };
 
@@ -464,6 +473,9 @@ export class PlatformChannelsService {
       dto.resendApiKeyUseDatabase !== undefined ||
       dto.sendgridApiKey !== undefined ||
       dto.sendgridApiKeyUseDatabase !== undefined ||
+      dto.mailerApiKey !== undefined ||
+      dto.mailerApiKeyUseDatabase !== undefined ||
+      dto.mailerSender !== undefined ||
       dto.birdAccessKey !== undefined ||
       dto.birdAccessKeyUseDatabase !== undefined ||
       dto.birdWorkspaceId !== undefined ||
@@ -500,6 +512,9 @@ export class PlatformChannelsService {
       }
       if (dto.birdApiBaseUrl !== undefined) {
         patch.birdApiBaseUrl = dto.birdApiBaseUrl.trim() || null;
+      }
+      if (dto.mailerSender !== undefined) {
+        patch.mailerSendSender = dto.mailerSender.trim() || null;
       }
 
       if (Object.keys(patch).length > 0) {
@@ -548,6 +563,11 @@ export class PlatformChannelsService {
         'SENDGRID_API_KEY',
         dto.sendgridApiKey,
         dto.sendgridApiKeyUseDatabase,
+      );
+      pushSecretKey(
+        'MAILER_API_KEY',
+        dto.mailerApiKey,
+        dto.mailerApiKeyUseDatabase,
       );
       pushSecretKey(
         'BIRD_ACCESS_KEY',
@@ -612,8 +632,6 @@ export class PlatformChannelsService {
     const doc = await this.ensureSettings();
     const smtpConfigs = doc.smtpConfigs ?? [];
     const smtpViews = await this.buildSmtpConfigViews(smtpConfigs);
-    const mailerKey = process.env.MAILER_API_KEY?.trim() ?? '';
-    const mailerSender = process.env.MAILER_SENDER?.trim() ?? '';
     return {
       globalEngine: normalizeEmailEngine(doc.emailEngine, smtpConfigs),
       defaultSmtpConfigured: await this.isDefaultSmtpConfigured(),
@@ -623,7 +641,7 @@ export class PlatformChannelsService {
       configuredSmtpConfigIds: smtpViews
         .filter((view) => view.configured)
         .map((view) => view.id),
-      mailerSendConfigured: Boolean(mailerKey && mailerSender),
+      mailerSendConfigured: await this.isMailerSendConfigured(),
     };
   }
 
@@ -684,9 +702,24 @@ export class PlatformChannelsService {
 
   async listConfiguredConcreteEmailEngines(): Promise<string[]> {
     const ctx = await this.getEmailEngineRuntimeContext();
-    const engines = listConfiguredConcreteEngines(ctx);
-    if (ctx.mailerSendConfigured) engines.push('mailersend');
-    return engines;
+    return listConfiguredConcreteEngines(ctx);
+  }
+
+  async getMailerSendCredentials(): Promise<{
+    apiKey: string;
+    senderEmail: string;
+    appName: string;
+  } | null> {
+    const apiKey = await this.secrets.resolveString('api', 'MAILER_API_KEY');
+    if (!apiKey.trim()) return null;
+    const doc = await this.ensureSettings();
+    const senderEmail =
+      String(doc.mailerSendSender ?? '').trim() ||
+      process.env.MAILER_SENDER?.trim() ||
+      '';
+    if (!senderEmail) return null;
+    const appName = process.env.APP_NAME?.trim() || 'Wise Eat';
+    return { apiKey: apiKey.trim(), senderEmail, appName };
   }
 
   async createSmtpConfig(
@@ -975,6 +1008,13 @@ export class PlatformChannelsService {
       }
       return this.probeSendgridApiKey(apiKey);
     }
+    if (normalized === EMAIL_ENGINE_MAILERSEND) {
+      if (!(await this.isMailerSendConfigured())) {
+        return { ok: false, message: 'MailerSend non configuré.' };
+      }
+      const apiKey = await this.secrets.resolveString('api', 'MAILER_API_KEY');
+      return this.probeMailerSendApiKey(apiKey);
+    }
     const smtpId = smtpConfigIdFromEngine(normalized);
     if (smtpId) {
       return this.probeSmtpProfile(
@@ -1023,6 +1063,10 @@ export class PlatformChannelsService {
       if (await this.isResendConfigured()) {
         return { ok: true, message: 'Resend configuré.' };
       }
+      if (await this.isMailerSendConfigured()) {
+        const apiKey = await this.secrets.resolveString('api', 'MAILER_API_KEY');
+        return this.probeMailerSendApiKey(apiKey);
+      }
       return { ok: false, message: 'Aucun moteur email configuré pour Any.' };
     }
 
@@ -1037,13 +1081,14 @@ export class PlatformChannelsService {
     const birdEmailConfigured = await this.isBirdEmailConfigured();
     const resendConfigured = await this.isResendConfigured();
     const sendgridConfigured = await this.isSendgridConfigured();
+    const mailerSendConfigured = await this.isMailerSendConfigured();
     const globalEngine = normalizeEmailEngine(doc.emailEngine, smtpConfigsRaw);
-    const ctx = await this.getEmailEngineRuntimeContext();
     const engineOptions = buildEmailEngineOptions({
       defaultSmtpConfigured,
       birdEmailConfigured,
       resendConfigured,
       sendgridConfigured,
+      mailerSendConfigured,
       smtpConfigs,
     });
 
@@ -1099,17 +1144,6 @@ export class PlatformChannelsService {
         healthDetail: row.healthDetail,
       });
     }
-
-    rows.push({
-      engine: 'mailersend-legacy',
-      label: 'MailerSend (legacy env)',
-      configured: ctx.mailerSendConfigured,
-      globalActive: false,
-      healthOk: ctx.mailerSendConfigured ? true : null,
-      healthDetail: ctx.mailerSendConfigured
-        ? 'MAILER_API_KEY + MAILER_SENDER présents (pas de probe API)'
-        : 'non configuré',
-    });
 
     return { globalEngine, rows };
   }
@@ -1187,6 +1221,47 @@ export class PlatformChannelsService {
     return Boolean(key.trim());
   }
 
+  private async isMailerSendConfigured(): Promise<boolean> {
+    const key = await this.secrets.resolveString('api', 'MAILER_API_KEY');
+    if (!key.trim()) return false;
+    const doc = await this.ensureSettings();
+    const sender =
+      String(doc.mailerSendSender ?? '').trim() ||
+      process.env.MAILER_SENDER?.trim() ||
+      '';
+    return Boolean(sender);
+  }
+
+  private async probeMailerSendApiKey(
+    apiKey: string,
+  ): Promise<{ ok: boolean; message: string; details?: string }> {
+    const trimmed = apiKey.trim();
+    if (!trimmed) {
+      return { ok: false, message: 'MailerSend non configuré.' };
+    }
+    try {
+      const res = await fetch('https://api.mailersend.com/v1/token', {
+        headers: { Authorization: `Bearer ${trimmed}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) {
+        return { ok: true, message: 'MailerSend configuré et valide.' };
+      }
+      const body = await res.text().catch(() => '');
+      return {
+        ok: false,
+        message: 'MailerSend non valide.',
+        details: body || `HTTP ${res.status}`,
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        message: 'MailerSend non accessible.',
+        details: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }
+
   private async buildSecretCredentialView(envVarName: string): Promise<{
     field: ChannelCredentialField;
     useDatabase: boolean;
@@ -1212,9 +1287,11 @@ export class PlatformChannelsService {
   private async buildEmailEngineCredentialsResponse(
     doc: PlatformChannelSettingsDocument,
   ): Promise<EmailEngineCredentialsResponse> {
-    const [resendSecret, sendgridSecret, birdAccessSecret] = await Promise.all([
+    const [resendSecret, sendgridSecret, mailerSecret, birdAccessSecret] =
+      await Promise.all([
       this.buildSecretCredentialView('RESEND_API_KEY'),
       this.buildSecretCredentialView('SENDGRID_API_KEY'),
+      this.buildSecretCredentialView('MAILER_API_KEY'),
       this.buildSecretCredentialView('BIRD_ACCESS_KEY'),
     ]);
 
@@ -1233,6 +1310,12 @@ export class PlatformChannelsService {
 
     const mergedEnv = await this.getBirdEmailMergedEnv();
     const birdConfigured = readBirdEmailConfig(mergedEnv) != null;
+    const sender = resolveField(
+      doc.mailerSendSender,
+      process.env.MAILER_SENDER,
+    );
+    const mailerConfigured =
+      mailerSecret.field.configured && sender.configured;
 
     return {
       resend: {
@@ -1244,6 +1327,12 @@ export class PlatformChannelsService {
         apiKey: sendgridSecret.field,
         apiKeyUseDatabase: sendgridSecret.useDatabase,
         configured: sendgridSecret.field.configured,
+      },
+      mailersend: {
+        apiKey: mailerSecret.field,
+        apiKeyUseDatabase: mailerSecret.useDatabase,
+        sender,
+        configured: mailerConfigured,
       },
       bird: {
         accessKey: birdAccessSecret.field,
@@ -1328,12 +1417,14 @@ export class PlatformChannelsService {
     const birdEmailConfigured = await this.isBirdEmailConfigured();
     const resendConfigured = await this.isResendConfigured();
     const sendgridConfigured = await this.isSendgridConfigured();
+    const mailerSendConfigured = await this.isMailerSendConfigured();
     const emailEngine = normalizeEmailEngine(doc.emailEngine, smtpConfigsRaw);
     const engineOptions = buildEmailEngineOptions({
       defaultSmtpConfigured,
       birdEmailConfigured,
       resendConfigured,
       sendgridConfigured,
+      mailerSendConfigured,
       smtpConfigs,
     });
     const credentials = await this.buildEmailEngineCredentialsResponse(doc);

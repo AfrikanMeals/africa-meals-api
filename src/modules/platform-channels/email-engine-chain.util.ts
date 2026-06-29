@@ -5,6 +5,7 @@ import {
   EMAIL_ENGINE_DEFAULT,
   EMAIL_ENGINE_RESEND,
   EMAIL_ENGINE_SENDGRID,
+  EMAIL_ENGINE_MAILERSEND,
   isSmtpEngineValue,
 } from './email-engine.util';
 import type { EmailEngineRuntimeContext } from './email-send.types';
@@ -29,6 +30,7 @@ export function listConfiguredConcreteEngines(
   if (ctx.birdEmailConfigured) engines.push(EMAIL_ENGINE_BIRD);
   if (ctx.resendConfigured) engines.push(EMAIL_ENGINE_RESEND);
   if (ctx.sendgridConfigured) engines.push(EMAIL_ENGINE_SENDGRID);
+  if (ctx.mailerSendConfigured) engines.push(EMAIL_ENGINE_MAILERSEND);
   return engines;
 }
 
@@ -52,7 +54,7 @@ export function buildEmailEngineAttemptChain(args: {
 }): string[] {
   const all = listConfiguredConcreteEngines(args.ctx);
   if (!all.length) {
-    return args.ctx.mailerSendConfigured ? ['mailersend'] : [];
+    return [];
   }
 
   let primary: string[] = [];
@@ -71,9 +73,5 @@ export function buildEmailEngineAttemptChain(args: {
 
   const seen = new Set(primary);
   const fallback = all.filter((engine) => !seen.has(engine));
-  const chain = [...primary, ...fallback];
-  if (args.ctx.mailerSendConfigured && !chain.includes('mailersend')) {
-    chain.push('mailersend');
-  }
-  return chain;
+  return [...primary, ...fallback];
 }

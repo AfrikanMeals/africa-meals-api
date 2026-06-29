@@ -1,6 +1,5 @@
 import {
   BadGatewayException,
-  Inject,
   Injectable,
   Logger,
 } from '@nestjs/common';
@@ -11,6 +10,7 @@ import {
   EMAIL_ENGINE_DEFAULT,
   EMAIL_ENGINE_RESEND,
   EMAIL_ENGINE_SENDGRID,
+  EMAIL_ENGINE_MAILERSEND,
   smtpConfigIdFromEngine,
 } from '@modules/platform-channels/email-engine.util';
 import type { EmailAppModuleId } from '@modules/platform-channels/email-module.registry';
@@ -36,7 +36,6 @@ export class EmailDispatchService {
     private readonly platformChannels: PlatformChannelsService,
     private readonly secrets: SecretManagerService,
     private readonly config: ConfigService,
-    @Inject('MAILER') private readonly mailerSend: MailerSend,
   ) {}
 
   async sendSimple(args: EmailDispatchSendArgs): Promise<void> {
@@ -79,7 +78,7 @@ export class EmailDispatchService {
     engine: string,
     args: DispatchSimpleMailPayload,
   ): Promise<void> {
-    if (engine === 'mailersend') {
+    if (engine === EMAIL_ENGINE_MAILERSEND) {
       await this.sendViaMailerSend(args);
       return;
     }
@@ -248,12 +247,11 @@ export class EmailDispatchService {
   }
 
   private async sendViaMailerSend(args: DispatchSimpleMailPayload): Promise<void> {
-    const apiKey = this.config.get<string>('MAILER_API_KEY')?.trim();
-    const senderEmail = this.config.get<string>('MAILER_SENDER')?.trim();
-    if (!apiKey || !senderEmail) throw new Error('mailersend_not_configured');
+    const creds = await this.platformChannels.getMailerSendCredentials();
+    if (!creds) throw new Error('mailersend_not_configured');
 
-    const appName = this.config.get<string>('APP_NAME') ?? 'App';
-    const sentFrom = new Sender(senderEmail, appName);
+    const client = new MailerSend({ apiKey: creds.apiKey });
+    const sentFrom = new Sender(creds.senderEmail, creds.appName);
     const recipients = [new Recipient(args.to, args.toName ?? args.to)];
     const ccRecipients =
       args.cc?.map((email) => new Recipient(email, email)) ?? [];
@@ -278,6 +276,6 @@ export class EmailDispatchService {
       paramsBuilder.setText(args.text);
     }
 
-    await this.mailerSend.email.send(paramsBuilder);
+    await client.email.send(paramsBuilder);
   }
 }

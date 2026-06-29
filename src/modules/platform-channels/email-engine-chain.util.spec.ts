@@ -5,6 +5,7 @@ import {
   EMAIL_ENGINE_DEFAULT,
   EMAIL_ENGINE_RESEND,
   EMAIL_ENGINE_SENDGRID,
+  EMAIL_ENGINE_MAILERSEND,
 } from './email-engine.util';
 import { buildEmailEngineAttemptChain } from './email-engine-chain.util';
 import type { EmailEngineRuntimeContext } from './email-send.types';
@@ -29,8 +30,8 @@ describe('buildEmailEngineAttemptChain', () => {
     expect(chain).toContain(EMAIL_ENGINE_DEFAULT);
     expect(chain).toContain(EMAIL_ENGINE_BIRD);
     expect(chain).toContain('smtp:cfg1');
+    expect(chain).toContain(EMAIL_ENGINE_MAILERSEND);
     expect(new Set(chain).size).toBe(chain.length);
-    expect(chain.at(-1)).toBe('mailersend');
   });
 
   it('uses only smtp engines for auto selection primary pool', () => {
@@ -43,7 +44,7 @@ describe('buildEmailEngineAttemptChain', () => {
     expect(chain).toContain(EMAIL_ENGINE_BIRD);
   });
 
-  it('falls back to mailersend when no platform engines configured', () => {
+  it('falls back to mailersend when only mailersend is configured', () => {
     const chain = buildEmailEngineAttemptChain({
       selectedEngine: EMAIL_ENGINE_ANY,
       ctx: {
@@ -51,9 +52,27 @@ describe('buildEmailEngineAttemptChain', () => {
         defaultSmtpConfigured: false,
         birdEmailConfigured: false,
         resendConfigured: false,
+        sendgridConfigured: false,
         configuredSmtpConfigIds: [],
+        mailerSendConfigured: true,
       },
     });
-    expect(chain).toEqual(['mailersend']);
+    expect(chain).toEqual([EMAIL_ENGINE_MAILERSEND]);
+  });
+
+  it('returns empty chain when no engines configured', () => {
+    const chain = buildEmailEngineAttemptChain({
+      selectedEngine: EMAIL_ENGINE_ANY,
+      ctx: {
+        ...baseCtx,
+        defaultSmtpConfigured: false,
+        birdEmailConfigured: false,
+        resendConfigured: false,
+        sendgridConfigured: false,
+        configuredSmtpConfigIds: [],
+        mailerSendConfigured: false,
+      },
+    });
+    expect(chain).toEqual([]);
   });
 });
