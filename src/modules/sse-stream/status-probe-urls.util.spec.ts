@@ -3,6 +3,11 @@ import {
   isDevStatusProbeStack,
   resolveAdminProbeEndpointUrl,
   resolveAdminProbeHealthUrl,
+  resolveAdminPublicUrl,
+  resolveGrpcApiDisplayEndpoint,
+  resolveGrpcApiProbeHost,
+  resolveGrpcWsDisplayEndpoint,
+  resolveGrpcWsProbeHost,
   resolveWebProbeEndpointUrl,
   resolveWebProbeUrl,
   resolveWsProbeEndpointUrl,
@@ -82,6 +87,30 @@ describe('status-probe-urls.util', () => {
         }),
       ),
     ).toBe('https://admin.wise-eat.com/api/health');
+  });
+
+  it('resolveAdminPublicUrl prefers ADMIN_APP_URL over localhost in production', () => {
+    expect(
+      resolveAdminPublicUrl(
+        mockConfig({
+          NODE_ENV: 'production',
+          SERVER_URL: 'https://api.wise-eat.com',
+          ADMIN_APP_URL: 'https://admin.wise-eat.com',
+        }),
+      ),
+    ).toBe('https://admin.wise-eat.com');
+  });
+
+  it('resolveAdminPublicUrl derives from STATUS_PROBE_ADMIN_URL when ADMIN_APP_URL absent', () => {
+    expect(
+      resolveAdminPublicUrl(
+        mockConfig({
+          NODE_ENV: 'production',
+          SERVER_URL: 'https://api.wise-eat.com',
+          STATUS_PROBE_ADMIN_URL: 'https://admin.wise-eat.com/api/health',
+        }),
+      ),
+    ).toBe('https://admin.wise-eat.com');
   });
 
   it('uses k8s internal WS for fetch and public WS_BASE_URL for endpoint', () => {

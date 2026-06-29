@@ -18,6 +18,10 @@ import {
 } from '../../common/cache/memcached-connection.util';
 import { tlsMemcachedPing } from '../../common/cache/memcached-tls-client';
 import {
+  resolveGrpcApiProbeHost,
+  resolveGrpcWsProbeHost,
+} from '../sse-stream/status-probe-urls.util';
+import {
   getProtoServiceClientConstructor,
   grpc,
   grpcInternalMetadata,
@@ -513,7 +517,7 @@ export async function probeGrpcWsNotify(
       details: 'INTERNAL_NOTIFY_SECRET absent — gRPC WS non testable.',
     };
   }
-  const host = config.get<string>('GRPC_WS_HOST')?.trim() || '127.0.0.1';
+  const host = resolveGrpcWsProbeHost(config);
   const port = parsePositiveInt(config.get<string>('GRPC_WS_PORT'), 50051);
   const deadlineMs = parsePositiveInt(config.get<string>('GRPC_DEADLINE_MS'), 5000);
   const started = performance.now();
@@ -589,7 +593,7 @@ export async function probeGrpcApiInternal(
       details: 'INTERNAL_NOTIFY_SECRET absent — gRPC API non testable.',
     };
   }
-  const host = config.get<string>('GRPC_API_BIND_HOST')?.trim() || '127.0.0.1';
+  const host = resolveGrpcApiProbeHost(config);
   const port = parsePositiveInt(config.get<string>('GRPC_API_PORT'), 50052);
   const deadlineMs = parsePositiveInt(config.get<string>('GRPC_DEADLINE_MS'), 5000);
   const started = performance.now();

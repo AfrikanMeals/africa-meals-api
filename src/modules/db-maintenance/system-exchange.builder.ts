@@ -26,6 +26,11 @@ import {
   type ProbeResult,
 } from './system-exchange.probes';
 import { parseGrpcVersion } from '@africa-meals/proto';
+import {
+  resolveAdminPublicUrl,
+  resolveGrpcApiDisplayEndpoint,
+  resolveGrpcWsDisplayEndpoint,
+} from '../sse-stream/status-probe-urls.util';
 
 type BuildSystemExchangeInput = {
   config: ConfigService;
@@ -130,24 +135,13 @@ export async function buildSystemExchangeResponse(
   const webPublic =
     input.config.get<string>('AFRICA_MEALS_WEB_PUBLIC_URL')?.trim() ||
     'https://wise-eat.com';
-  const adminPublic =
-    input.config.get<string>('AFRICA_MEALS_ADMIN_PUBLIC_URL')?.trim() ||
-    'http://localhost:3001';
+  const adminPublic = resolveAdminPublicUrl(input.config);
 
   const wsHealthUrl = `${wsInternal.replace(/\/$/, '')}/api/health`;
   const wsSsePublicUrl = `${wsInternal.replace(/\/$/, '')}/api/sse/public/status`;
   const apiHealthUrl = resolveApiHealthProbeUrl(apiPublic);
-  const grpcWsHost = input.config.get<string>('GRPC_WS_HOST')?.trim() || '127.0.0.1';
-  const grpcWsPort = String(
-    input.config.get<string>('GRPC_WS_PORT')?.trim() || '50051',
-  );
-  const grpcApiPort = String(
-    input.config.get<string>('GRPC_API_PORT')?.trim() || '50052',
-  );
-  const grpcWsEndpoint = `${grpcWsHost}:${grpcWsPort}`;
-  const grpcApiHost =
-    input.config.get<string>('GRPC_API_BIND_HOST')?.trim() || '127.0.0.1';
-  const grpcApiEndpoint = `${grpcApiHost}:${grpcApiPort}`;
+  const grpcWsEndpoint = resolveGrpcWsDisplayEndpoint(input.config);
+  const grpcApiEndpoint = resolveGrpcApiDisplayEndpoint(input.config);
 
   const [
     mongoProbe,

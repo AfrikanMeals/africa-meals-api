@@ -53,6 +53,84 @@ function normalizeAdminHealthUrl(url: string): string {
   return `${base}/api/health`;
 }
 
+/** URL publique du dashboard admin (affichage statut / System Exchange). */
+export function resolveAdminPublicUrl(config: ConfigService): string {
+  const africaMeals = config.get<string>('AFRICA_MEALS_ADMIN_PUBLIC_URL')?.trim();
+  if (africaMeals) return africaMeals.replace(/\/+$/, '');
+
+  const adminApp = config.get<string>('ADMIN_APP_URL')?.trim();
+  if (adminApp) return adminApp.replace(/\/+$/, '');
+
+  const probeUrl = config.get<string>('STATUS_PROBE_ADMIN_URL')?.trim();
+  if (probeUrl) {
+    return probeUrl.replace(/\/+$/, '').replace(/\/api\/health$/, '');
+  }
+
+  if (isDevStatusProbeStack(config)) {
+    const port = localPort(config, 'PM2_ADMIN_DEV_PORT', '3001');
+    return `http://localhost:${port}`;
+  }
+
+  return 'https://admin.wise-eat.com';
+}
+
+const K8S_WS_GRPC_HOST = 'africa-meals-ws.wise-eat.svc.cluster.local';
+const K8S_API_GRPC_HOST = 'africa-meals-api.wise-eat.svc.cluster.local';
+
+function isGrpcInternalHost(host: string): boolean {
+  const h = host.toLowerCase();
+  if (h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0') return true;
+  if (h.includes('.svc.cluster.local') || h === 'host.k3s.internal') return true;
+  return false;
+}
+
+function hostFromInternalServiceUrl(raw: string | undefined): string | null {
+  const url = raw?.trim();
+  if (!url) return null;
+  try {
+    const host = new URL(url).hostname;
+    return isGrpcInternalHost(host) ? host : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Hôte gRPC WS pour sondes (jamais l’URL publique ws.wise-eat.com — port 50051 non exposé). */
+export function resolveGrpcWsProbeHost(config: ConfigService): string {
+  const configured = config.get<string>('GRPC_WS_HOST')?.trim();
+  if (configured && isGrpcInternalHost(configured)) {
+    return configured;
+  }
+  const fromWsInternal = hostFromInternalServiceUrl(
+    config.get<string>('AFRICA_MEALS_WS_INTERNAL_URL'),
+  );
+  if (fromWsInternal) return fromWsInternal;
+  if (!isDevStatusProbeStack(config)) return K8S_WS_GRPC_HOST;
+  return configured || '127.0.0.1';
+}
+
+export function resolveGrpcWsDisplayEndpoint(config: ConfigService): string {
+  const port = localPort(config, 'GRPC_WS_PORT', '50051');
+  return `${resolveGrpcWsProbeHost(config)}:${port}`;
+}
+
+/** Hôte gRPC API pour sondes depuis le pod API (bind 0.0.0.0 → loopback). */
+export function resolveGrpcApiProbeHost(config: ConfigService): string {
+  const bind = config.get<string>('GRPC_API_BIND_HOST')?.trim();
+  if (bind && bind !== '0.0.0.0' && isGrpcInternalHost(bind)) {
+    return bind;
+  }
+  return '127.0.0.1';
+}
+
+export function resolveGrpcApiDisplayEndpoint(config: ConfigService): string {
+  const port = localPort(config, 'GRPC_API_PORT', '50052');
+  if (!isDevStatusProbeStack(config)) {
+    return `${K8S_API_GRPC_HOST}:${port}`;
+  }
+  return `${resolveGrpcApiProbeHost(config)}:${port}`;
+}
+
 export function resolveWebProbeUrl(config: ConfigService): string {
   const direct = config.get<string>('STATUS_PROBE_WEB_URL')?.trim();
 
