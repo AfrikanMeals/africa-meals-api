@@ -688,6 +688,80 @@ export class VendorStatusEmailService {
     });
   }
 
+  /** E-mail d’annulation — propriétaire boutique uniquement (pas équipe / admins). */
+  async sendStoreOwnerOrderCancelledEmail(args: {
+    storeId: string;
+    orderId: string;
+    storeName?: string;
+    totalPrice?: number;
+    currency?: string;
+    itemCount?: number;
+    note?: string;
+    /** Évite un doublon si le propriétaire est aussi le client commandeur. */
+    excludeUserId?: string;
+  }): Promise<void> {
+    const ownerId = await this.storeAccess.resolveStoreOwnerUserId(args.storeId);
+    if (!ownerId) return;
+    const excluded = args.excludeUserId?.trim();
+    if (excluded && ownerId === excluded) return;
+
+    const recipient = await this.userRecipient(ownerId);
+    if (!recipient) return;
+
+    const storeName =
+      (args.storeName ?? '').trim() ||
+      (await this.storeName(args.storeId));
+    const emailPayload = this.buildVendorOrderEmailPayload({
+      storeId: args.storeId,
+      orderId: args.orderId,
+      event: 'order_cancelled',
+      storeName,
+      totalPrice: args.totalPrice,
+      currency: args.currency,
+      itemCount: args.itemCount,
+      note: args.note,
+    });
+
+    await this.sendToRecipient({
+      recipient,
+      subject: emailPayload.subject,
+      heading: emailPayload.heading,
+      body: emailPayload.body,
+      infoRows: emailPayload.infoRows,
+      logTag: `store_owner_order_cancelled store=${args.storeId} order=${args.orderId}`,
+    });
+  }
+
+  /** E-mail d’annulation — client commandeur. */
+  async sendCustomerOrderCancelledEmail(args: {
+    customerUserId: string;
+    orderId: string;
+    storeName?: string;
+    body: string;
+    note?: string;
+  }): Promise<void> {
+    const recipient = await this.userRecipient(args.customerUserId);
+    if (!recipient) return;
+    const storeName = (args.storeName ?? '').trim() || 'Restaurant';
+    const orderRef = this.orderRefLabel(args.orderId);
+    const infoRows: Array<{ label: string; value: string }> = [
+      { label: 'Commande', value: orderRef },
+      { label: 'Restaurant', value: storeName },
+      { label: 'Statut', value: 'Annulée' },
+    ];
+    if (args.note?.trim()) {
+      infoRows.push({ label: 'Détail', value: args.note.trim() });
+    }
+    await this.sendToRecipient({
+      recipient,
+      subject: 'Commande annulée',
+      heading: 'Commande annulée',
+      body: args.body,
+      infoRows,
+      logTag: `customer_order_cancelled order=${args.orderId}`,
+    });
+  }
+
   private orderRefLabel(orderId: string): string {
     const id = orderId.trim();
     const tail = id.length > 6 ? id.slice(-6).toUpperCase() : id.toUpperCase();

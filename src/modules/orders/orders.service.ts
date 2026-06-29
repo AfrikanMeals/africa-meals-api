@@ -98,7 +98,6 @@ import {
   readCourierGpsThrottleConfig,
 } from './courier-gps-throttle';
 import { domainEventIdFromCourierTracking } from '../../common/domain-events/domain-event-id.util';
-import { isDomainEventsWsViaBus } from '@modules/domain-event-handlers/domain-event-handlers.util';
 
 @Injectable()
 export class OrdersService {
@@ -1239,18 +1238,103 @@ export class OrdersService {
         reason: push.reason,
         status: ctx.status,
       },
-      email: {
-        event: ctx.reason,
-        orderId: orderIdStr,
-        storeName,
-        totalPrice,
-        currency,
-        itemCount,
-        note: ctx.note,
-        statusLabel,
-      },
+      email:
+        ctx.reason === 'order_cancelled'
+          ? undefined
+          : {
+              event: ctx.reason,
+              orderId: orderIdStr,
+              storeName,
+              totalPrice,
+              currency,
+              itemCount,
+              note: ctx.note,
+              statusLabel,
+            },
       logTag: ctx.reason,
     });
+  }
+
+  /**
+   * Annulation : push + e-mail client ; e-mail propriétaire boutique (pas équipe / admins).
+   */
+  private notifyOrderCancelledParties(
+    order: OrderModel,
+    args: {
+      previousStatus: string;
+      bodyOverride: string;
+      note?: string;
+    },
+  ): void {
+    const customerId = this.userIdFromOrderDoc(order);
+    const oid = order._id.toString();
+    const storeId = this.storeIdFromOrderDoc(order);
+    const storeName = this.storeNameFromPopulated(order.store);
+    const items = (order.items ?? []) as OrdeLineItem[];
+    const itemCount = items.reduce(
+      (s, i) => s + Math.max(1, Math.round(Number(i.quantity) || 1)),
+      0,
+    );
+    const totalPrice = Number(order.totalPrice) || 0;
+    const currency =
+      typeof order.currency === 'string' ? order.currency : undefined;
+
+    if (customerId) {
+      void this._notificationsService
+        .pushCustomerOrderStatusChanged({
+          userId: customerId,
+          orderId: oid,
+          storeName,
+          storeId: storeId ?? undefined,
+          previousStatus: args.previousStatus,
+          newStatus: OrderStatusEnum.CANCELLED,
+          bodyOverride: args.bodyOverride,
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `FCM order cancel: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
+
+      void this._vendorStatusEmail
+        .sendCustomerOrderCancelledEmail({
+          customerUserId: customerId,
+          orderId: oid,
+          storeName,
+          body: args.bodyOverride,
+          note: args.note,
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `Email order cancel customer: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
+    }
+
+    if (storeId) {
+      void this._vendorStatusEmail
+        .sendStoreOwnerOrderCancelledEmail({
+          storeId,
+          orderId: oid,
+          storeName,
+          totalPrice,
+          currency,
+          itemCount,
+          note: args.note,
+          excludeUserId: customerId ?? undefined,
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `Email order cancel owner: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
+    }
   }
 
   /**
@@ -2603,23 +2687,11 @@ export class OrdersService {
     });
 
     if (customerId) {
-      void this._notificationsService
-        .pushCustomerOrderStatusChanged({
-          userId: customerId,
-          orderId: oid,
-          storeName: this.storeNameFromPopulated(order.store),
-          storeId: storeId ?? undefined,
-          previousStatus: prevStatus,
-          newStatus: OrderStatusEnum.CANCELLED,
-          bodyOverride: 'Commande refusée ou annulée par le restaurant',
-        })
-        .catch((err) =>
-          this.logger.warn(
-            `FCM order reject: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          ),
-        );
+      this.notifyOrderCancelledParties(order, {
+        previousStatus: prevStatus,
+        bodyOverride: 'Commande refusée ou annulée par le restaurant',
+        note: resolved.details,
+      });
     }
 
     if (this._orderDomainBridge?.enabled()) {
@@ -2930,14 +3002,13 @@ export class OrdersService {
     return this._orderDomainBridge?.enabled() ?? false;
   }
 
-  /** WS temps réel immédiat (mobile / admin / vendeur), indépendamment du bus domaine async. */
+  /** WS temps réel immédiat (mobile / admin / vendeur). Toujours actif : le bus domaine peut être absent ou en retard. */
   private notifyOrderPartiesRealtime(
     orderOrId: OrderModel | Record<string, unknown> | string,
     status: OrderStatusEnum,
     extra?: Partial<OrderWsTrackingPayload>,
   ): void {
     if (!this._wsOrderNotifyHandler) return;
-    if (isDomainEventsWsViaBus(this._config)) return;
     if (typeof orderOrId === 'string') {
       void this._wsOrderNotifyHandler.notifyPartiesByOrderId(
         orderOrId,
@@ -3713,23 +3784,11 @@ export class OrdersService {
       note: `Annulation client (collecte) : ${resolved.details}`.slice(0, 500),
     });
 
-    void this._notificationsService
-      .pushCustomerOrderStatusChanged({
-        userId: String(user.id),
-        orderId: oid,
-        storeName: this.storeNameFromPopulated(order.store),
-        storeId: storeId ?? undefined,
-        previousStatus: prevStatus,
-        newStatus: OrderStatusEnum.CANCELLED,
-        bodyOverride: 'Commande annulée',
-      })
-      .catch((err) =>
-        this.logger.warn(
-          `FCM cancel pay-on-pickup: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        ),
-      );
+    this.notifyOrderCancelledParties(order, {
+      previousStatus: prevStatus,
+      bodyOverride: 'Commande annulée',
+      note: `Annulation client (collecte) : ${resolved.details}`,
+    });
 
     void this._wsOrderNotifyHandler?.notifyPartiesByOrderId(
       oid,
@@ -3826,23 +3885,11 @@ export class OrdersService {
       note: `Annulation client : ${resolved.details}`.slice(0, 500),
     });
 
-    void this._notificationsService
-      .pushCustomerOrderStatusChanged({
-        userId: String(user.id),
-        orderId: oid,
-        storeName: this.storeNameFromPopulated(order.store),
-        storeId: storeId ?? undefined,
-        previousStatus: prevStatus,
-        newStatus: OrderStatusEnum.CANCELLED,
-        bodyOverride: 'Commande annulée — remboursement en cours d’examen',
-      })
-      .catch((err) =>
-        this.logger.warn(
-          `FCM cancel+refund: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        ),
-      );
+    this.notifyOrderCancelledParties(order, {
+      previousStatus: prevStatus,
+      bodyOverride: 'Commande annulée — remboursement en cours d’examen',
+      note: `Annulation client : ${resolved.details}`,
+    });
 
     void this._wsOrderNotifyHandler?.notifyPartiesByOrderId(
       oid,

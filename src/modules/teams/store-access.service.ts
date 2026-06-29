@@ -333,8 +333,19 @@ export class StoreAccessService {
       .map((id) => new Types.ObjectId(id));
   }
 
+  /** Propriétaire de la boutique uniquement (pas équipe ni admins plateforme). */
+  async resolveStoreOwnerUserId(storeId: string): Promise<string | null> {
+    if (!Types.ObjectId.isValid(storeId)) return null;
+    const sto = await this.storeModel
+      .findById(new Types.ObjectId(storeId.trim()))
+      .select('owner')
+      .lean()
+      .exec();
+    return this.userIdFromRef(sto?.owner);
+  }
+
   /**
-   * Utilisateurs à notifier par FCM pour une boutique (propriétaire + équipe active).
+   * Utilisateurs à notifier par FCM pour une boutique (propriétaire + équipe active + admins commandes).
    */
   async listStorePushRecipientUserIds(storeId: string): Promise<string[]> {
     if (!Types.ObjectId.isValid(storeId)) {
@@ -360,6 +371,58 @@ export class StoreAccessService {
       const memberId = this.userIdFromRef(m.user);
       if (memberId) {
         ids.add(memberId);
+      }
+    }
+    const platformAdminIds = await this.listPlatformOrderPushRecipientUserIds();
+    for (const adminId of platformAdminIds) {
+      ids.add(adminId);
+    }
+    return [...ids].filter((id) => Types.ObjectId.isValid(id));
+  }
+
+  /**
+   * Admins plateforme avec accès commandes — alertes push nouvelles commandes (admin web).
+   */
+  async listPlatformOrderPushRecipientUserIds(): Promise<string[]> {
+    const matchingRoleIds = new Set<string>();
+    const roles = await this.platformRoleModel
+      .find()
+      .select('_id isSuper permissions')
+      .lean()
+      .exec();
+    for (const role of roles) {
+      const roleId = String(role._id);
+      if (role.isSuper) {
+        matchingRoleIds.add(roleId);
+        continue;
+      }
+      const rolePerms = (role.permissions ?? []).filter(
+        (p): p is string => typeof p === 'string',
+      );
+      if (adminPermissionGranted(rolePerms, 'admin.orders')) {
+        matchingRoleIds.add(roleId);
+      }
+    }
+
+    const admins = await this.userModel
+      .find({ type: UserTypeEnum.ADMIN })
+      .select('_id platformRoleId platformRoleIds')
+      .lean()
+      .exec();
+    const ids = new Set<string>();
+    for (const admin of admins) {
+      const roleIds = normalizePlatformRoleIds(
+        admin as {
+          platformRoleId?: Types.ObjectId;
+          platformRoleIds?: Types.ObjectId[];
+        },
+      );
+      if (!roleIds.length) {
+        ids.add(String(admin._id));
+        continue;
+      }
+      if (roleIds.some((rid) => matchingRoleIds.has(String(rid)))) {
+        ids.add(String(admin._id));
       }
     }
     return [...ids].filter((id) => Types.ObjectId.isValid(id));
