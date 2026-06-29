@@ -26,6 +26,15 @@ export class PlatformChannelSettingsModel {
   @Prop({ type: String, default: null, trim: true, name: 'bird_email_channel_id' })
   birdEmailChannelId?: string | null;
 
+  @Prop({ type: String, default: null, trim: true, name: 'bird_sms_workspace_id' })
+  birdSmsWorkspaceId?: string | null;
+
+  @Prop({ type: String, default: null, trim: true, name: 'bird_sms_channel_id' })
+  birdSmsChannelId?: string | null;
+
+  @Prop({ type: String, default: null, trim: true, name: 'twilio_sms_from' })
+  twilioSmsFrom?: string | null;
+
   @Prop({ type: String, default: null, trim: true, name: 'telegram_api_base_url' })
   telegramApiBaseUrl?: string | null;
 

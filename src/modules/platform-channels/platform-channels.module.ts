@@ -4,6 +4,10 @@ import {
   PlatformChannelSettingsModel,
   PlatformChannelSettingsSchema,
 } from '@schemas/platform-channel-settings.schema';
+import {
+  MaintenanceAlertSettingsModel,
+  MaintenanceAlertSettingsSchema,
+} from '@schemas/maintenance-alert-settings.schema';
 import { PlatformChannelsController } from './platform-channels.controller';
 import { PlatformChannelsService } from './platform-channels.service';
 
@@ -14,6 +18,10 @@ import { PlatformChannelsService } from './platform-channels.service';
       {
         name: PlatformChannelSettingsModel.name,
         schema: PlatformChannelSettingsSchema,
+      },
+      {
+        name: MaintenanceAlertSettingsModel.name,
+        schema: MaintenanceAlertSettingsSchema,
       },
     ]),
   ],

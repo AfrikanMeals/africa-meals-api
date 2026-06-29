@@ -10,6 +10,7 @@ import * as nodemailer from 'nodemailer';
 import {
   probeBirdChannelApi,
   readBirdEmailConfig,
+  readBirdSmsConfig,
   readBirdWhatsAppConfig,
   type BirdConfig,
 } from '@modules/ads/bird-channels.util';
@@ -18,6 +19,13 @@ import {
   readTelegramBotConfig,
   type TelegramBotConfig,
 } from '@modules/messaging/telegram-bot.util';
+import {
+  readTwilioSmsConfig,
+} from '@modules/messaging/twilio-sms.util';
+import {
+  MaintenanceAlertSettingsModel,
+  SmsEngineEnum,
+} from '@schemas/maintenance-alert-settings.schema';
 import { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
 import {
   PlatformChannelSettingsDocument,
@@ -26,6 +34,7 @@ import {
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 import { UpdateWhatsappChannelSettingsDto } from './dto/update-whatsapp-channel-settings.dto';
+import { UpdateSmsChannelSettingsDto } from './dto/update-sms-channel-settings.dto';
 import { UpdateTelegramChannelSettingsDto } from './dto/update-telegram-channel-settings.dto';
 import {
   UpdateEmailChannelSettingsDto,
@@ -56,6 +65,14 @@ import {
   buildEmailEngineAttemptChain,
   listConfiguredConcreteEngines,
 } from './email-engine-chain.util';
+import {
+  buildSmsEngineOptions,
+  normalizeSmsEngine,
+  SMS_ENGINE_AUTO,
+  SMS_ENGINE_BIRD,
+  SMS_ENGINE_TWILIO,
+  type SmsEngineOption,
+} from './sms-engine.util';
 import type { EmailEngineRuntimeContext, SmtpSendProfile } from './email-send.types';
 import type { PlatformSmtpConfigModel } from '@schemas/platform-smtp-config.schema';
 
@@ -89,6 +106,34 @@ export type TelegramChannelSettingsResponse = {
   configured: boolean;
   updatedAt: string | null;
 };
+
+export type TwilioSmsCredentialsResponse = {
+  accountSid: ChannelCredentialField;
+  accountSidUseDatabase: boolean;
+  authToken: ChannelCredentialField;
+  authTokenUseDatabase: boolean;
+  smsFrom: ChannelCredentialField;
+  configured: boolean;
+};
+
+export type BirdSmsCredentialsResponse = {
+  accessKey: ChannelCredentialField;
+  accessKeyUseDatabase: boolean;
+  workspaceId: ChannelCredentialField;
+  smsChannelId: ChannelCredentialField;
+  apiBaseUrl: ChannelCredentialField;
+  configured: boolean;
+};
+
+export type SmsChannelSettingsResponse = {
+  smsEngine: string;
+  engineOptions: SmsEngineOption[];
+  bird: BirdSmsCredentialsResponse;
+  twilio: TwilioSmsCredentialsResponse;
+  updatedAt: string | null;
+};
+
+const MAINTENANCE_ALERT_SETTINGS_KEY = 'default';
 
 export type EmailProviderCredentialsResponse = {
   apiKey: ChannelCredentialField;
@@ -185,16 +230,23 @@ export class PlatformChannelsService {
     at: number;
     env: NodeJS.ProcessEnv;
   } | null = null;
+  private mergedSmsEnvCache: {
+    at: number;
+    env: NodeJS.ProcessEnv;
+  } | null = null;
 
   constructor(
     @InjectModel(PlatformChannelSettingsModel.name)
     private readonly settingsModel: Model<PlatformChannelSettingsDocument>,
+    @InjectModel(MaintenanceAlertSettingsModel.name)
+    private readonly maintenanceSettingsModel: Model<MaintenanceAlertSettingsModel>,
     private readonly secrets: SecretManagerService,
   ) {}
 
   invalidateCache(): void {
     this.mergedWhatsappEnvCache = null;
     this.mergedTelegramEnvCache = null;
+    this.mergedSmsEnvCache = null;
   }
 
   async getWhatsappSettings(user: UserModel): Promise<WhatsappChannelSettingsResponse> {
@@ -1391,6 +1443,407 @@ export class PlatformChannelsService {
       botTokenUseDatabase: botTokenEntry?.dbEnabled === true,
       apiBaseUrl,
       configured,
+      updatedAt: typed.updatedAt?.toISOString?.() ?? null,
+    };
+  }
+
+  async getSmsSettings(user: UserModel): Promise<SmsChannelSettingsResponse> {
+    assertAdmin(user);
+    return this.buildSmsSettingsResponse(await this.ensureSettings());
+  }
+
+  async updateSmsSettings(
+    user: UserModel,
+    dto: UpdateSmsChannelSettingsDto,
+  ): Promise<SmsChannelSettingsResponse> {
+    assertAdmin(user);
+    const patch: Record<string, string | null> = {};
+
+    if (dto.birdWorkspaceId !== undefined) {
+      patch.birdSmsWorkspaceId = dto.birdWorkspaceId.trim() || null;
+    }
+    if (dto.birdSmsChannelId !== undefined) {
+      patch.birdSmsChannelId = dto.birdSmsChannelId.trim() || null;
+    }
+    if (dto.birdApiBaseUrl !== undefined) {
+      patch.birdApiBaseUrl = dto.birdApiBaseUrl.trim() || null;
+    }
+    if (dto.twilioSmsFrom !== undefined) {
+      patch.twilioSmsFrom = dto.twilioSmsFrom.trim() || null;
+    }
+
+    if (Object.keys(patch).length > 0) {
+      await this.settingsModel
+        .findOneAndUpdate(
+          { key: SETTINGS_KEY },
+          { $set: patch, $setOnInsert: { key: SETTINGS_KEY } },
+          { upsert: true, new: true, setDefaultsOnInsert: true },
+        )
+        .exec();
+    }
+
+    const secretKeys: Array<{
+      envVarName: string;
+      dbEnabled?: boolean;
+      value?: string;
+    }> = [];
+
+    if (dto.birdAccessKey !== undefined || dto.birdAccessKeyUseDatabase !== undefined) {
+      const keyPayload: {
+        envVarName: string;
+        dbEnabled?: boolean;
+        value?: string;
+      } = { envVarName: 'BIRD_ACCESS_KEY' };
+      if (dto.birdAccessKeyUseDatabase !== undefined) {
+        keyPayload.dbEnabled = dto.birdAccessKeyUseDatabase;
+      }
+      if (dto.birdAccessKey !== undefined) {
+        keyPayload.value = dto.birdAccessKey;
+        keyPayload.dbEnabled = dto.birdAccessKeyUseDatabase ?? true;
+      }
+      secretKeys.push(keyPayload);
+    }
+
+    if (
+      dto.twilioAccountSid !== undefined ||
+      dto.twilioAccountSidUseDatabase !== undefined
+    ) {
+      const keyPayload: {
+        envVarName: string;
+        dbEnabled?: boolean;
+        value?: string;
+      } = { envVarName: 'TWILIO_ACCOUNT_SID' };
+      if (dto.twilioAccountSidUseDatabase !== undefined) {
+        keyPayload.dbEnabled = dto.twilioAccountSidUseDatabase;
+      }
+      if (dto.twilioAccountSid !== undefined) {
+        keyPayload.value = dto.twilioAccountSid;
+        keyPayload.dbEnabled = dto.twilioAccountSidUseDatabase ?? true;
+      }
+      secretKeys.push(keyPayload);
+    }
+
+    if (
+      dto.twilioAuthToken !== undefined ||
+      dto.twilioAuthTokenUseDatabase !== undefined
+    ) {
+      const keyPayload: {
+        envVarName: string;
+        dbEnabled?: boolean;
+        value?: string;
+      } = { envVarName: 'TWILIO_AUTH_TOKEN' };
+      if (dto.twilioAuthTokenUseDatabase !== undefined) {
+        keyPayload.dbEnabled = dto.twilioAuthTokenUseDatabase;
+      }
+      if (dto.twilioAuthToken !== undefined) {
+        keyPayload.value = dto.twilioAuthToken;
+        keyPayload.dbEnabled = dto.twilioAuthTokenUseDatabase ?? true;
+      }
+      secretKeys.push(keyPayload);
+    }
+
+    if (secretKeys.length > 0) {
+      await this.secrets.updateSettings(user, {
+        scope: 'api',
+        managerEnabled: true,
+        keys: secretKeys,
+      });
+    }
+
+    if (dto.smsEngine !== undefined) {
+      await this.maintenanceSettingsModel
+        .findOneAndUpdate(
+          { key: MAINTENANCE_ALERT_SETTINGS_KEY },
+          { $set: { smsEngine: dto.smsEngine } },
+          { upsert: true, new: true, setDefaultsOnInsert: true },
+        )
+        .exec();
+    }
+
+    this.invalidateCache();
+    return this.getSmsSettings(user);
+  }
+
+  async getSmsMergedEnv(): Promise<NodeJS.ProcessEnv> {
+    const now = Date.now();
+    if (
+      this.mergedSmsEnvCache &&
+      now - this.mergedSmsEnvCache.at < MERGED_ENV_CACHE_MS
+    ) {
+      return this.mergedSmsEnvCache.env;
+    }
+
+    const doc = await this.ensureSettings();
+    const merged: NodeJS.ProcessEnv = { ...process.env };
+
+    const accessKey = await this.secrets.resolveString('api', 'BIRD_ACCESS_KEY');
+    if (accessKey.trim()) {
+      merged.BIRD_ACCESS_KEY = accessKey.trim();
+    }
+
+    const workspaceId =
+      String(doc.birdSmsWorkspaceId ?? '').trim() ||
+      process.env.BIRD_WORKSPACE_ID?.trim() ||
+      '';
+    if (workspaceId) {
+      merged.BIRD_WORKSPACE_ID = workspaceId;
+    }
+
+    const smsChannelId =
+      String(doc.birdSmsChannelId ?? '').trim() ||
+      process.env.BIRD_SMS_CHANNEL_ID?.trim() ||
+      process.env.BIRD_SMS_CHANNEL?.trim() ||
+      '';
+    if (smsChannelId) {
+      merged.BIRD_SMS_CHANNEL_ID = smsChannelId;
+    }
+
+    const apiBase =
+      String(doc.birdApiBaseUrl ?? '').trim() ||
+      process.env.BIRD_API_BASE_URL?.trim() ||
+      '';
+    if (apiBase) {
+      merged.BIRD_API_BASE_URL = apiBase;
+    }
+
+    const accountSid = await this.secrets.resolveString('api', 'TWILIO_ACCOUNT_SID');
+    if (accountSid.trim()) {
+      merged.TWILIO_ACCOUNT_SID = accountSid.trim();
+    }
+
+    const authToken = await this.secrets.resolveString('api', 'TWILIO_AUTH_TOKEN');
+    if (authToken.trim()) {
+      merged.TWILIO_AUTH_TOKEN = authToken.trim();
+    }
+
+    const smsFrom =
+      String(doc.twilioSmsFrom ?? '').trim() ||
+      process.env.TWILIO_SMS_FROM?.trim() ||
+      process.env.TWILIO_PHONE_NUMBER?.trim() ||
+      '';
+    if (smsFrom) {
+      merged.TWILIO_SMS_FROM = smsFrom;
+      merged.TWILIO_PHONE_NUMBER = smsFrom;
+    }
+
+    this.mergedSmsEnvCache = { at: now, env: merged };
+    return merged;
+  }
+
+  async getBirdSmsConfig(): Promise<BirdConfig | null> {
+    const env = await this.getSmsMergedEnv();
+    return readBirdSmsConfig(env);
+  }
+
+  async probeSmsSettings(
+    engine?: string,
+  ): Promise<{ ok: boolean; message: string; details?: string }> {
+    const normalized = normalizeSmsEngine(engine);
+    if (normalized === SMS_ENGINE_TWILIO) {
+      return this.probeTwilioSms();
+    }
+    if (normalized === SMS_ENGINE_BIRD) {
+      return this.probeBirdSms();
+    }
+    if (normalized === SMS_ENGINE_AUTO) {
+      const env = await this.getSmsMergedEnv();
+      const bird = readBirdSmsConfig(env);
+      const twilio = readTwilioSmsConfig(env);
+      if (!bird && !twilio) {
+        return {
+          ok: false,
+          message: 'Aucun moteur SMS configuré (Bird ou Twilio).',
+        };
+      }
+      const probes = await Promise.all([
+        bird ? this.probeBirdSms() : Promise.resolve(null),
+        twilio ? this.probeTwilioSms() : Promise.resolve(null),
+      ]);
+      const ok = probes.some((p) => p?.ok);
+      const details = probes
+        .filter(Boolean)
+        .map((p) => p!.message)
+        .join(' · ');
+      return {
+        ok,
+        message: ok
+          ? 'Au moins un moteur SMS est opérationnel.'
+          : 'Aucun moteur SMS accessible.',
+        details,
+      };
+    }
+    return this.probeBirdSms();
+  }
+
+  private async probeBirdSms(): Promise<{
+    ok: boolean;
+    message: string;
+    details?: string;
+  }> {
+    const config = await this.getBirdSmsConfig();
+    if (!config?.smsChannelId) {
+      return {
+        ok: false,
+        message: 'Bird SMS non configuré.',
+      };
+    }
+    const probe = await probeBirdChannelApi({
+      config,
+      channelId: config.smsChannelId,
+    });
+    return {
+      ok: probe.ok,
+      message: probe.ok
+        ? 'Bird SMS configuré et accessible.'
+        : 'Bird SMS non accessible.',
+      details: probe.error,
+    };
+  }
+
+  private async probeTwilioSms(): Promise<{
+    ok: boolean;
+    message: string;
+    details?: string;
+  }> {
+    const env = await this.getSmsMergedEnv();
+    const config = readTwilioSmsConfig(env);
+    if (!config) {
+      return { ok: false, message: 'Twilio SMS non configuré.' };
+    }
+    try {
+      const url = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(config.accountSid)}.json`;
+      const auth = Buffer.from(
+        `${config.accountSid}:${config.authToken}`,
+      ).toString('base64');
+      const res = await fetch(url, {
+        headers: { Authorization: `Basic ${auth}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      const data = (await res.json().catch(() => ({}))) as { message?: string };
+      if (!res.ok) {
+        return {
+          ok: false,
+          message: 'Twilio non valide.',
+          details: data.message ?? `Twilio HTTP ${res.status}`,
+        };
+      }
+      return { ok: true, message: 'Twilio configuré et valide.' };
+    } catch (e) {
+      return {
+        ok: false,
+        message: 'Twilio non accessible.',
+        details: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }
+
+  /** Moteur SMS global (runtime — sans contrôle admin). */
+  async getSmsEngineSetting(): Promise<SmsEngineEnum> {
+    const raw = await this.readSmsEngineSetting();
+    if (raw === SMS_ENGINE_TWILIO) return SmsEngineEnum.TWILIO;
+    if (raw === SMS_ENGINE_AUTO) return SmsEngineEnum.AUTO;
+    return SmsEngineEnum.BIRD;
+  }
+
+  private async readSmsEngineSetting(): Promise<string> {
+    const doc = await this.maintenanceSettingsModel
+      .findOne({ key: MAINTENANCE_ALERT_SETTINGS_KEY })
+      .select('smsEngine')
+      .lean()
+      .exec();
+    return normalizeSmsEngine(doc?.smsEngine);
+  }
+
+  private async buildSmsSettingsResponse(
+    doc: PlatformChannelSettingsDocument,
+  ): Promise<SmsChannelSettingsResponse> {
+    const typed = doc as unknown as { updatedAt?: Date };
+    const mergedEnv = await this.getSmsMergedEnv();
+    const birdConfigured = readBirdSmsConfig(mergedEnv) != null;
+    const twilioConfigured = readTwilioSmsConfig(mergedEnv) != null;
+    const smsEngine = await this.readSmsEngineSetting();
+    const engineOptions = buildSmsEngineOptions({
+      birdConfigured,
+      twilioConfigured,
+    });
+
+    const scopeView = await this.secrets.getScopeView('api');
+    const accessResolved = await this.secrets.resolve('api', 'BIRD_ACCESS_KEY');
+    const accessKeyEntry = scopeView.keys.find(
+      (k) => k.envVarName === 'BIRD_ACCESS_KEY',
+    );
+    const sidResolved = await this.secrets.resolve('api', 'TWILIO_ACCOUNT_SID');
+    const sidEntry = scopeView.keys.find(
+      (k) => k.envVarName === 'TWILIO_ACCOUNT_SID',
+    );
+    const tokenResolved = await this.secrets.resolve('api', 'TWILIO_AUTH_TOKEN');
+    const tokenEntry = scopeView.keys.find(
+      (k) => k.envVarName === 'TWILIO_AUTH_TOKEN',
+    );
+
+    const workspaceId = resolveField(
+      doc.birdSmsWorkspaceId,
+      process.env.BIRD_WORKSPACE_ID,
+    );
+    const smsChannelId = resolveField(
+      doc.birdSmsChannelId,
+      process.env.BIRD_SMS_CHANNEL_ID || process.env.BIRD_SMS_CHANNEL,
+    );
+    const apiBaseUrl = resolveField(
+      doc.birdApiBaseUrl,
+      process.env.BIRD_API_BASE_URL,
+    );
+    const smsFrom = resolveField(
+      doc.twilioSmsFrom,
+      process.env.TWILIO_SMS_FROM || process.env.TWILIO_PHONE_NUMBER,
+    );
+
+    return {
+      smsEngine,
+      engineOptions,
+      bird: {
+        accessKey: {
+          value: '',
+          source: accessResolved.source,
+          configured: Boolean(accessResolved.value),
+          preview:
+            accessKeyEntry?.valuePreview ??
+            maskSecret(accessResolved.value) ??
+            accessKeyEntry?.envPreview ??
+            null,
+        },
+        accessKeyUseDatabase: accessKeyEntry?.dbEnabled === true,
+        workspaceId,
+        smsChannelId,
+        apiBaseUrl,
+        configured: birdConfigured,
+      },
+      twilio: {
+        accountSid: {
+          value: '',
+          source: sidResolved.source,
+          configured: Boolean(sidResolved.value),
+          preview:
+            sidEntry?.valuePreview ??
+            maskSecret(sidResolved.value) ??
+            sidEntry?.envPreview ??
+            null,
+        },
+        accountSidUseDatabase: sidEntry?.dbEnabled === true,
+        authToken: {
+          value: '',
+          source: tokenResolved.source,
+          configured: Boolean(tokenResolved.value),
+          preview:
+            tokenEntry?.valuePreview ??
+            maskSecret(tokenResolved.value) ??
+            tokenEntry?.envPreview ??
+            null,
+        },
+        authTokenUseDatabase: tokenEntry?.dbEnabled === true,
+        smsFrom,
+        configured: twilioConfigured,
+      },
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
   }

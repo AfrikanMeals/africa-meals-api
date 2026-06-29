@@ -54,3 +54,4 @@ firebase-service-account.json
 scripts/reports/
 
 proxy.yml
+.env.prod

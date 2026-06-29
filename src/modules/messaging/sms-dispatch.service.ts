@@ -1,22 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
-import {
-  MaintenanceAlertSettingsModel,
-  SmsEngineEnum,
-} from '@schemas/maintenance-alert-settings.schema';
+import { SmsEngineEnum } from '@schemas/maintenance-alert-settings.schema';
 import {
   phoneToBirdE164,
   readBirdSmsConfig,
   sendBirdSmsMessage,
 } from '@modules/ads/bird-channels.util';
-import { Model } from 'mongoose';
+import { PlatformChannelsService } from '@modules/platform-channels/platform-channels.service';
 import {
   readTwilioSmsConfig,
   sendTwilioSmsMessage,
 } from './twilio-sms.util';
-
-const SMS_ENGINE_SETTINGS_KEY = 'default';
 
 export type SmsDispatchResult = {
   ok: boolean;
@@ -32,10 +26,13 @@ export class SmsDispatchService {
   private engineCache: { value: SmsEngineEnum; expiresAt: number } | null = null;
 
   constructor(
-    @InjectModel(MaintenanceAlertSettingsModel.name)
-    private readonly settingsModel: Model<MaintenanceAlertSettingsModel>,
+    private readonly platformChannels: PlatformChannelsService,
     private readonly config: ConfigService,
   ) {}
+
+  clearEngineCache(): void {
+    this.engineCache = null;
+  }
 
   async sendSms(args: {
     toPhone: string;
@@ -43,7 +40,8 @@ export class SmsDispatchService {
     defaultCountryCode?: string;
   }): Promise<SmsDispatchResult> {
     const configuredEngine = await this.getSmsEngine();
-    const engine = this.resolveEngineForSend(configuredEngine);
+    const env = await this.platformChannels.getSmsMergedEnv();
+    const engine = this.resolveEngineForSend(configuredEngine, env);
     const defaultCc =
       args.defaultCountryCode?.trim() ||
       this.config.get<string>('AD_NOTIFICATION_SMS_DEFAULT_COUNTRY_CODE')?.trim() ||
@@ -59,7 +57,7 @@ export class SmsDispatchService {
     }
 
     if (engine === SmsEngineEnum.TWILIO) {
-      const twilio = readTwilioSmsConfig(process.env);
+      const twilio = readTwilioSmsConfig(env);
       if (!twilio) {
         return { ok: false, engine, error: 'twilio_not_configured' };
       }
@@ -77,7 +75,7 @@ export class SmsDispatchService {
       }
     }
 
-    const bird = readBirdSmsConfig(process.env);
+    const bird = readBirdSmsConfig(env);
     if (!bird) {
       return { ok: false, engine, error: 'bird_sms_not_configured' };
     }
@@ -96,33 +94,23 @@ export class SmsDispatchService {
     if (this.engineCache && this.engineCache.expiresAt > now) {
       return this.engineCache.value;
     }
-    const doc = await this.settingsModel
-      .findOne({ key: SMS_ENGINE_SETTINGS_KEY })
-      .select('smsEngine')
-      .lean()
-      .exec();
-    const raw = doc?.smsEngine;
-    const value =
-      raw === SmsEngineEnum.TWILIO
-        ? SmsEngineEnum.TWILIO
-        : raw === SmsEngineEnum.AUTO
-          ? SmsEngineEnum.AUTO
-          : SmsEngineEnum.BIRD;
+    const value = await this.platformChannels.getSmsEngineSetting();
     this.engineCache = { value, expiresAt: now + 30_000 };
     return value;
   }
 
   private resolveEngineForSend(
     configured: SmsEngineEnum,
+    env: NodeJS.ProcessEnv,
   ): SmsEngineEnum {
     if (configured !== SmsEngineEnum.AUTO) {
       return configured;
     }
     const available: SmsEngineEnum[] = [];
-    if (readBirdSmsConfig(process.env)) {
+    if (readBirdSmsConfig(env)) {
       available.push(SmsEngineEnum.BIRD);
     }
-    if (readTwilioSmsConfig(process.env)) {
+    if (readTwilioSmsConfig(env)) {
       available.push(SmsEngineEnum.TWILIO);
     }
     if (available.length === 0) {

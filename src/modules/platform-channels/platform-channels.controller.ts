@@ -17,6 +17,7 @@ import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { UpdateWhatsappChannelSettingsDto } from './dto/update-whatsapp-channel-settings.dto';
+import { UpdateSmsChannelSettingsDto } from './dto/update-sms-channel-settings.dto';
 import { UpdateTelegramChannelSettingsDto } from './dto/update-telegram-channel-settings.dto';
 import {
   UpdateEmailChannelSettingsDto,
@@ -79,6 +80,31 @@ export class PlatformChannelsController {
   @ApiOperation({ summary: 'Vérifie la configuration Telegram Bot API' })
   probeTelegramSettings(@Req() req: Request) {
     return this.channels.probeTelegramSettings();
+  }
+
+  @Get('sms')
+  @ApiOperation({
+    summary:
+      'Paramètres SMS — moteur global (Bird / Twilio) et credentials DB + .env',
+  })
+  getSmsSettings(@Req() req: Request) {
+    return this.channels.getSmsSettings(req.user as UserModel);
+  }
+
+  @Patch('sms')
+  @ApiOperation({ summary: 'Met à jour le moteur SMS et les credentials' })
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  updateSmsSettings(
+    @Req() req: Request,
+    @Body() dto: UpdateSmsChannelSettingsDto,
+  ) {
+    return this.channels.updateSmsSettings(req.user as UserModel, dto);
+  }
+
+  @Get('sms/probe')
+  @ApiOperation({ summary: 'Vérifie la configuration d’un moteur SMS' })
+  probeSmsSettings(@Query('engine') engine?: string) {
+    return this.channels.probeSmsSettings(engine);
   }
 
   @Get('email')

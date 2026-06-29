@@ -161,6 +161,18 @@ export const API_SECRET_REGISTRY: SecretKeyDefinition[] = [
     category: 'Messagerie',
   },
   {
+    envVarName: 'TWILIO_ACCOUNT_SID',
+    label: 'Twilio — Account SID',
+    description: 'Identifiant compte Twilio (AC…).',
+    category: 'Messagerie',
+  },
+  {
+    envVarName: 'TWILIO_AUTH_TOKEN',
+    label: 'Twilio — Auth Token',
+    description: 'Token d’authentification Twilio.',
+    category: 'Messagerie',
+  },
+  {
     envVarName: 'TELEGRAM_BOT_TOKEN',
     label: 'Telegram — token bot',
     description: 'Token Bot API Telegram (@BotFather).',
