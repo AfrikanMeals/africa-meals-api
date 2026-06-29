@@ -167,4 +167,48 @@ describe('status-probe-urls.util', () => {
       ),
     ).toBe('http://localhost:5002/');
   });
+
+  it('resolveGrpcWsProbeHost ignores public ws.wise-eat.com in production', () => {
+    expect(
+      resolveGrpcWsProbeHost(
+        mockConfig({
+          NODE_ENV: 'production',
+          SERVER_URL: 'https://api.wise-eat.com',
+          GRPC_WS_HOST: 'ws.wise-eat.com',
+          AFRICA_MEALS_WS_INTERNAL_URL:
+            'http://africa-meals-ws.wise-eat.svc.cluster.local:8000',
+        }),
+      ),
+    ).toBe('africa-meals-ws.wise-eat.svc.cluster.local');
+    expect(
+      resolveGrpcWsDisplayEndpoint(
+        mockConfig({
+          NODE_ENV: 'production',
+          SERVER_URL: 'https://api.wise-eat.com',
+          GRPC_WS_HOST: 'ws.wise-eat.com',
+          AFRICA_MEALS_WS_INTERNAL_URL:
+            'http://africa-meals-ws.wise-eat.svc.cluster.local:8000',
+        }),
+      ),
+    ).toBe('africa-meals-ws.wise-eat.svc.cluster.local:50051');
+  });
+
+  it('resolveGrpcApiProbeHost uses loopback when bind is 0.0.0.0', () => {
+    expect(
+      resolveGrpcApiProbeHost(
+        mockConfig({
+          GRPC_API_BIND_HOST: '0.0.0.0',
+        }),
+      ),
+    ).toBe('127.0.0.1');
+    expect(
+      resolveGrpcApiDisplayEndpoint(
+        mockConfig({
+          NODE_ENV: 'production',
+          SERVER_URL: 'https://api.wise-eat.com',
+          GRPC_API_PORT: '50052',
+        }),
+      ),
+    ).toBe('africa-meals-api.wise-eat.svc.cluster.local:50052');
+  });
 });
