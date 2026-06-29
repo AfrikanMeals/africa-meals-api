@@ -38,15 +38,15 @@ function assertAtLeastOneEngine(
 function normalizeVendorDefault(raw: unknown): VendorEngine {
   const v = String(raw ?? '').trim().toLowerCase();
   if (v === 'google') return 'google';
-  if (v === 'osm') return 'osm';
-  return 'mapbox';
+  if (v === 'mapbox') return 'mapbox';
+  return 'osm';
 }
 
 function normalizeMobileDefault(raw: unknown): MobileEngine {
   const v = String(raw ?? '').trim().toLowerCase();
   if (v === 'google') return 'google';
-  if (v === 'osm') return 'osm';
-  return 'mapbox';
+  if (v === 'mapbox') return 'mapbox';
+  return 'osm';
 }
 
 function normalizeGeocodingEngine(raw: unknown): GeocodingEngine {
@@ -127,15 +127,15 @@ export class MapSettingsService {
             vendorMapboxEnabled: true,
             vendorGoogleEnabled: false,
             vendorOsmEnabled: true,
-            vendorDefaultMapEngine: 'mapbox',
+            vendorDefaultMapEngine: 'osm',
             mobileUserMapboxEnabled: true,
             mobileUserGoogleEnabled: true,
             mobileUserOsmEnabled: true,
-            mobileUserDefaultMapEngine: 'mapbox',
+            mobileUserDefaultMapEngine: 'osm',
             mobileDeliveryMapboxEnabled: true,
             mobileDeliveryGoogleEnabled: true,
             mobileDeliveryOsmEnabled: true,
-            mobileDeliveryDefaultMapEngine: 'mapbox',
+            mobileDeliveryDefaultMapEngine: 'osm',
             vendorGeocodingEngine: 'osm',
             mobileUserGeocodingEngine: 'osm',
             mobileDeliveryGeocodingEngine: 'osm',

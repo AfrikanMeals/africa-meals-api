@@ -17,8 +17,8 @@ export class MapSettingsModel {
   @Prop({ type: Boolean, default: true })
   vendorOsmEnabled: boolean;
 
-  /** Moteur par défaut — tableau de bord vendeur (mapbox | google). */
-  @Prop({ type: String, default: 'mapbox', trim: true })
+  /** Moteur par défaut — tableau de bord vendeur (mapbox | google | osm). */
+  @Prop({ type: String, default: 'osm', trim: true })
   vendorDefaultMapEngine: string;
 
   /** App mobile — mode client (USER). */
@@ -32,7 +32,7 @@ export class MapSettingsModel {
   mobileUserOsmEnabled: boolean;
 
   /** Moteur par défaut — app mobile client (mapbox | google | osm). */
-  @Prop({ type: String, default: 'mapbox', trim: true })
+  @Prop({ type: String, default: 'osm', trim: true })
   mobileUserDefaultMapEngine: string;
 
   /** App mobile — mode livreur (DELIVERY). */
@@ -46,7 +46,7 @@ export class MapSettingsModel {
   mobileDeliveryOsmEnabled: boolean;
 
   /** Moteur par défaut — app mobile livreur (mapbox | google | osm). */
-  @Prop({ type: String, default: 'mapbox', trim: true })
+  @Prop({ type: String, default: 'osm', trim: true })
   mobileDeliveryDefaultMapEngine: string;
 
   /** API géocodage — vendeur web (+ mobile vendeur). */
