@@ -34,7 +34,9 @@ export class AppCacheBustSubscriber implements OnModuleInit {
 
     this.subscriber = client.duplicate();
     this.subscriber.on('error', (err) => {
-      this._logger.warn(`Cache bust subscriber error: ${err.message}`);
+      const msg = err.message ?? '';
+      if (msg.includes('ECONNRESET')) return;
+      this._logger.warn(`Cache bust subscriber error: ${msg}`);
     });
     void this.subscriber
       .subscribe(APP_CACHE_BUST_CHANNEL)

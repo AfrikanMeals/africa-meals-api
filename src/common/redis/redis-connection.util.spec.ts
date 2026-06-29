@@ -1,4 +1,5 @@
 import {
+  buildIoredisOptionsFromConnection,
   isRedisReadonlyError,
   listBullmqRedisWriteConnectionsFromGetter,
   listRedisCacheConnectionsFromGetter,
@@ -50,5 +51,13 @@ describe('redis-connection.util write vs read lists', () => {
       ),
     ).toBe(true);
     expect(isRedisReadonlyError(new Error('ECONNRESET'))).toBe(false);
+  });
+
+  it('buildIoredisOptionsFromConnection active keepAlive TLS par défaut', () => {
+    const opts = buildIoredisOptionsFromConnection(
+      { host: 'host.k3s.internal', port: 6381, tls: {} },
+    );
+    expect(opts.keepAlive).toBe(30_000);
+    expect(opts.reconnectOnError).toBeDefined();
   });
 });

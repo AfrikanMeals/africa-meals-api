@@ -36,7 +36,9 @@ export class SharedRedisService implements OnModuleInit, OnModuleDestroy {
   private _attachClient(client: Redis, connection: RedisConnectionConfig): void {
     this.client = client;
     this.client.on('error', (err) => {
-      this.logger.warn(`Shared Redis error: ${err.message}`);
+      const msg = err.message ?? '';
+      if (msg.includes('ECONNRESET')) return;
+      this.logger.warn(`Shared Redis error: ${msg}`);
     });
     this.client.on('ready', () => {
       const bustClient = this.client as unknown as {

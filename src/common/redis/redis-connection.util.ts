@@ -25,6 +25,13 @@ export function readRedisIpFamily(
   return undefined;
 }
 
+/** TCP keepalive (ms) — évite TIMEOUTidle Stunnel (~120s) sur connexions BullMQ/pub-sub idle. */
+export function readRedisTcpKeepAliveMs(
+  get: RedisEnvGetter = (key) => process.env[key],
+): number {
+  return parsePositiveInt(get('REDIS_TCP_KEEPALIVE_MS'), 30_000);
+}
+
 export type RedisConnectionConfig = {
   host: string;
   port: number;
@@ -389,6 +396,7 @@ export type IoredisOptions = {
   password?: string;
   tls?: Record<string, unknown>;
   family?: number;
+  keepAlive?: number;
   maxRetriesPerRequest: number | null;
   connectTimeout?: number;
   lazyConnect?: boolean;
@@ -402,6 +410,7 @@ export function buildIoredisOptionsFromConnection(
   overrides?: Partial<IoredisOptions>,
 ): IoredisOptions {
   const ipFamily = readRedisIpFamily();
+  const keepAliveMs = readRedisTcpKeepAliveMs();
   const tlsOpts = connection.tls
     ? { reconnectOnError: ioredisReconnectOnTlsError }
     : {};
@@ -412,6 +421,7 @@ export function buildIoredisOptionsFromConnection(
     password: connection.password,
     tls: connection.tls,
     ...(ipFamily != null ? { family: ipFamily } : {}),
+    ...(keepAliveMs > 0 ? { keepAlive: keepAliveMs } : {}),
     ...tlsOpts,
     maxRetriesPerRequest: 2,
     connectTimeout: parsePositiveInt(

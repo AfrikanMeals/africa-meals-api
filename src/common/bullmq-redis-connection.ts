@@ -32,8 +32,19 @@ export function bullmqJobId(...parts: Array<string | number>): string {
 
 function attachRedisErrorLogging(client: Redis, label?: string): void {
   const prefix = label ? `${label}: ` : '';
+  let lastResetLogAt = 0;
   client.on('error', (err) => {
-    logger.warn(`${prefix}${err.message}`);
+    const msg = err.message ?? '';
+    if (msg.includes('ECONNRESET')) {
+      const now = Date.now();
+      if (now - lastResetLogAt < 60_000) return;
+      lastResetLogAt = now;
+      logger.warn(
+        `${prefix}TLS connexion fermée (idle Stunnel) — reconnexion automatique`,
+      );
+      return;
+    }
+    logger.warn(`${prefix}${msg}`);
   });
 }
 
