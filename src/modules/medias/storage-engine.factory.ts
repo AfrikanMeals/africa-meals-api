@@ -69,19 +69,33 @@ export class StorageEngineFactory {
     );
   }
 
+  resolveFromPool(
+    pool: StorageEngineId[] | undefined,
+    enabled?: StorageEnginesEnabled,
+  ): IStorageEngine {
+    const candidateIds =
+      pool?.length && pool.length > 0
+        ? pool
+        : (['firebase', 'gcs', 's3', 'minio', 'r2'] as StorageEngineId[]);
+    const available = candidateIds
+      .filter((id) => this.isEngineAllowed(id, enabled))
+      .map((id) => this.byId(id))
+      .filter((e) => e.isConfigured());
+    if (!available.length) {
+      const fallback = this.configuredAndAllowed(enabled)[0];
+      return fallback ?? this.byId('firebase');
+    }
+    if (available.length === 1) return available[0];
+    return available[Math.floor(Math.random() * available.length)];
+  }
+
   resolve(
     mode: StorageEngineMode,
     enabled?: StorageEnginesEnabled,
+    pool?: StorageEngineId[],
   ): IStorageEngine {
     if (mode === 'auto') {
-      const available = this.configuredAndAllowed(enabled);
-      if (!available.length) {
-        const fallback = this.engines.find((e) =>
-          this.isEngineAllowed(e.id, enabled),
-        );
-        return fallback ?? this.byId('firebase');
-      }
-      return available[Math.floor(Math.random() * available.length)];
+      return this.resolveFromPool(pool, enabled);
     }
     if (!this.isEngineAllowed(mode, enabled)) {
       const available = this.configuredAndAllowed(enabled);
@@ -106,8 +120,9 @@ export class StorageEngineFactory {
   enginesToTryForRead(
     mode: StorageEngineMode,
     enabled?: StorageEnginesEnabled,
+    pool?: StorageEngineId[],
   ): IStorageEngine[] {
-    const primary = this.resolve(mode, enabled);
+    const primary = this.resolve(mode, enabled, pool);
     const seen = new Set<StorageEngineId>();
     const ordered: IStorageEngine[] = [];
     for (const engine of [

@@ -19,6 +19,7 @@ describe('MediasService', () => {
               compressionEnabled: false,
               maxFileSizeMb: 5,
               storageEngine: 's3',
+              storageEnginePool: ['s3'],
               fallbackStorageEngine: null,
               mediaProxyEnabled: false,
               enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true },
@@ -74,8 +75,17 @@ describe('MediasService', () => {
       compressionEnabled: false,
       maxFileSizeMb: 5,
       storageEngine: 's3',
+      storageEnginePool: ['s3'],
+      fallbackStorageEngine: null,
       mediaProxyEnabled: true,
       enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true },
+      moduleStorageEngines: {
+        catalog: 'default',
+        profile: 'default',
+        marketing: 'default',
+        chat: 'default',
+        system: 'default',
+      },
       updatedAt: null,
     });
     const url =
@@ -97,8 +107,17 @@ describe('MediasService', () => {
       compressionEnabled: false,
       maxFileSizeMb: 5,
       storageEngine: 'minio',
+      storageEnginePool: ['minio'],
+      fallbackStorageEngine: null,
       mediaProxyEnabled: false,
       enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true },
+      moduleStorageEngines: {
+        catalog: 'default',
+        profile: 'default',
+        marketing: 'default',
+        chat: 'default',
+        system: 'default',
+      },
       updatedAt: null,
     });
     const url =

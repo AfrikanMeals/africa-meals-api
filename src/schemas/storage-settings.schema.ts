@@ -18,6 +18,14 @@ export type StorageEngineMode = 'firebase' | 'gcs' | 's3' | 'minio' | 'r2' | 'au
 
 export type StorageEngineId = 'firebase' | 'gcs' | 's3' | 'minio' | 'r2';
 
+export const STORAGE_ENGINE_IDS: StorageEngineId[] = [
+  'firebase',
+  'gcs',
+  's3',
+  'minio',
+  'r2',
+];
+
 export type StorageEnginesEnabled = Record<StorageEngineId, boolean>;
 
 export const DEFAULT_STORAGE_ENGINES_ENABLED: StorageEnginesEnabled = {
@@ -48,6 +56,17 @@ export class StorageSettingsModel {
   storageEngine: StorageEngineMode;
 
   /**
+   * Moteurs utilisés pour les uploads globaux. Un seul = déterministe ; plusieurs = tirage aléatoire.
+   * `storageEngine` reste synchronisé (`auto` si pool > 1) pour compatibilité.
+   */
+  @Prop({
+    type: [String],
+    enum: ['firebase', 'gcs', 's3', 'minio', 'r2'],
+    default: ['firebase'],
+  })
+  storageEnginePool: StorageEngineId[];
+
+  /**
    * Moteur de secours si l’écriture échoue sur le moteur principal (null = désactivé).
    */
   @Prop({
@@ -75,7 +94,7 @@ export class StorageSettingsModel {
   })
   enginesEnabled: StorageEnginesEnabled;
 
-  /** Moteur par module ; `default` = moteur global (`storageEngine`). */
+  /** Moteur par module ; `default` = pool global (`storageEnginePool`). */
   @Prop({
     type: {
       catalog: {

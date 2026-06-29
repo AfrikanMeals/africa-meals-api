@@ -6,6 +6,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import {
   DEFAULT_STORAGE_ENGINES_ENABLED,
+  STORAGE_ENGINE_IDS,
   StorageEnginesEnabled,
   StorageSettingsDocument,
   StorageSettingsModel,
@@ -31,12 +32,45 @@ export type StorageSettingsResponse = {
   compressionEnabled: boolean;
   maxFileSizeMb: number;
   storageEngine: StorageEngineMode;
+  storageEnginePool: StorageEngineId[];
   fallbackStorageEngine: StorageEngineId | null;
   mediaProxyEnabled: boolean;
   enginesEnabled: StorageEnginesEnabled;
   moduleStorageEngines: StorageModuleEngines;
   updatedAt: string | null;
 };
+
+function deriveLegacyStorageEngine(pool: StorageEngineId[]): StorageEngineMode {
+  if (pool.length > 1) return 'auto';
+  return pool[0] ?? 'firebase';
+}
+
+function normalizeStorageEnginePool(
+  raw: unknown,
+  legacyEngine: StorageEngineMode,
+  enginesEnabled: StorageEnginesEnabled,
+): StorageEngineId[] {
+  if (Array.isArray(raw) && raw.length > 0) {
+    const pool = [
+      ...new Set(
+        raw.filter(
+          (id): id is StorageEngineId =>
+            typeof id === 'string' &&
+            STORAGE_ENGINE_IDS.includes(id as StorageEngineId),
+        ),
+      ),
+    ];
+    if (pool.length > 0) return pool;
+  }
+  if (legacyEngine === 'auto') {
+    const enabled = STORAGE_ENGINE_IDS.filter((id) => enginesEnabled[id]);
+    return enabled.length > 0 ? enabled : ['firebase'];
+  }
+  if (STORAGE_ENGINE_IDS.includes(legacyEngine as StorageEngineId)) {
+    return [legacyEngine as StorageEngineId];
+  }
+  return ['firebase'];
+}
 
 function normalizeEnginesEnabled(raw: unknown): StorageEnginesEnabled {
   const o =
@@ -58,7 +92,7 @@ function normalizeFallbackStorageEngine(raw: unknown): StorageEngineId | null {
 }
 
 function assertFallbackStorageEngine(args: {
-  storageEngine: StorageEngineMode;
+  storageEnginePool: StorageEngineId[];
   fallbackStorageEngine: StorageEngineId | null;
   enginesEnabled: StorageEnginesEnabled;
 }) {
@@ -67,28 +101,31 @@ function assertFallbackStorageEngine(args: {
   if (!args.enginesEnabled[fallback]) {
     throw new BadRequestException('storage_fallback_engine_disabled');
   }
-  if (args.storageEngine !== 'auto' && args.storageEngine === fallback) {
+  if (
+    args.storageEnginePool.length === 1 &&
+    args.storageEnginePool[0] === fallback
+  ) {
     throw new BadRequestException('storage_fallback_engine_same_as_primary');
   }
 }
 
 function assertEnginesEnabledSettings(args: {
-  storageEngine: StorageEngineMode;
+  storageEnginePool: StorageEngineId[];
   fallbackStorageEngine?: StorageEngineId | null;
   enginesEnabled: StorageEnginesEnabled;
   moduleStorageEngines?: StorageModuleEngines;
 }) {
-  const enabledIds = (
-    ['firebase', 'gcs', 's3', 'minio', 'r2'] as StorageEngineId[]
-  ).filter((id) => args.enginesEnabled[id]);
+  const enabledIds = STORAGE_ENGINE_IDS.filter((id) => args.enginesEnabled[id]);
   if (enabledIds.length === 0) {
     throw new BadRequestException('storage_engine_none_enabled');
   }
-  if (
-    args.storageEngine !== 'auto' &&
-    !args.enginesEnabled[args.storageEngine as StorageEngineId]
-  ) {
-    throw new BadRequestException('storage_engine_disabled');
+  if (args.storageEnginePool.length === 0) {
+    throw new BadRequestException('storage_engine_pool_empty');
+  }
+  for (const id of args.storageEnginePool) {
+    if (!args.enginesEnabled[id]) {
+      throw new BadRequestException('storage_engine_disabled');
+    }
   }
   if (args.moduleStorageEngines) {
     for (const module of STORAGE_MODULES) {
@@ -103,7 +140,7 @@ function assertEnginesEnabledSettings(args: {
     }
   }
   assertFallbackStorageEngine({
-    storageEngine: args.storageEngine,
+    storageEnginePool: args.storageEnginePool,
     fallbackStorageEngine: args.fallbackStorageEngine ?? null,
     enginesEnabled: args.enginesEnabled,
   });
@@ -128,18 +165,27 @@ export class StorageSettingsService {
   private _toResponse(doc: StorageSettingsModel): StorageSettingsResponse {
     const typed = doc as unknown as { updatedAt?: Date };
     const maxMb = Number(doc.maxFileSizeMb);
+    const enginesEnabled = normalizeEnginesEnabled(doc.enginesEnabled);
+    const legacyEngine = (doc.storageEngine as StorageEngineMode) || 'firebase';
+    const storageEnginePool = normalizeStorageEnginePool(
+      doc.storageEnginePool,
+      legacyEngine,
+      enginesEnabled,
+    );
+    const storageEngine = deriveLegacyStorageEngine(storageEnginePool);
     return {
       compressionEnabled: doc.compressionEnabled === true,
       maxFileSizeMb:
         Number.isFinite(maxMb) && maxMb >= 1 && maxMb <= 50
           ? Math.trunc(maxMb)
           : 5,
-      storageEngine: (doc.storageEngine as StorageEngineMode) || 'firebase',
+      storageEngine,
+      storageEnginePool,
       fallbackStorageEngine: normalizeFallbackStorageEngine(
         doc.fallbackStorageEngine,
       ),
       mediaProxyEnabled: doc.mediaProxyEnabled === true,
-      enginesEnabled: normalizeEnginesEnabled(doc.enginesEnabled),
+      enginesEnabled,
       moduleStorageEngines: normalizeModuleStorageEngines(
         doc.moduleStorageEngines,
       ),
@@ -166,6 +212,7 @@ export class StorageSettingsService {
             compressionEnabled: false,
             maxFileSizeMb: 5,
             storageEngine: 'firebase',
+            storageEnginePool: ['firebase'],
             fallbackStorageEngine: null,
             mediaProxyEnabled: false,
             enginesEnabled: { ...DEFAULT_STORAGE_ENGINES_ENABLED },
@@ -196,12 +243,15 @@ export class StorageSettingsService {
 
   resolveEngineForModuleFromSettings(
     module: StorageModuleId,
-    settings: Pick<StorageSettingsResponse, 'storageEngine' | 'moduleStorageEngines'>,
+    settings: Pick<
+      StorageSettingsResponse,
+      'storageEngine' | 'storageEnginePool' | 'moduleStorageEngines'
+    >,
   ): StorageEngineMode {
     const moduleEngine: StorageModuleEngineSetting =
       settings.moduleStorageEngines?.[module] ?? 'default';
     if (moduleEngine === 'default') {
-      return settings.storageEngine;
+      return deriveLegacyStorageEngine(settings.storageEnginePool);
     }
     return moduleEngine;
   }
@@ -212,16 +262,20 @@ export class StorageSettingsService {
     const moduleStorageEngines = normalizeModuleStorageEngines(
       dto.moduleStorageEngines,
     );
+    const storageEnginePool = [
+      ...new Set(dto.storageEnginePool),
+    ] as StorageEngineId[];
     const fallbackStorageEngine =
       dto.fallbackStorageEngine === undefined
         ? null
         : normalizeFallbackStorageEngine(dto.fallbackStorageEngine);
     assertEnginesEnabledSettings({
-      storageEngine: dto.storageEngine,
+      storageEnginePool,
       fallbackStorageEngine,
       enginesEnabled,
       moduleStorageEngines,
     });
+    const storageEngine = deriveLegacyStorageEngine(storageEnginePool);
     const updated = await this._settings
       .findOneAndUpdate(
         { key: SETTINGS_KEY },
@@ -229,7 +283,8 @@ export class StorageSettingsService {
           $set: {
             compressionEnabled: dto.compressionEnabled,
             maxFileSizeMb: dto.maxFileSizeMb,
-            storageEngine: dto.storageEngine,
+            storageEngine,
+            storageEnginePool,
             fallbackStorageEngine,
             mediaProxyEnabled: dto.mediaProxyEnabled,
             enginesEnabled,

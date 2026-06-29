@@ -264,6 +264,7 @@ export class MediasService {
     const engines = this.engineFactory.enginesToTryForRead(
       settings.storageEngine,
       settings.enginesEnabled,
+      settings.storageEnginePool,
     );
 
     for (const engine of engines) {
@@ -291,7 +292,11 @@ export class MediasService {
       module,
       settings,
     );
-    return this.engineFactory.resolve(engineMode, settings.enginesEnabled);
+    return this.engineFactory.resolve(
+      engineMode,
+      settings.enginesEnabled,
+      settings.storageEnginePool,
+    );
   }
 
   private async uploadWithFallback(
@@ -419,6 +424,8 @@ export class MediasService {
         const settings = await this.storageSettings.getPublicSettings();
         const engines = this.engineFactory.enginesToTryForRead(
           settings.storageEngine,
+          settings.enginesEnabled,
+          settings.storageEnginePool,
         );
         for (const engine of engines) {
           try {
@@ -447,6 +454,7 @@ export class MediasService {
     const engine = this.engineFactory.resolve(
       settings.storageEngine,
       settings.enginesEnabled,
+      settings.storageEnginePool,
     );
     await engine.deleteFilesWithPrefix(prefix);
   }
@@ -459,6 +467,7 @@ export class MediasService {
     const engine = this.engineFactory.resolve(
       settings.storageEngine,
       settings.enginesEnabled,
+      settings.storageEnginePool,
     );
     await engine.deleteFilesWithPrefixExcept(prefix, keepPathOrUrl);
   }

@@ -1,6 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -26,11 +28,15 @@ export class UpdateStorageSettingsDto {
   maxFileSizeMb: number;
 
   @ApiProperty({
-    description: 'Moteur de stockage',
-    enum: ['firebase', 'gcs', 's3', 'minio', 'r2', 'auto'],
+    description:
+      'Moteurs utilisés pour les uploads globaux (1 = fixe, plusieurs = tirage aléatoire)',
+    type: [String],
+    enum: ['firebase', 'gcs', 's3', 'minio', 'r2'],
   })
-  @IsIn(['firebase', 'gcs', 's3', 'minio', 'r2', 'auto'])
-  storageEngine: 'firebase' | 'gcs' | 's3' | 'minio' | 'r2' | 'auto';
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsIn(['firebase', 'gcs', 's3', 'minio', 'r2'], { each: true })
+  storageEnginePool: StorageEngineId[];
 
   @ApiProperty({
     description:
