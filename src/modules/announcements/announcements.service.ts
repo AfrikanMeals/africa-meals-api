@@ -9,6 +9,7 @@ import {
   AnnouncementPlacementEnum,
 } from '@schemas/announcement.constants';
 import {
+  BadRequestException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -29,6 +30,7 @@ import {
   CreateAnnouncementDto,
   UpdateAnnouncementDto,
 } from './dto/announcements.dto';
+import { AnnouncementImageJsonDto } from './dto/announcement-image.dto';
 
 function assertAdmin(user: UserModel) {
   if (user.type !== UserTypeEnum.ADMIN) {
@@ -198,6 +200,56 @@ export class AnnouncementsService {
     return { ok: true };
   }
 
+  /** Même destination Storage que multipart ; corps JSON pour proxys qui coupent multipart. */
+  async uploadAnnouncementImageJson(
+    user: UserModel,
+    dto: AnnouncementImageJsonDto,
+  ): Promise<{ url: string }> {
+    assertAdmin(user);
+    const raw = dto.imageBase64
+      .replace(/\s/g, '')
+      .replace(/^data:image\/[^;]+;base64,/i, '');
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(raw, 'base64');
+    } catch {
+      throw new BadRequestException('invalid_base64');
+    }
+    if (!buffer.length) {
+      throw new BadRequestException('empty_image');
+    }
+    const max = await this._mediasService.getMaxFileSizeBytes();
+    if (buffer.length > max) {
+      throw new BadRequestException('file_too_large');
+    }
+    const name = (dto.filename || 'announcement.jpg').trim() || 'announcement.jpg';
+    if (!/\.(jpe?g|png|webp)$/i.test(name)) {
+      throw new BadRequestException('invalid_file_type');
+    }
+    const lower = name.toLowerCase();
+    const mime = lower.endsWith('.png')
+      ? 'image/png'
+      : lower.endsWith('.webp')
+        ? 'image/webp'
+        : 'image/jpeg';
+    const file = {
+      fieldname: 'image',
+      originalname: name,
+      encoding: '7bit',
+      mimetype: mime,
+      buffer,
+      size: buffer.length,
+      destination: '',
+      filename: '',
+      path: '',
+      stream: undefined,
+    } as Express.Multer.File;
+    const url = await this._mediasService.upload(file, user, 'announcements');
+    const resolved =
+      (await this._mediasService.resolvePublicMediaUrl(url)) ?? url;
+    return { url: resolved };
+  }
+
   private async _buildPayload(
     args: CreateAnnouncementDto | UpdateAnnouncementDto,
     user: UserModel,
@@ -241,6 +293,8 @@ export class AnnouncementsService {
         user,
         'announcements',
       );
+    } else if (args.pictureUrl?.trim()) {
+      payload.pictureUrl = args.pictureUrl.trim();
     }
     return payload;
   }

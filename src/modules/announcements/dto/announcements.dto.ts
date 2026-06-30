@@ -138,6 +138,12 @@ export class AnnouncementBaseDto {
   @IsOptional()
   @IsBoolean()
   dismissible?: boolean;
+
+  /** URL déjà uploadée (ex. via POST /announcements/image-json). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  pictureUrl?: string;
 }
 
 export class CreateAnnouncementDto extends AnnouncementBaseDto {}

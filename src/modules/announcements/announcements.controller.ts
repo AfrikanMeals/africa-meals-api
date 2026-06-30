@@ -28,6 +28,7 @@ import {
   ListAnnouncementsQueryDto,
   UpdateAnnouncementDto,
 } from './dto/announcements.dto';
+import { AnnouncementImageJsonDto } from './dto/announcement-image.dto';
 import { parseMultipartJsonBody } from './parse-multipart-json-body.util';
 
 function toClientRows(docs: unknown[]): Record<string, unknown>[] {
@@ -72,6 +73,20 @@ export class AnnouncementsController {
       req.user as UserModel,
     );
     return { items: toClientRows(docs) };
+  }
+
+  /** JSON + base64 : recommandé derrière proxys (multipart « Unexpected end of form »). */
+  @Post('image-json')
+  @UseGuards(JwtGuard)
+  async uploadImageJson(
+    @Req() req: Request,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: AnnouncementImageJsonDto,
+  ) {
+    return this._announcementsService.uploadAnnouncementImageJson(
+      req.user as UserModel,
+      body,
+    );
   }
 
   @Post('')
