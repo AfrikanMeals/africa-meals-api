@@ -5,6 +5,13 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import {
+  assertGeocodeCacheStorePriority,
+  DEFAULT_GEOCODE_CACHE_STORE_PRIORITY,
+  GeocodeCacheStore,
+  normalizeGeocodeCacheStorePriority,
+} from '@common/geocode-cache-store.util';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
+import {
   MapSettingsDocument,
   MapSettingsModel,
 } from '@schemas/map-settings.schema';
@@ -80,7 +87,17 @@ export class MapSettingsService {
   constructor(
     @InjectModel(MapSettingsModel.name)
     private readonly _settings: Model<MapSettingsDocument>,
+    private readonly _moduleCache: ModuleCacheLayerService,
   ) {}
+
+  private _geocodeCacheAvailability(): Record<GeocodeCacheStore, boolean> {
+    const availability = this._moduleCache.getAvailability();
+    return {
+      redis: availability.redis,
+      memcached: availability.memcached,
+      mongodb: true,
+    };
+  }
 
   private _toResponse(doc: MapSettingsModel, regionCode?: string | null) {
     const scoped = resolveMapSettingsForRegion(doc, regionCode);
@@ -120,6 +137,12 @@ export class MapSettingsService {
         ),
       },
       resolvedRegionCode,
+      geocodeCache: {
+        storePriority: normalizeGeocodeCacheStorePriority(
+          doc.geocodeCacheStorePriority,
+        ),
+        storeAvailability: this._geocodeCacheAvailability(),
+      },
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
   }
@@ -146,6 +169,7 @@ export class MapSettingsService {
             vendorGeocodingEngine: 'osm',
             mobileUserGeocodingEngine: 'osm',
             mobileDeliveryGeocodingEngine: 'osm',
+            geocodeCacheStorePriority: [...DEFAULT_GEOCODE_CACHE_STORE_PRIORITY],
             settingsByRegion: {},
           },
         },
@@ -210,6 +234,18 @@ export class MapSettingsService {
       dto.mobileDeliveryGeocodingEngine ??
         (existing as MapSettingsModel | null)?.mobileDeliveryGeocodingEngine,
     );
+    let geocodeCacheStorePriority = normalizeGeocodeCacheStorePriority(
+      (existing as MapSettingsModel | null)?.geocodeCacheStorePriority,
+    );
+    if (dto.geocodeCacheStorePriority !== undefined) {
+      try {
+        geocodeCacheStorePriority = assertGeocodeCacheStorePriority(
+          dto.geocodeCacheStorePriority,
+        );
+      } catch {
+        throw new BadRequestException('geocode_cache_store_priority_invalid');
+      }
+    }
 
     assertDefaultEngineEnabled(
       vendorDefault,
@@ -253,6 +289,7 @@ export class MapSettingsService {
             vendorGeocodingEngine: vendorGeocoding,
             mobileUserGeocodingEngine: mobileUserGeocoding,
             mobileDeliveryGeocodingEngine: mobileDeliveryGeocoding,
+            geocodeCacheStorePriority,
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },

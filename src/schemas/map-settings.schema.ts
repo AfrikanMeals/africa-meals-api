@@ -61,6 +61,13 @@ export class MapSettingsModel {
   @Prop({ type: String, default: 'osm', trim: true })
   mobileDeliveryGeocodingEngine: string;
 
+  /** Priorité des backends cache géocodage (redis | memcached | mongodb). */
+  @Prop({
+    type: [String],
+    default: ['redis', 'memcached', 'mongodb'],
+  })
+  geocodeCacheStorePriority: string[];
+
   /** Overrides moteurs carte / géocodage par région active (ISO2). */
   @Prop({ type: Object, default: {} })
   settingsByRegion: Record<string, Record<string, unknown>>;

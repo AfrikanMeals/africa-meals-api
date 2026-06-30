@@ -1,9 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsOptional, IsString } from 'class-validator';
 
 const VENDOR_ENGINES = ['mapbox', 'google', 'osm'] as const;
 const MOBILE_ENGINES = ['mapbox', 'google', 'osm'] as const;
 const GEOCODING_ENGINES = ['mapbox', 'google', 'osm'] as const;
+const GEOCODE_CACHE_STORES = ['redis', 'memcached', 'mongodb'] as const;
 
 export class UpdateMapSettingsDto {
   @ApiProperty()
@@ -77,4 +78,16 @@ export class UpdateMapSettingsDto {
   @IsString()
   @IsIn(GEOCODING_ENGINES)
   mobileDeliveryGeocodingEngine?: string;
+
+  @ApiPropertyOptional({
+    type: [String],
+    enum: GEOCODE_CACHE_STORES,
+    description:
+      'Ordre de priorité des backends cache géocodage (redis, memcached, mongodb).',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @IsIn(GEOCODE_CACHE_STORES, { each: true })
+  geocodeCacheStorePriority?: string[];
 }

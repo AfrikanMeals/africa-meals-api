@@ -1,6 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
+import {
+  GeocodeCacheStore,
+  normalizeGeocodeCacheStorePriority,
+} from '@common/geocode-cache-store.util';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import {
   buildGeocodeCacheKey,
   GeocodeCacheKind,
@@ -11,6 +16,7 @@ import {
   GeocodeCacheEntryDocument,
   GeocodeCacheEntryModel,
 } from '@schemas/geocode-cache-entry.schema';
+import { MapSettingsService } from '@modules/map-settings/map-settings.service';
 import { Model } from 'mongoose';
 
 export type GeocodeEngine = 'osm' | 'mapbox' | 'google';
@@ -24,15 +30,31 @@ export type GeocodeCacheLookupArgs = {
   bbox?: string;
 };
 
+type VolatileCacheEntry = {
+  engine: GeocodeEngine;
+  payload: Record<string, unknown>;
+};
+
 @Injectable()
 export class GeocodeCacheService {
+  private readonly logger = new Logger(GeocodeCacheService.name);
   private readonly inflight = new Map<string, Promise<unknown>>();
+  private priorityCache: { at: number; value: GeocodeCacheStore[] } | null =
+    null;
+  private static readonly PRIORITY_TTL_MS = 30_000;
+  private readonly volatileTtlMs: number;
 
   constructor(
     @InjectModel(GeocodeCacheEntryModel.name)
     private readonly model: Model<GeocodeCacheEntryDocument>,
     private readonly config: ConfigService,
-  ) {}
+    private readonly mapSettings: MapSettingsService,
+    private readonly moduleCache: ModuleCacheLayerService,
+  ) {
+    const raw = Number(this.config.get<string>('GEOCODE_CACHE_TTL_MS'));
+    this.volatileTtlMs =
+      Number.isFinite(raw) && raw >= 60_000 ? raw : 7 * 24 * 60 * 60 * 1000;
+  }
 
   buildKey(args: GeocodeCacheLookupArgs): string {
     return buildGeocodeCacheKey(args);
@@ -52,10 +74,78 @@ export class GeocodeCacheService {
     return false;
   }
 
-  async lookup<T>(
-    args: GeocodeCacheLookupArgs,
+  private volatileKey(cacheKey: string): string {
+    return `geocode:v1:${cacheKey}`;
+  }
+
+  private isStoreAvailable(store: GeocodeCacheStore): boolean {
+    if (store === 'mongodb') return true;
+    if (store === 'redis') return this.moduleCache.isEngineAvailable('redis');
+    if (store === 'memcached') {
+      return this.moduleCache.isEngineAvailable('memcached');
+    }
+    return false;
+  }
+
+  private async getStorePriority(): Promise<GeocodeCacheStore[]> {
+    const now = Date.now();
+    if (
+      this.priorityCache &&
+      now - this.priorityCache.at < GeocodeCacheService.PRIORITY_TTL_MS
+    ) {
+      return this.priorityCache.value;
+    }
+    const doc = await this.mapSettings.getSettingsDocument();
+    const value = normalizeGeocodeCacheStorePriority(
+      doc.geocodeCacheStorePriority,
+    );
+    this.priorityCache = { at: now, value };
+    return value;
+  }
+
+  private async lookupVolatile<T>(
+    store: Exclude<GeocodeCacheStore, 'mongodb'>,
+    cacheKey: string,
   ): Promise<{ payload: T; engine: GeocodeEngine } | null> {
-    const cacheKey = this.buildKey(args);
+    const cache = this.moduleCache.cacheForEngine(store);
+    try {
+      const raw = await cache.get<VolatileCacheEntry>(
+        this.volatileKey(cacheKey),
+      );
+      if (!raw?.payload) return null;
+      const engine = (raw.engine as GeocodeEngine) || 'osm';
+      return { payload: raw.payload as T, engine };
+    } catch (err) {
+      this.logger.warn(
+        `Geocode cache read failed (${store}): ${(err as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  private async storeVolatile(
+    store: Exclude<GeocodeCacheStore, 'mongodb'>,
+    cacheKey: string,
+    engine: GeocodeEngine,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const cache = this.moduleCache.cacheForEngine(store);
+    try {
+      await cache.set(
+        this.volatileKey(cacheKey),
+        { engine, payload } satisfies VolatileCacheEntry,
+        this.volatileTtlMs,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Geocode cache write failed (${store}): ${(err as Error).message}`,
+      );
+    }
+  }
+
+  private async lookupMongo<T>(
+    cacheKey: string,
+  ): Promise<{ payload: T; engine: GeocodeEngine } | null> {
     const doc = await this.model.findOne({ cacheKey }).lean().exec();
     if (!doc?.payload) return null;
     await this.model
@@ -71,13 +161,12 @@ export class GeocodeCacheService {
     return { payload: doc.payload as T, engine };
   }
 
-  async store(
+  private async storeMongo(
     args: GeocodeCacheLookupArgs & {
       engine: GeocodeEngine;
       payload: Record<string, unknown>;
     },
   ): Promise<void> {
-    if (!this.canPersistEngine(args.engine)) return;
     const cacheKey = this.buildKey(args);
     const normalizedQuery = normalizeGeocodeQuery(args.query);
     const countryCode = normalizeCountryCode(args.countryCode) || 'XX';
@@ -99,6 +188,44 @@ export class GeocodeCacheService {
         { upsert: true },
       )
       .exec();
+  }
+
+  async lookup<T>(
+    args: GeocodeCacheLookupArgs,
+  ): Promise<{ payload: T; engine: GeocodeEngine } | null> {
+    const cacheKey = this.buildKey(args);
+    const priority = await this.getStorePriority();
+    for (const store of priority) {
+      if (!this.isStoreAvailable(store)) continue;
+      if (store === 'mongodb') {
+        const hit = await this.lookupMongo<T>(cacheKey);
+        if (hit) return hit;
+        continue;
+      }
+      const hit = await this.lookupVolatile<T>(store, cacheKey);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  async store(
+    args: GeocodeCacheLookupArgs & {
+      engine: GeocodeEngine;
+      payload: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    if (!this.canPersistEngine(args.engine)) return;
+    const cacheKey = this.buildKey(args);
+    const priority = await this.getStorePriority();
+    for (const store of priority) {
+      if (!this.isStoreAvailable(store)) continue;
+      if (store === 'mongodb') {
+        await this.storeMongo(args);
+      } else {
+        await this.storeVolatile(store, cacheKey, args.engine, args.payload);
+      }
+      return;
+    }
   }
 
   async dedupe<T>(
