@@ -12,6 +12,29 @@ export function storageObjectAclEnabled(
   return config.get<string>(engineEnvKey)?.trim() !== 'false';
 }
 
+/** Erreurs réseau / endpoint injoignable — ne pas confondre avec ACL refusée. */
+export function isStorageConnectionError(err: unknown): boolean {
+  const code = (err as { code?: string })?.code;
+  if (
+    code === 'ECONNREFUSED' ||
+    code === 'ETIMEDOUT' ||
+    code === 'ENOTFOUND' ||
+    code === 'EHOSTUNREACH' ||
+    code === 'ECONNRESET'
+  ) {
+    return true;
+  }
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    msg.includes('econnrefused') ||
+    msg.includes('etimedout') ||
+    msg.includes('enotfound') ||
+    msg.includes('ehostunreach') ||
+    msg.includes('network') ||
+    msg.includes('socket hang up')
+  );
+}
+
 /** Erreurs courantes quand le bucket interdit les ACL objet (UBLA, Object Ownership, etc.). */
 export function isObjectAclUnsupportedError(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();

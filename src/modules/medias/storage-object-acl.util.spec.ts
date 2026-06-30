@@ -1,10 +1,35 @@
 import {
   isObjectAclUnsupportedError,
+  isStorageConnectionError,
   storageObjectAclEnabled,
 } from './storage-object-acl.util';
 import { ConfigService } from '@nestjs/config';
 
 describe('storage-object-acl.util', () => {
+  describe('isStorageConnectionError', () => {
+    it('detects ECONNREFUSED by code', () => {
+      expect(
+        isStorageConnectionError(
+          Object.assign(new Error('connect ECONNREFUSED'), {
+            code: 'ECONNREFUSED',
+          }),
+        ),
+      ).toBe(true);
+    });
+
+    it('detects timeout in message', () => {
+      expect(isStorageConnectionError(new Error('network timeout'))).toBe(
+        true,
+      );
+    });
+
+    it('returns false for ACL errors', () => {
+      expect(
+        isStorageConnectionError(new Error('The bucket does not allow ACLs')),
+      ).toBe(false);
+    });
+  });
+
   describe('isObjectAclUnsupportedError', () => {
     it('detects S3 ACL-disabled bucket', () => {
       expect(

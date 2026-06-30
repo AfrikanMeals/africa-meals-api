@@ -18,6 +18,7 @@ import {
 } from './minio-endpoints.util';
 import {
   isObjectAclUnsupportedError,
+  isStorageConnectionError,
   storageObjectAclEnabled,
 } from './storage-object-acl.util';
 
@@ -335,6 +336,7 @@ export class S3StorageEngine implements IStorageEngine {
           new PutObjectCommand({ ...putBase, ACL: 'public-read' }),
         );
       } catch (err) {
+        if (isStorageConnectionError(err)) throw err;
         if (isObjectAclUnsupportedError(err)) {
           this.objectAclUnsupported = true;
           this.logger.debug(
@@ -556,6 +558,7 @@ export class MinioStorageEngine implements IStorageEngine {
           new PutObjectCommand({ ...putBase, ACL: 'public-read' }),
         );
       } catch (err) {
+        if (isStorageConnectionError(err)) throw err;
         if (isObjectAclUnsupportedError(err)) {
           this.objectAclUnsupported = true;
           this.logger.debug(

@@ -116,6 +116,44 @@ export class StorageEngineFactory {
     return this.byId('firebase');
   }
 
+  /** Chaîne d’upload : primaire, repli admin, pool, puis autres moteurs configurés. */
+  enginesToTryForUpload(
+    primary: IStorageEngine,
+    settings: {
+      fallbackStorageEngine: StorageEngineId | null;
+      enginesEnabled?: StorageEnginesEnabled;
+      storageEnginePool?: StorageEngineId[];
+    },
+  ): IStorageEngine[] {
+    const { fallbackStorageEngine, enginesEnabled, storageEnginePool } =
+      settings;
+    const priorityIds: StorageEngineId[] = [primary.id];
+    if (fallbackStorageEngine && fallbackStorageEngine !== primary.id) {
+      priorityIds.push(fallbackStorageEngine);
+    }
+    for (const id of storageEnginePool ?? []) {
+      if (!priorityIds.includes(id)) priorityIds.push(id);
+    }
+
+    const seen = new Set<StorageEngineId>();
+    const chain: IStorageEngine[] = [];
+    const push = (engine: IStorageEngine) => {
+      if (seen.has(engine.id)) return;
+      if (!this.isEngineAllowed(engine.id, enginesEnabled)) return;
+      if (!engine.isConfigured()) return;
+      seen.add(engine.id);
+      chain.push(engine);
+    };
+
+    for (const id of priorityIds) {
+      push(this.byId(id));
+    }
+    for (const engine of this.engines) {
+      push(engine);
+    }
+    return chain.length > 0 ? chain : [primary];
+  }
+
   /** Ordre de lecture proxy : moteur admin d’abord, puis les autres configurés et activés. */
   enginesToTryForRead(
     mode: StorageEngineMode,

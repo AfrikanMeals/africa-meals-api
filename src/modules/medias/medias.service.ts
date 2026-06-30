@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { UserModel } from '@schemas/user.schema';
@@ -303,38 +304,33 @@ export class MediasService {
     primary: IStorageEngine,
     settings: Pick<
       StorageSettingsResponse,
-      'fallbackStorageEngine' | 'enginesEnabled'
+      'fallbackStorageEngine' | 'enginesEnabled' | 'storageEnginePool'
     >,
     input: StorageUploadInput,
   ): Promise<StorageUploadResult> {
-    try {
-      return await primary.upload(input);
-    } catch (primaryErr) {
-      const fallbackId = settings.fallbackStorageEngine;
-      if (
-        !fallbackId ||
-        fallbackId === primary.id ||
-        settings.enginesEnabled[fallbackId] === false
-      ) {
-        throw primaryErr;
-      }
-      const fallback = this.engineFactory.byId(fallbackId);
-      if (!fallback.isConfigured()) {
-        throw primaryErr;
-      }
-      this.logger.warn(
-        `Upload échoué sur ${primary.id}, repli vers ${fallbackId} (${input.path})`,
-      );
+    const chain = this.engineFactory.enginesToTryForUpload(primary, settings);
+    let lastError: unknown;
+    for (let i = 0; i < chain.length; i++) {
+      const engine = chain[i];
       try {
-        return await fallback.upload(input);
-      } catch (fallbackErr) {
-        this.logger.error(
-          `Repli upload ${fallbackId} échoué (${input.path})`,
-          fallbackErr instanceof Error ? fallbackErr.stack : String(fallbackErr),
-        );
-        throw primaryErr;
+        if (i > 0) {
+          this.logger.warn(
+            `Upload repli moteur ${engine.id} après échec ${chain[i - 1].id} (${input.path})`,
+          );
+        }
+        return await engine.upload(input);
+      } catch (err) {
+        lastError = err;
+        if (i < chain.length - 1) {
+          this.logger.warn(
+            `Upload échoué sur ${engine.id} (${input.path}): ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
       }
     }
+    throw lastError;
   }
 
   private async prepareForUpload(
@@ -378,8 +374,11 @@ export class MediasService {
       return await this.resolveUploadPublicUrl(result);
     } catch (e) {
       if (e instanceof BadRequestException) throw e;
-      console.error('MediasService.upload', e);
-      throw e;
+      this.logger.error(
+        'MediasService.upload',
+        e instanceof Error ? e.stack : String(e),
+      );
+      throw new ServiceUnavailableException('storage_upload_failed');
     }
   }
 
