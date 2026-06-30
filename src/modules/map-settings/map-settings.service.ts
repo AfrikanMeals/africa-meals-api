@@ -10,7 +10,9 @@ import {
 } from '@schemas/map-settings.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
+import { normalizeRegionCode } from '@modules/platform-shipping-settings/platform-shipping-region.util';
 import { UpdateMapSettingsDto } from './dto/update-map-settings.dto';
+import { resolveMapSettingsForRegion } from './map-settings-region.util';
 
 const SETTINGS_KEY = 'default';
 
@@ -80,44 +82,49 @@ export class MapSettingsService {
     private readonly _settings: Model<MapSettingsDocument>,
   ) {}
 
-  private _toResponse(doc: MapSettingsModel) {
+  private _toResponse(doc: MapSettingsModel, regionCode?: string | null) {
+    const scoped = resolveMapSettingsForRegion(doc, regionCode);
     const typed = doc as unknown as { updatedAt?: Date };
-    const vendorDefault = normalizeVendorDefault(doc.vendorDefaultMapEngine);
+    const vendorDefault = normalizeVendorDefault(scoped.vendorDefaultMapEngine);
     const mobileUserDefault = normalizeMobileDefault(
-      doc.mobileUserDefaultMapEngine,
+      scoped.mobileUserDefaultMapEngine,
     );
     const mobileDeliveryDefault = normalizeMobileDefault(
-      doc.mobileDeliveryDefaultMapEngine,
+      scoped.mobileDeliveryDefaultMapEngine,
     );
+    const resolvedRegionCode = normalizeRegionCode(regionCode);
     return {
       vendor: {
-        mapboxEnabled: doc.vendorMapboxEnabled !== false,
-        googleEnabled: doc.vendorGoogleEnabled !== false,
-        osmEnabled: doc.vendorOsmEnabled !== false,
+        mapboxEnabled: scoped.vendorMapboxEnabled !== false,
+        googleEnabled: scoped.vendorGoogleEnabled !== false,
+        osmEnabled: scoped.vendorOsmEnabled !== false,
         defaultMapEngine: vendorDefault,
-        geocodingEngine: normalizeGeocodingEngine(doc.vendorGeocodingEngine),
+        geocodingEngine: normalizeGeocodingEngine(scoped.vendorGeocodingEngine),
       },
       mobileUser: {
-        mapboxEnabled: doc.mobileUserMapboxEnabled !== false,
-        googleEnabled: doc.mobileUserGoogleEnabled !== false,
-        osmEnabled: doc.mobileUserOsmEnabled !== false,
+        mapboxEnabled: scoped.mobileUserMapboxEnabled !== false,
+        googleEnabled: scoped.mobileUserGoogleEnabled !== false,
+        osmEnabled: scoped.mobileUserOsmEnabled !== false,
         defaultMapEngine: mobileUserDefault,
-        geocodingEngine: normalizeGeocodingEngine(doc.mobileUserGeocodingEngine),
-      },
-      mobileDelivery: {
-        mapboxEnabled: doc.mobileDeliveryMapboxEnabled !== false,
-        googleEnabled: doc.mobileDeliveryGoogleEnabled !== false,
-        osmEnabled: doc.mobileDeliveryOsmEnabled !== false,
-        defaultMapEngine: mobileDeliveryDefault,
         geocodingEngine: normalizeGeocodingEngine(
-          doc.mobileDeliveryGeocodingEngine,
+          scoped.mobileUserGeocodingEngine,
         ),
       },
+      mobileDelivery: {
+        mapboxEnabled: scoped.mobileDeliveryMapboxEnabled !== false,
+        googleEnabled: scoped.mobileDeliveryGoogleEnabled !== false,
+        osmEnabled: scoped.mobileDeliveryOsmEnabled !== false,
+        defaultMapEngine: mobileDeliveryDefault,
+        geocodingEngine: normalizeGeocodingEngine(
+          scoped.mobileDeliveryGeocodingEngine,
+        ),
+      },
+      resolvedRegionCode,
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
   }
 
-  async getPublicSettings() {
+  async getSettingsDocument(): Promise<MapSettingsModel> {
     const doc = await this._settings
       .findOneAndUpdate(
         { key: SETTINGS_KEY },
@@ -139,12 +146,18 @@ export class MapSettingsService {
             vendorGeocodingEngine: 'osm',
             mobileUserGeocodingEngine: 'osm',
             mobileDeliveryGeocodingEngine: 'osm',
+            settingsByRegion: {},
           },
         },
         { upsert: true, new: true, lean: true, setDefaultsOnInsert: true },
       )
       .exec();
-    return this._toResponse(doc as MapSettingsModel);
+    return doc as MapSettingsModel;
+  }
+
+  async getPublicSettings(regionCode?: string | null) {
+    const doc = await this.getSettingsDocument();
+    return this._toResponse(doc, regionCode);
   }
 
   async updateSettings(user: UserModel, dto: UpdateMapSettingsDto) {

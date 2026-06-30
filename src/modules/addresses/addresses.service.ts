@@ -5,19 +5,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { AddressModel, AddressTypeEnum } from '@schemas/address.schema';
 import { UserModel } from '@schemas/user.schema';
-import axios from 'axios';
 import { Model } from 'mongoose';
 import { CreateAddressDto, SearchAddressDto } from './dto/addresses.dto';
-import { osmSearchStructuredAddress } from '@common/osm-geocoding.util';
-import {
-  resolveMapboxGeocodeApiUrl,
-  resolveMapboxGeocodingToken,
-} from '@common/mapbox-geocoding.util';
-import { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
+import { GeocodeService } from '@modules/geocode/geocode.service';
 
 /** Réponse enrichie pour éviter un `GET /auth/me` après chaque mutation (mobile). */
 export type UserAddressesMutationResult = {
@@ -33,10 +26,7 @@ export class AddressesService {
   @InjectModel(UserModel.name)
   private readonly userModel: Model<UserModel>;
 
-  @Inject(ConfigService)
-  private readonly _configService: ConfigService;
-
-  constructor(private readonly secrets: SecretManagerService) {}
+  constructor(private readonly geocode: GeocodeService) {}
 
   /** Liste des adresses du client (populate léger, sans le reste du profil). */
   async listUserAddresses(userId: string): Promise<Record<string, unknown>[]> {
@@ -107,99 +97,28 @@ export class AddressesService {
   }
 
   async search(args: SearchAddressDto, user: UserModel) {
-    const engine = String(
-      this._configService.get<string>('MAP_GEOCODING_ENGINE') ?? 'mapbox',
-    )
-      .trim()
-      .toLowerCase();
-    if (engine === 'osm') {
-      return this._searchWithOsm(args);
-    }
-    const mapboxToken = await resolveMapboxGeocodingToken(
-      this.secrets,
-      this._configService,
-    );
-    if (!mapboxToken) {
-      return this._searchWithOsm(args);
-    }
-    return this._searchWithMapbox(args, mapboxToken);
-  }
-
-  private async _searchWithOsm(args: SearchAddressDto) {
-    const item = await osmSearchStructuredAddress(
+    const countryCode =
+      String(args.countryCode ?? user?.appCountryCode ?? 'CA')
+        .trim()
+        .toUpperCase()
+        .slice(0, 2) || 'CA';
+    const result = await this.geocode.searchStructured(
       {
         address: args.address,
         city: args.city,
         country: args.country,
         zipCode: args.zipCode,
-        countryCode: args.countryCode,
+        countryCode,
       },
-      this._configService,
+      user,
     );
-    if (!item) {
-      throw new NotFoundException('address_not_found');
-    }
-    const formatPostalcode = (code: string) =>
-      code?.split('')?.join('')?.toLowerCase()?.trim();
-    if (
-      args.zipCode?.trim() &&
-      item.zipCode?.trim() &&
-      formatPostalcode(item.zipCode) !== formatPostalcode(args.zipCode)
-    ) {
-      throw new NotFoundException('invalid_zip_code');
-    }
     return {
-      address:
-        item.address ||
-        `${args.address}, ${args.zipCode}, ${args.city}, ${args.country}`,
-      country: item.country || args.country,
-      countryCode: item.countryCode || args.countryCode || '',
-      zipCode: item.zipCode || args.zipCode,
-      city: item.city || args.city,
-      location: [item.longitude, item.latitude],
-    };
-  }
-
-  private async _searchWithMapbox(args: SearchAddressDto, mapboxToken: string) {
-    const q = encodeURIComponent(
-      `${args.address}, ${args.zipCode}, ${args.city}, ${args.country}`,
-    );
-    const url = `${resolveMapboxGeocodeApiUrl(this._configService)}?q=${q}&proximity=ip&types=address&access_token=${encodeURIComponent(
-      mapboxToken,
-    )}&limit=1&autocomplete=true&language=fr`;
-    const { data } = await axios.get(url);
-
-    if (!data?.features?.length) {
-      throw new NotFoundException('address_not_found');
-    }
-
-    const formatPostalcode = (code: string) =>
-      code?.split('')?.join('')?.toLowerCase()?.trim();
-
-    const item =
-      (data?.features || []).find(
-        (add) =>
-          formatPostalcode(add?.properties?.context?.postcode?.name) ===
-          formatPostalcode(args.zipCode),
-      ) ?? data?.features[0];
-
-    if (
-      formatPostalcode(item?.properties?.context?.postcode?.name) !==
-      formatPostalcode(args.zipCode)
-    ) {
-      throw new NotFoundException('invalid_zip_code');
-    }
-
-    return {
-      address:
-        item.properties.full_address ??
-        item.name ??
-        `${args.address}, ${args.zipCode}, ${args.city}, ${args.country}`,
-      country: args.country,
-      countryCode: item.properties.context?.country?.country_code,
-      zipCode: args.zipCode,
-      city: args.city,
-      location: item.geometry.coordinates ?? [0, 0], // [Longitude, Latitude]
+      address: result.address,
+      country: result.country,
+      countryCode: result.countryCode,
+      zipCode: result.zipCode,
+      city: result.city,
+      location: result.location,
     };
   }
 

@@ -60,6 +60,10 @@ export class MapSettingsModel {
   /** API géocodage — livreur mobile. */
   @Prop({ type: String, default: 'osm', trim: true })
   mobileDeliveryGeocodingEngine: string;
+
+  /** Overrides moteurs carte / géocodage par région active (ISO2). */
+  @Prop({ type: Object, default: {} })
+  settingsByRegion: Record<string, Record<string, unknown>>;
 }
 
 export type MapSettingsDocument = HydratedDocument<MapSettingsModel>;

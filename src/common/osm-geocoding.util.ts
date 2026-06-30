@@ -1,3 +1,4 @@
+import { GEOCODE_MIN_QUERY_LENGTH } from '@common/normalize-geocode-query.util';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 
@@ -86,7 +87,7 @@ export async function osmForwardGeocode(
   options?: { limit?: number; countryCode?: string },
 ): Promise<OsmGeocodeResult[]> {
   const q = query.trim();
-  if (q.length < 2) return [];
+  if (q.length < GEOCODE_MIN_QUERY_LENGTH) return [];
   const base = nominatimBase(config);
   const params: Record<string, string> = {
     q,

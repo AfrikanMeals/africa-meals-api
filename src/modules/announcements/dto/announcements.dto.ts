@@ -1,28 +1,37 @@
 import { SearchContent } from '@modules/search/dto/search.dto';
+import {
+  AnnouncementAudienceTypeEnum,
+  AnnouncementPlacementEnum,
+} from '@schemas/announcement.constants';
 import { AnnouncementNavigationTypeEnum } from '@schemas/announcement.schema';
+import { StoreAdActionTypeEnum } from '@schemas/ad.schema';
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsDateString,
   IsEnum,
+  IsMongoId,
   IsNotEmpty,
   IsOptional,
+  IsString,
+  MaxLength,
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
 class AnnouncementConfigStyleDto {
-  @IsNotEmpty()
+  @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
-  colors: string[];
+  colors?: string[];
 }
 
 class AnnouncementConfigQueryDto {
-  @IsNotEmpty()
+  @IsOptional()
   @IsEnum(SearchContent)
-  searchContent: SearchContent;
+  searchContent?: SearchContent;
 
   @IsOptional()
   storeId?: string;
@@ -35,40 +44,112 @@ class AnnouncementConfigQueryDto {
 }
 
 class AnnouncementConfigDto {
-  @IsNotEmpty()
+  @IsOptional()
   @IsEnum(AnnouncementNavigationTypeEnum)
-  navigationType: AnnouncementNavigationTypeEnum;
+  navigationType?: AnnouncementNavigationTypeEnum;
 
-  @IsNotEmpty()
+  @IsOptional()
   @ValidateNested()
   @Type(() => AnnouncementConfigQueryDto)
-  query: AnnouncementConfigQueryDto;
+  query?: AnnouncementConfigQueryDto;
 
-  @IsNotEmpty()
+  @IsOptional()
   @ValidateNested()
   @Type(() => AnnouncementConfigStyleDto)
-  style: AnnouncementConfigStyleDto;
+  style?: AnnouncementConfigStyleDto;
 
-  @IsNotEmpty()
+  @IsOptional()
   @ValidateIf(
     (o) => o.navigationType === AnnouncementNavigationTypeEnum.EXTERNAL,
   )
-  url: string;
+  url?: string;
 }
 
-export class CreateAnnouncementDto {
+export class AnnouncementBaseDto {
   @IsBoolean()
-  @IsNotEmpty()
   isActive: boolean;
 
   @IsNotEmpty()
+  @IsString()
+  @MaxLength(200)
   text: string;
 
-  @IsNotEmpty()
-  actionText: string;
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  subtitle?: string;
 
-  @IsNotEmpty()
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  actionText?: string;
+
+  @IsOptional()
   @ValidateNested()
   @Type(() => AnnouncementConfigDto)
-  config: AnnouncementConfigDto;
+  config?: AnnouncementConfigDto;
+
+  @IsOptional()
+  @Type(() => Number)
+  sortOrder?: number;
+
+  @IsOptional()
+  @IsString()
+  region?: string;
+
+  @IsOptional()
+  @IsDateString()
+  validFrom?: string;
+
+  @IsOptional()
+  @IsDateString()
+  validUntil?: string;
+
+  @IsOptional()
+  @IsEnum(AnnouncementAudienceTypeEnum)
+  audienceType?: AnnouncementAudienceTypeEnum;
+
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  audienceUserIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsEnum(AnnouncementPlacementEnum, { each: true })
+  placements?: AnnouncementPlacementEnum[];
+
+  @IsOptional()
+  @IsEnum(StoreAdActionTypeEnum)
+  actionType?: StoreAdActionTypeEnum;
+
+  @IsOptional()
+  @IsString()
+  actionTarget?: string;
+
+  @IsOptional()
+  @IsMongoId()
+  storeId?: string;
+
+  @IsOptional()
+  @IsMongoId()
+  productId?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  dismissible?: boolean;
+}
+
+export class CreateAnnouncementDto extends AnnouncementBaseDto {}
+
+export class UpdateAnnouncementDto extends AnnouncementBaseDto {}
+
+export class ListAnnouncementsQueryDto {
+  @IsOptional()
+  @IsEnum(AnnouncementPlacementEnum)
+  placement?: AnnouncementPlacementEnum;
+
+  @IsOptional()
+  @IsString()
+  regionCode?: string;
 }

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AddressModel, AddressSchema } from '@schemas/address.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
+import { GeocodeModule } from '../geocode/geocode.module';
 import { AddressesController } from './addresses.controller';
 import { AddressesService } from './addresses.service';
 
@@ -9,6 +10,7 @@ import { AddressesService } from './addresses.service';
   controllers: [AddressesController],
   providers: [AddressesService],
   imports: [
+    GeocodeModule,
     MongooseModule.forFeature([
       { name: AddressModel.name, schema: AddressSchema },
       { name: UserModel.name, schema: UserSchema },

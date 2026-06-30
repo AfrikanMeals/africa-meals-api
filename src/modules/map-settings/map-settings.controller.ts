@@ -4,6 +4,7 @@ import {
   Get,
   Header,
   Put,
+  Query,
   Req,
   UseGuards,
   UsePipes,
@@ -23,8 +24,8 @@ export class MapSettingsController {
 
   @Get()
   @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
-  getPublic() {
-    return this._service.getPublicSettings();
+  getPublic(@Query('regionCode') regionCode?: string) {
+    return this._service.getPublicSettings(regionCode);
   }
 
   @ApiBearerAuth('bearer')
