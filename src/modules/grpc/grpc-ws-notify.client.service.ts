@@ -128,13 +128,18 @@ export class GrpcWsNotifyClientService implements OnModuleDestroy {
     return true;
   }
 
-  private markSuccess(started: number): void {
+  private markSuccess(started: number, method: string, bytes = 0): void {
     this.consecutiveFailures = 0;
-    this.metrics.record(Date.now() - started, true, false);
+    this.metrics.record(method, Date.now() - started, true, false, bytes);
   }
 
-  private markFailure(started: number, fallback: boolean): void {
-    this.metrics.record(Date.now() - started, false, fallback);
+  private markFailure(
+    started: number,
+    method: string,
+    fallback: boolean,
+    bytes = 0,
+  ): void {
+    this.metrics.record(method, Date.now() - started, false, fallback, bytes);
     this.consecutiveFailures += 1;
     const threshold = parsePositiveInt(
       this.config.get<string>('GRPC_CIRCUIT_FAILURE_THRESHOLD'),
@@ -160,11 +165,11 @@ export class GrpcWsNotifyClientService implements OnModuleDestroy {
     return new Promise((resolve) => {
       this.client!.Ping({}, md, { deadline }, (err, res) => {
         if (err || !res?.service) {
-          this.markFailure(started, false);
+          this.markFailure(started, 'Ping', false);
           resolve(false);
           return;
         }
-        this.markSuccess(started);
+        this.markSuccess(started, 'Ping');
         resolve(true);
       });
     });
@@ -184,6 +189,8 @@ export class GrpcWsNotifyClientService implements OnModuleDestroy {
     const userId = String(payload.userId ?? '').trim();
 
     const runRpc = (
+      method: string,
+      bytes: number,
       fn: (
         cb: (err: grpc.ServiceError | null, res?: { ok?: boolean }) => void,
       ) => void,
@@ -191,18 +198,18 @@ export class GrpcWsNotifyClientService implements OnModuleDestroy {
       new Promise<boolean>((resolve) => {
         fn((err, res) => {
           if (err || res?.ok !== true) {
-            this.markFailure(started, false);
+            this.markFailure(started, method, false, bytes);
             resolve(false);
             return;
           }
-          this.markSuccess(started);
+          this.markSuccess(started, method, bytes);
           resolve(true);
         });
       });
 
     if (suffix === 'inbox/refresh') {
       if (!userId) return false;
-      return runRpc((cb) =>
+      return runRpc('InboxRefresh', payloadJson.length, (cb) =>
         this.client!.InboxRefresh({ userId }, md, { deadline }, cb),
       );
     }
@@ -214,7 +221,7 @@ export class GrpcWsNotifyClientService implements OnModuleDestroy {
       'order/staff-broadcast',
     ]);
     if (orderPaths.has(suffix)) {
-      return runRpc((cb) =>
+      return runRpc('OrderDispatch', payloadJson.length, (cb) =>
         this.client!.OrderDispatch(
           { pathSuffix: suffix, userId, payloadJson },
           md,
@@ -224,7 +231,7 @@ export class GrpcWsNotifyClientService implements OnModuleDestroy {
       );
     }
 
-    return runRpc((cb) =>
+    return runRpc('GenericDispatch', payloadJson.length, (cb) =>
       this.client!.GenericDispatch({ pathSuffix: suffix, payloadJson }, md, { deadline }, cb),
     );
   }
@@ -243,14 +250,19 @@ export class GrpcWsNotifyClientService implements OnModuleDestroy {
       payloadJson: JSON.stringify(item.payload),
     }));
 
+    const payloadBytes = rpcItems.reduce(
+      (sum, item) => sum + item.payloadJson.length,
+      0,
+    );
+
     return new Promise((resolve) => {
       this.client!.BatchDispatch({ items: rpcItems }, md, { deadline }, (err, res) => {
         if (err || (res?.failed ?? 0) > 0) {
-          this.markFailure(started, false);
+          this.markFailure(started, 'BatchDispatch', false, payloadBytes);
           resolve(false);
           return;
         }
-        this.markSuccess(started);
+        this.markSuccess(started, 'BatchDispatch', payloadBytes);
         resolve(true);
       });
     });

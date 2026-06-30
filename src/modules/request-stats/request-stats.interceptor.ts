@@ -81,6 +81,19 @@ export class RequestStatsInterceptor implements NestInterceptor {
       durationMs: Math.max(0, Date.now() - started),
       userId,
       source: 'api',
+      responseBytes: parseContentLength(res.getHeader('content-length')),
+      requestBytes: parseContentLength(req.headers['content-length']),
     });
   }
+}
+
+function parseContentLength(raw: unknown): number {
+  const value =
+    typeof raw === 'string'
+      ? raw
+      : Array.isArray(raw)
+        ? raw[0]
+        : undefined;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : 0;
 }

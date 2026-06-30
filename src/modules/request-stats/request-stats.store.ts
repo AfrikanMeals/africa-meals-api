@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import {
   RequestStatsEntry,
@@ -6,16 +6,26 @@ import {
   RequestStatsQuery,
 } from './request-stats.types';
 import { applyRequestStatsFilters } from './request-stats-slow.util';
+import { RequestStatsPrometheusAggregator } from './request-stats-prometheus.aggregator';
 
 export type PushRequestStatsInput = Omit<
   RequestStatsEntry,
   'id' | 'at' | 'source'
-> & { source?: 'api' | 'ws' };
+> & {
+  source?: 'api' | 'ws';
+  responseBytes?: number;
+  requestBytes?: number;
+};
 
 @Injectable()
 export class RequestStatsStore {
   private entries: RequestStatsEntry[] = [];
   private maxEntries = 10_000;
+
+  constructor(
+    @Optional()
+    private readonly prometheus?: RequestStatsPrometheusAggregator,
+  ) {}
 
   configure(maxEntries: number): void {
     this.maxEntries = maxEntries;
@@ -41,6 +51,15 @@ export class RequestStatsStore {
     if (this.entries.length > this.maxEntries) {
       this.entries.splice(0, this.entries.length - this.maxEntries);
     }
+    this.prometheus?.record({
+      kind: input.kind,
+      method: input.method,
+      route: input.route,
+      statusCode: input.statusCode,
+      durationMs: input.durationMs,
+      responseBytes: input.responseBytes,
+      requestBytes: input.requestBytes,
+    });
   }
 
   clear(): void {

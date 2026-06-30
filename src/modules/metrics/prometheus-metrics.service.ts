@@ -2,6 +2,8 @@ import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
+import { GrpcWsNotifyMetricsService } from '@modules/grpc/grpc-ws-notify.metrics.service';
+import { RequestStatsPrometheusAggregator } from '@modules/request-stats/request-stats-prometheus.aggregator';
 import { RequestStatsStore } from '@modules/request-stats/request-stats.store';
 
 function escLabel(value: string): string {
@@ -22,11 +24,23 @@ function line(
   return `${name}{${parts}} ${value}`;
 }
 
+function prometheusLine(
+  name: string,
+  value: number,
+  labels?: Record<string, string>,
+): string {
+  return line(name, value, labels);
+}
+
 @Injectable()
 export class PrometheusMetricsService {
   constructor(
     private readonly config: ConfigService,
     private readonly requestStats: RequestStatsStore,
+    @Optional()
+    private readonly requestStatsPrometheus?: RequestStatsPrometheusAggregator,
+    @Optional()
+    private readonly grpcClientMetrics?: GrpcWsNotifyMetricsService,
     @Optional() @InjectConnection() private readonly mongoose?: Connection,
   ) {}
 
@@ -73,6 +87,26 @@ export class PrometheusMetricsService {
       '# TYPE api_request_stats_events gauge',
       line('api_request_stats_events', httpCount, { pod, kind: 'http' }),
     );
+
+    if (this.requestStatsPrometheus) {
+      lines.push(...this.requestStatsPrometheus.render('api', pod));
+    }
+    if (this.grpcClientMetrics) {
+      lines.push(...this.grpcClientMetrics.renderPrometheus('api', pod));
+      const snap = this.grpcClientMetrics.snapshot();
+      lines.push(
+        '# HELP api_grpc_client_window_samples Recent gRPC client samples in window',
+        '# TYPE api_grpc_client_window_samples gauge',
+        prometheusLine('api_grpc_client_window_samples', snap.count, { pod }),
+        '# HELP api_grpc_client_window_error_rate Recent gRPC client error rate',
+        '# TYPE api_grpc_client_window_error_rate gauge',
+        prometheusLine('api_grpc_client_window_error_rate', snap.errorRate, { pod }),
+        '# HELP api_grpc_client_window_p95_ms Recent gRPC client p95 latency ms',
+        '# TYPE api_grpc_client_window_p95_ms gauge',
+        prometheusLine('api_grpc_client_window_p95_ms', snap.p95Ms, { pod }),
+        '',
+      );
+    }
 
     lines.push('');
     return `${lines.join('\n')}\n`;

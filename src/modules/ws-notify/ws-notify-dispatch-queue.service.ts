@@ -208,11 +208,11 @@ export class WsNotifyDispatchQueueService
         return;
       }
       if (!this.grpcWsNotify.httpFallbackEnabled()) {
-        this.grpcMetrics.record(0, false, false);
+        this.grpcMetrics.record(suffix, 0, false, false);
         this.logger.warn(`gRPC dispatch failed (${suffix}) — fallback HTTP disabled`);
         return;
       }
-      this.grpcMetrics.record(0, false, true);
+      this.grpcMetrics.record(suffix, 0, false, true);
     }
 
     const mirrorNotifyEventsOverHttp =

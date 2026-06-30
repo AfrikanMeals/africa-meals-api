@@ -19,6 +19,7 @@ import { DrinkModel, DrinkSchema } from '@schemas/drink.schema';
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
 import { StoreModule } from '../store/store.module';
 import { TeamsModule } from '../teams/teams.module';
+import { RequestStatsPrometheusAggregator } from './request-stats-prometheus.aggregator';
 import { RequestStatsAdminController } from './request-stats-admin.controller';
 import { RequestStatsCollectController } from './request-stats-collect.controller';
 import { RequestStatsInterceptor } from './request-stats.interceptor';
@@ -45,6 +46,7 @@ import { VendorAnalyticsCollectService } from './vendor-analytics-collect.servic
   ],
   controllers: [RequestStatsAdminController, RequestStatsCollectController],
   providers: [
+    RequestStatsPrometheusAggregator,
     RequestStatsStore,
     RequestStatsService,
     VendorAnalyticsCollectService,
@@ -54,6 +56,6 @@ import { VendorAnalyticsCollectService } from './vendor-analytics-collect.servic
       useClass: RequestStatsInterceptor,
     },
   ],
-  exports: [RequestStatsStore, RequestStatsService],
+  exports: [RequestStatsStore, RequestStatsService, RequestStatsPrometheusAggregator],
 })
 export class RequestStatsModule {}
