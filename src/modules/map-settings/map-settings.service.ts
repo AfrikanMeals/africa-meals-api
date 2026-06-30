@@ -144,23 +144,7 @@ export class MapSettingsService {
         { upsert: true, new: true, lean: true, setDefaultsOnInsert: true },
       )
       .exec();
-    const base = this._toResponse(doc as MapSettingsModel);
-    // Client & livreur mobile : tous les moteurs d’affichage (formule boutique sans effet).
-    return {
-      ...base,
-      mobileUser: {
-        ...base.mobileUser,
-        mapboxEnabled: true,
-        googleEnabled: true,
-        osmEnabled: true,
-      },
-      mobileDelivery: {
-        ...base.mobileDelivery,
-        mapboxEnabled: true,
-        googleEnabled: true,
-        osmEnabled: true,
-      },
-    };
+    return this._toResponse(doc as MapSettingsModel);
   }
 
   async updateSettings(user: UserModel, dto: UpdateMapSettingsDto) {
