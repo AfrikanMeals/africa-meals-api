@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MediasModule } from '@modules/medias/medias.module';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -23,7 +23,7 @@ import { RecaptchaEnterpriseService } from './recaptcha-enterprise.service';
 
 @Module({
   imports: [
-    MediasModule,
+    forwardRef(() => MediasModule),
     MongooseModule.forFeature([
       {
         name: SiteContactRequestModel.name,

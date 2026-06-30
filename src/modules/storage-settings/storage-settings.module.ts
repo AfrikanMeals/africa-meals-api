@@ -1,8 +1,8 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
+import { AdminJobsModule } from '@modules/admin-jobs/admin-jobs.module';
 import { MediasModule } from '@modules/medias/medias.module';
-import { TeamsModule } from '@modules/teams/teams.module';
+import { StoreAccessModule } from '@modules/teams/store-access.module';
 import {
   StorageSettingsModel,
   StorageSettingsSchema,
@@ -22,8 +22,8 @@ import { StorageTransferService } from './storage-transfer.service';
       { name: StorageTransferRunModel.name, schema: StorageTransferRunSchema },
     ]),
     forwardRef(() => MediasModule),
-    forwardRef(() => DomainEventHandlersModule),
-    TeamsModule,
+    AdminJobsModule,
+    StoreAccessModule,
   ],
   controllers: [StorageSettingsController],
   providers: [StorageSettingsService, StorageTransferService],

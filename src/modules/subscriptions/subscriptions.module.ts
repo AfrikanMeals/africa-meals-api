@@ -1,7 +1,7 @@
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { StoreAdCashModule } from '@modules/store-ad-cash/store-ad-cash.module';
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AdModel, AdSchema } from '@schemas/ad.schema';
 import { AdCampaignModel, AdCampaignSchema } from '@schemas/ad-campaign.schema';
@@ -31,7 +31,7 @@ import { VendorSubscriptionEmailService } from './vendor-subscription-email.serv
 
 @Module({
   imports: [
-    MailerModule,
+    forwardRef(() => MailerModule),
     NotificationsModule,
     StoreAdCashModule,
     MongooseModule.forFeature([

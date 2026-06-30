@@ -9,8 +9,7 @@ import { RefundsModule } from '@modules/refunds/refunds.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { FleetModule } from '@modules/fleet/fleet.module';
-import { AdminJobProgressService } from '@modules/admin-jobs/admin-job-progress.service';
-import { AdminJobEmitterService } from '@modules/admin-jobs/admin-job-emitter.service';
+import { AdminJobsModule } from '@modules/admin-jobs/admin-jobs.module';
 import { CheckoutSessionSseModule } from '@modules/sse-stream/checkout-session-sse.module';
 import { DomainEventHandlersService } from './domain-event-handlers.service';
 import { DomainEventHandlersBootstrapService } from './domain-event-handlers-bootstrap.service';
@@ -27,6 +26,7 @@ import { OrderDomainBridgeService } from './order-domain-bridge.service';
 @Module({
   imports: [
     ConfigModule,
+    AdminJobsModule,
     FleetModule,
     WsNotifyModule,
     NotificationsModule,
@@ -50,15 +50,12 @@ import { OrderDomainBridgeService } from './order-domain-bridge.service';
     WsOrderNotifyHandler,
     JobDomainEventHandler,
     SubscriptionDomainEventHandler,
-    AdminJobProgressService,
-    AdminJobEmitterService,
   ],
   exports: [
     DomainEventHandlersService,
     OrderDomainBridgeService,
     WsOrderNotifyHandler,
-    AdminJobProgressService,
-    AdminJobEmitterService,
+    AdminJobsModule,
   ],
 })
 export class DomainEventHandlersModule {}
