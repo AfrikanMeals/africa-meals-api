@@ -10,18 +10,14 @@ import {
   Post,
   Query,
   Req,
-  UploadedFile,
   UseGuards,
-  UseInterceptors,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { slimAnnouncementForClient } from '@utils/public-client-shapes';
 import { Request } from 'express';
-import { memoryStorage } from 'multer';
 import { AnnouncementsService } from './announcements.service';
 import {
   CreateAnnouncementDto,
@@ -29,7 +25,6 @@ import {
   UpdateAnnouncementDto,
 } from './dto/announcements.dto';
 import { AnnouncementImageJsonDto } from './dto/announcement-image.dto';
-import { parseMultipartJsonBody } from './parse-multipart-json-body.util';
 
 function toClientRows(docs: unknown[]): Record<string, unknown>[] {
   return docs.map((d) => {
@@ -91,28 +86,14 @@ export class AnnouncementsController {
 
   @Post('')
   @UseGuards(JwtGuard)
-  @UseInterceptors(
-    FileInterceptor('image', {
-      storage: memoryStorage(),
-      limits: { fileSize: 50 * 1024 * 1024, files: 1 },
-      fileFilter: (_req, file, cb) => {
-        if (!file.originalname.match(/\.(jpg|jpeg|png|webp)$/i)) {
-          return cb(new Error('invalid_file_type'), false);
-        }
-        cb(null, true);
-      },
-    }),
-  )
   async create(
-    @Body() body: Record<string, unknown>,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: CreateAnnouncementDto,
     @Req() req: Request,
-    @UploadedFile() file?: Express.Multer.File,
   ) {
-    const args = await parseMultipartJsonBody(body, CreateAnnouncementDto);
     const created = await this._announcementsService.create(
-      args,
+      body,
       req.user as UserModel,
-      file,
     );
     return slimAnnouncementForClient(
       JSON.parse(JSON.stringify(created)) as Record<string, unknown>,
@@ -121,30 +102,16 @@ export class AnnouncementsController {
 
   @Patch(':id')
   @UseGuards(JwtGuard)
-  @UseInterceptors(
-    FileInterceptor('image', {
-      storage: memoryStorage(),
-      limits: { fileSize: 50 * 1024 * 1024, files: 1 },
-      fileFilter: (_req, file, cb) => {
-        if (!file.originalname.match(/\.(jpg|jpeg|png|webp)$/i)) {
-          return cb(new Error('invalid_file_type'), false);
-        }
-        cb(null, true);
-      },
-    }),
-  )
   async update(
     @Param('id') id: string,
-    @Body() body: Record<string, unknown>,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: UpdateAnnouncementDto,
     @Req() req: Request,
-    @UploadedFile() file?: Express.Multer.File,
   ) {
-    const args = await parseMultipartJsonBody(body, UpdateAnnouncementDto);
     const updated = await this._announcementsService.update(
       id,
-      args,
+      body,
       req.user as UserModel,
-      file,
     );
     return slimAnnouncementForClient(
       JSON.parse(JSON.stringify(updated)) as Record<string, unknown>,
