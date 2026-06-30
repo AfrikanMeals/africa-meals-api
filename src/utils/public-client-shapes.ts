@@ -62,6 +62,8 @@ export function slimAnnouncementForClient(
   const updatedAt = raw['updatedAt'] ?? raw['updated_at'];
   const storeId = mongoIdToString(raw['store'] ?? raw['storeId'] ?? '');
   const productId = mongoIdToString(raw['product'] ?? raw['productId'] ?? '');
+  const audienceUserIdsRaw =
+    raw['audienceUserIds'] ?? raw['audience_user_ids'];
   return {
     id,
     isActive: raw['isActive'] ?? raw['is_active'] ?? false,
@@ -81,10 +83,8 @@ export function slimAnnouncementForClient(
     audienceType: String(
       raw['audienceType'] ?? raw['audience_type'] ?? 'ALL',
     ),
-    audienceUserIds: Array.isArray(raw['audienceUserIds'] ?? raw['audience_user_ids'])
-      ? (raw['audienceUserIds'] ?? raw['audience_user_ids']).map((v) =>
-          mongoIdToString(v),
-        )
+    audienceUserIds: Array.isArray(audienceUserIdsRaw)
+      ? audienceUserIdsRaw.map((v) => mongoIdToString(v))
       : [],
     placements: Array.isArray(raw['placements']) ? raw['placements'] : [],
     actionType: raw['actionType'] ?? raw['action_type'] ?? undefined,
