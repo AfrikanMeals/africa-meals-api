@@ -22,13 +22,13 @@ import { UserModel } from '@schemas/user.schema';
 import { slimAnnouncementForClient } from '@utils/public-client-shapes';
 import { Request } from 'express';
 import { memoryStorage } from 'multer';
-import { MultipartToJsonPipe } from 'src/pipes/multipart-to-json/multipart-to-json.pipe';
 import { AnnouncementsService } from './announcements.service';
 import {
   CreateAnnouncementDto,
   ListAnnouncementsQueryDto,
   UpdateAnnouncementDto,
 } from './dto/announcements.dto';
+import { parseMultipartJsonBody } from './parse-multipart-json-body.util';
 
 function toClientRows(docs: unknown[]): Record<string, unknown>[] {
   return docs.map((d) => {
@@ -89,10 +89,11 @@ export class AnnouncementsController {
     }),
   )
   async create(
-    @Body(MultipartToJsonPipe, ValidationPipe) args: CreateAnnouncementDto,
+    @Body() body: Record<string, unknown>,
     @Req() req: Request,
     @UploadedFile() file?: Express.Multer.File,
   ) {
+    const args = await parseMultipartJsonBody(body, CreateAnnouncementDto);
     const created = await this._announcementsService.create(
       args,
       req.user as UserModel,
@@ -119,10 +120,11 @@ export class AnnouncementsController {
   )
   async update(
     @Param('id') id: string,
-    @Body(MultipartToJsonPipe, ValidationPipe) args: UpdateAnnouncementDto,
+    @Body() body: Record<string, unknown>,
     @Req() req: Request,
     @UploadedFile() file?: Express.Multer.File,
   ) {
+    const args = await parseMultipartJsonBody(body, UpdateAnnouncementDto);
     const updated = await this._announcementsService.update(
       id,
       args,
