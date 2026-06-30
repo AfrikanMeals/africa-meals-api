@@ -53,24 +53,53 @@ function slimAnnouncementConfig(cfg: unknown): Record<string, unknown> {
   };
 }
 
-/** Aligné sur `PromotionBanner.fromJson` (mobile). */
+/** Aligné sur le client mobile + admin. */
 export function slimAnnouncementForClient(
   raw: Record<string, unknown>,
 ): Record<string, unknown> {
   const id = mongoIdToString(raw['id'] ?? raw['_id']);
   const createdAt = raw['createdAt'] ?? raw['created_at'];
   const updatedAt = raw['updatedAt'] ?? raw['updated_at'];
+  const storeId = mongoIdToString(raw['store'] ?? raw['storeId'] ?? '');
+  const productId = mongoIdToString(raw['product'] ?? raw['productId'] ?? '');
   return {
     id,
     isActive: raw['isActive'] ?? raw['is_active'] ?? false,
     text: String(raw['text'] ?? ''),
+    subtitle: String(raw['subtitle'] ?? ''),
     actionText: String(raw['actionText'] ?? raw['action_text'] ?? ''),
+    sortOrder: Number(raw['sortOrder'] ?? raw['sort_order'] ?? 0),
+    region: raw['region'] != null ? String(raw['region']) : undefined,
+    validFrom:
+      raw['validFrom'] != null || raw['valid_from'] != null
+        ? String(raw['validFrom'] ?? raw['valid_from'])
+        : undefined,
+    validUntil:
+      raw['validUntil'] != null || raw['valid_until'] != null
+        ? String(raw['validUntil'] ?? raw['valid_until'])
+        : undefined,
+    audienceType: String(
+      raw['audienceType'] ?? raw['audience_type'] ?? 'ALL',
+    ),
+    audienceUserIds: Array.isArray(raw['audienceUserIds'] ?? raw['audience_user_ids'])
+      ? (raw['audienceUserIds'] ?? raw['audience_user_ids']).map((v) =>
+          mongoIdToString(v),
+        )
+      : [],
+    placements: Array.isArray(raw['placements']) ? raw['placements'] : [],
+    actionType: raw['actionType'] ?? raw['action_type'] ?? undefined,
+    actionTarget: raw['actionTarget'] ?? raw['action_target'] ?? undefined,
+    ...(storeId ? { storeId } : {}),
+    ...(productId ? { productId } : {}),
+    dismissible: raw['dismissible'] !== false,
     ...(raw['pictureUrl'] != null || raw['picture_url'] != null
       ? {
           pictureUrl: String(raw['pictureUrl'] ?? raw['picture_url']),
         }
       : {}),
-    config: slimAnnouncementConfig(raw['config']),
+    ...(raw['config'] != null
+      ? { config: slimAnnouncementConfig(raw['config']) }
+      : {}),
     createdAt:
       createdAt instanceof Date
         ? createdAt.toISOString()

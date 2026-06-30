@@ -1,8 +1,10 @@
-import { MediasModule } from '@modules/medias/medias.module';
-import { OffersModule } from '@modules/offers/offers.module';
-import { ProductsModule } from '@modules/products/products.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { MediasModule } from '@modules/medias/medias.module';
+import {
+  AnnouncementDismissalModel,
+  AnnouncementDismissalSchema,
+} from '@schemas/announcement-dismissal.schema';
 import {
   AnnouncementModel,
   AnnouncementSchema,
@@ -14,11 +16,13 @@ import { AnnouncementsService } from './announcements.service';
   controllers: [AnnouncementsController],
   providers: [AnnouncementsService],
   imports: [
-    ProductsModule,
-    OffersModule,
     MediasModule,
     MongooseModule.forFeature([
       { name: AnnouncementModel.name, schema: AnnouncementSchema },
+      {
+        name: AnnouncementDismissalModel.name,
+        schema: AnnouncementDismissalSchema,
+      },
     ]),
   ],
   exports: [AnnouncementsService],
