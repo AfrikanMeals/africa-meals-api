@@ -43,6 +43,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
 @Module({
   controllers: [BillingController],
   providers: [
+    BillingStripePaymentIntentRateLimitGuard,
     BillingService,
     DeliveryTipService,
     StripeGroupedCheckoutService,

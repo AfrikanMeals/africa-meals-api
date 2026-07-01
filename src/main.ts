@@ -11,6 +11,8 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import express from 'express';
 import { AppModule } from './app.module';
 import { configureApplication } from './configure-app';
+import { httpRateLimitMiddleware } from './common/rate-limit/http-rate-limit.middleware';
+import { RateLimitService } from './common/rate-limit/rate-limit.service';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -18,6 +20,7 @@ async function bootstrap() {
   });
   app.enableShutdownHooks();
   app.use(httpRequestTimeoutMiddleware());
+  app.use(httpRateLimitMiddleware(app.get(RateLimitService)));
   app.use(compressionMiddleware({ threshold: 1024 }));
   app.use(createRouteAwareJsonBodyParser({ preserveRawBody: true }));
   app.use(

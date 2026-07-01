@@ -68,7 +68,7 @@ export class BillingStripePaymentIntentRateLimitGuard implements CanActivate {
       limits.maxPerIp,
     );
 
-    const userId = req.user?.id?.toString()?.trim();
+    const userId = String(req.user?._id ?? req.user?.id ?? '').trim();
     if (userId) {
       assertUnderLimit(
         `stripe-grouped-pi:user:${userId}`,

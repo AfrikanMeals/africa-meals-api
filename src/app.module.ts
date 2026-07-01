@@ -56,6 +56,7 @@ import { DomainEventsModule } from './common/domain-events/domain-events.module'
 import { ModuleCacheLayerModule } from './common/cache/module-cache-layer.module';
 import { InfraRecoveryModule } from './common/infra-recovery/infra-recovery.module';
 import { RedisSharedModule } from './common/redis/redis-shared.module';
+import { RateLimitModule } from './common/rate-limit/rate-limit.module';
 import { BullmqRedisModule } from './common/redis/bullmq-redis-connections.service';
 import { SharedMqttModule } from './common/mqtt/shared-mqtt-publisher.service';
 import { AppCacheBustSubscriber } from './common/app-cache-bust.subscriber';
@@ -181,6 +182,7 @@ async function readRedisManagerEnabledAtBootstrap(
       isGlobal: true,
     }),
     RedisSharedModule,
+    RateLimitModule,
     BullmqRedisModule,
     SharedMqttModule,
     SseRedisModule,
