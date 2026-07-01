@@ -28,6 +28,7 @@ import {
 } from '@schemas/ad-credit-payment.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { BillingController } from './billing.controller';
+import { BillingStripePaymentIntentRateLimitGuard } from './guards/billing-stripe-payment-intent-rate-limit.guard';
 import { BillingService } from './billing.service';
 import { DeliveryTipService } from './delivery-tip.service';
 import { PaypalModule } from './paypal/paypal.module';

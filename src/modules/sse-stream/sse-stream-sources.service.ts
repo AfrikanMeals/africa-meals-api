@@ -14,7 +14,6 @@ import {
   take,
 } from 'rxjs/operators';
 import { sseHealthDedupKey } from './sse-health-dedup.util';
-import { PublicStatusProbeService, PublicStatusSnapshot } from './public-status-probe.service';
 import { SseStreamService } from './sse-stream.service';
 import { MessageEvent } from '@nestjs/common';
 import { AdminJobProgressService } from '@modules/admin-jobs/admin-job-progress.service';
@@ -30,7 +29,6 @@ export class SseStreamSourcesService {
     private readonly sse: SseStreamService,
     private readonly reindexProgress: SearchReindexProgressService,
     private readonly dbMaintenance: DbMaintenanceService,
-    private readonly statusProbes: PublicStatusProbeService,
     private readonly fleetSnapshot: FleetSnapshotService,
     private readonly fleetBootstrap: FleetBootstrapService,
     private readonly adminJobs: AdminJobProgressService,
@@ -80,15 +78,17 @@ export class SseStreamSourcesService {
   }
 
   publicStatusStream(): Observable<MessageEvent> {
-    const poll$ = interval(60_000).pipe(
-      startWith(0),
-      switchMap(() => from(this.statusProbes.probeAll())),
-      map((snapshot: PublicStatusSnapshot) => ({ type: 'status', ...snapshot })),
-    );
-
+    // Sondes statut publiques désactivées en SSE — utiliser le bouton Actualiser sur /status.
     return this.sse.stream({
       eventName: 'status',
-      source$: poll$,
+      source$: of({
+        type: 'status',
+        manualOnly: true,
+        checkedAt: new Date().toISOString(),
+        summary: 'checking',
+        services: [],
+        infra: [],
+      }),
     });
   }
 

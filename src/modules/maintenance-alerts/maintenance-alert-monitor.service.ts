@@ -7,7 +7,6 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   DbMaintenanceService,
-  SystemHealthCheckResult,
 } from '@modules/db-maintenance/db-maintenance.service';
 import {
   mqttToExchange,
@@ -143,15 +142,12 @@ export class MaintenanceAlertMonitorService
   }
 
   private async collectMonitoredServices(): Promise<MonitoredService[]> {
-    const [checks, runtime, mqtt] = await Promise.all([
-      this.dbMaintenance.runAllSystemHealthChecksInternal(),
+    const [runtime, mqtt] = await Promise.all([
       this.dbMaintenance.getInfraRuntimeSettingsInternal(),
       this.dbMaintenance.getInfraMqttStatusInternal(),
     ]);
 
-    const services: MonitoredService[] = checks.map((check) =>
-      mapHealthCheck(check),
-    );
+    const services: MonitoredService[] = [];
 
     if (runtime.redisManagerEnabled) {
       const redisProbe = await probeRedis(this.config);
@@ -193,16 +189,6 @@ export class MaintenanceAlertMonitorService
 
     return services;
   }
-}
-
-function mapHealthCheck(check: SystemHealthCheckResult): MonitoredService {
-  return {
-    key: check.key,
-    label: check.label,
-    status: check.status,
-    details: check.details,
-    checkedAt: check.checkedAt,
-  };
 }
 
 function mapExchangeStatus(

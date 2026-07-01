@@ -1074,7 +1074,11 @@ export class PlatformChannelsService {
     return { ok: false, message: `Moteur email inconnu : ${engine}` };
   }
 
-  async getEmailEnginesHealthSnapshot(): Promise<EmailEnginesHealthSnapshot> {
+  async getEmailEnginesHealthSnapshot(options?: {
+    probeExternal?: boolean;
+  }): Promise<EmailEnginesHealthSnapshot> {
+    const probeExternal = options?.probeExternal ?? true;
+    const manualHint = ' · sonde via Run manuel uniquement';
     const doc = await this.ensureSettings();
     const smtpConfigsRaw = doc.smtpConfigs ?? [];
     const smtpConfigs = await this.buildSmtpConfigViews(smtpConfigsRaw);
@@ -1123,6 +1127,13 @@ export class PlatformChannelsService {
             opt,
             healthOk: null as boolean | null,
             healthDetail: 'non configuré',
+          };
+        }
+        if (!probeExternal) {
+          return {
+            opt,
+            healthOk: null as boolean | null,
+            healthDetail: `configuré${manualHint}`,
           };
         }
         const probe = await this.probeEmailEngine(opt.value);

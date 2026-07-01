@@ -1,5 +1,4 @@
 import { DbMaintenanceService, SystemHealthCheckResult } from '@modules/db-maintenance/db-maintenance.service';
-import { probeRedis } from '@modules/db-maintenance/system-exchange.probes';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -17,6 +16,8 @@ export type PublicInfraSnapshot = {
   components: PublicInfraProbe[];
 };
 
+const MANUAL_PROBE_HINT = ' · sonde réseau via Run manuel admin uniquement';
+
 @Injectable()
 export class PublicInfraStatusService {
   constructor(
@@ -24,25 +25,40 @@ export class PublicInfraStatusService {
     private readonly config: ConfigService,
   ) {}
 
+  /** Config locale uniquement — aucun appel réseau vers tiers (Mapbox, Bird, SMTP, etc.). */
   async probeAll(): Promise<PublicInfraSnapshot> {
     const checkedAt = new Date().toISOString();
-    const [mongo, map, storage, mail, sms, whatsapp, redis] =
-      await Promise.all([
-        this.dbMaintenance.runPublicSystemHealthCheck('mongodb-status'),
-        this.dbMaintenance.runPublicSystemHealthCheck('map-engine-status'),
-        this.dbMaintenance.runPublicSystemHealthCheck('file-storage-engines-status'),
-        this.dbMaintenance.runPublicSystemHealthCheck('mail-health-status'),
-        this.dbMaintenance.runPublicSystemHealthCheck('bird-sms-api-status'),
-        this.dbMaintenance.runPublicSystemHealthCheck('bird-whatsapp-api-status'),
-        probeRedis(this.config),
-      ]);
+    const [mongo, map, storage, mail, sms, whatsapp] = await Promise.all([
+      this.dbMaintenance.runPublicSystemHealthCheck('mongodb-status'),
+      this.dbMaintenance.runPublicSystemHealthCheck('map-engine-status'),
+      this.dbMaintenance.runPublicSystemHealthCheck('file-storage-engines-status'),
+      this.dbMaintenance.runPublicSystemHealthCheck('mail-health-status'),
+      this.dbMaintenance.runPublicSystemHealthCheck('bird-sms-api-status'),
+      this.dbMaintenance.runPublicSystemHealthCheck('bird-whatsapp-api-status'),
+    ]);
+
+    const redisConfigured = Boolean(
+      String(this.config.get<string>('REDIS_URL') ?? '').trim() ||
+        String(this.config.get<string>('REDIS_HOST') ?? '').trim(),
+    );
 
     const components: PublicInfraProbe[] = [
       this.fromHealthCheck('mongodb', {
         name: 'MongoDB',
         desc: 'Moteur de stockage des données applicatives.',
       }, mongo),
-      this.fromRedisProbe(redis),
+      {
+        id: 'redis',
+        name: 'Redis',
+        desc: 'Cache, files BullMQ et pont SSE.',
+        state: redisConfigured ? 'ok' : 'unknown',
+        latencyMs: null,
+        details: this.sanitizeDetails(
+          redisConfigured
+            ? `configuré${MANUAL_PROBE_HINT}`
+            : 'non configuré',
+        ),
+      },
       this.fromHealthCheck('map', {
         name: 'Moteur cartographique',
         desc: 'Géocodage et cartes multi-moteurs (Mapbox, Google Maps).',
@@ -83,34 +99,11 @@ export class PublicInfraStatusService {
     };
   }
 
-  private fromRedisProbe(redis: Awaited<ReturnType<typeof probeRedis>>): PublicInfraProbe {
-    return {
-      id: 'redis',
-      name: 'Redis',
-      desc: 'Cache, files BullMQ et pont SSE.',
-      state:
-        redis.status === 'disabled'
-          ? 'unknown'
-          : this.mapExchangeStatus(redis.status),
-      latencyMs: redis.latencyMs,
-      details: this.sanitizeDetails(redis.details),
-    };
-  }
-
   private mapHealthStatus(
     status: SystemHealthCheckResult['status'],
   ): PublicInfraProbe['state'] {
     if (status === 'healthy') return 'ok';
     if (status === 'degraded') return 'degraded';
-    return 'down';
-  }
-
-  private mapExchangeStatus(
-    status: 'healthy' | 'degraded' | 'down' | 'disabled' | 'unknown',
-  ): PublicInfraProbe['state'] {
-    if (status === 'healthy') return 'ok';
-    if (status === 'degraded') return 'degraded';
-    if (status === 'disabled' || status === 'unknown') return 'unknown';
     return 'down';
   }
 

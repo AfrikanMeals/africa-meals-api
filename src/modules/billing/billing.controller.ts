@@ -32,6 +32,7 @@ import { StripeConnectService } from './stripe/stripe-connect.service';
 import { SubscriptionsStripeCheckoutService } from '@modules/subscriptions/subscriptions-stripe-checkout.service';
 import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.service';
 import { subscriptionCheckoutReturnHtml } from './stripe/subscription-checkout-return.html';
+import { BillingStripePaymentIntentRateLimitGuard } from './guards/billing-stripe-payment-intent-rate-limit.guard';
 
 @ApiTags('billing')
 @ApiBearerAuth('bearer')
@@ -211,7 +212,7 @@ export class BillingController {
   }
 
   @Post('stripe/grouped-payment-intent')
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, BillingStripePaymentIntentRateLimitGuard)
   @ApiOperation({
     summary:
       'PaymentIntent (client_secret) pour Payment Sheet — Apple Pay, Google Pay, cartes',

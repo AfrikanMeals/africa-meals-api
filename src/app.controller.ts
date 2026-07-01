@@ -30,9 +30,9 @@ export class AppController {
   @Get('health/infra')
   @ApiTags('health')
   @ApiOperation({
-    summary: 'Statut infrastructure publique',
+    summary: 'Statut infrastructure publique (config uniquement)',
     description:
-      'MongoDB, Redis, cartes, stockage fichiers, e-mail, SMS et WhatsApp — sans authentification.',
+      'MongoDB, Redis, cartes, stockage, e-mail, SMS et WhatsApp — configuration locale sans sondes réseau tierces. Sondes complètes : admin System Health → Run.',
   })
   async getPublicInfraHealth() {
     return this.publicInfra.probeAll();

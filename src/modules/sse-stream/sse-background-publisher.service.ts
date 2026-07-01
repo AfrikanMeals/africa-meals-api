@@ -21,7 +21,6 @@ import {
   isSseRedisBridgeEnabled,
 } from '../../common/sse/sse-redis.channels';
 import { sseHealthDedupKey } from './sse-health-dedup.util';
-import { PublicStatusProbeService } from './public-status-probe.service';
 
 /**
  * Publie snapshots santé / statut public sur Redis pour SSE hébergé sur WS (POLL-000).
@@ -32,14 +31,12 @@ export class SseBackgroundPublisherService
 {
   private readonly logger = new Logger(SseBackgroundPublisherService.name);
   private mqttTimer: ReturnType<typeof setInterval> | null = null;
-  private statusTimer: ReturnType<typeof setInterval> | null = null;
   private statsTimer: ReturnType<typeof setInterval> | null = null;
   private lastHealthKey = '';
 
   constructor(
     private readonly sseRedis: SseRedisPublishService,
     private readonly dbMaintenance: DbMaintenanceService,
-    private readonly statusProbes: PublicStatusProbeService,
     private readonly requestStatsStore: RequestStatsStore,
     private readonly config: ConfigService,
   ) {}
@@ -47,13 +44,11 @@ export class SseBackgroundPublisherService
   onModuleInit(): void {
     if (!isSseRedisBridgeEnabled() || !isSseHostOnWs()) return;
     this.logger.log(
-      'SSE background publisher started (health + status + request-stats)',
+      'SSE background publisher started (mqtt + request-stats; status health probes disabled)',
     );
     void this.publishMqttTick();
-    void this.publishStatusTick();
     void this.publishRequestStatsTick();
     this.mqttTimer = setInterval(() => void this.publishMqttTick(), 7000);
-    this.statusTimer = setInterval(() => void this.publishStatusTick(), 60_000);
     const statsMs = Number(this.config.get('REQUEST_STATS_SSE_PUSH_MS')) || 10_000;
     this.statsTimer = setInterval(
       () => void this.publishRequestStatsTick(),
@@ -63,7 +58,6 @@ export class SseBackgroundPublisherService
 
   onModuleDestroy(): void {
     if (this.mqttTimer) clearInterval(this.mqttTimer);
-    if (this.statusTimer) clearInterval(this.statusTimer);
     if (this.statsTimer) clearInterval(this.statsTimer);
   }
 
@@ -90,17 +84,6 @@ export class SseBackgroundPublisherService
     if (key === this.lastHealthKey) return;
     this.lastHealthKey = key;
     await this.sseRedis.publishHealth(payload);
-  }
-
-  private async publishStatusTick(): Promise<void> {
-    try {
-      const snapshot = await this.statusProbes.probeAll();
-      await this.sseRedis.publishStatus({ type: 'status', ...snapshot });
-    } catch (e) {
-      this.logger.warn(
-        `status tick: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
   }
 
   private async publishRequestStatsTick(): Promise<void> {

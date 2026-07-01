@@ -170,6 +170,9 @@ export type SystemHealthCheckResult = {
   checkedAt: string;
 };
 
+/** `full` = sondes réseau (Run manuel admin). `config-only` = config locale sans appels tiers. */
+export type SystemHealthProbeMode = 'full' | 'config-only';
+
 export type InfraRuntimeSettingsResponse = {
   redisManagerEnabled: boolean;
   mqBrokerEnabled: boolean;
@@ -662,12 +665,12 @@ export class DbMaintenanceService {
   }
 
   async runAllSystemHealthChecksInternal(options?: {
-    externalMapProbe?: boolean;
+    probeMode?: SystemHealthProbeMode;
   }): Promise<SystemHealthCheckResult[]> {
-    const externalMapProbe = options?.externalMapProbe ?? false;
+    const probeMode = options?.probeMode ?? 'config-only';
     return Promise.all(
       this.systemHealthChecks.map((def) =>
-        this.runSystemHealthCheckInternal(def.key, { externalMapProbe }),
+        this.runSystemHealthCheckInternal(def.key, { probeMode }),
       ),
     );
   }
@@ -676,16 +679,20 @@ export class DbMaintenanceService {
   async runPublicSystemHealthCheck(
     key: string,
   ): Promise<SystemHealthCheckResult> {
-    return this.runSystemHealthCheckInternal(key, { externalMapProbe: false });
+    return this.runSystemHealthCheckInternal(key, { probeMode: 'config-only' });
   }
 
   private async runSystemHealthCheckInternal(
     key: string,
-    options?: { externalMapProbe?: boolean },
+    options?: { probeMode?: SystemHealthProbeMode },
   ): Promise<SystemHealthCheckResult> {
     const normalized = String(key || '')
       .trim()
       .toLowerCase();
+    const probeMode = options?.probeMode ?? 'full';
+    if (probeMode === 'config-only') {
+      return this.runSystemHealthCheckConfigOnly(normalized);
+    }
     switch (normalized) {
       case 'mongodb-status':
         return this.runMongoHealthCheck();
@@ -710,26 +717,184 @@ export class DbMaintenanceService {
       case 'stripe-webhook-latency':
         return this.runStripeWebhookLatencyHealthCheck();
       case 'map-engine-status':
-        return this.runMapEngineHealthCheck(
-          options?.externalMapProbe ?? true,
-        );
+        return this.runMapEngineHealthCheck(true);
       case 'file-storage-engines-status':
-        return this.runFileStorageEnginesHealthCheck();
+        return this.runFileStorageEnginesHealthCheck(true);
       case 'mail-health-status':
-        return this.runMailHealthCheck();
+        return this.runMailHealthCheck(true);
       case 'firebase-services-status':
         return this.runFirebaseServicesHealthCheck();
       case 'ad-notification-channels-status':
-        return this.runAdNotificationChannelsHealthCheck();
+        return this.runAdNotificationChannelsHealthCheck(true);
       case 'bird-sms-api-status':
-        return this.runBirdSmsApiHealthCheck();
+        return this.runBirdSmsApiHealthCheck(true);
       case 'bird-whatsapp-api-status':
-        return this.runBirdWhatsAppApiHealthCheck();
+        return this.runBirdWhatsAppApiHealthCheck(true);
       default:
         throw new BadRequestException(
           `unknown_system_health_check:${normalized}`,
         );
     }
+  }
+
+  private static readonly MANUAL_HEALTH_PROBE_HINT =
+    ' · sonde réseau via Run manuel uniquement';
+
+  private async runSystemHealthCheckConfigOnly(
+    key: string,
+  ): Promise<SystemHealthCheckResult> {
+    const def = this.systemHealthChecks.find((c) => c.key === key);
+    const label = def?.label ?? key;
+    const startedAtMs = Date.now();
+    const hint = DbMaintenanceService.MANUAL_HEALTH_PROBE_HINT;
+
+    switch (key) {
+      case 'mongodb-status': {
+        const db = this.connection.db;
+        return this.normalizeHealthResult({
+          key,
+          label,
+          startedAtMs,
+          status: db ? 'healthy' : 'down',
+          details: db
+            ? `Connexion initialisée${hint}`
+            : 'MongoDB indisponible (connexion non initialisée).',
+        });
+      }
+      case 'redis-cache-status':
+        return this.configOnlyFromEnvFlag(
+          key,
+          label,
+          startedAtMs,
+          Boolean(
+            String(this.config.get('REDIS_URL') ?? '').trim() ||
+              String(this.config.get('REDIS_HOST') ?? '').trim(),
+          ),
+          'Redis cache',
+        );
+      case 'bullmq-redis-status':
+        return this.configOnlyFromEnvFlag(
+          key,
+          label,
+          startedAtMs,
+          Boolean(
+            String(this.config.get('BULLMQ_REDIS_URL') ?? '').trim() ||
+              String(this.config.get('BULLMQ_REDIS_HOST') ?? '').trim() ||
+              String(this.config.get('REDIS_URL') ?? '').trim(),
+          ),
+          'Redis BullMQ',
+        );
+      case 'memcached-status':
+        return this.configOnlyFromEnvFlag(
+          key,
+          label,
+          startedAtMs,
+          Boolean(String(this.config.get('MEMCACHED_SERVERS') ?? '').trim()),
+          'Memcached',
+        );
+      case 'websocket-service-status':
+        return this.configOnlyFromEnvFlag(
+          key,
+          label,
+          startedAtMs,
+          Boolean(String(this.config.get('WS_PUBLIC_URL') ?? '').trim()),
+          'Service WS',
+        );
+      case 'grpc-ws-notify-status':
+        return this.configOnlyFromEnvFlag(
+          key,
+          label,
+          startedAtMs,
+          String(this.config.get('GRPC_WS_NOTIFY_ENABLED') ?? '').trim() ===
+            'true',
+          'gRPC WS Notify',
+        );
+      case 'grpc-api-internal-status':
+        return this.configOnlyFromEnvFlag(
+          key,
+          label,
+          startedAtMs,
+          String(this.config.get('GRPC_API_INTERNAL_ENABLED') ?? '').trim() ===
+            'true',
+          'gRPC API internal',
+        );
+      case 'api-function-status':
+        return this.normalizeHealthResult({
+          key,
+          label,
+          startedAtMs,
+          status: 'healthy',
+          details: `API up · uptime=${Math.floor(process.uptime())}s${hint}`,
+        });
+      case 'stripe-payment-status': {
+        const sk = String(this.config.get('STRIPE_SECRET_KEY') ?? '').trim();
+        return this.normalizeHealthResult({
+          key,
+          label,
+          startedAtMs,
+          status: sk.startsWith('sk_') ? 'healthy' : 'down',
+          details: sk.startsWith('sk_')
+            ? `STRIPE_SECRET_KEY configurée${hint}`
+            : 'STRIPE_SECRET_KEY non configurée.',
+        });
+      }
+      case 'stripe-webhook-last-activity':
+      case 'stripe-webhook-latency':
+        return this.normalizeHealthResult({
+          key,
+          label,
+          startedAtMs,
+          status: 'degraded',
+          details: `Métrique disponible via Run manuel uniquement${hint}`,
+        });
+      case 'map-engine-status':
+        return this.runMapEngineHealthCheck(false);
+      case 'file-storage-engines-status':
+        return this.runFileStorageEnginesHealthCheck(false);
+      case 'mail-health-status':
+        return this.runMailHealthCheck(false);
+      case 'firebase-services-status': {
+        const projectId = String(
+          this.firebaseApp?.options?.projectId ?? '',
+        ).trim();
+        return this.normalizeHealthResult({
+          key,
+          label,
+          startedAtMs,
+          status: projectId ? 'healthy' : 'down',
+          details: projectId
+            ? `Firebase projectId=${projectId}${hint}`
+            : 'Firebase Admin projectId manquant.',
+        });
+      }
+      case 'ad-notification-channels-status':
+        return this.runAdNotificationChannelsHealthCheck(false);
+      case 'bird-sms-api-status':
+        return this.runBirdSmsApiHealthCheck(false);
+      case 'bird-whatsapp-api-status':
+        return this.runBirdWhatsAppApiHealthCheck(false);
+      default:
+        throw new BadRequestException(`unknown_system_health_check:${key}`);
+    }
+  }
+
+  private configOnlyFromEnvFlag(
+    key: string,
+    label: string,
+    startedAtMs: number,
+    configured: boolean,
+    serviceLabel: string,
+  ): SystemHealthCheckResult {
+    const hint = DbMaintenanceService.MANUAL_HEALTH_PROBE_HINT;
+    return this.normalizeHealthResult({
+      key,
+      label,
+      startedAtMs,
+      status: configured ? 'healthy' : 'degraded',
+      details: configured
+        ? `${serviceLabel} configuré${hint}`
+        : `${serviceLabel} non configuré.`,
+    });
   }
 
   async runSystemHealthCheck(
@@ -4345,10 +4510,13 @@ export class DbMaintenanceService {
     });
   }
 
-  private async runFileStorageEnginesHealthCheck(): Promise<SystemHealthCheckResult> {
+  private async runFileStorageEnginesHealthCheck(
+    probeExternal = true,
+  ): Promise<SystemHealthCheckResult> {
     const startedAtMs = Date.now();
     const key = 'file-storage-engines-status';
     const label = 'File storage engines status';
+    const hint = DbMaintenanceService.MANUAL_HEALTH_PROBE_HINT;
 
     const engines: Array<{
       name: string;
@@ -4360,6 +4528,84 @@ export class DbMaintenanceService {
     const firebaseBucket =
       String(this.config.get<string>('AM_FIREBASE_STORAGE_BUCKET') ?? '').trim() ||
       String(this.firebaseApp?.options?.storageBucket ?? '').trim();
+    if (!probeExternal) {
+      const gcsBucket =
+        String(this.config.get<string>('GCS_BUCKET') ?? '').trim() ||
+        String(this.config.get<string>('GOOGLE_CLOUD_STORAGE_BUCKET') ?? '').trim();
+      const s3Bucket = String(this.config.get<string>('AWS_S3_BUCKET') ?? '').trim();
+      const s3Key = String(this.config.get<string>('AWS_ACCESS_KEY_ID') ?? '').trim();
+      const s3Secret = String(
+        this.config.get<string>('AWS_SECRET_ACCESS_KEY') ?? '',
+      ).trim();
+      const minioBucket = String(this.config.get<string>('MINIO_BUCKET') ?? '').trim();
+      const minioKey = String(this.config.get<string>('MINIO_ACCESS_KEY') ?? '').trim();
+      const minioSecret = String(
+        this.config.get<string>('MINIO_SECRET_KEY') ?? '',
+      ).trim();
+      const minioEndpoint = String(
+        this.config.get<string>('MINIO_ENDPOINT') ?? '',
+      ).trim();
+      const r2Bucket = String(this.config.get<string>('R2_BUCKET') ?? '').trim();
+      const r2Key = String(this.config.get<string>('R2_ACCESS_KEY_ID') ?? '').trim();
+      const r2Secret = String(
+        this.config.get<string>('R2_SECRET_ACCESS_KEY') ?? '',
+      ).trim();
+      const r2Endpoint =
+        String(this.config.get<string>('R2_ENDPOINT') ?? '').trim() ||
+        (() => {
+          const accountId = String(
+            this.config.get<string>('R2_ACCOUNT_ID') ?? '',
+          ).trim();
+          return accountId
+            ? `https://${accountId}.r2.cloudflarestorage.com`
+            : '';
+        })();
+      const configOnlyEntries = [
+        { name: 'Firebase Storage', configured: Boolean(firebaseBucket) },
+        { name: 'Google Cloud Storage', configured: Boolean(gcsBucket) },
+        {
+          name: 'Amazon S3',
+          configured: Boolean(s3Bucket && s3Key && s3Secret),
+        },
+        {
+          name: 'MinIO',
+          configured: Boolean(
+            minioBucket && minioKey && minioSecret && minioEndpoint,
+          ),
+        },
+        {
+          name: 'Cloudflare R2',
+          configured: Boolean(r2Bucket && r2Key && r2Secret && r2Endpoint),
+        },
+      ];
+      for (const entry of configOnlyEntries) {
+        engines.push({
+          name: entry.name,
+          configured: entry.configured,
+          ok: entry.configured,
+          detail: entry.configured
+            ? `configuré${hint}`
+            : 'non configuré',
+        });
+      }
+      const configured = engines.filter((e) => e.configured);
+      const okCount = configured.filter((e) => e.ok).length;
+      let status: SystemHealthCheckResult['status'] = 'down';
+      if (configured.length === 0) status = 'down';
+      else if (okCount === configured.length) status = 'healthy';
+      else if (okCount > 0) status = 'degraded';
+      const details = engines
+        .map((e) => `${e.name} : ${e.configured ? e.detail : 'non configuré'}`)
+        .join(' · ');
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status,
+        details,
+      });
+    }
+
     if (firebaseBucket) {
       try {
         const [exists] = await getStorage(this.firebaseApp)
@@ -4577,12 +4823,16 @@ export class DbMaintenanceService {
     });
   }
 
-  private async runMailHealthCheck(): Promise<SystemHealthCheckResult> {
+  private async runMailHealthCheck(
+    probeExternal = true,
+  ): Promise<SystemHealthCheckResult> {
     const startedAtMs = Date.now();
     const key = 'mail-health-status';
     const label = 'Mail health status';
 
-    const snapshot = await this.platformChannels.getEmailEnginesHealthSnapshot();
+    const snapshot = await this.platformChannels.getEmailEnginesHealthSnapshot({
+      probeExternal,
+    });
 
     const formatRow = (row: (typeof snapshot.rows)[number]): string => {
       const cfg = row.configured ? 'config✓' : 'config✗';
@@ -4614,9 +4864,15 @@ export class DbMaintenanceService {
         row.engine !== 'any' &&
         row.engine !== 'auto',
     );
-    const withHealth = concreteConfigured.filter((row) => row.healthOk !== null);
-    const okCount = withHealth.filter((row) => row.healthOk === true).length;
-    const failCount = withHealth.filter((row) => row.healthOk === false).length;
+    const withHealth = probeExternal
+      ? concreteConfigured.filter((row) => row.healthOk !== null)
+      : concreteConfigured;
+    const okCount = withHealth.filter((row) =>
+      probeExternal ? row.healthOk === true : row.configured,
+    ).length;
+    const failCount = probeExternal
+      ? withHealth.filter((row) => row.healthOk === false).length
+      : 0;
 
     let status: SystemHealthCheckResult['status'] = 'down';
     if (concreteConfigured.length === 0) {
@@ -4732,7 +4988,9 @@ export class DbMaintenanceService {
     });
   }
 
-  private async runBirdSmsApiHealthCheck(): Promise<SystemHealthCheckResult> {
+  private async runBirdSmsApiHealthCheck(
+    probeExternal = true,
+  ): Promise<SystemHealthCheckResult> {
     const startedAtMs = Date.now();
     const key = 'bird-sms-api-status';
     const label = 'SMS API status';
@@ -4753,6 +5011,16 @@ export class DbMaintenanceService {
         details: partial
           ? 'Canal SMS incomplet : credentials requis (ACCESS_KEY, WORKSPACE_ID, SMS_CHANNEL_ID).'
           : 'Canal SMS non configuré (optionnel si SMS Ads désactivé).',
+      });
+    }
+
+    if (!probeExternal) {
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: smsEnabled ? 'healthy' : 'degraded',
+        details: `Canal SMS configuré${DbMaintenanceService.MANUAL_HEALTH_PROBE_HINT}`,
       });
     }
 
@@ -4788,7 +5056,9 @@ export class DbMaintenanceService {
     });
   }
 
-  private async runBirdWhatsAppApiHealthCheck(): Promise<SystemHealthCheckResult> {
+  private async runBirdWhatsAppApiHealthCheck(
+    probeExternal = true,
+  ): Promise<SystemHealthCheckResult> {
     const startedAtMs = Date.now();
     const key = 'bird-whatsapp-api-status';
     const label = 'WhatsApp API status';
@@ -4809,6 +5079,16 @@ export class DbMaintenanceService {
         details: partial
           ? 'Canal WhatsApp incomplet : credentials requis (ACCESS_KEY, WORKSPACE_ID, WHATSAPP_CHANNEL_ID).'
           : 'Canal WhatsApp non configuré (optionnel si canal désactivé).',
+      });
+    }
+
+    if (!probeExternal) {
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: waEnabled ? 'healthy' : 'degraded',
+        details: `Canal WhatsApp configuré${DbMaintenanceService.MANUAL_HEALTH_PROBE_HINT}`,
       });
     }
 
@@ -4844,22 +5124,26 @@ export class DbMaintenanceService {
     });
   }
 
-  private async runAdNotificationChannelsHealthCheck(): Promise<SystemHealthCheckResult> {
+  private async runAdNotificationChannelsHealthCheck(
+    probeExternal = true,
+  ): Promise<SystemHealthCheckResult> {
     const startedAtMs = Date.now();
     const key = 'ad-notification-channels-status';
     const label = 'Ad notification channels status';
 
-    const [pricingDoc, infra, firebaseMessagingOk, wsReachable] =
-      await Promise.all([
-        this.adNotificationPricingModel
-          .findOne({ key: 'default' })
-          .select('availableChannels')
-          .lean()
-          .exec(),
-        this.ensureInfraRuntimeSettings(),
-        this.isFirebaseMessagingReady(),
-        this.isWsHealthReachable(),
-      ]);
+    const [pricingDoc, infra] = await Promise.all([
+      this.adNotificationPricingModel
+        .findOne({ key: 'default' })
+        .select('availableChannels')
+        .lean()
+        .exec(),
+      this.ensureInfraRuntimeSettings(),
+    ]);
+
+    const firebaseMessagingOk = probeExternal
+      ? await this.isFirebaseMessagingReady()
+      : Boolean(this.firebaseApp?.options?.projectId);
+    const wsReachable = probeExternal ? await this.isWsHealthReachable() : true;
 
     const availability = parseAvailableChannelsFromDoc(
       pricingDoc as Record<string, unknown> | null | undefined,
