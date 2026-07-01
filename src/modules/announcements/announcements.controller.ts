@@ -95,9 +95,7 @@ export class AnnouncementsController {
       body,
       req.user as UserModel,
     );
-    return slimAnnouncementForClient(
-      JSON.parse(JSON.stringify(created)) as Record<string, unknown>,
-    );
+    return slimAnnouncementForClient(created as Record<string, unknown>);
   }
 
   @Patch(':id')
@@ -113,9 +111,7 @@ export class AnnouncementsController {
       body,
       req.user as UserModel,
     );
-    return slimAnnouncementForClient(
-      JSON.parse(JSON.stringify(updated)) as Record<string, unknown>,
-    );
+    return slimAnnouncementForClient(updated as Record<string, unknown>);
   }
 
   @Delete(':id')

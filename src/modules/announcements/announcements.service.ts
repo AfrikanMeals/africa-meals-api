@@ -13,6 +13,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -26,6 +27,8 @@ import {
 } from '@schemas/announcement.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { FilterQuery, Model, Types } from 'mongoose';
+import { Error as MongooseError } from 'mongoose';
+import { StoreAdActionTypeEnum } from '@schemas/ad.schema';
 import {
   CreateAnnouncementDto,
   UpdateAnnouncementDto,
@@ -61,8 +64,26 @@ function isWithinSchedule(doc: {
   return true;
 }
 
+function defaultActionText(actionType?: StoreAdActionTypeEnum): string {
+  switch (actionType) {
+    case StoreAdActionTypeEnum.CALL:
+      return 'Appeler';
+    case StoreAdActionTypeEnum.WHATSAPP:
+      return 'WhatsApp';
+    case StoreAdActionTypeEnum.EMAIL:
+      return 'E-mail';
+    case StoreAdActionTypeEnum.SHOP:
+      return 'Voir la boutique';
+    case StoreAdActionTypeEnum.PRODUCT:
+      return 'Voir le plat';
+    default:
+      return 'En savoir plus';
+  }
+}
+
 @Injectable()
 export class AnnouncementsService {
+  private readonly logger = new Logger(AnnouncementsService.name);
   @InjectModel(AnnouncementModel.name)
   private readonly _announcementModel: Model<AnnouncementModel>;
 
@@ -163,9 +184,23 @@ export class AnnouncementsService {
   ) {
     assertAdmin(user);
     const payload = await this._buildPayload(args, user, image);
-    const created = await this._announcementModel.create(payload);
-    await this._cacheLayer.bustKeyOnAllStores(AppCacheKeys.announcements);
-    return created;
+    let created: AnnouncementModel;
+    try {
+      created = await this._announcementModel.create(payload);
+    } catch (err) {
+      if (err instanceof MongooseError.ValidationError) {
+        throw new BadRequestException(err.message);
+      }
+      this.logger.error(
+        `announcement create failed: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      throw err;
+    }
+    await this._bustAnnouncementsCache();
+    const doc = await this._announcementModel.findById(created._id).lean().exec();
+    if (!doc) throw new NotFoundException('announcement_not_found');
+    return doc;
   }
 
   async update(
@@ -176,8 +211,15 @@ export class AnnouncementsService {
   ) {
     assertAdmin(user);
     const payload = await this._buildPayload(args, user, image);
-    await this._announcementModel.updateOne({ _id: id }, { $set: payload });
-    await this._cacheLayer.bustKeyOnAllStores(AppCacheKeys.announcements);
+    try {
+      await this._announcementModel.updateOne({ _id: id }, { $set: payload });
+    } catch (err) {
+      if (err instanceof MongooseError.ValidationError) {
+        throw new BadRequestException(err.message);
+      }
+      throw err;
+    }
+    await this._bustAnnouncementsCache();
     const doc = await this._announcementModel.findById(id).lean().exec();
     if (!doc) throw new NotFoundException('announcement_not_found');
     return doc;
@@ -187,7 +229,7 @@ export class AnnouncementsService {
     assertAdmin(user);
     await this._announcementModel.deleteOne({ _id: id });
     await this._dismissalModel.deleteMany({ announcementId: id });
-    await this._cacheLayer.bustKeyOnAllStores(AppCacheKeys.announcements);
+    await this._bustAnnouncementsCache();
     return { ok: true };
   }
 
@@ -259,7 +301,9 @@ export class AnnouncementsService {
       isActive: args.isActive,
       text: String(args.text ?? '').trim(),
       subtitle: String(args.subtitle ?? '').trim(),
-      actionText: String(args.actionText ?? '').trim(),
+      actionText:
+        String(args.actionText ?? '').trim() ||
+        defaultActionText(args.actionType),
       sortOrder: Number.isFinite(Number(args.sortOrder))
         ? Number(args.sortOrder)
         : 0,
@@ -297,6 +341,16 @@ export class AnnouncementsService {
       payload.pictureUrl = args.pictureUrl.trim();
     }
     return payload;
+  }
+
+  private async _bustAnnouncementsCache(): Promise<void> {
+    try {
+      await this._cacheLayer.bustKeyOnAllStores(AppCacheKeys.announcements);
+    } catch (err) {
+      this.logger.warn(
+        `Announcements cache bust failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   private _matchesAudience(

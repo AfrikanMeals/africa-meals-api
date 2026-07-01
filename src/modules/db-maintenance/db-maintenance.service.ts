@@ -661,10 +661,13 @@ export class DbMaintenanceService {
     return { checks: this.systemHealthChecks };
   }
 
-  async runAllSystemHealthChecksInternal(): Promise<SystemHealthCheckResult[]> {
+  async runAllSystemHealthChecksInternal(options?: {
+    externalMapProbe?: boolean;
+  }): Promise<SystemHealthCheckResult[]> {
+    const externalMapProbe = options?.externalMapProbe ?? false;
     return Promise.all(
       this.systemHealthChecks.map((def) =>
-        this.runSystemHealthCheckInternal(def.key),
+        this.runSystemHealthCheckInternal(def.key, { externalMapProbe }),
       ),
     );
   }
@@ -673,11 +676,12 @@ export class DbMaintenanceService {
   async runPublicSystemHealthCheck(
     key: string,
   ): Promise<SystemHealthCheckResult> {
-    return this.runSystemHealthCheckInternal(key);
+    return this.runSystemHealthCheckInternal(key, { externalMapProbe: false });
   }
 
   private async runSystemHealthCheckInternal(
     key: string,
+    options?: { externalMapProbe?: boolean },
   ): Promise<SystemHealthCheckResult> {
     const normalized = String(key || '')
       .trim()
@@ -706,7 +710,9 @@ export class DbMaintenanceService {
       case 'stripe-webhook-latency':
         return this.runStripeWebhookLatencyHealthCheck();
       case 'map-engine-status':
-        return this.runMapEngineHealthCheck();
+        return this.runMapEngineHealthCheck(
+          options?.externalMapProbe ?? true,
+        );
       case 'file-storage-engines-status':
         return this.runFileStorageEnginesHealthCheck();
       case 'mail-health-status':
@@ -4119,10 +4125,13 @@ export class DbMaintenanceService {
     });
   }
 
-  private async runMapEngineHealthCheck(): Promise<SystemHealthCheckResult> {
+  private async runMapEngineHealthCheck(
+    probeExternal = true,
+  ): Promise<SystemHealthCheckResult> {
     const startedAtMs = Date.now();
     const key = 'map-engine-status';
     const label = 'Map Engine Status';
+    const manualProbeHint = ' · sonde réseau via Run manuel uniquement';
 
     const engines: Array<{
       name: string;
@@ -4143,25 +4152,38 @@ export class DbMaintenanceService {
       this.config,
     );
     if (mapboxToken) {
-      const probe = await probeMapboxGeocodingApi(mapboxToken, mapboxUrl);
-      const mapboxOptionalForGeocoding =
-        geocodingEngine === 'osm' &&
-        !probe.ok &&
-        mapboxToken.startsWith('sk.');
-      if (mapboxOptionalForGeocoding) {
+      if (!probeExternal) {
+        const mapboxOptionalForGeocoding =
+          geocodingEngine === 'osm' && mapboxToken.startsWith('sk.');
         engines.push({
           name: 'Mapbox',
-          configured: false,
+          configured: !mapboxOptionalForGeocoding,
           ok: true,
-          detail: `optionnel (OSM actif) — ${probe.details ?? probe.message}`,
+          detail: mapboxOptionalForGeocoding
+            ? 'optionnel (OSM actif)'
+            : `configuré${manualProbeHint}`,
         });
       } else {
-        engines.push({
-          name: 'Mapbox',
-          configured: true,
-          ok: probe.ok,
-          detail: probe.ok ? probe.message : probe.details ?? probe.message,
-        });
+        const probe = await probeMapboxGeocodingApi(mapboxToken, mapboxUrl);
+        const mapboxOptionalForGeocoding =
+          geocodingEngine === 'osm' &&
+          !probe.ok &&
+          mapboxToken.startsWith('sk.');
+        if (mapboxOptionalForGeocoding) {
+          engines.push({
+            name: 'Mapbox',
+            configured: false,
+            ok: true,
+            detail: `optionnel (OSM actif) — ${probe.details ?? probe.message}`,
+          });
+        } else {
+          engines.push({
+            name: 'Mapbox',
+            configured: true,
+            ok: probe.ok,
+            detail: probe.ok ? probe.message : probe.details ?? probe.message,
+          });
+        }
       }
     } else {
       engines.push({
@@ -4178,34 +4200,43 @@ export class DbMaintenanceService {
         '',
     ).trim();
     if (googleKey) {
-      try {
-        const url = new URL('https://maps.googleapis.com/maps/api/geocode/json');
-        url.searchParams.set('address', 'Montreal');
-        url.searchParams.set('key', googleKey);
-        const res = await this.fetchWithTimeout(url.toString(), 7000);
-        const body = (await res.json().catch(() => ({}))) as {
-          status?: string;
-        };
+      if (!probeExternal) {
         engines.push({
           name: 'Google Maps',
           configured: true,
-          ok:
-            res.ok &&
-            (body.status === 'OK' || body.status === 'ZERO_RESULTS'),
-          detail:
-            body.status === 'OK' || body.status === 'ZERO_RESULTS'
-              ? 'joignable'
-              : body.status
-                ? String(body.status).toLowerCase()
-                : `HTTP ${res.status}`,
+          ok: true,
+          detail: `configuré${manualProbeHint}`,
         });
-      } catch (e) {
-        engines.push({
-          name: 'Google Maps',
-          configured: true,
-          ok: false,
-          detail: e instanceof Error ? e.message : String(e),
-        });
+      } else {
+        try {
+          const url = new URL('https://maps.googleapis.com/maps/api/geocode/json');
+          url.searchParams.set('address', 'Montreal');
+          url.searchParams.set('key', googleKey);
+          const res = await this.fetchWithTimeout(url.toString(), 7000);
+          const body = (await res.json().catch(() => ({}))) as {
+            status?: string;
+          };
+          engines.push({
+            name: 'Google Maps',
+            configured: true,
+            ok:
+              res.ok &&
+              (body.status === 'OK' || body.status === 'ZERO_RESULTS'),
+            detail:
+              body.status === 'OK' || body.status === 'ZERO_RESULTS'
+                ? 'joignable'
+                : body.status
+                  ? String(body.status).toLowerCase()
+                  : `HTTP ${res.status}`,
+          });
+        } catch (e) {
+          engines.push({
+            name: 'Google Maps',
+            configured: true,
+            ok: false,
+            detail: e instanceof Error ? e.message : String(e),
+          });
+        }
       }
     } else {
       engines.push({
@@ -4240,31 +4271,46 @@ export class DbMaintenanceService {
     } · ${mapDefaults}`;
     const osmAppsEnabled = osmContexts.length > 0 || geocodingEngine === 'osm';
 
-    try {
-      const results = await osmForwardGeocode('Montreal', this.config, {
-        limit: 1,
-      });
+    if (!probeExternal) {
       engines.push({
         name: 'OpenStreetMap',
-        configured: true,
-        ok: results.length > 0,
+        configured: osmAppsEnabled,
+        ok: osmAppsEnabled,
         detail:
-          (results.length > 0
-            ? `Nominatim joignable (${nominatimBase})`
-            : `Nominatim sans résultat (${nominatimBase})`) +
+          (osmAppsEnabled
+            ? `activé (${nominatimBase})`
+            : `non activé côté apps (${nominatimBase})`) +
           ` · MAP_GEOCODING_ENGINE=${geocodingEngine}` +
-          (osmAppsEnabled ? '' : ' · OSM non activé côté apps') +
-          ` · ${mapPlatformConfig}`,
+          ` · ${mapPlatformConfig}` +
+          manualProbeHint,
       });
-    } catch (e) {
-      engines.push({
-        name: 'OpenStreetMap',
-        configured: true,
-        ok: false,
-        detail: `${
-          e instanceof Error ? e.message : String(e)
-        } · MAP_GEOCODING_ENGINE=${geocodingEngine} · ${mapPlatformConfig}`,
-      });
+    } else {
+      try {
+        const results = await osmForwardGeocode('Montreal', this.config, {
+          limit: 1,
+        });
+        engines.push({
+          name: 'OpenStreetMap',
+          configured: true,
+          ok: results.length > 0,
+          detail:
+            (results.length > 0
+              ? `Nominatim joignable (${nominatimBase})`
+              : `Nominatim sans résultat (${nominatimBase})`) +
+            ` · MAP_GEOCODING_ENGINE=${geocodingEngine}` +
+            (osmAppsEnabled ? '' : ' · OSM non activé côté apps') +
+            ` · ${mapPlatformConfig}`,
+        });
+      } catch (e) {
+        engines.push({
+          name: 'OpenStreetMap',
+          configured: true,
+          ok: false,
+          detail: `${
+            e instanceof Error ? e.message : String(e)
+          } · MAP_GEOCODING_ENGINE=${geocodingEngine} · ${mapPlatformConfig}`,
+        });
+      }
     }
 
     const configured = engines.filter((e) => e.configured);

@@ -32,7 +32,6 @@ export class SseBackgroundPublisherService
 {
   private readonly logger = new Logger(SseBackgroundPublisherService.name);
   private mqttTimer: ReturnType<typeof setInterval> | null = null;
-  private checksTimer: ReturnType<typeof setInterval> | null = null;
   private statusTimer: ReturnType<typeof setInterval> | null = null;
   private statsTimer: ReturnType<typeof setInterval> | null = null;
   private lastHealthKey = '';
@@ -51,11 +50,9 @@ export class SseBackgroundPublisherService
       'SSE background publisher started (health + status + request-stats)',
     );
     void this.publishMqttTick();
-    void this.publishChecksTick();
     void this.publishStatusTick();
     void this.publishRequestStatsTick();
     this.mqttTimer = setInterval(() => void this.publishMqttTick(), 7000);
-    this.checksTimer = setInterval(() => void this.publishChecksTick(), 120_000);
     this.statusTimer = setInterval(() => void this.publishStatusTick(), 60_000);
     const statsMs = Number(this.config.get('REQUEST_STATS_SSE_PUSH_MS')) || 10_000;
     this.statsTimer = setInterval(
@@ -66,7 +63,6 @@ export class SseBackgroundPublisherService
 
   onModuleDestroy(): void {
     if (this.mqttTimer) clearInterval(this.mqttTimer);
-    if (this.checksTimer) clearInterval(this.checksTimer);
     if (this.statusTimer) clearInterval(this.statusTimer);
     if (this.statsTimer) clearInterval(this.statsTimer);
   }
@@ -83,26 +79,6 @@ export class SseBackgroundPublisherService
     } catch (e) {
       this.logger.warn(
         `health mqtt tick: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-  }
-
-  private async publishChecksTick(): Promise<void> {
-    try {
-      const [checks, runtime] = await Promise.all([
-        this.dbMaintenance.runAllSystemHealthChecksInternal(),
-        this.dbMaintenance.getInfraRuntimeSettingsInternal(),
-      ]);
-      const payload = {
-        type: 'snapshot',
-        runtime,
-        checks,
-        checkedAt: new Date().toISOString(),
-      };
-      await this.maybePublishHealth(payload);
-    } catch (e) {
-      this.logger.warn(
-        `health checks tick: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }

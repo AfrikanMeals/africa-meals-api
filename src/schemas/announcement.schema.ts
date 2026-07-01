@@ -112,7 +112,7 @@ export class AnnouncementModel extends BaseSchema {
   @Prop({ required: false, name: 'subtitle', default: '' })
   subtitle?: string;
 
-  @Prop({ required: true, name: 'action_text' })
+  @Prop({ required: true, name: 'action_text', default: 'En savoir plus' })
   actionText: string;
 
   @Prop({ required: false, name: 'picture_url' })

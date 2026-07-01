@@ -6,7 +6,13 @@ import {
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Observable, interval, from, merge, of } from 'rxjs';
-import { switchMap, startWith, map, distinctUntilChanged, take } from 'rxjs/operators';
+import {
+  switchMap,
+  startWith,
+  map,
+  distinctUntilChanged,
+  take,
+} from 'rxjs/operators';
 import { sseHealthDedupKey } from './sse-health-dedup.util';
 import { PublicStatusProbeService, PublicStatusSnapshot } from './public-status-probe.service';
 import { SseStreamService } from './sse-stream.service';
@@ -57,19 +63,10 @@ export class SseStreamSourcesService {
     this.assertAdmin(user);
     const userId = String((user as { _id?: unknown; id?: unknown })._id ?? user.id);
 
-    const mqtt$ = interval(7000).pipe(
+    const poll$ = interval(7000).pipe(
       startWith(0),
       switchMap(() => from(this.dbMaintenance.getInfraMqttStatusInternal())),
       map((mqtt) => ({ type: 'mqtt', mqtt, checkedAt: new Date().toISOString() })),
-    );
-
-    const checks$ = interval(120_000).pipe(
-      startWith(0),
-      switchMap(() => from(this.buildHealthChecksPayload())),
-      map((payload) => payload as Record<string, unknown>),
-    );
-
-    const poll$ = merge(mqtt$, checks$).pipe(
       distinctUntilChanged(
         (a, b) => sseHealthDedupKey(a) === sseHealthDedupKey(b),
       ),
@@ -80,19 +77,6 @@ export class SseStreamSourcesService {
       eventName: 'health',
       source$: poll$,
     });
-  }
-
-  private async buildHealthChecksPayload(): Promise<Record<string, unknown>> {
-    const [checks, runtime] = await Promise.all([
-      this.dbMaintenance.runAllSystemHealthChecksInternal(),
-      this.dbMaintenance.getInfraRuntimeSettingsInternal(),
-    ]);
-    return {
-      type: 'snapshot',
-      runtime,
-      checks,
-      checkedAt: new Date().toISOString(),
-    };
   }
 
   publicStatusStream(): Observable<MessageEvent> {
