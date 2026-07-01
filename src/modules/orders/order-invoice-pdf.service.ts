@@ -1,9 +1,8 @@
+import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import PDFDocument from 'pdfkit';
 import {
   fetchInvoiceLogoBuffer,
-  resolveInvoiceBrand,
   type InvoiceBrandTheme,
 } from './invoice-brand.util';
 import {
@@ -21,10 +20,10 @@ import {
 
 @Injectable()
 export class OrderInvoicePdfService {
-  constructor(private readonly config: ConfigService) {}
+  constructor(private readonly emailTemplate: EmailTemplateService) {}
 
   async buildPdf(snapshot: OrderInvoiceSnapshot): Promise<Buffer> {
-    const brand = resolveInvoiceBrand(this.config);
+    const brand = await this.emailTemplate.getBrandAsync();
     const logoBuffer = await fetchInvoiceLogoBuffer(brand.logoUrl);
     return this.renderPdf(snapshot, brand, logoBuffer);
   }

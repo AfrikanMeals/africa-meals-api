@@ -498,7 +498,7 @@ export class OrderPaidInvoiceEmailService {
     );
     const currency =
       (snapshot.currency || 'CAD').trim().toUpperCase() || 'CAD';
-    const brand = this.emailTemplate.getBrand();
+    const brand = await this.emailTemplate.getBrandAsync();
     const orderDateIso = snapshot.createdAt
       ? new Date(snapshot.createdAt).toISOString()
       : undefined;
@@ -624,7 +624,7 @@ export class OrderPaidInvoiceEmailService {
             );
             return parcelJsonLd ? [orderJsonLd, parcelJsonLd] : orderJsonLd;
           })();
-    const wrappedHtml = this.emailTemplate.wrapBody(html, {
+    const wrappedHtml = await this.emailTemplate.wrapBodyAsync(html, {
       title: subject,
       preheader,
       jsonLd,

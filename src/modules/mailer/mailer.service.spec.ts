@@ -23,6 +23,7 @@ describe('MailerService', () => {
           useValue: {
             shouldWrap: jest.fn().mockReturnValue(false),
             wrapBody: jest.fn((html: string) => html),
+            wrapBodyAsync: jest.fn(async (html: string) => html),
           },
         },
       ],

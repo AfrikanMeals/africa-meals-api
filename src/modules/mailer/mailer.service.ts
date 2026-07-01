@@ -59,11 +59,15 @@ export class MailerService {
     private readonly _emailDispatch: EmailDispatchService,
   ) {}
 
-  private prepareHtml(html: string, subject: string, args?: Pick<SendSimpleMailDto, 'heroImageUrl' | 'heroImageAlt'>): string {
+  private async prepareHtml(
+    html: string,
+    subject: string,
+    args?: Pick<SendSimpleMailDto, 'heroImageUrl' | 'heroImageAlt'>,
+  ): Promise<string> {
     if (!this._emailTemplate.shouldWrap(html)) {
       return html;
     }
-    return this._emailTemplate.wrapBody(html, {
+    return this._emailTemplate.wrapBodyAsync(html, {
       title: subject,
       preheader: subject,
       heroImageUrl: args?.heroImageUrl,
@@ -172,7 +176,7 @@ export class MailerService {
     const profile = this.readAdNotificationSmtpProfile();
     const prepared: SendSimpleMailDto = {
       ...args,
-      html: this.prepareHtml(args.html, args.subject, args),
+      html: await this.prepareHtml(args.html, args.subject, args),
       replyTo: args.replyTo ?? profile?.from,
       replyToName: args.replyToName ?? profile?.fromDisplayName,
     };
@@ -204,7 +208,7 @@ export class MailerService {
       ...mailArgs,
       logContext,
       emailModule,
-      html: this.prepareHtml(mailArgs.html, mailArgs.subject, {
+      html: await this.prepareHtml(mailArgs.html, mailArgs.subject, {
         heroImageUrl,
         heroImageAlt,
       }),
