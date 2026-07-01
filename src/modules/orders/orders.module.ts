@@ -33,6 +33,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
 import { PreOrderReminderCron } from './pre-order-reminder.cron';
 import { PreOrderReminderService } from './pre-order-reminder.service';
 import { ProductRatingsDemoSeedService } from './product-ratings-demo-seed.service';
+import { OrdersDemoSeedService } from './orders-demo-seed.service';
 import { OrderStatusEventsService } from './order-status-events.service';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';

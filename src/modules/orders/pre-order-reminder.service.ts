@@ -29,6 +29,16 @@ export type PreOrderReminderPassResult = {
 
 const REMINDER_KEYS = ['d-3', 'd-2', 'd-1', 'd-day'] as const;
 
+type PreOrderReminderScanDoc = {
+  _id: unknown;
+  scheduledAt?: Date;
+  store?: unknown;
+  user?: unknown;
+  preOrderRemindersSent?: string[];
+  preOrderVendorRemindersSent?: string[];
+  status?: string;
+};
+
 @Injectable()
 export class PreOrderReminderService {
   private readonly _logger = new Logger(PreOrderReminderService.name);
@@ -76,7 +86,10 @@ export class PreOrderReminderService {
 
     for (const order of orders) {
       try {
-        await this.processOrderReminder(order, result);
+        await this.processOrderReminder(
+          order as PreOrderReminderScanDoc,
+          result,
+        );
       } catch (err) {
         this._logger.warn(
           `Pre-order reminder failed order=${String(order._id)}: ${
@@ -91,15 +104,7 @@ export class PreOrderReminderService {
   }
 
   private async processOrderReminder(
-    order: {
-      _id: Types.ObjectId;
-      scheduledAt?: Date;
-      store?: unknown;
-      user?: unknown;
-      preOrderRemindersSent?: string[];
-      preOrderVendorRemindersSent?: string[];
-      status?: string;
-    },
+    order: PreOrderReminderScanDoc,
     result: PreOrderReminderPassResult,
   ): Promise<void> {
     const scheduledAt = order.scheduledAt;
@@ -187,7 +192,10 @@ export class PreOrderReminderService {
   }
 
   private async maybeNotifyCustomer(
-    order: { _id: Types.ObjectId; user?: unknown; preOrderRemindersSent?: string[] },
+    order: Pick<
+      PreOrderReminderScanDoc,
+      '_id' | 'user' | 'preOrderRemindersSent'
+    >,
     key: (typeof REMINDER_KEYS)[number],
     daysUntil: number,
     storeId: string,
@@ -228,10 +236,10 @@ export class PreOrderReminderService {
   }
 
   private async maybeNotifyVendor(
-    order: {
-      _id: Types.ObjectId;
-      preOrderVendorRemindersSent?: string[];
-    },
+    order: Pick<
+      PreOrderReminderScanDoc,
+      '_id' | 'preOrderVendorRemindersSent'
+    >,
     key: (typeof REMINDER_KEYS)[number],
     daysUntil: number,
     scheduledAtLabel: string,
