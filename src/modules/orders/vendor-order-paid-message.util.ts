@@ -84,6 +84,53 @@ export function buildVendorOrderPaidInboxMessage(
   return lines.join('\n').slice(0, 4000);
 }
 
+/** Message inbox vendeur — pré-commande du jour (J-day). */
+export function buildVendorPreOrderDDayInboxMessage(
+  args: VendorOrderNotifyMessageArgs,
+): string {
+  const ref = orderRef(args.orderId);
+  const total = formatMoney(args.totalPrice, args.currency);
+  const itemCount = args.items.reduce(
+    (s, i) => s + Math.max(1, Math.round(Number(i.quantity) || 1)),
+    0,
+  );
+  const lines: string[] = [
+    `Pré-commande du jour · #${ref} · ${itemCount} article${itemCount > 1 ? 's' : ''} · Total ${total} — à traiter comme une commande`,
+  ];
+  for (const item of args.items) {
+    lines.push(`• ${formatLineItem(item)}`);
+  }
+  const code = args.pickupCode?.trim();
+  if (code) {
+    lines.push(`Code retrait : ${code.toUpperCase()}`);
+  }
+  return lines.join('\n').slice(0, 4000);
+}
+
+/** Message inbox vendeur — rappel pré-commande (J-3 à J-day). */
+export function buildVendorPreOrderReminderInboxMessage(args: {
+  orderId: string;
+  items: OrdeLineItem[];
+  totalPrice: number;
+  currency?: string;
+  daysUntil: number;
+  scheduledAtLabel: string;
+}): string {
+  const ref = orderRef(args.orderId);
+  const total = formatMoney(args.totalPrice, args.currency);
+  const when =
+    args.daysUntil === 0
+      ? "aujourd'hui"
+      : `dans ${args.daysUntil} jour${args.daysUntil > 1 ? 's' : ''}`;
+  const lines: string[] = [
+    `Rappel pré-commande · #${ref} · ${when} (${args.scheduledAtLabel}) · Total ${total}`,
+  ];
+  for (const item of args.items) {
+    lines.push(`• ${formatLineItem(item)}`);
+  }
+  return lines.join('\n').slice(0, 4000);
+}
+
 /** Message inbox vendeur — commande retrait avec paiement cash à effectuer au retrait. */
 export function buildVendorOrderPayOnPickupInboxMessage(
   args: VendorOrderNotifyMessageArgs,
@@ -114,7 +161,8 @@ export type VendorOrderNotifyReason =
   | 'order_ready'
   | 'order_shipped'
   | 'order_cancelled'
-  | 'order_completed';
+  | 'order_completed'
+  | 'pre_order_d_day';
 
 export function vendorOrderStatusLabelFr(
   status: string,
@@ -197,6 +245,7 @@ export function buildVendorOrderStatusPush(args: {
       order_shipped: 'Commande en livraison',
       order_cancelled: 'Commande annulée',
       order_completed: 'Commande terminée',
+      pre_order_d_day: 'Pré-commande du jour',
     };
     return {
       title: titles[args.reason],
@@ -262,6 +311,12 @@ export function buildVendorOrderStatusPush(args: {
         body: `${store} : commande #${ref} terminée.`,
         reason: 'order_completed',
       };
+    case 'pre_order_d_day':
+      return {
+        title: 'Pré-commande du jour',
+        body: `${store} : pré-commande #${ref} du jour${totalPart} — à approuver ou refuser.`,
+        reason: 'pre_order_d_day',
+      };
   }
 }
 
@@ -292,6 +347,38 @@ export function buildVendorOrderPaidPushBody(
   const code = args.pickupCode?.trim();
   const pickup = code ? ` · Code ${code.toUpperCase()}` : '';
   return `${store} : commande #${ref} payée (${total})${detail}${pickup}`.slice(
+    0,
+    240,
+  );
+}
+
+/** Corps court push vendeur — pré-commande du jour. */
+export function buildVendorPreOrderDDayPushBody(
+  args: VendorOrderNotifyMessageArgs,
+): string {
+  const store = (args.storeName ?? '').trim() || 'Boutique';
+  const ref = orderRef(args.orderId);
+  const total = formatMoney(args.totalPrice, args.currency);
+  return `${store} : pré-commande #${ref} du jour (${total}) — à approuver`.slice(
+    0,
+    240,
+  );
+}
+
+/** Corps court push vendeur — rappel pré-commande. */
+export function buildVendorPreOrderReminderPushBody(args: {
+  storeName?: string;
+  orderId: string;
+  daysUntil: number;
+  scheduledAtLabel: string;
+}): string {
+  const store = (args.storeName ?? '').trim() || 'Boutique';
+  const ref = orderRef(args.orderId);
+  const when =
+    args.daysUntil === 0
+      ? "aujourd'hui"
+      : `J-${args.daysUntil}`;
+  return `${store} : rappel pré-commande #${ref} ${when} (${args.scheduledAtLabel})`.slice(
     0,
     240,
   );

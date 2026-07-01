@@ -61,6 +61,18 @@ export class MapSettingsModel {
   @Prop({ type: String, default: 'osm', trim: true })
   mobileDeliveryGeocodingEngine: string;
 
+  /** Pool géocodage pondéré — vendeur (engine + weight). */
+  @Prop({ type: [{ engine: String, weight: Number }], default: [] })
+  vendorGeocodingEnginePool: { engine: string; weight: number }[];
+
+  /** Pool géocodage pondéré — client mobile. */
+  @Prop({ type: [{ engine: String, weight: Number }], default: [] })
+  mobileUserGeocodingEnginePool: { engine: string; weight: number }[];
+
+  /** Pool géocodage pondéré — livreur mobile. */
+  @Prop({ type: [{ engine: String, weight: Number }], default: [] })
+  mobileDeliveryGeocodingEnginePool: { engine: string; weight: number }[];
+
   /** Priorité des backends cache géocodage (redis | memcached | mongodb). */
   @Prop({
     type: [String],

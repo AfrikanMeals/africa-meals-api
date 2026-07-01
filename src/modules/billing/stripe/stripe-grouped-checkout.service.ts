@@ -130,6 +130,8 @@ type GroupedStripeBuilt = {
   fulfillmentByStoreId: Record<string, 'pickup' | 'delivery'>;
   /** Boutiques du panier en paiement cash au retrait (hors Stripe). */
   payOnPickupByStoreId: Record<string, boolean>;
+  /** Métadonnées pré-commande par boutique (checkout immédiat). */
+  preOrderByStoreId?: GroupedStripeCheckoutDto['preOrderByStoreId'];
   deliveryMetaByStore: Record<
     string,
     {
@@ -697,6 +699,28 @@ function parsePayoutFromStripeMetadata(
     /* ignore */
   }
   return m;
+}
+
+/** Pré-commande planifiée par boutique (`preOrderB64` sur PaymentIntent). */
+function parsePreOrderScheduleFromStripeMetadata(
+  meta: Record<string, string | undefined | null>,
+  storeId: string,
+): { scheduledAt: string; customerNote?: string } | undefined {
+  const b64 = meta['preOrderB64']?.trim();
+  if (!b64) return undefined;
+  try {
+    const map = JSON.parse(
+      Buffer.from(b64, 'base64url').toString('utf8'),
+    ) as Record<string, { scheduledAt?: string; customerNote?: string }>;
+    const row = map[storeId];
+    if (!row?.scheduledAt?.trim()) return undefined;
+    return {
+      scheduledAt: row.scheduledAt.trim(),
+      customerNote: row.customerNote?.trim() || undefined,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function sumPayoutMapGrossCents(
@@ -1565,6 +1589,7 @@ export class StripeGroupedCheckoutService {
       totalCents,
       fulfillmentByStoreId: fulfillment as Record<string, 'pickup' | 'delivery'>,
       payOnPickupByStoreId,
+      preOrderByStoreId: dto.preOrderByStoreId,
       deliveryMetaByStore,
     };
   }
@@ -1677,7 +1702,25 @@ export class StripeGroupedCheckoutService {
       ...this.payoutMetadataChunks(built.payoutByStore),
       ...this.couponsMetadataChunk(built.coupons),
       ...this.giftCodeMetadataChunk(built),
+      ...this.preOrderMetadataChunk(built.preOrderByStoreId),
     };
+  }
+
+  /** Pré-commande planifiée (date + note) — reprise webhook / PaymentIntent. */
+  private preOrderMetadataChunk(
+    preOrderByStoreId?: GroupedStripeCheckoutDto['preOrderByStoreId'],
+  ): Record<string, string> {
+    if (!preOrderByStoreId || !Object.keys(preOrderByStoreId).length) {
+      return {};
+    }
+    const json = JSON.stringify(preOrderByStoreId);
+    if (json.length <= 490) {
+      return { preOrderB64: Buffer.from(json, 'utf8').toString('base64url') };
+    }
+    this.logger.warn(
+      `Stripe grouped checkout: preOrderB64 metadata too long (${json.length}), omitted`,
+    );
+    return {};
   }
 
   private giftCodeMetadataChunk(
@@ -1972,6 +2015,7 @@ export class StripeGroupedCheckoutService {
     giftCode?: string;
     giftDiscountByStore: Record<string, number>;
     deferCapture?: boolean;
+    stripeMetadata?: Record<string, string | undefined | null>;
   }): Promise<{
     breakdown: StripePerStoreBreakdownRow;
     orderId?: string;
@@ -1998,6 +2042,7 @@ export class StripeGroupedCheckoutService {
       giftCode,
       giftDiscountByStore,
       deferCapture,
+      stripeMetadata,
     } = params;
 
     const paymentCap = Math.max(0, Math.round(amountTotalCents ?? 0));
@@ -2114,17 +2159,43 @@ export class StripeGroupedCheckoutService {
     };
 
     try {
-      let oid = await this.ordersService.findRecoverableOrderIdForStorePayment(
-        uid,
-        storeId,
-        stripePaymentId,
-      );
+      const meta = stripeMetadata ?? {};
+      const preOrderOidRaw = String(meta.preOrderOid ?? meta.pre_order_oid ?? '')
+        .trim();
+      let oid: string | null = null;
+      if (preOrderOidRaw && Types.ObjectId.isValid(preOrderOidRaw)) {
+        const ok = await this.ordersService.assertPreOrderPayableByClient(
+          preOrderOidRaw,
+          uid,
+          storeId,
+        );
+        if (ok) oid = preOrderOidRaw;
+      }
+      if (!oid) {
+        oid = await this.ordersService.findRecoverableOrderIdForStorePayment(
+          uid,
+          storeId,
+          stripePaymentId,
+        );
+      }
 
       if (!oid) {
+        const scheduleMeta = parsePreOrderScheduleFromStripeMetadata(
+          meta,
+          storeId,
+        );
+        const preOrderOpts = scheduleMeta
+          ? {
+              isPreOrder: true as const,
+              scheduledAt: new Date(scheduleMeta.scheduledAt),
+              customerNote: scheduleMeta.customerNote,
+            }
+          : undefined;
         try {
           const order = await this.storeService.createOrderFromCart(
             storeId,
             user,
+            preOrderOpts,
           );
           oid =
             (order as { _id?: Types.ObjectId })?._id?.toString() ??
@@ -2484,6 +2555,7 @@ export class StripeGroupedCheckoutService {
           giftCode: giftCode || undefined,
           giftDiscountByStore,
           deferCapture,
+          stripeMetadata: metadata,
         }),
       ),
     );
@@ -3287,7 +3359,11 @@ export class StripeGroupedCheckoutService {
         throw new BadRequestException('multi_currency_not_supported');
       }
 
-      const order = await this.storeService.createOrderFromCart(storeId, user);
+      const order = await this.storeService.createOrderFromCart(
+        storeId,
+        user,
+        this.resolvePreOrderCreateOptions(dto, storeId),
+      );
       const oid =
         (order as { _id?: Types.ObjectId })?._id?.toString() ??
         (order as { id?: string })?.id ??
@@ -3406,6 +3482,163 @@ export class StripeGroupedCheckoutService {
     }
 
     return { orderIds, pickupStoreIds };
+  }
+
+  /**
+   * PaymentIntent pour régler une pré-commande existante (statut `created`).
+   */
+  async createPreOrderPaymentIntent(
+    user: UserModel,
+    orderId: string,
+    idempotencyKey?: string,
+  ): Promise<{ clientSecret: string; paymentIntentId: string }> {
+    const pre = await this.ordersService.getPreOrderForClientPayment(
+      orderId,
+      user,
+    );
+    const currency = normalizeStripeCurrencyCode(pre.currency);
+    const amountFactor =
+      await this.supportedCountries.resolveStripeAmountFactorForCheckout({
+        currency,
+        userCountryCode: (
+          user as UserModel & { appCountryCode?: string }
+        ).appCountryCode,
+      });
+    const goodsCents = Math.round(
+      pre.totalPrice * amountFactor + Number.EPSILON,
+    );
+    const shipCents = 0;
+    const stripeMinimumMinor = stripeMinimumChargeMinorUnits(currency);
+    if (goodsCents < stripeMinimumMinor) {
+      throw new BadRequestException({
+        message: 'amount_below_stripe_minimum',
+        totalCents: goodsCents,
+        stripeMinimumMinor,
+        currency,
+      });
+    }
+
+    const payoutByStore: GroupedStripeBuilt['payoutByStore'] = {
+      [pre.storeId]: {
+        storeName: pre.storeName.slice(0, 48),
+        goodsCents,
+        shipCents,
+      },
+    };
+    const shipB64 = Buffer.from(
+      JSON.stringify({ [pre.storeId]: 0 }),
+      'utf8',
+    ).toString('base64url');
+    const meta: Record<string, string> = {
+      uid: String(user.id),
+      stores: pre.storeId,
+      shipB64,
+      preOrderOid: pre.orderId,
+      amtFactor: String(amountFactor),
+      checkoutCur: currency.toLowerCase(),
+      ...this.payoutMetadataChunks(payoutByStore),
+    };
+
+    const stripe = this.stripe();
+    const idem = idempotencyKey?.trim().slice(0, 255);
+    const pi = await stripe.paymentIntents.create(
+      {
+        amount: goodsCents,
+        currency: currency.toLowerCase(),
+        description: `Wise Eat · Pré-commande`,
+        metadata: meta,
+        automatic_payment_methods: { enabled: true },
+      },
+      idem ? { idempotencyKey: idem } : undefined,
+    );
+    const clientSecret = pi.client_secret;
+    if (!clientSecret) {
+      throw new BadRequestException('stripe_missing_client_secret');
+    }
+    return { clientSecret, paymentIntentId: pi.id };
+  }
+
+  /**
+   * Pré-commande sans paiement immédiat — statut `created`, le client paiera plus tard.
+   */
+  async createDeferredPreOrderCheckout(
+    user: UserModel,
+    dto: GroupedStripeCheckoutDto,
+  ): Promise<{ orderIds: string[] }> {
+    const preOrderByStoreId = dto.preOrderByStoreId ?? {};
+    if (!Object.keys(preOrderByStoreId).length) {
+      throw new BadRequestException('pre_order_metadata_required');
+    }
+
+    const validation = await this.cartService.validateCheckoutReadiness(user, {
+      coupons: (dto.coupons ?? [])
+        .filter((c) => c.code?.trim())
+        .map((c) => ({ storeId: c.storeId.trim(), code: c.code.trim() })),
+    });
+    if (!validation.ok) {
+      throw new BadRequestException({
+        message: 'checkout_validation_failed',
+        ...validation,
+      });
+    }
+
+    const cart = await this.cartService.filter(user);
+    const groups = (cart?.data ?? []) as CartGroup[];
+    if (!groups.length) {
+      throw new BadRequestException('cart_is_empty');
+    }
+
+    const orderIds: string[] = [];
+    for (const g of groups) {
+      const storeId = storeMongoId(g.store);
+      if (!storeId) continue;
+      const meta = preOrderByStoreId[storeId];
+      if (!meta?.scheduledAt?.trim()) {
+        throw new BadRequestException('pre_order_scheduled_at_required');
+      }
+      const scheduledAt = new Date(meta.scheduledAt);
+      if (Number.isNaN(scheduledAt.getTime())) {
+        throw new BadRequestException('pre_order_scheduled_at_invalid');
+      }
+      const order = await this.storeService.createOrderFromCart(storeId, user, {
+        isPreOrder: true,
+        scheduledAt,
+        customerNote: meta.customerNote,
+      });
+      const oid =
+        (order as { _id?: Types.ObjectId })?._id?.toString() ??
+        (order as { id?: string })?.id ??
+        null;
+      if (!oid) {
+        throw new BadRequestException('order_create_failed');
+      }
+      orderIds.push(oid);
+    }
+
+    if (!orderIds.length) {
+      throw new BadRequestException('pre_order_no_stores');
+    }
+
+    return { orderIds };
+  }
+
+  private resolvePreOrderCreateOptions(
+    dto: GroupedStripeCheckoutDto | undefined,
+    storeId: string,
+  ):
+    | { isPreOrder: true; scheduledAt: Date; customerNote?: string }
+    | undefined {
+    const meta = dto?.preOrderByStoreId?.[storeId];
+    if (!meta?.scheduledAt?.trim()) return undefined;
+    const scheduledAt = new Date(meta.scheduledAt);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      throw new BadRequestException('pre_order_scheduled_at_invalid');
+    }
+    return {
+      isPreOrder: true,
+      scheduledAt,
+      customerNote: meta.customerNote,
+    };
   }
 
   private getStripeWebhookSecrets(): string[] {

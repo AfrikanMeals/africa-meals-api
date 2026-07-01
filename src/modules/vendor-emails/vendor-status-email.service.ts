@@ -39,7 +39,9 @@ export type VendorOrderEmailEvent =
   | 'order_ready'
   | 'order_shipped'
   | 'order_cancelled'
-  | 'order_completed';
+  | 'order_completed'
+  | 'pre_order_d_day'
+  | 'pre_order_reminder';
 
 @Injectable()
 export class VendorStatusEmailService {
@@ -834,6 +836,20 @@ export class VendorStatusEmailService {
           heading: 'Commande terminée',
           body: `La commande ${args.orderRef} pour ${args.storeName} est terminée.`,
           statusLabel: args.statusLabel ?? 'Terminée',
+        };
+      case 'pre_order_d_day':
+        return {
+          subject: 'Pré-commande du jour',
+          heading: 'Pré-commande du jour',
+          body: `La pré-commande ${args.orderRef} pour ${args.storeName} est prévue aujourd'hui${amountPart}. Vous pouvez l'approuver ou la refuser depuis Commandes.`,
+          statusLabel: args.statusLabel ?? 'Pré-commande du jour',
+        };
+      case 'pre_order_reminder':
+        return {
+          subject: 'Rappel pré-commande',
+          heading: 'Rappel pré-commande',
+          body: `Rappel : pré-commande ${args.orderRef} pour ${args.storeName}${notePart}${amountPart}.`,
+          statusLabel: args.statusLabel ?? 'Pré-commande planifiée',
         };
     }
   }

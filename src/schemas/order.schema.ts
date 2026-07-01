@@ -523,6 +523,39 @@ export class OrderModel extends BaseSchema {
     processedBy?: 'cron' | 'admin';
     adminUserId?: string;
   }>;
+
+  /** Commande planifiée (pré-commande repas). */
+  @Prop({ default: false, name: 'is_pre_order' })
+  isPreOrder?: boolean;
+
+  /** Date/heure de livraison ou retrait souhaitée (pré-commande). */
+  @Prop({ required: false, name: 'scheduled_at', type: Date })
+  scheduledAt?: Date;
+
+  /** Rappels push envoyés : `d-3`, `d-2`, `d-1`, `d-day`. */
+  @Prop({ type: [String], default: [], name: 'pre_order_reminders_sent' })
+  preOrderRemindersSent?: string[];
+
+  /** Rappels vendeur / équipe (push + e-mail) : `d-3`, `d-2`, `d-1`, `d-day`. */
+  @Prop({
+    type: [String],
+    default: [],
+    name: 'pre_order_vendor_reminders_sent',
+  })
+  preOrderVendorRemindersSent?: string[];
+
+  /** Pré-commande remontée dans la file active (jour J). */
+  @Prop({ required: false, name: 'pre_order_promoted_at', type: Date })
+  preOrderPromotedAt?: Date;
+
+  /** Note client pour le vendeur (pré-commande). */
+  @Prop({
+    required: false,
+    name: 'customer_note',
+    trim: true,
+    maxlength: 2000,
+  })
+  customerNote?: string;
 }
 
 export const OrderSchema = SchemaFactory.createForClass(OrderModel);
@@ -532,6 +565,12 @@ OrderSchema.index({
   assigned_delivery_user: 1,
   status: 1,
   should_ship: 1,
+});
+
+OrderSchema.index({
+  is_pre_order: 1,
+  scheduled_at: 1,
+  user: 1,
 });
 
 export type OrderModelDocument = OrderModel & Document;

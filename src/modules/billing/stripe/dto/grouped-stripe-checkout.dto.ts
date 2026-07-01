@@ -77,4 +77,21 @@ export class GroupedStripeCheckoutDto {
   @IsOptional()
   @IsString()
   giftCode?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Métadonnées pré-commande par boutique (date/heure planifiée, note client).',
+    example: {
+      storeMongoId24Hex: {
+        scheduledAt: '2026-07-15T12:00:00.000Z',
+        customerNote: 'Sans piment',
+      },
+    },
+  })
+  @IsOptional()
+  @IsObject()
+  preOrderByStoreId?: Record<
+    string,
+    { scheduledAt: string; customerNote?: string }
+  >;
 }

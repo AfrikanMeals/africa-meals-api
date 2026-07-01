@@ -2766,7 +2766,156 @@ export class StoreService {
     return await this._cartService.addItemToCart(args, user, store);
   }
 
-  async createOrderFromCart(storeId: string, user: UserModel) {
+  private async assertPreOrderCheckoutAllowed(
+    store: StoreModel,
+    scheduledAt?: Date,
+  ): Promise<void> {
+    const storeId = this.stringifyIdLike((store as { _id?: unknown })._id);
+    const planOk = await this._mealPreOrderEnabledForStore(storeId);
+    const doc = store.toObject?.() ?? store;
+    const accepts = this._effectiveAcceptsMealPreOrders(
+      doc as Record<string, unknown>,
+      planOk,
+    );
+    if (!accepts) {
+      throw new ForbiddenException('meal_pre_order_not_available');
+    }
+    if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) {
+      throw new BadRequestException('pre_order_scheduled_at_required');
+    }
+    const minLeadMs = 60 * 60 * 1000;
+    if (scheduledAt.getTime() < Date.now() + minLeadMs) {
+      throw new BadRequestException('pre_order_scheduled_at_too_soon');
+    }
+  }
+
+  private async assertDailyMenuStockForCartOnSchedule(
+    store: StoreModel,
+    cart: {
+      items: Array<{ type?: string; entityId?: string; quantity?: number }>;
+    },
+    scheduledAt: Date,
+    tz: string,
+  ): Promise<void> {
+    const storeId = this.stringifyIdLike((store as { _id?: unknown })._id);
+    const scope = this._docMealPreOrderCatalogScope(
+      store.toObject?.() as Record<string, unknown> ?? {},
+    );
+    if (scope === MealPreOrderCatalogScopeEnum.CATALOG) {
+      return;
+    }
+    const raw = (store as { dailyMenuByWeekday?: unknown }).dailyMenuByWeekday;
+    const dailyMenuLimit = Types.ObjectId.isValid(storeId)
+      ? await this._subscriptionsService.resolveDailyMenuItemLimitForStore(
+          storeId,
+        )
+      : null;
+    const rows = this.normalizeDailyMenuForApi(
+      Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [],
+      dailyMenuLimit,
+    );
+    const slot = this.todayDailyMenuSlot(
+      rows,
+      jsDayOfWeekInTimezone(tz, scheduledAt),
+    );
+    if (!slot) {
+      throw new BadRequestException('daily_menu_not_available_for_date');
+    }
+    for (const line of cart.items) {
+      if (line.type !== CartItemTypeEnum.PRODUCT) continue;
+      const pid = String(line.entityId ?? '');
+      if (!pid) continue;
+      const entry = slot.items.find((i) => i.productId === pid);
+      if (!entry) {
+        throw new BadRequestException('daily_menu_product_not_available');
+      }
+      if (!entry.stockUnlimited && entry.stockRemaining <= 0) {
+        throw new BadRequestException('daily_menu_product_not_available');
+      }
+      if (entry.stockUnlimited) continue;
+      const qty = Math.max(0, Number(line.quantity ?? 0));
+      if (qty > entry.stockRemaining) {
+        throw new BadRequestException('daily_menu_insufficient_stock');
+      }
+    }
+  }
+
+  /** Produits éligibles à la pré-commande pour une date planifiée. */
+  async listPreOrderEligibleProducts(
+    storeId: string,
+    scheduledAtRaw: string,
+    pageRaw?: string,
+    limitRaw?: string,
+  ) {
+    if (!Types.ObjectId.isValid(storeId)) {
+      throw new NotFoundException('store_not_found');
+    }
+    const scheduledAt = new Date(scheduledAtRaw);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      throw new BadRequestException('pre_order_scheduled_at_invalid');
+    }
+    const store = await this.findOneById(storeId);
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+    await this.assertPreOrderCheckoutAllowed(store, scheduledAt);
+
+    const page = Math.max(1, parseInt(pageRaw ?? '1', 10) || 1);
+    const limit = Math.min(
+      120,
+      Math.max(8, parseInt(limitRaw ?? '24', 10) || 24),
+    );
+    const scope = this._docMealPreOrderCatalogScope(
+      store.toObject?.() as Record<string, unknown> ?? {},
+    );
+    const tz = await this.resolveEffectiveTimezoneForStore(store);
+
+    let productIds: string[] | undefined;
+    if (scope !== MealPreOrderCatalogScopeEnum.CATALOG) {
+      const raw = (store as { dailyMenuByWeekday?: unknown }).dailyMenuByWeekday;
+      const dailyMenuLimit =
+        await this._subscriptionsService.resolveDailyMenuItemLimitForStore(
+          storeId,
+        );
+      const rows = this.normalizeDailyMenuForApi(
+        Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [],
+        dailyMenuLimit,
+      );
+      const slot = this.todayDailyMenuSlot(
+        rows,
+        jsDayOfWeekInTimezone(tz, scheduledAt),
+      );
+      productIds = (slot?.items ?? [])
+        .filter((i) => !i.soldOut && (i.stockUnlimited || i.stockRemaining > 0))
+        .map((i) => i.productId)
+        .filter(Boolean);
+      if (!productIds.length) {
+        return { items: [], total: 0, page, limit, catalogScope: scope };
+      }
+    }
+
+    const pageOut = await this._productsService.findByStoreIdPaginated(
+      storeId,
+      { page, take: limit, productIds },
+    );
+    return {
+      items: pageOut.items,
+      total: pageOut.total,
+      page,
+      limit,
+      catalogScope: scope,
+    };
+  }
+
+  async createOrderFromCart(
+    storeId: string,
+    user: UserModel,
+    options?: {
+      isPreOrder?: boolean;
+      scheduledAt?: Date;
+      customerNote?: string;
+    },
+  ) {
     const store = await this.findOneById(storeId);
 
     if (!store) {
@@ -2775,6 +2924,10 @@ export class StoreService {
 
     if (!store.acceptsOrders) {
       throw new ForbiddenException('store_does_not_accept_orders');
+    }
+
+    if (options?.isPreOrder) {
+      await this.assertPreOrderCheckoutAllowed(store, options.scheduledAt);
     }
 
     let cart;
@@ -2787,10 +2940,22 @@ export class StoreService {
       throw new NotFoundException('cart_is_empty');
     }
 
-    await this.assertDailyMenuStockForCart(store, cart);
-
     const tz = await this.resolveEffectiveTimezoneForStore(store);
-    const dow = jsDayOfWeekInTimezone(tz);
+    if (options?.isPreOrder && options.scheduledAt) {
+      await this.assertDailyMenuStockForCartOnSchedule(
+        store,
+        cart,
+        options.scheduledAt,
+        tz,
+      );
+    } else {
+      await this.assertDailyMenuStockForCart(store, cart);
+    }
+
+    const dow =
+      options?.isPreOrder && options.scheduledAt
+        ? jsDayOfWeekInTimezone(tz, options.scheduledAt)
+        : jsDayOfWeekInTimezone(tz);
     const consumed: { productId: string; qty: number }[] = [];
     const consumedDrinks: { drinkId: string; qty: number }[] = [];
 
@@ -2846,7 +3011,7 @@ export class StoreService {
         }
       }
 
-      const order = await this._ordersService.createFromCart(storeId, user);
+      const order = await this._ordersService.createFromCart(storeId, user, options);
 
       if (order) {
         await this._cartService.clearStoreCart(store, user);

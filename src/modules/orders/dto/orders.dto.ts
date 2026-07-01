@@ -81,6 +81,52 @@ export class FilterOrdersDto extends FieldSelectionQueryDto {
     return s === '1' || s === 'true' || s === 'yes' || s === 'on';
   })
   asCustomer?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Filtre pré-commandes repas planifiées uniquement.',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    const s = String(value ?? '')
+      .trim()
+      .toLowerCase();
+    return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+  })
+  isPreOrder?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Pré-commandes planifiées après aujourd’hui (UTC, début de journée).',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    const s = String(value ?? '')
+      .trim()
+      .toLowerCase();
+    return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+  })
+  preOrderFuture?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Exclut les pré-commandes dont la date planifiée est strictement future (liste commandes actives).',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    const s = String(value ?? '')
+      .trim()
+      .toLowerCase();
+    return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+  })
+  excludeFuturePreOrders?: boolean;
+
+  @ApiPropertyOptional({ enum: ['createdAt', 'scheduledAt'] })
+  @IsOptional()
+  @IsIn(['createdAt', 'scheduledAt'])
+  sortBy?: 'createdAt' | 'scheduledAt';
 }
 
 export class ConfirmPickupDto {
@@ -105,6 +151,13 @@ export class ConfirmPickupDto {
   @IsNumber()
   @Min(0)
   collectedAmount?: number;
+}
+
+export class PatchPreOrderCustomerNoteDto {
+  @ApiProperty({ maxLength: 2000 })
+  @IsString()
+  @MaxLength(2000)
+  customerNote!: string;
 }
 
 export class CreateRefundRequestDto {

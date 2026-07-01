@@ -36,6 +36,22 @@ export function readOrderPayOnPickup(order: Record<string, unknown>): boolean {
   return isPayOnPickupOrder(order);
 }
 
+export function readOrderIsPreOrder(order: Record<string, unknown>): boolean {
+  return order['isPreOrder'] === true || order['is_pre_order'] === true;
+}
+
+/** Pré-commande payée annulable par le client (avant prise en charge vendeur). */
+export function canClientCancelPaidPreOrder(
+  order: Record<string, unknown>,
+): boolean {
+  if (!readOrderIsPreOrder(order)) return false;
+  const st = String(order['status'] ?? '').toLowerCase();
+  if (st !== OrderStatusEnum.PAIED && st !== OrderStatusEnum.AWAITING_CASH) {
+    return false;
+  }
+  return readVendorAcceptedAt(order) == null;
+}
+
 export function readVendorAcceptedAt(
   order: Record<string, unknown>,
 ): string | null {

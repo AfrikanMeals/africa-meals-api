@@ -188,6 +188,46 @@ export class BillingController {
     );
   }
 
+  @Post('pre-order-checkout')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Crée une pré-commande planifiée sans paiement immédiat (statut created).',
+  })
+  async preOrderCheckout(
+    @Req() req: Request,
+    @Body(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: false,
+      }),
+    )
+    dto: GroupedStripeCheckoutDto,
+  ) {
+    return this._stripeGroupedCheckout.createDeferredPreOrderCheckout(
+      req.user as UserModel,
+      dto,
+    );
+  }
+
+  @Post('pre-order/:orderId/payment-intent')
+  @UseGuards(JwtGuard, BillingStripePaymentIntentRateLimitGuard)
+  @ApiOperation({
+    summary: 'PaymentIntent Stripe pour régler une pré-commande impayée',
+  })
+  async preOrderPaymentIntent(
+    @Req() req: Request,
+    @Param('orderId') orderId: string,
+    @Headers('x-idempotency-key') idempotencyKey: string | undefined,
+  ) {
+    return this._stripeGroupedCheckout.createPreOrderPaymentIntent(
+      req.user as UserModel,
+      orderId,
+      idempotencyKey,
+    );
+  }
+
   @Post('pickup-pay-on-delivery-checkout')
   @UseGuards(JwtGuard)
   @ApiOperation({

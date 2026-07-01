@@ -1,3 +1,10 @@
+import {
+  GeocodingEngineId,
+  GeocodingEnginePoolEntry,
+  normalizeGeocodingEnginePool,
+  pickWeightedGeocodingEngine,
+  resolveGeocodingPool,
+} from '@common/geocoding-engine-pool.util';
 import { normalizeRegionCode } from '@modules/platform-shipping-settings/platform-shipping-region.util';
 import { MapSettingsModel } from '@schemas/map-settings.schema';
 
@@ -7,16 +14,19 @@ export type RegionMapSettingsOverride = Partial<{
   vendorOsmEnabled: boolean;
   vendorDefaultMapEngine: string;
   vendorGeocodingEngine: string;
+  vendorGeocodingEnginePool: GeocodingEnginePoolEntry[];
   mobileUserMapboxEnabled: boolean;
   mobileUserGoogleEnabled: boolean;
   mobileUserOsmEnabled: boolean;
   mobileUserDefaultMapEngine: string;
   mobileUserGeocodingEngine: string;
+  mobileUserGeocodingEnginePool: GeocodingEnginePoolEntry[];
   mobileDeliveryMapboxEnabled: boolean;
   mobileDeliveryGoogleEnabled: boolean;
   mobileDeliveryOsmEnabled: boolean;
   mobileDeliveryDefaultMapEngine: string;
   mobileDeliveryGeocodingEngine: string;
+  mobileDeliveryGeocodingEnginePool: GeocodingEnginePoolEntry[];
 }>;
 
 export function readMapSettingsByRegion(
@@ -55,7 +65,7 @@ export type MapSettingsGroupKey = 'vendor' | 'mobileUser' | 'mobileDelivery';
 export function geocodingEngineForGroup(
   doc: MapSettingsModel,
   group: MapSettingsGroupKey,
-): 'osm' | 'mapbox' | 'google' {
+): GeocodingEngineId {
   const raw =
     group === 'vendor'
       ? doc.vendorGeocodingEngine
@@ -68,10 +78,23 @@ export function geocodingEngineForGroup(
   return 'osm';
 }
 
+export function geocodingEnginePoolForGroup(
+  doc: MapSettingsModel,
+  group: MapSettingsGroupKey,
+): GeocodingEnginePoolEntry[] {
+  const raw =
+    group === 'vendor'
+      ? doc.vendorGeocodingEnginePool
+      : group === 'mobileDelivery'
+        ? doc.mobileDeliveryGeocodingEnginePool
+        : doc.mobileUserGeocodingEnginePool;
+  return resolveGeocodingPool(raw, geocodingEngineForGroup(doc, group));
+}
+
 export function isEngineEnabledForGroup(
   doc: MapSettingsModel,
   group: MapSettingsGroupKey,
-  engine: 'osm' | 'mapbox' | 'google',
+  engine: GeocodingEngineId,
 ): boolean {
   const flags =
     group === 'vendor'
@@ -100,14 +123,21 @@ export function resolveGeocodingEngineForRegion(
   doc: MapSettingsModel,
   group: MapSettingsGroupKey,
   regionCode?: string | null,
-): 'osm' | 'mapbox' | 'google' {
+  random: () => number = Math.random,
+): GeocodingEngineId {
   const merged = resolveMapSettingsForRegion(doc, regionCode);
-  let engine = geocodingEngineForGroup(merged, group);
-  if (!isEngineEnabledForGroup(merged, group, engine)) {
-    if (isEngineEnabledForGroup(merged, group, 'osm')) return 'osm';
-    if (isEngineEnabledForGroup(merged, group, 'mapbox')) return 'mapbox';
-    if (isEngineEnabledForGroup(merged, group, 'google')) return 'google';
-    return 'osm';
-  }
-  return engine;
+  const fallback = geocodingEngineForGroup(merged, group);
+  const pool = geocodingEnginePoolForGroup(merged, group);
+  return pickWeightedGeocodingEngine(
+    pool,
+    (engine) => isEngineEnabledForGroup(merged, group, engine),
+    fallback,
+    random,
+  );
+}
+
+export function normalizeStoredGeocodingEnginePool(
+  raw: unknown,
+): GeocodingEnginePoolEntry[] {
+  return normalizeGeocodingEnginePool(raw);
 }

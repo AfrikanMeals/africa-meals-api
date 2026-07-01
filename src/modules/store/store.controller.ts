@@ -982,10 +982,27 @@ export class StoreController {
     );
   }
 
-  /**
-   * Méta en-tête pour l’app (menu boutique) : léger, sans populate lourd.
-   * Doit rester avant `GET /:id` pour que le segment `menu-meta` soit résolu correctement.
-   */
+  /** Plats éligibles à la pré-commande pour une date/heure planifiée. */
+  @Get(':id/pre-order/products')
+  @UseGuards(OptionalAuthGuard)
+  async listPreOrderProducts(
+    @Param('id') id: string,
+    @Query('scheduledAt') scheduledAt: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const storeId = resolveMongoIdFromPublicParam(id) ?? id;
+    if (!scheduledAt?.trim()) {
+      throw new BadRequestException('pre_order_scheduled_at_required');
+    }
+    return this._storeService.listPreOrderEligibleProducts(
+      storeId,
+      scheduledAt.trim(),
+      page,
+      limit,
+    );
+  }
+
   @Get(':id/menu-meta')
   @UseGuards(OptionalAuthGuard)
   async getStoreMenuMeta(

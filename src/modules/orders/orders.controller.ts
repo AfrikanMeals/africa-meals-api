@@ -5,6 +5,7 @@ import {
   Get,
   Inject,
   Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -22,6 +23,7 @@ import {
   ConfirmPickupDto,
   CreateRefundRequestDto,
   FilterOrdersDto,
+  PatchPreOrderCustomerNoteDto,
   RejectOrderDto,
   VendorCourierLocationDto,
 } from './dto/orders.dto';
@@ -217,6 +219,23 @@ export class OrdersController {
   }
 
   /** Demande de remboursement (client propriétaire de la commande). */
+  /** Client : note sur une pré-commande planifiée. */
+  @Patch(':id/pre-order-note')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Mettre à jour la note client (pré-commande)' })
+  async patchPreOrderNote(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: PatchPreOrderCustomerNoteDto,
+  ) {
+    return this._ordersService.patchPreOrderCustomerNote(
+      id,
+      req.user as UserModel,
+      body.customerNote,
+    );
+  }
+
   @Post(':id/refund-request')
   @UseGuards(JwtGuard)
   @ApiOperation({

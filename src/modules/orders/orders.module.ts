@@ -30,7 +30,8 @@ import {
   StripeProcessedCheckoutSchema,
 } from '@schemas/stripe-processed-checkout.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
-import { OrdersDemoSeedService } from './orders-demo-seed.service';
+import { PreOrderReminderCron } from './pre-order-reminder.cron';
+import { PreOrderReminderService } from './pre-order-reminder.service';
 import { ProductRatingsDemoSeedService } from './product-ratings-demo-seed.service';
 import { OrderStatusEventsService } from './order-status-events.service';
 import { OrdersController } from './orders.controller';
@@ -57,6 +58,8 @@ import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain
     ProductRatingsDemoSeedService,
     OrderInvoicePdfService,
     OrderPaidInvoiceEmailService,
+    PreOrderReminderService,
+    PreOrderReminderCron,
   ],
   exports: [
     OrdersService,

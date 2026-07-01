@@ -45,7 +45,13 @@ import {
   normalizePickupCodeInput,
 } from 'src/utils/pickup-code';
 import { objectIdStringFromRef, mongoIdsEqual } from 'src/utils/mongoose-ref.util';
-import { enrichOrdersDisplayStatus, readOrderPayOnPickup } from './order-display-status.util';
+import {
+  canClientCancelPaidPreOrder,
+  enrichOrdersDisplayStatus,
+  readOrderIsPreOrder,
+  readOrderPayOnPickup,
+  readVendorAcceptedAt,
+} from './order-display-status.util';
 import {
   isOrderStatusCancellablePayOnPickup,
   isOrderStatusPaidForVendorWorkflow,
@@ -72,6 +78,10 @@ import {
   buildVendorOrderCreatedPushBody,
   buildVendorOrderPaidInboxMessage,
   buildVendorOrderPaidPushBody,
+  buildVendorPreOrderDDayInboxMessage,
+  buildVendorPreOrderDDayPushBody,
+  buildVendorPreOrderReminderInboxMessage,
+  buildVendorPreOrderReminderPushBody,
   buildVendorOrderPayOnPickupInboxMessage,
   buildVendorOrderPayOnPickupPushBody,
   buildVendorOrderStatusInboxMessage,
@@ -98,6 +108,11 @@ import {
   readCourierGpsThrottleConfig,
 } from './courier-gps-throttle';
 import { domainEventIdFromCourierTracking } from '../../common/domain-events/domain-event-id.util';
+
+import dayjs = require('dayjs');
+import utc = require('dayjs/plugin/utc');
+
+dayjs.extend(utc);
 
 @Injectable()
 export class OrdersService {
@@ -438,6 +453,36 @@ export class OrdersService {
       filter['status'] = args.status;
     }
 
+    if (args.isPreOrder === true) {
+      filter['isPreOrder'] = true;
+    } else if (args.isPreOrder === false) {
+      filter['isPreOrder'] = { $ne: true };
+    }
+
+    const tomorrowStartUtc = dayjs().utc().add(1, 'day').startOf('day').toDate();
+
+    if (args.preOrderFuture === true) {
+      filter['isPreOrder'] = true;
+      filter['scheduledAt'] = { $gte: tomorrowStartUtc };
+    }
+
+    if (args.excludeFuturePreOrders === true) {
+      const futurePreOrderClause = {
+        isPreOrder: true,
+        scheduledAt: { $gte: tomorrowStartUtc },
+      };
+      const existingOr = filter['$or'];
+      if (Array.isArray(existingOr)) {
+        filter['$and'] = [
+          { $or: existingOr },
+          { $nor: [futurePreOrderClause] },
+        ];
+        delete filter['$or'];
+      } else {
+        filter['$nor'] = [futurePreOrderClause];
+      }
+    }
+
     const search = await this.applyStoreNameSearch(filter, args.q);
     if (search === 'empty') {
       return { data: [] };
@@ -454,9 +499,12 @@ export class OrdersService {
         ? Math.min(10_000, Math.max(0, Math.floor(args.skip)))
         : 0;
 
+    const sortField =
+      args.sortBy === 'scheduledAt' ? 'scheduledAt' : 'createdAt';
+
     const data = await this._orderModel
       .find(filter)
-      .sort({ createdAt: -1 })
+      .sort({ [sortField]: -1 })
       .skip(skip)
       .limit(lim)
       .populate({
@@ -620,6 +668,16 @@ export class OrdersService {
   } {
     const status = String(order['status'] ?? '');
     if (
+      readOrderIsPreOrder(order) &&
+      status === OrderStatusEnum.CREATED
+    ) {
+      return {
+        canRequestRefund: false,
+        refundRequestState: 'unavailable',
+        canCancelOrder: true,
+      };
+    }
+    if (
       readOrderPayOnPickup(order) &&
       isOrderStatusCancellablePayOnPickup(status)
     ) {
@@ -652,7 +710,16 @@ export class OrdersService {
         return { canRequestRefund: false, refundRequestState: 'processed' };
       }
     }
+    if (canClientCancelPaidPreOrder(order)) {
+      return { canRequestRefund: true, refundRequestState: 'eligible' };
+    }
     if (this.isRefundRequestAllowedForStatus(status)) {
+      if (readOrderIsPreOrder(order)) {
+        return {
+          canRequestRefund: false,
+          refundRequestState: 'unavailable',
+        };
+      }
       return { canRequestRefund: true, refundRequestState: 'eligible' };
     }
     if (status === OrderStatusEnum.CANCELLED) {
@@ -858,7 +925,15 @@ export class OrdersService {
     }
   }
 
-  async createFromCart(storeId: string, user: UserModel) {
+  async createFromCart(
+    storeId: string,
+    user: UserModel,
+    options?: {
+      isPreOrder?: boolean;
+      scheduledAt?: Date;
+      customerNote?: string;
+    },
+  ) {
     const cart = await this._cartService.findOneByStoreId(storeId, user);
 
     if (!cart?.items?.length) {
@@ -915,6 +990,9 @@ export class OrdersService {
       items,
       totalPrice: calculatedPrice, // TODO should we add shipping price here?
       shippingPrice: 0,
+      isPreOrder: options?.isPreOrder === true,
+      scheduledAt: options?.scheduledAt,
+      customerNote: options?.customerNote?.trim() || undefined,
     });
 
     const orderIdStr = order._id.toString();
@@ -1054,7 +1132,102 @@ export class OrdersService {
     if (pending?._id) {
       return pending._id.toString();
     }
+
+    const preOrder = await this._orderModel
+      .findOne({
+        user: uid,
+        store: sid,
+        status: OrderStatusEnum.CREATED,
+        isPreOrder: true,
+      })
+      .sort({ createdAt: -1 })
+      .select('_id')
+      .lean()
+      .exec();
+    if (preOrder?._id) {
+      return preOrder._id.toString();
+    }
     return null;
+  }
+
+  /** Pré-commande impayée : cible valide pour un PaymentIntent existant. */
+  async assertPreOrderPayableByClient(
+    orderId: string,
+    userId: string,
+    storeId: string,
+  ): Promise<boolean> {
+    if (
+      !Types.ObjectId.isValid(orderId) ||
+      !Types.ObjectId.isValid(userId) ||
+      !Types.ObjectId.isValid(storeId)
+    ) {
+      return false;
+    }
+    const row = await this._orderModel
+      .findOne({
+        _id: new Types.ObjectId(orderId),
+        user: new Types.ObjectId(userId),
+        store: new Types.ObjectId(storeId),
+        isPreOrder: true,
+        status: OrderStatusEnum.CREATED,
+        stripeParentPaymentId: { $exists: false },
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    return Boolean(row?._id);
+  }
+
+  /** Charge une pré-commande client avant création PaymentIntent. */
+  async getPreOrderForClientPayment(
+    orderId: string,
+    user: UserModel,
+  ): Promise<{
+    orderId: string;
+    storeId: string;
+    storeName: string;
+    totalPrice: number;
+    currency: string;
+  }> {
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+    const order = await this._orderModel
+      .findOne({
+        _id: new Types.ObjectId(oid),
+        user: new Types.ObjectId(String(user.id)),
+        isPreOrder: true,
+        status: OrderStatusEnum.CREATED,
+      })
+      .populate('store', 'name currency')
+      .lean()
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+    const storeRaw = order.store as unknown;
+    const store =
+      storeRaw && typeof storeRaw === 'object'
+        ? (storeRaw as Record<string, unknown>)
+        : null;
+    const storeId = String(store?._id ?? store?.id ?? '').trim();
+    if (!storeId) {
+      throw new BadRequestException('order_store_missing');
+    }
+    const totalPrice = Number(order.totalPrice ?? 0);
+    if (!Number.isFinite(totalPrice) || totalPrice <= 0) {
+      throw new BadRequestException('pre_order_invalid_amount');
+    }
+    return {
+      orderId: oid,
+      storeId,
+      storeName: String(store?.name ?? 'Wise Eat').trim() || 'Wise Eat',
+      totalPrice,
+      currency: String(order.currency ?? store?.currency ?? 'CAD')
+        .trim()
+        .toUpperCase(),
+    };
   }
 
   /** Ajoute une entrée `stores.vendor_messages` + refresh inbox WebSocket. */
@@ -1213,6 +1386,8 @@ export class OrdersService {
     const inbox =
       ctx.reason === 'order_paid'
         ? buildVendorOrderPaidInboxMessage(msgArgs)
+        : ctx.reason === 'pre_order_d_day'
+          ? buildVendorPreOrderDDayInboxMessage(msgArgs)
         : ctx.reason === 'new_order'
           ? buildVendorOrderCreatedInboxMessage(msgArgs)
           : buildVendorOrderStatusInboxMessage({
@@ -1230,6 +1405,8 @@ export class OrdersService {
         body:
           ctx.reason === 'order_paid'
             ? buildVendorOrderPaidPushBody(msgArgs)
+            : ctx.reason === 'pre_order_d_day'
+              ? buildVendorPreOrderDDayPushBody(msgArgs)
             : ctx.reason === 'new_order'
               ? buildVendorOrderCreatedPushBody(msgArgs)
               : push.body,
@@ -1242,7 +1419,9 @@ export class OrdersService {
         ctx.reason === 'order_cancelled'
           ? undefined
           : {
-              event: ctx.reason,
+              event: (ctx.reason === 'pre_order_d_day'
+                ? 'pre_order_d_day'
+                : ctx.reason) as VendorOrderEmailEvent,
               orderId: orderIdStr,
               storeName,
               totalPrice,
@@ -1253,6 +1432,111 @@ export class OrdersService {
             },
       logTag: ctx.reason,
     });
+  }
+
+  /** Rappel vendeur / équipe (push + e-mail + inbox) pour une pré-commande planifiée. */
+  notifyStoreVendorsForPreOrderVendorReminder(
+    order: OrderModel,
+    ctx: {
+      reminderKey: 'd-3' | 'd-2' | 'd-1' | 'd-day';
+      daysUntil: number;
+      scheduledAtLabel: string;
+    },
+  ): void {
+    const storeId = this.storeIdFromOrderDoc(order);
+    if (!storeId) return;
+
+    const storeName = this.storeNameFromPopulated(order.store);
+    const orderIdStr = order._id.toString();
+    const items = (order.items ?? []) as OrdeLineItem[];
+    const totalPrice = Number(order.totalPrice) || 0;
+    const currency =
+      typeof order.currency === 'string' ? order.currency : undefined;
+    const itemCount = items.reduce(
+      (s, i) => s + Math.max(1, Math.round(Number(i.quantity) || 1)),
+      0,
+    );
+    const title =
+      ctx.reminderKey === 'd-day'
+        ? 'Rappel pré-commande — aujourd\'hui'
+        : `Rappel pré-commande — J-${ctx.daysUntil}`;
+    const inbox = buildVendorPreOrderReminderInboxMessage({
+      orderId: orderIdStr,
+      items,
+      totalPrice,
+      currency,
+      daysUntil: ctx.daysUntil,
+      scheduledAtLabel: ctx.scheduledAtLabel,
+    });
+    const pushBody = buildVendorPreOrderReminderPushBody({
+      storeName,
+      orderId: orderIdStr,
+      daysUntil: ctx.daysUntil,
+      scheduledAtLabel: ctx.scheduledAtLabel,
+    });
+
+    void this.notifyStoreVendorsForOrder({
+      storeId,
+      customerUserId: this.userIdFromOrderDoc(order),
+      inboxMessage: inbox,
+      push: {
+        title,
+        body: pushBody,
+        orderId: orderIdStr,
+        storeName,
+        reason: `pre_order_reminder_${ctx.reminderKey}`,
+        status: String(order.status ?? ''),
+      },
+      email: {
+        event: 'pre_order_reminder',
+        orderId: orderIdStr,
+        storeName,
+        totalPrice,
+        currency,
+        itemCount,
+        note: ctx.scheduledAtLabel,
+        statusLabel:
+          ctx.daysUntil === 0
+            ? 'Pré-commande aujourd\'hui'
+            : `Pré-commande dans ${ctx.daysUntil} jour(s)`,
+      },
+      logTag: `pre_order_vendor_reminder_${ctx.reminderKey}`,
+    });
+  }
+
+  /** Marque une pré-commande comme active (jour J) et alerte la boutique si commande payable. */
+  async promotePreOrderOnDDay(orderId: string): Promise<void> {
+    const order = await this._orderModel
+      .findById(orderId)
+      .populate({
+        path: 'store',
+        select: 'name profileImage status currency acceptsOrders supportsShipping bio',
+      })
+      .exec();
+    if (!order?.isPreOrder || !order.scheduledAt) return;
+
+    if (!order.preOrderPromotedAt) {
+      order.preOrderPromotedAt = new Date();
+      await order.save();
+    }
+
+    const st = String(order.status ?? '').trim().toLowerCase();
+    if (
+      st === OrderStatusEnum.CANCELLED ||
+      st === OrderStatusEnum.COMPLETED
+    ) {
+      return;
+    }
+
+    if (
+      isOrderStatusPaidForVendorWorkflow(st) &&
+      !order.vendorAcceptedAt
+    ) {
+      this.notifyStoreVendorsForOrderStatusChange(order, {
+        reason: 'pre_order_d_day',
+        status: st as OrderStatusEnum,
+      });
+    }
   }
 
   /**
@@ -2651,11 +2935,16 @@ export class OrdersService {
           parentId,
         );
       if (release !== 'cancelled') {
+        const isPreOrder = order.isPreOrder === true;
         const autoDetails =
           source === 'vendor'
-            ? 'Annulation par le restaurant — remboursement client intégral (sans frais plateforme).'
+            ? isPreOrder
+              ? 'Annulation pré-commande par le restaurant — remboursement client intégral (frais Stripe à la charge du restaurant).'
+              : 'Annulation par le restaurant — remboursement client intégral (sans frais plateforme).'
             : source === 'admin'
-              ? 'Annulation par l’administration — remboursement à traiter.'
+              ? isPreOrder
+                ? 'Annulation pré-commande par l’administration — remboursement à traiter.'
+                : 'Annulation par l’administration — remboursement à traiter.'
               : 'Annulation — remboursement à traiter.';
         order.refundRequestLog = [
           ...(order.refundRequestLog ?? []),
@@ -3806,6 +4095,116 @@ export class OrdersService {
     };
   }
 
+  /** Client : annule une pré-commande impayée (statut `created`). */
+  private async cancelUnpaidPreOrderByClient(
+    order: OrderModel,
+    user: UserModel,
+    dto: CreateRefundRequestDto,
+    oid: string,
+  ): Promise<{ orderId: string; status: OrderStatusEnum }> {
+    const st = order.status as OrderStatusEnum;
+    if (st !== OrderStatusEnum.CREATED || order.isPreOrder !== true) {
+      throw new BadRequestException('refund_not_applicable_status');
+    }
+
+    try {
+      assertOrderCancelReasonPayload({
+        source: 'client',
+        reasonCode: dto.reasonCode,
+        customDetails: dto.details,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'cancel_reason_invalid';
+      throw new BadRequestException(msg);
+    }
+
+    const resolved = resolveOrderCancelReasonDisplay({
+      source: 'client',
+      reasonCode: dto.reasonCode,
+      customDetails: dto.details,
+    });
+
+    const prevStatus = st;
+    order.status = OrderStatusEnum.CANCELLED;
+    order.cancelReasonCode = resolved.code;
+    order.cancelReasonDetails = resolved.details;
+    order.cancelReasonSource = 'client';
+    await order.save();
+
+    const storeId = this.storeIdFromOrderDoc(order);
+    await this._orderStatusEvents.record({
+      orderId: oid,
+      storeId,
+      customerUserId: String(user.id),
+      fromStatus: prevStatus,
+      toStatus: OrderStatusEnum.CANCELLED,
+      source: OrderStatusChangeSourceEnum.SYSTEM,
+      actorUserId: String(user.id),
+      note: `Annulation pré-commande : ${resolved.details}`.slice(0, 500),
+    });
+
+    this.notifyOrderCancelledParties(order, {
+      previousStatus: prevStatus,
+      bodyOverride: 'Pré-commande annulée',
+      note: `Annulation client : ${resolved.details}`,
+    });
+
+    void this._wsOrderNotifyHandler?.notifyPartiesByOrderId(
+      oid,
+      OrderStatusEnum.CANCELLED,
+    );
+    this.notifyStoreVendorsForOrderStatusChange(order, {
+      reason: 'order_cancelled',
+      status: OrderStatusEnum.CANCELLED,
+      note: `Pré-commande annulée : ${resolved.details}`,
+    });
+
+    return {
+      orderId: oid,
+      status: OrderStatusEnum.CANCELLED,
+    };
+  }
+
+  /**
+   * Client : met à jour la note sur une pré-commande.
+   */
+  async patchPreOrderCustomerNote(
+    orderId: string,
+    user: UserModel,
+    customerNote: string,
+  ): Promise<{ orderId: string; customerNote: string }> {
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+    const note = customerNote.trim();
+    const order = await this._orderModel
+      .findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(oid),
+          user: new Types.ObjectId(String(user.id)),
+          isPreOrder: true,
+          status: {
+            $nin: [
+              OrderStatusEnum.CANCELLED,
+              OrderStatusEnum.COMPLETED,
+            ],
+          },
+        },
+        { $set: { customerNote: note || undefined } },
+        { new: true },
+      )
+      .select('_id customerNote')
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+    return {
+      orderId: String(order._id),
+      customerNote: String(order.customerNote ?? ''),
+    };
+  }
+
   /**
    * Client : enregistre une demande de remboursement (historique sur la commande).
    * Refus si statut commande / livraison incompatible ou si une demande est déjà en cours / traitée.
@@ -3826,17 +4225,27 @@ export class OrdersService {
     const order = await this._orderModel
       .findOne({ _id: new Types.ObjectId(oid), user: uid })
       .select(
-        'status shouldShip payOnPickup refundRequestLog store items totalPrice currency pickupCode user',
+        'status shouldShip payOnPickup isPreOrder vendorAcceptedAt refundRequestLog store items totalPrice currency pickupCode user stripeParentPaymentId',
       )
       .populate('store', 'name')
       .exec();
     if (!order) {
       throw new NotFoundException('order_not_found');
     }
+    const st = order.status as OrderStatusEnum;
+    if (order.isPreOrder === true && st === OrderStatusEnum.CREATED) {
+      return this.cancelUnpaidPreOrderByClient(order, user, dto, oid);
+    }
+    if (
+      order.isPreOrder === true &&
+      readVendorAcceptedAt(order as unknown as Record<string, unknown>) !=
+        null
+    ) {
+      throw new BadRequestException('pre_order_vendor_already_accepted');
+    }
     if (order.payOnPickup === true) {
       return this.cancelPayOnPickupOrderByClient(order, user, dto, oid);
     }
-    const st = order.status as OrderStatusEnum;
     this.assertRefundRequestApplicableToOrder(st);
     const log = order.refundRequestLog ?? [];
     this.assertRefundRequestNotBlockedByHistory(log);
@@ -3887,7 +4296,9 @@ export class OrdersService {
 
     this.notifyOrderCancelledParties(order, {
       previousStatus: prevStatus,
-      bodyOverride: 'Commande annulée — remboursement en cours d’examen',
+      bodyOverride: order.isPreOrder
+        ? 'Pré-commande annulée — remboursement en cours d’examen'
+        : 'Commande annulée — remboursement en cours d’examen',
       note: `Annulation client : ${resolved.details}`,
     });
 

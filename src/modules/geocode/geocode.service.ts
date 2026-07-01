@@ -22,10 +22,17 @@ import {
   resolveMapboxGeocodeApiUrl,
   resolveMapboxGeocodingToken,
 } from '@common/mapbox-geocoding.util';
+import {
+  GeocodingEngineId,
+  pickWeightedGeocodingEngine,
+} from '@common/geocoding-engine-pool.util';
 import { MapSettingsService } from '@modules/map-settings/map-settings.service';
 import {
   MapSettingsGroupKey,
-  resolveGeocodingEngineForRegion,
+  geocodingEngineForGroup,
+  geocodingEnginePoolForGroup,
+  isEngineEnabledForGroup,
+  resolveMapSettingsForRegion,
 } from '@modules/map-settings/map-settings-region.util';
 import { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
 import { Injectable, NotFoundException } from '@nestjs/common';
@@ -259,33 +266,42 @@ export class GeocodeService {
     countryCode: string,
     context: MapSettingsGroupKey,
   ): Promise<GeocodeEngine> {
-    const doc = await this.mapSettings.getSettingsDocument();
-    const fromSettings = resolveGeocodingEngineForRegion(
-      doc,
-      context,
-      countryCode,
-    );
     const envEngine = String(
       this.config.get<string>('MAP_GEOCODING_ENGINE') ?? '',
     )
       .trim()
       .toLowerCase();
     if (envEngine === 'osm') return 'osm';
-    if (
-      fromSettings === 'mapbox' &&
-      (await resolveMapboxGeocodingToken(this.secrets, this.config))
-    ) {
-      return 'mapbox';
-    }
-    if (fromSettings === 'google') {
-      const key = String(
-        this.config.get<string>('GOOGLE_MAPS_API_KEY') ??
-          process.env.GOOGLE_MAPS_API_KEY ??
-          '',
-      ).trim();
-      if (key) return 'google';
-    }
-    if (fromSettings === 'osm') return 'osm';
+
+    const doc = await this.mapSettings.getSettingsDocument();
+    const merged = resolveMapSettingsForRegion(doc, countryCode);
+    const hasMapbox = Boolean(
+      await resolveMapboxGeocodingToken(this.secrets, this.config),
+    );
+    const googleKey = String(
+      this.config.get<string>('GOOGLE_MAPS_API_KEY') ??
+        process.env.GOOGLE_MAPS_API_KEY ??
+        '',
+    ).trim();
+
+    const isAvailable = (engine: GeocodingEngineId): boolean => {
+      if (!isEngineEnabledForGroup(merged, context, engine)) return false;
+      if (engine === 'mapbox') return hasMapbox;
+      if (engine === 'google') return Boolean(googleKey);
+      return true;
+    };
+
+    const pool = geocodingEnginePoolForGroup(merged, context);
+    const fallback = geocodingEngineForGroup(merged, context);
+    const picked = pickWeightedGeocodingEngine(
+      pool,
+      isAvailable,
+      isAvailable(fallback) ? fallback : 'osm',
+    );
+    if (isAvailable(picked)) return picked;
+    if (isAvailable('osm')) return 'osm';
+    if (isAvailable('mapbox')) return 'mapbox';
+    if (isAvailable('google')) return 'google';
     return 'osm';
   }
 

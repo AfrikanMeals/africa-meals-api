@@ -23,8 +23,16 @@ import {
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 import { normalizeRegionCode } from '@modules/platform-shipping-settings/platform-shipping-region.util';
+import {
+  GeocodingEnginePoolEntry,
+  primaryGeocodingEngineFromPool,
+} from '@common/geocoding-engine-pool.util';
 import { UpdateMapSettingsDto } from './dto/update-map-settings.dto';
-import { resolveMapSettingsForRegion } from './map-settings-region.util';
+import {
+  geocodingEnginePoolForGroup,
+  normalizeStoredGeocodingEnginePool,
+  resolveMapSettingsForRegion,
+} from './map-settings-region.util';
 
 const SETTINGS_KEY = 'default';
 
@@ -68,6 +76,13 @@ function normalizeGeocodingEngine(raw: unknown): GeocodingEngine {
   if (v === 'google') return 'google';
   if (v === 'mapbox') return 'mapbox';
   return 'osm';
+}
+
+function poolForResponse(
+  doc: MapSettingsModel,
+  group: 'vendor' | 'mobileUser' | 'mobileDelivery',
+): GeocodingEnginePoolEntry[] {
+  return geocodingEnginePoolForGroup(doc, group);
 }
 
 function assertDefaultEngineEnabled(
@@ -124,6 +139,7 @@ export class MapSettingsService {
         osmEnabled: scoped.vendorOsmEnabled !== false,
         defaultMapEngine: vendorDefault,
         geocodingEngine: normalizeGeocodingEngine(scoped.vendorGeocodingEngine),
+        geocodingEnginePool: poolForResponse(scoped, 'vendor'),
       },
       mobileUser: {
         mapboxEnabled: scoped.mobileUserMapboxEnabled !== false,
@@ -133,6 +149,7 @@ export class MapSettingsService {
         geocodingEngine: normalizeGeocodingEngine(
           scoped.mobileUserGeocodingEngine,
         ),
+        geocodingEnginePool: poolForResponse(scoped, 'mobileUser'),
       },
       mobileDelivery: {
         mapboxEnabled: scoped.mobileDeliveryMapboxEnabled !== false,
@@ -142,6 +159,7 @@ export class MapSettingsService {
         geocodingEngine: normalizeGeocodingEngine(
           scoped.mobileDeliveryGeocodingEngine,
         ),
+        geocodingEnginePool: poolForResponse(scoped, 'mobileDelivery'),
       },
       resolvedRegionCode,
       geocodeCache: {
@@ -176,6 +194,9 @@ export class MapSettingsService {
             vendorGeocodingEngine: 'osm',
             mobileUserGeocodingEngine: 'osm',
             mobileDeliveryGeocodingEngine: 'osm',
+            vendorGeocodingEnginePool: [],
+            mobileUserGeocodingEnginePool: [],
+            mobileDeliveryGeocodingEnginePool: [],
             geocodeCacheStorePriority: [...DEFAULT_GEOCODE_CACHE_STORE_PRIORITY],
             settingsByRegion: {},
           },
@@ -249,6 +270,46 @@ export class MapSettingsService {
       dto.mobileDeliveryGeocodingEngine ??
         (existing as MapSettingsModel | null)?.mobileDeliveryGeocodingEngine,
     );
+    const vendorGeocodingPool =
+      dto.vendorGeocodingEnginePool !== undefined
+        ? normalizeStoredGeocodingEnginePool(dto.vendorGeocodingEnginePool)
+        : normalizeStoredGeocodingEnginePool(
+            (existing as MapSettingsModel | null)?.vendorGeocodingEnginePool,
+          );
+    const mobileUserGeocodingPool =
+      dto.mobileUserGeocodingEnginePool !== undefined
+        ? normalizeStoredGeocodingEnginePool(dto.mobileUserGeocodingEnginePool)
+        : normalizeStoredGeocodingEnginePool(
+            (existing as MapSettingsModel | null)?.mobileUserGeocodingEnginePool,
+          );
+    const mobileDeliveryGeocodingPool =
+      dto.mobileDeliveryGeocodingEnginePool !== undefined
+        ? normalizeStoredGeocodingEnginePool(
+            dto.mobileDeliveryGeocodingEnginePool,
+          )
+        : normalizeStoredGeocodingEnginePool(
+            (existing as MapSettingsModel | null)
+              ?.mobileDeliveryGeocodingEnginePool,
+          );
+
+    const vendorGeocodingResolved = primaryGeocodingEngineFromPool(
+      vendorGeocodingPool.length
+        ? vendorGeocodingPool
+        : [{ engine: vendorGeocoding, weight: 100 }],
+      vendorGeocoding,
+    );
+    const mobileUserGeocodingResolved = primaryGeocodingEngineFromPool(
+      mobileUserGeocodingPool.length
+        ? mobileUserGeocodingPool
+        : [{ engine: mobileUserGeocoding, weight: 100 }],
+      mobileUserGeocoding,
+    );
+    const mobileDeliveryGeocodingResolved = primaryGeocodingEngineFromPool(
+      mobileDeliveryGeocodingPool.length
+        ? mobileDeliveryGeocodingPool
+        : [{ engine: mobileDeliveryGeocoding, weight: 100 }],
+      mobileDeliveryGeocoding,
+    );
     let geocodeCacheStorePriority = normalizeGeocodeCacheStorePriority(
       (existing as MapSettingsModel | null)?.geocodeCacheStorePriority,
     );
@@ -284,6 +345,26 @@ export class MapSettingsService {
       'mobile_delivery',
     );
 
+    const assertPoolHasWeight = (
+      pool: GeocodingEnginePoolEntry[],
+      scope: string,
+    ) => {
+      if (!pool.length) return;
+      const total = pool.reduce((sum, entry) => sum + entry.weight, 0);
+      if (total <= 0) {
+        throw new BadRequestException(`geocoding_engine_pool_empty_${scope}`);
+      }
+    };
+    if (dto.vendorGeocodingEnginePool !== undefined) {
+      assertPoolHasWeight(vendorGeocodingPool, 'vendor');
+    }
+    if (dto.mobileUserGeocodingEnginePool !== undefined) {
+      assertPoolHasWeight(mobileUserGeocodingPool, 'mobile_user');
+    }
+    if (dto.mobileDeliveryGeocodingEnginePool !== undefined) {
+      assertPoolHasWeight(mobileDeliveryGeocodingPool, 'mobile_delivery');
+    }
+
     const updated = await this._settings
       .findOneAndUpdate(
         { key: SETTINGS_KEY },
@@ -301,9 +382,12 @@ export class MapSettingsService {
             mobileDeliveryGoogleEnabled: dto.mobileDeliveryGoogleEnabled,
             mobileDeliveryOsmEnabled: dto.mobileDeliveryOsmEnabled,
             mobileDeliveryDefaultMapEngine: mobileDeliveryDefault,
-            vendorGeocodingEngine: vendorGeocoding,
-            mobileUserGeocodingEngine: mobileUserGeocoding,
-            mobileDeliveryGeocodingEngine: mobileDeliveryGeocoding,
+            vendorGeocodingEngine: vendorGeocodingResolved,
+            mobileUserGeocodingEngine: mobileUserGeocodingResolved,
+            mobileDeliveryGeocodingEngine: mobileDeliveryGeocodingResolved,
+            vendorGeocodingEnginePool: vendorGeocodingPool,
+            mobileUserGeocodingEnginePool: mobileUserGeocodingPool,
+            mobileDeliveryGeocodingEnginePool: mobileDeliveryGeocodingPool,
             geocodeCacheStorePriority,
           },
         },

@@ -1,5 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsBoolean, IsIn, IsOptional, IsString } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { GeocodingEnginePoolEntryDto } from './geocoding-engine-pool-entry.dto';
 
 const VENDOR_ENGINES = ['mapbox', 'google', 'osm'] as const;
 const MOBILE_ENGINES = ['mapbox', 'google', 'osm'] as const;
@@ -78,6 +87,27 @@ export class UpdateMapSettingsDto {
   @IsString()
   @IsIn(GEOCODING_ENGINES)
   mobileDeliveryGeocodingEngine?: string;
+
+  @ApiPropertyOptional({ type: [GeocodingEnginePoolEntryDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => GeocodingEnginePoolEntryDto)
+  vendorGeocodingEnginePool?: GeocodingEnginePoolEntryDto[];
+
+  @ApiPropertyOptional({ type: [GeocodingEnginePoolEntryDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => GeocodingEnginePoolEntryDto)
+  mobileUserGeocodingEnginePool?: GeocodingEnginePoolEntryDto[];
+
+  @ApiPropertyOptional({ type: [GeocodingEnginePoolEntryDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => GeocodingEnginePoolEntryDto)
+  mobileDeliveryGeocodingEnginePool?: GeocodingEnginePoolEntryDto[];
 
   @ApiPropertyOptional({
     type: [String],
