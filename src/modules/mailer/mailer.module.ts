@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MediasModule } from '@modules/medias/medias.module';
+import { PlatformThemeSettingsModule } from '@modules/platform-theme-settings/platform-theme-settings.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { MailerSend } from 'mailersend';
 import {
@@ -24,6 +25,7 @@ import { RecaptchaEnterpriseService } from './recaptcha-enterprise.service';
 @Module({
   imports: [
     forwardRef(() => MediasModule),
+    PlatformThemeSettingsModule,
     MongooseModule.forFeature([
       {
         name: SiteContactRequestModel.name,

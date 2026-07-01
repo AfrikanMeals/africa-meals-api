@@ -77,6 +77,7 @@ import { SearchSettingsModule } from './modules/search-settings/search-settings.
 import { SecretManagerModule } from './modules/secret-manager/secret-manager.module';
 import { PlatformChannelsModule } from './modules/platform-channels/platform-channels.module';
 import { MobileAppSettingsModule } from './modules/mobile-app-settings/mobile-app-settings.module';
+import { PlatformThemeSettingsModule } from './modules/platform-theme-settings/platform-theme-settings.module';
 import { StockManagerSettingsModule } from './modules/stock-manager-settings/stock-manager-settings.module';
 import { PlatformFeatureModulesModule } from './modules/platform-feature-modules/platform-feature-modules.module';
 import { PosSettingsModule } from './modules/pos-settings/pos-settings.module';
@@ -336,6 +337,7 @@ async function readRedisManagerEnabledAtBootstrap(
     SecretManagerModule,
     PlatformChannelsModule,
     MobileAppSettingsModule,
+    PlatformThemeSettingsModule,
     StockManagerSettingsModule,
     PlatformFeatureModulesModule,
     PosSettingsModule,
