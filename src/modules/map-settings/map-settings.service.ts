@@ -1,9 +1,14 @@
 import {
+  resolveMapboxPublicAccessToken,
+} from '@common/mapbox-geocoding.util';
+import {
   BadRequestException,
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
+import { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
 import {
   assertGeocodeCacheStorePriority,
   DEFAULT_GEOCODE_CACHE_STORE_PRIORITY,
@@ -88,6 +93,8 @@ export class MapSettingsService {
     @InjectModel(MapSettingsModel.name)
     private readonly _settings: Model<MapSettingsDocument>,
     private readonly _moduleCache: ModuleCacheLayerService,
+    private readonly _secrets: SecretManagerService,
+    private readonly _config: ConfigService,
   ) {}
 
   private _geocodeCacheAvailability(): Record<GeocodeCacheStore, boolean> {
@@ -181,7 +188,15 @@ export class MapSettingsService {
 
   async getPublicSettings(regionCode?: string | null) {
     const doc = await this.getSettingsDocument();
-    return this._toResponse(doc, regionCode);
+    const base = this._toResponse(doc, regionCode);
+    const mapboxPublicAccessToken = await resolveMapboxPublicAccessToken(
+      this._secrets,
+      this._config,
+    );
+    return {
+      ...base,
+      mapboxPublicAccessToken: mapboxPublicAccessToken || null,
+    };
   }
 
   async updateSettings(user: UserModel, dto: UpdateMapSettingsDto) {

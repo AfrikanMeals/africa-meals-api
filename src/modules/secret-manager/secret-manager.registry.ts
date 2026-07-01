@@ -132,16 +132,16 @@ export const API_SECRET_REGISTRY: SecretKeyDefinition[] = [
   },
   {
     envVarName: 'MAPBOX_ACCESS_TOKEN',
-    label: 'Mapbox — token',
+    label: 'Mapbox — token serveur (sk. / secret)',
     description:
-      'Token Mapbox pour le géocodage serveur. Préférer un token public (pk.) avec scope Geocoding ; un secret (sk.) sans ce scope renvoie HTTP 403.',
+      'Token secret MAPBOX_ACCESS_TOKEN — géocodage API uniquement (Geocoding v6). Ne pas exposer au frontend.',
     category: 'Cartographie',
   },
   {
     envVarName: 'MAPBOX_PUBLIC_ACCESS_TOKEN',
     label: 'Mapbox — token public (pk.)',
     description:
-      'Token public Mapbox pour Geocoding API (prioritaire sur MAPBOX_ACCESS_TOKEN si les deux sont définis).',
+      'Token public réservé au frontend (admin / mobile) pour le chargement des cartes. Restreindre par URL dans Mapbox (domaine, navigateur, pays). Non utilisé pour le géocodage serveur.',
     category: 'Cartographie',
   },
   {

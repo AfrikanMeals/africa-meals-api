@@ -11,39 +11,40 @@ export function readMapboxEnvToken(
   return String(config?.get<string>(key) ?? process.env[key] ?? '').trim();
 }
 
-/** Préfère un token public (pk.) — requis pour Geocoding si le secret (sk.) n’a pas ce scope. */
-export function pickMapboxGeocodingToken(tokens: string[]): string {
-  const normalized = tokens.map((t) => t.trim()).filter(Boolean);
-  const pk = normalized.find((t) => t.startsWith('pk.'));
-  if (pk) return pk;
-  return normalized[0] ?? '';
-}
-
-export function resolveMapboxGeocodingTokenFromEnv(
+/** Token serveur (MAPBOX_ACCESS_TOKEN) — géocodage API uniquement, jamais le pk. public frontend. */
+export function resolveMapboxServerTokenFromEnv(
   config?: ConfigService,
 ): string {
-  return pickMapboxGeocodingToken([
-    readMapboxEnvToken(config, 'MAPBOX_PUBLIC_ACCESS_TOKEN'),
-    readMapboxEnvToken(config, 'MAPBOX_ACCESS_TOKEN'),
-    readMapboxEnvToken(config, 'NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN'),
-  ]);
+  return readMapboxEnvToken(config, 'MAPBOX_ACCESS_TOKEN');
+}
+
+/** Ne jamais exposer un token secret (sk.) ni une valeur non pk. aux clients. */
+export function sanitizeMapboxPublicAccessToken(raw: string): string {
+  const t = String(raw ?? '').trim();
+  if (!t || t.startsWith('sk.')) return '';
+  if (!t.startsWith('pk.')) return '';
+  return t;
+}
+
+/** Token public (pk.) — tuiles / Directions admin & mobile via GET /platform/map-settings. */
+export async function resolveMapboxPublicAccessToken(
+  secrets: SecretManagerService,
+  config?: ConfigService,
+): Promise<string> {
+  const fromDb = await secrets.resolveString(
+    'api',
+    'MAPBOX_PUBLIC_ACCESS_TOKEN',
+  );
+  const fromEnv = readMapboxEnvToken(config, 'MAPBOX_PUBLIC_ACCESS_TOKEN');
+  return sanitizeMapboxPublicAccessToken(fromDb || fromEnv);
 }
 
 export async function resolveMapboxGeocodingToken(
   secrets: SecretManagerService,
   config?: ConfigService,
 ): Promise<string> {
-  const [publicDb, accessDb] = await Promise.all([
-    secrets.resolveString('api', 'MAPBOX_PUBLIC_ACCESS_TOKEN'),
-    secrets.resolveString('api', 'MAPBOX_ACCESS_TOKEN'),
-  ]);
-  return pickMapboxGeocodingToken([
-    publicDb,
-    readMapboxEnvToken(config, 'MAPBOX_PUBLIC_ACCESS_TOKEN'),
-    readMapboxEnvToken(config, 'NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN'),
-    accessDb,
-    readMapboxEnvToken(config, 'MAPBOX_ACCESS_TOKEN'),
-  ]);
+  const fromDb = await secrets.resolveString('api', 'MAPBOX_ACCESS_TOKEN');
+  return resolveMapboxServerTokenFromEnv(config) || fromDb.trim();
 }
 
 export function resolveMapboxGeocodeApiUrl(config?: ConfigService): string {
@@ -77,7 +78,7 @@ export async function probeMapboxGeocodingApi(
     let details = `HTTP ${res.status}`;
     if (res.status === 403) {
       details = trimmed.startsWith('sk.')
-        ? 'HTTP 403 — token secret (sk.) sans scope Geocoding ; utiliser MAPBOX_PUBLIC_ACCESS_TOKEN (pk.)'
+        ? 'HTTP 403 — vérifier scopes Geocoding sur le token secret (MAPBOX_ACCESS_TOKEN)'
         : 'HTTP 403 — token refusé (scopes Geocoding ou restrictions URL)';
     }
     return {
