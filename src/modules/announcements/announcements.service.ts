@@ -292,6 +292,17 @@ export class AnnouncementsService {
     return { url: resolved };
   }
 
+  private _normalizeHexColor(raw?: string): string | undefined {
+    const value = String(raw ?? '').trim();
+    if (!value) return undefined;
+    if (
+      /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(value)
+    ) {
+      return value.toUpperCase();
+    }
+    return undefined;
+  }
+
   private async _buildPayload(
     args: CreateAnnouncementDto | UpdateAnnouncementDto,
     user: UserModel,
@@ -319,6 +330,12 @@ export class AnnouncementsService {
       actionTarget: args.actionTarget?.trim(),
       dismissible: args.dismissible !== false,
     };
+    if (args.backgroundColor !== undefined) {
+      payload.backgroundColor = this._normalizeHexColor(args.backgroundColor);
+    }
+    if (args.textColor !== undefined) {
+      payload.textColor = this._normalizeHexColor(args.textColor);
+    }
     if (args.storeId) payload.store = new Types.ObjectId(args.storeId);
     if (args.productId) payload.product = new Types.ObjectId(args.productId);
     if (args.config) {

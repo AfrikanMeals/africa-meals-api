@@ -179,6 +179,14 @@ export class AnnouncementModel extends BaseSchema {
   @Prop({ default: true, name: 'dismissible' })
   dismissible: boolean;
 
+  /** Fond du bandeau (hex, ex. #111111). */
+  @Prop({ required: false, name: 'background_color', trim: true })
+  backgroundColor?: string;
+
+  /** Couleur du texte (hex, ex. #FFFFFF). */
+  @Prop({ required: false, name: 'text_color', trim: true })
+  textColor?: string;
+
   @Prop({
     required: false,
     name: 'config',

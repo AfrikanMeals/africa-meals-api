@@ -17,9 +17,13 @@ import {
   IsOptional,
   IsString,
   MaxLength,
+  Matches,
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+
+const ANNOUNCEMENT_HEX_COLOR_RE =
+  /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/;
 
 class AnnouncementConfigStyleDto {
   @IsOptional()
@@ -144,6 +148,22 @@ export class AnnouncementBaseDto {
   @IsString()
   @MaxLength(2048)
   pictureUrl?: string;
+
+  /** Fond bandeau (#RGB / #RRGGBB / #RRGGBBAA). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(9)
+  @ValidateIf((_, value) => String(value ?? '').trim() !== '')
+  @Matches(ANNOUNCEMENT_HEX_COLOR_RE, { message: 'invalid_background_color' })
+  backgroundColor?: string;
+
+  /** Texte bandeau (#RGB / #RRGGBB / #RRGGBBAA). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(9)
+  @ValidateIf((_, value) => String(value ?? '').trim() !== '')
+  @Matches(ANNOUNCEMENT_HEX_COLOR_RE, { message: 'invalid_text_color' })
+  textColor?: string;
 }
 
 export class CreateAnnouncementDto extends AnnouncementBaseDto {}

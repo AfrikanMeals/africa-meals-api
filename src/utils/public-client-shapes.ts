@@ -64,6 +64,10 @@ export function slimAnnouncementForClient(
   const productId = mongoIdToString(raw['product'] ?? raw['productId'] ?? '');
   const audienceUserIdsRaw =
     raw['audienceUserIds'] ?? raw['audience_user_ids'];
+  const backgroundColor = String(
+    raw['backgroundColor'] ?? raw['background_color'] ?? '',
+  ).trim();
+  const textColor = String(raw['textColor'] ?? raw['text_color'] ?? '').trim();
   return {
     id,
     isActive: raw['isActive'] ?? raw['is_active'] ?? false,
@@ -92,6 +96,8 @@ export function slimAnnouncementForClient(
     ...(storeId ? { storeId } : {}),
     ...(productId ? { productId } : {}),
     dismissible: raw['dismissible'] !== false,
+    ...(backgroundColor ? { backgroundColor } : {}),
+    ...(textColor ? { textColor } : {}),
     ...(raw['pictureUrl'] != null || raw['picture_url'] != null
       ? {
           pictureUrl: String(raw['pictureUrl'] ?? raw['picture_url']),
