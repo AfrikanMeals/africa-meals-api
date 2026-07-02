@@ -66,6 +66,9 @@ import {
   redactRedisUrl,
 } from './common/redis/redis-connection.util';
 import { SseRedisModule } from './common/sse/sse-redis.module';
+import { RecommendationAutomationSettingsModule } from './modules/recommendation-automation-settings/recommendation-automation-settings.module';
+import { EngagementPerformancesModule } from './modules/engagement-performances/engagement-performances.module';
+import { PushRecommendationsModule } from './modules/push-recommendations/push-recommendations.module';
 import { AuthSettingsModule } from './modules/auth-settings/auth-settings.module';
 import { SecuritySettingsModule } from './modules/security-settings/security-settings.module';
 import { StorageSettingsModule } from './modules/storage-settings/storage-settings.module';
@@ -334,6 +337,9 @@ async function readRedisManagerEnabledAtBootstrap(
     GeocodeModule,
     MapSettingsModule,
     SearchSettingsModule,
+    RecommendationAutomationSettingsModule,
+    EngagementPerformancesModule,
+    PushRecommendationsModule,
     SecretManagerModule,
     PlatformChannelsModule,
     MobileAppSettingsModule,

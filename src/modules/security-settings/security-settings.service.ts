@@ -1,6 +1,7 @@
 import {
   ForbiddenException,
   Injectable,
+  OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -51,18 +52,21 @@ function resolvePlatformFlags(doc: SecuritySettingsModel): AppCheckPlatformFlags
     };
   }
 
-  const legacy = doc.appCheckEnabled === true;
-  return {
-    mobile: legacy,
-    web: legacy,
-    admin: legacy,
-    websocket: legacy,
-    api: legacy,
-  };
+  if (doc.appCheckEnabled === true) {
+    return {
+      mobile: true,
+      web: true,
+      admin: true,
+      websocket: true,
+      api: true,
+    };
+  }
+
+  return { ...DEFAULT_FLAGS };
 }
 
 @Injectable()
-export class SecuritySettingsService {
+export class SecuritySettingsService implements OnModuleInit {
   private cacheFlags: AppCheckPlatformFlags | null = null;
   private cacheExpiresAt = 0;
 
@@ -71,6 +75,10 @@ export class SecuritySettingsService {
     private readonly _settings: Model<SecuritySettingsDocument>,
     private readonly config: ConfigService,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    await this.normalizeLegacyDocument();
+  }
 
   private _toResponse(doc: SecuritySettingsModel) {
     const typed = doc as unknown as { updatedAt?: Date };
@@ -173,5 +181,34 @@ export class SecuritySettingsService {
       .exec();
     this.invalidateCache();
     return this._toResponse(updated);
+  }
+
+  /** Normalise les documents legacy (appCheckEnabled seul) en flags granulaires explicites. */
+  async normalizeLegacyDocument(): Promise<void> {
+    const doc = await this._settings.findOne({ key: SETTINGS_KEY }).exec();
+    if (!doc) return;
+    const hasGranular =
+      doc.appCheckMobileEnabled !== undefined ||
+      doc.appCheckWebEnabled !== undefined ||
+      doc.appCheckAdminEnabled !== undefined ||
+      doc.appCheckWebsocketEnabled !== undefined ||
+      doc.appCheckApiEnabled !== undefined;
+    if (hasGranular) return;
+    const legacy = doc.appCheckEnabled === true;
+    await this._settings
+      .updateOne(
+        { key: SETTINGS_KEY },
+        {
+          $set: {
+            appCheckMobileEnabled: legacy,
+            appCheckWebEnabled: legacy,
+            appCheckAdminEnabled: legacy,
+            appCheckWebsocketEnabled: legacy,
+            appCheckApiEnabled: legacy,
+          },
+        },
+      )
+      .exec();
+    this.invalidateCache();
   }
 }

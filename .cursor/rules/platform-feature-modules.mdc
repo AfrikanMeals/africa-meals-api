@@ -1,0 +1,33 @@
+---
+description: API — platform feature modules (source de vérité des clés et endpoints)
+globs: src/modules/platform-feature-modules/**/*.ts,src/schemas/platform-feature-modules.schema.ts
+alwaysApply: false
+---
+
+# API — platform feature modules
+
+Module Nest : `src/modules/platform-feature-modules/`.
+
+## Endpoints
+
+| Méthode | Route | Auth |
+|---------|-------|------|
+| `GET` | `/platform/feature-modules` | Public (cache 5 min) |
+| `PUT` | `/platform/feature-modules` | JWT + rôle `ADMIN` |
+
+Payload PUT : patch partiel `{ admin?: Partial<...>, mobile?: Partial<...> }`.
+
+## Ajouter un module
+
+1. Ajouter la clé dans `PLATFORM_FEATURE_MODULE_KEYS` (camelCase).
+2. Mettre à jour `DEFAULT_PLATFORM_SURFACE_MODULES` + `PLATFORM_FEATURE_MODULE_DEFINITIONS` (labelFr, labelEn, descriptionFr).
+3. Schema Mongo + DTO Nest — même clé booléenne sur `admin` et `mobile`.
+4. **Ne pas** dupliquer la liste ailleurs dans l’API ; importer depuis `platform-feature-modules.constants.ts`.
+
+## Garde-fous serveur (optionnel)
+
+Le gating actuel est **côté client**. Ajouter un guard API seulement si la feature a un impact sécurité, facturation ou données sensibles — injecter `PlatformFeatureModulesService` et vérifier la surface concernée.
+
+## Tests
+
+Couvrir merge partiel PUT, défaut `true`, et persistance Mongo.
