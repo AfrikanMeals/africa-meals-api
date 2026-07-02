@@ -39,6 +39,7 @@ lerna-debug.log*
 .env.prod
 .env.functions
 .env.local
+.env.docker
 .env.wise-eat-ca
 .env.k8s.stash
 .firebase-package.json.bak
@@ -46,6 +47,7 @@ lerna-debug.log*
 
 # Firebase / GCP service account keys (never commit)
 accounts.json
+recaptcha-accounts.json
 serviceAccountKey.json
 *-firebase-adminsdk-*.json
 firebase-service-account.json

@@ -13,3 +13,4 @@ test
 .vscode
 .cursor
 accounts.json
+.env.docker

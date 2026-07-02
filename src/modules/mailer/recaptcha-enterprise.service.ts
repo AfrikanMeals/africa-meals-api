@@ -1,16 +1,16 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GoogleAuth } from 'google-auth-library';
+import { createRecaptchaGoogleAuth } from './recaptcha-enterprise-auth.util';
 import { isRecaptchaEnterpriseEnforced } from './recaptcha-enterprise-enforce.util';
 
 @Injectable()
 export class RecaptchaEnterpriseService {
   private readonly logger = new Logger(RecaptchaEnterpriseService.name);
-  private readonly googleAuth = new GoogleAuth({
-    scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-  });
+  private readonly googleAuth;
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private readonly configService: ConfigService) {
+    this.googleAuth = createRecaptchaGoogleAuth(configService);
+  }
 
   async verify(token: string | undefined, expectedAction: string): Promise<void> {
     const apiKey =
@@ -107,10 +107,11 @@ export class RecaptchaEnterpriseService {
     }
 
     if (!resp.ok) {
+      const assessmentError = this.normalizeAssessmentError(
+        data?.error?.message,
+      );
       if (enforce) {
-        throw new BadRequestException(
-          data?.error?.message || 'recaptcha_assessment_failed',
-        );
+        throw new BadRequestException(assessmentError);
       }
       this.logger.warn(
         `reCAPTCHA assessment non-OK (monitor mode): ${
@@ -122,8 +123,9 @@ export class RecaptchaEnterpriseService {
 
     const valid = data?.tokenProperties?.valid === true;
     if (!valid) {
-      const reason =
-        data?.tokenProperties?.invalidReason || 'recaptcha_invalid_token';
+      const reason = this.normalizeInvalidReason(
+        data?.tokenProperties?.invalidReason,
+      );
       if (enforce) throw new BadRequestException(reason);
       this.logger.warn(`reCAPTCHA invalid token (monitor mode): ${reason}`);
       return;
@@ -149,6 +151,34 @@ export class RecaptchaEnterpriseService {
         }, threshold=${minScore}`,
       );
     }
+  }
+
+  /** Mappe les erreurs REST Google vers des codes API stables (pas de message brut côté client). */
+  private normalizeAssessmentError(message: string | undefined): string {
+    const raw = String(message ?? '').trim();
+    if (!raw) return 'recaptcha_assessment_failed';
+    const lower = raw.toLowerCase();
+    if (lower.includes('permission') && lower.includes('denied')) {
+      return 'recaptcha_unavailable';
+    }
+    if (lower.includes('blocked')) {
+      return 'recaptcha_api_blocked';
+    }
+    if (lower.includes('not enabled') || lower.includes('has not been used')) {
+      return 'recaptcha_unavailable';
+    }
+    return 'recaptcha_assessment_failed';
+  }
+
+  /** Mappe les codes Google (ex. KEY_MISMATCH) vers des codes API stables. */
+  private normalizeInvalidReason(raw: string | undefined): string {
+    const reason = String(raw ?? '').trim();
+    if (!reason) return 'recaptcha_invalid_token';
+    const upper = reason.toUpperCase();
+    if (upper === 'KEY_MISMATCH' || upper === 'INVALID_SITE_KEY') {
+      return 'recaptcha_invalid_token';
+    }
+    return reason;
   }
 
   private async buildRecaptchaRequestAuth(args: {
