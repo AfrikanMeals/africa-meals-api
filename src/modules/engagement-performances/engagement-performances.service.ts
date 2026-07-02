@@ -77,6 +77,21 @@ export type EngagementOverviewResponse = {
     conversion24hPercent: number;
     dismissRatePercent: number;
   };
+  emailNewsletter: {
+    sent: number;
+    delivered: number;
+    opened: number;
+    clicked: number;
+    unsubscribed: number;
+    orders48h: number;
+    revenueAmount: number;
+    currency: string;
+    deliverabilityPercent: number;
+    openRatePercent: number;
+    clickRatePercent: number;
+    conversion48hPercent: number;
+    unsubscribeRatePercent: number;
+  };
   timeseries: Array<{
     date: string;
     sent: number;
@@ -85,6 +100,8 @@ export type EngagementOverviewResponse = {
     orders24h: number;
   }>;
 };
+
+export type ChannelMetrics = EngagementOverviewResponse['pushReco'];
 
 @Injectable()
 export class EngagementPerformancesService {
@@ -156,17 +173,13 @@ export class EngagementPerformancesService {
     });
   }
 
-  async getOverview(
-    user: UserModel,
-    query: QueryEngagementPerformancesDto,
-  ): Promise<EngagementOverviewResponse> {
-    assertAdmin(user);
-    const { from, to, fromKey, toKey } = resolveRange(query);
-    const channel = EngagementPerformanceChannel.PUSH_RECO;
-    const regionFilter = query.region?.trim()
-      ? { region: query.region.trim() }
-      : {};
-
+  private async buildChannelMetrics(
+    channel: EngagementPerformanceChannel,
+    from: Date,
+    to: Date,
+    regionFilter: Record<string, unknown>,
+    conversionEvent: EngagementPerformanceEventType,
+  ): Promise<ChannelMetrics & { orders48h?: number }> {
     const [
       sent,
       delivered,
@@ -191,7 +204,7 @@ export class EngagementPerformancesService {
       {
         $match: {
           channel,
-          event: EngagementPerformanceEventType.ORDER_24H,
+          event: conversionEvent,
           occurredAt: { $gte: from, $lte: new Date(to.getTime() + DAY_MS - 1) },
           ...regionFilter,
         },
@@ -207,7 +220,92 @@ export class EngagementPerformancesService {
     const revenueRow = revenueAgg[0];
     const deliverabilityBase = sent || delivered;
     const openBase = delivered || sent;
+    const conversionCount =
+      conversionEvent === EngagementPerformanceEventType.ORDER_48H
+        ? orders48h
+        : orders24h;
 
+    return {
+      sent,
+      delivered,
+      opened,
+      clicked,
+      dismissed,
+      unsubscribed,
+      orders24h,
+      orders48h,
+      revenueAmount: round2(revenueRow?.total ?? 0),
+      currency: revenueRow?.currency || 'CAD',
+      deliverabilityPercent: percent(delivered, deliverabilityBase),
+      openRatePercent: percent(opened, openBase),
+      clickRatePercent: percent(clicked, opened),
+      conversion24hPercent: percent(conversionCount, sent),
+      dismissRatePercent: percent(dismissed, openBase),
+    };
+  }
+
+  async getOverview(
+    user: UserModel,
+    query: QueryEngagementPerformancesDto,
+  ): Promise<EngagementOverviewResponse> {
+    assertAdmin(user);
+    const { from, to, fromKey, toKey } = resolveRange(query);
+    const regionFilter = query.region?.trim()
+      ? { region: query.region.trim() }
+      : {};
+
+    const [pushRecoRaw, emailRaw] = await Promise.all([
+      this.buildChannelMetrics(
+        EngagementPerformanceChannel.PUSH_RECO,
+        from,
+        to,
+        regionFilter,
+        EngagementPerformanceEventType.ORDER_24H,
+      ),
+      this.buildChannelMetrics(
+        EngagementPerformanceChannel.EMAIL_NEWSLETTER,
+        from,
+        to,
+        regionFilter,
+        EngagementPerformanceEventType.ORDER_48H,
+      ),
+    ]);
+
+    const pushReco = {
+      sent: pushRecoRaw.sent,
+      delivered: pushRecoRaw.delivered,
+      opened: pushRecoRaw.opened,
+      clicked: pushRecoRaw.clicked,
+      dismissed: pushRecoRaw.dismissed,
+      unsubscribed: pushRecoRaw.unsubscribed,
+      orders24h: pushRecoRaw.orders24h,
+      orders48h: pushRecoRaw.orders48h,
+      revenueAmount: pushRecoRaw.revenueAmount,
+      currency: pushRecoRaw.currency,
+      deliverabilityPercent: pushRecoRaw.deliverabilityPercent,
+      openRatePercent: pushRecoRaw.openRatePercent,
+      clickRatePercent: pushRecoRaw.clickRatePercent,
+      conversion24hPercent: pushRecoRaw.conversion24hPercent,
+      dismissRatePercent: pushRecoRaw.dismissRatePercent,
+    };
+
+    const emailNewsletter = {
+      sent: emailRaw.sent,
+      delivered: emailRaw.delivered,
+      opened: emailRaw.opened,
+      clicked: emailRaw.clicked,
+      unsubscribed: emailRaw.unsubscribed,
+      orders48h: emailRaw.orders48h,
+      revenueAmount: emailRaw.revenueAmount,
+      currency: emailRaw.currency,
+      deliverabilityPercent: emailRaw.deliverabilityPercent,
+      openRatePercent: emailRaw.openRatePercent,
+      clickRatePercent: emailRaw.clickRatePercent,
+      conversion48hPercent: percent(emailRaw.orders48h, emailRaw.sent),
+      unsubscribeRatePercent: percent(emailRaw.unsubscribed, emailRaw.sent),
+    };
+
+    const channel = EngagementPerformanceChannel.PUSH_RECO;
     const dailyRows = await this.dailyModel
       .find({
         channel,
@@ -231,23 +329,8 @@ export class EngagementPerformancesService {
 
     return {
       range: { from: fromKey, to: toKey },
-      pushReco: {
-        sent,
-        delivered,
-        opened,
-        clicked,
-        dismissed,
-        unsubscribed,
-        orders24h,
-        orders48h,
-        revenueAmount: round2(revenueRow?.total ?? 0),
-        currency: revenueRow?.currency || 'CAD',
-        deliverabilityPercent: percent(delivered, deliverabilityBase),
-        openRatePercent: percent(opened, openBase),
-        clickRatePercent: percent(clicked, opened),
-        conversion24hPercent: percent(orders24h, sent),
-        dismissRatePercent: percent(dismissed, openBase),
-      },
+      pushReco,
+      emailNewsletter,
       timeseries,
     };
   }
@@ -315,7 +398,69 @@ export class EngagementPerformancesService {
     assertAdmin(user);
     const overview = await this.getOverview(user, query);
     const { from, to } = resolveRange(query);
-    const channel = EngagementPerformanceChannel.PUSH_RECO;
+    const breakdowns = await this.buildChannelBreakdowns(
+      EngagementPerformanceChannel.PUSH_RECO,
+      from,
+      to,
+      query,
+    );
+    return {
+      ...overview,
+      breakdowns,
+    };
+  }
+
+  async getNewsletterDetail(user: UserModel, query: QueryEngagementPerformancesDto) {
+    assertAdmin(user);
+    const overview = await this.getOverview(user, query);
+    const { from, to, fromKey, toKey } = resolveRange(query);
+    const channel = EngagementPerformanceChannel.EMAIL_NEWSLETTER;
+    const regionFilter = query.region?.trim()
+      ? { region: query.region.trim() }
+      : {};
+
+    const breakdowns = await this.buildChannelBreakdowns(
+      channel,
+      from,
+      to,
+      query,
+    );
+
+    const dailyRows = await this.dailyModel
+      .find({
+        channel,
+        date: { $gte: fromKey, $lte: toKey },
+        ...(query.region?.trim() ? { region: query.region.trim() } : {}),
+      })
+      .sort({ date: 1 })
+      .lean()
+      .exec();
+
+    const timeseries =
+      dailyRows.length > 0
+        ? dailyRows.map((row) => ({
+            date: row.date,
+            sent: row.sent ?? 0,
+            opened: row.opened ?? 0,
+            clicked: row.clicked ?? 0,
+            orders48h: row.orders48h ?? 0,
+          }))
+        : await this.buildEmailTimeseriesFromEvents(from, to, regionFilter);
+
+    return {
+      range: overview.range,
+      emailNewsletter: overview.emailNewsletter,
+      timeseries,
+      breakdowns,
+    };
+  }
+
+  private async buildChannelBreakdowns(
+    channel: EngagementPerformanceChannel,
+    from: Date,
+    to: Date,
+    query: QueryEngagementPerformancesDto,
+  ) {
     const match: Record<string, unknown> = {
       channel,
       occurredAt: { $gte: from, $lte: new Date(to.getTime() + DAY_MS - 1) },
@@ -361,90 +506,155 @@ export class EngagementPerformancesService {
       ]);
 
     return {
-      ...overview,
-      breakdowns: {
-        byCandidateType,
-        byCopySource,
-        skippedByReason: skippedByReason.map((row) => ({
-          reason: row._id || 'unknown',
-          count: row.count,
-        })),
-        funnel: funnel.map((row) => ({ event: row._id, count: row.count })),
-      },
+      byCandidateType,
+      byCopySource,
+      skippedByReason: skippedByReason.map((row) => ({
+        reason: row._id || 'unknown',
+        count: row.count,
+      })),
+      funnel: funnel.map((row) => ({ event: row._id, count: row.count })),
     };
+  }
+
+  private async buildEmailTimeseriesFromEvents(
+    from: Date,
+    to: Date,
+    regionFilter: Record<string, unknown>,
+  ) {
+    const channel = EngagementPerformanceChannel.EMAIL_NEWSLETTER;
+    const rows = await this.eventModel.aggregate<{
+      _id: string;
+      sent: number;
+      opened: number;
+      clicked: number;
+      orders48h: number;
+    }>([
+      {
+        $match: {
+          channel,
+          occurredAt: { $gte: from, $lte: new Date(to.getTime() + DAY_MS - 1) },
+          ...regionFilter,
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: '%Y-%m-%d', date: '$occurredAt', timezone: 'UTC' },
+          },
+          sent: {
+            $sum: {
+              $cond: [{ $eq: ['$event', EngagementPerformanceEventType.SENT] }, 1, 0],
+            },
+          },
+          opened: {
+            $sum: {
+              $cond: [{ $eq: ['$event', EngagementPerformanceEventType.OPEN] }, 1, 0],
+            },
+          },
+          clicked: {
+            $sum: {
+              $cond: [{ $eq: ['$event', EngagementPerformanceEventType.CLICK] }, 1, 0],
+            },
+          },
+          orders48h: {
+            $sum: {
+              $cond: [{ $eq: ['$event', EngagementPerformanceEventType.ORDER_48H] }, 1, 0],
+            },
+          },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    return rows.map((row) => ({
+      date: row._id,
+      sent: row.sent,
+      opened: row.opened,
+      clicked: row.clicked,
+      orders48h: row.orders48h,
+    }));
   }
 
   async aggregateDailyForDate(date: Date): Promise<void> {
     const dayStart = startOfUtcDay(date);
     const dayEnd = new Date(dayStart.getTime() + DAY_MS - 1);
     const key = dateKey(dayStart);
-    const channel = EngagementPerformanceChannel.PUSH_RECO;
 
-    const counts = await this.eventModel.aggregate([
-      {
-        $match: {
-          channel,
-          occurredAt: { $gte: dayStart, $lte: dayEnd },
+    for (const channel of [
+      EngagementPerformanceChannel.PUSH_RECO,
+      EngagementPerformanceChannel.EMAIL_NEWSLETTER,
+    ]) {
+      const conversionEvent =
+        channel === EngagementPerformanceChannel.EMAIL_NEWSLETTER
+          ? EngagementPerformanceEventType.ORDER_48H
+          : EngagementPerformanceEventType.ORDER_24H;
+
+      const counts = await this.eventModel.aggregate([
+        {
+          $match: {
+            channel,
+            occurredAt: { $gte: dayStart, $lte: dayEnd },
+          },
         },
-      },
-      { $group: { _id: '$event', count: { $sum: 1 } } },
-    ]);
+        { $group: { _id: '$event', count: { $sum: 1 } } },
+      ]);
 
-    const map = new Map<string, number>();
-    for (const row of counts) {
-      map.set(String(row._id), row.count);
+      const map = new Map<string, number>();
+      for (const row of counts) {
+        map.set(String(row._id), row.count);
+      }
+
+      const skipped = await this.eventModel.aggregate([
+        {
+          $match: {
+            channel,
+            event: EngagementPerformanceEventType.SKIPPED,
+            occurredAt: { $gte: dayStart, $lte: dayEnd },
+          },
+        },
+        { $group: { _id: '$skipReason', count: { $sum: 1 } } },
+      ]);
+
+      const skippedByReason: Record<string, number> = {};
+      for (const row of skipped) {
+        skippedByReason[String(row._id || 'unknown')] = row.count;
+      }
+
+      const revenueAgg = await this.eventModel.aggregate([
+        {
+          $match: {
+            channel,
+            event: conversionEvent,
+            occurredAt: { $gte: dayStart, $lte: dayEnd },
+          },
+        },
+        {
+          $group: {
+            _id: '$currency',
+            total: { $sum: { $ifNull: ['$revenueAmount', 0] } },
+          },
+        },
+      ]);
+
+      await this.dailyModel.updateOne(
+        { date: key, channel, region: '' },
+        {
+          $set: {
+            sent: map.get(EngagementPerformanceEventType.SENT) ?? 0,
+            delivered: map.get(EngagementPerformanceEventType.DELIVERED) ?? 0,
+            opened: map.get(EngagementPerformanceEventType.OPEN) ?? 0,
+            clicked: map.get(EngagementPerformanceEventType.CLICK) ?? 0,
+            dismissed: map.get(EngagementPerformanceEventType.DISMISS) ?? 0,
+            unsubscribed: map.get(EngagementPerformanceEventType.UNSUBSCRIBE) ?? 0,
+            orders24h: map.get(EngagementPerformanceEventType.ORDER_24H) ?? 0,
+            orders48h: map.get(EngagementPerformanceEventType.ORDER_48H) ?? 0,
+            revenueAmount: round2(revenueAgg[0]?.total ?? 0),
+            currency: revenueAgg[0]?._id || 'CAD',
+            skippedByReason,
+          },
+        },
+        { upsert: true },
+      );
     }
-
-    const skipped = await this.eventModel.aggregate([
-      {
-        $match: {
-          channel,
-          event: EngagementPerformanceEventType.SKIPPED,
-          occurredAt: { $gte: dayStart, $lte: dayEnd },
-        },
-      },
-      { $group: { _id: '$skipReason', count: { $sum: 1 } } },
-    ]);
-
-    const skippedByReason: Record<string, number> = {};
-    for (const row of skipped) {
-      skippedByReason[String(row._id || 'unknown')] = row.count;
-    }
-
-    const revenueAgg = await this.eventModel.aggregate([
-      {
-        $match: {
-          channel,
-          event: EngagementPerformanceEventType.ORDER_24H,
-          occurredAt: { $gte: dayStart, $lte: dayEnd },
-        },
-      },
-      {
-        $group: {
-          _id: '$currency',
-          total: { $sum: { $ifNull: ['$revenueAmount', 0] } },
-        },
-      },
-    ]);
-
-    await this.dailyModel.updateOne(
-      { date: key, channel, region: '' },
-      {
-        $set: {
-          sent: map.get(EngagementPerformanceEventType.SENT) ?? 0,
-          delivered: map.get(EngagementPerformanceEventType.DELIVERED) ?? 0,
-          opened: map.get(EngagementPerformanceEventType.OPEN) ?? 0,
-          clicked: map.get(EngagementPerformanceEventType.CLICK) ?? 0,
-          dismissed: map.get(EngagementPerformanceEventType.DISMISS) ?? 0,
-          unsubscribed: map.get(EngagementPerformanceEventType.UNSUBSCRIBE) ?? 0,
-          orders24h: map.get(EngagementPerformanceEventType.ORDER_24H) ?? 0,
-          orders48h: map.get(EngagementPerformanceEventType.ORDER_48H) ?? 0,
-          revenueAmount: round2(revenueAgg[0]?.total ?? 0),
-          currency: revenueAgg[0]?._id || 'CAD',
-          skippedByReason,
-        },
-      },
-      { upsert: true },
-    );
   }
 }

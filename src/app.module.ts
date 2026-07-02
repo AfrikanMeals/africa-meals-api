@@ -32,6 +32,7 @@ import { RecommendationsModule } from './modules/recommendations/recommendations
 import { PlatformFeesModule } from './modules/platform-fees/platform-fees.module';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
 import { PartnerBadgesModule } from './modules/partner-badges/partner-badges.module';
+import { MarketingOffersModule } from './modules/marketing-offers/marketing-offers.module';
 import { TeamsModule } from './modules/teams/teams.module';
 import { RefundsModule } from './modules/refunds/refunds.module';
 import { PenaltiesModule } from './modules/penalties/penalties.module';
@@ -315,6 +316,7 @@ async function readRedisManagerEnabledAtBootstrap(
     PlatformFeesModule,
     SubscriptionsModule,
     PartnerBadgesModule,
+    MarketingOffersModule,
     TeamsModule,
     RefundsModule,
     PenaltiesModule,

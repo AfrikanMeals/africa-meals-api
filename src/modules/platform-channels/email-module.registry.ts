@@ -101,7 +101,9 @@ export function inferEmailModuleFromLogContext(
   }
   if (ctx.startsWith('login-notification')) return 'login_notify';
   if (ctx.startsWith('site-contact')) return 'newsletter';
-  if (ctx.startsWith('blog-newsletter')) return 'newsletter';
+  if (ctx.startsWith('blog-newsletter') || ctx.startsWith('food-newsletter')) {
+    return 'newsletter';
+  }
   if (ctx.startsWith('admin-alert') || ctx.includes('admin-ops')) return 'admin_ops';
   if (ctx.startsWith('business-report')) return 'business_reports';
   if (ctx.includes('vendor-subscription')) return 'subscriptions';
