@@ -22,4 +22,9 @@ export class EngagementPerformancesController {
   pushReco(@Req() req: Request, @Query() query: QueryEngagementPerformancesDto) {
     return this.service.getPushRecoDetail(req.user as UserModel, query);
   }
+
+  @Get('newsletter')
+  newsletter(@Req() req: Request, @Query() query: QueryEngagementPerformancesDto) {
+    return this.service.getNewsletterDetail(req.user as UserModel, query);
+  }
 }

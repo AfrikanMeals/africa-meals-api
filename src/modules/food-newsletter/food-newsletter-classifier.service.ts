@@ -88,7 +88,7 @@ export class FoodNewsletterClassifierService {
           email: { $exists: true, $ne: '' },
           emailVerifiedAt: { $exists: true, $ne: null },
         })
-        .select('_id firstName email countryCode emailVerifiedAt')
+        .select('_id fullName email appCountryCode emailVerifiedAt')
         .sort({ _id: 1 })
         .skip(skip)
         .limit(batchSize)
@@ -203,8 +203,8 @@ export class FoodNewsletterClassifierService {
               $set: {
                 score,
                 contentSnapshot: { stores, items, promo: null },
-                locale: user.countryCode === 'CA' ? 'fr-CA' : 'fr',
-                region: String(user.countryCode ?? ''),
+                locale: user.appCountryCode === 'CA' ? 'fr-CA' : 'fr',
+                region: String(user.appCountryCode ?? ''),
                 computedAt: new Date(),
                 expiresAt,
               },

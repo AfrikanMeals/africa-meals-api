@@ -133,7 +133,7 @@ export class FoodNewsletterPlannerService {
 
       const user = await this.userModel
         .findById(userId)
-        .select('email firstName')
+        .select('email fullName')
         .lean()
         .exec();
       const email = String(user?.email ?? '').trim();
@@ -147,7 +147,7 @@ export class FoodNewsletterPlannerService {
         settings,
         campaignType: candidate.campaignType,
         contentSnapshot: snapshot as Record<string, unknown>,
-        firstName: user?.firstName,
+        firstName: user?.fullName?.split(/\s+/)[0],
         locale,
       });
 
