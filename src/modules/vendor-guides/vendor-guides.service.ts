@@ -82,10 +82,7 @@ function guideProgressKey(slug: string, locale: string): string {
 
 function isDisplayableGuide(doc: VendorGuideArticleDocument): boolean {
   const title = doc.title?.trim() ?? '';
-  if (!title) return false;
-  const html = doc.htmlContent?.trim() ?? '';
-  const image = doc.imageUrl?.trim() ?? '';
-  return Boolean(html || image);
+  return Boolean(title);
 }
 
 function isGuideProgressBlocking(

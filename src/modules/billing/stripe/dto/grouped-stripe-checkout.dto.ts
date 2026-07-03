@@ -94,4 +94,13 @@ export class GroupedStripeCheckoutDto {
     string,
     { scheduledAt: string; customerNote?: string }
   >;
+
+  @ApiPropertyOptional({
+    description:
+      'Pré-commande impayée existante par boutique — évite de recréer une commande au paiement.',
+    example: { storeMongoId24Hex: 'orderMongoId24Hex' },
+  })
+  @IsOptional()
+  @IsObject()
+  preOrderOidByStoreId?: Record<string, string>;
 }

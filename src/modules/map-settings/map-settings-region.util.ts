@@ -75,6 +75,15 @@ export function geocodingEngineForGroup(
   const v = String(raw ?? '').trim().toLowerCase();
   if (v === 'google') return 'google';
   if (v === 'mapbox') return 'mapbox';
+  if (v === 'mapsco' || v === 'maps.co' || v === 'maps_co') return 'mapsco';
+  if (
+    v === 'locationiq' ||
+    v === 'location.iq' ||
+    v === 'location_iq'
+  ) {
+    return 'locationiq';
+  }
+  if (v === 'tomtom') return 'tomtom';
   return 'osm';
 }
 
@@ -116,6 +125,9 @@ export function isEngineEnabledForGroup(
           };
   if (engine === 'mapbox') return flags.mapbox;
   if (engine === 'google') return flags.google;
+  if (engine === 'mapsco') return true;
+  if (engine === 'locationiq') return true;
+  if (engine === 'tomtom') return true;
   return flags.osm;
 }
 

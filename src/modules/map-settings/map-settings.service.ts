@@ -38,7 +38,7 @@ const SETTINGS_KEY = 'default';
 
 type VendorEngine = 'mapbox' | 'google' | 'osm';
 type MobileEngine = 'mapbox' | 'google' | 'osm';
-type GeocodingEngine = 'mapbox' | 'google' | 'osm';
+type GeocodingEngine = 'mapbox' | 'google' | 'osm' | 'mapsco' | 'locationiq' | 'tomtom';
 
 function assertAdmin(user: UserModel) {
   if (user.type !== UserTypeEnum.ADMIN) {
@@ -75,6 +75,15 @@ function normalizeGeocodingEngine(raw: unknown): GeocodingEngine {
   const v = String(raw ?? '').trim().toLowerCase();
   if (v === 'google') return 'google';
   if (v === 'mapbox') return 'mapbox';
+  if (v === 'mapsco' || v === 'maps.co' || v === 'maps_co') return 'mapsco';
+  if (
+    v === 'locationiq' ||
+    v === 'location.iq' ||
+    v === 'location_iq'
+  ) {
+    return 'locationiq';
+  }
+  if (v === 'tomtom') return 'tomtom';
   return 'osm';
 }
 

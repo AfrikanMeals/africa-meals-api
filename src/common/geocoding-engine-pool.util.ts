@@ -1,4 +1,11 @@
-export const KNOWN_GEOCODING_ENGINES = ['osm', 'mapbox', 'google'] as const;
+export const KNOWN_GEOCODING_ENGINES = [
+  'osm',
+  'mapsco',
+  'locationiq',
+  'tomtom',
+  'mapbox',
+  'google',
+] as const;
 
 export type GeocodingEngineId = (typeof KNOWN_GEOCODING_ENGINES)[number];
 
@@ -11,6 +18,15 @@ export function normalizeGeocodingEngineId(raw: unknown): GeocodingEngineId | nu
   const v = String(raw ?? '').trim().toLowerCase();
   if (v === 'google') return 'google';
   if (v === 'mapbox') return 'mapbox';
+  if (v === 'mapsco' || v === 'maps.co' || v === 'maps_co') return 'mapsco';
+  if (
+    v === 'locationiq' ||
+    v === 'location.iq' ||
+    v === 'location_iq'
+  ) {
+    return 'locationiq';
+  }
+  if (v === 'tomtom') return 'tomtom';
   if (v === 'osm') return 'osm';
   return null;
 }

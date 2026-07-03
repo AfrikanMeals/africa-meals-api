@@ -8,6 +8,7 @@ import {
   IsInt,
   IsNotEmpty,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   Max,
@@ -224,4 +225,12 @@ export class ValidateCheckoutDto {
   @IsOptional()
   @IsNumber()
   expectedGiftCodeDiscountAmount?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Pré-commandes impayées existantes par boutique — ignore le contrôle stock menu du jour.',
+  })
+  @IsOptional()
+  @IsObject()
+  preOrderOidByStoreId?: Record<string, string>;
 }

@@ -19,7 +19,8 @@ import {
 import { MapSettingsService } from '@modules/map-settings/map-settings.service';
 import { Model } from 'mongoose';
 
-export type GeocodeEngine = 'osm' | 'mapbox' | 'google';
+export type GeocodeEngine =
+  'osm' | 'mapsco' | 'locationiq' | 'tomtom' | 'mapbox' | 'google';
 
 export type GeocodeCacheLookupArgs = {
   kind: GeocodeCacheKind;
@@ -61,7 +62,14 @@ export class GeocodeCacheService {
   }
 
   canPersistEngine(engine: GeocodeEngine): boolean {
-    if (engine === 'osm') return true;
+    if (
+      engine === 'osm' ||
+      engine === 'mapsco' ||
+      engine === 'locationiq' ||
+      engine === 'tomtom'
+    ) {
+      return true;
+    }
     if (engine === 'google') return false;
     if (engine === 'mapbox') {
       return (

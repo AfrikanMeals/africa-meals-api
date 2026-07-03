@@ -43,7 +43,7 @@ function pickAddressField(
   return '';
 }
 
-function parseNominatimItem(item: Record<string, unknown>): OsmGeocodeResult | null {
+export function parseNominatimItem(item: Record<string, unknown>): OsmGeocodeResult | null {
   const lat = Number(item.lat);
   const lon = Number(item.lon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;

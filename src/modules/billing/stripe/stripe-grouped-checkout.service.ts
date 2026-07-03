@@ -8,6 +8,7 @@ import { resolveStripeCheckoutSuccessUrl } from './stripe-checkout-return-url.ut
 import { CheckoutSessionSseService } from '@modules/sse-stream/checkout-session-sse.service';
 import { SubscriptionsStripeCheckoutService } from '@modules/subscriptions/subscriptions-stripe-checkout.service';
 import { CartService } from '@modules/cart/cart.service';
+import { MarketingOfferListingsService } from '@modules/marketing-offer-listings/marketing-offer-listings.service';
 import {
   customizationSummaryLabel,
   normalizeSelectedComplements,
@@ -132,6 +133,8 @@ type GroupedStripeBuilt = {
   payOnPickupByStoreId: Record<string, boolean>;
   /** Métadonnées pré-commande par boutique (checkout immédiat). */
   preOrderByStoreId?: GroupedStripeCheckoutDto['preOrderByStoreId'];
+  /** Pré-commande impayée existante par boutique (paiement depuis la liste). */
+  preOrderOidByStoreId?: GroupedStripeCheckoutDto['preOrderOidByStoreId'];
   deliveryMetaByStore: Record<
     string,
     {
@@ -723,6 +726,26 @@ function parsePreOrderScheduleFromStripeMetadata(
   }
 }
 
+function parsePreOrderOidFromStripeMetadata(
+  meta: Record<string, string | undefined | null>,
+  storeId: string,
+): string | undefined {
+  const b64 = meta['preOrderOidB64']?.trim();
+  if (b64) {
+    try {
+      const map = JSON.parse(
+        Buffer.from(b64, 'base64url').toString('utf8'),
+      ) as Record<string, string>;
+      const oid = String(map[storeId] ?? '').trim();
+      if (oid) return oid;
+    } catch {
+      /* fall through */
+    }
+  }
+  const legacy = String(meta.preOrderOid ?? meta.pre_order_oid ?? '').trim();
+  return legacy || undefined;
+}
+
 function sumPayoutMapGrossCents(
   payoutMap: Map<string, { goodsCents: number; shipCents: number }>,
 ): number {
@@ -787,6 +810,7 @@ export class StripeGroupedCheckoutService {
   constructor(
     private readonly config: ConfigService,
     private readonly cartService: CartService,
+    private readonly marketingOfferListingsService: MarketingOfferListingsService,
     private readonly quoteService: PlatformShippingQuoteService,
     private readonly deliveryTipService: DeliveryTipService,
     private readonly storeService: StoreService,
@@ -1038,6 +1062,44 @@ export class StripeGroupedCheckoutService {
     }
   }
 
+  private async mergeCartGroupsWithPreOrders(
+    user: UserModel,
+    dto: GroupedStripeCheckoutDto,
+  ): Promise<CartGroup[]> {
+    const cart = await this.cartService.filter(user);
+    let groups = [...((cart?.data ?? []) as CartGroup[])];
+    const preOrderMap = dto.preOrderOidByStoreId ?? {};
+    const preOrderStoreIds = Object.keys(preOrderMap)
+      .map((k) => k.trim())
+      .filter(Boolean);
+    if (!preOrderStoreIds.length) {
+      return groups;
+    }
+
+    groups = groups.filter(
+      (g) => !preOrderStoreIds.includes(storeMongoId(g.store)),
+    );
+
+    for (const storeId of preOrderStoreIds) {
+      const orderId = String(preOrderMap[storeId] ?? '').trim();
+      if (!orderId) {
+        throw new BadRequestException('pre_order_not_payable');
+      }
+      const built = await this.ordersService.buildCartGroupFromPayablePreOrder(
+        orderId,
+        String(user.id),
+        storeId,
+      );
+      groups.push({
+        store: built.store as CartGroup['store'],
+        items: built.items,
+        totalPrice: built.totalPrice,
+      });
+    }
+
+    return groups;
+  }
+
   private async buildGroupedStripePayload(
     user: UserModel,
     dto: GroupedStripeCheckoutDto,
@@ -1052,6 +1114,7 @@ export class StripeGroupedCheckoutService {
 
     const validation = await this.cartService.validateCheckoutReadiness(user, {
       coupons,
+      preOrderOidByStoreId: dto.preOrderOidByStoreId,
     });
     if (!validation.ok) {
       throw new BadRequestException({
@@ -1060,8 +1123,7 @@ export class StripeGroupedCheckoutService {
       });
     }
 
-    const cart = await this.cartService.filter(user);
-    const groups = (cart?.data ?? []) as CartGroup[];
+    const groups = await this.mergeCartGroupsWithPreOrders(user, dto);
     if (!groups.length) {
       throw new BadRequestException('cart_is_empty');
     }
@@ -1216,6 +1278,12 @@ export class StripeGroupedCheckoutService {
           x != null && typeof x === 'object' && !Array.isArray(x),
       );
 
+      const goodsSubtotalDisplay = cartLines.reduce(
+        (acc, line) =>
+          acc + Number(line['price'] ?? 0) * cartLineQuantity(line),
+        0,
+      );
+
       const code = couponByStore.get(storeId);
       if (code) {
         const snap = await this.cartService.previewCouponForStore(
@@ -1325,17 +1393,34 @@ export class StripeGroupedCheckoutService {
         continue;
       }
 
+      let marketingDiscountDisplay = 0;
+      const strategyPreview =
+        await this.marketingOfferListingsService.previewCartStrategyForStore(
+          user,
+          storeId,
+          goodsSubtotalDisplay,
+        );
+      if (strategyPreview?.meetsThreshold) {
+        marketingDiscountDisplay = strategyPreview.discountAmount;
+        if (strategyPreview.freeDelivery) {
+          shipFee = 0;
+          shipCentsByStore[storeId] = 0;
+          payoutByStore[storeId].shipCents = 0;
+        }
+      }
+
       const giftDisc = giftDiscountByStore[storeId] ?? 0;
-      if (giftDisc > 0 && cartLines.length) {
+      const promoDiscountDisplay = giftDisc + marketingDiscountDisplay;
+      if (promoDiscountDisplay > 0 && cartLines.length) {
         const grossPerLine = cartLines.map(
           (line) =>
             cartLineUnitCents(line, amountFactor) * cartLineQuantity(line),
         );
         const sumGross = grossPerLine.reduce((a, b) => a + b, 0);
-        const giftDiscCents = Math.round(
-          giftDisc * amountFactor + Number.EPSILON,
+        const promoDiscCents = Math.round(
+          promoDiscountDisplay * amountFactor + Number.EPSILON,
         );
-        const targetGoodsCents = Math.max(0, sumGross - giftDiscCents);
+        const targetGoodsCents = Math.max(0, sumGross - promoDiscCents);
         const shipC = shipCentsByStore[storeId] ?? 0;
         const totalCents = targetGoodsCents + shipC;
         if (totalCents < stripeMinimumMinor) {
@@ -1364,8 +1449,8 @@ export class StripeGroupedCheckoutService {
               lineKind: 'promo_goods',
               extraDescription:
                 qtyOrig > 1
-                  ? `Qté ${qtyOrig} · prix avec gift code`
-                  : 'Prix avec gift code',
+                  ? `Qté ${qtyOrig} · prix avec offre`
+                  : 'Prix avec offre',
             });
             if (li) {
               lineItems.push(li);
@@ -1383,7 +1468,7 @@ export class StripeGroupedCheckoutService {
             quantity: 1,
             unitAmountCents: goodsC,
             lineKind: 'promo_goods',
-            extraDescription: 'Panier (gift code)',
+            extraDescription: 'Panier (offre)',
           });
           if (li) {
             lineItems.push(li);
@@ -1590,6 +1675,7 @@ export class StripeGroupedCheckoutService {
       fulfillmentByStoreId: fulfillment as Record<string, 'pickup' | 'delivery'>,
       payOnPickupByStoreId,
       preOrderByStoreId: dto.preOrderByStoreId,
+      preOrderOidByStoreId: dto.preOrderOidByStoreId,
       deliveryMetaByStore,
     };
   }
@@ -1703,7 +1789,27 @@ export class StripeGroupedCheckoutService {
       ...this.couponsMetadataChunk(built.coupons),
       ...this.giftCodeMetadataChunk(built),
       ...this.preOrderMetadataChunk(built.preOrderByStoreId),
+      ...this.preOrderOidMetadataChunk(built.preOrderOidByStoreId),
     };
+  }
+
+  /** Pré-commande impayée existante par boutique (reprise webhook). */
+  private preOrderOidMetadataChunk(
+    preOrderOidByStoreId?: GroupedStripeCheckoutDto['preOrderOidByStoreId'],
+  ): Record<string, string> {
+    if (!preOrderOidByStoreId || !Object.keys(preOrderOidByStoreId).length) {
+      return {};
+    }
+    const json = JSON.stringify(preOrderOidByStoreId);
+    if (json.length <= 490) {
+      return {
+        preOrderOidB64: Buffer.from(json, 'utf8').toString('base64url'),
+      };
+    }
+    this.logger.warn(
+      `Stripe grouped checkout: preOrderOidB64 metadata too long (${json.length}), omitted`,
+    );
+    return {};
   }
 
   /** Pré-commande planifiée (date + note) — reprise webhook / PaymentIntent. */
@@ -1740,9 +1846,11 @@ export class StripeGroupedCheckoutService {
   private async recheckBeforeStripe(
     user: UserModel,
     coupons: GroupedStripeBuilt['coupons'],
+    preOrderOidByStoreId?: GroupedStripeBuilt['preOrderOidByStoreId'],
   ): Promise<void> {
     const recheck = await this.cartService.validateCheckoutReadiness(user, {
       coupons,
+      preOrderOidByStoreId,
     });
     if (!recheck.ok) {
       throw new BadRequestException({
@@ -1786,7 +1894,11 @@ export class StripeGroupedCheckoutService {
     dto: GroupedStripeCheckoutDto,
   ): Promise<{ url: string }> {
     const built = await this.buildGroupedStripePayload(user, dto);
-    await this.recheckBeforeStripe(user, built.coupons);
+    await this.recheckBeforeStripe(
+      user,
+      built.coupons,
+      built.preOrderOidByStoreId,
+    );
 
     const server =
       this.config.get<string>('SERVER_URL')?.replace(/\/$/, '') ??
@@ -1851,7 +1963,11 @@ export class StripeGroupedCheckoutService {
     idempotencyKey?: string,
   ): Promise<{ clientSecret: string; paymentIntentId: string }> {
     const built = await this.buildGroupedStripePayload(user, dto);
-    await this.recheckBeforeStripe(user, built.coupons);
+    await this.recheckBeforeStripe(
+      user,
+      built.coupons,
+      built.preOrderOidByStoreId,
+    );
 
     const totalCents = built.lineItems.reduce((sum, li) => {
       const ua = li.price_data?.unit_amount;
@@ -2160,8 +2276,9 @@ export class StripeGroupedCheckoutService {
 
     try {
       const meta = stripeMetadata ?? {};
-      const preOrderOidRaw = String(meta.preOrderOid ?? meta.pre_order_oid ?? '')
-        .trim();
+      const preOrderOidRaw =
+        parsePreOrderOidFromStripeMetadata(meta, storeId) ??
+        String(meta.preOrderOid ?? meta.pre_order_oid ?? '').trim();
       let oid: string | null = null;
       if (preOrderOidRaw && Types.ObjectId.isValid(preOrderOidRaw)) {
         const ok = await this.ordersService.assertPreOrderPayableByClient(
@@ -3589,18 +3706,22 @@ export class StripeGroupedCheckoutService {
     }
 
     const orderIds: string[] = [];
-    for (const g of groups) {
-      const storeId = storeMongoId(g.store);
-      if (!storeId) continue;
-      const meta = preOrderByStoreId[storeId];
-      if (!meta?.scheduledAt?.trim()) {
+    for (const [storeId, meta] of Object.entries(preOrderByStoreId)) {
+      const sid = String(storeId ?? '').trim();
+      if (!sid || !meta?.scheduledAt?.trim()) {
         throw new BadRequestException('pre_order_scheduled_at_required');
       }
       const scheduledAt = new Date(meta.scheduledAt);
       if (Number.isNaN(scheduledAt.getTime())) {
         throw new BadRequestException('pre_order_scheduled_at_invalid');
       }
-      const order = await this.storeService.createOrderFromCart(storeId, user, {
+      const hasCartLines = groups.some(
+        (g) => storeMongoId(g.store) === sid && (g.items?.length ?? 0) > 0,
+      );
+      if (!hasCartLines) {
+        throw new BadRequestException('cart_is_empty');
+      }
+      const order = await this.storeService.createOrderFromCart(sid, user, {
         isPreOrder: true,
         scheduledAt,
         customerNote: meta.customerNote,

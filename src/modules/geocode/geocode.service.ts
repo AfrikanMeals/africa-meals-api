@@ -14,6 +14,25 @@ import {
   normalizePostalCode,
 } from '@common/normalize-geocode-query.util';
 import {
+  locationIqForwardGeocode,
+  locationIqReverseGeocode,
+  locationIqSearchStructuredAddress,
+  resolveLocationIqAccessToken,
+} from '@common/locationiq-geocoding.util';
+import {
+  mapsCoForwardGeocode,
+  mapsCoReverseGeocode,
+  mapsCoSearchStructuredAddress,
+  resolveMapsCoGeocodingApiKey,
+} from '@common/maps-co-geocoding.util';
+import {
+  tomtomForwardGeocode,
+  tomtomReverseGeocode,
+  tomtomSearchStructuredAddress,
+  resolveTomTomGeocodingApiKey,
+} from '@common/tomtom-geocoding.util';
+import type { OsmGeocodeResult } from '@common/osm-geocoding.util';
+import {
   osmForwardGeocode,
   osmReverseGeocode,
   osmSearchStructuredAddress,
@@ -283,11 +302,26 @@ export class GeocodeService {
         process.env.GOOGLE_MAPS_API_KEY ??
         '',
     ).trim();
+    const mapsCoKey = await resolveMapsCoGeocodingApiKey(
+      this.secrets,
+      this.config,
+    );
+    const locationIqKey = await resolveLocationIqAccessToken(
+      this.secrets,
+      this.config,
+    );
+    const tomtomKey = await resolveTomTomGeocodingApiKey(
+      this.secrets,
+      this.config,
+    );
 
     const isAvailable = (engine: GeocodingEngineId): boolean => {
       if (!isEngineEnabledForGroup(merged, context, engine)) return false;
       if (engine === 'mapbox') return hasMapbox;
       if (engine === 'google') return Boolean(googleKey);
+      if (engine === 'mapsco') return Boolean(mapsCoKey);
+      if (engine === 'locationiq') return Boolean(locationIqKey);
+      if (engine === 'tomtom') return Boolean(tomtomKey);
       return true;
     };
 
@@ -300,22 +334,18 @@ export class GeocodeService {
     );
     if (isAvailable(picked)) return picked;
     if (isAvailable('osm')) return 'osm';
+    if (isAvailable('mapsco')) return 'mapsco';
+    if (isAvailable('locationiq')) return 'locationiq';
+    if (isAvailable('tomtom')) return 'tomtom';
     if (isAvailable('mapbox')) return 'mapbox';
     if (isAvailable('google')) return 'google';
     return 'osm';
   }
 
-  private async fetchForward(
-    engine: GeocodeEngine,
-    args: ForwardArgs & { autocomplete: boolean },
-  ): Promise<GeocodeFeature[]> {
-    if (engine === 'mapbox') {
-      return this.fetchMapboxForward(args);
-    }
-    const rows = await osmForwardGeocode(args.query, this.config, {
-      limit: args.limit ?? 5,
-      countryCode: args.countryCode,
-    });
+  private nominatimRowsToFeatures(
+    rows: OsmGeocodeResult[],
+    idPrefix: string,
+  ): GeocodeFeature[] {
     return rows.map((row) => {
       const location: [number, number] = [row.longitude, row.latitude];
       const display = [row.address, row.city, row.zipCode, row.country]
@@ -323,7 +353,7 @@ export class GeocodeService {
         .filter(Boolean)
         .join(', ');
       return {
-        id: `osm.${row.longitude},${row.latitude}`,
+        id: `${idPrefix}.${row.longitude},${row.latitude}`,
         place_name: display || row.address,
         center: location,
         text: row.address,
@@ -345,6 +375,73 @@ export class GeocodeService {
         geometry: { type: 'Point', coordinates: location },
       } satisfies GeocodeFeature;
     });
+  }
+
+  private async fetchForward(
+    engine: GeocodeEngine,
+    args: ForwardArgs & { autocomplete: boolean },
+  ): Promise<GeocodeFeature[]> {
+    if (engine === 'mapbox') {
+      return this.fetchMapboxForward(args);
+    }
+    if (engine === 'mapsco') {
+      const apiKey = await resolveMapsCoGeocodingApiKey(
+        this.secrets,
+        this.config,
+      );
+      if (!apiKey) return [];
+      const rows = await mapsCoForwardGeocode(
+        args.query,
+        apiKey,
+        this.config,
+        {
+          limit: args.limit ?? 5,
+          countryCode: args.countryCode,
+        },
+      );
+      return this.nominatimRowsToFeatures(rows, 'mapsco');
+    }
+    if (engine === 'locationiq') {
+      const accessToken = await resolveLocationIqAccessToken(
+        this.secrets,
+        this.config,
+      );
+      if (!accessToken) return [];
+      const rows = await locationIqForwardGeocode(
+        args.query,
+        accessToken,
+        this.config,
+        {
+          limit: args.limit ?? 5,
+          countryCode: args.countryCode,
+        },
+      );
+      return this.nominatimRowsToFeatures(rows, 'locationiq');
+    }
+    if (engine === 'tomtom') {
+      const apiKey = await resolveTomTomGeocodingApiKey(
+        this.secrets,
+        this.config,
+      );
+      if (!apiKey) return [];
+      const rows = await tomtomForwardGeocode(
+        args.query,
+        apiKey,
+        this.config,
+        {
+          limit: args.limit ?? 5,
+          countryCode: args.countryCode,
+          proximityLat: args.proximityLat,
+          proximityLng: args.proximityLng,
+        },
+      );
+      return this.nominatimRowsToFeatures(rows, 'tomtom');
+    }
+    const rows = await osmForwardGeocode(args.query, this.config, {
+      limit: args.limit ?? 5,
+      countryCode: args.countryCode,
+    });
+    return this.nominatimRowsToFeatures(rows, 'osm');
   }
 
   private async fetchMapboxForward(
@@ -401,6 +498,74 @@ export class GeocodeService {
       if (!first) return null;
       return mapboxV6ToFeature(first as Record<string, unknown>);
     }
+    if (engine === 'mapsco') {
+      const apiKey = await resolveMapsCoGeocodingApiKey(
+        this.secrets,
+        this.config,
+      );
+      if (!apiKey) return null;
+      const row = await mapsCoReverseGeocode(lat, lng, apiKey, this.config);
+      if (!row) return null;
+      return nominatimToFeature({
+        lat: row.latitude,
+        lon: row.longitude,
+        display_name: row.address,
+        address: {
+          road: row.address,
+          postcode: row.zipCode,
+          city: row.city,
+          country: row.country,
+          country_code: row.countryCode.toLowerCase(),
+        },
+      });
+    }
+    if (engine === 'locationiq') {
+      const accessToken = await resolveLocationIqAccessToken(
+        this.secrets,
+        this.config,
+      );
+      if (!accessToken) return null;
+      const row = await locationIqReverseGeocode(
+        lat,
+        lng,
+        accessToken,
+        this.config,
+      );
+      if (!row) return null;
+      return nominatimToFeature({
+        lat: row.latitude,
+        lon: row.longitude,
+        display_name: row.address,
+        address: {
+          road: row.address,
+          postcode: row.zipCode,
+          city: row.city,
+          country: row.country,
+          country_code: row.countryCode.toLowerCase(),
+        },
+      });
+    }
+    if (engine === 'tomtom') {
+      const apiKey = await resolveTomTomGeocodingApiKey(
+        this.secrets,
+        this.config,
+      );
+      if (!apiKey) return null;
+      const row = await tomtomReverseGeocode(lat, lng, apiKey, this.config);
+      if (!row) return null;
+      return nominatimToFeature({
+        lat: row.latitude,
+        lon: row.longitude,
+        display_name: row.address,
+        address: {
+          road: row.address,
+          postcode: row.zipCode,
+          city: row.city,
+          country: row.country,
+          country_code: row.countryCode.toLowerCase(),
+        },
+      });
+    }
     const row = await osmReverseGeocode(lat, lng, this.config);
     if (!row) return null;
     return nominatimToFeature({
@@ -424,7 +589,26 @@ export class GeocodeService {
     if (engine === 'mapbox') {
       return this.fetchStructuredMapbox(args);
     }
-    const item = await osmSearchStructuredAddress(args, this.config);
+    const item =
+      engine === 'mapsco'
+        ? await mapsCoSearchStructuredAddress(
+            args,
+            await resolveMapsCoGeocodingApiKey(this.secrets, this.config),
+            this.config,
+          )
+        : engine === 'locationiq'
+          ? await locationIqSearchStructuredAddress(
+              args,
+              await resolveLocationIqAccessToken(this.secrets, this.config),
+              this.config,
+            )
+          : engine === 'tomtom'
+            ? await tomtomSearchStructuredAddress(
+                args,
+                await resolveTomTomGeocodingApiKey(this.secrets, this.config),
+                this.config,
+              )
+            : await osmSearchStructuredAddress(args, this.config);
     if (!item) {
       throw new NotFoundException('address_not_found');
     }

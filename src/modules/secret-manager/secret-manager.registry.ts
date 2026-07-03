@@ -145,6 +145,27 @@ export const API_SECRET_REGISTRY: SecretKeyDefinition[] = [
     category: 'Cartographie',
   },
   {
+    envVarName: 'MAPS_CO_GEOCODING_API_KEY',
+    label: 'Maps.co — clé API géocodage',
+    description:
+      'Clé API geocode.maps.co pour le moteur Maps.co (Nominatim hébergé, quota). Servie uniquement côté API — jamais au frontend.',
+    category: 'Cartographie',
+  },
+  {
+    envVarName: 'LOCATIONIQ_ACCESS_TOKEN',
+    label: 'LocationIQ — access token géocodage',
+    description:
+      'Access token LocationIQ pour le moteur Location.iq (Nominatim compatible, quota). Servi uniquement côté API — jamais au frontend.',
+    category: 'Cartographie',
+  },
+  {
+    envVarName: 'TOMTOM_GEOCODING_API_KEY',
+    label: 'TomTom — clé API géocodage',
+    description:
+      'Clé API TomTom Search (Geocoding v2) pour le moteur tomtom. Servie uniquement côté API — jamais au frontend.',
+    category: 'Cartographie',
+  },
+  {
     envVarName: 'OPENAI_API_KEY',
     label: 'OpenAI — clé API',
     description: 'Clé API OpenAI (embeddings, IA).',

@@ -33,6 +33,7 @@ import { PlatformFeesModule } from './modules/platform-fees/platform-fees.module
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
 import { PartnerBadgesModule } from './modules/partner-badges/partner-badges.module';
 import { MarketingOffersModule } from './modules/marketing-offers/marketing-offers.module';
+import { MarketingOfferListingsModule } from './modules/marketing-offer-listings/marketing-offer-listings.module';
 import { TeamsModule } from './modules/teams/teams.module';
 import { RefundsModule } from './modules/refunds/refunds.module';
 import { PenaltiesModule } from './modules/penalties/penalties.module';
@@ -73,6 +74,7 @@ import { UserNotificationPreferencesModule } from './modules/user-notification-p
 import { EngagementPerformancesModule } from './modules/engagement-performances/engagement-performances.module';
 import { PushRecommendationsModule } from './modules/push-recommendations/push-recommendations.module';
 import { FoodNewsletterModule } from './modules/food-newsletter/food-newsletter.module';
+import { EngagementAutomationAdminModule } from './modules/engagement-automation-admin/engagement-automation-admin.module';
 import { AuthSettingsModule } from './modules/auth-settings/auth-settings.module';
 import { SecuritySettingsModule } from './modules/security-settings/security-settings.module';
 import { StorageSettingsModule } from './modules/storage-settings/storage-settings.module';
@@ -320,6 +322,7 @@ async function readRedisManagerEnabledAtBootstrap(
     SubscriptionsModule,
     PartnerBadgesModule,
     MarketingOffersModule,
+    MarketingOfferListingsModule,
     TeamsModule,
     RefundsModule,
     PenaltiesModule,
@@ -348,6 +351,7 @@ async function readRedisManagerEnabledAtBootstrap(
     EngagementPerformancesModule,
     PushRecommendationsModule,
     FoodNewsletterModule,
+    EngagementAutomationAdminModule,
     SecretManagerModule,
     PlatformChannelsModule,
     MobileAppSettingsModule,

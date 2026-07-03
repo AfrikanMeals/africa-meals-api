@@ -510,7 +510,11 @@ export class OrdersService {
       .populate({
         path: 'store',
         select:
-          'name profileImage status currency acceptsOrders supportsShipping bio',
+          'name profileImage status currency acceptsOrders supportsShipping acceptsPickupPayOnDelivery defaultPickupPayOnPickup bio',
+        populate: {
+          path: 'address',
+          select: 'address city country countryCode zipCode label location',
+        },
       })
       .populate(OrdersService.orderUserWithAddressesPopulate)
       .lean()
@@ -1176,6 +1180,97 @@ export class OrdersService {
       .lean()
       .exec();
     return Boolean(row?._id);
+  }
+
+  /**
+   * Lignes panier synthétiques pour checkout groupé d’une pré-commande impayée
+   * (le panier serveur a été vidé à la création de la commande).
+   */
+  async buildCartGroupFromPayablePreOrder(
+    orderId: string,
+    userId: string,
+    storeId: string,
+  ): Promise<{
+    store: Record<string, unknown>;
+    items: Record<string, unknown>[];
+    totalPrice: number;
+  }> {
+    const oid = orderId.trim();
+    const sid = storeId.trim();
+    const uid = userId.trim();
+    const ok = await this.assertPreOrderPayableByClient(oid, uid, sid);
+    if (!ok) {
+      throw new BadRequestException('pre_order_not_payable');
+    }
+    const order = await this._orderModel
+      .findOne({
+        _id: new Types.ObjectId(oid),
+        user: new Types.ObjectId(uid),
+        store: new Types.ObjectId(sid),
+        isPreOrder: true,
+        status: OrderStatusEnum.CREATED,
+        stripeParentPaymentId: { $exists: false },
+      })
+      .populate({
+        path: 'store',
+        select:
+          'name currency supportsShipping acceptsOrders acceptsPickupPayOnDelivery defaultPickupPayOnPickup bio region timezone address shippingZones',
+        populate: {
+          path: 'address',
+          select: 'address city country countryCode zipCode label location',
+        },
+      })
+      .lean()
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+    const rawItems = (order.items ?? []) as OrdeLineItem[];
+    const items = rawItems
+      .filter((it) => {
+        const t = String(it.itemType ?? '')
+          .trim()
+          .toLowerCase();
+        return t !== 'offer';
+      })
+      .map((it, idx) => {
+        const itemType = String(it.itemType ?? 'product');
+        return {
+          _id: `pre-${oid}-${idx}`,
+          type: itemType,
+          entityId: String(it.entityId ?? ''),
+          quantity: Math.max(1, Number(it.quantity ?? 1)),
+          price: Number(it.price ?? 0),
+          entity: {
+            title: String(it.label ?? 'Article'),
+            name: String(it.label ?? 'Article'),
+            profileImage: it.pictureUrl,
+          },
+          selectedComplements: Array.isArray(it.selectedComplements)
+            ? it.selectedComplements
+            : [],
+          selectedSupplements: Array.isArray(it.selectedSupplements)
+            ? it.selectedSupplements
+            : [],
+          ...(it.selectedVariantLabel
+            ? { selectedVariantLabel: it.selectedVariantLabel }
+            : {}),
+        };
+      });
+    if (!items.length) {
+      throw new BadRequestException('pre_order_items_empty');
+    }
+    const summed = items.reduce(
+      (acc, line) =>
+        acc + Number(line.price ?? 0) * Number(line.quantity ?? 1),
+      0,
+    );
+    const totalPrice =
+      Number.isFinite(Number(order.totalPrice)) && Number(order.totalPrice) > 0
+        ? Number(order.totalPrice)
+        : summed;
+    const store = order.store as Record<string, unknown>;
+    return { store, items, totalPrice };
   }
 
   /** Charge une pré-commande client avant création PaymentIntent. */

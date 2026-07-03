@@ -1,7 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsIn, IsInt, IsString, Max, Min } from 'class-validator';
 
-const GEOCODING_ENGINES = ['mapbox', 'google', 'osm'] as const;
+const GEOCODING_ENGINES = [
+  'mapbox',
+  'google',
+  'osm',
+  'mapsco',
+  'locationiq',
+  'tomtom',
+] as const;
 
 export class GeocodingEnginePoolEntryDto {
   @ApiProperty({ enum: GEOCODING_ENGINES })

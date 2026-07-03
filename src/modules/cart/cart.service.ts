@@ -21,6 +21,7 @@ import {
   stableCacheHash,
 } from '@common/redis-app-cache';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
+import { CartMarketingStrategyModel } from '@schemas/cart-marketing-strategy.schema';
 import { StoreCouponDiscountTypeEnum } from '@schemas/store_coupon.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
@@ -54,7 +55,12 @@ const cartStorePopulate = {
 
 function storeIdFromPopulatedCartItem(item: { store?: unknown }): string {
   const s = item.store;
-  if (s && typeof s === 'object') {
+  if (s == null) return '';
+  if (typeof s === 'string' || typeof s === 'number') {
+    const id = String(s).trim();
+    return id && id !== 'undefined' ? id : '';
+  }
+  if (typeof s === 'object') {
     const o = s as { _id?: unknown; id?: unknown };
     if (o._id != null) {
       return String(o._id);
@@ -63,7 +69,8 @@ function storeIdFromPopulatedCartItem(item: { store?: unknown }): string {
       return String(o.id);
     }
   }
-  return '';
+  const fallback = String(s).trim();
+  return fallback && fallback !== 'undefined' ? fallback : '';
 }
 
 function badRequestExceptionKey(e: unknown): string {
@@ -116,6 +123,9 @@ export class CartService {
 
   @InjectModel(StoreModel.name)
   private readonly _storeModel: Model<StoreModel>;
+
+  @InjectModel(CartMarketingStrategyModel.name)
+  private readonly _cartMarketingStrategyModel: Model<CartMarketingStrategyModel>;
 
   @Inject(ProductsService)
   private readonly _productsService: ProductsService;
@@ -286,14 +296,15 @@ export class CartService {
         }),
         drinkMaxOrderQuantity: maxOrder,
       } as unknown as Partial<CartItemModel>;
-    } else {
-      const product = await this._productsService.findOneById(item.productId);
-      // console.log('🚀 ~ CartService ~ product:', product);
+    } else if (item.type === CartItemTypeEnum.PRODUCT_EXTRA) {
+      const product = await this._productsService.findOneById(
+        String(item.productId ?? ''),
+      );
       if (!product) {
         throw new NotFoundException('product_not_found');
       }
-
-      const extra = product.extras.find((e) => e.id === item.entityId);
+      const extras = Array.isArray(product.extras) ? product.extras : [];
+      const extra = extras.find((e) => e.id === item.entityId);
       if (!extra) {
         throw new NotFoundException('extra_not_found');
       }
@@ -301,6 +312,8 @@ export class CartService {
         ...item.toJSON(),
         entity: extra,
       };
+    } else {
+      throw new NotFoundException('unsupported_cart_item_type');
     }
   }
 
@@ -317,13 +330,17 @@ export class CartService {
 
     const formatedItems = (items ?? []).reduce(
       (acc, item) => {
-        if (!acc[item.store.id]) {
-          acc[item.store.id] = {
+        const storeKey = storeIdFromPopulatedCartItem(item);
+        if (!storeKey) {
+          return acc;
+        }
+        if (!acc[storeKey]) {
+          acc[storeKey] = {
             store: item.store,
             items: [],
           };
         }
-        acc[item.store.id].items.push(item);
+        acc[storeKey].items.push(item);
         return acc;
       },
       {} as {
@@ -581,13 +598,67 @@ export class CartService {
         user: new Types.ObjectId(user.id),
       })
       .exec();
+    await this.clearCartMarketingStrategy(user.id, store.id);
     await this.bustCartPricingCache(user);
+  }
+
+  async setCartMarketingStrategy(
+    userId: string,
+    storeId: string,
+    listingId: string,
+  ): Promise<void> {
+    await this._cartMarketingStrategyModel
+      .findOneAndUpdate(
+        {
+          userId: new Types.ObjectId(userId),
+          storeId: new Types.ObjectId(storeId),
+        },
+        {
+          $set: {
+            userId: new Types.ObjectId(userId),
+            storeId: new Types.ObjectId(storeId),
+            listingId: new Types.ObjectId(listingId),
+          },
+        },
+        { upsert: true, new: true },
+      )
+      .exec();
+  }
+
+  async getCartMarketingStrategyListingId(
+    userId: string,
+    storeId: string,
+  ): Promise<string | null> {
+    const row = await this._cartMarketingStrategyModel
+      .findOne({
+        userId: new Types.ObjectId(userId),
+        storeId: new Types.ObjectId(storeId),
+      })
+      .select('listingId')
+      .lean()
+      .exec();
+    return row?.listingId ? String(row.listingId) : null;
+  }
+
+  async clearCartMarketingStrategy(
+    userId: string,
+    storeId: string,
+  ): Promise<void> {
+    await this._cartMarketingStrategyModel
+      .deleteOne({
+        userId: new Types.ObjectId(userId),
+        storeId: new Types.ObjectId(storeId),
+      })
+      .exec();
   }
 
   /** Supprime toutes les lignes panier du client (ex. déconnexion). */
   async clearAllForUser(user: UserModel): Promise<void> {
     await this._cartItemModel
       .deleteMany({ user: new Types.ObjectId(user.id) })
+      .exec();
+    await this._cartMarketingStrategyModel
+      .deleteMany({ userId: new Types.ObjectId(user.id) })
       .exec();
     await this.bustCartPricingCache(user);
   }
@@ -777,6 +848,12 @@ export class CartService {
     > | null;
   }> {
     const uid = new Types.ObjectId(user.id);
+    const preOrderOidByStoreId = dto.preOrderOidByStoreId ?? {};
+    const skipStockStoreIds = new Set(
+      Object.keys(preOrderOidByStoreId)
+        .map((k) => k.trim())
+        .filter(Boolean),
+    );
     const rawItems = await this._cartItemModel
       .find({ user: uid })
       .lean()
@@ -820,6 +897,9 @@ export class CartService {
     }
 
     for (const [storeId, lines] of byStore) {
+      if (skipStockStoreIds.has(storeId)) {
+        continue;
+      }
       const store = await this._storeModel
         .findById(storeId)
         .select('dailyMenuByWeekday name region timezone')
