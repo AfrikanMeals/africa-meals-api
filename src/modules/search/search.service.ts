@@ -506,6 +506,37 @@ export class SearchService {
   }
 
   /**
+   * Filtre texte catalogue (nom, bio, e-mail, téléphone, adresse postale).
+   * Appliqué après les étapes Stripe / distance pour une pagination correcte.
+   */
+  private _storeCatalogTextQueryStages(query: string): PipelineStage[] {
+    const esc = escapeMongoRegex(query.trim());
+    const regex = { $regex: esc, $options: 'i' };
+    return [
+      this._lookupAddressPipelineStage('$address', '_catalogSearchAddr'),
+      {
+        $addFields: {
+          _catalogSearchAddrDoc: { $arrayElemAt: ['$_catalogSearchAddr', 0] },
+        },
+      },
+      {
+        $match: {
+          $or: [
+            { name: regex },
+            { bio: regex },
+            { email: regex },
+            { phoneNumber: regex },
+            { '_catalogSearchAddrDoc.address': regex },
+            { '_catalogSearchAddrDoc.city': regex },
+            { '_catalogSearchAddrDoc.label': regex },
+            { '_catalogSearchAddrDoc.country': regex },
+          ],
+        },
+      },
+    ];
+  }
+
+  /**
    * Jointure `addresses` : `localField` + `foreignField` échoue si la ref boutique est une
    * string (legacy) et `_id` adresse est un ObjectId — `$convert` unifie les deux cas.
    */
@@ -2159,15 +2190,6 @@ export class SearchService {
       { acceptsOrders: { $ne: false } },
       storeDirectRegionMatch(region),
     ];
-    if (q) {
-      const esc = escapeMongoRegex(q);
-      andParts.push({
-        $or: [
-          { name: { $regex: esc, $options: 'i' } },
-          { bio: { $regex: esc, $options: 'i' } },
-        ],
-      });
-    }
     const storeDistanceStages = await this._storeDistanceAndMenuStages(
       args,
       region,
@@ -2180,6 +2202,7 @@ export class SearchService {
       },
       ...storeOwnerStripeOnboardedPipelineStages(),
       ...storeDistanceStages,
+      ...(q ? this._storeCatalogTextQueryStages(q) : []),
     ];
 
     const sortKeys = this._storeSortKeys(args);
