@@ -10,4 +10,11 @@ describe('GrpcWsNotifyMetricsService', () => {
     expect(snap.count).toBe(3);
     expect(snap.fallbackRate).toBeCloseTo(1 / 3);
   });
+
+  it('exports idle counter series when no RPC yet', () => {
+    const metrics = new GrpcWsNotifyMetricsService();
+    const rendered = metrics.renderPrometheus('api', 'pod-a').join('\n');
+    expect(rendered).toContain('api_grpc_client_requests_total');
+    expect(rendered).toContain('method="__idle__"');
+  });
 });

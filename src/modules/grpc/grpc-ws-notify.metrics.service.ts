@@ -85,6 +85,21 @@ export class GrpcWsNotifyMetricsService {
       if (!groups.has(metric)) groups.set(metric, []);
       groups.get(metric)!.push([{ pod, ...labels }, value]);
     }
+
+    const idleSuffixes = [
+      'grpc_client_requests_total',
+      'grpc_client_request_duration_ms_sum',
+      'grpc_client_request_duration_ms_count',
+      'grpc_client_request_bytes_total',
+      'grpc_client_fallback_total',
+    ] as const;
+    for (const suffix of idleSuffixes) {
+      const metric = `${prefix}_${suffix}`;
+      if (!groups.has(metric)) {
+        groups.set(metric, [[{ pod, method: '__idle__', status: 'ok' }, 0]]);
+      }
+    }
+
     for (const [metric, entries] of groups.entries()) {
       lines.push(`# HELP ${metric} gRPC client statistics`);
       lines.push(`# TYPE ${metric} counter`);
