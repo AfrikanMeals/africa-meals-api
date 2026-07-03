@@ -242,6 +242,12 @@ function storeMongoId(store: CartGroup['store']): string {
   return String(raw ?? '');
 }
 
+function checkoutStoreIdsFromDto(dto: GroupedStripeCheckoutDto): string[] {
+  return Object.keys(dto.fulfillmentByStoreId ?? {})
+    .map((k) => k.trim())
+    .filter(Boolean);
+}
+
 /** Libellé lisible pour une ligne panier (Checkout Stripe). */
 function stripeLabelForCartLine(line: Record<string, unknown>): string {
   const ent = line['entity'] as Record<string, unknown> | undefined;
@@ -1112,9 +1118,11 @@ export class StripeGroupedCheckoutService {
         code: c.code.trim(),
       }));
 
+    const checkoutStoreIds = checkoutStoreIdsFromDto(dto);
     const validation = await this.cartService.validateCheckoutReadiness(user, {
       coupons,
       preOrderOidByStoreId: dto.preOrderOidByStoreId,
+      checkoutStoreIds,
     });
     if (!validation.ok) {
       throw new BadRequestException({
@@ -1847,10 +1855,12 @@ export class StripeGroupedCheckoutService {
     user: UserModel,
     coupons: GroupedStripeBuilt['coupons'],
     preOrderOidByStoreId?: GroupedStripeBuilt['preOrderOidByStoreId'],
+    checkoutStoreIds?: string[],
   ): Promise<void> {
     const recheck = await this.cartService.validateCheckoutReadiness(user, {
       coupons,
       preOrderOidByStoreId,
+      checkoutStoreIds,
     });
     if (!recheck.ok) {
       throw new BadRequestException({
@@ -1898,6 +1908,7 @@ export class StripeGroupedCheckoutService {
       user,
       built.coupons,
       built.preOrderOidByStoreId,
+      Object.keys(built.payoutByStore),
     );
 
     const server =
@@ -1967,6 +1978,7 @@ export class StripeGroupedCheckoutService {
       user,
       built.coupons,
       built.preOrderOidByStoreId,
+      Object.keys(built.payoutByStore),
     );
 
     const totalCents = built.lineItems.reduce((sum, li) => {
@@ -3416,8 +3428,10 @@ export class StripeGroupedCheckoutService {
         code: c.code.trim(),
       }));
 
+    const checkoutStoreIds = checkoutStoreIdsFromDto(dto);
     const validation = await this.cartService.validateCheckoutReadiness(user, {
       coupons,
+      checkoutStoreIds,
     });
     if (!validation.ok) {
       throw new BadRequestException({
@@ -3687,10 +3701,17 @@ export class StripeGroupedCheckoutService {
       throw new BadRequestException('pre_order_metadata_required');
     }
 
+    const checkoutStoreIds = checkoutStoreIdsFromDto(dto);
     const validation = await this.cartService.validateCheckoutReadiness(user, {
       coupons: (dto.coupons ?? [])
         .filter((c) => c.code?.trim())
         .map((c) => ({ storeId: c.storeId.trim(), code: c.code.trim() })),
+      checkoutStoreIds:
+        checkoutStoreIds.length > 0
+          ? checkoutStoreIds
+          : Object.keys(preOrderByStoreId)
+              .map((k) => k.trim())
+              .filter(Boolean),
     });
     if (!validation.ok) {
       throw new BadRequestException({
