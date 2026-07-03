@@ -79,6 +79,19 @@ export class OrderPaidInvoiceEmailService {
     return raw === '1' || raw.toLowerCase() === 'true';
   }
 
+  /**
+   * Trustpilot Automatic Feedback Service — BCC unique sur le reçu payé
+   * (une invitation par commande, pas sur les renvois / debug).
+   * @see https://support.trustpilot.com/hc/en-us/articles/115004145087
+   */
+  private trustpilotBccForPaidReceipt(): string[] | undefined {
+    if (this.isFlagDisabled('DISABLE_TRUSTPILOT_BCC')) return undefined;
+    const email =
+      this.config.get<string>('TRUSTPILOT_BCC_EMAIL')?.trim() ||
+      'wise-eat.com+9bc4407b32@invite.trustpilot.com';
+    return email.includes('@') ? [email] : undefined;
+  }
+
   isEnabled(): boolean {
     return !this.isFlagDisabled('DISABLE_ORDER_PAID_INVOICE_EMAIL');
   }
@@ -134,6 +147,7 @@ export class OrderPaidInvoiceEmailService {
         html: composed.wrappedHtml,
         text: composed.text,
         logContext: 'order-paid-invoice',
+        bcc: this.trustpilotBccForPaidReceipt(),
         attachments: composed.pdf
           ? [
               {

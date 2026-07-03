@@ -22,6 +22,8 @@ export type SendSimpleMailDto = {
   toName?: string;
   /** Copie (e-mails boutique, etc.). */
   cc?: string[];
+  /** Copie cachée (ex. Trustpilot Automatic Feedback Service). */
+  bcc?: string[];
   subject: string;
   html: string;
   text?: string;
@@ -121,11 +123,14 @@ export class MailerService {
 
     const cc =
       args.cc?.map((e) => e.trim()).filter(Boolean) ?? [];
+    const bcc =
+      args.bcc?.map((e) => e.trim()).filter(Boolean) ?? [];
 
     await transporter.sendMail({
       from: `"${profile.fromDisplayName}" <${profile.from}>`,
       to: args.to,
       cc: cc.length > 0 ? cc : undefined,
+      bcc: bcc.length > 0 ? bcc : undefined,
       replyTo,
       subject: args.subject,
       html: args.html,
@@ -214,10 +219,12 @@ export class MailerService {
       }),
     };
     const ccList = prepared.cc?.map((e) => e.trim()).filter(Boolean) ?? [];
+    const bccList = prepared.bcc?.map((e) => e.trim()).filter(Boolean) ?? [];
     if (logContext) {
       const ccPart = ccList.length > 0 ? ` cc=${ccList.join(', ')}` : '';
+      const bccPart = bccList.length > 0 ? ` bcc=${bccList.join(', ')}` : '';
       this._logger.log(
-        `[${logContext}] envoi → to=${prepared.to}${ccPart} subject="${prepared.subject}"`,
+        `[${logContext}] envoi → to=${prepared.to}${ccPart}${bccPart} subject="${prepared.subject}"`,
       );
     }
     await this._emailDispatch.sendSimple(prepared);

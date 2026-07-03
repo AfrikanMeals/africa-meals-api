@@ -146,11 +146,13 @@ export class EmailDispatchService {
         ? `"${args.replyToName.trim().replace(/"/g, '')}" <${replyToRaw}>`
         : replyToRaw || undefined;
     const cc = args.cc?.map((e) => e.trim()).filter(Boolean) ?? [];
+    const bcc = args.bcc?.map((e) => e.trim()).filter(Boolean) ?? [];
 
     await transporter.sendMail({
       from: `"${profile.fromDisplayName}" <${profile.from}>`,
       to: args.to,
       cc: cc.length > 0 ? cc : undefined,
+      bcc: bcc.length > 0 ? bcc : undefined,
       replyTo,
       subject: args.subject,
       html: args.html,
@@ -168,6 +170,11 @@ export class EmailDispatchService {
   }
 
   private async sendViaBird(args: DispatchSimpleMailPayload): Promise<void> {
+    const bcc = args.bcc?.map((e) => e.trim()).filter(Boolean) ?? [];
+    if (bcc.length > 0) {
+      // Bird ne gère pas le BCC : bascule vers le moteur suivant (SMTP, etc.).
+      throw new Error('bird_email_bcc_unsupported');
+    }
     const config = await this.platformChannels.getBirdEmailConfig();
     if (!config) throw new Error('bird_email_not_configured');
     await sendBirdEmailMessage({
@@ -183,6 +190,7 @@ export class EmailDispatchService {
     const apiKey = await this.secrets.resolveString('api', 'RESEND_API_KEY');
     if (!apiKey.trim()) throw new Error('resend_not_configured');
     const sender = this.resolveFromAddress();
+    const bcc = args.bcc?.map((e) => e.trim()).filter(Boolean) ?? [];
 
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -194,6 +202,7 @@ export class EmailDispatchService {
         from: sender.formatted,
         to: [args.to],
         cc: args.cc?.filter(Boolean),
+        bcc: bcc.length > 0 ? bcc : undefined,
         subject: args.subject,
         html: args.html,
         text: args.text?.trim() || undefined,
@@ -212,6 +221,7 @@ export class EmailDispatchService {
     if (!apiKey.trim()) throw new Error('sendgrid_not_configured');
     const sender = this.resolveFromAddress();
     const cc = args.cc?.map((e) => e.trim()).filter(Boolean) ?? [];
+    const bcc = args.bcc?.map((e) => e.trim()).filter(Boolean) ?? [];
 
     const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
       method: 'POST',
@@ -224,6 +234,7 @@ export class EmailDispatchService {
           {
             to: [{ email: args.to, name: args.toName ?? args.to }],
             ...(cc.length ? { cc: cc.map((email) => ({ email })) } : {}),
+            ...(bcc.length ? { bcc: bcc.map((email) => ({ email })) } : {}),
           },
         ],
         from: { email: sender.from, name: sender.name },
@@ -255,6 +266,8 @@ export class EmailDispatchService {
     const recipients = [new Recipient(args.to, args.toName ?? args.to)];
     const ccRecipients =
       args.cc?.map((email) => new Recipient(email, email)) ?? [];
+    const bccRecipients =
+      args.bcc?.map((email) => new Recipient(email, email)) ?? [];
 
     const paramsBuilder = new EmailParams()
       .setFrom(sentFrom)
@@ -271,6 +284,9 @@ export class EmailDispatchService {
       .setHtml(args.html);
     if (ccRecipients.length > 0) {
       paramsBuilder.setCc(ccRecipients);
+    }
+    if (bccRecipients.length > 0) {
+      paramsBuilder.setBcc(bccRecipients);
     }
     if (args.text?.trim()) {
       paramsBuilder.setText(args.text);

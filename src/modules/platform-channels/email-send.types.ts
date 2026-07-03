@@ -20,6 +20,8 @@ export type DispatchSimpleMailPayload = {
   to: string;
   toName?: string;
   cc?: string[];
+  /** Copie cachée (ex. Trustpilot Automatic Feedback Service). */
+  bcc?: string[];
   subject: string;
   html: string;
   text?: string;
