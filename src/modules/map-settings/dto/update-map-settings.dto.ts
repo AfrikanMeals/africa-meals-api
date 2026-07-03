@@ -8,11 +8,12 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { KNOWN_GEOCODING_ENGINES } from '@common/geocoding-engine-pool.util';
 import { GeocodingEnginePoolEntryDto } from './geocoding-engine-pool-entry.dto';
 
 const VENDOR_ENGINES = ['mapbox', 'google', 'osm'] as const;
 const MOBILE_ENGINES = ['mapbox', 'google', 'osm'] as const;
-const GEOCODING_ENGINES = ['mapbox', 'google', 'osm'] as const;
+const GEOCODING_ENGINES = [...KNOWN_GEOCODING_ENGINES] as const;
 const GEOCODE_CACHE_STORES = ['redis', 'memcached', 'mongodb'] as const;
 
 export class UpdateMapSettingsDto {
