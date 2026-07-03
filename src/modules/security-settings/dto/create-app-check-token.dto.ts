@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
 
 export const APP_CHECK_TOKEN_APPS = ['android', 'ios', 'web'] as const;
@@ -19,6 +20,7 @@ export class CreateAppCheckTokenDto {
     default: 1,
   })
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(168)
