@@ -254,6 +254,17 @@ export class OrdersController {
     );
   }
 
+  @Get('trustpilot-invitation')
+  @ApiOperation({
+    summary:
+      'Payload Trustpilot Invitation Script (session Stripe checkout, public)',
+  })
+  async trustpilotInvitation(@Query('sessionId') sessionId?: string) {
+    return this._ordersService.getTrustpilotInvitationBySessionId(
+      sessionId ?? '',
+    );
+  }
+
   @Get(':id/live-tracking')
   @UseGuards(JwtGuard)
   @ApiOperation({ summary: 'Suivi temps réel commande (CLIENT)' })
@@ -266,7 +277,7 @@ export class OrdersController {
 
   @Get(':id/public')
   @ApiOperation({
-    summary: 'Résumé commande public (landing web / lien e-mail)',
+    summary: 'Résumé public commande (landing web / lien e-mail)',
   })
   async publicSummary(@Param('id') id: string) {
     const orderId = resolveMongoIdFromPublicParam(id) ?? id;

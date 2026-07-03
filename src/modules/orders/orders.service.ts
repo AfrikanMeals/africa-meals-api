@@ -823,6 +823,152 @@ export class OrdersService {
     ])[0] as unknown as typeof order;
   }
 
+  /**
+   * Payload Trustpilot Invitation Script (page `/checkout-success`).
+   * Sécurisé par l’id de session Stripe (`cs_…` / `pi_…`), non devinable.
+   */
+  async getTrustpilotInvitationBySessionId(sessionId: string): Promise<{
+    recipientEmail: string;
+    recipientName: string;
+    referenceId: string;
+    source: 'InvitationScript';
+    productSkus: string[];
+    products: Array<{
+      sku: string;
+      productUrl: string;
+      imageUrl?: string;
+      name: string;
+    }>;
+  }> {
+    const sid = sessionId?.trim();
+    if (!sid || sid.length < 10) {
+      throw new NotFoundException('checkout_session_not_found');
+    }
+
+    const processed = await this._stripeProcessedCheckoutModel
+      .findOne({ sessionId: sid })
+      .lean()
+      .exec();
+    if (!processed?.orderIds?.length) {
+      throw new NotFoundException('checkout_session_not_found');
+    }
+
+    const orderObjectIds = processed.orderIds
+      .map((id) => String(id ?? '').trim())
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    if (!orderObjectIds.length) {
+      throw new NotFoundException('checkout_session_not_found');
+    }
+
+    const orders = await this._orderModel
+      .find({ _id: { $in: orderObjectIds } })
+      .populate({ path: 'store', select: 'name' })
+      .populate({ path: 'user', select: 'fullName email' })
+      .lean()
+      .exec();
+    if (!orders.length) {
+      throw new NotFoundException('checkout_session_not_found');
+    }
+
+    const userRaw = orders[0]?.user as
+      | { email?: string; fullName?: string }
+      | null
+      | undefined;
+    const recipientEmail = userRaw?.email?.trim() ?? '';
+    if (!recipientEmail || !recipientEmail.includes('@')) {
+      throw new NotFoundException('checkout_session_not_found');
+    }
+    const recipientName =
+      userRaw?.fullName?.trim() || recipientEmail.split('@')[0] || 'Client';
+
+    const publicWeb = (
+      this._config.get<string>('PUBLIC_WEB_URL')?.trim() ||
+      this._config.get<string>('EMAIL_WEBSITE_URL')?.trim() ||
+      'https://wise-eat.com'
+    ).replace(/\/+$/, '');
+
+    const products: Array<{
+      sku: string;
+      productUrl: string;
+      imageUrl?: string;
+      name: string;
+    }> = [];
+    const productSkus: string[] = [];
+    const seen = new Set<string>();
+
+    for (const order of orders) {
+      const storeRaw = order.store as unknown as
+        | { _id?: Types.ObjectId; name?: string }
+        | null
+        | undefined;
+      const storeId = storeRaw?._id ? String(storeRaw._id) : '';
+      const storeName = storeRaw?.name?.trim() || 'Restaurant';
+      const storeSeg = storeId
+        ? `${storeId}-${this.slugifyForPublicPath(storeName)}`
+        : '';
+
+      for (const item of order.items ?? []) {
+        const row = item as OrdeLineItem & {
+          pictureUrl?: string;
+          picture_url?: string;
+        };
+        const name = String(row.label ?? '').trim() || 'Article';
+        const entityId = String(row.entityId ?? '').trim();
+        const sku =
+          entityId ||
+          `${String(order._id)}-${productSkus.length + 1}`;
+        if (seen.has(sku)) continue;
+        seen.add(sku);
+        productSkus.push(sku);
+
+        const itemType = String(row.itemType ?? '').toLowerCase();
+        let path = `/orders/${encodeURIComponent(String(order._id))}`;
+        if (storeSeg && entityId) {
+          if (itemType === CartItemTypeEnum.DRINK) {
+            path = `/stores/${storeSeg}/drinks/${encodeURIComponent(entityId)}`;
+          } else {
+            const productSeg = `${entityId}-${this.slugifyForPublicPath(name)}`;
+            path = `/stores/${storeSeg}/products/${productSeg}`;
+          }
+        }
+        const imageUrl =
+          String(row.pictureUrl ?? row.picture_url ?? '').trim() || undefined;
+        products.push({
+          sku,
+          productUrl: `${publicWeb}${path}`,
+          ...(imageUrl ? { imageUrl } : {}),
+          name,
+        });
+      }
+    }
+
+    const primaryOrderId = String(orders[0]?._id ?? '');
+    const referenceId =
+      orders.length === 1 && primaryOrderId
+        ? orderInvoiceRef(primaryOrderId)
+        : sid;
+
+    return {
+      recipientEmail,
+      recipientName,
+      referenceId,
+      source: 'InvitationScript',
+      productSkus,
+      products,
+    };
+  }
+
+  private slugifyForPublicPath(value: string): string {
+    return String(value ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48) || 'item';
+  }
+
   /** Résumé public pour la landing web `/orders/:id` (liens e-mail de reçu). */
   async getPublicOrderSummary(orderId: string) {
     const oid = orderId?.trim();
