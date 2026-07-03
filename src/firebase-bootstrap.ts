@@ -8,6 +8,7 @@ import { ExpressAdapter } from '@nestjs/platform-express';
 import express from 'express';
 import { AppModule } from './app.module';
 import { configureApplication } from './configure-app';
+import { httpDryRunMiddleware } from './common/http/dry-run.middleware';
 
 let cachedServer: express.Express | undefined;
 
@@ -23,6 +24,7 @@ export async function getExpressServer(): Promise<express.Express> {
   expressApp.use(httpRequestTimeoutMiddleware());
   expressApp.use(compressionMiddleware({ threshold: 1024 }));
   expressApp.use(createRouteAwareJsonBodyParser({ preserveRawBody: true }));
+  expressApp.use(httpDryRunMiddleware());
   expressApp.use(
     express.urlencoded({
       extended: true,

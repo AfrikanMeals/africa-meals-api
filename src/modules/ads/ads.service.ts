@@ -2298,7 +2298,11 @@ export class AdsService implements OnModuleInit {
       )
       .exec();
     this.invalidateListCache();
-    await this._finalizeAdBilling(adId);
+    try {
+      await this._finalizeAdBilling(adId);
+    } catch {
+      /* Archivage conservé même si la clôture billing échoue (retry possible). */
+    }
     const storeId = existing.store != null ? String(existing.store) : '';
     if (storeId) {
       const newStatus: AdMarketingEntityStatus =
@@ -5248,7 +5252,6 @@ export class AdsService implements OnModuleInit {
     id: string,
   ): Promise<{ ok: true; adId: string; archivedAt: string }> {
     this.assertVendorOrAdmin(user);
-    this.assertVendorStripeConnectReadyForWrites(user);
     if (!Types.ObjectId.isValid(id)) {
       throw new NotFoundException('ad_not_found');
     }
