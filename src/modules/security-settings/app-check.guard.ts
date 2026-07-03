@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Logger,
 } from '@nestjs/common';
 import { GqlExecutionContext } from '@nestjs/graphql';
 import type { Request } from 'express';
@@ -42,6 +43,8 @@ function isAppCheckExempt(method: string, path: string): boolean {
 
 @Injectable()
 export class AppCheckGuard implements CanActivate {
+  private readonly logger = new Logger(AppCheckGuard.name);
+
   constructor(
     private readonly securitySettings: SecuritySettingsService,
     private readonly appCheck: AppCheckService,
@@ -68,6 +71,12 @@ export class AppCheckGuard implements CanActivate {
 
     const header = req.headers[APP_CHECK_HEADER];
     const token = Array.isArray(header) ? header[0] : header;
+    const hasToken = typeof token === 'string' && token.trim().length > 0;
+    if (!hasToken) {
+      this.logger.warn(
+        `App Check token missing platform=${platform} ${method} ${path}`,
+      );
+    }
     await this.appCheck.verifyRequestToken(
       typeof token === 'string' ? token : undefined,
     );

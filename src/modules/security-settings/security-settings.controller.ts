@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Header,
+  Post,
   Put,
   Req,
   UseGuards,
@@ -13,6 +14,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
+import { CreateAppCheckTokenDto } from './dto/create-app-check-token.dto';
 import { UpdateSecuritySettingsDto } from './dto/update-security-settings.dto';
 import { SecuritySettingsService } from './security-settings.service';
 
@@ -26,6 +28,28 @@ export class SecuritySettingsController {
   @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
   getPublic() {
     return this._service.getPublicSettings();
+  }
+
+  @ApiBearerAuth('bearer')
+  @Get('app-check-apps')
+  @UseGuards(JwtGuard)
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
+  listAppCheckApps(@Req() req: Request) {
+    return this._service.listAppCheckApps(req.user as UserModel);
+  }
+
+  @ApiBearerAuth('bearer')
+  @Post('app-check-token')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  createAppCheckToken(
+    @Req() req: Request,
+    @Body() body: CreateAppCheckTokenDto,
+  ) {
+    return this._service.createAppCheckReleaseToken(
+      req.user as UserModel,
+      body,
+    );
   }
 
   @ApiBearerAuth('bearer')

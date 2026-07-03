@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   OnModuleInit,
@@ -11,11 +12,31 @@ import {
 } from '@schemas/security-settings.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
-import { UpdateSecuritySettingsDto } from './dto/update-security-settings.dto';
+import {
+  AppCheckService,
+  APP_CHECK_TOKEN_TTL_DEFAULT_MS,
+} from './app-check.service';
 import {
   AppCheckPlatform,
   AppCheckPlatformFlags,
 } from './app-check-platform.util';
+import {
+  AppCheckTokenApp,
+  CreateAppCheckTokenDto,
+} from './dto/create-app-check-token.dto';
+import { UpdateSecuritySettingsDto } from './dto/update-security-settings.dto';
+
+const APP_CHECK_APP_ENV: Record<AppCheckTokenApp, string> = {
+  android: 'AM_FIREBASE_ANDROID_APP_ID',
+  ios: 'AM_FIREBASE_IOS_APP_ID',
+  web: 'AM_FIREBASE_APP_ID',
+};
+
+const APP_CHECK_APP_LABELS: Record<AppCheckTokenApp, string> = {
+  android: 'Android (mobile)',
+  ios: 'iOS (mobile)',
+  web: 'Web / Admin',
+};
 
 const SETTINGS_KEY = 'default';
 const CACHE_TTL_MS = 5_000;
@@ -74,6 +95,7 @@ export class SecuritySettingsService implements OnModuleInit {
     @InjectModel(SecuritySettingsModel.name)
     private readonly _settings: Model<SecuritySettingsDocument>,
     private readonly config: ConfigService,
+    private readonly appCheck: AppCheckService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -181,6 +203,56 @@ export class SecuritySettingsService implements OnModuleInit {
       .exec();
     this.invalidateCache();
     return this._toResponse(updated);
+  }
+
+  private resolveAppCheckAppId(app: AppCheckTokenApp): string | null {
+    const envKey = APP_CHECK_APP_ENV[app];
+    const value = this.config.get<string>(envKey)?.trim() ?? '';
+    return value.length > 0 ? value : null;
+  }
+
+  listAppCheckApps(user: UserModel) {
+    assertAdmin(user);
+    const apps = (Object.keys(APP_CHECK_APP_ENV) as AppCheckTokenApp[]).map(
+      (key) => {
+        const appId = this.resolveAppCheckAppId(key);
+        return {
+          key,
+          label: APP_CHECK_APP_LABELS[key],
+          appId,
+          configured: appId !== null,
+        };
+      },
+    );
+    return { apps };
+  }
+
+  async createAppCheckReleaseToken(
+    user: UserModel,
+    dto: CreateAppCheckTokenDto,
+  ) {
+    assertAdmin(user);
+    const appId = this.resolveAppCheckAppId(dto.app);
+    if (!appId) {
+      throw new BadRequestException({
+        message: 'app_check_app_id_not_configured',
+        envVar: APP_CHECK_APP_ENV[dto.app],
+      });
+    }
+    const ttlHours = dto.ttlHours ?? 1;
+    const ttlMillis =
+      ttlHours > 0
+        ? ttlHours * 60 * 60 * 1000
+        : APP_CHECK_TOKEN_TTL_DEFAULT_MS;
+    const minted = await this.appCheck.createReleaseToken(appId, ttlMillis);
+    return {
+      app: dto.app,
+      label: APP_CHECK_APP_LABELS[dto.app],
+      appId,
+      token: minted.token,
+      ttlMillis: minted.ttlMillis,
+      expiresAt: minted.expiresAt,
+    };
   }
 
   /** Normalise les documents legacy (appCheckEnabled seul) en flags granulaires explicites. */
