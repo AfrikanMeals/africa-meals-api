@@ -12,6 +12,10 @@ import {
   CartMarketingStrategySchema,
 } from '@schemas/cart-marketing-strategy.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
+import {
+  MarketingOfferListingModel,
+  MarketingOfferListingSchema,
+} from '@schemas/marketing-offer-listing.schema';
 import { CartController } from './cart.controller';
 import { CartService } from './cart.service';
 
@@ -29,6 +33,10 @@ import { CartService } from './cart.service';
       { name: CartItemModel.name, schema: CartItemSchema },
       { name: CartMarketingStrategyModel.name, schema: CartMarketingStrategySchema },
       { name: StoreModel.name, schema: StoreSchema },
+      {
+        name: MarketingOfferListingModel.name,
+        schema: MarketingOfferListingSchema,
+      },
     ]),
   ],
   exports: [CartService],

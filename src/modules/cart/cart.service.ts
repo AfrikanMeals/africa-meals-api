@@ -22,6 +22,7 @@ import {
 } from '@common/redis-app-cache';
 import { CartItemModel, CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { CartMarketingStrategyModel } from '@schemas/cart-marketing-strategy.schema';
+import { MarketingOfferListingModel } from '@schemas/marketing-offer-listing.schema';
 import { StoreCouponDiscountTypeEnum } from '@schemas/store_coupon.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
@@ -126,6 +127,9 @@ export class CartService {
 
   @InjectModel(CartMarketingStrategyModel.name)
   private readonly _cartMarketingStrategyModel: Model<CartMarketingStrategyModel>;
+
+  @InjectModel(MarketingOfferListingModel.name)
+  private readonly _marketingOfferListingModel: Model<MarketingOfferListingModel>;
 
   @Inject(ProductsService)
   private readonly _productsService: ProductsService;
@@ -854,6 +858,11 @@ export class CartService {
         .map((k) => k.trim())
         .filter(Boolean),
     );
+    const checkoutStoreFilter = new Set(
+      (dto.checkoutStoreIds ?? [])
+        .map((id) => id.trim())
+        .filter(Boolean),
+    );
     const rawItems = await this._cartItemModel
       .find({ user: uid })
       .lean()
@@ -897,9 +906,30 @@ export class CartService {
     }
 
     for (const [storeId, lines] of byStore) {
+      if (
+        checkoutStoreFilter.size > 0 &&
+        !checkoutStoreFilter.has(storeId)
+      ) {
+        continue;
+      }
       if (skipStockStoreIds.has(storeId)) {
         continue;
       }
+
+      const marketingListingId =
+        await this.getCartMarketingStrategyListingId(user.id, storeId);
+      let marketingDealProductId: string | null = null;
+      if (marketingListingId) {
+        const listing = await this._marketingOfferListingModel
+          .findById(marketingListingId)
+          .select('productId')
+          .lean()
+          .exec();
+        if (listing?.productId) {
+          marketingDealProductId = String(listing.productId);
+        }
+      }
+
       const store = await this._storeModel
         .findById(storeId)
         .select('dailyMenuByWeekday name region timezone')
@@ -933,6 +963,9 @@ export class CartService {
       }
 
       for (const [pid, qty] of productQty) {
+        if (marketingDealProductId && pid === marketingDealProductId) {
+          continue;
+        }
         const cap = resolveDailyMenuProductCap(menuRows, pid, effectiveTz);
         if (cap.kind === 'unlimited' || cap.kind === 'no_menu_today') {
           continue;

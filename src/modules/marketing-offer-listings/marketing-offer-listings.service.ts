@@ -617,13 +617,11 @@ export class MarketingOfferListingsService {
       store as StoreModel,
     );
 
-    if (pricing.cartLevelStrategy) {
-      await this.cartService.setCartMarketingStrategy(
-        user.id,
-        String(store._id),
-        listingId,
-      );
-    }
+    await this.cartService.setCartMarketingStrategy(
+      user.id,
+      String(store._id),
+      listingId,
+    );
 
     await this.trackDealEngagement(listingId, 'checkout_start');
 

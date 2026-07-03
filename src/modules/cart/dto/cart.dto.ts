@@ -233,4 +233,13 @@ export class ValidateCheckoutDto {
   @IsOptional()
   @IsObject()
   preOrderOidByStoreId?: Record<string, string>;
+
+  @ApiPropertyOptional({
+    description:
+      'Boutiques en cours de paiement — limite le contrôle stock à ces boutiques (checkout partiel).',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  checkoutStoreIds?: string[];
 }
