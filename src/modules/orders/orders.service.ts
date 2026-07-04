@@ -1107,8 +1107,14 @@ export class OrdersService {
           selectedComplements?: unknown;
           selectedSupplements?: unknown;
           selectedVariantLabel?: string;
+          commissionRetrieveStrategy?: string;
         };
         const variantLabel = String(row.selectedVariantLabel ?? '').trim();
+        const strategyRaw = String(row.commissionRetrieveStrategy ?? '').trim();
+        const commissionRetrieveStrategy =
+          strategyRaw === 'add_to_price' || strategyRaw === 'on_payout'
+            ? strategyRaw
+            : undefined;
         return {
           label,
           itemType: item.type!,
@@ -1124,6 +1130,9 @@ export class OrdersService {
             ? row.selectedSupplements
             : [],
           ...(variantLabel ? { selectedVariantLabel: variantLabel } : {}),
+          ...(commissionRetrieveStrategy
+            ? { commissionRetrieveStrategy }
+            : {}),
         };
       },
     );

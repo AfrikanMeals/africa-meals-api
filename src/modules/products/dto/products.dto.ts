@@ -237,6 +237,17 @@ export class CreateProductDto {
   @Min(0)
   price: number;
 
+  @ApiPropertyOptional({
+    enum: ['on_payout', 'add_to_price'],
+    description:
+      'Stratégie commission de ce plat (null = hériter boutique / défaut on_payout)',
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
+  @IsIn(['on_payout', 'add_to_price'])
+  commissionRetrieveStrategy?: 'on_payout' | 'add_to_price' | null;
+
   @ApiPropertyOptional({ example: 0, type: Number })
   @IsOptional()
   @IsNumber()
@@ -399,6 +410,17 @@ export class PatchProductDto {
   @IsNumber()
   @Min(0)
   price?: number;
+
+  @ApiPropertyOptional({
+    enum: ['on_payout', 'add_to_price'],
+    nullable: true,
+    description:
+      'Stratégie commission de ce plat (null = hériter boutique / défaut on_payout)',
+  })
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
+  @IsIn(['on_payout', 'add_to_price'])
+  commissionRetrieveStrategy?: 'on_payout' | 'add_to_price' | null;
 
   @ApiPropertyOptional()
   @IsOptional()

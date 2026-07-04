@@ -2331,8 +2331,15 @@ export class StoreService {
       const currency = settings.currency;
       const config = settings.config;
 
+      // Uniquement les articles qui héritent de la boutique (pas de stratégie item).
       const products = await this._productModel
-        .find({ store: store._id })
+        .find({
+          store: store._id,
+          $or: [
+            { commissionRetrieveStrategy: null },
+            { commissionRetrieveStrategy: { $exists: false } },
+          ],
+        })
         .select('price discountPrice listPrice listDiscountPrice')
         .exec();
       for (const product of products) {
@@ -2391,7 +2398,13 @@ export class StoreService {
       }
 
       const drinks = await this._drinkModel
-        .find({ store: store._id })
+        .find({
+          store: store._id,
+          $or: [
+            { commissionRetrieveStrategy: null },
+            { commissionRetrieveStrategy: { $exists: false } },
+          ],
+        })
         .select('priceCad')
         .exec();
       for (const drink of drinks) {
@@ -2444,11 +2457,13 @@ export class StoreService {
     user: UserModel,
     unitPrice: number,
     storeId?: string,
+    itemStrategy?: 'on_payout' | 'add_to_price' | null,
   ) {
     const { targetId } = await this._resolveVendorStoreTarget(user, storeId);
     return this._planOrderCommission.previewUnitCommissionForStore(
       targetId,
       unitPrice,
+      itemStrategy,
     );
   }
 

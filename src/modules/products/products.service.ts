@@ -560,6 +560,11 @@ export class ProductsService {
     let complements = this.normalizeComplements(obj.complements);
     let supplements = this.normalizeSupplements(obj.supplements);
     const variants = this.normalizeVariants(obj.variants);
+    const itemStrategy =
+      obj.commissionRetrieveStrategy === 'add_to_price' ||
+      obj.commissionRetrieveStrategy === 'on_payout'
+        ? obj.commissionRetrieveStrategy
+        : null;
     if (storeId && Types.ObjectId.isValid(storeId)) {
       // Commission sur (base + options) au panier ; ici on expose les prix client
       // avec répartition cohérente (base + chaque complément / supplément).
@@ -570,6 +575,7 @@ export class ProductsService {
             vendorBase: price,
             complements,
             supplements,
+            itemStrategy,
           },
         );
       if (priced.strategy === 'add_to_price') {
@@ -580,6 +586,7 @@ export class ProductsService {
         price = await this._planOrderCommission.resolveCustomerUnitPriceForStore(
           storeId,
           price,
+          itemStrategy,
         );
       }
 
@@ -591,6 +598,7 @@ export class ProductsService {
               vendorBase: discountPrice,
               complements: this.normalizeComplements(obj.complements),
               supplements: this.normalizeSupplements(obj.supplements),
+              itemStrategy,
             },
           );
         discountPrice =
@@ -599,6 +607,7 @@ export class ProductsService {
             : await this._planOrderCommission.resolveCustomerUnitPriceForStore(
                 storeId,
                 discountPrice,
+                itemStrategy,
               );
       }
 
@@ -606,12 +615,14 @@ export class ProductsService {
         await this._planOrderCommission.resolveCustomerUnitPriceForStore(
           storeId,
           listPrice,
+          itemStrategy,
         );
       if (listDiscountPrice > 0) {
         listDiscountPrice =
           await this._planOrderCommission.resolveCustomerUnitPriceForStore(
             storeId,
             listDiscountPrice,
+            itemStrategy,
           );
       }
 
@@ -623,6 +634,7 @@ export class ProductsService {
               vendorBase: v.price,
               complements: this.normalizeComplements(obj.complements),
               supplements: this.normalizeSupplements(obj.supplements),
+              itemStrategy,
             },
           );
         if (vp.strategy === 'add_to_price') {
@@ -632,6 +644,7 @@ export class ProductsService {
             await this._planOrderCommission.resolveCustomerUnitPriceForStore(
               storeId,
               v.price,
+              itemStrategy,
             );
         }
         if (v.discountPrice > 0) {
@@ -642,6 +655,7 @@ export class ProductsService {
                 vendorBase: v.discountPrice,
                 complements: this.normalizeComplements(obj.complements),
                 supplements: this.normalizeSupplements(obj.supplements),
+                itemStrategy,
               },
             );
           v.discountPrice =
@@ -650,6 +664,7 @@ export class ProductsService {
               : await this._planOrderCommission.resolveCustomerUnitPriceForStore(
                   storeId,
                   v.discountPrice,
+                  itemStrategy,
                 );
         }
       }
@@ -992,17 +1007,24 @@ export class ProductsService {
   ): Promise<Record<string, unknown>> {
     const vendorPrice = Number(row.price ?? 0);
     const vendorDiscount = Number(row.discountPrice ?? 0);
+    const itemStrategyRaw = row.commissionRetrieveStrategy;
+    const itemStrategy =
+      itemStrategyRaw === 'add_to_price' || itemStrategyRaw === 'on_payout'
+        ? itemStrategyRaw
+        : null;
     try {
       const preview =
         await this._planOrderCommission.previewUnitCommissionForStore(
           storeId,
           vendorPrice,
+          itemStrategy,
         );
       const discountPreview =
         vendorDiscount > 0
           ? await this._planOrderCommission.previewUnitCommissionForStore(
               storeId,
               vendorDiscount,
+              itemStrategy,
             )
           : null;
       return {
@@ -1013,6 +1035,8 @@ export class ProductsService {
         customerPrice: preview.customerPrice,
         customerDiscountPrice: discountPreview?.customerPrice ?? 0,
         commissionRetrieveStrategy: preview.strategy,
+        commissionRetrieveStrategyItem: itemStrategy,
+        commissionRetrieveStrategySource: preview.strategySource,
         commissionFeeMode: preview.feeMode,
         commissionFeePercent: preview.feePercent,
         commissionFeeFixed: preview.feeFixed,
@@ -1026,6 +1050,8 @@ export class ProductsService {
         customerPrice: vendorPrice,
         customerDiscountPrice: vendorDiscount,
         commissionRetrieveStrategy: 'on_payout',
+        commissionRetrieveStrategyItem: itemStrategy,
+        commissionRetrieveStrategySource: 'default',
       };
     }
   }
@@ -1136,6 +1162,11 @@ export class ProductsService {
       baseDiscountPrice: pricing.baseDiscountPrice,
       price: pricing.price,
       discountPrice: pricing.discountPrice,
+      commissionRetrieveStrategy:
+        p.commissionRetrieveStrategy === 'add_to_price' ||
+        p.commissionRetrieveStrategy === 'on_payout'
+          ? p.commissionRetrieveStrategy
+          : null,
       listPrice: Number(
         p.listPrice ?? p.list_price ?? p.price ?? 0,
       ),
@@ -1556,6 +1587,10 @@ export class ProductsService {
         // Devise harmonisée: toujours la devise de la boutique.
         currency: (store.currency || 'CAD') as string,
         status: args.status ?? ProductStatusEnum.ACTIVE,
+        ...(args.commissionRetrieveStrategy === 'add_to_price' ||
+        args.commissionRetrieveStrategy === 'on_payout'
+          ? { commissionRetrieveStrategy: args.commissionRetrieveStrategy }
+          : {}),
         ...(profileImage && { profileImage }),
         ...(galleryItems.length > 0 && { galleryImages: galleryItems }),
       });
@@ -1700,6 +1735,21 @@ export class ProductsService {
       );
       if (!active) {
         doc.listPrice = price;
+      }
+    }
+    if (args.commissionRetrieveStrategy !== undefined) {
+      if (
+        args.commissionRetrieveStrategy === 'add_to_price' ||
+        args.commissionRetrieveStrategy === 'on_payout'
+      ) {
+        doc.commissionRetrieveStrategy = args.commissionRetrieveStrategy;
+      } else {
+        doc.set('commissionRetrieveStrategy', undefined);
+        doc.markModified('commissionRetrieveStrategy');
+        await this._productModel.updateOne(
+          { _id: doc._id },
+          { $unset: { commission_retrieve_strategy: 1 } },
+        );
       }
     }
     if (args.discountPrice !== undefined) {

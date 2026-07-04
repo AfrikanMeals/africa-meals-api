@@ -1174,12 +1174,18 @@ export class StoreController {
     @Req() req: Request,
     @Query('unitPrice') unitPriceRaw?: string,
     @Query('storeId') storeId?: string,
+    @Query('itemStrategy') itemStrategyRaw?: string,
   ) {
     const unitPrice = Math.max(0, Number(unitPriceRaw ?? 0));
+    const itemStrategy =
+      itemStrategyRaw === 'add_to_price' || itemStrategyRaw === 'on_payout'
+        ? itemStrategyRaw
+        : null;
     return this._storeService.previewVendorCommissionUnit(
       req.user as UserModel,
       unitPrice,
       storeId,
+      itemStrategy,
     );
   }
 

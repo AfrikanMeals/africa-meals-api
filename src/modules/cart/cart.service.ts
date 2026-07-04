@@ -482,6 +482,7 @@ export class CartService {
     );
 
     const storeId = String(store.id ?? (store as { _id?: unknown })._id ?? '');
+    let lineStrategy: 'on_payout' | 'add_to_price' = 'on_payout';
 
     if (args.type === CartItemTypeEnum.DRINK) {
       const drink = await this._drinksService.findOneInStoreCatalog(
@@ -498,10 +499,17 @@ export class CartService {
         throw new BadRequestException('drink_quantity_limit_exceeded');
       }
       if (storeId) {
+        lineStrategy =
+          await this._planOrderCommission.resolveEffectiveStrategyForCatalogItem(
+            storeId,
+            'drink',
+            args.itemId,
+          );
         priceForLine =
           await this._planOrderCommission.resolveCustomerUnitPriceForStore(
             storeId,
             Number(priceForLine),
+            lineStrategy,
           );
       }
     } else if (args.type === CartItemTypeEnum.PRODUCT) {
@@ -550,21 +558,32 @@ export class CartService {
       customization.selectedComplements = repriced.complements;
       customization.selectedSupplements = repriced.supplements;
 
-      const extras = sumSelectedCustomizationVendorExtras(
-        repriced.complements,
-        repriced.supplements,
-      );
-      const vendorLine = Math.max(0, vendorBase) + extras;
-      priceForLine = storeId
-        ? await this._planOrderCommission.resolveCustomerLineUnitPriceForStore(
+      const vendorLine =
+        Math.max(0, vendorBase) +
+        sumSelectedCustomizationVendorExtras(
+          repriced.complements,
+          repriced.supplements,
+        );
+      if (storeId) {
+        lineStrategy =
+          await this._planOrderCommission.resolveEffectiveStrategyForCatalogItem(
+            storeId,
+            'product',
+            args.itemId,
+          );
+        priceForLine =
+          await this._planOrderCommission.resolveCustomerLineUnitPriceForStore(
             storeId,
             vendorBase,
             {
               complements: repriced.complements,
               supplements: repriced.supplements,
             },
-          )
-        : vendorLine;
+            lineStrategy,
+          );
+      } else {
+        priceForLine = vendorLine;
+      }
     } else if (storeId && Number(priceForLine ?? 0) > 0) {
       priceForLine =
         await this._planOrderCommission.resolveCustomerUnitPriceForStore(
@@ -578,7 +597,15 @@ export class CartService {
       await this.updateQuantity(item, nextQty);
       if (args.type === CartItemTypeEnum.DRINK) {
         await this._cartItemModel
-          .updateOne({ _id: item.id }, { $set: { price: priceForLine } })
+          .updateOne(
+            { _id: item.id },
+            {
+              $set: {
+                price: priceForLine,
+                commissionRetrieveStrategy: lineStrategy,
+              },
+            },
+          )
           .exec();
       } else if (args.type === CartItemTypeEnum.PRODUCT) {
         await this._cartItemModel
@@ -587,6 +614,7 @@ export class CartService {
             {
               $set: {
                 price: priceForLine,
+                commissionRetrieveStrategy: lineStrategy,
                 selectedComplements: customization.selectedComplements,
                 selectedSupplements: customization.selectedSupplements,
                 selectedVariantLabel: customization.selectedVariantLabel,
@@ -597,6 +625,7 @@ export class CartService {
       }
       item.quantity = nextQty;
       item.price = priceForLine;
+      item.commissionRetrieveStrategy = lineStrategy;
     } else {
       item = await this._cartItemModel.create({
         user: new Types.ObjectId(user.id),
@@ -608,6 +637,7 @@ export class CartService {
         type: args.type,
         quantity: qtyReq,
         price: priceForLine,
+        commissionRetrieveStrategy: lineStrategy,
         customizationKey: customization.customizationKey,
         selectedComplements: customization.selectedComplements,
         selectedSupplements: customization.selectedSupplements,

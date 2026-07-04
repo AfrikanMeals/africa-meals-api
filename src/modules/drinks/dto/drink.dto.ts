@@ -4,6 +4,7 @@ import { Transform, Type } from 'class-transformer';
 import { PartialType } from '@nestjs/mapped-types';
 import {
   IsBoolean,
+  IsIn,
   IsMongoId,
   IsNotEmpty,
   IsNumber,
@@ -49,6 +50,17 @@ export class CreateDrinkDto {
   @IsNumber()
   @Min(0)
   priceCad: number;
+
+  @ApiPropertyOptional({
+    enum: ['on_payout', 'add_to_price'],
+    nullable: true,
+    description:
+      'Stratégie commission de cette boisson (null = hériter boutique / défaut on_payout)',
+  })
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
+  @IsIn(['on_payout', 'add_to_price'])
+  commissionRetrieveStrategy?: 'on_payout' | 'add_to_price' | null;
 
   @ApiPropertyOptional({
     description: 'Identifiant catégorie boisson (`product_categories`, kind=drink)',
@@ -110,6 +122,15 @@ export class PatchDrinkDto {
   @IsNumber()
   @Min(0)
   priceCad?: number;
+
+  @ApiPropertyOptional({
+    enum: ['on_payout', 'add_to_price'],
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
+  @IsIn(['on_payout', 'add_to_price'])
+  commissionRetrieveStrategy?: 'on_payout' | 'add_to_price' | null;
 
   @ApiPropertyOptional({
     description: 'Retirer l’image existante (sans envoyer de nouveau fichier)',

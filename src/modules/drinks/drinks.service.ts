@@ -78,6 +78,11 @@ function mapDrinkCatalogListRow(doc: Record<string, unknown>) {
     quantite: Number(doc.quantite ?? 0),
     seuil: Number(doc.seuil ?? 0),
     statut: String(doc.statut ?? DrinkStatutEnum.OK),
+    commissionRetrieveStrategy:
+      doc.commissionRetrieveStrategy === 'add_to_price' ||
+      doc.commissionRetrieveStrategy === 'on_payout'
+        ? doc.commissionRetrieveStrategy
+        : null,
     ...moderationFieldsFromDoc(doc),
     ...(imageUrl ? { imageUrl } : {}),
   };
@@ -105,6 +110,11 @@ function mapDrinkDoc(doc: Record<string, unknown>) {
     seuil: Number(doc.seuil ?? 0),
     priceCad: Number(doc.priceCad ?? doc.price_cad ?? 0),
     statut: String(doc.statut ?? DrinkStatutEnum.OK) as DrinkStatutEnum,
+    commissionRetrieveStrategy:
+      doc.commissionRetrieveStrategy === 'add_to_price' ||
+      doc.commissionRetrieveStrategy === 'on_payout'
+        ? doc.commissionRetrieveStrategy
+        : null,
     ...moderationFieldsFromDoc(doc),
     imageUrl:
       doc.imageUrl != null
@@ -791,6 +801,10 @@ export class DrinksService {
       priceCad,
       statut,
       store: new Types.ObjectId(storeId),
+      ...(dto.commissionRetrieveStrategy === 'add_to_price' ||
+      dto.commissionRetrieveStrategy === 'on_payout'
+        ? { commissionRetrieveStrategy: dto.commissionRetrieveStrategy }
+        : {}),
       ...(categoryOid ? { category: categoryOid } : {}),
       ...(imageUrl ? { imageUrl } : {}),
     });
@@ -845,6 +859,21 @@ export class DrinksService {
     found.seuil = seuil;
     found.priceCad = priceCad;
     found.statut = statut;
+    if (dto.commissionRetrieveStrategy !== undefined) {
+      if (
+        dto.commissionRetrieveStrategy === 'add_to_price' ||
+        dto.commissionRetrieveStrategy === 'on_payout'
+      ) {
+        found.commissionRetrieveStrategy = dto.commissionRetrieveStrategy;
+      } else {
+        found.set('commissionRetrieveStrategy', undefined);
+        found.markModified('commissionRetrieveStrategy');
+        await this._drinkModel.updateOne(
+          { _id: found._id },
+          { $unset: { commission_retrieve_strategy: 1 } },
+        );
+      }
+    }
 
     if (dto.categoryId !== undefined) {
       const categoryOid = await this.resolveDrinkCategoryId(dto.categoryId);

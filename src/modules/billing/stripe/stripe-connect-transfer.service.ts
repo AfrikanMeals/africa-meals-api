@@ -207,9 +207,14 @@ export class StripeConnectTransferService {
     )
       .trim()
       .toUpperCase();
+    const storeStrategy =
+      await this.planOrderCommission.getCommissionRetrieveStrategyForStore(
+        args.storeId,
+      );
     const lineItems = mapOrderLineItemsToCommissionLines(
       orderDoc?.items as OrdeLineItem[] | undefined,
       paymentCurrency,
+      storeStrategy,
     );
 
     const split =
