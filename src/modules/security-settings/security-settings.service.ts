@@ -3,7 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   OnModuleInit,
-  ServiceUnavailableException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -261,12 +261,17 @@ export class SecuritySettingsService implements OnModuleInit {
   }
 
   /**
-   * Mint public (debug mobile) d’un jeton App Check longue durée (max 7 j).
-   * Activé hors production par défaut ; forcer via APP_CHECK_SESSION_MINT_ENABLED.
+   * Mint d’un jeton App Check longue durée (max 7 j).
+   * - Hors prod (ou APP_CHECK_SESSION_MINT_ENABLED) : public (debug mobile).
+   * - En prod : Bearer JWT requis (admin / vendeur) — alimente API + WS.
    */
-  async createAppCheckSessionToken(dto: CreateAppCheckSessionTokenDto) {
-    if (!this.isAppCheckSessionMintEnabled()) {
-      throw new ServiceUnavailableException('app_check_session_mint_disabled');
+  async createAppCheckSessionToken(
+    dto: CreateAppCheckSessionTokenDto,
+    user: UserModel | null,
+  ) {
+    const publicOk = this.isAppCheckSessionMintEnabled();
+    if (!publicOk && !user) {
+      throw new UnauthorizedException('app_check_session_auth_required');
     }
     const app = dto.app as AppCheckSessionApp;
     const appId = this.resolveAppCheckAppId(app);

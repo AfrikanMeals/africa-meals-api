@@ -36,10 +36,11 @@ function isAppCheckExempt(method: string, path: string): boolean {
   if (path.startsWith('/internal/')) return true;
   if (path.includes('/stripe/webhook')) return true;
   if (method === 'GET' && path.startsWith('/platform/')) return true;
-  // Mint session longue (debug mobile) — pas de jeton préalable (œuf/poule).
+  // Mint session / release — pas de jeton préalable (œuf/poule).
   if (
     method === 'POST' &&
-    path === '/platform/security-settings/app-check-session'
+    (path === '/platform/security-settings/app-check-session' ||
+      path === '/platform/security-settings/app-check-token')
   ) {
     return true;
   }

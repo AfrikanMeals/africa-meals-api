@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
+import { OptionalAuthGuard } from '@modules/auth/guards/optional.auth.guard';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { CreateAppCheckSessionTokenDto } from './dto/create-app-check-session-token.dto';
@@ -32,14 +33,21 @@ export class SecuritySettingsController {
   }
 
   /**
-   * Session longue (7 j, max Firebase) pour le mobile debug — sans JWT ni App Check.
-   * Désactivé en production sauf APP_CHECK_SESSION_MINT_ENABLED=true.
+   * Session longue (7 j, max Firebase) — exempt App Check (œuf/poule).
+   * Hors prod : public. En prod : Bearer JWT (admin/vendeur) pour API + WS.
    */
   @Post('app-check-session')
+  @UseGuards(OptionalAuthGuard)
   @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  createAppCheckSession(@Body() body: CreateAppCheckSessionTokenDto) {
-    return this._service.createAppCheckSessionToken(body);
+  createAppCheckSession(
+    @Req() req: Request,
+    @Body() body: CreateAppCheckSessionTokenDto,
+  ) {
+    return this._service.createAppCheckSessionToken(
+      body,
+      (req.user as UserModel | undefined) ?? null,
+    );
   }
 
   @ApiBearerAuth('bearer')
