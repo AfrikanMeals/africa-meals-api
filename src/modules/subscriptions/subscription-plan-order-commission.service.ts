@@ -30,7 +30,6 @@ import { CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { CartItemTypeEnum } from '@schemas/cart_item.schema';
 import { OrdeLineItem } from '@schemas/order.schema';
 import { PlanRegionOrderCommissionModel } from '@schemas/plan-region-order-commission.schema';
 import { PlanRegionPricingModel } from '@schemas/plan-region-pricing.schema';

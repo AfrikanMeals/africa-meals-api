@@ -11,10 +11,11 @@ import type { App } from 'firebase-admin/app';
 
 export const APP_CHECK_HEADER = 'x-firebase-appcheck';
 
-/** Firebase Admin : TTL min 30 min, max 7 jours. */
+/** Firebase Admin : TTL min 30 min, max 7 jours (pas de TTL 1 mois côté Firebase). */
 export const APP_CHECK_TOKEN_TTL_MIN_MS = 30 * 60 * 1000;
 export const APP_CHECK_TOKEN_TTL_MAX_MS = 7 * 24 * 60 * 60 * 1000;
-export const APP_CHECK_TOKEN_TTL_DEFAULT_MS = 60 * 60 * 1000;
+/** Défaut = max Firebase (session longue, moins d’échanges debug / minting). */
+export const APP_CHECK_TOKEN_TTL_DEFAULT_MS = APP_CHECK_TOKEN_TTL_MAX_MS;
 
 export type AppCheckReleaseTokenResult = {
   token: string;

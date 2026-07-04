@@ -520,7 +520,7 @@ export class CartService {
       const productObj = (
         typeof (product as { toObject?: () => unknown }).toObject === 'function'
           ? (product as { toObject: () => Record<string, unknown> }).toObject()
-          : (product as Record<string, unknown>)
+          : (product as unknown as Record<string, unknown>)
       ) as Record<string, unknown>;
 
       let vendorBase = Number(productObj.price ?? args.price ?? 0);

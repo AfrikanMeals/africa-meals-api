@@ -14,6 +14,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
+import { CreateAppCheckSessionTokenDto } from './dto/create-app-check-session-token.dto';
 import { CreateAppCheckTokenDto } from './dto/create-app-check-token.dto';
 import { UpdateSecuritySettingsDto } from './dto/update-security-settings.dto';
 import { SecuritySettingsService } from './security-settings.service';
@@ -28,6 +29,17 @@ export class SecuritySettingsController {
   @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
   getPublic() {
     return this._service.getPublicSettings();
+  }
+
+  /**
+   * Session longue (7 j, max Firebase) pour le mobile debug — sans JWT ni App Check.
+   * Désactivé en production sauf APP_CHECK_SESSION_MINT_ENABLED=true.
+   */
+  @Post('app-check-session')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  createAppCheckSession(@Body() body: CreateAppCheckSessionTokenDto) {
+    return this._service.createAppCheckSessionToken(body);
   }
 
   @ApiBearerAuth('bearer')

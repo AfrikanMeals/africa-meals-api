@@ -14,10 +14,10 @@ export class CreateAppCheckTokenDto {
   app: AppCheckTokenApp;
 
   @ApiPropertyOptional({
-    description: 'Durée de vie en heures (1–168, défaut 1 h)',
+    description: 'Durée de vie en heures (1–168, défaut 168 = 7 jours, max Firebase)',
     minimum: 1,
     maximum: 168,
-    default: 1,
+    default: 168,
   })
   @IsOptional()
   @Type(() => Number)

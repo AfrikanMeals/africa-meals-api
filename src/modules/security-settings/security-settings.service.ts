@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   OnModuleInit,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -20,6 +21,10 @@ import {
   AppCheckPlatform,
   AppCheckPlatformFlags,
 } from './app-check-platform.util';
+import {
+  AppCheckSessionApp,
+  CreateAppCheckSessionTokenDto,
+} from './dto/create-app-check-session-token.dto';
 import {
   AppCheckTokenApp,
   CreateAppCheckTokenDto,
@@ -239,7 +244,7 @@ export class SecuritySettingsService implements OnModuleInit {
         envVar: APP_CHECK_APP_ENV[dto.app],
       });
     }
-    const ttlHours = dto.ttlHours ?? 1;
+    const ttlHours = dto.ttlHours ?? 168;
     const ttlMillis =
       ttlHours > 0
         ? ttlHours * 60 * 60 * 1000
@@ -253,6 +258,48 @@ export class SecuritySettingsService implements OnModuleInit {
       ttlMillis: minted.ttlMillis,
       expiresAt: minted.expiresAt,
     };
+  }
+
+  /**
+   * Mint public (debug mobile) d’un jeton App Check longue durée (max 7 j).
+   * Activé hors production par défaut ; forcer via APP_CHECK_SESSION_MINT_ENABLED.
+   */
+  async createAppCheckSessionToken(dto: CreateAppCheckSessionTokenDto) {
+    if (!this.isAppCheckSessionMintEnabled()) {
+      throw new ServiceUnavailableException('app_check_session_mint_disabled');
+    }
+    const app = dto.app as AppCheckSessionApp;
+    const appId = this.resolveAppCheckAppId(app);
+    if (!appId) {
+      throw new BadRequestException({
+        message: 'app_check_app_id_not_configured',
+        envVar: APP_CHECK_APP_ENV[app],
+      });
+    }
+    const minted = await this.appCheck.createReleaseToken(
+      appId,
+      APP_CHECK_TOKEN_TTL_DEFAULT_MS,
+    );
+    return {
+      app,
+      label: APP_CHECK_APP_LABELS[app],
+      appId,
+      token: minted.token,
+      ttlMillis: minted.ttlMillis,
+      expiresAt: minted.expiresAt,
+    };
+  }
+
+  /** Hors prod par défaut ; `true`/`false` force l’état. */
+  isAppCheckSessionMintEnabled(): boolean {
+    const flag = this.config
+      .get<string>('APP_CHECK_SESSION_MINT_ENABLED')
+      ?.trim()
+      .toLowerCase();
+    if (flag === 'true' || flag === '1') return true;
+    if (flag === 'false' || flag === '0') return false;
+    const nodeEnv = this.config.get<string>('NODE_ENV')?.trim().toLowerCase();
+    return nodeEnv !== 'production';
   }
 
   /** Normalise les documents legacy (appCheckEnabled seul) en flags granulaires explicites. */
