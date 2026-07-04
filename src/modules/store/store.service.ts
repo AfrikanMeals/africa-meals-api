@@ -64,9 +64,17 @@ import {
   CreateStoreDto,
   DailyMenuItemDto,
   DailyMenuSlotDto,
+  PatchVendorCommissionStrategyDto,
   PatchVendorShippingZonesDto,
   PatchVendorWorkingHoursDto,
 } from './dto/store.dto';
+import { DrinkModel } from '@schemas/drink.schema';
+import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
+import {
+  applyCommissionMarkup,
+  normalizeCommissionRetrieveStrategy,
+  reverseCommissionMarkup,
+} from '@modules/platform-fees/platform-order-commission.util';
 import {
   normalizeStoreTimezone,
   normalizeStoreWorkingHours,
@@ -237,6 +245,9 @@ export class StoreService {
   @InjectModel(ProductModel.name)
   private readonly _productModel: Model<ProductModel>;
 
+  @InjectModel(DrinkModel.name)
+  private readonly _drinkModel: Model<DrinkModel>;
+
   @InjectModel(ProductRatingModel.name)
   private readonly _productRatingModel: Model<ProductRatingModel>;
 
@@ -328,6 +339,9 @@ export class StoreService {
 
   @Inject(SubscriptionsService)
   private readonly _subscriptionsService: SubscriptionsService;
+
+  @Inject(SubscriptionPlanOrderCommissionService)
+  private readonly _planOrderCommission: SubscriptionPlanOrderCommissionService;
 
   @Inject(BusinessTypesService)
   private readonly _businessTypesService: BusinessTypesService;
@@ -1055,7 +1069,7 @@ export class StoreService {
         select: 'address city country zipCode countryCode location',
       })
       .select(
-        'name bio businessType email phoneNumber currency region status acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders acceptsPickupPayOnDelivery mealPreOrderCatalogScope partnerBadgeCode timezone workingHours',
+        'name bio businessType email phoneNumber currency region status acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders acceptsPickupPayOnDelivery mealPreOrderCatalogScope partnerBadgeCode timezone workingHours commissionRetrieveStrategy',
       )
       .lean()
       .exec();
@@ -1139,6 +1153,9 @@ export class StoreService {
       timezone: effectiveTimezone,
       workingHours: serializeStoreWorkingHoursForApi(
         doc.workingHours as Record<string, unknown> | undefined,
+      ),
+      commissionRetrieveStrategy: normalizeCommissionRetrieveStrategy(
+        doc.commissionRetrieveStrategy,
       ),
     };
 
@@ -2225,6 +2242,214 @@ export class StoreService {
     );
     await this._invalidatePublicCatalogCachesForStore(targetId);
     return this.findMyStoreSummary(user, targetId);
+  }
+
+  private async _resolveVendorStoreTarget(
+    user: UserModel,
+    storeId?: string,
+  ): Promise<{ targetId: string; store: StoreModel }> {
+    const access = await this._storeAccess.resolveStoreAccess(user);
+    const requested = storeId?.trim();
+    let targetId = requested;
+    if (!targetId) {
+      const owned =
+        access.find((a) => a.isOwner)?.storeId ?? access[0]?.storeId;
+      targetId = owned;
+    }
+    if (!targetId) {
+      throw new NotFoundException('store_not_found');
+    }
+    const row = access.find((a) => a.storeId === targetId);
+    if (!row) {
+      throw new ForbiddenException('store_not_found');
+    }
+    const store = await this._storeModel.findById(targetId).exec();
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+    if (store.status === StoreStatusEnum.INACTIVE) {
+      throw new ForbiddenException('store_not_editable');
+    }
+    return { targetId, store };
+  }
+
+  async getVendorCommissionStrategy(user: UserModel, storeId?: string) {
+    const { targetId, store } = await this._resolveVendorStoreTarget(
+      user,
+      storeId,
+    );
+    const strategy = normalizeCommissionRetrieveStrategy(
+      store.commissionRetrieveStrategy,
+    );
+    const preview = await this._planOrderCommission.previewUnitCommissionForStore(
+      targetId,
+      100,
+    );
+    const alertKey =
+      strategy === 'add_to_price'
+        ? 'commission_strategy_add_to_price'
+        : 'commission_strategy_on_payout';
+    return {
+      storeId: targetId,
+      strategy,
+      currency: preview.currency,
+      commissionSource: preview.source,
+      samplePreview: preview,
+      alertKey,
+      alerts: {
+        on_payout:
+          'La commission plateforme (barème de votre formule) est retenue lors du versement Connect. Le prix saisi est celui payé par le client.',
+        add_to_price:
+          'La commission plateforme est ajoutée au prix saisi. Le client paie un montant plus élevé ; vous conservez le prix net saisi.',
+      },
+    };
+  }
+
+  async updateVendorCommissionStrategy(
+    user: UserModel,
+    args: PatchVendorCommissionStrategyDto,
+    storeId?: string,
+  ) {
+    const { targetId, store } = await this._resolveVendorStoreTarget(
+      user,
+      storeId,
+    );
+    const previous = normalizeCommissionRetrieveStrategy(
+      store.commissionRetrieveStrategy,
+    );
+    const next = normalizeCommissionRetrieveStrategy(args.strategy);
+    const priceAction = args.priceAction === 'reset' ? 'reset' : 'keep';
+
+    let productsUpdated = 0;
+    let drinksUpdated = 0;
+
+    if (previous !== next && priceAction === 'reset') {
+      const settings =
+        await this._planOrderCommission.resolveOrderCommissionForStore(
+          targetId,
+        );
+      const currency = settings.currency;
+      const config = settings.config;
+
+      const products = await this._productModel
+        .find({ store: store._id })
+        .select('price discountPrice listPrice listDiscountPrice')
+        .exec();
+      for (const product of products) {
+        const price = Number(product.price ?? 0);
+        const discount = Number(product.discountPrice ?? 0);
+        let nextPrice = price;
+        let nextDiscount = discount;
+        if (previous === 'on_payout' && next === 'add_to_price') {
+          nextPrice = reverseCommissionMarkup(price, config, currency);
+          nextDiscount =
+            discount > 0
+              ? reverseCommissionMarkup(discount, config, currency)
+              : 0;
+        } else if (previous === 'add_to_price' && next === 'on_payout') {
+          nextPrice = applyCommissionMarkup(
+            price,
+            config,
+            currency,
+            'add_to_price',
+          );
+          nextDiscount =
+            discount > 0
+              ? applyCommissionMarkup(discount, config, currency, 'add_to_price')
+              : 0;
+        }
+        const $set: Record<string, number> = {
+          price: nextPrice,
+          discountPrice: nextDiscount,
+        };
+        if (product.listPrice != null) {
+          const listPrice = Number(product.listPrice);
+          $set.listPrice =
+            previous === 'on_payout' && next === 'add_to_price'
+              ? reverseCommissionMarkup(listPrice, config, currency)
+              : applyCommissionMarkup(
+                  listPrice,
+                  config,
+                  currency,
+                  'add_to_price',
+                );
+        }
+        if (product.listDiscountPrice != null && Number(product.listDiscountPrice) > 0) {
+          const listDiscount = Number(product.listDiscountPrice);
+          $set.listDiscountPrice =
+            previous === 'on_payout' && next === 'add_to_price'
+              ? reverseCommissionMarkup(listDiscount, config, currency)
+              : applyCommissionMarkup(
+                  listDiscount,
+                  config,
+                  currency,
+                  'add_to_price',
+                );
+        }
+        await this._productModel.updateOne({ _id: product._id }, { $set });
+        productsUpdated += 1;
+      }
+
+      const drinks = await this._drinkModel
+        .find({ store: store._id })
+        .select('priceCad')
+        .exec();
+      for (const drink of drinks) {
+        const priceCad = Number(drink.priceCad ?? 0);
+        const nextCad =
+          previous === 'on_payout' && next === 'add_to_price'
+            ? reverseCommissionMarkup(priceCad, config, currency)
+            : applyCommissionMarkup(priceCad, config, currency, 'add_to_price');
+        await this._drinkModel.updateOne(
+          { _id: drink._id },
+          { $set: { priceCad: nextCad } },
+        );
+        drinksUpdated += 1;
+      }
+    }
+
+    await this._storeModel.updateOne(
+      { _id: store._id },
+      { $set: { commissionRetrieveStrategy: next } },
+    );
+    await this._storeModel.updateOne(
+      { _id: store._id },
+      {
+        $push: {
+          vendorMessages: {
+            message:
+              next === 'add_to_price'
+                ? 'Stratégie commission : ajoutée au prix produit.'
+                : 'Stratégie commission : retenue à la redistribution.',
+            from: 'SYSTEM',
+            createdAt: new Date(),
+          },
+        },
+      },
+    );
+    this._wsInboxNotify.notifyUserInboxRefresh(
+      (user._id as { toString(): string }).toString(),
+    );
+    await this._invalidatePublicCatalogCachesForStore(targetId);
+    return {
+      ...(await this.getVendorCommissionStrategy(user, targetId)),
+      previousStrategy: previous,
+      priceAction,
+      productsUpdated,
+      drinksUpdated,
+    };
+  }
+
+  async previewVendorCommissionUnit(
+    user: UserModel,
+    unitPrice: number,
+    storeId?: string,
+  ) {
+    const { targetId } = await this._resolveVendorStoreTarget(user, storeId);
+    return this._planOrderCommission.previewUnitCommissionForStore(
+      targetId,
+      unitPrice,
+    );
   }
 
   async updateProfileImage(

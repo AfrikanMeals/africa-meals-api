@@ -3,6 +3,7 @@ import { PublicSeoModule } from '@modules/public-seo/public-seo.module';
 import { RatingsModule } from '@modules/ratings/ratings.module';
 import { AuthModule } from '@modules/auth/auth.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
+import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -23,6 +24,7 @@ import { ProductsService } from './products.service';
   imports: [
     AuthModule,
     SupportedCountriesModule,
+    SubscriptionsModule,
     MediasModule,
     PublicSeoModule,
     RatingsModule,

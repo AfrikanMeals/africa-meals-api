@@ -205,6 +205,17 @@ export class ProductModel extends BaseSchema {
   @Prop({ required: true, name: 'price', default: 0 })
   price: number;
 
+  /**
+   * Stratégie commission pour ce plat uniquement.
+   * Absent / null → hérite de la boutique, sinon défaut `on_payout`.
+   */
+  @Prop({
+    required: false,
+    name: 'commission_retrieve_strategy',
+    enum: ['on_payout', 'add_to_price'],
+  })
+  commissionRetrieveStrategy?: 'on_payout' | 'add_to_price' | null;
+
   @Prop({ required: false, name: 'discount_price', default: 0 })
   discountPrice?: number;
 

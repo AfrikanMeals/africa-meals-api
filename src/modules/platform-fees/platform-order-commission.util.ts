@@ -29,6 +29,8 @@ export type CommissionLineItem = {
   unitPrice: number;
   quantity: number;
   lineTotalMinor: number;
+  /** Stratégie effective figée à la commande (sinon repli boutique / défaut). */
+  strategy?: CommissionRetrieveStrategy;
 };
 
 export type OrderCommissionSplitMeta = {
@@ -124,6 +126,247 @@ export function orderCommissionConfigFromRow(
     fallbackMode,
     fallbackFixed,
     fallbackPercent,
+  };
+}
+
+export const COMMISSION_RETRIEVE_STRATEGIES = [
+  'on_payout',
+  'add_to_price',
+] as const;
+
+export type CommissionRetrieveStrategy =
+  (typeof COMMISSION_RETRIEVE_STRATEGIES)[number];
+
+export function normalizeCommissionRetrieveStrategy(
+  raw: unknown,
+): CommissionRetrieveStrategy {
+  return raw === 'add_to_price' ? 'add_to_price' : 'on_payout';
+}
+
+/** `null` = hériter (item → boutique → défaut `on_payout`). */
+export function parseOptionalCommissionStrategy(
+  raw: unknown,
+): CommissionRetrieveStrategy | null {
+  if (raw === 'add_to_price' || raw === 'on_payout') return raw;
+  return null;
+}
+
+/**
+ * Priorité : stratégie item → stratégie boutique → défaut (`on_payout`).
+ */
+export function resolveEffectiveCommissionStrategy(
+  itemStrategy?: CommissionRetrieveStrategy | null,
+  storeStrategy?: CommissionRetrieveStrategy | null,
+): CommissionRetrieveStrategy {
+  if (itemStrategy === 'add_to_price' || itemStrategy === 'on_payout') {
+    return itemStrategy;
+  }
+  if (storeStrategy === 'add_to_price' || storeStrategy === 'on_payout') {
+    return storeStrategy;
+  }
+  return 'on_payout';
+}
+
+export type UnitCommissionBreakdown = {
+  vendorPrice: number;
+  commissionAmount: number;
+  customerPrice: number;
+  feeMode: PlatformFeeMode | 'tiered';
+  feePercent: number;
+  feeFixed: number;
+};
+
+/** Commission unitaire (devise affichage) pour un prix de base vendeur. */
+export function computeUnitCommission(
+  vendorPrice: number,
+  config: OrderCommissionConfig,
+  currency: string,
+): UnitCommissionBreakdown {
+  const price = Math.max(0, Number(vendorPrice) || 0);
+  if (price <= 0) {
+    return {
+      vendorPrice: 0,
+      commissionAmount: 0,
+      customerPrice: 0,
+      feeMode: config.fallbackMode,
+      feePercent: config.fallbackPercent,
+      feeFixed: config.fallbackFixed,
+    };
+  }
+
+  const minor = toStripeMinorUnits(price, currency);
+  const meta = computeOrderCommissionCents({
+    goodsMinor: minor,
+    shipMinor: 0,
+    lineItems: [
+      {
+        unitPrice: price,
+        quantity: 1,
+        lineTotalMinor: minor,
+      },
+    ],
+    config,
+    currency,
+  });
+
+  const commissionAmount = minorToDisplay(meta.platformFeeCents, currency);
+  const tier = findTierForPrice(price, config.tiers);
+  return {
+    vendorPrice: price,
+    commissionAmount,
+    customerPrice: price + commissionAmount,
+    feeMode: meta.feeMode,
+    feePercent: tier?.percent ?? config.fallbackPercent,
+    feeFixed: tier?.fixed ?? config.fallbackFixed,
+  };
+}
+
+/** Prix client à partir du prix saisi vendeur. */
+export function applyCommissionMarkup(
+  vendorPrice: number,
+  config: OrderCommissionConfig,
+  currency: string,
+  strategy: CommissionRetrieveStrategy = 'add_to_price',
+): number {
+  if (strategy !== 'add_to_price') {
+    return Math.max(0, Number(vendorPrice) || 0);
+  }
+  return computeUnitCommission(vendorPrice, config, currency).customerPrice;
+}
+
+/**
+ * Inverse le markup pour retrouver le prix net vendeur à partir du prix client
+ * (utilisé lors du reset de stratégie pour garder le prix client stable).
+ */
+export function reverseCommissionMarkup(
+  customerPrice: number,
+  config: OrderCommissionConfig,
+  currency: string,
+): number {
+  const target = Math.max(0, Number(customerPrice) || 0);
+  if (target <= 0) return 0;
+
+  let lo = 0;
+  let hi = target;
+  for (let i = 0; i < 40; i += 1) {
+    const mid = (lo + hi) / 2;
+    const customer = applyCommissionMarkup(mid, config, currency, 'add_to_price');
+    if (customer > target) {
+      hi = mid;
+    } else {
+      lo = mid;
+    }
+  }
+
+  const factor = stripeAmountFactor(currency);
+  if (factor <= 1) {
+    return Math.round(lo);
+  }
+  return Math.round(lo * factor) / factor;
+}
+
+/** Prix catalogue exposé au client selon la stratégie boutique. */
+export function resolveCustomerUnitPrice(
+  vendorPrice: number,
+  config: OrderCommissionConfig,
+  currency: string,
+  strategy: CommissionRetrieveStrategy,
+): number {
+  return applyCommissionMarkup(vendorPrice, config, currency, strategy);
+}
+
+/** Somme des extras vendeur (priceDelta compléments + prix suppléments). */
+export function sumVendorCustomizationExtras(args: {
+  complements?: Array<{ options?: Array<{ priceDelta?: number }> }>;
+  supplements?: Array<{ price?: number }>;
+}): number {
+  let total = 0;
+  for (const g of args.complements ?? []) {
+    for (const o of g.options ?? []) {
+      const d = Number(o.priceDelta ?? 0);
+      if (Number.isFinite(d) && d > 0) total += d;
+    }
+  }
+  for (const s of args.supplements ?? []) {
+    const p = Number(s.price ?? 0);
+    if (Number.isFinite(p) && p > 0) total += p;
+  }
+  return total;
+}
+
+export type CustomerPriceComponents = {
+  customerBase: number;
+  customerExtras: number[];
+  vendorTotal: number;
+  customerTotal: number;
+  commissionAmount: number;
+};
+
+/**
+ * Prix client pour base + extras (compléments / suppléments).
+ *
+ * - Commission calculée sur le **total ligne** (base + extras) pour le montant global.
+ * - Affichage : base porte les frais fixes ; les extras sont majorés au % uniquement
+ *   (évite d’appliquer N fois un forfait fixe sur chaque option).
+ * - Au panier, préférer `resolveCustomerUnitPrice(base + extras)` pour le total exact.
+ */
+export function applyCommissionMarkupToPriceComponents(
+  vendorBase: number,
+  vendorExtras: number[],
+  config: OrderCommissionConfig,
+  currency: string,
+  strategy: CommissionRetrieveStrategy,
+): CustomerPriceComponents {
+  const base = Math.max(0, Number(vendorBase) || 0);
+  const extras = vendorExtras.map((e) => Math.max(0, Number(e) || 0));
+  const vendorTotal = base + extras.reduce((a, b) => a + b, 0);
+  if (strategy !== 'add_to_price' || vendorTotal <= 0) {
+    return {
+      customerBase: base,
+      customerExtras: extras,
+      vendorTotal,
+      customerTotal: vendorTotal,
+      commissionAmount: 0,
+    };
+  }
+
+  const factor = stripeAmountFactor(currency);
+  const roundMoney = (n: number) =>
+    factor <= 1 ? Math.round(n) : Math.round(n * factor) / factor;
+
+  const lineBreakdown = computeUnitCommission(vendorTotal, config, currency);
+  const customerTotal = lineBreakdown.customerPrice;
+  const commissionAmount = lineBreakdown.commissionAmount;
+
+  const customerBase = applyCommissionMarkup(
+    base,
+    config,
+    currency,
+    'add_to_price',
+  );
+
+  const customerExtras = extras.map((extra) => {
+    if (extra <= 0) return 0;
+    const extraBreakdown = computeUnitCommission(extra, config, currency);
+    // Forfait fixe : ne pas le rejouer sur chaque option (déjà sur la base).
+    if (
+      extraBreakdown.feeMode === 'fixed' ||
+      (extraBreakdown.feeFixed > 0 && extraBreakdown.feePercent <= 0)
+    ) {
+      return extra;
+    }
+    if (extraBreakdown.feePercent > 0) {
+      return roundMoney(extra * (1 + extraBreakdown.feePercent / 100));
+    }
+    return extra;
+  });
+
+  return {
+    customerBase: roundMoney(customerBase),
+    customerExtras: customerExtras.map(roundMoney),
+    vendorTotal,
+    customerTotal: roundMoney(customerTotal),
+    commissionAmount: roundMoney(commissionAmount),
   };
 }
 

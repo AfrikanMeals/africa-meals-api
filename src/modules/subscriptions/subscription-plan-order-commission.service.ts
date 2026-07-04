@@ -7,11 +7,20 @@ import {
   VendorTransferSplit,
 } from '@modules/platform-fees/platform-fees.service';
 import {
+  applyCommissionMarkupToPriceComponents,
   CommissionLineItem,
+  CommissionRetrieveStrategy,
   computeOrderCommissionCents,
+  computeUnitCommission,
+  CustomerPriceComponents,
+  normalizeCommissionRetrieveStrategy,
   orderCommissionConfigFromRow,
   OrderCommissionConfig,
   OrderCommissionSplitMeta,
+  resolveCustomerUnitPrice,
+  reverseCommissionMarkup,
+  sumVendorCustomizationExtras,
+  UnitCommissionBreakdown,
 } from '@modules/platform-fees/platform-order-commission.util';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { Injectable } from '@nestjs/common';
@@ -375,6 +384,152 @@ export class SubscriptionPlanOrderCommissionService {
     };
   }
 
+  async getCommissionRetrieveStrategyForStore(
+    storeId: string,
+  ): Promise<CommissionRetrieveStrategy> {
+    if (!Types.ObjectId.isValid(storeId)) return 'on_payout';
+    const store = await this.storeModel
+      .findById(storeId)
+      .select('commissionRetrieveStrategy')
+      .lean()
+      .exec();
+    return normalizeCommissionRetrieveStrategy(
+      (store as { commissionRetrieveStrategy?: string } | null)
+        ?.commissionRetrieveStrategy,
+    );
+  }
+
+  async previewUnitCommissionForStore(
+    storeId: string,
+    vendorPrice: number,
+  ): Promise<
+    UnitCommissionBreakdown & {
+      strategy: CommissionRetrieveStrategy;
+      currency: string;
+      source: string;
+    }
+  > {
+    const settings = await this.resolveOrderCommissionForStore(storeId);
+    const strategy = await this.getCommissionRetrieveStrategyForStore(storeId);
+    const breakdown = computeUnitCommission(
+      vendorPrice,
+      settings.config,
+      settings.currency,
+    );
+    return {
+      ...breakdown,
+      customerPrice:
+        strategy === 'add_to_price'
+          ? breakdown.customerPrice
+          : breakdown.vendorPrice,
+      strategy,
+      currency: settings.currency,
+      source: settings.source,
+    };
+  }
+
+  async resolveCustomerUnitPriceForStore(
+    storeId: string,
+    vendorPrice: number,
+  ): Promise<number> {
+    const settings = await this.resolveOrderCommissionForStore(storeId);
+    const strategy = await this.getCommissionRetrieveStrategyForStore(storeId);
+    return resolveCustomerUnitPrice(
+      vendorPrice,
+      settings.config,
+      settings.currency,
+      strategy,
+    );
+  }
+
+  /**
+   * Prix client pour une ligne produit : base + compléments (priceDelta) + suppléments.
+   * La commission `add_to_price` s’applique sur le total vendeur de la ligne.
+   */
+  async resolveCustomerLineUnitPriceForStore(
+    storeId: string,
+    vendorBasePrice: number,
+    customization?: {
+      complements?: Array<{ options?: Array<{ priceDelta?: number }> }>;
+      supplements?: Array<{ price?: number }>;
+    },
+  ): Promise<number> {
+    const extras = sumVendorCustomizationExtras(customization ?? {});
+    const vendorTotal = Math.max(0, Number(vendorBasePrice) || 0) + extras;
+    return this.resolveCustomerUnitPriceForStore(storeId, vendorTotal);
+  }
+
+  async applyCustomerPricingToProductComponents(
+    storeId: string,
+    args: {
+      vendorBase: number;
+      complements?: Array<{
+        options?: Array<{ label: string; priceDelta: number; isDefault?: boolean }>;
+        [key: string]: unknown;
+      }>;
+      supplements?: Array<{ name: string; price: number; [key: string]: unknown }>;
+    },
+  ): Promise<{
+    strategy: CommissionRetrieveStrategy;
+    currency: string;
+    components: CustomerPriceComponents;
+    complements: Array<Record<string, unknown>>;
+    supplements: Array<Record<string, unknown>>;
+    customerBase: number;
+  }> {
+    const settings = await this.resolveOrderCommissionForStore(storeId);
+    const strategy = await this.getCommissionRetrieveStrategyForStore(storeId);
+    const complements = args.complements ?? [];
+    const supplements = args.supplements ?? [];
+    const extras: number[] = [];
+    const extraMeta: Array<{ kind: 'complement'; gi: number; oi: number } | { kind: 'supplement'; si: number }> = [];
+
+    complements.forEach((g, gi) => {
+      (g.options ?? []).forEach((o, oi) => {
+        extras.push(Math.max(0, Number(o.priceDelta) || 0));
+        extraMeta.push({ kind: 'complement', gi, oi });
+      });
+    });
+    supplements.forEach((s, si) => {
+      extras.push(Math.max(0, Number(s.price) || 0));
+      extraMeta.push({ kind: 'supplement', si });
+    });
+
+    const components = applyCommissionMarkupToPriceComponents(
+      args.vendorBase,
+      extras,
+      settings.config,
+      settings.currency,
+      strategy,
+    );
+
+    const nextComplements = complements.map((g) => ({
+      ...g,
+      options: (g.options ?? []).map((o) => ({ ...o })),
+    }));
+    const nextSupplements = supplements.map((s) => ({ ...s }));
+
+    extraMeta.forEach((meta, idx) => {
+      const customerExtra = components.customerExtras[idx] ?? 0;
+      if (meta.kind === 'complement') {
+        const opt = nextComplements[meta.gi]?.options?.[meta.oi];
+        if (opt) opt.priceDelta = customerExtra;
+      } else {
+        const row = nextSupplements[meta.si];
+        if (row) row.price = customerExtra;
+      }
+    });
+
+    return {
+      strategy,
+      currency: settings.currency,
+      components,
+      complements: nextComplements,
+      supplements: nextSupplements,
+      customerBase: components.customerBase,
+    };
+  }
+
   async computeVendorTransferSplitForStore(
     storeId: string,
     amounts: {
@@ -384,9 +539,56 @@ export class SubscriptionPlanOrderCommissionService {
     },
   ): Promise<VendorTransferSplit> {
     const settings = await this.resolveOrderCommissionForStore(storeId);
+    const strategy = await this.getCommissionRetrieveStrategyForStore(storeId);
+    const goodsCents = Math.max(0, Math.round(amounts.goodsCents));
+    const shipCents = Math.max(0, Math.round(amounts.shipCents));
+
+    if (
+      strategy === 'add_to_price' &&
+      amounts.lineItems &&
+      amounts.lineItems.length > 0
+    ) {
+      let vendorGoodsMinor = 0;
+      const factor = stripeAmountFactor(settings.currency);
+      for (const line of amounts.lineItems) {
+        const qty = Math.max(0, Math.round(line.quantity));
+        const lineMinor = Math.max(0, Math.round(line.lineTotalMinor));
+        if (qty < 1 || lineMinor < 1) continue;
+        const customerUnitDisplay =
+          line.unitPrice > 0
+            ? line.unitPrice
+            : factor > 1
+              ? lineMinor / qty / factor
+              : lineMinor / qty;
+        const vendorUnit = reverseCommissionMarkup(
+          customerUnitDisplay,
+          settings.config,
+          settings.currency,
+        );
+        vendorGoodsMinor +=
+          toStripeMinorUnits(vendorUnit, settings.currency) * qty;
+      }
+      vendorGoodsMinor = Math.max(0, Math.min(vendorGoodsMinor, goodsCents));
+      const goodsFee = Math.max(0, goodsCents - vendorGoodsMinor);
+      const shipSplit = this.computeVendorCommissionSplit(settings, {
+        goodsCents: 0,
+        shipCents,
+      });
+      const platformFeeCents = goodsFee + shipSplit.platformFeeCents;
+      const gross = goodsCents + shipCents;
+      return {
+        grossCents: gross,
+        platformFeeCents: Math.min(platformFeeCents, gross),
+        transferCents: Math.max(0, gross - Math.min(platformFeeCents, gross)),
+        feeMode: 'percent',
+        feePercent: settings.config.fallbackPercent,
+        feeFixedCad: settings.config.fallbackFixed,
+      };
+    }
+
     return this.computeVendorCommissionSplit(settings, {
-      goodsCents: Math.max(0, Math.round(amounts.goodsCents)),
-      shipCents: Math.max(0, Math.round(amounts.shipCents)),
+      goodsCents,
+      shipCents,
       lineItems: amounts.lineItems,
     });
   }

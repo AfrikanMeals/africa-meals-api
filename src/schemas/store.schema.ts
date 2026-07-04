@@ -345,6 +345,19 @@ export class StoreModel extends BaseSchema {
     default: PartnerBadgeCode.SILVER,
   })
   partnerBadgeCode?: string;
+
+  /**
+   * Comment la commission plateforme (barème plan / région) est récupérée :
+   * - `on_payout` : prix catalogue = prix client ; commission retenue au transfer Connect
+   * - `add_to_price` : prix catalogue saisi = net vendeur ; prix client = net + commission
+   */
+  @Prop({
+    required: false,
+    name: 'commission_retrieve_strategy',
+    enum: ['on_payout', 'add_to_price'],
+    default: 'on_payout',
+  })
+  commissionRetrieveStrategy?: 'on_payout' | 'add_to_price';
 }
 
 export const StoreSchema = SchemaFactory.createForClass(StoreModel);

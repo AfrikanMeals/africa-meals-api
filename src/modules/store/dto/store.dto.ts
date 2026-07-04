@@ -261,6 +261,35 @@ export class CreateStoreDto {
   workingHours?: StoreWorkingHoursDto;
 }
 
+export enum CommissionRetrieveStrategyDto {
+  ON_PAYOUT = 'on_payout',
+  ADD_TO_PRICE = 'add_to_price',
+}
+
+export enum CommissionPriceActionDto {
+  KEEP = 'keep',
+  RESET = 'reset',
+}
+
+/** Stratégie de récupération de la commission plateforme (barème plan). */
+export class PatchVendorCommissionStrategyDto {
+  @ApiProperty({
+    enum: CommissionRetrieveStrategyDto,
+    description:
+      'on_payout = commission au transfer ; add_to_price = commission ajoutée au prix client',
+  })
+  @IsEnum(CommissionRetrieveStrategyDto)
+  strategy: CommissionRetrieveStrategyDto;
+
+  @ApiProperty({
+    enum: CommissionPriceActionDto,
+    description:
+      'keep = conserver les prix saisis ; reset = recalculer pour garder le prix client stable',
+  })
+  @IsEnum(CommissionPriceActionDto)
+  priceAction: CommissionPriceActionDto;
+}
+
 /** Horaires d’ouverture et fuseau horaire (tous statuts sauf INACTIVE). */
 export class PatchVendorWorkingHoursDto {
   @ApiPropertyOptional({

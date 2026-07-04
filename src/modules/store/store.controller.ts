@@ -21,6 +21,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UploadedFile,
@@ -77,6 +78,7 @@ import {
 import {
   CreateStoreDto,
   PatchDailyMenuDto,
+  PatchVendorCommissionStrategyDto,
   PatchVendorShippingZonesDto,
   PatchVendorWorkingHoursDto,
   StoreProfileImageJsonDto,
@@ -1134,6 +1136,49 @@ export class StoreController {
     return this._storeService.updateVendorWorkingHours(
       req.user as UserModel,
       body,
+      storeId,
+    );
+  }
+
+  /** Stratégie de récupération de la commission (barème formule / région). */
+  @Get('vendor/commission-strategy')
+  @UseGuards(JwtGuard)
+  async getVendorCommissionStrategy(
+    @Req() req: Request,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this._storeService.getVendorCommissionStrategy(
+      req.user as UserModel,
+      storeId,
+    );
+  }
+
+  @Put('vendor/commission-strategy')
+  @UseGuards(JwtGuard)
+  async putVendorCommissionStrategy(
+    @Req() req: Request,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: PatchVendorCommissionStrategyDto,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this._storeService.updateVendorCommissionStrategy(
+      req.user as UserModel,
+      body,
+      storeId,
+    );
+  }
+
+  @Get('vendor/commission-preview')
+  @UseGuards(JwtGuard)
+  async getVendorCommissionPreview(
+    @Req() req: Request,
+    @Query('unitPrice') unitPriceRaw?: string,
+    @Query('storeId') storeId?: string,
+  ) {
+    const unitPrice = Math.max(0, Number(unitPriceRaw ?? 0));
+    return this._storeService.previewVendorCommissionUnit(
+      req.user as UserModel,
+      unitPrice,
       storeId,
     );
   }

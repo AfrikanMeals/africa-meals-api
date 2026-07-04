@@ -54,6 +54,17 @@ export class CartItemModel extends BaseSchema {
   @Prop({ required: true, name: 'price' })
   price: number;
 
+  /**
+   * Stratégie commission effective au moment de l’ajout au panier
+   * (item → boutique → on_payout), figée pour le checkout / transfer.
+   */
+  @Prop({
+    required: false,
+    name: 'commission_retrieve_strategy',
+    enum: ['on_payout', 'add_to_price'],
+  })
+  commissionRetrieveStrategy?: 'on_payout' | 'add_to_price';
+
   /** Empêche de fusionner deux lignes même produit avec personnalisations différentes. */
   @Prop({ required: false, name: 'customization_key', default: '' })
   customizationKey?: string;

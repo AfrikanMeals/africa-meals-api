@@ -131,6 +131,17 @@ export class OrdeLineItem {
   @Prop({ required: true, name: 'price' })
   price: number;
 
+  /**
+   * Stratégie commission effective figée à la commande
+   * (priorité item → boutique → on_payout).
+   */
+  @Prop({
+    required: false,
+    name: 'commission_retrieve_strategy',
+    enum: ['on_payout', 'add_to_price'],
+  })
+  commissionRetrieveStrategy?: 'on_payout' | 'add_to_price';
+
   @Prop({ required: true, name: 'quantity' })
   quantity: number;
 

@@ -4,6 +4,7 @@ import { SupportedCountriesModule } from '@modules/supported-countries/supported
 import { DrinksModule } from '@modules/drinks/drinks.module';
 import { OffersModule } from '@modules/offers/offers.module';
 import { ProductsModule } from '@modules/products/products.module';
+import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { CartItemModel, CartItemSchema } from '@schemas/cart_item.schema';
@@ -29,6 +30,7 @@ import { CartService } from './cart.service';
     CouponsModule,
     GiftCodesModule,
     SupportedCountriesModule,
+    SubscriptionsModule,
     MongooseModule.forFeature([
       { name: CartItemModel.name, schema: CartItemSchema },
       { name: CartMarketingStrategyModel.name, schema: CartMarketingStrategySchema },

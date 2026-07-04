@@ -18,6 +18,7 @@ import { CreateRatingDto } from '@modules/ratings/dto/ratings.dto';
 import { isDemoProductRaterEmail } from '@modules/ratings/demo-product-rating-users';
 import { RatingsService } from '@modules/ratings/ratings.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
+import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
 import { resolveEffectiveTimezone } from '@modules/supported-countries/region-timezone.util';
 import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
 import {
@@ -75,6 +76,9 @@ export class ProductsService {
 
   @Inject(SitemapDispatchService)
   private readonly _sitemapDispatch: SitemapDispatchService;
+
+  @Inject(SubscriptionPlanOrderCommissionService)
+  private readonly _planOrderCommission: SubscriptionPlanOrderCommissionService;
 
   @Inject(SupportedCountriesService)
   private readonly _supportedCountries: SupportedCountriesService;
@@ -540,28 +544,134 @@ export class ProductsService {
         ? await this.resolveProductDailyMenuTimezone(storeLean)
         : undefined,
     );
+    const pricing = this.effectivePriceFromVariants(
+      Number(obj.price ?? 0),
+      Number(obj.discountPrice ?? obj.discount_price ?? 0),
+      obj.variants,
+    );
+    let price = pricing.price;
+    let discountPrice = pricing.discountPrice;
+    let listPrice = this._discountSchedules.resolveListPrice(
+      obj as unknown as ProductModel,
+    );
+    let listDiscountPrice = this._discountSchedules.resolveListDiscountPrice(
+      obj as unknown as ProductModel,
+    );
+    let complements = this.normalizeComplements(obj.complements);
+    let supplements = this.normalizeSupplements(obj.supplements);
+    const variants = this.normalizeVariants(obj.variants);
+    if (storeId && Types.ObjectId.isValid(storeId)) {
+      // Commission sur (base + options) au panier ; ici on expose les prix client
+      // avec répartition cohérente (base + chaque complément / supplément).
+      const priced =
+        await this._planOrderCommission.applyCustomerPricingToProductComponents(
+          storeId,
+          {
+            vendorBase: price,
+            complements,
+            supplements,
+          },
+        );
+      if (priced.strategy === 'add_to_price') {
+        price = priced.customerBase;
+        complements = priced.complements as typeof complements;
+        supplements = priced.supplements as typeof supplements;
+      } else {
+        price = await this._planOrderCommission.resolveCustomerUnitPriceForStore(
+          storeId,
+          price,
+        );
+      }
+
+      if (discountPrice > 0) {
+        const discPriced =
+          await this._planOrderCommission.applyCustomerPricingToProductComponents(
+            storeId,
+            {
+              vendorBase: discountPrice,
+              complements: this.normalizeComplements(obj.complements),
+              supplements: this.normalizeSupplements(obj.supplements),
+            },
+          );
+        discountPrice =
+          discPriced.strategy === 'add_to_price'
+            ? discPriced.customerBase
+            : await this._planOrderCommission.resolveCustomerUnitPriceForStore(
+                storeId,
+                discountPrice,
+              );
+      }
+
+      listPrice =
+        await this._planOrderCommission.resolveCustomerUnitPriceForStore(
+          storeId,
+          listPrice,
+        );
+      if (listDiscountPrice > 0) {
+        listDiscountPrice =
+          await this._planOrderCommission.resolveCustomerUnitPriceForStore(
+            storeId,
+            listDiscountPrice,
+          );
+      }
+
+      for (const v of variants) {
+        const vp =
+          await this._planOrderCommission.applyCustomerPricingToProductComponents(
+            storeId,
+            {
+              vendorBase: v.price,
+              complements: this.normalizeComplements(obj.complements),
+              supplements: this.normalizeSupplements(obj.supplements),
+            },
+          );
+        if (vp.strategy === 'add_to_price') {
+          v.price = vp.customerBase;
+        } else {
+          v.price =
+            await this._planOrderCommission.resolveCustomerUnitPriceForStore(
+              storeId,
+              v.price,
+            );
+        }
+        if (v.discountPrice > 0) {
+          const vd =
+            await this._planOrderCommission.applyCustomerPricingToProductComponents(
+              storeId,
+              {
+                vendorBase: v.discountPrice,
+                complements: this.normalizeComplements(obj.complements),
+                supplements: this.normalizeSupplements(obj.supplements),
+              },
+            );
+          v.discountPrice =
+            vd.strategy === 'add_to_price'
+              ? vd.customerBase
+              : await this._planOrderCommission.resolveCustomerUnitPriceForStore(
+                  storeId,
+                  v.discountPrice,
+                );
+        }
+      }
+    }
     return {
       ...obj,
       id: String(doc._id),
       dailyMenuToday,
       ...this.cookingTimeForResponse(obj),
-      complements: this.normalizeComplements(obj.complements),
-      supplements: this.normalizeSupplements(obj.supplements),
-      variants: this.normalizeVariants(obj.variants),
+      complements,
+      supplements,
+      variants,
       variantsLabel: String(obj.variantsLabel ?? obj.variants_label ?? ''),
-      usesVariants: this.normalizeVariants(obj.variants).length > 0,
-      ...this.effectivePriceFromVariants(
-        Number(obj.price ?? 0),
-        Number(obj.discountPrice ?? obj.discount_price ?? 0),
-        obj.variants,
-      ),
+      usesVariants: variants.length > 0,
+      ...pricing,
+      price,
+      discountPrice,
+      basePrice: pricing.basePrice,
+      baseDiscountPrice: pricing.baseDiscountPrice,
       fieldsets: this.normalizeFieldsets(obj.fieldsets),
-      listPrice: this._discountSchedules.resolveListPrice(
-        obj as unknown as ProductModel,
-      ),
-      listDiscountPrice: this._discountSchedules.resolveListDiscountPrice(
-        obj as unknown as ProductModel,
-      ),
+      listPrice,
+      listDiscountPrice,
       discountSchedules: this._discountSchedules.schedulesForResponse(
         obj.discountSchedules ?? obj.discount_schedules,
       ),
@@ -876,6 +986,50 @@ export class ProductsService {
       : raw;
   }
 
+  private async attachVendorCommissionPricing(
+    storeId: string,
+    row: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const vendorPrice = Number(row.price ?? 0);
+    const vendorDiscount = Number(row.discountPrice ?? 0);
+    try {
+      const preview =
+        await this._planOrderCommission.previewUnitCommissionForStore(
+          storeId,
+          vendorPrice,
+        );
+      const discountPreview =
+        vendorDiscount > 0
+          ? await this._planOrderCommission.previewUnitCommissionForStore(
+              storeId,
+              vendorDiscount,
+            )
+          : null;
+      return {
+        ...row,
+        vendorPrice,
+        vendorDiscountPrice: vendorDiscount,
+        commissionAmount: preview.commissionAmount,
+        customerPrice: preview.customerPrice,
+        customerDiscountPrice: discountPreview?.customerPrice ?? 0,
+        commissionRetrieveStrategy: preview.strategy,
+        commissionFeeMode: preview.feeMode,
+        commissionFeePercent: preview.feePercent,
+        commissionFeeFixed: preview.feeFixed,
+      };
+    } catch {
+      return {
+        ...row,
+        vendorPrice,
+        vendorDiscountPrice: vendorDiscount,
+        commissionAmount: 0,
+        customerPrice: vendorPrice,
+        customerDiscountPrice: vendorDiscount,
+        commissionRetrieveStrategy: 'on_payout',
+      };
+    }
+  }
+
   private mapVendorProductRow(
     p: Record<string, unknown>,
     forcedCurrency?: string,
@@ -1052,19 +1206,25 @@ export class ProductsService {
       row,
       String(store?.currency ?? 'CAD'),
     );
+    const withCommission = await this.attachVendorCommissionPricing(
+      storeId,
+      mapped as Record<string, unknown>,
+    );
     const main =
-      typeof mapped.profileImage === 'string' &&
-      (mapped.profileImage.startsWith('http://') ||
-        mapped.profileImage.startsWith('https://'))
-        ? mapped.profileImage
+      typeof withCommission.profileImage === 'string' &&
+      (withCommission.profileImage.startsWith('http://') ||
+        withCommission.profileImage.startsWith('https://'))
+        ? withCommission.profileImage
         : undefined;
-    const gallery = (mapped.profileImages ?? []).filter(
+    const gallery = (
+      (withCommission.profileImages as string[] | undefined) ?? []
+    ).filter(
       (u) =>
         typeof u === 'string' &&
         (u.startsWith('http://') || u.startsWith('https://')),
     );
     return this.resolveVendorProductMediaUrls({
-      ...mapped,
+      ...withCommission,
       profileImage: main,
       profileImages: gallery,
       imageStoredInDb: false,
@@ -1105,8 +1265,17 @@ export class ProductsService {
       .lean()
       .exec();
     const storeCurrency = String(store?.currency ?? 'CAD');
-    const mapped = rows.map((p) =>
-      this.mapVendorProductRow(p as Record<string, unknown>, storeCurrency),
+    const mapped = await Promise.all(
+      rows.map(async (p) => {
+        const row = this.mapVendorProductRow(
+          p as Record<string, unknown>,
+          storeCurrency,
+        );
+        return this.attachVendorCommissionPricing(
+          storeId,
+          row as Record<string, unknown>,
+        );
+      }),
     );
     return Promise.all(
       mapped.map((row) => this.resolveVendorProductMediaUrls(row)),

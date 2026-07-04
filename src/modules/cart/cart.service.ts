@@ -9,6 +9,7 @@ import {
 } from '@modules/drinks/drinks.service';
 import { OffersService } from '@modules/offers/offers.service';
 import { ProductsService } from '@modules/products/products.service';
+import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
 import {
   BadRequestException,
   Inject,
@@ -31,6 +32,8 @@ import {
   customizationKeyFromSelections,
   normalizeSelectedComplements,
   normalizeSelectedSupplements,
+  repriceCustomizationFromProductCatalog,
+  sumSelectedCustomizationVendorExtras,
 } from './cart-customization.util';
 import {
   AddItemToCartDto,
@@ -133,6 +136,9 @@ export class CartService {
 
   @Inject(ProductsService)
   private readonly _productsService: ProductsService;
+
+  @Inject(SubscriptionPlanOrderCommissionService)
+  private readonly _planOrderCommission: SubscriptionPlanOrderCommissionService;
 
   @Inject(OffersService)
   private readonly _offersService: OffersService;
@@ -475,6 +481,8 @@ export class CartService {
       customization.customizationKey,
     );
 
+    const storeId = String(store.id ?? (store as { _id?: unknown })._id ?? '');
+
     if (args.type === CartItemTypeEnum.DRINK) {
       const drink = await this._drinksService.findOneInStoreCatalog(
         store.id,
@@ -489,6 +497,80 @@ export class CartService {
       if (newTotalQty > maxOrder) {
         throw new BadRequestException('drink_quantity_limit_exceeded');
       }
+      if (storeId) {
+        priceForLine =
+          await this._planOrderCommission.resolveCustomerUnitPriceForStore(
+            storeId,
+            Number(priceForLine),
+          );
+      }
+    } else if (args.type === CartItemTypeEnum.PRODUCT) {
+      const product = await this._productsService.findOneById(args.itemId);
+      if (!product) {
+        throw new NotFoundException('product_not_found');
+      }
+      const productObj = (
+        typeof (product as { toObject?: () => unknown }).toObject === 'function'
+          ? (product as { toObject: () => Record<string, unknown> }).toObject()
+          : (product as Record<string, unknown>)
+      ) as Record<string, unknown>;
+
+      let vendorBase = Number(productObj.price ?? args.price ?? 0);
+      const variantLabel = customization.selectedVariantLabel;
+      const variants = Array.isArray(productObj.variants)
+        ? productObj.variants
+        : [];
+      if (variantLabel && variants.length) {
+        const match = variants.find((v) => {
+          const row = (v ?? {}) as Record<string, unknown>;
+          return (
+            String(row.label ?? row.name ?? '').trim() === variantLabel
+          );
+        }) as Record<string, unknown> | undefined;
+        if (match) {
+          const vp = Number(match.price ?? 0);
+          const vd = Number(match.discountPrice ?? match.discount_price ?? 0);
+          vendorBase = vd > 0 && vd < vp ? vd : vp;
+        }
+      } else {
+        const disc = Number(
+          productObj.discountPrice ?? productObj.discount_price ?? 0,
+        );
+        if (disc > 0 && disc < vendorBase) vendorBase = disc;
+      }
+
+      const repriced = repriceCustomizationFromProductCatalog(
+        {
+          complements: productObj.complements,
+          supplements: productObj.supplements,
+        },
+        customization.selectedComplements,
+        customization.selectedSupplements,
+      );
+      customization.selectedComplements = repriced.complements;
+      customization.selectedSupplements = repriced.supplements;
+
+      const extras = sumSelectedCustomizationVendorExtras(
+        repriced.complements,
+        repriced.supplements,
+      );
+      const vendorLine = Math.max(0, vendorBase) + extras;
+      priceForLine = storeId
+        ? await this._planOrderCommission.resolveCustomerLineUnitPriceForStore(
+            storeId,
+            vendorBase,
+            {
+              complements: repriced.complements,
+              supplements: repriced.supplements,
+            },
+          )
+        : vendorLine;
+    } else if (storeId && Number(priceForLine ?? 0) > 0) {
+      priceForLine =
+        await this._planOrderCommission.resolveCustomerUnitPriceForStore(
+          storeId,
+          Number(priceForLine),
+        );
     }
 
     if (item) {

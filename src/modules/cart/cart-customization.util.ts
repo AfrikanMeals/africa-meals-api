@@ -90,6 +90,104 @@ export function customizationKeyFromSelections(
     .slice(0, 32);
 }
 
+/** Total vendeur des options sélectionnées (priceDelta + prix suppléments). */
+export function sumSelectedCustomizationVendorExtras(
+  complements: NormalizedLineComplementGroup[],
+  supplements: NormalizedLineSupplement[],
+): number {
+  let total = 0;
+  for (const g of complements) {
+    for (const o of g.options) {
+      const d = Number(o.priceDelta ?? 0);
+      if (Number.isFinite(d) && d > 0) total += d;
+    }
+  }
+  for (const s of supplements) {
+    const p = Number(s.price ?? 0);
+    if (Number.isFinite(p) && p > 0) total += p;
+  }
+  return total;
+}
+
+/**
+ * Recalcule les priceDelta / prix depuis la fiche produit (source de vérité),
+ * y compris `firstOptionFree` sur les groupes de compléments.
+ */
+export function repriceCustomizationFromProductCatalog(
+  product: {
+    complements?: unknown;
+    supplements?: unknown;
+  },
+  selectedComplements: NormalizedLineComplementGroup[],
+  selectedSupplements: NormalizedLineSupplement[],
+): {
+  complements: NormalizedLineComplementGroup[];
+  supplements: NormalizedLineSupplement[];
+} {
+  const catalogGroups = Array.isArray(product.complements)
+    ? product.complements
+    : [];
+  const catalogSupplements = Array.isArray(product.supplements)
+    ? product.supplements
+    : [];
+
+  const complements: NormalizedLineComplementGroup[] = selectedComplements.map(
+    (g) => {
+      const catalog = catalogGroups.find((cg) => {
+        const row = (cg ?? {}) as Record<string, unknown>;
+        return (
+          String(row.title ?? '').trim().toLowerCase() ===
+          g.groupTitle.trim().toLowerCase()
+        );
+      }) as Record<string, unknown> | undefined;
+      const firstOptionFree = Boolean(
+        catalog?.firstOptionFree ?? catalog?.first_option_free ?? false,
+      );
+      const catalogOptions = Array.isArray(catalog?.options)
+        ? catalog.options
+        : [];
+      const options = g.options.map((o) => {
+        const catOptIndex = catalogOptions.findIndex((co) => {
+          const row = (co ?? {}) as Record<string, unknown>;
+          return (
+            String(row.label ?? '').trim().toLowerCase() ===
+            o.label.trim().toLowerCase()
+          );
+        });
+        const catOpt =
+          catOptIndex >= 0
+            ? (catalogOptions[catOptIndex] as Record<string, unknown>)
+            : undefined;
+        let priceDelta = Number(
+          catOpt?.priceDelta ?? catOpt?.price_delta ?? o.priceDelta ?? 0,
+        );
+        if (!Number.isFinite(priceDelta) || priceDelta < 0) priceDelta = 0;
+        // Première option du groupe catalogue offerte.
+        if (firstOptionFree && catOptIndex === 0) priceDelta = 0;
+        return { label: o.label, priceDelta };
+      });
+      return { groupTitle: g.groupTitle, options };
+    },
+  );
+
+  const supplements: NormalizedLineSupplement[] = selectedSupplements.map(
+    (s) => {
+      const cat = catalogSupplements.find((cs) => {
+        const row = (cs ?? {}) as Record<string, unknown>;
+        return (
+          String(row.name ?? '').trim().toLowerCase() ===
+          s.name.trim().toLowerCase()
+        );
+      }) as Record<string, unknown> | undefined;
+      let price = Number(cat?.price ?? s.price ?? 0);
+      if (!Number.isFinite(price) || price < 0) price = 0;
+      return { name: s.name, price };
+    },
+  );
+
+  return { complements, supplements };
+}
+
 export function customizationSummaryLabel(
   complements: NormalizedLineComplementGroup[],
   supplements: NormalizedLineSupplement[],

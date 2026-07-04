@@ -32,6 +32,17 @@ export class DrinkModel extends BaseSchema {
   @Prop({ required: true, default: 0, name: 'price_cad', min: 0 })
   priceCad: number;
 
+  /**
+   * Stratégie commission pour cette boisson uniquement.
+   * Absent / null → hérite de la boutique, sinon défaut `on_payout`.
+   */
+  @Prop({
+    required: false,
+    name: 'commission_retrieve_strategy',
+    enum: ['on_payout', 'add_to_price'],
+  })
+  commissionRetrieveStrategy?: 'on_payout' | 'add_to_price' | null;
+
   @Prop({
     required: true,
     enum: DrinkStatutEnum,
