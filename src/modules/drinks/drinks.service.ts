@@ -859,6 +859,7 @@ export class DrinksService {
     found.seuil = seuil;
     found.priceCad = priceCad;
     found.statut = statut;
+    let unsetCommissionStrategy = false;
     if (dto.commissionRetrieveStrategy !== undefined) {
       if (
         dto.commissionRetrieveStrategy === 'add_to_price' ||
@@ -866,12 +867,7 @@ export class DrinksService {
       ) {
         found.commissionRetrieveStrategy = dto.commissionRetrieveStrategy;
       } else {
-        found.set('commissionRetrieveStrategy', undefined);
-        found.markModified('commissionRetrieveStrategy');
-        await this._drinkModel.updateOne(
-          { _id: found._id },
-          { $unset: { commission_retrieve_strategy: 1 } },
-        );
+        unsetCommissionStrategy = true;
       }
     }
 
@@ -899,6 +895,12 @@ export class DrinksService {
     }
 
     await found.save();
+    if (unsetCommissionStrategy) {
+      await this._drinkModel.updateOne(
+        { _id: found._id },
+        { $unset: { commission_retrieve_strategy: 1 } },
+      );
+    }
     const populated = await this._drinkModel
       .findById(found._id)
       .populate('category', 'title kind isEnabled')

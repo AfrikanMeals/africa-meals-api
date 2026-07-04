@@ -1737,6 +1737,7 @@ export class ProductsService {
         doc.listPrice = price;
       }
     }
+    let unsetCommissionStrategy = false;
     if (args.commissionRetrieveStrategy !== undefined) {
       if (
         args.commissionRetrieveStrategy === 'add_to_price' ||
@@ -1744,12 +1745,7 @@ export class ProductsService {
       ) {
         doc.commissionRetrieveStrategy = args.commissionRetrieveStrategy;
       } else {
-        doc.set('commissionRetrieveStrategy', undefined);
-        doc.markModified('commissionRetrieveStrategy');
-        await this._productModel.updateOne(
-          { _id: doc._id },
-          { $unset: { commission_retrieve_strategy: 1 } },
-        );
+        unsetCommissionStrategy = true;
       }
     }
     if (args.discountPrice !== undefined) {
@@ -1807,6 +1803,12 @@ export class ProductsService {
 
     this._discountSchedules.applyToDocument(doc);
     await doc.save();
+    if (unsetCommissionStrategy) {
+      await this._productModel.updateOne(
+        { _id: doc._id },
+        { $unset: { commission_retrieve_strategy: 1 } },
+      );
+    }
     await this._bustShopProductCaches(productId, storeId);
     if (
       doc.status === ProductStatusEnum.ACTIVE &&
