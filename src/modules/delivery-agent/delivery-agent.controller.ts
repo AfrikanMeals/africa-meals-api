@@ -132,6 +132,19 @@ export class DeliveryAgentController {
     );
   }
 
+  @Post('orders/:orderId/abandon')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Le livreur abandonne une course en cours (retrait assignation, notification vendeur, pas de gain).',
+  })
+  abandonOrderDelivery(@Req() req: Request, @Param('orderId') orderId: string) {
+    return this._deliveryAgent.abandonOrderDelivery(
+      req.user as UserModel,
+      orderId,
+    );
+  }
+
   @Post('orders/preview-handoff-code')
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))

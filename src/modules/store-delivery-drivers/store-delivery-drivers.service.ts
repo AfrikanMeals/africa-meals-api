@@ -223,16 +223,24 @@ export class StoreDeliveryDriversService {
         today: number;
         revenueTotal: number;
         revenueToday: number;
+        abandonsTotal: number;
+        abandonsToday: number;
+        vendorUnassignsTotal: number;
+        vendorUnassignsToday: number;
       }
     >();
     await Promise.all(
       storeIds.map(async (sid) => {
-        const stats = await this._aggregateDriverStats(sid, [userOid]);
+        const stats = await this._aggregateDriverPerformanceStats(sid, [userOid]);
         statsByStore.set(sid, stats.get(userId) ?? {
           total: 0,
           today: 0,
           revenueTotal: 0,
           revenueToday: 0,
+          abandonsTotal: 0,
+          abandonsToday: 0,
+          vendorUnassignsTotal: 0,
+          vendorUnassignsToday: 0,
         });
       }),
     );
@@ -248,6 +256,10 @@ export class StoreDeliveryDriversService {
         today: 0,
         revenueTotal: 0,
         revenueToday: 0,
+        abandonsTotal: 0,
+        abandonsToday: 0,
+        vendorUnassignsTotal: 0,
+        vendorUnassignsToday: 0,
       };
       items.push({
         membershipId: String(doc._id),
@@ -269,6 +281,10 @@ export class StoreDeliveryDriversService {
         ordersDeliveredToday: stats.today,
         deliveryRevenueTotal: stats.revenueTotal,
         deliveryRevenueToday: stats.revenueToday,
+        courierAbandonsTotal: stats.abandonsTotal,
+        courierAbandonsToday: stats.abandonsToday,
+        vendorUnassignsTotal: stats.vendorUnassignsTotal,
+        vendorUnassignsToday: stats.vendorUnassignsToday,
       });
     }
 
@@ -304,7 +320,7 @@ export class StoreDeliveryDriversService {
         : [];
     const userMap = new Map(users.map((u) => [String(u._id), u]));
 
-    const statsByUser = await this._aggregateDriverStats(sid, userIds);
+    const statsByUser = await this._aggregateDriverPerformanceStats(sid, userIds);
 
     const items: StoreDeliveryDriverRowDto[] = memberships.map((m) => {
       const doc = m as Record<string, unknown>;
@@ -328,6 +344,10 @@ export class StoreDeliveryDriversService {
         ordersDeliveredToday: stats?.today ?? 0,
         deliveryRevenueTotal: stats?.revenueTotal ?? 0,
         deliveryRevenueToday: stats?.revenueToday ?? 0,
+        courierAbandonsTotal: stats?.abandonsTotal ?? 0,
+        courierAbandonsToday: stats?.abandonsToday ?? 0,
+        vendorUnassignsTotal: stats?.vendorUnassignsTotal ?? 0,
+        vendorUnassignsToday: stats?.vendorUnassignsToday ?? 0,
       };
     });
 
@@ -341,6 +361,201 @@ export class StoreDeliveryDriversService {
     };
   }
 
+  private async _aggregateDriverPerformanceStats(
+    storeId: string,
+    userIds: Types.ObjectId[],
+  ): Promise<
+    Map<
+      string,
+      {
+        total: number;
+        today: number;
+        revenueTotal: number;
+        revenueToday: number;
+        abandonsTotal: number;
+        abandonsToday: number;
+        vendorUnassignsTotal: number;
+        vendorUnassignsToday: number;
+      }
+    >
+  > {
+    const out = new Map<
+      string,
+      {
+        total: number;
+        today: number;
+        revenueTotal: number;
+        revenueToday: number;
+        abandonsTotal: number;
+        abandonsToday: number;
+        vendorUnassignsTotal: number;
+        vendorUnassignsToday: number;
+      }
+    >();
+    if (!userIds.length) return out;
+
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const storeOid = new Types.ObjectId(storeId);
+
+    const [deliveredRows, abandonRows, vendorUnassignRows] = await Promise.all([
+      this._orderModel
+        .aggregate([
+          {
+            $match: {
+              store: storeOid,
+              shouldShip: true,
+              assignedDeliveryUser: { $in: userIds },
+              status: { $in: DELIVERED_STATUSES },
+            },
+          },
+          {
+            $group: {
+              _id: '$assignedDeliveryUser',
+              total: { $sum: 1 },
+              revenueTotal: { $sum: { $ifNull: ['$shippingPrice', 0] } },
+              today: {
+                $sum: {
+                  $cond: [{ $gte: ['$updatedAt', startOfDay] }, 1, 0],
+                },
+              },
+              revenueToday: {
+                $sum: {
+                  $cond: [
+                    { $gte: ['$updatedAt', startOfDay] },
+                    { $ifNull: ['$shipping_price', 0] },
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+        ])
+        .exec(),
+      this._orderModel
+        .aggregate([
+          {
+            $match: {
+              store: storeOid,
+              shouldShip: true,
+              deliveryUnassignedFromUser: { $in: userIds },
+              deliveryUnassignReason: 'courier_abandon',
+            },
+          },
+          {
+            $group: {
+              _id: '$deliveryUnassignedFromUser',
+              abandonsTotal: { $sum: 1 },
+              abandonsToday: {
+                $sum: {
+                  $cond: [{ $gte: ['$deliveryUnassignedAt', startOfDay] }, 1, 0],
+                },
+              },
+            },
+          },
+        ])
+        .exec(),
+      this._orderModel
+        .aggregate([
+          {
+            $match: {
+              store: storeOid,
+              shouldShip: true,
+              deliveryUnassignedFromUser: { $in: userIds },
+              deliveryUnassignReason: { $in: ['vendor_unassign', 'admin_unassign'] },
+            },
+          },
+          {
+            $group: {
+              _id: '$deliveryUnassignedFromUser',
+              vendorUnassignsTotal: { $sum: 1 },
+              vendorUnassignsToday: {
+                $sum: {
+                  $cond: [{ $gte: ['$deliveryUnassignedAt', startOfDay] }, 1, 0],
+                },
+              },
+            },
+          },
+        ])
+        .exec(),
+    ]);
+
+    for (const uid of userIds) {
+      out.set(String(uid), {
+        total: 0,
+        today: 0,
+        revenueTotal: 0,
+        revenueToday: 0,
+        abandonsTotal: 0,
+        abandonsToday: 0,
+        vendorUnassignsTotal: 0,
+        vendorUnassignsToday: 0,
+      });
+    }
+
+    for (const row of deliveredRows) {
+      const id = String(row._id ?? '');
+      if (!id) continue;
+      const cur = out.get(id) ?? {
+        total: 0,
+        today: 0,
+        revenueTotal: 0,
+        revenueToday: 0,
+        abandonsTotal: 0,
+        abandonsToday: 0,
+        vendorUnassignsTotal: 0,
+        vendorUnassignsToday: 0,
+      };
+      out.set(id, {
+        ...cur,
+        total: Number(row.total ?? 0),
+        today: Number(row.today ?? 0),
+        revenueTotal: Math.round(Number(row.revenueTotal ?? 0) * 100) / 100,
+        revenueToday: Math.round(Number(row.revenueToday ?? 0) * 100) / 100,
+      });
+    }
+    for (const row of abandonRows) {
+      const id = String(row._id ?? '');
+      if (!id) continue;
+      const cur = out.get(id) ?? {
+        total: 0,
+        today: 0,
+        revenueTotal: 0,
+        revenueToday: 0,
+        abandonsTotal: 0,
+        abandonsToday: 0,
+        vendorUnassignsTotal: 0,
+        vendorUnassignsToday: 0,
+      };
+      out.set(id, {
+        ...cur,
+        abandonsTotal: Number(row.abandonsTotal ?? 0),
+        abandonsToday: Number(row.abandonsToday ?? 0),
+      });
+    }
+    for (const row of vendorUnassignRows) {
+      const id = String(row._id ?? '');
+      if (!id) continue;
+      const cur = out.get(id) ?? {
+        total: 0,
+        today: 0,
+        revenueTotal: 0,
+        revenueToday: 0,
+        abandonsTotal: 0,
+        abandonsToday: 0,
+        vendorUnassignsTotal: 0,
+        vendorUnassignsToday: 0,
+      };
+      out.set(id, {
+        ...cur,
+        vendorUnassignsTotal: Number(row.vendorUnassignsTotal ?? 0),
+        vendorUnassignsToday: Number(row.vendorUnassignsToday ?? 0),
+      });
+    }
+    return out;
+  }
+
+  /** @deprecated use _aggregateDriverPerformanceStats */
   private async _aggregateDriverStats(
     storeId: string,
     userIds: Types.ObjectId[],
@@ -350,57 +565,17 @@ export class StoreDeliveryDriversService {
       { total: number; today: number; revenueTotal: number; revenueToday: number }
     >
   > {
+    const perf = await this._aggregateDriverPerformanceStats(storeId, userIds);
     const out = new Map<
       string,
       { total: number; today: number; revenueTotal: number; revenueToday: number }
     >();
-    if (!userIds.length) return out;
-
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const rows = await this._orderModel
-      .aggregate([
-        {
-          $match: {
-            store: new Types.ObjectId(storeId),
-            shouldShip: true,
-            assignedDeliveryUser: { $in: userIds },
-            status: { $in: DELIVERED_STATUSES },
-          },
-        },
-        {
-          $group: {
-            _id: '$assignedDeliveryUser',
-            total: { $sum: 1 },
-            revenueTotal: { $sum: { $ifNull: ['$shippingPrice', 0] } },
-            today: {
-              $sum: {
-                $cond: [{ $gte: ['$updatedAt', startOfDay] }, 1, 0],
-              },
-            },
-            revenueToday: {
-              $sum: {
-                $cond: [
-                  { $gte: ['$updatedAt', startOfDay] },
-                  { $ifNull: ['$shipping_price', 0] },
-                  0,
-                ],
-              },
-            },
-          },
-        },
-      ])
-      .exec();
-
-    for (const row of rows) {
-      const id = String(row._id ?? '');
-      if (!id) continue;
+    for (const [id, stats] of perf) {
       out.set(id, {
-        total: Number(row.total ?? 0),
-        today: Number(row.today ?? 0),
-        revenueTotal: Math.round(Number(row.revenueTotal ?? 0) * 100) / 100,
-        revenueToday: Math.round(Number(row.revenueToday ?? 0) * 100) / 100,
+        total: stats.total,
+        today: stats.today,
+        revenueTotal: stats.revenueTotal,
+        revenueToday: stats.revenueToday,
       });
     }
     return out;
@@ -482,6 +657,10 @@ export class StoreDeliveryDriversService {
         ordersDeliveredToday: 0,
         deliveryRevenueTotal: 0,
         deliveryRevenueToday: 0,
+        courierAbandonsTotal: 0,
+        courierAbandonsToday: 0,
+        vendorUnassignsTotal: 0,
+        vendorUnassignsToday: 0,
       };
     }
     return row;
@@ -550,6 +729,10 @@ export class StoreDeliveryDriversService {
         ordersDeliveredToday: 0,
         deliveryRevenueTotal: 0,
         deliveryRevenueToday: 0,
+        courierAbandonsTotal: 0,
+        courierAbandonsToday: 0,
+        vendorUnassignsTotal: 0,
+        vendorUnassignsToday: 0,
       }
     );
   }

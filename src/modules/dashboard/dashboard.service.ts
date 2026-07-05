@@ -374,6 +374,12 @@ export type DashboardLivreurRow = {
   note: number;
   livraisons_jour: number;
   livraisons_total: number;
+  /** Courses abandonnées par le livreur (aujourd’hui / total). */
+  abandons_jour: number;
+  abandons_total: number;
+  /** Retraits par le vendeur ou l’admin (aujourd’hui / total). */
+  desassignations_vendeur_jour: number;
+  desassignations_vendeur_total: number;
   temps_moyen: number;
   distance_jour: number;
   revenu_jour: number;
@@ -3784,6 +3790,15 @@ export class DashboardService {
 
     orderDoc.set('assignedDeliveryUser', undefined);
     orderDoc.status = OrderStatusEnum.APPROVED;
+    orderDoc.deliveryUnassignReason =
+      user.type === UserTypeEnum.ADMIN ? 'admin_unassign' : 'vendor_unassign';
+    orderDoc.deliveryUnassignedAt = new Date();
+    orderDoc.deliveryUnassignedFromUser = prevAssignee
+      ? new Types.ObjectId(prevAssignee)
+      : undefined;
+    orderDoc.deliveryUnassignedByUser = new Types.ObjectId(
+      String(user._id ?? user.id),
+    );
     await orderDoc.save();
 
     const customerId = this.customerUserIdForOrderPush(orderDoc);
@@ -4558,7 +4573,7 @@ export class DashboardService {
 
     const startOfDay = this.startOfTodayUtc();
 
-    const [todayAgg, totalAgg, activeOrders, applications] = await Promise.all([
+    const [todayAgg, totalAgg, abandonTodayAgg, abandonTotalAgg, vendorUnassignTodayAgg, vendorUnassignTotalAgg, activeOrders, applications] = await Promise.all([
       this.orderModel
         .aggregate<{ _id: Types.ObjectId; count: number }>([
           {
@@ -4580,6 +4595,56 @@ export class DashboardService {
             },
           },
           { $group: { _id: '$assignedDeliveryUser', count: { $sum: 1 } } },
+        ])
+        .exec(),
+      this.orderModel
+        .aggregate<{ _id: Types.ObjectId; count: number }>([
+          {
+            $match: {
+              shouldShip: true,
+              deliveryUnassignedFromUser: { $in: userIds },
+              deliveryUnassignReason: 'courier_abandon',
+              deliveryUnassignedAt: { $gte: startOfDay },
+            },
+          },
+          { $group: { _id: '$deliveryUnassignedFromUser', count: { $sum: 1 } } },
+        ])
+        .exec(),
+      this.orderModel
+        .aggregate<{ _id: Types.ObjectId; count: number }>([
+          {
+            $match: {
+              shouldShip: true,
+              deliveryUnassignedFromUser: { $in: userIds },
+              deliveryUnassignReason: 'courier_abandon',
+            },
+          },
+          { $group: { _id: '$deliveryUnassignedFromUser', count: { $sum: 1 } } },
+        ])
+        .exec(),
+      this.orderModel
+        .aggregate<{ _id: Types.ObjectId; count: number }>([
+          {
+            $match: {
+              shouldShip: true,
+              deliveryUnassignedFromUser: { $in: userIds },
+              deliveryUnassignReason: { $in: ['vendor_unassign', 'admin_unassign'] },
+              deliveryUnassignedAt: { $gte: startOfDay },
+            },
+          },
+          { $group: { _id: '$deliveryUnassignedFromUser', count: { $sum: 1 } } },
+        ])
+        .exec(),
+      this.orderModel
+        .aggregate<{ _id: Types.ObjectId; count: number }>([
+          {
+            $match: {
+              shouldShip: true,
+              deliveryUnassignedFromUser: { $in: userIds },
+              deliveryUnassignReason: { $in: ['vendor_unassign', 'admin_unassign'] },
+            },
+          },
+          { $group: { _id: '$deliveryUnassignedFromUser', count: { $sum: 1 } } },
         ])
         .exec(),
       this.orderModel
@@ -4610,6 +4675,18 @@ export class DashboardService {
 
     const todayByUser = new Map(todayAgg.map((x) => [String(x._id), x.count]));
     const totalByUser = new Map(totalAgg.map((x) => [String(x._id), x.count]));
+    const abandonTodayByUser = new Map(
+      abandonTodayAgg.map((x) => [String(x._id), x.count]),
+    );
+    const abandonTotalByUser = new Map(
+      abandonTotalAgg.map((x) => [String(x._id), x.count]),
+    );
+    const vendorUnassignTodayByUser = new Map(
+      vendorUnassignTodayAgg.map((x) => [String(x._id), x.count]),
+    );
+    const vendorUnassignTotalByUser = new Map(
+      vendorUnassignTotalAgg.map((x) => [String(x._id), x.count]),
+    );
     const activeByUser = new Map<string, (typeof activeOrders)[0]>();
     for (const o of activeOrders) {
       const uid = o.assignedDeliveryUser ? String(o.assignedDeliveryUser) : '';
@@ -4707,6 +4784,10 @@ export class DashboardService {
         commande_en_cours,
         livraisons_jour: todayByUser.get(uid) ?? 0,
         livraisons_total: totalByUser.get(uid) ?? 0,
+        abandons_jour: abandonTodayByUser.get(uid) ?? 0,
+        abandons_total: abandonTotalByUser.get(uid) ?? 0,
+        desassignations_vendeur_jour: vendorUnassignTodayByUser.get(uid) ?? 0,
+        desassignations_vendeur_total: vendorUnassignTotalByUser.get(uid) ?? 0,
         longitude,
         latitude,
         coords: coordsFromLngLat(longitude, latitude),
@@ -5077,6 +5158,10 @@ export class DashboardService {
       note: 0,
       livraisons_jour: 0,
       livraisons_total: 0,
+      abandons_jour: 0,
+      abandons_total: 0,
+      desassignations_vendeur_jour: 0,
+      desassignations_vendeur_total: 0,
       temps_moyen: 0,
       distance_jour: 0,
       revenu_jour: 0,

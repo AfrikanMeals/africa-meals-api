@@ -1798,6 +1798,96 @@ export class DeliveryAgentService {
     return { ok: true, orderId: orderDoc._id.toString(), orderRef };
   }
 
+  /**
+   * Le livreur abandonne une course en cours : retrait assignation, repasse en
+   * `approved`, notification vendeur uniquement (pas de push client), pas de gain.
+   */
+  async abandonOrderDelivery(user: UserModel, orderId: string) {
+    this.assertDeliveryAgent(user);
+    if (!Types.ObjectId.isValid(orderId)) {
+      throw new BadRequestException('invalid_order_id');
+    }
+    const agentId = new Types.ObjectId(String(user._id ?? user.id));
+    const oid = new Types.ObjectId(orderId);
+
+    await this.assertAgentApprovedApplication(agentId);
+
+    const orderDoc = await this._orders
+      .findById(oid)
+      .populate('store', 'name owner')
+      .populate({ path: 'user', select: 'fullName' })
+      .exec();
+    if (!orderDoc) {
+      throw new NotFoundException('order_not_found');
+    }
+    if (!orderDoc.shouldShip) {
+      throw new BadRequestException('order_not_shippable');
+    }
+    if ((orderDoc.status as OrderStatusEnum) !== OrderStatusEnum.SHIPPED) {
+      throw new BadRequestException('order_not_abandonable');
+    }
+    const assignee = orderDoc.assignedDeliveryUser
+      ? String(orderDoc.assignedDeliveryUser)
+      : '';
+    if (!assignee || assignee !== String(agentId)) {
+      throw new ForbiddenException('order_not_assigned_to_agent');
+    }
+
+    const orderStoreId = this.storeIdFromPopulatedOrder(orderDoc);
+    const prevAssignee = assignee;
+
+    orderDoc.set('assignedDeliveryUser', undefined);
+    orderDoc.status = OrderStatusEnum.APPROVED;
+    orderDoc.deliveryUnassignReason = 'courier_abandon';
+    orderDoc.deliveryUnassignedAt = new Date();
+    orderDoc.deliveryUnassignedFromUser = agentId;
+    orderDoc.deliveryUnassignedByUser = agentId;
+    orderDoc.courierAbandonNoPayout = true;
+    await orderDoc.save();
+
+    const customerId = this.customerUserIdFromOrder(orderDoc);
+    await this._ordersService.recordOrderStatusChangeIfLegacy({
+      orderId: orderDoc._id.toString(),
+      storeId: orderStoreId ?? undefined,
+      customerUserId: customerId ?? undefined,
+      fromStatus: OrderStatusEnum.SHIPPED,
+      toStatus: OrderStatusEnum.APPROVED,
+      source: OrderStatusChangeSourceEnum.DELIVERY_AGENT,
+      actorUserId: String(agentId),
+      note: 'Course abandonnée par le livreur',
+    });
+
+    this._ordersService.notifyOrderPartiesRealtime(
+      orderDoc,
+      OrderStatusEnum.APPROVED,
+      { assignedDeliveryUserId: null },
+      { additionalPartyUserIds: [prevAssignee] },
+    );
+
+    if (orderStoreId) {
+      const sname = this.storeNameFromPopulatedOrder(orderDoc);
+      const agentName = user.fullName?.trim() || 'Livreur';
+      this._ordersService.notifyStoreVendorsForOrderStatusChange(orderDoc, {
+        reason: 'courier_abandoned',
+        status: OrderStatusEnum.APPROVED,
+        note: `Course abandonnée par ${agentName}`,
+        pushBodyOverride: `${
+          sname ?? 'Boutique'
+        } : ${agentName} a abandonné la course — à réassigner.`,
+      });
+    }
+
+    await this.publishPresenceWs(prevAssignee, 'order_unassigned');
+
+    return {
+      ok: true,
+      orderId: orderDoc._id.toString(),
+      status: OrderStatusEnum.APPROVED,
+      abandoned: true,
+      noPayout: true,
+    };
+  }
+
   private storeIdFromPopulatedOrder(orderDoc: OrderModel): string | null {
     const store = orderDoc.store;
     if (!store || typeof store !== 'object' || !('_id' in store)) {
@@ -1868,6 +1958,7 @@ export class DeliveryAgentService {
         status: {
           $in: [OrderStatusEnum.SHIPPED, OrderStatusEnum.COMPLETED],
         },
+        courierAbandonNoPayout: { $ne: true },
       })
       .sort({ updatedAt: -1 })
       .limit(50)

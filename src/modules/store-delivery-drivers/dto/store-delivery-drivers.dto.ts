@@ -29,6 +29,10 @@ export class StoreDeliveryDriverRowDto {
   ordersDeliveredToday: number;
   deliveryRevenueTotal: number;
   deliveryRevenueToday: number;
+  courierAbandonsTotal: number;
+  courierAbandonsToday: number;
+  vendorUnassignsTotal: number;
+  vendorUnassignsToday: number;
 }
 
 export class StoreDeliveryDriversListResponseDto {
@@ -52,6 +56,10 @@ export class DeliveryDriverStorePartnerRowDto {
   ordersDeliveredToday: number;
   deliveryRevenueTotal: number;
   deliveryRevenueToday: number;
+  courierAbandonsTotal: number;
+  courierAbandonsToday: number;
+  vendorUnassignsTotal: number;
+  vendorUnassignsToday: number;
 }
 
 export class DeliveryDriverStorePartnersListResponseDto {

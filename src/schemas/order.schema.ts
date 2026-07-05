@@ -192,6 +192,45 @@ export class OrderModel extends BaseSchema {
   })
   assignedDeliveryUser?: MongooseSchema.Types.ObjectId;
 
+  /** Motif du dernier retrait livreur (`courier_abandon`, `vendor_unassign`, …). */
+  @Prop({
+    required: false,
+    name: 'delivery_unassign_reason',
+    enum: ['courier_abandon', 'vendor_unassign', 'admin_unassign'],
+    maxlength: 32,
+  })
+  deliveryUnassignReason?:
+    | 'courier_abandon'
+    | 'vendor_unassign'
+    | 'admin_unassign';
+
+  /** Horodatage du dernier retrait livreur. */
+  @Prop({ required: false, name: 'delivery_unassigned_at' })
+  deliveryUnassignedAt?: Date;
+
+  /** Livreur retiré (conservé après `assignedDeliveryUser` effacé — stats performance). */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserModel',
+    required: false,
+    name: 'delivery_unassigned_from_user',
+    index: true,
+  })
+  deliveryUnassignedFromUser?: MongooseSchema.Types.ObjectId;
+
+  /** Acteur du retrait (livreur, vendeur ou admin). */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserModel',
+    required: false,
+    name: 'delivery_unassigned_by_user',
+  })
+  deliveryUnassignedByUser?: MongooseSchema.Types.ObjectId;
+
+  /** Course abandonnée par le livreur — exclue des gains / transferts Stripe. */
+  @Prop({ required: false, name: 'courier_abandon_no_payout', default: false })
+  courierAbandonNoPayout?: boolean;
+
   /** Code à présenter en boutique (commandes retrait, généré au paiement). */
   @Prop({ required: false, name: 'pickup_code', trim: true, uppercase: true })
   pickupCode?: string;
