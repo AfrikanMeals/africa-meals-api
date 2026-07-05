@@ -3588,12 +3588,14 @@ export class DashboardService {
           if (!agentUserId) return null;
           const notifyStoreIds =
             await this.fleetAudience.resolveNotifyStoreIds(agentUserId);
+          const activeOrderCount =
+            row.statut === 'en_livraison' || row.commande_en_cours ? 1 : 0;
           return {
             agentUserId,
             presence: row.statut,
             availability:
               row.statut === 'hors_ligne' ? 'hors_ligne' : 'disponible',
-            activeOrderCount: row.commande_en_cours ? 1 : 0,
+            activeOrderCount,
             maxConcurrentOrders: row.capacite,
             latitude: row.latitude,
             longitude: row.longitude,
@@ -4178,7 +4180,10 @@ export class DashboardService {
     return row;
   }
 
-  private readAssignedDeliveryUserId(
+import {
+  courierTrackingExtraFromApplication,
+  fleetActiveOrderCountFromLivreurRow,
+} from './dashboard-fleet-seed.util';
     order: OrderModel | Record<string, unknown>,
   ): string | null {
     const raw =
@@ -4313,6 +4318,14 @@ export class DashboardService {
     orderDoc.status = OrderStatusEnum.SHIPPED;
     await orderDoc.save();
 
+    const courierTrackingExtra = this.courierTrackingExtraFromApplication(
+      application,
+    );
+    const notifyExtra = {
+      assignedDeliveryUserId: deliveryUserId,
+      ...courierTrackingExtra,
+    };
+
     const customerId = this.customerUserIdForOrderPush(orderDoc);
     const agentName = deliveryUser.fullName?.trim() || 'Livreur app';
 
@@ -4354,12 +4367,13 @@ export class DashboardService {
         actorUserId: String(actor.id),
         source: OrderStatusChangeSourceEnum.DASHBOARD,
         courier: agentName,
+        courierTrackingExtra,
       });
     } else {
       this.ordersService.notifyOrderPartiesRealtime(
         orderDoc,
         OrderStatusEnum.SHIPPED,
-        { assignedDeliveryUserId: deliveryUserId },
+        notifyExtra,
       );
     }
 
@@ -4375,12 +4389,14 @@ export class DashboardService {
       });
     }
 
-    void this.deliveryAgentService.publishPresenceWs(
+    const rows = await this.listDashboardLivreurs(actor);
+    await this.deliveryAgentService.publishPresenceWs(
       deliveryUserId,
       'order_assigned',
     );
-
-    const rows = await this.listDashboardLivreurs(actor);
+    this.logger.debug(
+      `assignOrderToAppDeliveryUser order=${orderId} agent=${deliveryUserId} status=shipped`,
+    );
     const row = rows.find((r) => r.id === deliveryUserId);
     if (!row) {
       throw new NotFoundException('livreur_not_found');
@@ -4514,6 +4530,7 @@ export class DashboardService {
         .find({
           assignedDeliveryUser: { $in: userIds },
           status: OrderStatusEnum.SHIPPED,
+          shouldShip: true,
         })
         .populate({
           path: 'user',

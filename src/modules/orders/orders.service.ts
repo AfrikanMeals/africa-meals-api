@@ -3802,12 +3802,17 @@ export class OrdersService {
       actorUserId: string;
       source: OrderStatusChangeSourceEnum;
       courier?: string;
+      courierTrackingExtra?: Partial<OrderWsTrackingPayload>;
     },
   ): void {
     const orderId =
       (order as { _id?: Types.ObjectId })._id?.toString() ??
       String((order as { id?: string }).id ?? '');
     if (!orderId) return;
+    const notifyExtra: Partial<OrderWsTrackingPayload> = {
+      assignedDeliveryUserId: opts.assignedDeliveryUserId,
+      ...(opts.courierTrackingExtra ?? {}),
+    };
     if (this._orderDomainBridge?.enabled()) {
       void this._orderDomainBridge.emit({
         type: 'order.shipped',
@@ -3824,12 +3829,17 @@ export class OrdersService {
             ...this.buildOrderDomainDispatchContext(
               order,
               OrderStatusEnum.SHIPPED,
+              notifyExtra,
             ),
           },
         },
       });
     }
-    this.notifyOrderPartiesRealtime(order, OrderStatusEnum.SHIPPED);
+    this.notifyOrderPartiesRealtime(
+      order,
+      OrderStatusEnum.SHIPPED,
+      notifyExtra,
+    );
   }
 
   /** Charge une commande peuplée pour dispatch WS (EDA-005). */
