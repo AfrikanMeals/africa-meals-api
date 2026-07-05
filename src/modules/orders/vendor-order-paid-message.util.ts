@@ -162,7 +162,8 @@ export type VendorOrderNotifyReason =
   | 'order_shipped'
   | 'order_cancelled'
   | 'order_completed'
-  | 'pre_order_d_day';
+  | 'pre_order_d_day'
+  | 'courier_abandoned';
 
 export function vendorOrderStatusLabelFr(
   status: string,
@@ -246,6 +247,7 @@ export function buildVendorOrderStatusPush(args: {
       order_cancelled: 'Commande annulée',
       order_completed: 'Commande terminée',
       pre_order_d_day: 'Pré-commande du jour',
+      courier_abandoned: 'Course abandonnée',
     };
     return {
       title: titles[args.reason],

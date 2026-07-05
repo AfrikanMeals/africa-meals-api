@@ -1840,8 +1840,8 @@ export class DeliveryAgentService {
     orderDoc.status = OrderStatusEnum.APPROVED;
     orderDoc.deliveryUnassignReason = 'courier_abandon';
     orderDoc.deliveryUnassignedAt = new Date();
-    orderDoc.deliveryUnassignedFromUser = agentId;
-    orderDoc.deliveryUnassignedByUser = agentId;
+    orderDoc.set('deliveryUnassignedFromUser', agentId);
+    orderDoc.set('deliveryUnassignedByUser', agentId);
     orderDoc.courierAbandonNoPayout = true;
     await orderDoc.save();
 

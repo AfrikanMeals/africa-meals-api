@@ -3793,11 +3793,15 @@ export class DashboardService {
     orderDoc.deliveryUnassignReason =
       user.type === UserTypeEnum.ADMIN ? 'admin_unassign' : 'vendor_unassign';
     orderDoc.deliveryUnassignedAt = new Date();
-    orderDoc.deliveryUnassignedFromUser = prevAssignee
-      ? new Types.ObjectId(prevAssignee)
-      : undefined;
-    orderDoc.deliveryUnassignedByUser = new Types.ObjectId(
-      String(user._id ?? user.id),
+    if (prevAssignee) {
+      orderDoc.set(
+        'deliveryUnassignedFromUser',
+        new Types.ObjectId(prevAssignee),
+      );
+    }
+    orderDoc.set(
+      'deliveryUnassignedByUser',
+      new Types.ObjectId(String(user._id ?? user.id)),
     );
     await orderDoc.save();
 
