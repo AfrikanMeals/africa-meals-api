@@ -1,5 +1,9 @@
 import { escapeMongoRegex } from '@common/mongo/escape-regex.util';
 import {
+  courierTrackingExtraFromApplication,
+  fleetActiveOrderCountFromLivreurRow,
+} from './dashboard-fleet-seed.util';
+import {
   BadRequestException,
   ForbiddenException,
   Inject,
@@ -3588,8 +3592,7 @@ export class DashboardService {
           if (!agentUserId) return null;
           const notifyStoreIds =
             await this.fleetAudience.resolveNotifyStoreIds(agentUserId);
-          const activeOrderCount =
-            row.statut === 'en_livraison' || row.commande_en_cours ? 1 : 0;
+          const activeOrderCount = fleetActiveOrderCountFromLivreurRow(row);
           return {
             agentUserId,
             presence: row.statut,
@@ -4180,10 +4183,7 @@ export class DashboardService {
     return row;
   }
 
-import {
-  courierTrackingExtraFromApplication,
-  fleetActiveOrderCountFromLivreurRow,
-} from './dashboard-fleet-seed.util';
+  private readAssignedDeliveryUserId(
     order: OrderModel | Record<string, unknown>,
   ): string | null {
     const raw =
@@ -4318,7 +4318,7 @@ import {
     orderDoc.status = OrderStatusEnum.SHIPPED;
     await orderDoc.save();
 
-    const courierTrackingExtra = this.courierTrackingExtraFromApplication(
+    const courierTrackingExtra = courierTrackingExtraFromApplication(
       application,
     );
     const notifyExtra = {

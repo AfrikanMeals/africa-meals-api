@@ -54,6 +54,7 @@ import {
   countActiveShippedOrdersForAgent,
   maxConcurrentOrdersFromApplication,
 } from './delivery-agent-capacity.util';
+import { courierTrackingExtraFromApplication } from '@modules/dashboard/dashboard-fleet-seed.util';
 import { PatchDeliveryAgentPresenceDto } from './dto/patch-delivery-agent-presence.dto';
 import {
   ConfirmDeliveryHandoffDto,
@@ -1665,11 +1666,19 @@ export class DeliveryAgentService {
         });
     }
 
+    const appLoc = await this._applications
+      .findOne({ user: agentId })
+      .select('lastLatitude lastLongitude')
+      .lean()
+      .exec();
+
+    const courierTrackingExtra = courierTrackingExtraFromApplication(appLoc);
     this._ordersService.emitOrderShippedFromDoc(orderDoc, {
       prevStatus: prevOrderStatus,
       assignedDeliveryUserId: String(agentId),
       actorUserId: String(agentId),
       source: OrderStatusChangeSourceEnum.DELIVERY_AGENT,
+      courierTrackingExtra,
     });
 
     if (orderStoreId && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
@@ -1685,11 +1694,6 @@ export class DeliveryAgentService {
       });
     }
 
-    const appLoc = await this._applications
-      .findOne({ user: agentId })
-      .select('lastLatitude lastLongitude')
-      .lean()
-      .exec();
     if (
       appLoc &&
       typeof appLoc.lastLatitude === 'number' &&
@@ -1702,7 +1706,7 @@ export class DeliveryAgentService {
       );
     }
 
-    void this.publishPresenceWs(String(agentId), 'order_assigned');
+    await this.publishPresenceWs(String(agentId), 'order_assigned');
 
     return { ok: true, orderId: orderDoc._id.toString(), orderRef };
   }
