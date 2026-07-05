@@ -331,6 +331,8 @@ export class NotificationsService implements OnModuleInit {
     type?: string;
     data?: Record<string, unknown>;
     sendPush?: boolean;
+    /** Canal Android (ex. `african_meals_courier_orders`). */
+    androidChannelId?: string;
   }): Promise<{ id: string }> {
     if (!Types.ObjectId.isValid(args.recipientUserId)) {
       throw new NotFoundException('user_not_found');
@@ -362,6 +364,7 @@ export class NotificationsService implements OnModuleInit {
           type: args.type ?? 'in_app',
           notificationId: doc._id.toString(),
         }),
+        androidChannelId: args.androidChannelId,
       });
     }
 
@@ -901,6 +904,63 @@ export class NotificationsService implements OnModuleInit {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(`notifyDeliveryAgentApplicationReview: ${msg}`);
+    }
+  }
+
+  /**
+   * Inbox + push FCM — course assignée ou retirée (livreur app).
+   */
+  async notifyDeliveryAgentOrderAssignment(args: {
+    recipientUserId: string;
+    orderId: string;
+    orderRef?: string;
+    storeName?: string;
+    storeId?: string;
+    action: 'assigned' | 'unassigned';
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.recipientUserId)) {
+      return;
+    }
+    const orderId = args.orderId?.trim();
+    if (!orderId) return;
+
+    const store = (args.storeName ?? '').trim() || 'Restaurant';
+    const ref =
+      (args.orderRef ?? '').trim() ||
+      `#AE-${orderId.slice(-6).toUpperCase()}`;
+    const assigned = args.action === 'assigned';
+    const title = assigned ? 'Nouvelle course' : 'Course retirée';
+    const body = assigned
+      ? `${store} : la course ${ref} vous a été assignée. Ouvrez la carte pour démarrer.`
+      : `${store} : la course ${ref} ne vous est plus assignée.`;
+
+    const data: Record<string, unknown> = {
+      type: 'courier_order_update',
+      audience: 'courier',
+      reason: assigned ? 'order_assigned' : 'order_unassigned',
+      orderId,
+      orderRef: ref,
+      storeName: store,
+      action: args.action,
+    };
+    const storeId = args.storeId?.trim();
+    if (storeId) {
+      data.storeId = storeId;
+    }
+
+    try {
+      await this.createUserScopedNotification({
+        recipientUserId: args.recipientUserId,
+        title,
+        body,
+        type: 'courier_order_update',
+        data,
+        sendPush: true,
+        androidChannelId: 'african_meals_courier_orders',
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`notifyDeliveryAgentOrderAssignment: ${msg}`);
     }
   }
 

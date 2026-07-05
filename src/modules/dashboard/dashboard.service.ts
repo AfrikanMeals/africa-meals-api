@@ -785,6 +785,38 @@ export class DashboardService {
     return undefined;
   }
 
+  private pushCourierOrderAssignmentNotify(
+    recipientUserId: string | null | undefined,
+    orderDoc: OrderModel,
+    action: 'assigned' | 'unassigned',
+  ): void {
+    const uid = recipientUserId?.trim();
+    if (!uid) return;
+    const orderId = orderDoc._id.toString();
+    const storeId =
+      orderDoc.store &&
+      typeof orderDoc.store === 'object' &&
+      '_id' in orderDoc.store
+        ? String((orderDoc.store as { _id: unknown })._id)
+        : undefined;
+    void this.notificationsService
+      .notifyDeliveryAgentOrderAssignment({
+        recipientUserId: uid,
+        orderId,
+        orderRef: `#AE-${orderId.slice(-6).toUpperCase()}`,
+        storeName: this.storeNameForOrderPush(orderDoc),
+        storeId,
+        action,
+      })
+      .catch((err) => {
+        this.logger.warn(
+          `pushCourierOrderAssignmentNotify ${action}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      });
+  }
+
   private storeOwnerUserIdForOrderPush(order: {
     store?: unknown;
   }): string | null {
@@ -3790,6 +3822,7 @@ export class DashboardService {
       prevAssignee,
       'order_unassigned',
     );
+    this.pushCourierOrderAssignmentNotify(prevAssignee, orderDoc, 'unassigned');
 
     return {
       ok: true,
@@ -4171,11 +4204,13 @@ export class DashboardService {
         prevAssignee,
         'order_unassigned',
       );
+      this.pushCourierOrderAssignmentNotify(prevAssignee, orderDoc, 'unassigned');
     }
     void this.deliveryAgentService.publishPresenceWs(
       deliveryUserId,
       'order_assigned',
     );
+    this.pushCourierOrderAssignmentNotify(deliveryUserId, orderDoc, 'assigned');
 
     const rows = await this.listDashboardLivreurs(user);
     const row = rows.find((r) => r.id === deliveryUserId);
@@ -4394,6 +4429,7 @@ export class DashboardService {
       deliveryUserId,
       'order_assigned',
     );
+    this.pushCourierOrderAssignmentNotify(deliveryUserId, orderDoc, 'assigned');
     this.logger.debug(
       `assignOrderToAppDeliveryUser order=${orderId} agent=${deliveryUserId} status=shipped`,
     );

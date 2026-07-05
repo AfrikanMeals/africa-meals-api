@@ -3019,6 +3019,22 @@ export class OrdersService {
         prevAssignee,
         'order_unassigned',
       );
+      void this._notificationsService
+        .notifyDeliveryAgentOrderAssignment({
+          recipientUserId: prevAssignee,
+          orderId: oid,
+          orderRef,
+          storeName: this.storeNameFromPopulated(order.store),
+          storeId: storeId ?? undefined,
+          action: 'unassigned',
+        })
+        .catch((err) => {
+          this.logger.warn(
+            `notifyDeliveryAgentOrderAssignment unassigned: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
     }
 
     if (prevStatus !== OrderStatusEnum.SHIPPED) {
