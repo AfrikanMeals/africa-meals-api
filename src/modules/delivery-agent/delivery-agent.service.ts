@@ -2039,8 +2039,9 @@ export class DeliveryAgentService {
         return [lng, lat];
       }
     }
-    const lat = Number((addr as { latitude?: unknown }).latitude);
-    const lng = Number((addr as { longitude?: unknown }).longitude);
+    const doc = addr as Record<string, unknown>;
+    const lat = Number(doc.latitude ?? doc.lat);
+    const lng = Number(doc.longitude ?? doc.lng ?? doc.lon);
     if (Number.isFinite(lat) && Number.isFinite(lng)) {
       return [lng, lat];
     }
