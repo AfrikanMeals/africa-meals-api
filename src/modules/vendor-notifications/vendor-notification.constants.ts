@@ -51,13 +51,17 @@ export function defaultVendorNotificationPreferences(): VendorNotificationPrefer
 export function vendorOrderReasonToCategory(
   reason: string,
 ): VendorNotificationCategory {
-  if (reason === 'order_shipped') return 'delivery';
+  if (reason === 'order_shipped' || reason === 'courier_abandoned') {
+    return 'delivery';
+  }
   return 'order';
 }
 
 export function vendorOrderEmailEventToCategory(
   event: string,
 ): VendorNotificationCategory {
-  if (event === 'order_shipped') return 'delivery';
+  if (event === 'order_shipped' || event === 'courier_abandoned') {
+    return 'delivery';
+  }
   return 'order';
 }

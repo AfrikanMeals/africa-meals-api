@@ -41,7 +41,8 @@ export type VendorOrderEmailEvent =
   | 'order_cancelled'
   | 'order_completed'
   | 'pre_order_d_day'
-  | 'pre_order_reminder';
+  | 'pre_order_reminder'
+  | 'courier_abandoned';
 
 @Injectable()
 export class VendorStatusEmailService {
@@ -850,6 +851,13 @@ export class VendorStatusEmailService {
           heading: 'Rappel pré-commande',
           body: `Rappel : pré-commande ${args.orderRef} pour ${args.storeName}${notePart}${amountPart}.`,
           statusLabel: args.statusLabel ?? 'Pré-commande planifiée',
+        };
+      case 'courier_abandoned':
+        return {
+          subject: 'Course abandonnée par le livreur',
+          heading: 'Course abandonnée',
+          body: `Le livreur a abandonné la commande ${args.orderRef} pour ${args.storeName}. La commande est de nouveau en attente d'assignation.${notePart}`,
+          statusLabel: args.statusLabel ?? 'En attente de livreur',
         };
     }
   }
