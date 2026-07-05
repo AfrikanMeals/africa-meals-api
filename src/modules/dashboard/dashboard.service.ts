@@ -4352,6 +4352,27 @@ export class DashboardService {
     orderDoc.status = OrderStatusEnum.SHIPPED;
     await orderDoc.save();
 
+    const persistedAssign = await this.orderModel
+      .findById(orderOid)
+      .select('assignedDeliveryUser status')
+      .lean()
+      .exec();
+    const persistedAssignAgent = persistedAssign?.assignedDeliveryUser
+      ? String(persistedAssign.assignedDeliveryUser)
+      : null;
+    this.logger.debug(
+      `[DeliveryTrace] assignOrderToAppDeliveryUser order=${orderId} ` +
+        `agent=${deliveryUserId} prevStatus=${prevOrderStatus} ` +
+        `persistedAgent=${persistedAssignAgent} status=${persistedAssign?.status}`,
+    );
+    if (persistedAssignAgent !== deliveryUserId) {
+      this.logger.error(
+        `[DeliveryTrace] ALERTE assignOrderToAppDeliveryUser order=${orderId} ` +
+          `assignation NON persistée (attendu=${deliveryUserId} ` +
+          `obtenu=${persistedAssignAgent})`,
+      );
+    }
+
     const courierTrackingExtra = courierTrackingExtraFromApplication(
       application,
     );

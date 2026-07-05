@@ -1100,6 +1100,12 @@ export class DeliveryAgentService {
       return item.distanceKm <= maxDeliveryRadiusKm + 1e-9;
     });
 
+    this._logger.debug(
+      `[DeliveryTrace] listPendingOrders agent=${agentId} ` +
+        `unassignedFetched=${mapped.length} afterFilter=${items.length} ` +
+        `radiusKm=${maxDeliveryRadiusKm}`,
+    );
+
     return { items, maxDeliveryRadiusKm };
   }
 
@@ -1145,6 +1151,61 @@ export class DeliveryAgentService {
     const items = rows.map((row) =>
       this.mapOrderRowForAgent(row as Record<string, unknown>),
     );
+    this._logger.debug(
+      `[DeliveryTrace] getActiveOrder agent=${agentId.toString()} ` +
+        `count=${items.length} capacity=${capacity} ` +
+        `ids=[${items.map((i) => i.id).join(',')}]`,
+    );
+    for (const it of items) {
+      if (it.destinationLat == null || it.destinationLng == null) {
+        this._logger.warn(
+          `[DeliveryTrace] getActiveOrder order=${it.id} ` +
+            `agent=${agentId.toString()} SANS coords destination ` +
+            `(route non traçable) storeCoords=${it.storeLat != null}`,
+        );
+      }
+    }
+    if (items.length === 0) {
+      const shippedAny = await this._orders.countDocuments({
+        assignedDeliveryUser: agentId,
+        status: OrderStatusEnum.SHIPPED,
+      });
+      const assignedNotShipped = await this._orders
+        .find({
+          assignedDeliveryUser: agentId,
+          status: { $ne: OrderStatusEnum.SHIPPED },
+        })
+        .select('_id status')
+        .lean()
+        .exec();
+      const orphanShipped = await this._orders.countDocuments({
+        status: OrderStatusEnum.SHIPPED,
+        shouldShip: true,
+        $or: [
+          { assignedDeliveryUser: { $exists: false } },
+          { assignedDeliveryUser: null },
+        ],
+      });
+      this._logger.debug(
+        `[DeliveryTrace] getActiveOrder agent=${agentId.toString()} ` +
+          `AUCUNE course active. shippedAssigned(anyShouldShip)=${shippedAny} ` +
+          `assignedNotShipped=${assignedNotShipped.length} ` +
+          `orphanShippedSansLivreur=${orphanShipped}`,
+      );
+      for (const o of assignedNotShipped) {
+        this._logger.warn(
+          `[DeliveryTrace] ALERTE order=${String(o._id)} assigné à ` +
+            `agent=${agentId.toString()} mais status=${o.status} (≠ shipped) — ` +
+            `incohérent : livreur assigné sans expédition`,
+        );
+      }
+      if (orphanShipped > 0) {
+        this._logger.warn(
+          `[DeliveryTrace] ALERTE ${orphanShipped} commande(s) SHIPPED ` +
+            `sans livreur assigné (orphelines) — nettoyage requis`,
+        );
+      }
+    }
     return {
       items,
       count: items.length,
@@ -1173,6 +1234,11 @@ export class DeliveryAgentService {
     const availability =
       app.dashboardAvailability === 'hors_ligne' ? 'hors_ligne' : 'disponible';
     const presence = resolveDeliveryAgentPresence(availability, activeCount);
+    this._logger.debug(
+      `[DeliveryTrace] getPresence agent=${agentId.toString()} ` +
+        `availability=${availability} presence=${presence} ` +
+        `activeCount=${activeCount}`,
+    );
     return {
       availability,
       presence,
@@ -1627,6 +1693,27 @@ export class DeliveryAgentService {
     orderDoc.set('assignedDeliveryUser', agentId);
     orderDoc.status = OrderStatusEnum.SHIPPED;
     await orderDoc.save();
+
+    const persisted = await this._orders
+      .findById(oid)
+      .select('assignedDeliveryUser status')
+      .lean()
+      .exec();
+    const persistedAgent = persisted?.assignedDeliveryUser
+      ? String(persisted.assignedDeliveryUser)
+      : null;
+    this._logger.debug(
+      `[DeliveryTrace] assignSelfToOrder order=${oid.toString()} ` +
+        `agent=${agentId.toString()} prevStatus=${prevOrderStatus} ` +
+        `persistedAgent=${persistedAgent} persistedStatus=${persisted?.status}`,
+    );
+    if (persistedAgent !== String(agentId)) {
+      this._logger.error(
+        `[DeliveryTrace] ALERTE assignSelfToOrder order=${oid.toString()} ` +
+          `assignation NON persistée (attendu=${agentId.toString()} ` +
+          `obtenu=${persistedAgent})`,
+      );
+    }
 
     const customerId = this.customerUserIdFromOrder(orderDoc);
     const tail = String(orderDoc._id).slice(-6).toUpperCase();
