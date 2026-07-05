@@ -3670,7 +3670,7 @@ export class DashboardService {
     const orderOid = new Types.ObjectId(dto.orderId);
     const orderPreview = await this.orderModel
       .findById(orderOid)
-      .select('status assigned_delivery_user shouldShip')
+      .select('status assignedDeliveryUser shouldShip')
       .lean()
       .exec();
     if (!orderPreview) {
@@ -4223,7 +4223,6 @@ export class DashboardService {
   ): string | null {
     const raw =
       (order as OrderModel).assignedDeliveryUser ??
-      (order as Record<string, unknown>).assigned_delivery_user ??
       (order as Record<string, unknown>).assignedDeliveryUser;
     if (raw == null) return null;
     if (typeof raw === 'object' && '_id' in (raw as object)) {
@@ -4543,23 +4542,23 @@ export class DashboardService {
         .aggregate<{ _id: Types.ObjectId; count: number }>([
           {
             $match: {
-              assigned_delivery_user: { $in: userIds },
+              assignedDeliveryUser: { $in: userIds },
               status: OrderStatusEnum.COMPLETED,
               updatedAt: { $gte: startOfDay },
             },
           },
-          { $group: { _id: '$assigned_delivery_user', count: { $sum: 1 } } },
+          { $group: { _id: '$assignedDeliveryUser', count: { $sum: 1 } } },
         ])
         .exec(),
       this.orderModel
         .aggregate<{ _id: Types.ObjectId; count: number }>([
           {
             $match: {
-              assigned_delivery_user: { $in: userIds },
+              assignedDeliveryUser: { $in: userIds },
               status: OrderStatusEnum.COMPLETED,
             },
           },
-          { $group: { _id: '$assigned_delivery_user', count: { $sum: 1 } } },
+          { $group: { _id: '$assignedDeliveryUser', count: { $sum: 1 } } },
         ])
         .exec(),
       this.orderModel

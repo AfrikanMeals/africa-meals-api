@@ -44,12 +44,12 @@ export class FleetBootstrapService {
           .aggregate<{ _id: Types.ObjectId; count: number }>([
             {
               $match: {
-                assigned_delivery_user: { $in: userIds },
+                assignedDeliveryUser: { $in: userIds },
                 shouldShip: true,
                 status: OrderStatusEnum.SHIPPED,
               },
             },
-            { $group: { _id: '$assigned_delivery_user', count: { $sum: 1 } } },
+            { $group: { _id: '$assignedDeliveryUser', count: { $sum: 1 } } },
           ])
           .exec();
         for (const row of activeAgg) {

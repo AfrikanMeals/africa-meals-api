@@ -324,7 +324,7 @@ export class OrdersService {
   ];
 
   private static readonly orderTrackingCourierSelect =
-    '_id status shouldShip shippingPrice assigned_delivery_user deliveryAddressSnapshot delivery_address_snapshot';
+    '_id status shouldShip shippingPrice assignedDeliveryUser deliveryAddressSnapshot';
 
   private storeOwnerUserIdFromLean(store: unknown): string | null {
     if (!store || typeof store !== 'object' || !('owner' in store)) {
@@ -760,7 +760,7 @@ export class OrdersService {
         filter['user'] = vendorUserId;
       }
     } else if (user.type === UserTypeEnum.DELIVERY) {
-      filter['assigned_delivery_user'] = new Types.ObjectId(String(user.id));
+      filter['assignedDeliveryUser'] = new Types.ObjectId(String(user.id));
       filter['shouldShip'] = true;
     } else {
       filter['user'] = new Types.ObjectId(String(user.id));
@@ -2925,7 +2925,7 @@ export class OrdersService {
 
     const activeOrder = await this._orderModel
       .findOne({
-        assigned_delivery_user: vendorId,
+        assignedDeliveryUser: vendorId,
         shouldShip: true,
         status: OrderStatusEnum.SHIPPED,
       })
@@ -3122,7 +3122,7 @@ export class OrdersService {
     const vendorId = String(user._id ?? user.id);
     const order = await this._orderModel
       .findById(new Types.ObjectId(oid))
-      .select('status shouldShip assigned_delivery_user store')
+      .select('status shouldShip assignedDeliveryUser store')
       .exec();
     if (!order) {
       throw new NotFoundException('order_not_found');
@@ -3895,7 +3895,7 @@ export class OrdersService {
     if (!Types.ObjectId.isValid(agentId)) return [];
     const docs = await this._orderModel
       .find({
-        assigned_delivery_user: new Types.ObjectId(agentId),
+        assignedDeliveryUser: new Types.ObjectId(agentId),
         shouldShip: true,
         status: OrderStatusEnum.SHIPPED,
       })
@@ -4237,7 +4237,7 @@ export class OrdersService {
 
     const assignee =
       order.assignedDeliveryUser ??
-      (order as unknown as Record<string, unknown>).assigned_delivery_user;
+      (order as unknown as Record<string, unknown>).assignedDeliveryUser;
     if (!mongoIdsEqual(assignee, agentId)) {
       throw new ForbiddenException('order_not_assigned_to_agent');
     }
@@ -4417,7 +4417,6 @@ export class OrdersService {
   ): string | null {
     const raw =
       (order as OrderModel).assignedDeliveryUser ??
-      (order as Record<string, unknown>).assigned_delivery_user ??
       (order as Record<string, unknown>).assignedDeliveryUser;
     if (raw == null) return null;
     if (typeof raw === 'object' && '_id' in (raw as object)) {

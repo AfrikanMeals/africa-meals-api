@@ -22,7 +22,7 @@ export async function countActiveShippedOrdersForAgent(
   agentId: Types.ObjectId,
 ): Promise<number> {
   return orderModel.countDocuments({
-    assigned_delivery_user: agentId,
+    assignedDeliveryUser: agentId,
     shouldShip: true,
     status: OrderStatusEnum.SHIPPED,
   });

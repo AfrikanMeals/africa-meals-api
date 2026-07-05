@@ -1017,8 +1017,8 @@ export class DeliveryAgentService {
       .find({
         shouldShip: true,
         $or: [
-          { assigned_delivery_user: { $exists: false } },
-          { assigned_delivery_user: null },
+          { assignedDeliveryUser: { $exists: false } },
+          { assignedDeliveryUser: null },
         ],
         status: {
           $in: [
@@ -1118,7 +1118,7 @@ export class DeliveryAgentService {
     const capacity = maxConcurrentOrdersFromApplication(app);
     const rows = await this._orders
       .find({
-        assigned_delivery_user: agentId,
+        assignedDeliveryUser: agentId,
         shouldShip: true,
         status: OrderStatusEnum.SHIPPED,
       })
@@ -1495,7 +1495,7 @@ export class DeliveryAgentService {
 
       const assignee =
         row.assignedDeliveryUser ??
-        (row as unknown as Record<string, unknown>).assigned_delivery_user;
+        (row as unknown as Record<string, unknown>).assignedDeliveryUser;
       if (!mongoIdsEqual(assignee, agentId)) {
         throw new ForbiddenException('order_not_assigned_to_agent');
       }
@@ -1514,7 +1514,7 @@ export class DeliveryAgentService {
 
     const rows = await this._orders
       .find({
-        assigned_delivery_user: agentId,
+        assignedDeliveryUser: agentId,
         status: {
           $in: [OrderStatusEnum.SHIPPED, OrderStatusEnum.APPROVED],
         },
@@ -1624,7 +1624,7 @@ export class DeliveryAgentService {
     }
 
     const prevOrderStatus = orderDoc.status as OrderStatusEnum;
-    orderDoc.set('assigned_delivery_user', agentId);
+    orderDoc.set('assignedDeliveryUser', agentId);
     orderDoc.status = OrderStatusEnum.SHIPPED;
     await orderDoc.save();
 

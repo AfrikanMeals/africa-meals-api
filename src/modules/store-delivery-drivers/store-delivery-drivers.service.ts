@@ -365,15 +365,15 @@ export class StoreDeliveryDriversService {
           $match: {
             store: new Types.ObjectId(storeId),
             shouldShip: true,
-            assigned_delivery_user: { $in: userIds },
+            assignedDeliveryUser: { $in: userIds },
             status: { $in: DELIVERED_STATUSES },
           },
         },
         {
           $group: {
-            _id: '$assigned_delivery_user',
+            _id: '$assignedDeliveryUser',
             total: { $sum: 1 },
-            revenueTotal: { $sum: { $ifNull: ['$shipping_price', 0] } },
+            revenueTotal: { $sum: { $ifNull: ['$shippingPrice', 0] } },
             today: {
               $sum: {
                 $cond: [{ $gte: ['$updatedAt', startOfDay] }, 1, 0],

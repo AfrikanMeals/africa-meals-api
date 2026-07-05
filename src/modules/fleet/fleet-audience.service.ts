@@ -55,7 +55,7 @@ export class FleetAudienceService {
 
     const activeOrders = await this.orders
       .find({
-        assigned_delivery_user: agentOid,
+        assignedDeliveryUser: agentOid,
         shouldShip: true,
         status: OrderStatusEnum.SHIPPED,
       })

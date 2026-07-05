@@ -573,14 +573,14 @@ export const OrderSchema = SchemaFactory.createForClass(OrderModel);
 
 /** Comptage rapide des courses actives par livreur. */
 OrderSchema.index({
-  assigned_delivery_user: 1,
+  assignedDeliveryUser: 1,
   status: 1,
-  should_ship: 1,
+  shouldShip: 1,
 });
 
 OrderSchema.index({
-  is_pre_order: 1,
-  scheduled_at: 1,
+  isPreOrder: 1,
+  scheduledAt: 1,
   user: 1,
 });
 
