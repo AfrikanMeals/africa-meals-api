@@ -3677,9 +3677,11 @@ export class OrdersService {
     const status = orderDoc.status as OrderStatusEnum;
     const plain = orderDoc.toObject() as Record<string, unknown>;
     const tracking = this.buildOrderTrackingPayload(plain, status);
+    const assignedAgentId = this.assignedDeliveryUserIdFromOrderDoc(plain);
     let extra: Partial<OrderWsTrackingPayload> = {
       ...tracking,
       deliveryAddressUpdated: true,
+      ...(assignedAgentId ? { assignedDeliveryUserId: assignedAgentId } : {}),
     };
 
     if (status === OrderStatusEnum.SHIPPED) {
@@ -3700,7 +3702,14 @@ export class OrdersService {
       }
     }
 
-    this.notifyOrderPartiesRealtime(orderDoc, status, extra);
+    this.notifyOrderPartiesRealtime(
+      orderDoc,
+      status,
+      extra,
+      assignedAgentId
+        ? { additionalPartyUserIds: [assignedAgentId] }
+        : undefined,
+    );
 
     const snap = orderDoc.deliveryAddressSnapshot as
       | { location?: { coordinates?: number[] } }
@@ -3708,6 +3717,13 @@ export class OrdersService {
     const coords = snap?.location?.coordinates;
     const lng = coords?.[0] ?? tracking.destinationLongitude ?? 0;
     const lat = coords?.[1] ?? tracking.destinationLatitude ?? 0;
+
+    this.logger.log(
+      `[DeliveryMapRT] notify deliveryAddressUpdated orderId=${orderDoc._id.toString()} ` +
+        `status=${status} assignee=${assignedAgentId ?? 'none'} ` +
+        `dest=(${extra.destinationLatitude ?? lat},${extra.destinationLongitude ?? lng}) ` +
+        `deliveryAddressUpdated=${extra.deliveryAddressUpdated === true}`,
+    );
 
     return {
       destinationLine: tracking.destinationLine,

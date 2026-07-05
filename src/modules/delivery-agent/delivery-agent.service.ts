@@ -1879,7 +1879,6 @@ export class DeliveryAgentService {
   private mapOrderRowForAgent(row: Record<string, unknown>) {
     const id = String(row._id);
     const tail = id.slice(-6).toUpperCase();
-    const shippingAddress = this.shippingLineFromOrder(row);
     const store =
       row.store && typeof row.store === 'object'
         ? (row.store as {
@@ -1894,15 +1893,17 @@ export class DeliveryAgentService {
         ? (store.address as Record<string, unknown>)
         : undefined;
     const storeCoords = this.coordsFromAddressLike(storeAddr);
-    const userAddr =
-      this.deliveryAddressFromOrder(row) ??
-      this.defaultUserAddressFromPopulated(row.user);
+    const snapAddr = this.deliveryAddressFromOrder(row);
+    const fallbackAddr = this.defaultUserAddressFromPopulated(row.user);
+    const coords = snapAddr?.coords ?? fallbackAddr?.coords;
+    const shippingAddress =
+      snapAddr?.line ?? fallbackAddr?.line ?? this.shippingLineFromOrder(row);
     let distanceKm: number | undefined;
-    if (storeCoords && userAddr?.coords) {
-      distanceKm = +haversineDistance(storeCoords, userAddr.coords).toFixed(2);
+    if (storeCoords && coords) {
+      distanceKm = +haversineDistance(storeCoords, coords).toFixed(2);
     }
-    const destLng = userAddr?.coords?.[0];
-    const destLat = userAddr?.coords?.[1];
+    const destLng = coords?.[0];
+    const destLat = coords?.[1];
     const storeLat = storeCoords?.[1];
     const storeLng = storeCoords?.[0];
     return {
