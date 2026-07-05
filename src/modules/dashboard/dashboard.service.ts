@@ -3980,17 +3980,21 @@ export class DashboardService {
     }
 
     const countryCode = dto.countryCode?.trim().toUpperCase().slice(0, 2);
-    orderDoc.set('deliveryAddressSnapshot', {
-      address: dto.address.trim(),
-      city: dto.city?.trim() || undefined,
-      zipCode: dto.zipCode?.trim() || undefined,
-      country: dto.country?.trim() || undefined,
-      countryCode: countryCode || undefined,
-      location: {
-        type: 'Point',
-        coordinates: [lng, lat],
-      },
-    });
+    orderDoc.set(
+      'deliveryAddressSnapshot',
+      this.ordersService.buildDeliveryAddressSnapshotFromAdminUpdate(
+        {
+          address: dto.address,
+          city: dto.city,
+          zipCode: dto.zipCode,
+          country: dto.country,
+          countryCode,
+          latitude: lat,
+          longitude: lng,
+        },
+        orderDoc.deliveryAddressSnapshot,
+      ),
+    );
     await orderDoc.save();
 
     const result = await this.ordersService.updateDeliveryAddressAndNotify(

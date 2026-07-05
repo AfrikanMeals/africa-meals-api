@@ -26,6 +26,8 @@ export type OrderWsTrackingPayload = {
   storeId?: string;
   /** Prise en charge vendeur (préparation) — ISO8601. */
   vendorAcceptedAt?: string;
+  /** Adresse livraison modifiée (admin) — resync cartes livreur / client. */
+  deliveryAddressUpdated?: boolean;
 };
 
 /**

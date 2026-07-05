@@ -3624,6 +3624,50 @@ export class OrdersService {
     return this._orderDomainBridge?.enabled() ?? false;
   }
 
+  /** Snapshot livraison complet (champs requis Mongo) pour correction admin. */
+  buildDeliveryAddressSnapshotFromAdminUpdate(
+    dto: {
+      address: string;
+      city?: string;
+      zipCode?: string;
+      country?: string;
+      countryCode?: string;
+      latitude: number;
+      longitude: number;
+    },
+    previous?: OrderModel['deliveryAddressSnapshot'] | null,
+  ): NonNullable<OrderModel['deliveryAddressSnapshot']> {
+    const lat = Number(dto.latitude);
+    const lng = Number(dto.longitude);
+    const prev = previous ?? undefined;
+    const countryCode = (
+      dto.countryCode?.trim().toUpperCase().slice(0, 2) ||
+      prev?.countryCode?.trim().toUpperCase().slice(0, 2) ||
+      'CM'
+    ).slice(0, 2);
+    const zipCode =
+      dto.zipCode?.trim() || prev?.zipCode?.trim() || '00000';
+    const city = dto.city?.trim() || prev?.city?.trim() || '—';
+    const country =
+      dto.country?.trim() ||
+      prev?.country?.trim() ||
+      (countryCode === 'CM' ? 'Cameroun' : countryCode);
+    const address = dto.address?.trim() || prev?.address?.trim() || '—';
+
+    return {
+      ...(prev?.label ? { label: prev.label } : {}),
+      address,
+      city,
+      country,
+      countryCode,
+      zipCode,
+      location: {
+        type: 'Point',
+        coordinates: [lng, lat],
+      },
+    };
+  }
+
   /** Met à jour le snapshot adresse livraison déjà persisté et propage WS avec coords destination. */
   async updateDeliveryAddressAndNotify(orderDoc: OrderModel): Promise<{
     destinationLine?: string;
@@ -3633,7 +3677,10 @@ export class OrdersService {
     const status = orderDoc.status as OrderStatusEnum;
     const plain = orderDoc.toObject() as Record<string, unknown>;
     const tracking = this.buildOrderTrackingPayload(plain, status);
-    let extra: Partial<OrderWsTrackingPayload> = { ...tracking };
+    let extra: Partial<OrderWsTrackingPayload> = {
+      ...tracking,
+      deliveryAddressUpdated: true,
+    };
 
     if (status === OrderStatusEnum.SHIPPED) {
       const courier = await this.resolveShippedCourierCoordinates(
