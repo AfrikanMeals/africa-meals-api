@@ -470,6 +470,7 @@ export class DeliveryAgentService {
       stripeOnboardingStatus,
       stripeConnectLinked: accountId.length > 0,
       stripeConnectActive: stripeOnboardingStatus === 'COMPLETE',
+      stripeConnectAccountId: accountId.length > 0 ? accountId : null,
       createdAt: doc.createdAt ? new Date(doc.createdAt).toISOString() : null,
     };
   }
@@ -824,6 +825,77 @@ export class DeliveryAgentService {
     return this.mapAdminRow(lean!, u as Record<string, unknown>);
   }
 
+  private async _requireApprovedApplication(applicationId: string) {
+    if (!Types.ObjectId.isValid(applicationId)) {
+      throw new NotFoundException('delivery_agent_application_not_found');
+    }
+    const app = await this._applications.findById(applicationId).exec();
+    if (!app) {
+      throw new NotFoundException('delivery_agent_application_not_found');
+    }
+    if (app.status !== DeliveryAgentApplicationStatus.APPROVED) {
+      throw new BadRequestException('delivery_agent_application_not_approved');
+    }
+    return app;
+  }
+
+  private async _reloadAdminApplicationRow(applicationId: string) {
+    const lean = await this._applications
+      .findById(applicationId)
+      .lean<LeanAppDoc>()
+      .exec();
+    if (!lean) {
+      throw new NotFoundException('delivery_agent_application_not_found');
+    }
+    const u = await this._users
+      .findById(lean.user)
+      .select(this.adminUserSelect)
+      .lean()
+      .exec();
+    return this.mapAdminRow(lean, u as Record<string, unknown>);
+  }
+
+  /** Admin : lie un compte Stripe Connect existant au livreur approuvé. */
+  async assignDeliveryAgentStripeConnectForAdmin(
+    admin: UserModel,
+    applicationId: string,
+    stripeAccountId: string,
+  ) {
+    this.assertAdmin(admin);
+    const app = await this._requireApprovedApplication(applicationId);
+    await this._stripeConnect.assignConnectAccountForUserAdmin({
+      userId: new Types.ObjectId(String(app.user)),
+      stripeAccountId,
+    });
+    return this._reloadAdminApplicationRow(applicationId);
+  }
+
+  /** Admin : resynchronise le statut Stripe Connect depuis Stripe. */
+  async syncDeliveryAgentStripeConnectForAdmin(
+    admin: UserModel,
+    applicationId: string,
+  ) {
+    this.assertAdmin(admin);
+    const app = await this._requireApprovedApplication(applicationId);
+    await this._stripeConnect.syncConnectAccountForUserAdmin({
+      userId: new Types.ObjectId(String(app.user)),
+    });
+    return this._reloadAdminApplicationRow(applicationId);
+  }
+
+  /** Admin : déconnecte Stripe Connect pour permettre un nouvel onboarding. */
+  async resetDeliveryAgentStripeConnectForAdmin(
+    admin: UserModel,
+    applicationId: string,
+  ) {
+    this.assertAdmin(admin);
+    const app = await this._requireApprovedApplication(applicationId);
+    await this._stripeConnect.resetConnectForReonboarding({
+      userId: new Types.ObjectId(String(app.user)),
+    });
+    return this._reloadAdminApplicationRow(applicationId);
+  }
+
   private escapeHtml(value: string): string {
     return value
       .replace(/&/g, '&amp;')
@@ -960,7 +1032,7 @@ export class DeliveryAgentService {
       .populate({
         path: 'store',
         select:
-          'name address vendorManagesDeliveryDrivers deliveryAssignmentMode',
+          'name currency address vendorManagesDeliveryDrivers deliveryAssignmentMode',
         populate: {
           path: 'address',
           select: 'address city zipCode location',
@@ -1053,7 +1125,7 @@ export class DeliveryAgentService {
       .limit(Math.max(capacity, 1))
       .populate({
         path: 'store',
-        select: 'name address',
+        select: 'name currency address',
         populate: {
           path: 'address',
           select: 'address city zipCode location',
@@ -1158,6 +1230,7 @@ export class DeliveryAgentService {
       | 'manual_toggle'
       | 'order_assigned'
       | 'order_completed'
+      | 'order_unassigned'
       | 'admin_toggle' = 'manual_toggle',
   ): Promise<void> {
     const uid = agentUserId?.trim();
@@ -1198,6 +1271,7 @@ export class DeliveryAgentService {
       | 'manual_toggle'
       | 'order_assigned'
       | 'order_completed'
+      | 'order_unassigned'
       | 'admin_toggle';
   }): Promise<void> {
     const storeIds = await this._fleetAudience.resolveNotifyStoreIds(
@@ -1789,6 +1863,19 @@ export class DeliveryAgentService {
     return Math.max(0, Math.round((ship - withheld) * 100) / 100);
   }
 
+  private orderCurrencyFromRow(
+    row: Record<string, unknown>,
+    store?: { currency?: string } | null,
+  ): string {
+    if (typeof row.currency === 'string' && row.currency.trim()) {
+      return row.currency.trim().toUpperCase();
+    }
+    if (typeof store?.currency === 'string' && store.currency.trim()) {
+      return store.currency.trim().toUpperCase();
+    }
+    return 'CAD';
+  }
+
   private mapOrderRowForAgent(row: Record<string, unknown>) {
     const id = String(row._id);
     const tail = id.slice(-6).toUpperCase();
@@ -1797,6 +1884,7 @@ export class DeliveryAgentService {
       row.store && typeof row.store === 'object'
         ? (row.store as {
             name?: string;
+            currency?: string;
             address?: unknown;
           })
         : null;
@@ -1828,6 +1916,7 @@ export class DeliveryAgentService {
       })(),
       orderRef: `#AE-${tail}`,
       priceCad: Number(row.totalPrice) || 0,
+      currency: this.orderCurrencyFromRow(row, store),
       distanceKm: distanceKm ?? null,
       storeLat: storeLat != null && Number.isFinite(storeLat) ? storeLat : null,
       storeLng: storeLng != null && Number.isFinite(storeLng) ? storeLng : null,

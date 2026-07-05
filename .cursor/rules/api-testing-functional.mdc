@@ -1,0 +1,69 @@
+---
+description: API — tests fonctionnels HTTP (CRUD, pagination, headers, uploads)
+globs: src/modules/**/*.controller.ts, src/**/dto/**/*.ts, src/**/*.dto.ts, test/**/*.ts
+alwaysApply: false
+---
+
+# API — tests fonctionnels (Tier 1)
+
+Appliquer après toute modification de route, DTO ou serializer.
+
+## Endpoints — vérifier pour chaque verbe touché
+
+- Status HTTP correct (pas seulement 200)
+- Body JSON : champs, types, nulls, valeurs par défaut
+- Headers : `Content-Type`, charset, pagination (`X-Total-Count` si applicable)
+- `OPTIONS` / `HEAD` si exposés (CORS preflight)
+
+## CRUD par ressource
+
+| Opération | Cas obligatoires |
+|-----------|------------------|
+| **Create** | payload valide ; invalide → 422 ; doublon contraint unique → 409 |
+| **Read** | existant ; inexistant → 404 ; autre user → 403/404 |
+| **Update** | PUT/PATCH valide ; champs invalides → 422 ; conflit concurrent → 409/412 |
+| **Delete** | soft delete si modèle ; déjà supprimé → 404/410 ; non autorisé → 403 |
+
+## Méthodes HTTP interdites
+
+Sur une route `POST` only : envoyer `GET`, `PUT`, `DELETE`, `PATCH` → **405**.
+
+## Query & path params
+
+- Param manquant / extra / dupliqué
+- UUID invalide, ID négatif, zero, très grand
+- Encodage URL, caractères spéciaux, tentatives injection (`' OR 1=1`, `%00`)
+
+## Pagination / tri / filtres / recherche
+
+- Première page, dernière page, page vide, page invalide / négative
+- `limit` max dépassé, cursor invalide
+- Tri asc/desc, champ invalide → 400
+- Filtres combinés, aucun résultat, unicode / emoji en recherche
+- Injection dans param `q` / `search`
+
+## Upload (`medias`, images produit)
+
+- Type supporté vs refusé ; fichier 0 octet ; taille max ; double extension
+- Non autorisé sans JWT ; mauvais `Content-Type`
+- Métadonnées image ; fichier corrompu
+
+## Download
+
+- Auth requise si privé ; `Content-Type` / filename corrects
+
+## Erreurs — status cohérents
+
+Couvrir au moins : **400**, **401**, **403**, **404**, **405**, **409**, **422**, **429** (si rate limit), **415** (mauvais media type).
+
+Format erreur Nest uniforme (`message`, `statusCode`, champs validation).
+
+## Exemple spec (supertest)
+
+```typescript
+await request(app.getHttpServer())
+  .patch('/api/orders/invalid-uuid')
+  .set('Authorization', `Bearer ${clientToken}`)
+  .send({ status: 'approved' })
+  .expect(400);
+```

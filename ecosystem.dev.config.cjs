@@ -41,6 +41,7 @@ const sharedDevApp = {
 const apiDevEnv = {
   NODE_ENV: 'development',
   FORCE_COLOR: '1',
+  API_HTTP_ADAPTER: 'fastify',
   ...apiPm2Env.devEnvVars(),
   ...apiPortEnv,
 };

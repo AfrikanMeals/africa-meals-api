@@ -1,0 +1,65 @@
+---
+description: API — performance, observabilité, release readiness, chaos
+globs: src/main.ts, src/app.module.ts, src/modules/sse-stream/**/*.ts, src/modules/db-maintenance/**/*.ts, scripts/**/*
+alwaysApply: false
+---
+
+# API — ops & production readiness (Tier 4)
+
+Avant release majeure, migration schema, ou changement infra (bootstrap, health, rate limit global).
+
+## Performance & charge
+
+| Niveau | Outil | Seuil indicatif |
+|--------|-------|-----------------|
+| Latence locale | `yarn bench:api` | p95 stable vs baseline |
+| Charge | `africa-meals-infra/scripts/load-test/` | pas d’erreur 5xx > 1 % |
+| Stress | VUs > charge nominale | recovery sans restart manuel |
+| Soak | 24 h staging | pas fuite mémoire / connexion Mongo |
+
+Endpoints smoke charge : `GET /health`, `GET /auth/me`, `GET /cart`, STOMP connect (WS).
+
+## Observabilité
+
+- `GET /api/health` : JSON `status`, `version`, `uptimeSeconds`
+- `GET /health/infra` si exposé : dépendances (mail, DB)
+- Logs structurés ; métriques webhook Stripe si touchées
+- Tracing / correlation ID sur requêtes longues
+
+## Rate limiting global
+
+- Routes auth : limite IP (`auth-rate-limit`)
+- Health exempt ; burst → **429**
+
+## Backup & déploiement
+
+- Migration Mongo testée up **et** rollback plan documenté
+- Blue/green ou canary : zéro downtime health OK
+- `yarn audit:ci` / workflow `security-audit.yml` vert
+
+## Chaos (staging uniquement)
+
+Couper temporairement : Mongo, Redis, broker — API dégrade proprement (503 contrôlé, pas crash loop).
+
+## Checklist prod (41 — résumé exécutable)
+
+Avant merge release :
+
+- [ ] Contrat OpenAPI à jour ; tests automatisés CI verts
+- [ ] AuthN + AuthZ enforced sur nouvelles routes
+- [ ] Validation DTO + erreurs cohérentes
+- [ ] Idempotence paiements / webhooks
+- [ ] Rate limiting actif sur surfaces sensibles
+- [ ] Logs sans PII / secrets
+- [ ] Health + readiness validés (`curl /api/health`)
+- [ ] Migrations testées ; rollback validé
+- [ ] Load test passé (staging)
+- [ ] Scan sécurité (`npm audit`) + revue OWASP tier 2
+- [ ] Procédure backup/restore documentée
+- [ ] Dépendances tierces : timeout + retry testés
+- [ ] QA checklist buffer synchronisée
+
+## Versioning
+
+- Préfixe `/api` stable ; breaking change → version ou feature flag
+- Endpoints dépréciés : header ou doc + période grâce

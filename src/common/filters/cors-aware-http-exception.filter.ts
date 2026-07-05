@@ -1,11 +1,17 @@
 import {
+  nestHttpHeadersSent,
+  sendNestHttpJson,
+  setNestHttpHeader,
+  type NestHttpResponse,
+} from '@common/http/http-response.util';
+import {
   ArgumentsHost,
   Catch,
   ExceptionFilter,
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
-import type { Request, Response } from 'express';
+import type { Request } from 'express';
 import { isBrowserCorsOriginAllowed } from '../cors/cors-options';
 
 /** Réponses d’erreur avec en-têtes CORS (évite « CORS error » masquant un 403). */
@@ -21,18 +27,18 @@ export class CorsAwareHttpExceptionFilter implements ExceptionFilter {
 
     const ctx = host.switchToHttp();
     const req = ctx.getRequest<Request>();
-    const res = ctx.getResponse<Response>();
+    const res = ctx.getResponse<NestHttpResponse>();
 
-    if (res.headersSent) {
+    if (nestHttpHeadersSent(res)) {
       return;
     }
 
     const origin =
       typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
     if (origin && isBrowserCorsOriginAllowed(origin)) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Access-Control-Allow-Credentials', 'true');
-      res.setHeader('Vary', 'Origin');
+      setNestHttpHeader(res, 'Access-Control-Allow-Origin', origin);
+      setNestHttpHeader(res, 'Access-Control-Allow-Credentials', 'true');
+      setNestHttpHeader(res, 'Vary', 'Origin');
     }
 
     const isProd = process.env.NODE_ENV === 'production';
@@ -71,6 +77,6 @@ export class CorsAwareHttpExceptionFilter implements ExceptionFilter {
       };
     }
 
-    res.status(status).json(body);
+    sendNestHttpJson(res, status, body);
   }
 }

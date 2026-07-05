@@ -1084,7 +1084,11 @@ export class StoreService {
     const st = doc.status as StoreStatusEnum;
     const canEditApplication =
       isOwner &&
-      [StoreStatusEnum.PENDING, StoreStatusEnum.REVISION].includes(st);
+      [
+        StoreStatusEnum.PENDING,
+        StoreStatusEnum.REVISION,
+        StoreStatusEnum.ACTIVE,
+      ].includes(st);
 
     const addr = doc.address as AddressModel & {
       location?: { coordinates?: number[] };
@@ -1934,7 +1938,7 @@ export class StoreService {
     return this.findMyNotificationFeed(user);
   }
 
-  /** Mise à jour fiche vendeur (dossier en PENDING ou REVISION). */
+  /** Mise à jour fiche vendeur (PENDING, REVISION ou ACTIVE — propriétaire). */
   async updateVendorApplication(user: UserModel, args: CreateStoreDto) {
     await this._businessTypesService.assertActiveSlug(args.businessType);
     const fullUser = await this._usersService.findById(
@@ -1957,9 +1961,11 @@ export class StoreService {
       throw new NotFoundException('store_not_found');
     }
     if (
-      ![StoreStatusEnum.PENDING, StoreStatusEnum.REVISION].includes(
-        store.status,
-      )
+      ![
+        StoreStatusEnum.PENDING,
+        StoreStatusEnum.REVISION,
+        StoreStatusEnum.ACTIVE,
+      ].includes(store.status)
     ) {
       throw new ForbiddenException('store_not_editable');
     }
@@ -2067,7 +2073,7 @@ export class StoreService {
 
   /**
    * Enregistre `supportsShipping` et `shippingZones` sans repasser par la fiche complète
-   * (nécessaire pour les boutiques ACTIVE, car `updateVendorApplication` est réservé au dossier).
+   * (raccourci pour les zones ; la fiche complète reste via `updateVendorApplication`).
    */
   async updateVendorShippingZones(
     user: UserModel,

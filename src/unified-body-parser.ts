@@ -1,3 +1,4 @@
+import { sendMiddlewareJson } from '@common/http/http-response.util';
 import type { IncomingMessage } from 'http';
 import type { NextFunction, Request, Response } from 'express';
 import express from 'express';
@@ -77,7 +78,7 @@ async function readCompressedJsonBody(
       return;
     }
     if (err instanceof SyntaxError) {
-      res.status(400).json({ message: 'invalid_compressed_body' });
+      sendMiddlewareJson(res, 400, { message: 'invalid_compressed_body' });
       return;
     }
     next(err);

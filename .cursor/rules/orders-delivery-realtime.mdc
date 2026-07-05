@@ -1,0 +1,47 @@
+---
+description: API — notify temps réel commandes / livraison après chaque mutation
+globs: src/modules/orders/**/*.ts,src/modules/delivery-agent/**/*.ts,src/modules/ws-notify/**/*.ts,src/modules/dashboard/**/*.ts,src/modules/fleet/**/*.ts,src/modules/domain-event-handlers/**/*.ts
+alwaysApply: false
+---
+
+# API — temps réel commandes & livraison
+
+## Point d’entrée unique notify
+
+Après **toute** mutation commande ou livraison :
+
+```typescript
+// ✅ Commande
+await this.ordersService.notifyOrderPartiesRealtime(orderDoc, { status, ...extra });
+
+// ✅ Présence livreur
+await this.deliveryAgentService.emitAgentPresenceChanged(agentId, reason);
+```
+
+Ne **pas** appeler `WsOrderNotifyService` / HTTP WS directement depuis un controller.
+
+## Services clés
+
+| Service | Rôle |
+|---------|------|
+| `OrdersService.notifyOrderPartiesRealtime` | Façade notify parties + staff |
+| `WsOrderNotifyHandler` | Batch parties, remboursements |
+| `WsOrderNotifyService.notifyOrderPartiesBatch` | Queue dispatch |
+| `WsDeliveryAgentNotifyService` | Présence livreur |
+| `WsNotifyDispatchQueueService` | gRPC → MQTT → BullMQ → HTTP |
+
+## Déclencheurs attendus
+
+Notify sur : création, paiement, approbation vendeur, expédition, assignation / unassign livreur, annulation, livraison confirmée, **GPS livreur** (throttle), toggle présence livreur.
+
+`DashboardService` (assign/unassign admin) doit aussi notifier.
+
+## Bus domaine (si activé)
+
+Enrichir avec `buildOrderDomainDispatchContext` ; éviter double notify legacy + bus — respecter `DOMAIN_EVENTS_WS_VIA_BUS`.
+
+## Checklist PR
+
+- [ ] Mutation DB suivie d’un notify (pas de « l’UI rafraîchira seule »)
+- [ ] Payload tracking inclut champs nécessaires au patch client (`orderId`, `status`, GPS, `assignedDeliveryUserId`, …)
+- [ ] Tests ou spec si nouveau statut / chemin notify

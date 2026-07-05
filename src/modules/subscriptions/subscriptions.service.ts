@@ -36,6 +36,7 @@ import { VendorSubscriptionEmailService } from './vendor-subscription-email.serv
 import { SubscriptionPlanOrderCommissionService } from './subscription-plan-order-commission.service';
 import { SubscriptionAdCashService } from './subscription-ad-cash.service';
 import {
+  mergeVendorStoreObjectIds,
   resolveVendorCheckoutStoreId,
   vendorStoreObjectIds,
 } from './subscription-vendor-store.util';
@@ -259,6 +260,23 @@ export class SubscriptionsService implements OnModuleInit {
     }
   }
 
+  /** Boutiques liées au compte (user.stores) + boutiques dont l’utilisateur est owner. */
+  async resolveAccessibleStoreIds(
+    user: UserModel,
+  ): Promise<Types.ObjectId[]> {
+    const fromUser = vendorStoreObjectIds(user);
+    const owned = await this.storeModel
+      .find({ owner: user._id })
+      .select('_id')
+      .lean()
+      .exec();
+    const fromOwned = owned
+      .map((s) => String((s as { _id?: unknown })._id ?? ''))
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    return mergeVendorStoreObjectIds(fromUser, fromOwned);
+  }
+
   async listPlans(
     user: UserModel,
     includeInactive = false,
@@ -268,33 +286,54 @@ export class SubscriptionsService implements OnModuleInit {
     if (user.type !== UserTypeEnum.ADMIN || !includeInactive) {
       filter.active = true;
     }
-    if (user.type === UserTypeEnum.VENDOR) {
-      const storeIds = vendorStoreObjectIds(user);
-      filter.$or = storeIds.length
+    const storeIds =
+      user.type === UserTypeEnum.ADMIN
+        ? vendorStoreObjectIds(user)
+        : await this.resolveAccessibleStoreIds(user);
+    const explicitStoreId = options?.storeId?.trim();
+    const explicitOid =
+      explicitStoreId && Types.ObjectId.isValid(explicitStoreId)
+        ? new Types.ObjectId(explicitStoreId)
+        : null;
+
+    if (user.type !== UserTypeEnum.ADMIN) {
+      // Plans globaux + plans custom des boutiques accessibles (jamais uniquement le storeId).
+      const scopedIds = [...storeIds];
+      if (
+        explicitOid &&
+        storeIds.some((id) => String(id) === String(explicitOid))
+      ) {
+        // déjà inclus
+      } else if (explicitOid && storeIds.length === 0) {
+        // pas d’accès boutique : ignorer le filtre custom
+      }
+      filter.$or = scopedIds.length
         ? [
             { storeId: { $exists: false } },
             { storeId: null },
-            { storeId: { $in: storeIds } },
+            { storeId: { $in: scopedIds } },
           ]
         : [{ storeId: { $exists: false } }, { storeId: null }];
-    } else if (options?.storeId && Types.ObjectId.isValid(options.storeId)) {
-      filter.storeId = new Types.ObjectId(options.storeId);
+    } else if (explicitOid) {
+      filter.$or = [
+        { storeId: { $exists: false } },
+        { storeId: null },
+        { storeId: explicitOid },
+      ];
     }
+
     const rows = await this.planModel
       .find(filter)
       .sort({ sortOrder: 1, createdAt: 1 })
       .lean()
       .exec();
     const plans = (rows as Record<string, unknown>[]).map(mapPlan);
-    if (user.type !== UserTypeEnum.VENDOR) {
+    if (!storeIds.length && !explicitOid) {
       return plans;
     }
-    const storeIds = vendorStoreObjectIds(user);
-    if (!storeIds.length) return plans;
-    const pricingStoreId = await this.resolveVendorPricingStoreId(
-      user,
-      options?.storeId,
-    );
+    const pricingStoreId =
+      (await this.resolveVendorPricingStoreId(user, options?.storeId, storeIds)) ??
+      (explicitOid ? String(explicitOid) : null);
     if (!pricingStoreId) return plans;
     return Promise.all(
       plans.map(async (plan) => {
@@ -338,8 +377,10 @@ export class SubscriptionsService implements OnModuleInit {
   private async resolveVendorPricingStoreId(
     user: UserModel,
     explicitStoreId?: string,
+    knownStoreIds?: Types.ObjectId[],
   ): Promise<string | null> {
-    const storeIds = vendorStoreObjectIds(user);
+    const storeIds =
+      knownStoreIds ?? (await this.resolveAccessibleStoreIds(user));
     if (!storeIds.length) return null;
 
     const trimmed = explicitStoreId?.trim() ?? '';
@@ -2154,7 +2195,8 @@ export class SubscriptionsService implements OnModuleInit {
   }
 
   async startVendorTrial(user: UserModel, dto: SubscribeVendorDto) {
-    if (user.type !== UserTypeEnum.VENDOR) {
+    const accessibleStores = await this.resolveAccessibleStoreIds(user);
+    if (!accessibleStores.length) {
       throw new ForbiddenException('vendor_only');
     }
     if (!Types.ObjectId.isValid(dto.planId)) {
@@ -2175,6 +2217,7 @@ export class SubscriptionsService implements OnModuleInit {
       user,
       dto.storeId,
       (plan as { storeId?: unknown }).storeId,
+      accessibleStores,
     );
 
     const trial = resolvePlanTrialFields({
@@ -2539,10 +2582,7 @@ export class SubscriptionsService implements OnModuleInit {
   }
 
   async getMySubscriptions(user: UserModel) {
-    if (user.type !== UserTypeEnum.VENDOR) {
-      throw new ForbiddenException('vendor_only');
-    }
-    const storeIds = vendorStoreObjectIds(user);
+    const storeIds = await this.resolveAccessibleStoreIds(user);
     if (!storeIds.length) {
       return { active: null as null, history: [] };
     }

@@ -1,4 +1,9 @@
-import type { NextFunction, Request, Response } from 'express';
+import {
+  middlewareHeadersSent,
+  sendMiddlewareJson,
+  type MiddlewareResponse,
+} from '@common/http/http-response.util';
+import type { NextFunction, Request } from 'express';
 import type { Server } from 'http';
 
 const DEFAULT_MS = 60_000;
@@ -34,13 +39,13 @@ export function applyHttpServerTimeouts(httpServer: Server): void {
  */
 export function httpRequestTimeoutMiddleware() {
   const ms = getHttpRequestTimeoutMs();
-  return (req: Request, res: Response, next: NextFunction) => {
+  return (req: Request, res: MiddlewareResponse, next: NextFunction) => {
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      if (!res.headersSent) {
-        res.status(504).json({
+      if (!middlewareHeadersSent(res)) {
+        sendMiddlewareJson(res, 504, {
           statusCode: 504,
           message: 'Request timeout',
         });

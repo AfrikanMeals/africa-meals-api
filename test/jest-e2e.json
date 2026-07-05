@@ -10,6 +10,7 @@
     "^.+\\.(t|j)s$": "ts-jest"
   },
   "moduleNameMapper": {
+    "^src/(.*)$": "<rootDir>/src/$1",
     "^@schemas/(.*)$": "<rootDir>/src/schemas/$1",
     "^@modules/(.*)$": "<rootDir>/src/modules/$1",
     "^@models/(.*)$": "<rootDir>/src/schema/$1",

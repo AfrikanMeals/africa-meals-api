@@ -1,4 +1,5 @@
-import type { NextFunction, Request, Response } from 'express';
+import { sendMiddlewareStatus, type MiddlewareResponse } from '@common/http/http-response.util';
+import type { NextFunction, Request } from 'express';
 import {
   buildApiCorsOptions,
   isBrowserCorsOriginAllowed,
@@ -14,7 +15,7 @@ export function wiseEatCorsEarlyMiddleware() {
   const opts = buildApiCorsOptions();
   const allowedHeaders = (opts.allowedHeaders as string[] | undefined)?.join(',') ?? '';
 
-  return (req: Request, res: Response, next: NextFunction): void => {
+  return (req: Request, res: MiddlewareResponse, next: NextFunction): void => {
     const origin =
       typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
     const allowed = origin ? isBrowserCorsOriginAllowed(origin) : false;
@@ -33,7 +34,7 @@ export function wiseEatCorsEarlyMiddleware() {
         }
         res.setHeader('Access-Control-Max-Age', '86400');
       }
-      res.status(204).end();
+      sendMiddlewareStatus(res, 204);
       return;
     }
 

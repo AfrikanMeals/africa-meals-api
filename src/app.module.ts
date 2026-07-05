@@ -28,6 +28,7 @@ import { SupportChatModule } from './modules/support-chat/support-chat.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { DeliveryAgentModule } from './modules/delivery-agent/delivery-agent.module';
 import { GraphqlApiModule } from './graphql/graphql.module';
+import { isFastifyHttpAdapter } from './http-adapter.util';
 import { RecommendationsModule } from './modules/recommendations/recommendations.module';
 import { PlatformFeesModule } from './modules/platform-fees/platform-fees.module';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
@@ -315,7 +316,7 @@ async function readRedisManagerEnabledAtBootstrap(
     SupportChatModule,
     DashboardModule,
     DeliveryAgentModule,
-    GraphqlApiModule,
+    ...(isFastifyHttpAdapter() ? [] : [GraphqlApiModule]),
     RecommendationsModule,
     PlatformShippingSettingsModule,
     PlatformFeesModule,

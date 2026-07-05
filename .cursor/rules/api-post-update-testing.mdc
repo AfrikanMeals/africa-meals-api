@@ -1,0 +1,95 @@
+---
+description: API — workflow de tests obligatoire après toute modification backend
+globs: src/**/*.ts, test/**/*.ts
+alwaysApply: false
+---
+
+# API — tests post-modification
+
+Toute modification API (controller, service, guard, DTO, pipe, webhook, migration) **n’est pas terminée** tant que les vérifications du tier applicable ne sont pas passées.
+
+## Workflow agent (dans l’ordre)
+
+1. **Identifier le tier** (matrice ci-dessous) + modules touchés.
+2. **Automatiser d’abord** : ajouter ou étendre `*.spec.ts` / `*.integration.spec.ts` / `*.e2e-spec.ts` — ne pas se limiter à « 200 OK ».
+3. **Exécuter** les commandes du tier (corriger avant de conclure).
+4. **QA produit** : si comportement testable nouveau ou corrigé → buffer dans `africa-meals-project/docs/QA_TESTING_CHECKLIST.md` + `.html`.
+5. **OpenAPI** : si route/DTO/status change → vérifier `/api/docs` et rétrocompatibilité.
+
+## Matrice changement → tier
+
+| Changement | Tier | Règle détaillée |
+|------------|------|-----------------|
+| Utilitaire pur, typo doc | **0** | `yarn test` ciblé sur le fichier |
+| Controller / DTO / validation | **1** | `api-testing-functional.mdc` |
+| Auth, guards, JWT, rôles | **1 + 2** | `api-testing-auth-security.mdc` |
+| Orders, cart, billing, Stripe, PayPal | **1 + 2 + 3** | `api-testing-reliability.mdc` |
+| Upload médias, webhooks, queues | **1 + 2 + 3** | `api-testing-reliability.mdc` |
+| Health, rate limit, logging, CORS | **1 + 4** | `api-testing-ops-release.mdc` |
+| Release / prod / migration schema | **1–4** | `api-testing-ops-release.mdc` (checklist prod) |
+
+## Commandes par tier
+
+```bash
+# Tier 0–1 (chaque PR API)
+cd africa-meals-api
+yarn test --findRelatedTests <fichiers_modifiés>
+yarn lint
+
+# Tier 2 (domaines sensibles)
+yarn test --testPathPattern='(auth|orders|billing|cart|delivery-agent)'
+yarn test:e2e
+
+# Tier 3 (fiabilité / idempotence)
+yarn test --testPathPattern='integration\.spec'
+
+# Tier 4 (ops / release — manuel ou CI planifié)
+yarn audit:ci
+yarn bench:api
+# Charge : africa-meals-infra/scripts/load-test/run-load-test.sh
+```
+
+## CI GitHub Actions (Tier 1–2 automatique)
+
+Workflow `.github/workflows/api-tests.yml` sur chaque PR/push API :
+
+| Job | Commande | Tier | Périmètre |
+|-----|----------|------|-----------|
+| Build | `npm run build` | 1 | Typecheck Nest |
+| Unit tests | `npm run test:ci` | 1 | Utils + specs stables (~73 suites) ; exclut stubs `*.controller.spec` / `*.service.spec` / `*.integration.spec` tant que mocks Nest incomplets |
+| Domain tests | `npm run test:domain` | 2 | `*.util.spec` auth · orders · billing · cart · delivery-agent |
+| E2E smoke | `npm run test:e2e:ci` | 2 | MongoDB service · `GET /api/health` + `/api/` |
+
+Lint local recommandé (`npm run lint:ci`) — non bloquant CI tant que la dette Prettier n’est pas résorbée.
+
+Audit npm : workflow `security-audit.yml` (planifié + push main/develop).
+
+**Dette tests** : enrichir progressivement les `*.controller.spec` / `*.service.spec` avec mocks Nest, puis retirer les `testPathIgnorePatterns` de `test:ci`.
+
+## Patterns de tests NestJS (obligatoires)
+
+- **Unit** : service/guard/pipe/util — mocks Mongo/Stripe/Redis.
+- **Integration** : module réel + supertest — auth JWT, ValidationPipe, status + body + headers.
+- **E2E** : parcours multi-étapes (ex. panier → commande → webhook simulé).
+
+Chaque endpoint touché doit couvrir au minimum : **succès**, **401/403 si protégé**, **422 validation**, **404 ressource absente**, **405 méthode interdite**.
+
+## Rôles Afrika Meals (authorization)
+
+| Rôle | Attendu |
+|------|---------|
+| `ADMIN` | accès global plateforme |
+| `VENDOR` | données propres boutique / équipe |
+| `CLIENT` | propres commandes, panier, adresses |
+| `DELIVERY_AGENT` | courses assignées, pas données tierces |
+| Public | routes `@Public()` / cache public uniquement |
+
+Tester **escalade horizontale** (ID d’un autre user) et **verticale** (CLIENT → route ADMIN).
+
+## Ne pas considérer terminé sans
+
+- [ ] Specs ajoutées ou mises à jour pour le diff
+- [ ] Commandes tier exécutées sans échec
+- [ ] Pas de fuite PII/tokens dans logs (`redact-sensitive.util`)
+- [ ] Devise/région : parcours hors CAD si montants touchés
+- [ ] QA buffer mis à jour si parcours testable

@@ -23,9 +23,10 @@ export class WsOrderNotifyHandler {
     order: OrderModel | Record<string, unknown>,
     status: OrderStatusEnum,
     extra?: Partial<OrderWsTrackingPayload>,
+    notifyOptions?: { additionalPartyUserIds?: string[] },
   ): void {
     const ctx = this.orders.buildOrderDomainDispatchContext(order, status, extra);
-    this.dispatchToParties(ctx.wsTracking, ctx);
+    this.dispatchToParties(ctx.wsTracking, ctx, notifyOptions);
   }
 
   notifyPartiesFromOrderContext(
@@ -61,10 +62,11 @@ export class WsOrderNotifyHandler {
     orderId: string,
     status: OrderStatusEnum,
     extra?: Partial<OrderWsTrackingPayload>,
+    notifyOptions?: { additionalPartyUserIds?: string[] },
   ): Promise<void> {
     const order = await this.orders.findOrderForWsNotify(orderId);
     if (!order) return;
-    this.notifyPartiesFromDoc(order, status, extra);
+    this.notifyPartiesFromDoc(order, status, extra, notifyOptions);
   }
 
   /** GPS livreur — chemin legacy WS (sans republier `order.tracking.updated`). */
@@ -93,6 +95,7 @@ export class WsOrderNotifyHandler {
       vendorUserId?: string;
       deliveryAgentId?: string;
     },
+    notifyOptions?: { additionalPartyUserIds?: string[] },
   ): void {
     const targets: string[] = [];
     const customerId = parties.customerUserId?.trim();
@@ -106,6 +109,10 @@ export class WsOrderNotifyHandler {
       deliveryAgentId !== vendorId
     ) {
       targets.push(deliveryAgentId);
+    }
+    for (const uid of notifyOptions?.additionalPartyUserIds ?? []) {
+      const id = uid.trim();
+      if (id) targets.push(id);
     }
     this.wsOrderNotify.notifyOrderPartiesBatch(tracking, targets);
   }

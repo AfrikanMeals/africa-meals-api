@@ -1,4 +1,9 @@
-import type { NextFunction, Request, Response } from 'express';
+import {
+  sendMiddlewareJson,
+  sendMiddlewareStatus,
+  type MiddlewareResponse,
+} from '@common/http/http-response.util';
+import type { NextFunction, Request } from 'express';
 import {
   buildDryRunSimulatedResponse,
   DRY_RUN_MODE_HEADER,
@@ -13,7 +18,7 @@ import { normalizeRequestPath } from '../rate-limit/rate-limit.util';
  * Activation : DRY_RUN_ENABLED + DRY_RUN_SECRET + headers X-Wise-Eat-Dry-Run + token.
  */
 export function httpDryRunMiddleware(cfg = readDryRunConfig()) {
-  return (req: Request, res: Response, next: NextFunction): void => {
+  return (req: Request, res: MiddlewareResponse, next: NextFunction): void => {
     if (!isDryRunRequest(req, cfg)) {
       next();
       return;
@@ -26,10 +31,10 @@ export function httpDryRunMiddleware(cfg = readDryRunConfig()) {
       const { status, body } = buildDryRunSimulatedResponse(method, path);
       res.setHeader(DRY_RUN_MODE_HEADER, 'simulated');
       if (body) {
-        res.status(status).json(body);
+        sendMiddlewareJson(res, status, body);
         return;
       }
-      res.status(status).end();
+      sendMiddlewareStatus(res, status);
       return;
     }
 

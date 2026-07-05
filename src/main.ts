@@ -1,44 +1,56 @@
 import './setup-dns-resolver';
 import { compressionMiddleware } from './compression-middleware';
-import { DEFAULT_URLENCODED_BODY_LIMIT } from '@common/http/body-parser-limits.util';
-import { createRouteAwareJsonBodyParser } from './route-aware-body-parser';
 import {
   applyHttpServerTimeouts,
   httpRequestTimeoutMiddleware,
 } from './http-request-timeout';
 import { NestFactory } from '@nestjs/core';
-import { NestExpressApplication } from '@nestjs/platform-express';
-import express from 'express';
+import {
+  FastifyAdapter,
+  NestFastifyApplication,
+} from '@nestjs/platform-fastify';
+import { sendNestHttpText } from '@common/http/http-response.util';
 import { AppModule } from './app.module';
 import { configureApplication } from './configure-app';
 import { httpRateLimitMiddleware } from './common/rate-limit/http-rate-limit.middleware';
 import { RateLimitService } from './common/rate-limit/rate-limit.service';
 import { httpDryRunMiddleware } from './common/http/dry-run.middleware';
+import { isFastifyHttpAdapter } from './http-adapter.util';
+import { registerFastifyBodyParsing } from './register-fastify-body-parsing';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    bodyParser: false,
+  const adapter = new FastifyAdapter({
+    bodyLimit: 50 * 1024 * 1024,
   });
+  const app = await NestFactory.create<NestFastifyApplication>(
+    AppModule,
+    adapter,
+    { bodyParser: false, rawBody: true },
+  );
+  registerFastifyBodyParsing(adapter);
   app.enableShutdownHooks();
   app.use(httpRequestTimeoutMiddleware());
   app.use(httpRateLimitMiddleware(app.get(RateLimitService)));
   app.use(compressionMiddleware({ threshold: 1024 }));
-  app.use(createRouteAwareJsonBodyParser({ preserveRawBody: true }));
   app.use(httpDryRunMiddleware());
-  app.use(
-    express.urlencoded({
-      extended: true,
-      limit: DEFAULT_URLENCODED_BODY_LIMIT,
-    }),
-  );
   app.use('/robots.txt', (_req, res) => {
-    res.type('text/plain').send('User-agent: *\nDisallow: /\n');
+    sendNestHttpText(
+      res,
+      200,
+      'User-agent: *\nDisallow: /\n',
+      'text/plain',
+    );
   });
   await configureApplication(app);
 
   const port = Number(process.env.NODE_PORT || process.env.PORT || 3000);
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0');
   applyHttpServerTimeouts(app.getHttpServer());
-  console.warn(`🚀 API: http://localhost:${port}/api (docs: /api/docs)`);
+  const graphqlNote = isFastifyHttpAdapter()
+    ? ' — GraphQL désactivé (PR2 : @apollo/server + Fastify 4)'
+    : '';
+  console.warn(
+    `🚀 API (Fastify): http://0.0.0.0:${port}/api (docs: /api/docs, health: /api/health)${graphqlNote}`,
+  );
 }
 bootstrap();

@@ -1,4 +1,8 @@
-import type { NextFunction, Request, Response } from 'express';
+import {
+  sendMiddlewareJson,
+  type MiddlewareResponse,
+} from '@common/http/http-response.util';
+import type { NextFunction, Request } from 'express';
 import { RateLimitService } from './rate-limit.service';
 import {
   buildRateLimitHeaders,
@@ -12,7 +16,7 @@ import {
 export function httpRateLimitMiddleware(limiter: RateLimitService) {
   const cfg = readHttpRateLimitConfig(process.env);
 
-  return (req: Request, res: Response, next: NextFunction): void => {
+  return (req: Request, res: MiddlewareResponse, next: NextFunction): void => {
     if (!cfg.enabled) {
       next();
       return;
@@ -36,7 +40,7 @@ export function httpRateLimitMiddleware(limiter: RateLimitService) {
         res.setHeader(name, value);
       }
       if (!result.allowed) {
-        res.status(429).json({
+        sendMiddlewareJson(res, 429, {
           statusCode: 429,
           message: 'rate_limit_exceeded',
           error: 'Too Many Requests',

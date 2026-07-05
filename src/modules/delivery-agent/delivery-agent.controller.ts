@@ -29,6 +29,7 @@ import {
 } from './dto/confirm-delivery-handoff.dto';
 import { DeliveryAgentService } from './delivery-agent.service';
 import { SetPartnerBadgeDto } from '@common/partner-badges/dto/set-partner-badge.dto';
+import { AssignStripeConnectDto } from '@modules/store/dto/assign-stripe-connect.dto';
 
 @ApiTags('delivery-agent')
 @ApiBearerAuth('bearer')
@@ -373,6 +374,56 @@ export class DeliveryAgentController {
       req.user as UserModel,
       applicationId,
       body.badgeCode ?? null,
+    );
+  }
+
+  @Post('admin/applications/:applicationId/assign-stripe-connect')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Admin — lie manuellement un compte Stripe Connect (acct_…) à un livreur approuvé.',
+  })
+  async assignDeliveryAgentStripeConnectAdmin(
+    @Req() req: Request,
+    @Param('applicationId') applicationId: string,
+    @Body() body: AssignStripeConnectDto,
+  ) {
+    return this._deliveryAgent.assignDeliveryAgentStripeConnectForAdmin(
+      req.user as UserModel,
+      applicationId,
+      body.stripeAccountId,
+    );
+  }
+
+  @Post('admin/applications/:applicationId/sync-stripe-connect')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Admin — resynchronise le statut Stripe Connect d’un livreur approuvé.',
+  })
+  async syncDeliveryAgentStripeConnectAdmin(
+    @Req() req: Request,
+    @Param('applicationId') applicationId: string,
+  ) {
+    return this._deliveryAgent.syncDeliveryAgentStripeConnectForAdmin(
+      req.user as UserModel,
+      applicationId,
+    );
+  }
+
+  @Post('admin/applications/:applicationId/reset-stripe-connect')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Admin — déconnecte Stripe Connect d’un livreur approuvé (nouvel onboarding requis).',
+  })
+  async resetDeliveryAgentStripeConnectAdmin(
+    @Req() req: Request,
+    @Param('applicationId') applicationId: string,
+  ) {
+    return this._deliveryAgent.resetDeliveryAgentStripeConnectForAdmin(
+      req.user as UserModel,
+      applicationId,
     );
   }
 }

@@ -1,3 +1,4 @@
+import { sendNestHttpJson, type NestHttpResponse } from '@common/http/http-response.util';
 import {
   ArgumentsHost,
   Catch,
@@ -5,14 +6,13 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
-import type { Response } from 'express';
 
 /** Masque les détails 5xx en production (L-03). */
 @Catch()
 export class GlobalHttpExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
-    const response = ctx.getResponse<Response>();
+    const response = ctx.getResponse<NestHttpResponse>();
     const isProd = process.env.NODE_ENV === 'production';
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
@@ -50,6 +50,6 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
       };
     }
 
-    response.status(status).json(body);
+    sendNestHttpJson(response, status, body);
   }
 }

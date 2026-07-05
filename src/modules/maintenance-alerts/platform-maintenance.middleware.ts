@@ -1,9 +1,13 @@
 import {
+  sendNestHttpJson,
+  type NestHttpResponse,
+} from '@common/http/http-response.util';
+import {
   Injectable,
   Logger,
   NestMiddleware,
 } from '@nestjs/common';
-import type { NextFunction, Request, Response } from 'express';
+import type { NextFunction, Request } from 'express';
 import { PlatformMaintenanceSseService } from './platform-maintenance-sse.service';
 import { PlatformMaintenanceService } from './platform-maintenance.service';
 import {
@@ -25,7 +29,7 @@ export class PlatformMaintenanceMiddleware implements NestMiddleware {
     private readonly maintenanceSse: PlatformMaintenanceSseService,
   ) {}
 
-  async use(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async use(req: Request, res: NestHttpResponse, next: NextFunction): Promise<void> {
     if (!isMobileClientRequest(req)) {
       next();
       return;
@@ -56,7 +60,7 @@ export class PlatformMaintenanceMiddleware implements NestMiddleware {
       String(entry.message ?? '').trim() ||
       'This platform is temporarily unavailable for maintenance.';
     this.logger.debug(`Blocked mobile ${mode} request ${req.method} ${path}`);
-    res.status(503).json({
+    sendNestHttpJson(res, 503, {
       statusCode: 503,
       code: 'platform_maintenance',
       message,

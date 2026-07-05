@@ -50,6 +50,7 @@ module.exports = {
       max_memory_restart: '1500M',
       env: {
         ...apiPm2Env.prodEnvVars(),
+        API_HTTP_ADAPTER: 'fastify',
         NODE_PORT: apiPort,
         PORT: apiPort,
         SERVER_URL: `http://localhost:${apiPort}`,

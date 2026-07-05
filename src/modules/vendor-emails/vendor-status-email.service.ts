@@ -1055,7 +1055,8 @@ export class VendorStatusEmailService {
   }
 
   private async storeRecipients(storeId: string): Promise<EmailRecipient[]> {
-    const userIds = await this.storeAccess.listStorePushRecipientUserIds(
+    // E-mails : équipe boutique uniquement, jamais les admins plateforme.
+    const userIds = await this.storeAccess.listStoreTeamRecipientUserIds(
       storeId,
     );
     const seen = new Set<string>();

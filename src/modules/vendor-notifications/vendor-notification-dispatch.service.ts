@@ -238,7 +238,9 @@ export class VendorNotificationDispatchService {
     metadata?: Record<string, string>;
     logTag: string;
   }): Promise<void> {
-    const userIds = await this.storeAccess.listStorePushRecipientUserIds(
+    // E-mails limités au propriétaire + équipe boutique — jamais aux admins
+    // plateforme (sinon chaque changement de statut spamme tous les admins).
+    const userIds = await this.storeAccess.listStoreTeamRecipientUserIds(
       args.storeId,
     );
     const seen = new Set<string>();

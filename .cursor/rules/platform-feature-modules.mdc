@@ -30,4 +30,4 @@ Le gating actuel est **côté client**. Ajouter un guard API seulement si la fea
 
 ## Tests
 
-Couvrir merge partiel PUT, défaut `true`, et persistance Mongo.
+Couvrir merge partiel PUT, défaut `true`, et persistance Mongo. Voir aussi `api-post-update-testing.mdc` (Tier 1 + auth ADMIN).

@@ -2952,24 +2952,47 @@ export class OrdersService {
     }
 
     const existingAssignee = this.assignedDeliveryUserIdFromOrderDoc(order);
-    if (existingAssignee && existingAssignee !== String(vendorId)) {
+    const st = order.status as OrderStatusEnum;
+    const vendorIdStr = String(vendorId);
+    const isTakeover =
+      st === OrderStatusEnum.SHIPPED &&
+      !!existingAssignee &&
+      existingAssignee !== vendorIdStr;
+    const isOrphanShipped =
+      st === OrderStatusEnum.SHIPPED && !existingAssignee;
+
+    if (existingAssignee && existingAssignee !== vendorIdStr && !isTakeover) {
       throw new BadRequestException('order_assigned_to_other');
     }
 
-    const st = order.status as OrderStatusEnum;
-    if (
-      ![
-        OrderStatusEnum.CREATED,
-        OrderStatusEnum.PAIED,
-        OrderStatusEnum.APPROVED,
-      ].includes(st)
-    ) {
+    const allowedStatuses: OrderStatusEnum[] = [
+      OrderStatusEnum.CREATED,
+      OrderStatusEnum.PAIED,
+      OrderStatusEnum.APPROVED,
+    ];
+    if (isTakeover || isOrphanShipped) {
+      allowedStatuses.push(OrderStatusEnum.SHIPPED);
+    }
+    if (!allowedStatuses.includes(st)) {
       throw new BadRequestException('order_not_assignable');
     }
 
+    if (existingAssignee === vendorIdStr && st === OrderStatusEnum.SHIPPED) {
+      const tail = oid.slice(-6).toUpperCase();
+      return {
+        ok: true,
+        orderId: oid,
+        orderRef: `#AE-${tail}`,
+        status: OrderStatusEnum.SHIPPED,
+      };
+    }
+
+    const prevAssignee = existingAssignee;
     const prevStatus = st;
-    order.set('assigned_delivery_user', vendorId);
-    order.status = OrderStatusEnum.SHIPPED;
+    order.set('assignedDeliveryUser', vendorId);
+    if (st !== OrderStatusEnum.SHIPPED) {
+      order.status = OrderStatusEnum.SHIPPED;
+    }
     await order.save();
 
     const storeId = this.storeIdFromOrderDoc(order);
@@ -2977,6 +3000,26 @@ export class OrdersService {
     const tail = oid.slice(-6).toUpperCase();
     const orderRef = `#AE-${tail}`;
     const vendorName = user.fullName?.trim() || 'Restaurant';
+
+    if (isTakeover && prevAssignee) {
+      await this.recordOrderStatusChangeIfLegacy({
+        orderId: oid,
+        storeId,
+        customerUserId: customerId,
+        fromStatus: OrderStatusEnum.SHIPPED,
+        toStatus: OrderStatusEnum.SHIPPED,
+        source: OrderStatusChangeSourceEnum.VENDOR,
+        actorUserId: vendorIdStr,
+        note: `Reprise livraison par ${vendorName}`,
+      });
+      this.notifyOrderPartiesRealtime(order, OrderStatusEnum.SHIPPED, {
+        assignedDeliveryUserId: vendorIdStr,
+      });
+      void this._deliveryAgentService.publishPresenceWs(
+        prevAssignee,
+        'order_unassigned',
+      );
+    }
 
     if (prevStatus !== OrderStatusEnum.SHIPPED) {
       await this.recordOrderStatusChangeIfLegacy({
@@ -3012,15 +3055,17 @@ export class OrdersService {
         );
     }
 
-    this.emitOrderShippedFromDoc(order, {
-      prevStatus,
-      assignedDeliveryUserId: String(vendorId),
-      actorUserId: String(vendorId),
-      source: OrderStatusChangeSourceEnum.VENDOR,
-      courier: vendorName,
-    });
+    if (!isTakeover && prevStatus !== OrderStatusEnum.SHIPPED) {
+      this.emitOrderShippedFromDoc(order, {
+        prevStatus,
+        assignedDeliveryUserId: String(vendorId),
+        actorUserId: String(vendorId),
+        source: OrderStatusChangeSourceEnum.VENDOR,
+        courier: vendorName,
+      });
+    }
 
-    if (storeId && prevStatus !== OrderStatusEnum.SHIPPED) {
+    if (storeId && prevStatus !== OrderStatusEnum.SHIPPED && !isTakeover) {
       const sname = this.storeNameFromPopulated(order.store);
       this.notifyStoreVendorsForOrderStatusChange(order, {
         reason: 'order_shipped',
@@ -3284,7 +3329,7 @@ export class OrdersService {
     const isPickup = this.isPickupOrder(
       order as { shouldShip?: boolean; shippingPrice?: number },
     );
-    const { distanceKm, destinationLine, originLine } =
+    const { distanceKm, destinationLine, originLine, destinationLatitude, destinationLongitude } =
       this.resolveOrderTrackingGeo(order, isPickup);
     const vendorAcceptedRaw =
       (order as { vendorAcceptedAt?: Date | string }).vendorAcceptedAt ??
@@ -3307,6 +3352,9 @@ export class OrdersService {
       progress,
       destinationLine,
       originLine,
+      ...(destinationLatitude != null && destinationLongitude != null
+        ? { destinationLatitude, destinationLongitude }
+        : {}),
       storeId: this.storeIdFromOrderDoc(order as OrderModel) ?? undefined,
       ...(vendorAcceptedAt ? { vendorAcceptedAt } : {}),
     };
@@ -3361,6 +3409,8 @@ export class OrdersService {
     distanceKm?: number;
     destinationLine?: string;
     originLine?: string;
+    destinationLatitude?: number;
+    destinationLongitude?: number;
   } {
     const orderRec = order as Record<string, unknown>;
     const store = orderRec.store;
@@ -3401,12 +3451,24 @@ export class OrdersService {
         distanceKm,
         originLine: userLine || undefined,
         destinationLine: storeLine || undefined,
+        ...(storeCoords
+          ? {
+              destinationLatitude: storeCoords[1],
+              destinationLongitude: storeCoords[0],
+            }
+          : {}),
       };
     }
     return {
       distanceKm,
       originLine: storeLine || undefined,
       destinationLine: userLine || undefined,
+      ...(userCoords
+        ? {
+            destinationLatitude: userCoords[1],
+            destinationLongitude: userCoords[0],
+          }
+        : {}),
     };
   }
 
@@ -3492,16 +3554,38 @@ export class OrdersService {
     storeId?: string;
     wsTracking: OrderWsTrackingPayload;
   } {
-    const delivery = this.clientDeliveryAgentFlags(
-      order as Record<string, unknown>,
-    );
+    const orderRecord = order as Record<string, unknown>;
+    const explicitAssigneeClear =
+      extra != null &&
+      'assignedDeliveryUserId' in extra &&
+      extra.assignedDeliveryUserId == null;
+    const extraAgentId =
+      typeof extra?.assignedDeliveryUserId === 'string'
+        ? extra.assignedDeliveryUserId.trim()
+        : '';
+    const baseDelivery = this.clientDeliveryAgentFlags(orderRecord);
+    const agentId = explicitAssigneeClear
+      ? null
+      : (baseDelivery.assignedDeliveryUserId ??
+        (extraAgentId.length > 0 ? extraAgentId : null));
+    const delivery =
+      agentId && !baseDelivery.assignedDeliveryUserId
+        ? this.clientDeliveryAgentFlags({
+            ...orderRecord,
+            assignedDeliveryUser: agentId,
+          })
+        : baseDelivery;
     const wsTracking: OrderWsTrackingPayload = {
       ...this.buildOrderTrackingPayload(order, status),
       ...extra,
-      ...(delivery.assignedDeliveryUserId
-        ? { assignedDeliveryUserId: delivery.assignedDeliveryUserId }
-        : {}),
-      canMessageDeliveryAgent: delivery.canMessageDeliveryAgent,
+      ...(explicitAssigneeClear
+        ? { assignedDeliveryUserId: null, canMessageDeliveryAgent: false }
+        : agentId
+          ? { assignedDeliveryUserId: agentId }
+          : {}),
+      canMessageDeliveryAgent: explicitAssigneeClear
+        ? false
+        : delivery.canMessageDeliveryAgent,
       deliveryChatArchived: delivery.deliveryChatArchived,
     };
     return {
@@ -3510,8 +3594,7 @@ export class OrdersService {
       vendorUserId:
         this.storeOwnerUserIdFromLean((order as { store?: unknown }).store) ??
         undefined,
-      deliveryAgentId:
-        this.assignedDeliveryUserIdFromOrderDoc(order) ?? undefined,
+      deliveryAgentId: agentId ?? undefined,
       storeId: this.storeIdFromOrderDoc(order as OrderModel) ?? undefined,
       wsTracking,
     };
@@ -3541,11 +3624,57 @@ export class OrdersService {
     return this._orderDomainBridge?.enabled() ?? false;
   }
 
+  /** Met à jour le snapshot adresse livraison déjà persisté et propage WS avec coords destination. */
+  async updateDeliveryAddressAndNotify(orderDoc: OrderModel): Promise<{
+    destinationLine?: string;
+    destinationLatitude: number;
+    destinationLongitude: number;
+  }> {
+    const status = orderDoc.status as OrderStatusEnum;
+    const plain = orderDoc.toObject() as Record<string, unknown>;
+    const tracking = this.buildOrderTrackingPayload(plain, status);
+    let extra: Partial<OrderWsTrackingPayload> = { ...tracking };
+
+    if (status === OrderStatusEnum.SHIPPED) {
+      const courier = await this.resolveShippedCourierCoordinates(
+        orderDoc._id.toString(),
+        plain,
+      );
+      if (courier) {
+        const courierExtra = this.buildShippedCourierTrackingExtra(
+          plain,
+          courier.latitude,
+          courier.longitude,
+          status,
+        );
+        if (courierExtra) {
+          extra = { ...extra, ...courierExtra };
+        }
+      }
+    }
+
+    this.notifyOrderPartiesRealtime(orderDoc, status, extra);
+
+    const snap = orderDoc.deliveryAddressSnapshot as
+      | { location?: { coordinates?: number[] } }
+      | undefined;
+    const coords = snap?.location?.coordinates;
+    const lng = coords?.[0] ?? tracking.destinationLongitude ?? 0;
+    const lat = coords?.[1] ?? tracking.destinationLatitude ?? 0;
+
+    return {
+      destinationLine: tracking.destinationLine,
+      destinationLatitude: lat,
+      destinationLongitude: lng,
+    };
+  }
+
   /** WS temps réel immédiat (mobile / admin / vendeur). Toujours actif : le bus domaine peut être absent ou en retard. */
-  private notifyOrderPartiesRealtime(
+  notifyOrderPartiesRealtime(
     orderOrId: OrderModel | Record<string, unknown> | string,
     status: OrderStatusEnum,
     extra?: Partial<OrderWsTrackingPayload>,
+    notifyOptions?: { additionalPartyUserIds?: string[] },
   ): void {
     if (!this._wsOrderNotifyHandler) return;
     if (typeof orderOrId === 'string') {
@@ -3553,10 +3682,16 @@ export class OrdersService {
         orderOrId,
         status,
         extra,
+        notifyOptions,
       );
       return;
     }
-    this._wsOrderNotifyHandler.notifyPartiesFromDoc(orderOrId, status, extra);
+    this._wsOrderNotifyHandler.notifyPartiesFromDoc(
+      orderOrId,
+      status,
+      extra,
+      notifyOptions,
+    );
   }
 
   /** Audit synchrone uniquement hors bus domaine (évite double enregistrement EDA-004). */
@@ -4834,7 +4969,9 @@ export class OrdersService {
         ? (plain.store as { address?: unknown }).address
         : undefined,
     );
-    const userAddr = this.defaultUserAddressFromPopulated(plain.user);
+    const userAddr =
+      this.deliveryAddressFromOrder(plain) ??
+      this.defaultUserAddressFromPopulated(plain.user);
     const userCoords = userAddr?.coords;
     if (!storeCoords || !userCoords) return null;
 

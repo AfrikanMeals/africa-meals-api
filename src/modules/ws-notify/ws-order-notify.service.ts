@@ -9,13 +9,16 @@ export type OrderWsTrackingPayload = {
   progress?: number;
   destinationLine?: string;
   originLine?: string;
+  /** Coordonnées destination livraison (client) — déplacement marqueur carte temps réel. */
+  destinationLatitude?: number;
+  destinationLongitude?: number;
   pickupCode?: string;
   courierLatitude?: number;
   courierLongitude?: number;
   remainingDistanceKm?: number;
   elapsedMinutes?: number;
-  /** Livreur mobile assigné (`User` DELIVERY) — chat client ↔ livreur. */
-  assignedDeliveryUserId?: string;
+  /** Livreur mobile assigné (`User` DELIVERY) — chat client ↔ livreur ; `null` = retrait explicite. */
+  assignedDeliveryUserId?: string | null;
   canMessageDeliveryAgent?: boolean;
   /** Fil client↔livreur archivé (commande livrée) — messagerie toujours ouverte. */
   deliveryChatArchived?: boolean;

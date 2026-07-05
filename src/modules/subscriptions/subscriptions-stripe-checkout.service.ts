@@ -14,7 +14,7 @@ import {
   VendorSubscriptionModel,
   VendorSubscriptionStatus,
 } from '@schemas/vendor-subscription.schema';
-import { UserModel, UserTypeEnum } from '@schemas/user.schema';
+import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import Stripe = require('stripe');
 import { SubscribeVendorDto } from './dto/subscription-plan.dto';
@@ -129,7 +129,9 @@ export class SubscriptionsStripeCheckoutService {
     user: UserModel,
     dto: SubscribeVendorDto,
   ): Promise<PlanSwitchDraft> {
-    if (user.type !== UserTypeEnum.VENDOR) {
+    const accessibleStores =
+      await this.subscriptions.resolveAccessibleStoreIds(user);
+    if (!accessibleStores.length) {
       throw new BadRequestException('vendor_only');
     }
 
@@ -151,6 +153,7 @@ export class SubscriptionsStripeCheckoutService {
       user,
       dto.storeId,
       (plan as { storeId?: unknown }).storeId,
+      accessibleStores,
     );
 
     const now = new Date();
@@ -570,7 +573,9 @@ export class SubscriptionsStripeCheckoutService {
     user: UserModel,
     paymentIntentId: string,
   ): Promise<{ activated: boolean; subscriptionId?: string }> {
-    if (user.type !== UserTypeEnum.VENDOR) {
+    const accessibleStores =
+      await this.subscriptions.resolveAccessibleStoreIds(user);
+    if (!accessibleStores.length) {
       throw new BadRequestException('vendor_only');
     }
     const id = paymentIntentId?.trim();
@@ -757,7 +762,9 @@ export class SubscriptionsStripeCheckoutService {
     user: UserModel,
     sessionId: string,
   ): Promise<{ activated: boolean }> {
-    if (user.type !== UserTypeEnum.VENDOR) {
+    const accessibleStores =
+      await this.subscriptions.resolveAccessibleStoreIds(user);
+    if (!accessibleStores.length) {
       throw new BadRequestException('vendor_only');
     }
     const sid = sessionId?.trim();

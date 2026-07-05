@@ -348,6 +348,25 @@ export class StoreAccessService {
    * Utilisateurs à notifier par FCM pour une boutique (propriétaire + équipe active + admins commandes).
    */
   async listStorePushRecipientUserIds(storeId: string): Promise<string[]> {
+    const ids = new Set<string>(
+      await this.listStoreTeamRecipientUserIds(storeId),
+    );
+    if (!ids.size && !Types.ObjectId.isValid(storeId)) {
+      return [];
+    }
+    const platformAdminIds = await this.listPlatformOrderPushRecipientUserIds();
+    for (const adminId of platformAdminIds) {
+      ids.add(adminId);
+    }
+    return [...ids].filter((id) => Types.ObjectId.isValid(id));
+  }
+
+  /**
+   * Propriétaire + équipe active de la boutique — SANS admins plateforme.
+   * À utiliser pour les e-mails (les admins ne doivent pas recevoir un e-mail
+   * à chaque changement de statut de commande).
+   */
+  async listStoreTeamRecipientUserIds(storeId: string): Promise<string[]> {
     if (!Types.ObjectId.isValid(storeId)) {
       return [];
     }
@@ -372,10 +391,6 @@ export class StoreAccessService {
       if (memberId) {
         ids.add(memberId);
       }
-    }
-    const platformAdminIds = await this.listPlatformOrderPushRecipientUserIds();
-    for (const adminId of platformAdminIds) {
-      ids.add(adminId);
     }
     return [...ids].filter((id) => Types.ObjectId.isValid(id));
   }

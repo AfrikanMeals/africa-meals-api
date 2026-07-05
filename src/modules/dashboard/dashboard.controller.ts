@@ -18,6 +18,9 @@ import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { AdminVendorFeedbacksQueryDto } from './dto/admin-vendor-feedbacks-query.dto';
 import { AssignDashboardOrderDto } from './dto/assign-dashboard-order.dto';
+import { UnassignDashboardOrderDto } from './dto/unassign-dashboard-order.dto';
+import { EstimateDashboardOrderDeliveryAddressDto } from './dto/estimate-dashboard-order-delivery-address.dto';
+import { UpdateDashboardOrderDeliveryAddressDto } from './dto/update-dashboard-order-delivery-address.dto';
 import { CreateVendorFeedbackDto } from './dto/create-vendor-feedback.dto';
 import { CreateVendorFeatureRequestDto } from './dto/create-vendor-feature-request.dto';
 import { AdminVendorFeatureRequestsQueryDto } from './dto/admin-vendor-feature-requests-query.dto';
@@ -374,6 +377,66 @@ export class DashboardController {
     @Body() body: AssignDashboardOrderDto,
   ) {
     return this._dashboardService.assignOrderToLivreur(
+      req.user as UserModel,
+      body,
+    );
+  }
+
+  /** Retire le livreur assigné et repasse la commande en `approved`. */
+  @Post('livreurs/unassign-order')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  unassignOrderFromLivreur(
+    @Req() req: Request,
+    @Body() body: UnassignDashboardOrderDto,
+  ) {
+    return this._dashboardService.unassignOrderFromLivreur(
+      req.user as UserModel,
+      body.orderId,
+    );
+  }
+
+  /** Admin — estimation frais livraison (nouvelle destination, sans paiement). */
+  @Post('orders/:orderId/delivery-address/estimate')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  estimateOrderDeliveryAddress(
+    @Req() req: Request,
+    @Param('orderId') orderId: string,
+    @Body() body: EstimateDashboardOrderDeliveryAddressDto,
+  ) {
+    return this._dashboardService.estimateOrderDeliveryAddress(
+      req.user as UserModel,
+      orderId,
+      body,
+    );
+  }
+
+  /** Admin — corrige l’adresse de livraison d’une commande active. */
+  @Patch('orders/:orderId/delivery-address')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  updateOrderDeliveryAddress(
+    @Req() req: Request,
+    @Param('orderId') orderId: string,
+    @Body() body: UpdateDashboardOrderDeliveryAddressDto,
+  ) {
+    return this._dashboardService.updateOrderDeliveryAddress(
+      req.user as UserModel,
+      orderId,
+      body,
+    );
+  }
+
+  /** Remplace le livreur sur une commande déjà `shipped`. */
+  @Post('livreurs/reassign-order')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  reassignOrderToLivreur(
+    @Req() req: Request,
+    @Body() body: AssignDashboardOrderDto,
+  ) {
+    return this._dashboardService.reassignOrderToLivreur(
       req.user as UserModel,
       body,
     );

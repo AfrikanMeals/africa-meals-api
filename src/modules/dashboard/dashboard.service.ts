@@ -64,6 +64,8 @@ import { AdminSiteContactRequestsQueryDto } from './dto/admin-site-contact-reque
 import { ReplySiteContactRequestDto } from './dto/reply-site-contact-request.dto';
 import { CreateDashboardLivreurDto } from './dto/create-dashboard-livreur.dto';
 import { AssignDashboardOrderDto } from './dto/assign-dashboard-order.dto';
+import { UpdateDashboardOrderDeliveryAddressDto } from './dto/update-dashboard-order-delivery-address.dto';
+import { EstimateDashboardOrderDeliveryAddressDto } from './dto/estimate-dashboard-order-delivery-address.dto';
 import { CreateVendorFeedbackDto } from './dto/create-vendor-feedback.dto';
 import { CreateVendorFeatureRequestDto } from './dto/create-vendor-feature-request.dto';
 import { UpdateVendorFeatureRequestAdminDto } from './dto/update-vendor-feature-request-admin.dto';
@@ -84,6 +86,14 @@ import { StoreAccessService } from '@modules/teams/store-access.service';
 import { ContactSubmissionService } from '@modules/mailer/contact-submission.service';
 import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import { PlatformShippingSettingsService } from '@modules/platform-shipping-settings/platform-shipping-settings.service';
+import { resolvePlatformShippingRegionCode } from '@modules/platform-shipping-settings/platform-shipping-region.util';
+import {
+  computePlatformShippingFeeFromDistance,
+  extractLatLonFromGeoPoint,
+  haversineDistanceKm,
+} from '@modules/platform-shipping-settings/shipping-quote.util';
+import { countryCodeFromStoreRegion } from '@modules/supported-countries/region-tax.util';
 import {
   buildDashboardAdPerformancePayload,
   DASHBOARD_AD_PERFORMANCE_DAYS,
@@ -155,6 +165,17 @@ const REVIEW_WINDOW_MINUTES = 60;
 /** Rayon autour de chaque boutique pour afficher les livreurs inscrits (compte DELIVERY + position). */
 const REGION_DELIVERY_USERS_RADIUS_KM = 75;
 const EARTH_RADIUS_KM = 6371;
+
+/** Options de listing livreurs plateforme (pool) sur le dashboard. */
+type DashboardPlatformDeliveryUsersListOptions = {
+  /** Admin : tous les livreurs approuvés, sans filtre distance. */
+  includeAllRegardlessOfDistance: boolean;
+  /**
+   * Sans GPS livreur : ancrer sur la boutique la plus proche (comme admin),
+   * puis appliquer le filtre rayon si actif.
+   */
+  allowStoreCoordinateFallback: boolean;
+};
 
 function haversineKm(
   lon1: number,
@@ -644,6 +665,7 @@ export class DashboardService {
     private readonly contactSubmissionService: ContactSubmissionService,
     private readonly storeDeliveryDrivers: StoreDeliveryDriversService,
     private readonly subscriptionsService: SubscriptionsService,
+    private readonly platformShippingSettings: PlatformShippingSettingsService,
   ) {}
 
   /** Boutiques visibles pour les agrégats dashboard (admin / vendeur + filtre région). */
@@ -3529,11 +3551,15 @@ export class DashboardService {
         const rows = await this.listStoreManagedLivreurs(managedStores);
         return this.seedFleetAndReturn(await this.enrichLivreurRows(rows));
       }
-      const storePoints = await this.loadVendorStoreGeoPoints(ids);
+      const storePoints =
+        await this.loadVendorPlatformPoolStoreGeoPoints(ids);
       const rows = await this.listApprovedDeliveryUsersForDashboard(
         storePoints,
         REGION_DELIVERY_USERS_RADIUS_KM,
-        false,
+        {
+          includeAllRegardlessOfDistance: false,
+          allowStoreCoordinateFallback: true,
+        },
       );
       return this.seedFleetAndReturn(await this.enrichLivreurRows(rows));
     }
@@ -3542,7 +3568,10 @@ export class DashboardService {
       const rows = await this.listApprovedDeliveryUsersForDashboard(
         storePoints,
         REGION_DELIVERY_USERS_RADIUS_KM,
-        true,
+        {
+          includeAllRegardlessOfDistance: true,
+          allowStoreCoordinateFallback: true,
+        },
       );
       return this.seedFleetAndReturn(await this.enrichLivreurRows(rows));
     }
@@ -3600,7 +3629,565 @@ export class DashboardService {
     if (!deliveryUserId) {
       throw new BadRequestException('invalid_ids');
     }
+
+    const orderOid = new Types.ObjectId(dto.orderId);
+    const orderPreview = await this.orderModel
+      .findById(orderOid)
+      .select('status assigned_delivery_user shouldShip')
+      .lean()
+      .exec();
+    if (!orderPreview) {
+      throw new NotFoundException('order_not_found');
+    }
+    if (!orderPreview.shouldShip) {
+      throw new BadRequestException('order_not_shippable');
+    }
+    const previewStatus = orderPreview.status as OrderStatusEnum;
+    const previewAssignee = this.readAssignedDeliveryUserId(orderPreview);
+    if (
+      previewStatus === OrderStatusEnum.SHIPPED &&
+      previewAssignee &&
+      previewAssignee !== deliveryUserId
+    ) {
+      return this.reassignOrderToLivreur(user, dto);
+    }
+    if (previewStatus === OrderStatusEnum.SHIPPED && !previewAssignee) {
+      return this.reassignOrderToLivreur(user, dto);
+    }
+
     return this.assignOrderToAppDeliveryUser(user, dto.orderId, deliveryUserId);
+  }
+
+  async unassignOrderFromLivreur(
+    user: UserModel,
+    orderId: string,
+  ): Promise<{ ok: true; orderId: string; status: OrderStatusEnum }> {
+    if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('livreurs_access_denied');
+    }
+    if (!Types.ObjectId.isValid(orderId)) {
+      throw new BadRequestException('invalid_order_id');
+    }
+
+    const vendorStoreIds =
+      user.type === UserTypeEnum.VENDOR ? vendorStoreObjectIds(user) : null;
+    if (user.type === UserTypeEnum.VENDOR && !vendorStoreIds?.length) {
+      throw new ForbiddenException('vendor_no_store');
+    }
+
+    const orderOid = new Types.ObjectId(orderId);
+    const orderDoc = await this.orderModel
+      .findById(orderOid)
+      .populate('store', 'name owner')
+      .populate({ path: 'user', select: 'fullName' })
+      .exec();
+    if (!orderDoc) throw new NotFoundException('order_not_found');
+    if (!orderDoc.shouldShip) {
+      throw new BadRequestException('order_not_shippable');
+    }
+    if ((orderDoc.status as OrderStatusEnum) !== OrderStatusEnum.SHIPPED) {
+      throw new BadRequestException('order_not_unassignable');
+    }
+
+    const orderStoreId =
+      orderDoc.store &&
+      typeof orderDoc.store === 'object' &&
+      '_id' in orderDoc.store
+        ? String((orderDoc.store as { _id: unknown })._id)
+        : '';
+    if (!orderStoreId) throw new BadRequestException('order_store_missing');
+    if (vendorStoreIds?.length) {
+      if (!vendorStoreIds.some((s) => s.toString() === orderStoreId)) {
+        throw new ForbiddenException('store_forbidden');
+      }
+    }
+
+    const prevAssignee = this.readAssignedDeliveryUserId(orderDoc);
+    if (!prevAssignee) {
+      orderDoc.status = OrderStatusEnum.APPROVED;
+      await orderDoc.save();
+
+      const customerId = this.customerUserIdForOrderPush(orderDoc);
+      await this.ordersService.recordOrderStatusChangeIfLegacy({
+        orderId: orderDoc._id.toString(),
+        storeId: orderStoreId,
+        customerUserId: customerId ?? undefined,
+        fromStatus: OrderStatusEnum.SHIPPED,
+        toStatus: OrderStatusEnum.APPROVED,
+        source:
+          user.type === UserTypeEnum.ADMIN
+            ? OrderStatusChangeSourceEnum.DASHBOARD
+            : OrderStatusChangeSourceEnum.VENDOR,
+        actorUserId: String(user._id ?? user.id),
+        note: 'Expédition sans livreur — repassée en attente',
+      });
+
+      this.ordersService.notifyOrderPartiesRealtime(
+        orderDoc,
+        OrderStatusEnum.APPROVED,
+        { assignedDeliveryUserId: null },
+      );
+
+      if (orderStoreId) {
+        const sname = this.storeNameForOrderPush(orderDoc);
+        this.ordersService.notifyStoreVendorsForOrderStatusChange(orderDoc, {
+          reason: 'order_ready',
+          status: OrderStatusEnum.APPROVED,
+          note: 'Commande repassée en attente livreur',
+          pushBodyOverride: `${sname ?? 'Boutique'} : commande en attente de livreur.`,
+        });
+      }
+
+      return {
+        ok: true,
+        orderId: orderDoc._id.toString(),
+        status: OrderStatusEnum.APPROVED,
+      };
+    }
+
+    orderDoc.set('assignedDeliveryUser', undefined);
+    orderDoc.status = OrderStatusEnum.APPROVED;
+    await orderDoc.save();
+
+    const customerId = this.customerUserIdForOrderPush(orderDoc);
+    await this.ordersService.recordOrderStatusChangeIfLegacy({
+      orderId: orderDoc._id.toString(),
+      storeId: orderStoreId,
+      customerUserId: customerId ?? undefined,
+      fromStatus: OrderStatusEnum.SHIPPED,
+      toStatus: OrderStatusEnum.APPROVED,
+      source:
+        user.type === UserTypeEnum.ADMIN
+          ? OrderStatusChangeSourceEnum.DASHBOARD
+          : OrderStatusChangeSourceEnum.VENDOR,
+      actorUserId: String(user._id ?? user.id),
+      note: 'Livreur retiré — commande prête pour réassignation',
+    });
+
+    this.ordersService.notifyOrderPartiesRealtime(
+      orderDoc,
+      OrderStatusEnum.APPROVED,
+      { assignedDeliveryUserId: null },
+      prevAssignee ? { additionalPartyUserIds: [prevAssignee] } : undefined,
+    );
+
+    if (orderStoreId) {
+      const sname = this.storeNameForOrderPush(orderDoc);
+      this.ordersService.notifyStoreVendorsForOrderStatusChange(orderDoc, {
+        reason: 'order_ready',
+        status: OrderStatusEnum.APPROVED,
+        note: 'Livreur retiré',
+        pushBodyOverride: `${sname ?? 'Boutique'} : livreur retiré, commande à réassigner.`,
+      });
+    }
+
+    void this.deliveryAgentService.publishPresenceWs(
+      prevAssignee,
+      'order_unassigned',
+    );
+
+    return {
+      ok: true,
+      orderId: orderDoc._id.toString(),
+      status: OrderStatusEnum.APPROVED,
+    };
+  }
+
+  /** Admin — estimation frais livraison pour une nouvelle destination (aucun paiement). */
+  async estimateOrderDeliveryAddress(
+    user: UserModel,
+    orderId: string,
+    dto: EstimateDashboardOrderDeliveryAddressDto,
+  ): Promise<{
+    ok: true;
+    orderId: string;
+    estimateOnly: true;
+    currency: string;
+    currentShippingPrice: number;
+    estimatedShippingPrice: number | null;
+    delta: number | null;
+    deltaDirection: 'more' | 'less' | 'same' | null;
+    currentDistanceKm: number | null;
+    estimatedDistanceKm: number | null;
+    deliverable: boolean;
+    maxDeliveryRadiusKm: number;
+    undeliverableReason?: string;
+  }> {
+    if (user.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('admin_only');
+    }
+    if (!Types.ObjectId.isValid(orderId)) {
+      throw new BadRequestException('invalid_order_id');
+    }
+
+    const lat = Number(dto.latitude);
+    const lng = Number(dto.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      throw new BadRequestException('invalid_coordinates');
+    }
+
+    const orderDoc = await this.orderModel
+      .findById(new Types.ObjectId(orderId))
+      .populate({
+        path: 'store',
+        select: 'name region address currency',
+        populate: { path: 'address', select: 'location countryCode' },
+      })
+      .lean()
+      .exec();
+    if (!orderDoc) throw new NotFoundException('order_not_found');
+    if (!orderDoc.shouldShip) {
+      throw new BadRequestException('order_not_shippable');
+    }
+
+    const store = orderDoc.store as
+      | {
+          region?: string;
+          currency?: string;
+          address?: {
+            location?: { coordinates?: number[] };
+            countryCode?: string;
+          };
+        }
+      | null
+      | undefined;
+    const shopAddr = store?.address;
+    const origin = extractLatLonFromGeoPoint(shopAddr?.location);
+    const deliveryCc = dto.countryCode?.trim().toUpperCase().slice(0, 2) || '';
+    const storeAddrCc = String(shopAddr?.countryCode ?? '').trim().toUpperCase();
+    const regionCode = resolvePlatformShippingRegionCode([
+      store?.region,
+      countryCodeFromStoreRegion(store ?? {}),
+      storeAddrCc,
+      deliveryCc,
+      user.appCountryCode,
+    ]);
+    const settings =
+      await this.platformShippingSettings.getPublicSettings(regionCode);
+
+    const snap = orderDoc.deliveryAddressSnapshot as
+      | { location?: { coordinates?: number[] } }
+      | undefined;
+    const currentDest = extractLatLonFromGeoPoint(snap?.location);
+
+    let currentDistanceKm: number | null = null;
+    if (origin && currentDest) {
+      currentDistanceKm =
+        Math.round(haversineDistanceKm(origin.lat, origin.lon, currentDest.lat, currentDest.lon) * 1000) /
+        1000;
+    }
+
+    const currentShippingPrice = Math.max(0, Number(orderDoc.shippingPrice) || 0);
+    const currency =
+      String((store as { currency?: string } | undefined)?.currency ?? 'CAD').trim() ||
+      'CAD';
+
+    if (!origin) {
+      return {
+        ok: true,
+        orderId,
+        estimateOnly: true,
+        currency,
+        currentShippingPrice,
+        estimatedShippingPrice: null,
+        delta: null,
+        deltaDirection: null,
+        currentDistanceKm,
+        estimatedDistanceKm: null,
+        deliverable: false,
+        maxDeliveryRadiusKm: settings.maxDeliveryRadiusKm,
+        undeliverableReason: 'store_address_missing_coordinates',
+      };
+    }
+
+    const estimatedDistanceKm =
+      Math.round(haversineDistanceKm(origin.lat, origin.lon, lat, lng) * 1000) / 1000;
+    const computed = computePlatformShippingFeeFromDistance(
+      settings,
+      estimatedDistanceKm,
+    );
+
+    const estimatedShippingPrice = computed.deliverable ? computed.total : null;
+    let delta: number | null = null;
+    let deltaDirection: 'more' | 'less' | 'same' | null = null;
+    if (estimatedShippingPrice != null) {
+      delta = Math.round((estimatedShippingPrice - currentShippingPrice + Number.EPSILON) * 100) / 100;
+      if (Math.abs(delta) < 0.01) deltaDirection = 'same';
+      else if (delta > 0) deltaDirection = 'more';
+      else deltaDirection = 'less';
+    }
+
+    return {
+      ok: true,
+      orderId,
+      estimateOnly: true,
+      currency,
+      currentShippingPrice,
+      estimatedShippingPrice,
+      delta,
+      deltaDirection,
+      currentDistanceKm,
+      estimatedDistanceKm,
+      deliverable: computed.deliverable,
+      maxDeliveryRadiusKm: settings.maxDeliveryRadiusKm,
+      ...(computed.deliverable
+        ? {}
+        : { undeliverableReason: 'beyond_delivery_radius' }),
+    };
+  }
+
+  /** Admin plateforme — corrige l’adresse de livraison et propage WS (client, livreur, vendeur). */
+  async updateOrderDeliveryAddress(
+    user: UserModel,
+    orderId: string,
+    dto: UpdateDashboardOrderDeliveryAddressDto,
+  ): Promise<{
+    ok: true;
+    orderId: string;
+    destinationLine?: string;
+    destinationLatitude: number;
+    destinationLongitude: number;
+  }> {
+    if (user.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('admin_only');
+    }
+    if (!Types.ObjectId.isValid(orderId)) {
+      throw new BadRequestException('invalid_order_id');
+    }
+
+    const orderDoc = await this.orderModel
+      .findById(new Types.ObjectId(orderId))
+      .populate('store', 'name owner address')
+      .populate({ path: 'user', select: 'fullName addresses' })
+      .exec();
+    if (!orderDoc) throw new NotFoundException('order_not_found');
+    if (!orderDoc.shouldShip) {
+      throw new BadRequestException('order_not_shippable');
+    }
+
+    const status = orderDoc.status as OrderStatusEnum;
+    if (
+      status === OrderStatusEnum.CANCELLED ||
+      status === OrderStatusEnum.COMPLETED
+    ) {
+      throw new BadRequestException('order_address_not_editable');
+    }
+
+    const lat = Number(dto.latitude);
+    const lng = Number(dto.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      throw new BadRequestException('invalid_coordinates');
+    }
+
+    const countryCode = dto.countryCode?.trim().toUpperCase().slice(0, 2);
+    orderDoc.set('deliveryAddressSnapshot', {
+      address: dto.address.trim(),
+      city: dto.city?.trim() || undefined,
+      zipCode: dto.zipCode?.trim() || undefined,
+      country: dto.country?.trim() || undefined,
+      countryCode: countryCode || undefined,
+      location: {
+        type: 'Point',
+        coordinates: [lng, lat],
+      },
+    });
+    await orderDoc.save();
+
+    const result = await this.ordersService.updateDeliveryAddressAndNotify(
+      orderDoc,
+    );
+
+    return {
+      ok: true,
+      orderId: orderDoc._id.toString(),
+      destinationLine: result.destinationLine,
+      destinationLatitude: result.destinationLatitude,
+      destinationLongitude: result.destinationLongitude,
+    };
+  }
+
+  async reassignOrderToLivreur(
+    user: UserModel,
+    dto: AssignDashboardOrderDto,
+  ): Promise<DashboardLivreurRow> {
+    if (user.type !== UserTypeEnum.ADMIN && user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('livreurs_access_denied');
+    }
+    const deliveryUserId = this.parseDeliveryUserId(dto.livreurId);
+    if (!deliveryUserId || !Types.ObjectId.isValid(dto.orderId)) {
+      throw new BadRequestException('invalid_ids');
+    }
+
+    const vendorStoreIds =
+      user.type === UserTypeEnum.VENDOR ? vendorStoreObjectIds(user) : null;
+    if (user.type === UserTypeEnum.VENDOR && !vendorStoreIds?.length) {
+      throw new ForbiddenException('vendor_no_store');
+    }
+
+    const agentOid = new Types.ObjectId(deliveryUserId);
+    const orderOid = new Types.ObjectId(dto.orderId);
+
+    const deliveryUser = await this.userModel
+      .findById(agentOid)
+      .select('type fullName')
+      .lean()
+      .exec();
+    if (!deliveryUser || deliveryUser.type !== UserTypeEnum.DELIVERY) {
+      throw new NotFoundException('livreur_not_found');
+    }
+
+    const application = await this.deliveryAgentApplicationModel
+      .findOne({
+        user: agentOid,
+        status: DeliveryAgentApplicationStatus.APPROVED,
+      })
+      .lean()
+      .exec();
+    if (!application) {
+      throw new BadRequestException('livreur_not_available');
+    }
+    if (application.dashboardAvailability === 'hors_ligne') {
+      throw new BadRequestException('livreur_not_available');
+    }
+
+    const capacityCheck = await agentHasDeliveryCapacity(
+      this.orderModel,
+      application,
+      agentOid,
+    );
+    if (!capacityCheck.allowed) {
+      throw new BadRequestException('livreur_capacity_full');
+    }
+
+    const orderDoc = await this.orderModel
+      .findById(orderOid)
+      .populate('store', 'name owner address vendorManagesDeliveryDrivers')
+      .populate({ path: 'user', select: 'fullName addresses' })
+      .exec();
+    if (!orderDoc) throw new NotFoundException('order_not_found');
+    if (!orderDoc.shouldShip) {
+      throw new BadRequestException('order_not_shippable');
+    }
+    if ((orderDoc.status as OrderStatusEnum) !== OrderStatusEnum.SHIPPED) {
+      throw new BadRequestException('order_not_reassignable');
+    }
+
+    const orderStoreId =
+      orderDoc.store &&
+      typeof orderDoc.store === 'object' &&
+      '_id' in orderDoc.store
+        ? String((orderDoc.store as { _id: unknown })._id)
+        : '';
+    if (!orderStoreId) throw new BadRequestException('order_store_missing');
+    if (vendorStoreIds?.length) {
+      if (!vendorStoreIds.some((s) => s.toString() === orderStoreId)) {
+        throw new ForbiddenException('store_forbidden');
+      }
+    }
+
+    const storePop =
+      orderDoc.store && typeof orderDoc.store === 'object'
+        ? (orderDoc.store as StoreModel)
+        : null;
+    if (storePop?.vendorManagesDeliveryDrivers) {
+      const policy =
+        await this.subscriptionsService.resolveStoreDeliveryPolicy(orderStoreId);
+      if (policy.selfDeliveryRequired) {
+        const isMember = await this.storeDeliveryDrivers.isActiveStoreDriver(
+          orderStoreId,
+          deliveryUserId,
+        );
+        if (!isMember) {
+          throw new BadRequestException('livreur_not_store_member');
+        }
+      }
+    }
+
+    const prevAssignee = this.readAssignedDeliveryUserId(orderDoc);
+    if (prevAssignee && prevAssignee === deliveryUserId) {
+      const rows = await this.listDashboardLivreurs(user);
+      const row = rows.find((r) => r.id === deliveryUserId);
+      if (!row) throw new NotFoundException('livreur_not_found');
+      return row;
+    }
+
+    orderDoc.set('assignedDeliveryUser', agentOid);
+    await orderDoc.save();
+
+    const agentName = deliveryUser.fullName?.trim() || 'Livreur app';
+    const customerId = this.customerUserIdForOrderPush(orderDoc);
+    const assignNote = prevAssignee
+      ? `Changement livreur → ${agentName}`
+      : `Assignation livreur → ${agentName}`;
+
+    await this.ordersService.recordOrderStatusChangeIfLegacy({
+      orderId: orderDoc._id.toString(),
+      storeId: orderStoreId,
+      customerUserId: customerId ?? undefined,
+      fromStatus: OrderStatusEnum.SHIPPED,
+      toStatus: OrderStatusEnum.SHIPPED,
+      source:
+        user.type === UserTypeEnum.ADMIN
+          ? OrderStatusChangeSourceEnum.DASHBOARD
+          : OrderStatusChangeSourceEnum.VENDOR,
+      actorUserId: String(user._id ?? user.id),
+      note: assignNote,
+    });
+
+    this.ordersService.notifyOrderPartiesRealtime(
+      orderDoc,
+      OrderStatusEnum.SHIPPED,
+      { assignedDeliveryUserId: deliveryUserId },
+      prevAssignee && prevAssignee !== deliveryUserId
+        ? { additionalPartyUserIds: [prevAssignee] }
+        : undefined,
+    );
+
+    if (orderStoreId) {
+      const sname = this.storeNameForOrderPush(orderDoc);
+      this.ordersService.notifyStoreVendorsForOrderStatusChange(orderDoc, {
+        reason: 'order_shipped',
+        status: OrderStatusEnum.SHIPPED,
+        note: prevAssignee
+          ? `Nouveau livreur : ${agentName}`
+          : `Livreur assigné : ${agentName}`,
+        pushBodyOverride: prevAssignee
+          ? `${sname ?? 'Boutique'} : course réassignée à ${agentName}.`
+          : `${sname ?? 'Boutique'} : course prise en charge par ${agentName}.`,
+      });
+    }
+
+    if (prevAssignee) {
+      void this.deliveryAgentService.publishPresenceWs(
+        prevAssignee,
+        'order_unassigned',
+      );
+    }
+    void this.deliveryAgentService.publishPresenceWs(
+      deliveryUserId,
+      'order_assigned',
+    );
+
+    const rows = await this.listDashboardLivreurs(user);
+    const row = rows.find((r) => r.id === deliveryUserId);
+    if (!row) throw new NotFoundException('livreur_not_found');
+    return row;
+  }
+
+  private readAssignedDeliveryUserId(
+    order: OrderModel | Record<string, unknown>,
+  ): string | null {
+    const raw =
+      (order as OrderModel).assignedDeliveryUser ??
+      (order as Record<string, unknown>).assigned_delivery_user ??
+      (order as Record<string, unknown>).assignedDeliveryUser;
+    if (raw == null) return null;
+    if (typeof raw === 'object' && '_id' in (raw as object)) {
+      const id = String((raw as { _id: unknown })._id).trim();
+      return id.length > 0 ? id : null;
+    }
+    const id = String(raw).trim();
+    return id.length > 0 ? id : null;
   }
 
   private parseDeliveryUserId(raw: string): string | null {
@@ -3764,6 +4351,12 @@ export class DashboardService {
         source: OrderStatusChangeSourceEnum.DASHBOARD,
         courier: agentName,
       });
+    } else {
+      this.ordersService.notifyOrderPartiesRealtime(
+        orderDoc,
+        OrderStatusEnum.SHIPPED,
+        { assignedDeliveryUserId: deliveryUserId },
+      );
     }
 
     if (orderStoreId && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
@@ -4135,6 +4728,36 @@ export class DashboardService {
     return out;
   }
 
+  /** Boutiques vendeur éligibles au pool plateforme (formule + réglage fiche restaurant). */
+  private async loadVendorPlatformPoolStoreGeoPoints(
+    storeIds: Types.ObjectId[],
+  ): Promise<VendorStorePoint[]> {
+    if (!storeIds.length) return [];
+    const stores = await this.storeModel
+      .find({
+        _id: { $in: storeIds },
+        vendorManagesDeliveryDrivers: { $ne: true },
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    const eligibleIds = stores.map((s) => String(s._id));
+    if (!eligibleIds.length) return [];
+
+    const selfDeliveryByStore =
+      await this.subscriptionsService.resolveSelfDeliveryRequiredByStoreIds(
+        eligibleIds,
+      );
+    const platformPoolIds = eligibleIds.filter(
+      (id) => selfDeliveryByStore.get(id) !== true,
+    );
+    if (!platformPoolIds.length) return [];
+
+    return this.loadVendorStoreGeoPoints(
+      platformPoolIds.map((id) => new Types.ObjectId(id)),
+    );
+  }
+
   /**
    * Livreurs = utilisateurs DELIVERY avec candidature APPROVED (plus de collection `delivery_drivers`).
    */
@@ -4229,12 +4852,12 @@ export class DashboardService {
   private async listApprovedDeliveryUsersForDashboard(
     storePoints: VendorStorePoint[],
     radiusKm: number,
-    includeAllApprovedForAdmin: boolean,
+    options: DashboardPlatformDeliveryUsersListOptions,
   ): Promise<DashboardLivreurRow[]> {
     const rows = await this.listDeliveryUsersFromApplicationGps(
       storePoints,
       radiusKm,
-      includeAllApprovedForAdmin,
+      options,
     );
     return this.mergeLivreurRowsById(rows);
   }
@@ -4242,7 +4865,7 @@ export class DashboardService {
   private async listDeliveryUsersFromApplicationGps(
     storePoints: VendorStorePoint[],
     radiusKm: number,
-    includeAllApprovedForAdmin: boolean,
+    options: DashboardPlatformDeliveryUsersListOptions,
   ): Promise<DashboardLivreurRow[]> {
     const applications = await this.deliveryAgentApplicationModel
       .find({ status: DeliveryAgentApplicationStatus.APPROVED })
@@ -4295,7 +4918,7 @@ export class DashboardService {
       }
 
       if (lng == null || lat == null) {
-        if (!includeAllApprovedForAdmin || !fallbackStore) continue;
+        if (!options.allowStoreCoordinateFallback || !fallbackStore) continue;
         lng = fallbackStore.lng;
         lat = fallbackStore.lat;
       }
@@ -4310,7 +4933,12 @@ export class DashboardService {
             bestStoreId = sp.storeId;
           }
         }
-        if (!includeAllApprovedForAdmin && bestKm > radiusKm) continue;
+        if (
+          !options.includeAllRegardlessOfDistance &&
+          bestKm > radiusKm
+        ) {
+          continue;
+        }
       }
 
       const initialStatut =

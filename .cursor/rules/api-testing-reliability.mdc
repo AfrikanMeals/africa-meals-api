@@ -1,0 +1,66 @@
+---
+description: API — transactions, idempotence, webhooks, intégrations tierces
+globs: src/modules/orders/**/*.ts, src/modules/cart/**/*.ts, src/modules/billing/**/*.ts, src/modules/delivery-agent/**/*.ts, src/modules/medias/**/*.ts, src/**/webhook*.ts
+alwaysApply: false
+---
+
+# API — fiabilité & intégrations (Tier 3)
+
+Appliquer aux domaines **commandes**, **paiements**, **panier**, **livraison**, **webhooks**, **files**.
+
+## Base de données
+
+- Insert / update persistés ; contraintes unique / FK respectées
+- Soft delete (`deletedAt`) vs hard delete documenté
+- Rollback transaction si étape intermédiaire échoue
+- Audit / historique si table dédiée
+
+## Transactions métier
+
+| Flux | Vérifier |
+|------|----------|
+| Commande | stock / statut cohérents ; pas double commande |
+| Paiement Stripe | montant = devise boutique ; pas double capture |
+| Panier multi-boutiques | checkout groupé isolé par store |
+| Remboursement | devise parent ; barème `cancelReasonSource` |
+| Livraison | assignation unique livreur |
+
+Simuler **échec partiel** → état final cohérent (pas demi-commande payée).
+
+## Concurrence & idempotence
+
+- Double submit même payload → une seule entité métier
+- Retry réseau POST paiement → `Idempotency-Key` ou clé métier
+- Optimistic locking (`version`, `If-Match`) si présent
+- 100 requêtes parallèles sur endpoint critique → pas de lost update
+
+## Webhooks (Stripe, PayPal, Bird, etc.)
+
+- Signature valide / invalide → 400 ou 401
+- **Retry** : même `event.id` → traitement idempotent
+- Événements hors ordre → état final correct
+- Timeout handler : ack seulement après persistance
+
+## Message queue / domain events
+
+- Retry + dead-letter si échec répété
+- Message dupliqué → pas double effet de bord
+- Poison message → isolé, pas crash worker
+
+## Intégrations tierces
+
+Stripe, PayPal, SendGrid, MinIO, Mapbox, gRPC `ws-notify` :
+
+- Timeout simulé → erreur contrôlée, pas 500 nu
+- Réponse invalide → fallback / log structuré
+- Circuit breaker si implémenté
+
+## Contrat API
+
+- DTO réponse aligné OpenAPI `/api/docs`
+- Champs dépréciés : compat backward une release
+- Listes allégées incluent `store.currency` / `store` minimal si prix
+
+## Fichiers
+
+Voir aussi uploads/downloads dans `api-testing-functional.mdc`.

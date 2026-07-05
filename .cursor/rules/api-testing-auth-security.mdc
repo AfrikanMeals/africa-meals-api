@@ -1,0 +1,67 @@
+---
+description: API — auth, authorization, validation entrées, sécurité
+globs: src/modules/auth/**/*.ts, src/**/guards/**/*.ts, src/**/decorators/**/*.ts, src/common/rate-limit/**/*.ts, src/common/logging/**/*.ts
+alwaysApply: false
+---
+
+# API — auth & sécurité (Tier 2)
+
+Appliquer dès qu’un guard, DTO, rate limit ou flux auth change.
+
+## Authentication
+
+| Cas | Attendu |
+|-----|---------|
+| Login valide | tokens + profil |
+| Logout / refresh | rotation refresh token |
+| Token expiré / invalide / manquant | **401** |
+| Token révoqué | **401** |
+| 2FA / OTP | code valide, expiré, replay |
+| Password reset / verify email | token one-shot, expiration |
+| Multi-device | sessions indépendantes si prévu |
+
+## Authorization (RBAC)
+
+- **ADMIN** : CRUD global
+- **VENDOR** : boutique(s) liées uniquement
+- **CLIENT** : `userId` du JWT = propriétaire ressource
+- **DELIVERY_AGENT** : courses assignées
+- **Guest** : routes `@Public()` seulement
+
+Tester **IDOR** : remplacer `:id` par ressource d’un autre compte → **403** ou **404** (pas 200).
+
+## Validation entrées (chaque champ DTO)
+
+| Entrée | Tests |
+|--------|-------|
+| String | `''`, null, min/max length, 255 vs 256 chars |
+| Email / phone / UUID / date / enum | formats invalides → **422** |
+| Unicode / emoji | accepté si métier le permet |
+| HTML / script | rejeté ou échappé (XSS) |
+| SQL / NoSQL | pas d’erreur DB brute ; requête paramétrée |
+| Boolean | `"true"`, `1`, `"maybe"` → **422** |
+
+## Sécurité OWASP (API)
+
+- **Mass assignment** : champs non whitelistés ignorés/rejetés
+- **JWT tampering** : signature invalidée → **401**
+- **CSRF** : N/A REST Bearer ; cookies session si ajoutés → CSRF token
+- **SSRF** : URLs user-controlled (webhooks callback) validées
+- **Path traversal** : noms fichiers upload
+- **Open redirect** : params `returnUrl` / `redirect`
+- **Host header** : pas de redirect basé sur Host non fiable
+- **Rate limit** : burst → **429** + `Retry-After` si présent (`auth-rate-limit.util`)
+
+## Headers
+
+`Authorization`, `Content-Type`, `Accept`, `Origin` (CORS), `If-Match` / ETag si versioning optimiste.
+
+## Logging (sans fuite)
+
+- Mots de passe, OTP, JWT, cartes : **jamais** en clair
+- Vérifier `redact-sensitive.util` sur nouveaux champs loggés
+- Correlation / request ID propagé si middleware actif
+
+## Caching auth-adjacent
+
+Routes publiques cacheables (`platform/*`) : `Cache-Control`, **304** si ETag.

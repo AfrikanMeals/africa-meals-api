@@ -532,6 +532,7 @@ export class NotificationsService implements OnModuleInit {
           if (
             code.includes('invalid-registration-token') ||
             code.includes('registration-token-not-registered') ||
+            code.includes('mismatched-credential') ||
             code.includes('invalid-argument')
           ) {
             if (tok) invalidTokens.add(tok);

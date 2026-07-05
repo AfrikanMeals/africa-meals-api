@@ -12,6 +12,7 @@ export type DeliveryAgentPresenceWsPayload = {
     | 'manual_toggle'
     | 'order_assigned'
     | 'order_completed'
+    | 'order_unassigned'
     | 'admin_toggle';
 };
 

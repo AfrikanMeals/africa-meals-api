@@ -8,17 +8,40 @@ import { UserModel } from '@schemas/user.schema';
 export function vendorStoreObjectIds(user: UserModel): Types.ObjectId[] {
   const rawStores = user.stores || [];
   const ids: Types.ObjectId[] = [];
+  const seen = new Set<string>();
   for (const s of rawStores) {
+    let oid: Types.ObjectId | null = null;
     if (typeof s === 'object' && s !== null && '_id' in s) {
       const id = (s as { _id: unknown })._id;
-      ids.push(
-        id instanceof Types.ObjectId ? id : new Types.ObjectId(String(id)),
-      );
+      oid =
+        id instanceof Types.ObjectId ? id : new Types.ObjectId(String(id));
     } else if (s) {
-      ids.push(new Types.ObjectId(String(s)));
+      const raw = String(s);
+      if (Types.ObjectId.isValid(raw)) oid = new Types.ObjectId(raw);
     }
+    if (!oid) continue;
+    const key = String(oid);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ids.push(oid);
   }
   return ids;
+}
+
+export function mergeVendorStoreObjectIds(
+  ...lists: Types.ObjectId[][]
+): Types.ObjectId[] {
+  const seen = new Set<string>();
+  const out: Types.ObjectId[] = [];
+  for (const list of lists) {
+    for (const id of list) {
+      const key = String(id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(id instanceof Types.ObjectId ? id : new Types.ObjectId(key));
+    }
+  }
+  return out;
 }
 
 /** Résout la boutique cible pour souscription / paiement vendeur. */
@@ -26,8 +49,12 @@ export function resolveVendorCheckoutStoreId(
   user: UserModel,
   explicitStoreId: string | undefined,
   planStoreId: unknown,
+  extraStoreIds: Types.ObjectId[] = [],
 ): Types.ObjectId {
-  const storeIds = vendorStoreObjectIds(user);
+  const storeIds = mergeVendorStoreObjectIds(
+    vendorStoreObjectIds(user),
+    extraStoreIds,
+  );
   if (!storeIds.length) {
     throw new BadRequestException('no_store');
   }
