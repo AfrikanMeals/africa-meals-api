@@ -82,6 +82,7 @@ import { StorageSettingsModule } from './modules/storage-settings/storage-settin
 import { CacheSettingsModule } from './modules/cache-settings/cache-settings.module';
 import { DatabaseSettingsModule } from './modules/database-settings/database-settings.module';
 import { GeocodeModule } from './modules/geocode/geocode.module';
+import { MapGeocodeUsageModule } from './common/map-geocode/map-geocode-usage.module';
 import { MapSettingsModule } from './modules/map-settings/map-settings.module';
 import { SearchSettingsModule } from './modules/search-settings/search-settings.module';
 import { SecretManagerModule } from './modules/secret-manager/secret-manager.module';
@@ -343,6 +344,7 @@ async function readRedisManagerEnabledAtBootstrap(
     StorageSettingsModule,
     CacheSettingsModule,
     DatabaseSettingsModule,
+    MapGeocodeUsageModule,
     GeocodeModule,
     MapSettingsModule,
     SearchSettingsModule,

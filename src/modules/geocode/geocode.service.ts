@@ -58,6 +58,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { UserModel } from '@schemas/user.schema';
 import axios from 'axios';
+import { MapGeocodeUsageTracker } from '@common/map-geocode/map-geocode-usage.tracker';
 import { GeocodeCacheService, GeocodeEngine } from './geocode-cache.service';
 
 type ForwardArgs = {
@@ -104,6 +105,7 @@ export class GeocodeService {
     private readonly mapSettings: MapSettingsService,
     private readonly config: ConfigService,
     private readonly secrets: SecretManagerService,
+    private readonly usage: MapGeocodeUsageTracker,
   ) {}
 
   async forward(
@@ -133,6 +135,7 @@ export class GeocodeService {
       cacheArgs,
     );
     if (cached?.payload?.features?.length) {
+      this.recordUsage('forward', cached.engine, 'cache_hit', context);
       return {
         features: cached.payload.features,
         cached: true,
@@ -159,6 +162,7 @@ export class GeocodeService {
       payload: payload as Record<string, unknown>,
     });
 
+    this.recordUsage('forward', engine, 'external', context);
     return {
       features: payload.features ?? [],
       cached: false,
@@ -184,6 +188,7 @@ export class GeocodeService {
       cacheArgs,
     );
     if (cached) {
+      this.recordUsage('reverse', cached.engine, 'cache_hit', context);
       return {
         feature: cached.payload.feature ?? null,
         cached: true,
@@ -203,6 +208,7 @@ export class GeocodeService {
       payload: payload as Record<string, unknown>,
     });
 
+    this.recordUsage('reverse', engine, 'external', context);
     return {
       feature: payload.feature ?? null,
       cached: false,
@@ -232,6 +238,7 @@ export class GeocodeService {
       cacheArgs,
     );
     if (cached?.payload?.result) {
+      this.recordUsage('structured', cached.engine, 'cache_hit', 'mobileUser');
       return {
         ...(cached.payload.result as StructuredGeocodeResult),
         cached: true,
@@ -254,11 +261,26 @@ export class GeocodeService {
       payload: payload as Record<string, unknown>,
     });
 
+    this.recordUsage('structured', engine, 'external', 'mobileUser');
     return {
       ...(payload.result as StructuredGeocodeResult),
       cached: false,
       engine,
     };
+  }
+
+  private recordUsage(
+    operation: 'forward' | 'reverse' | 'structured',
+    engine: GeocodeEngine,
+    source: 'cache_hit' | 'external',
+    context: MapSettingsGroupKey,
+  ): void {
+    this.usage.record({
+      operation,
+      engine,
+      source,
+      context,
+    });
   }
 
   private resolveCountryCode(raw?: string, user?: UserModel): string {

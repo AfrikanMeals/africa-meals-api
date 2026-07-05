@@ -15,12 +15,24 @@ import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { UpdateMapSettingsDto } from './dto/update-map-settings.dto';
+import { MapGeocodeUsageService } from './map-geocode-usage.service';
 import { MapSettingsService } from './map-settings.service';
 
 @ApiTags('map-settings')
 @Controller('platform/map-settings')
 export class MapSettingsController {
-  constructor(private readonly _service: MapSettingsService) {}
+  constructor(
+    private readonly _service: MapSettingsService,
+    private readonly _usage: MapGeocodeUsageService,
+  ) {}
+
+  @ApiBearerAuth('bearer')
+  @Get('usage-stats')
+  @UseGuards(JwtGuard)
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
+  getUsageStats(@Req() req: Request) {
+    return this._usage.getStats(req.user as UserModel);
+  }
 
   @Get()
   @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
