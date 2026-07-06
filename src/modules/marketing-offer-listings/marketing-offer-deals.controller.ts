@@ -54,6 +54,16 @@ export class MarketingOfferDealsController {
     return this.listings.listApprovedStrategiesForVendor();
   }
 
+  @Get(':listingId/preview')
+  @UseGuards(OptionalAuthGuard)
+  @ApiOperation({
+    summary:
+      'Aperçu offre exclusive (listing) — navigation Ads sans checkout direct.',
+  })
+  preview(@Param('listingId') listingId: string) {
+    return this.listings.getDealPreviewByListingId(listingId);
+  }
+
   @Post(':listingId/track')
   @HttpCode(204)
   @UseGuards(OptionalAuthGuard)

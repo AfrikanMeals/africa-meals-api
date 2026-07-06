@@ -552,6 +552,42 @@ export class MarketingOfferListingsService {
       .exec();
   }
 
+  /** Aperçu public d’un listing (sans mutation panier) — fallback bannières Ads. */
+  async getDealPreviewByListingId(
+    listingId: string,
+  ): Promise<ExclusiveStrategyDealRow> {
+    const listing = await this.listingModel.findById(listingId).lean().exec();
+    if (!listing || listing.status !== MarketingOfferListingStatusEnum.ACTIVE) {
+      throw new NotFoundException('listing_not_found');
+    }
+    if (!this.listingIsCurrentlyValid(listing)) {
+      throw new BadRequestException('listing_not_valid');
+    }
+
+    const [offer, product, storeDoc] = await Promise.all([
+      this.offerModel.findById(listing.marketingOfferId).lean().exec(),
+      this.productModel.findById(listing.productId).lean().exec(),
+      this.storeModel.findById(listing.storeId).lean().exec(),
+    ]);
+    if (
+      !offer ||
+      offer.moderationStatus !== MarketingOfferModerationStatusEnum.APPROVED ||
+      !product ||
+      product.status !== ProductStatusEnum.ACTIVE ||
+      !storeDoc ||
+      storeDoc.status !== StoreStatusEnum.ACTIVE
+    ) {
+      throw new NotFoundException('listing_not_available');
+    }
+
+    return this.buildDealRow({
+      listing,
+      offer,
+      product,
+      store: storeDoc,
+    });
+  }
+
   async prepareDirectCheckout(
     listingId: string,
     user: UserModel,
@@ -597,14 +633,24 @@ export class MarketingOfferListingsService {
       throw new BadRequestException('strategy_not_direct_checkout');
     }
 
-    const requestedQty = Math.max(
+    let requestedQty = Math.max(
       1,
       Math.min(999, Math.floor(Number(quantity) || 1)),
     );
-    const pricing = computeStrategyPricingForQuantity({
+    let pricing = computeStrategyPricingForQuantity({
       ...pricingInput,
       quantity: requestedQty,
     });
+    const minBundleQty = basePricing.cartLevelStrategy
+      ? 1
+      : Math.max(1, basePricing.checkoutQuantity);
+    if (!pricing.meetsConditions && requestedQty < minBundleQty) {
+      requestedQty = minBundleQty;
+      pricing = computeStrategyPricingForQuantity({
+        ...pricingInput,
+        quantity: requestedQty,
+      });
+    }
     if (!pricing.meetsConditions) {
       throw new BadRequestException('strategy_conditions_not_met');
     }
