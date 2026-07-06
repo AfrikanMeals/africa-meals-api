@@ -459,4 +459,20 @@ export class DeliveryAgentController {
       applicationId,
     );
   }
+
+  @Get('admin/applications/:applicationId/finance-overview')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Admin — performance, gains récents et solde Stripe d’un livreur approuvé.',
+  })
+  async getApplicationFinanceOverviewAdmin(
+    @Req() req: Request,
+    @Param('applicationId') applicationId: string,
+  ) {
+    return this._deliveryAgent.getApplicationFinanceOverviewForAdmin(
+      req.user as UserModel,
+      applicationId,
+    );
+  }
 }

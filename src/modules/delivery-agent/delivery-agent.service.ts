@@ -2019,6 +2019,170 @@ export class DeliveryAgentService {
     return { items };
   }
 
+  /** Admin — synthèse performance + gains + Stripe pour un livreur approuvé. */
+  async getApplicationFinanceOverviewForAdmin(
+    admin: UserModel,
+    applicationId: string,
+  ) {
+    this.assertAdmin(admin);
+    const app = await this._requireApprovedApplication(applicationId);
+    const agentUser = await this._users.findById(app.user).exec();
+    if (!agentUser) {
+      throw new NotFoundException('user_not_found');
+    }
+
+    const agentId = new Types.ObjectId(String(agentUser._id));
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const deliveredStatuses = [
+      OrderStatusEnum.SHIPPED,
+      OrderStatusEnum.COMPLETED,
+    ];
+    const earningsWindow = 25;
+
+    const [
+      deliveredAgg,
+      abandonAgg,
+      ratingAgg,
+      earnings,
+      connectStatus,
+      connectBalance,
+      recentPayouts,
+    ] = await Promise.all([
+      this._orders
+        .aggregate<{
+          total?: number;
+          today?: number;
+          revenueTotal?: number;
+          revenueToday?: number;
+        }>([
+          {
+            $match: {
+              shouldShip: true,
+              assignedDeliveryUser: agentId,
+              status: { $in: deliveredStatuses },
+              courierAbandonNoPayout: { $ne: true },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: 1 },
+              revenueTotal: { $sum: { $ifNull: ['$shippingPrice', 0] } },
+              today: {
+                $sum: {
+                  $cond: [{ $gte: ['$updatedAt', startOfDay] }, 1, 0],
+                },
+              },
+              revenueToday: {
+                $sum: {
+                  $cond: [
+                    { $gte: ['$updatedAt', startOfDay] },
+                    { $ifNull: ['$shippingPrice', 0] },
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+        ])
+        .exec(),
+      this._orders
+        .aggregate<{ abandonsTotal?: number; abandonsToday?: number }>([
+          {
+            $match: {
+              shouldShip: true,
+              deliveryUnassignedFromUser: agentId,
+              deliveryUnassignReason: 'courier_abandon',
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              abandonsTotal: { $sum: 1 },
+              abandonsToday: {
+                $sum: {
+                  $cond: [{ $gte: ['$deliveryUnassignedAt', startOfDay] }, 1, 0],
+                },
+              },
+            },
+          },
+        ])
+        .exec(),
+      this._courierRatings
+        .aggregate<{ avg?: number; count?: number }>([
+          { $match: { deliveryAgent: agentId } },
+          {
+            $group: {
+              _id: null,
+              avg: { $avg: '$rate' },
+              count: { $sum: 1 },
+            },
+          },
+        ])
+        .exec(),
+      this.loadAgentDeliveryHistory(agentUser, earningsWindow),
+      this._stripeConnect
+        .getConnectStatus(agentUser)
+        .catch(() => null),
+      agentUser.stripeConnectAccountId?.trim()
+        ? this._stripeConnect.getConnectBalance(agentUser).catch(() => null)
+        : Promise.resolve(null),
+      agentUser.stripeConnectAccountId?.trim()
+        ? this._stripeConnect
+            .listPayouts(agentUser, 5)
+            .catch(() => ({ payouts: [], hasMore: false }))
+        : Promise.resolve({ payouts: [], hasMore: false }),
+    ]);
+
+    const deliveredRow = deliveredAgg[0];
+    const abandonRow = abandonAgg[0];
+    const ratingRow = ratingAgg[0];
+    const ratingCount = Math.max(0, Math.round(Number(ratingRow?.count ?? 0)));
+    const avgRaw = Number(ratingRow?.avg ?? NaN);
+    const averageRating =
+      ratingCount > 0 && Number.isFinite(avgRaw)
+        ? Math.round(avgRaw * 10) / 10
+        : null;
+
+    const earningsItems = earnings.items.map(
+      ({
+        customerName: _c,
+        shippingAddress: _a,
+        distanceKm: _d,
+        ...earning
+      }) => earning,
+    );
+
+    return {
+      applicationId: String(app._id),
+      userId: String(agentUser._id),
+      stats: {
+        ordersDeliveredTotal: Number(deliveredRow?.total ?? 0),
+        ordersDeliveredToday: Number(deliveredRow?.today ?? 0),
+        shippingRevenueTotal:
+          Math.round(Number(deliveredRow?.revenueTotal ?? 0) * 100) / 100,
+        shippingRevenueToday:
+          Math.round(Number(deliveredRow?.revenueToday ?? 0) * 100) / 100,
+        courierAbandonsTotal: Number(abandonRow?.abandonsTotal ?? 0),
+        courierAbandonsToday: Number(abandonRow?.abandonsToday ?? 0),
+        averageRating,
+        ratingCount,
+      },
+      earnings: {
+        windowLimit: earningsWindow,
+        items: earningsItems,
+        totals: earnings.totals,
+      },
+      stripe: {
+        connectStatus,
+        balance: connectBalance,
+        recentPayouts: recentPayouts.payouts ?? [],
+        hasMorePayouts: recentPayouts.hasMore === true,
+      },
+    };
+  }
+
   private async loadAgentDeliveryHistory(user: UserModel, limit: number) {
     const agentId = new Types.ObjectId(String(user.id));
     const rows = await this._orders
