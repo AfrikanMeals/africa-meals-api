@@ -41,6 +41,16 @@ import {
 import { AdModel, AdSchema } from '@schemas/ad.schema';
 import { DrinkModel, DrinkSchema } from '@schemas/drink.schema';
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
+import {
+  MarketingOfferListingModel,
+  MarketingOfferListingSchema,
+} from '@schemas/marketing-offer-listing.schema';
+import {
+  MarketingOfferModel,
+  MarketingOfferSchema,
+  MarketingOfferSectionModel,
+  MarketingOfferSectionSchema,
+} from '@schemas/marketing-offer.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import {
   AdsTargetingProfileModel,
@@ -101,6 +111,9 @@ import { AdsService } from './ads.service';
       { name: StoreAdCashLedgerModel.name, schema: StoreAdCashLedgerSchema },
       { name: StoreModel.name, schema: StoreSchema },
       { name: ProductModel.name, schema: ProductSchema },
+      { name: MarketingOfferListingModel.name, schema: MarketingOfferListingSchema },
+      { name: MarketingOfferSectionModel.name, schema: MarketingOfferSectionSchema },
+      { name: MarketingOfferModel.name, schema: MarketingOfferSchema },
       { name: DrinkModel.name, schema: DrinkSchema },
       { name: UserModel.name, schema: UserSchema },
       {

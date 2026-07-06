@@ -101,6 +101,15 @@ import {
   StoreAdActionTypeEnum,
 } from '@schemas/ad.schema';
 import { DrinkModel } from '@schemas/drink.schema';
+import {
+  MarketingOfferListingModel,
+  MarketingOfferListingStatusEnum,
+} from '@schemas/marketing-offer-listing.schema';
+import {
+  MarketingOfferModel,
+  MarketingOfferModerationStatusEnum,
+} from '@schemas/marketing-offer.schema';
+import { isDirectCheckoutStrategyType } from '@modules/marketing-offer-listings/marketing-offer-strategy-pricing.util';
 import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
@@ -111,6 +120,14 @@ type StripeClient = InstanceType<typeof Stripe>;
 
 function productRefId(id: string): NonNullable<AdModel['product']> {
   return new Types.ObjectId(id) as unknown as NonNullable<AdModel['product']>;
+}
+
+function exclusiveOfferListingRefId(
+  id: string,
+): NonNullable<AdModel['marketingOfferListing']> {
+  return new Types.ObjectId(id) as unknown as NonNullable<
+    AdModel['marketingOfferListing']
+  >;
 }
 
 export type AdManagementRow = {
@@ -133,6 +150,8 @@ export type AdManagementRow = {
   actionTarget: string | null;
   productId: string | null;
   productTitle: string | null;
+  marketingOfferListingId: string | null;
+  marketingOfferListingLabel: string | null;
   archivedAt: string | null;
   archiveReason: AdArchiveReasonEnum | null;
   billingFinalizedAt: string | null;
@@ -256,9 +275,11 @@ export type AdCampaignItemRow = {
   itemType: AdCampaignItemTypeEnum;
   productId: string | null;
   drinkId: string | null;
+  marketingOfferListingId: string | null;
   title: string;
   imageUrl: string | null;
   priceCad: number;
+  strategyName?: string | null;
 };
 
 export type PublicAdCampaignRow = {
@@ -555,6 +576,12 @@ export class AdsService implements OnModuleInit {
 
   @InjectModel(DrinkModel.name)
   private readonly _drinkModel: Model<DrinkModel>;
+
+  @InjectModel(MarketingOfferListingModel.name)
+  private readonly _marketingOfferListingModel: Model<MarketingOfferListingModel>;
+
+  @InjectModel(MarketingOfferModel.name)
+  private readonly _marketingOfferModel: Model<MarketingOfferModel>;
 
   @InjectModel(UserModel.name)
   private readonly _userModel: Model<UserModel>;
@@ -1770,6 +1797,17 @@ export class AdsService implements OnModuleInit {
         if (seen.has(key)) continue;
         seen.add(key);
         out.push({ itemType: it.itemType, drinkId: it.drinkId });
+      } else if (
+        it.itemType === AdCampaignItemTypeEnum.EXCLUSIVE_OFFER &&
+        it.marketingOfferListingId
+      ) {
+        const key = `E:${it.marketingOfferListingId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          itemType: it.itemType,
+          marketingOfferListingId: it.marketingOfferListingId,
+        });
       }
     }
     return out;
@@ -1879,6 +1917,14 @@ export class AdsService implements OnModuleInit {
         throw new BadRequestException('campaign_drink_not_in_store');
       }
     }
+    const listingIds = normalized
+      .filter((i) => i.itemType === AdCampaignItemTypeEnum.EXCLUSIVE_OFFER)
+      .map((i) => i.marketingOfferListingId!)
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    if (listingIds.length > 0) {
+      await this.assertExclusiveOfferListingsBelongToStore(storeId, listingIds);
+    }
   }
 
   private _toCampaignRow(
@@ -1903,21 +1949,60 @@ export class AdsService implements OnModuleInit {
             itemType,
             productId: p?._id ? String(p._id) : null,
             drinkId: null,
+            marketingOfferListingId: null,
             title: String(p?.title ?? '(produit supprimé)'),
             imageUrl: p?.profileImage ? String(p.profileImage) : null,
             priceCad: Number(p?.price ?? 0),
+          };
+        }
+        if (itemType === AdCampaignItemTypeEnum.EXCLUSIVE_OFFER) {
+          const listing = it.marketingOfferListing as
+            | Record<string, unknown>
+            | undefined
+            | null;
+          const product = listing?.productId as
+            | Record<string, unknown>
+            | undefined
+            | null;
+          const offer = listing?.marketingOfferId as
+            | Record<string, unknown>
+            | undefined
+            | null;
+          const listingId = listing?._id ? String(listing._id) : null;
+          const strategyName = offer?.name ? String(offer.name) : null;
+          const productTitle = product?.title ? String(product.title) : '';
+          return {
+            itemType,
+            productId: null,
+            drinkId: null,
+            marketingOfferListingId: listingId,
+            title:
+              strategyName && productTitle
+                ? `${strategyName} — ${productTitle}`
+                : productTitle ||
+                  strategyName ||
+                  '(offre exclusive supprimée)',
+            imageUrl: product?.profileImage ? String(product.profileImage) : null,
+            priceCad: Number(product?.price ?? 0),
+            strategyName,
           };
         }
         return {
           itemType: AdCampaignItemTypeEnum.DRINK,
           productId: null,
           drinkId: d?._id ? String(d._id) : null,
+          marketingOfferListingId: null,
           title: String(d?.name ?? '(boisson supprimée)'),
           imageUrl: d?.imageUrl ? String(d.imageUrl) : null,
           priceCad: Number(d?.priceCad ?? 0),
         };
       })
-      .filter((it) => it.productId != null || it.drinkId != null);
+      .filter(
+        (it) =>
+          it.productId != null ||
+          it.drinkId != null ||
+          it.marketingOfferListingId != null,
+      );
 
     return {
       id: String(doc._id ?? ''),
@@ -1994,7 +2079,11 @@ export class AdsService implements OnModuleInit {
         campaign: campaignId,
         eventType: AdCampaignEventTypeEnum.CLICK,
         itemType: {
-          $in: [AdCampaignItemTypeEnum.PRODUCT, AdCampaignItemTypeEnum.DRINK],
+          $in: [
+            AdCampaignItemTypeEnum.PRODUCT,
+            AdCampaignItemTypeEnum.DRINK,
+            AdCampaignItemTypeEnum.EXCLUSIVE_OFFER,
+          ],
         },
       }),
       this._adCampaignEventModel.countDocuments({
@@ -2358,6 +2447,13 @@ export class AdsService implements OnModuleInit {
       .populate('store', 'name profileImage')
       .populate('items.product', 'title profileImage price store')
       .populate('items.drink', 'name imageUrl priceCad store')
+      .populate({
+        path: 'items.marketingOfferListing',
+        populate: [
+          { path: 'productId', select: 'title profileImage price' },
+          { path: 'marketingOfferId', select: 'name rule type' },
+        ],
+      })
       .sort({ createdAt: -1 })
       .lean()
       .exec();
@@ -2388,6 +2484,13 @@ export class AdsService implements OnModuleInit {
       .populate('store', 'name profileImage')
       .populate('items.product', 'title profileImage price store')
       .populate('items.drink', 'name imageUrl priceCad store')
+      .populate({
+        path: 'items.marketingOfferListing',
+        populate: [
+          { path: 'productId', select: 'title profileImage price' },
+          { path: 'marketingOfferId', select: 'name rule type' },
+        ],
+      })
       .sort({ archivedAt: -1, createdAt: -1 })
       .lean()
       .exec();
@@ -2433,20 +2536,18 @@ export class AdsService implements OnModuleInit {
     }
     const actionText =
       String(dto.actionText ?? 'Découvrir').trim() || 'Découvrir';
-    const actionTarget = isAdLinkActionType(actionType)
-      ? this.assertActionTargetValue(actionType, dto.actionTarget)
-      : undefined;
-    const items = this._normalizeCampaignItems(dto.items).map((it) => ({
-      itemType: it.itemType,
-      product:
-        it.itemType === AdCampaignItemTypeEnum.PRODUCT && it.productId
-          ? new Types.ObjectId(it.productId)
-          : undefined,
-      drink:
-        it.itemType === AdCampaignItemTypeEnum.DRINK && it.drinkId
-          ? new Types.ObjectId(it.drinkId)
-          : undefined,
-    }));
+    let actionTarget: string | undefined;
+    if (isAdLinkActionType(actionType)) {
+      actionTarget = this.assertActionTargetValue(actionType, dto.actionTarget);
+    } else if (actionType === StoreAdActionTypeEnum.EXCLUSIVE_OFFER) {
+      const listingId = String(dto.actionTarget ?? '').trim();
+      if (!listingId || !Types.ObjectId.isValid(listingId)) {
+        throw new BadRequestException('exclusive_offer_listing_required');
+      }
+      await this.assertExclusiveOfferListingsBelongToStore(storeId, [listingId]);
+      actionTarget = listingId;
+    }
+    const items = this._campaignItemsToDb(dto.items);
     const channelAvailability = await this._getAvailableNotificationChannels();
     const created = await this._adCampaignModel.create({
       store: new Types.ObjectId(storeId),
@@ -2479,6 +2580,13 @@ export class AdsService implements OnModuleInit {
       .populate('store', 'name profileImage')
       .populate('items.product', 'title profileImage price store')
       .populate('items.drink', 'name imageUrl priceCad store')
+      .populate({
+        path: 'items.marketingOfferListing',
+        populate: [
+          { path: 'productId', select: 'title profileImage price' },
+          { path: 'marketingOfferId', select: 'name rule type' },
+        ],
+      })
       .lean()
       .exec();
     return this._toCampaignRow(row as unknown as Record<string, unknown>);
@@ -2577,6 +2685,15 @@ export class AdsService implements OnModuleInit {
         effectiveActionType,
         existing.actionTarget,
       );
+    } else if (effectiveActionType === StoreAdActionTypeEnum.EXCLUSIVE_OFFER) {
+      const listingId = String(existing.actionTarget ?? '').trim();
+      if (!listingId || !Types.ObjectId.isValid(listingId)) {
+        throw new BadRequestException('exclusive_offer_listing_required');
+      }
+      await this.assertExclusiveOfferListingsBelongToStore(
+        existingStoreId,
+        [listingId],
+      );
     } else {
       existing.actionTarget = undefined;
     }
@@ -2587,17 +2704,7 @@ export class AdsService implements OnModuleInit {
     if (dto.items != null) {
       const sid = existingStoreId;
       await this._assertCampaignItemsBelongToStore(sid, dto.items, user);
-      existing.items = this._normalizeCampaignItems(dto.items).map((it) => ({
-        itemType: it.itemType,
-        product:
-          it.itemType === AdCampaignItemTypeEnum.PRODUCT && it.productId
-            ? (new Types.ObjectId(it.productId) as unknown as ProductModel)
-            : undefined,
-        drink:
-          it.itemType === AdCampaignItemTypeEnum.DRINK && it.drinkId
-            ? (new Types.ObjectId(it.drinkId) as unknown as DrinkModel)
-            : undefined,
-      }));
+      existing.items = this._campaignItemsToDb(dto.items);
     }
     if (dto.audienceTotal !== undefined) {
       existing.audienceTotal = normalizeAudienceTotal(dto.audienceTotal) ?? null;
@@ -2636,6 +2743,13 @@ export class AdsService implements OnModuleInit {
       .populate('store', 'name profileImage')
       .populate('items.product', 'title profileImage price store')
       .populate('items.drink', 'name imageUrl priceCad store')
+      .populate({
+        path: 'items.marketingOfferListing',
+        populate: [
+          { path: 'productId', select: 'title profileImage price' },
+          { path: 'marketingOfferId', select: 'name rule type' },
+        ],
+      })
       .lean()
       .exec();
     return this._toCampaignRow(row as unknown as Record<string, unknown>);
@@ -2733,6 +2847,13 @@ export class AdsService implements OnModuleInit {
       .populate('store', 'name status profileImage')
       .populate('items.product', 'title profileImage price status')
       .populate('items.drink', 'name imageUrl priceCad')
+      .populate({
+        path: 'items.marketingOfferListing',
+        populate: [
+          { path: 'productId', select: 'title profileImage price' },
+          { path: 'marketingOfferId', select: 'name rule type' },
+        ],
+      })
       .sort({ startsAt: -1, createdAt: -1 })
       .lean()
       .exec();
@@ -2809,6 +2930,7 @@ export class AdsService implements OnModuleInit {
     if (
       itemType !== AdCampaignItemTypeEnum.PRODUCT &&
       itemType !== AdCampaignItemTypeEnum.DRINK &&
+      itemType !== AdCampaignItemTypeEnum.EXCLUSIVE_OFFER &&
       itemType !== 'STORE_ACTION'
     ) {
       throw new BadRequestException('invalid_campaign_item_type');
@@ -2832,7 +2954,12 @@ export class AdsService implements OnModuleInit {
             $elemMatch:
               itemType === AdCampaignItemTypeEnum.PRODUCT
                 ? { itemType, product: new Types.ObjectId(itemId) }
-                : { itemType, drink: new Types.ObjectId(itemId) },
+                : itemType === AdCampaignItemTypeEnum.DRINK
+                  ? { itemType, drink: new Types.ObjectId(itemId) }
+                  : {
+                      itemType: AdCampaignItemTypeEnum.EXCLUSIVE_OFFER,
+                      marketingOfferListing: new Types.ObjectId(itemId),
+                    },
           },
         })
         .exec();
@@ -2910,7 +3037,8 @@ export class AdsService implements OnModuleInit {
       .filter(
         (it) =>
           (it.itemType === AdCampaignItemTypeEnum.PRODUCT ||
-            it.itemType === AdCampaignItemTypeEnum.DRINK) &&
+            it.itemType === AdCampaignItemTypeEnum.DRINK ||
+            it.itemType === AdCampaignItemTypeEnum.EXCLUSIVE_OFFER) &&
           Types.ObjectId.isValid(it.itemId),
       );
     if (!purchased.length) {
@@ -2936,7 +3064,11 @@ export class AdsService implements OnModuleInit {
         user: userOid,
         eventType: AdCampaignEventTypeEnum.CLICK,
         itemType: {
-          $in: [AdCampaignItemTypeEnum.PRODUCT, AdCampaignItemTypeEnum.DRINK],
+          $in: [
+            AdCampaignItemTypeEnum.PRODUCT,
+            AdCampaignItemTypeEnum.DRINK,
+            AdCampaignItemTypeEnum.EXCLUSIVE_OFFER,
+          ],
         },
         createdAt: { $gte: since },
       })
@@ -4420,6 +4552,30 @@ export class AdsService implements OnModuleInit {
     } else if (typeof pr === 'string' && pr) {
       productId = pr;
     }
+    const listingRaw =
+      doc.marketingOfferListing ?? doc.marketing_offer_listing;
+    let marketingOfferListingId: string | null = null;
+    let marketingOfferListingLabel: string | null = null;
+    if (
+      listingRaw != null &&
+      typeof listingRaw === 'object' &&
+      '_id' in (listingRaw as object)
+    ) {
+      const listing = listingRaw as Record<string, unknown>;
+      marketingOfferListingId = String(listing._id ?? '');
+      const product = listing.productId as Record<string, unknown> | null;
+      const offer = listing.marketingOfferId as Record<string, unknown> | null;
+      const strategyName = offer?.name ? String(offer.name) : '';
+      const productTitle = product?.title ? String(product.title) : '';
+      marketingOfferListingLabel =
+        strategyName && productTitle
+          ? `${strategyName} — ${productTitle}`
+          : productTitle || strategyName || null;
+    } else if (listingRaw instanceof Types.ObjectId) {
+      marketingOfferListingId = listingRaw.toString();
+    } else if (typeof listingRaw === 'string' && listingRaw) {
+      marketingOfferListingId = listingRaw;
+    }
     const vf = doc.validFrom as Date | string | undefined | null;
     const vu = doc.validUntil as Date | string | undefined | null;
     const at =
@@ -4454,6 +4610,8 @@ export class AdsService implements OnModuleInit {
       actionTarget: actTarget,
       productId,
       productTitle,
+      marketingOfferListingId,
+      marketingOfferListingLabel,
       archivedAt:
         doc.archivedAt instanceof Date
           ? doc.archivedAt.toISOString()
@@ -4849,6 +5007,13 @@ export class AdsService implements OnModuleInit {
         .find()
         .populate('store', 'name')
         .populate('product', 'title')
+        .populate({
+          path: 'marketingOfferListing',
+          populate: [
+            { path: 'productId', select: 'title' },
+            { path: 'marketingOfferId', select: 'name' },
+          ],
+        })
         .sort({ sortOrder: 1, createdAt: -1 })
         .lean()
         .exec();
@@ -4866,6 +5031,13 @@ export class AdsService implements OnModuleInit {
       .find({ store: { $in: ids } })
       .populate('store', 'name')
       .populate('product', 'title')
+      .populate({
+        path: 'marketingOfferListing',
+        populate: [
+          { path: 'productId', select: 'title' },
+          { path: 'marketingOfferId', select: 'name' },
+        ],
+      })
       .sort({ sortOrder: 1, createdAt: -1 })
       .lean()
       .exec();
@@ -4891,6 +5063,78 @@ export class AdsService implements OnModuleInit {
     }
   }
 
+  private async assertExclusiveOfferListingsBelongToStore(
+    storeId: string,
+    listingIds: Array<string | Types.ObjectId>,
+  ): Promise<void> {
+    const oids = listingIds
+      .map((id) => (id instanceof Types.ObjectId ? id : String(id).trim()))
+      .filter((id) => Types.ObjectId.isValid(String(id)))
+      .map((id) =>
+        id instanceof Types.ObjectId ? id : new Types.ObjectId(String(id)),
+      );
+    if (!oids.length) {
+      throw new BadRequestException('exclusive_offer_listing_required');
+    }
+    const rows = await this._marketingOfferListingModel
+      .find({
+        _id: { $in: oids },
+        storeId: new Types.ObjectId(storeId),
+        status: MarketingOfferListingStatusEnum.ACTIVE,
+      })
+      .select('_id marketingOfferId marketingOfferType')
+      .lean()
+      .exec();
+    if (rows.length !== oids.length) {
+      throw new BadRequestException('exclusive_offer_listing_not_in_store');
+    }
+    const offerIds = [
+      ...new Set(rows.map((r) => String(r.marketingOfferId ?? ''))),
+    ].filter((id) => Types.ObjectId.isValid(id));
+    if (!offerIds.length) {
+      throw new BadRequestException('exclusive_offer_listing_invalid');
+    }
+    const offers = await this._marketingOfferModel
+      .find({ _id: { $in: offerIds.map((id) => new Types.ObjectId(id)) } })
+      .select('_id type moderationStatus')
+      .lean()
+      .exec();
+    const offerById = new Map(offers.map((o) => [String(o._id), o]));
+    for (const row of rows) {
+      const offer = offerById.get(String(row.marketingOfferId ?? ''));
+      if (!offer) {
+        throw new BadRequestException('exclusive_offer_listing_invalid');
+      }
+      if (offer.moderationStatus === MarketingOfferModerationStatusEnum.BLOCKED) {
+        throw new BadRequestException('marketing_offer_blocked');
+      }
+      if (!isDirectCheckoutStrategyType(String(row.marketingOfferType ?? ''))) {
+        throw new BadRequestException('marketing_offer_not_direct_checkout');
+      }
+    }
+  }
+
+  private _campaignItemsToDb(items: CampaignItemDto[]) {
+    return this._normalizeCampaignItems(items).map((it) => ({
+      itemType: it.itemType,
+      product:
+        it.itemType === AdCampaignItemTypeEnum.PRODUCT && it.productId
+          ? (new Types.ObjectId(it.productId) as unknown as ProductModel)
+          : undefined,
+      drink:
+        it.itemType === AdCampaignItemTypeEnum.DRINK && it.drinkId
+          ? (new Types.ObjectId(it.drinkId) as unknown as DrinkModel)
+          : undefined,
+      marketingOfferListing:
+        it.itemType === AdCampaignItemTypeEnum.EXCLUSIVE_OFFER &&
+        it.marketingOfferListingId
+          ? (new Types.ObjectId(
+              it.marketingOfferListingId,
+            ) as unknown as import('@schemas/marketing-offer-listing.schema').MarketingOfferListingModel)
+          : undefined,
+    }));
+  }
+
   async createManagement(
     user: UserModel,
     dto: CreateAdManagementDto,
@@ -4913,6 +5157,9 @@ export class AdsService implements OnModuleInit {
 
     if (!storeOid && dto.actionType === StoreAdActionTypeEnum.PRODUCT) {
       throw new BadRequestException('global_product_action_forbidden');
+    }
+    if (!storeOid && dto.actionType === StoreAdActionTypeEnum.EXCLUSIVE_OFFER) {
+      throw new BadRequestException('global_exclusive_offer_action_forbidden');
     }
 
     if (storeOid) {
@@ -4951,6 +5198,15 @@ export class AdsService implements OnModuleInit {
         storeOid.toString(),
       );
     }
+    if (dto.actionType === StoreAdActionTypeEnum.EXCLUSIVE_OFFER) {
+      if (!dto.marketingOfferListingId || !storeOid) {
+        throw new BadRequestException('exclusive_offer_listing_required');
+      }
+      await this.assertExclusiveOfferListingsBelongToStore(
+        storeOid.toString(),
+        [dto.marketingOfferListingId],
+      );
+    }
 
     const linkTarget = isAdLinkActionType(dto.actionType)
       ? this.assertActionTargetValue(dto.actionType, dto.actionTarget)
@@ -4981,6 +5237,11 @@ export class AdsService implements OnModuleInit {
         dto.actionType === StoreAdActionTypeEnum.PRODUCT && dto.productId
           ? productRefId(dto.productId)
           : undefined,
+      marketingOfferListing:
+        dto.actionType === StoreAdActionTypeEnum.EXCLUSIVE_OFFER &&
+        dto.marketingOfferListingId
+          ? exclusiveOfferListingRefId(dto.marketingOfferListingId)
+          : undefined,
       audienceTotal: normalizeAudienceTotal(dto.audienceTotal) ?? null,
       notificationAddon: normalizeNotificationAddonInput(
         dto.notificationAddon,
@@ -5001,6 +5262,13 @@ export class AdsService implements OnModuleInit {
       .findById(created._id)
       .populate('store', 'name')
       .populate('product', 'title')
+      .populate({
+        path: 'marketingOfferListing',
+        populate: [
+          { path: 'productId', select: 'title' },
+          { path: 'marketingOfferId', select: 'name' },
+        ],
+      })
       .lean()
       .exec();
     return this.toManagementRowResolved(populated as Record<string, unknown>);
@@ -5057,6 +5325,9 @@ export class AdsService implements OnModuleInit {
       dto.actionType ?? existing.actionType ?? StoreAdActionTypeEnum.SHOP;
     if (!storeIdStr && nextAction === StoreAdActionTypeEnum.PRODUCT) {
       throw new BadRequestException('global_product_action_forbidden');
+    }
+    if (!storeIdStr && nextAction === StoreAdActionTypeEnum.EXCLUSIVE_OFFER) {
+      throw new BadRequestException('global_exclusive_offer_action_forbidden');
     }
 
     // Enforce banner limit when activating a previously inactive banner
@@ -5143,17 +5414,31 @@ export class AdsService implements OnModuleInit {
     const effectiveStoreId = storeIdStr;
     if (dto.actionType === StoreAdActionTypeEnum.SHOP) {
       existing.product = undefined;
+      existing.marketingOfferListing = undefined;
       existing.actionTarget = undefined;
     } else if (dto.actionType === StoreAdActionTypeEnum.PRODUCT) {
       existing.actionTarget = undefined;
+      existing.marketingOfferListing = undefined;
       const pid = dto.productId;
       if (!pid || !effectiveStoreId) {
         throw new BadRequestException('product_required_for_action');
       }
       await this.assertProductBelongsToStore(pid, effectiveStoreId);
       existing.product = productRefId(pid);
+    } else if (dto.actionType === StoreAdActionTypeEnum.EXCLUSIVE_OFFER) {
+      existing.actionTarget = undefined;
+      existing.product = undefined;
+      const listingId = dto.marketingOfferListingId;
+      if (!listingId || !effectiveStoreId) {
+        throw new BadRequestException('exclusive_offer_listing_required');
+      }
+      await this.assertExclusiveOfferListingsBelongToStore(effectiveStoreId, [
+        listingId,
+      ]);
+      existing.marketingOfferListing = exclusiveOfferListingRefId(listingId);
     } else if (dto.actionType != null && isAdLinkActionType(dto.actionType)) {
       existing.product = undefined;
+      existing.marketingOfferListing = undefined;
       if (dto.actionTarget !== undefined) {
         existing.actionTarget =
           dto.actionTarget === null || dto.actionTarget === ''
@@ -5164,6 +5449,22 @@ export class AdsService implements OnModuleInit {
 
     if (dto.productId === null) {
       existing.product = undefined;
+    } else if (
+      dto.marketingOfferListingId === null
+    ) {
+      existing.marketingOfferListing = undefined;
+    } else if (
+      dto.marketingOfferListingId &&
+      !dto.actionType &&
+      existing.actionType === StoreAdActionTypeEnum.EXCLUSIVE_OFFER &&
+      effectiveStoreId
+    ) {
+      await this.assertExclusiveOfferListingsBelongToStore(effectiveStoreId, [
+        dto.marketingOfferListingId,
+      ]);
+      existing.marketingOfferListing = exclusiveOfferListingRefId(
+        dto.marketingOfferListingId,
+      );
     } else if (
       dto.productId &&
       !dto.actionType &&
@@ -5196,6 +5497,17 @@ export class AdsService implements OnModuleInit {
         finalType,
         existing.actionTarget,
       );
+    } else if (finalType === StoreAdActionTypeEnum.EXCLUSIVE_OFFER) {
+      const listingRef = existing.marketingOfferListing;
+      const listingId =
+        listingRef != null ? String(listingRef) : '';
+      if (!listingId || !Types.ObjectId.isValid(listingId) || !effectiveStoreId) {
+        throw new BadRequestException('exclusive_offer_listing_required');
+      }
+      await this.assertExclusiveOfferListingsBelongToStore(effectiveStoreId, [
+        listingId,
+      ]);
+      existing.actionTarget = undefined;
     } else {
       existing.actionTarget = undefined;
     }
@@ -5845,6 +6157,22 @@ export class AdsService implements OnModuleInit {
         if (!itemId) continue;
         const title = String(d?.name ?? '').trim() || '(boisson supprimée)';
         itemTitles.set(`DRINK:${itemId}`, title);
+      } else if (itemType === AdCampaignItemTypeEnum.EXCLUSIVE_OFFER) {
+        const listing = item.marketingOfferListing as
+          | Record<string, unknown>
+          | undefined
+          | null;
+        const itemId = listing?._id ? String(listing._id) : '';
+        if (!itemId) continue;
+        const product = listing?.productId as Record<string, unknown> | null;
+        const offer = listing?.marketingOfferId as Record<string, unknown> | null;
+        const strategyName = offer?.name ? String(offer.name) : 'Offre exclusive';
+        const productTitle = product?.title ? String(product.title) : '';
+        const title =
+          productTitle.trim().length > 0
+            ? `${strategyName} — ${productTitle}`
+            : strategyName;
+        itemTitles.set(`EXCLUSIVE_OFFER:${itemId}`, title);
       }
     }
 

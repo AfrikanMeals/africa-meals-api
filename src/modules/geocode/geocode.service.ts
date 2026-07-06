@@ -59,6 +59,7 @@ import { ConfigService } from '@nestjs/config';
 import { UserModel } from '@schemas/user.schema';
 import axios from 'axios';
 import { MapGeocodeUsageTracker } from '@common/map-geocode/map-geocode-usage.tracker';
+import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { GeocodeCacheService, GeocodeEngine } from './geocode-cache.service';
 
 type ForwardArgs = {
@@ -68,6 +69,7 @@ type ForwardArgs = {
   proximityLng?: number;
   proximityLat?: number;
   context?: MapSettingsGroupKey;
+  storeId?: string;
   autocomplete?: boolean;
 };
 
@@ -76,6 +78,7 @@ type ReverseArgs = {
   lng: number;
   countryCode: string;
   context?: MapSettingsGroupKey;
+  storeId?: string;
 };
 
 type StructuredArgs = {
@@ -103,6 +106,7 @@ export class GeocodeService {
   constructor(
     private readonly cache: GeocodeCacheService,
     private readonly mapSettings: MapSettingsService,
+    private readonly subscriptions: SubscriptionsService,
     private readonly config: ConfigService,
     private readonly secrets: SecretManagerService,
     private readonly usage: MapGeocodeUsageTracker,
@@ -143,7 +147,7 @@ export class GeocodeService {
       };
     }
 
-    const engine = await this.resolveEngine(countryCode, context);
+    const engine = await this.resolveEngine(countryCode, context, user, args.storeId);
     const payload = await this.cache.dedupe(cacheArgs, async () => {
       const features = await this.fetchForward(engine, {
         query,
@@ -196,7 +200,7 @@ export class GeocodeService {
       };
     }
 
-    const engine = await this.resolveEngine(countryCode, context);
+    const engine = await this.resolveEngine(countryCode, context, user, args.storeId);
     const payload = await this.cache.dedupe(cacheArgs, async () => {
       const feature = await this.fetchReverse(engine, args.lat, args.lng);
       return { feature };
@@ -306,6 +310,8 @@ export class GeocodeService {
   private async resolveEngine(
     countryCode: string,
     context: MapSettingsGroupKey,
+    user?: UserModel,
+    storeId?: string,
   ): Promise<GeocodeEngine> {
     const envEngine = String(
       this.config.get<string>('MAP_GEOCODING_ENGINE') ?? '',
@@ -347,8 +353,16 @@ export class GeocodeService {
       return true;
     };
 
-    const pool = geocodingEnginePoolForGroup(merged, context);
-    const fallback = geocodingEngineForGroup(merged, context);
+    const pool =
+      context === 'vendor'
+        ? await this.resolveVendorGeocodingPool(merged, user, storeId)
+        : geocodingEnginePoolForGroup(merged, context);
+    const fallback = await this.resolveGeocodingFallback(
+      merged,
+      context,
+      user,
+      storeId,
+    );
     const picked = pickWeightedGeocodingEngine(
       pool,
       isAvailable,
@@ -362,6 +376,44 @@ export class GeocodeService {
     if (isAvailable('mapbox')) return 'mapbox';
     if (isAvailable('google')) return 'google';
     return 'osm';
+  }
+
+  private async resolveGeocodingFallback(
+    merged: ReturnType<typeof resolveMapSettingsForRegion>,
+    context: MapSettingsGroupKey,
+    user?: UserModel,
+    storeId?: string,
+  ): Promise<GeocodingEngineId> {
+    if (context !== 'vendor') {
+      return geocodingEngineForGroup(merged, context);
+    }
+    const planCfg = await this.resolveVendorGeocodingConfig(user, storeId);
+    if (planCfg.pool.length) return planCfg.fallback;
+    return geocodingEngineForGroup(merged, 'vendor');
+  }
+
+  private async resolveVendorGeocodingConfig(
+    user?: UserModel,
+    storeId?: string,
+  ): Promise<{ pool: ReturnType<typeof geocodingEnginePoolForGroup>; fallback: GeocodingEngineId }> {
+    const resolvedStoreId = await this.subscriptions.resolveVendorStoreIdForGeocode(
+      user,
+      storeId,
+    );
+    if (resolvedStoreId) {
+      return this.subscriptions.resolveVendorGeocodingForStore(resolvedStoreId);
+    }
+    return { pool: [], fallback: 'osm' };
+  }
+
+  private async resolveVendorGeocodingPool(
+    merged: ReturnType<typeof resolveMapSettingsForRegion>,
+    user?: UserModel,
+    storeId?: string,
+  ): Promise<ReturnType<typeof geocodingEnginePoolForGroup>> {
+    const planCfg = await this.resolveVendorGeocodingConfig(user, storeId);
+    if (planCfg.pool.length) return planCfg.pool;
+    return geocodingEnginePoolForGroup(merged, 'vendor');
   }
 
   private nominatimRowsToFeatures(

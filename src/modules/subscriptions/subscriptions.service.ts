@@ -1,5 +1,15 @@
 import { buildCaseInsensitiveExactRegex } from '@common/mongo/escape-regex.util';
 import {
+  GeocodingEngineId,
+  GeocodingEnginePoolEntry,
+  geocodingPoolFromScalar,
+  normalizeGeocodingEngineId,
+  normalizeGeocodingEnginePool,
+  primaryGeocodingEngineFromPool,
+  resolveGeocodingPool,
+} from '@common/geocoding-engine-pool.util';
+import { normalizeStoredGeocodingEnginePool } from '@modules/map-settings/map-settings-region.util';
+import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -40,6 +50,42 @@ import {
   resolveVendorCheckoutStoreId,
   vendorStoreObjectIds,
 } from './subscription-vendor-store.util';
+
+function normalizeVendorGeocodingScalar(raw: unknown): GeocodingEngineId {
+  return normalizeGeocodingEngineId(raw) ?? 'osm';
+}
+
+function normalizeVendorGeocodingPoolResponse(
+  poolRaw: unknown,
+  scalarRaw: unknown,
+): GeocodingEnginePoolEntry[] {
+  const scalar = normalizeVendorGeocodingScalar(scalarRaw);
+  return resolveGeocodingPool(poolRaw, scalar);
+}
+
+function resolveVendorGeocodingFieldsFromDto(dto: {
+  vendorGeocodingEngine?: string;
+  vendorGeocodingEnginePool?: { engine: string; weight: number }[];
+}) {
+  const scalar = normalizeVendorGeocodingScalar(dto.vendorGeocodingEngine);
+  const pool =
+    dto.vendorGeocodingEnginePool !== undefined
+      ? normalizeStoredGeocodingEnginePool(dto.vendorGeocodingEnginePool)
+      : geocodingPoolFromScalar(scalar);
+  if (pool.length) {
+    const total = pool.reduce((sum, entry) => sum + entry.weight, 0);
+    if (total <= 0) {
+      throw new BadRequestException('geocoding_engine_pool_empty_vendor');
+    }
+  }
+  const resolvedScalar = pool.length
+    ? primaryGeocodingEngineFromPool(pool, scalar)
+    : scalar;
+  return {
+    vendorGeocodingEngine: resolvedScalar,
+    vendorGeocodingEnginePool: pool,
+  };
+}
 
 function mapPlanCommissionRow(row: Record<string, unknown>) {
   const regionCode = String(row.regionCode ?? '')
@@ -131,6 +177,11 @@ function mapPlan(doc: Record<string, unknown>) {
     mapEngineMapboxEnabled: doc.mapEngineMapboxEnabled !== false,
     mapEngineGoogleEnabled: doc.mapEngineGoogleEnabled !== false,
     mapEngineOsmEnabled: doc.mapEngineOsmEnabled !== false,
+    vendorGeocodingEngine: normalizeVendorGeocodingScalar(doc.vendorGeocodingEngine),
+    vendorGeocodingEnginePool: normalizeVendorGeocodingPoolResponse(
+      doc.vendorGeocodingEnginePool,
+      doc.vendorGeocodingEngine,
+    ),
     selfDeliveryEnabled: doc.selfDeliveryEnabled === true,
     maxDeliveryAgents: Math.max(0, Number(doc.maxDeliveryAgents ?? 0)),
     maxCatalogItems: Math.max(0, Number(doc.maxCatalogItems ?? 0)),
@@ -547,6 +598,12 @@ export class SubscriptionsService implements OnModuleInit {
         mapEngineMapboxEnabled: seed.mapEngineMapboxEnabled !== false,
         mapEngineGoogleEnabled: seed.mapEngineGoogleEnabled !== false,
         mapEngineOsmEnabled: seed.mapEngineOsmEnabled !== false,
+        vendorGeocodingEngine: normalizeVendorGeocodingScalar(
+          seed.vendorGeocodingEngine,
+        ),
+        vendorGeocodingEnginePool: normalizeGeocodingEnginePool(
+          seed.vendorGeocodingEnginePool,
+        ),
         selfDeliveryEnabled: seed.selfDeliveryEnabled === true,
         maxDeliveryAgents: Math.max(0, Number(seed.maxDeliveryAgents ?? 0)),
         maxCatalogItems: Math.max(0, Number(seed.maxCatalogItems ?? 0)),
@@ -633,6 +690,15 @@ export class SubscriptionsService implements OnModuleInit {
           docFields.mapEngineOsmEnabled != null
         ) {
           patch.mapEngineOsmEnabled = docFields.mapEngineOsmEnabled;
+        }
+        if (
+          (!Array.isArray(existingDoc.vendorGeocodingEnginePool) ||
+            (existingDoc.vendorGeocodingEnginePool as unknown[]).length === 0) &&
+          Array.isArray(docFields.vendorGeocodingEnginePool) &&
+          docFields.vendorGeocodingEnginePool.length > 0
+        ) {
+          patch.vendorGeocodingEngine = docFields.vendorGeocodingEngine;
+          patch.vendorGeocodingEnginePool = docFields.vendorGeocodingEnginePool;
         }
         if (
           existingDoc.selfDeliveryEnabled == null &&
@@ -1525,6 +1591,68 @@ export class SubscriptionsService implements OnModuleInit {
     return this.resolveMapEngineAvailabilityForPlanName(planName);
   }
 
+  async resolveVendorStoreIdForGeocode(
+    user?: UserModel,
+    explicitStoreId?: string,
+  ): Promise<string | null> {
+    const requested = String(explicitStoreId ?? '').trim();
+    if (requested && Types.ObjectId.isValid(requested)) return requested;
+    if (!user?._id) return null;
+    const store = await this.storeModel
+      .findOne({ owner: user._id })
+      .select('_id')
+      .lean()
+      .exec();
+    const id = store?._id ? String(store._id) : '';
+    return Types.ObjectId.isValid(id) ? id : null;
+  }
+
+  async resolveVendorGeocodingForStore(storeId: string): Promise<{
+    pool: GeocodingEnginePoolEntry[];
+    fallback: GeocodingEngineId;
+  }> {
+    const id = String(storeId ?? '').trim();
+    if (!Types.ObjectId.isValid(id)) {
+      return { pool: geocodingPoolFromScalar('osm'), fallback: 'osm' };
+    }
+    const planByStore = await this.resolveActivePlanNamesByStoreIds([id]);
+    const planName = String(planByStore.get(id) ?? '').trim();
+    return this.resolveVendorGeocodingForPlanName(planName);
+  }
+
+  async resolveVendorGeocodingForPlanName(planName: string): Promise<{
+    pool: GeocodingEnginePoolEntry[];
+    fallback: GeocodingEngineId;
+  }> {
+    const name = String(planName ?? '').trim();
+    if (!name) {
+      return { pool: geocodingPoolFromScalar('osm'), fallback: 'osm' };
+    }
+    const escaped = buildCaseInsensitiveExactRegex(name);
+    const doc = await this.planModel
+      .findOne({
+        name: { $regex: escaped },
+        active: { $ne: false },
+      })
+      .select('vendorGeocodingEngine vendorGeocodingEnginePool')
+      .lean()
+      .exec();
+    const scalar = normalizeVendorGeocodingScalar(
+      (doc as { vendorGeocodingEngine?: unknown } | null)?.vendorGeocodingEngine,
+    );
+    const pool = normalizeGeocodingEnginePool(
+      (doc as { vendorGeocodingEnginePool?: unknown } | null)
+        ?.vendorGeocodingEnginePool,
+    );
+    if (pool.length) {
+      return {
+        pool,
+        fallback: primaryGeocodingEngineFromPool(pool, scalar),
+      };
+    }
+    return { pool: geocodingPoolFromScalar(scalar), fallback: scalar };
+  }
+
   async assertMarketingToolsEnabledForStore(
     storeId: string,
     user?: UserModel,
@@ -1864,6 +1992,7 @@ export class SubscriptionsService implements OnModuleInit {
       google: dto.mapEngineGoogleEnabled !== false,
       osm: dto.mapEngineOsmEnabled !== false,
     });
+    const vendorGeocoding = resolveVendorGeocodingFieldsFromDto(dto);
     let storeOid: Types.ObjectId | null = null;
     if (dto.storeId?.trim()) {
       if (!Types.ObjectId.isValid(dto.storeId)) {
@@ -1903,6 +2032,8 @@ export class SubscriptionsService implements OnModuleInit {
       mapEngineMapboxEnabled: dto.mapEngineMapboxEnabled !== false,
       mapEngineGoogleEnabled: dto.mapEngineGoogleEnabled !== false,
       mapEngineOsmEnabled: dto.mapEngineOsmEnabled !== false,
+      vendorGeocodingEngine: vendorGeocoding.vendorGeocodingEngine,
+      vendorGeocodingEnginePool: vendorGeocoding.vendorGeocodingEnginePool,
       selfDeliveryEnabled: dto.selfDeliveryEnabled === true,
       maxDeliveryAgents: Math.max(
         0,
@@ -2003,6 +2134,25 @@ export class SubscriptionsService implements OnModuleInit {
     }
     if (dto.mapEngineOsmEnabled != null) {
       patch.mapEngineOsmEnabled = dto.mapEngineOsmEnabled === true;
+    }
+    if (
+      dto.vendorGeocodingEngine != null ||
+      dto.vendorGeocodingEnginePool != null
+    ) {
+      const current = await this.planModel.findById(planId).lean().exec();
+      if (!current) throw new NotFoundException('plan_not_found');
+      const currentDoc = current as {
+        vendorGeocodingEngine?: string;
+        vendorGeocodingEnginePool?: { engine: string; weight: number }[];
+      };
+      const vendorGeocoding = resolveVendorGeocodingFieldsFromDto({
+        vendorGeocodingEngine:
+          dto.vendorGeocodingEngine ?? currentDoc.vendorGeocodingEngine,
+        vendorGeocodingEnginePool:
+          dto.vendorGeocodingEnginePool ?? currentDoc.vendorGeocodingEnginePool,
+      });
+      patch.vendorGeocodingEngine = vendorGeocoding.vendorGeocodingEngine;
+      patch.vendorGeocodingEnginePool = vendorGeocoding.vendorGeocodingEnginePool;
     }
     if (dto.selfDeliveryEnabled != null) {
       patch.selfDeliveryEnabled = dto.selfDeliveryEnabled === true;
@@ -2176,6 +2326,12 @@ export class SubscriptionsService implements OnModuleInit {
       dto.mapEngineOsmEnabled != null
     ) {
       fields.push('moteurs carte formule');
+    }
+    if (
+      dto.vendorGeocodingEngine != null ||
+      dto.vendorGeocodingEnginePool != null
+    ) {
+      fields.push('géocodage vendeur');
     }
     if (dto.selfDeliveryEnabled != null) fields.push('livraison autonome');
     if (dto.maxDeliveryAgents != null) fields.push('livreurs max');

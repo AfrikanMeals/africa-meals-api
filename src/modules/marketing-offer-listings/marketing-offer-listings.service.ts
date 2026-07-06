@@ -57,6 +57,8 @@ export type MarketingOfferListingRow = {
   rewardFixedAmount?: number;
   status: MarketingOfferListingStatusEnum;
   engagementScore: number;
+  /** Checkout direct mobile (BOGO, remise produit…) — requis pour bannières/campagnes Ads. */
+  directCheckoutEligible: boolean;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -307,6 +309,9 @@ export class MarketingOfferListingsService {
         rewardFixedAmount: r.rewardFixedAmount as number | undefined,
         status: r.status as MarketingOfferListingStatusEnum,
         engagementScore: Number(r.engagementScore ?? 0),
+        directCheckoutEligible: isDirectCheckoutStrategyType(
+          String(r.marketingOfferType ?? offer?.type ?? ''),
+        ),
         createdAt: this.toIso(r.createdAt),
         updatedAt: this.toIso(r.updatedAt),
       };

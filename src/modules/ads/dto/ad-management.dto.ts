@@ -100,6 +100,17 @@ export class CreateAdManagementDto {
   productId?: string;
 
   @ApiPropertyOptional({
+    description: 'Obligatoire si actionType = EXCLUSIVE_OFFER',
+  })
+  @ValidateIf(
+    (o) =>
+      String(o.actionType ?? '') === StoreAdActionTypeEnum.EXCLUSIVE_OFFER,
+  )
+  @IsNotEmpty()
+  @IsMongoId()
+  marketingOfferListingId?: string;
+
+  @ApiPropertyOptional({
     description:
       'Obligatoire si actionType = WHATSAPP, CALL, EMAIL ou WEBSITE (numéro, e-mail ou URL).',
   })
@@ -190,6 +201,17 @@ export class PatchAdManagementDto {
   @IsOptional()
   @IsMongoId()
   productId?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Listing offre exclusive (actionType = EXCLUSIVE_OFFER).',
+  })
+  @ValidateIf(
+    (o) =>
+      String(o.actionType ?? '') === StoreAdActionTypeEnum.EXCLUSIVE_OFFER,
+  )
+  @IsOptional()
+  @IsMongoId()
+  marketingOfferListingId?: string | null;
 
   @ApiPropertyOptional({
     description:

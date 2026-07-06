@@ -161,6 +161,24 @@ export function slimAdForPublicClient(
       if (fromRef !== '') productId = fromRef;
     }
   }
+  const listingRaw =
+    raw['marketingOfferListing'] ?? raw['marketing_offer_listing'];
+  let marketingOfferListingId = mongoIdToString(
+    raw['marketingOfferListingId'] ?? raw['marketing_offer_listing_id'] ?? '',
+  );
+  if (marketingOfferListingId === '') marketingOfferListingId = undefined;
+  if (listingRaw != null) {
+    if (typeof listingRaw === 'object' && !(listingRaw instanceof Date)) {
+      const fromRef = mongoIdToString(
+        (listingRaw as Record<string, unknown>)['_id'] ??
+          (listingRaw as Record<string, unknown>)['id'],
+      );
+      if (fromRef !== '') marketingOfferListingId = fromRef;
+    } else {
+      const fromRef = mongoIdToString(listingRaw);
+      if (fromRef !== '') marketingOfferListingId = fromRef;
+    }
+  }
   return {
     _id: id,
     id,
@@ -179,6 +197,9 @@ export function slimAdForPublicClient(
       ? { storeProfileImageUrl }
       : {}),
     ...(productId != null ? { productId } : {}),
+    ...(marketingOfferListingId != null
+      ? { marketingOfferListingId }
+      : {}),
     actionType: raw['actionType'] ?? raw['action_type'],
     actionTarget: raw['actionTarget'] ?? raw['action_target'],
   };

@@ -93,7 +93,7 @@ export class MapGeocodeUsageService {
           mobileDelivery: mapGroup(publicSettings.mobileDelivery),
         },
         geocodingPools: {
-          vendor: publicSettings.vendor.geocodingEnginePool ?? [],
+          vendor: [],
           mobileUser: publicSettings.mobileUser.geocodingEnginePool ?? [],
           mobileDelivery: publicSettings.mobileDelivery.geocodingEnginePool ?? [],
         },
@@ -104,6 +104,7 @@ export class MapGeocodeUsageService {
       },
       notes: [
         'Les compteurs « processus API » sont remis à zéro au redémarrage du serveur.',
+        'Le pool géocodage vendeur est configuré par formule d’abonnement (non listé ici).',
         'Les tuiles carte et itinéraires côté client (Mapbox, Google, OSM) ne passent pas par l’API : non comptabilisés ici.',
         'Les hits cache MongoDB incluent l’historique persistant (toutes instances).',
       ],

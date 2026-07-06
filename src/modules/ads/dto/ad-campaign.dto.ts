@@ -39,6 +39,14 @@ export class CampaignItemDto {
   @IsNotEmpty()
   @IsMongoId()
   drinkId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Obligatoire si itemType = EXCLUSIVE_OFFER',
+  })
+  @ValidateIf((o) => o.itemType === AdCampaignItemTypeEnum.EXCLUSIVE_OFFER)
+  @IsNotEmpty()
+  @IsMongoId()
+  marketingOfferListingId?: string;
 }
 
 export class CreateAdCampaignDto {

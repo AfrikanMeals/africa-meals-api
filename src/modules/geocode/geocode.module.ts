@@ -6,6 +6,7 @@ import {
 } from '@schemas/geocode-cache-entry.schema';
 import { MapSettingsModule } from '../map-settings/map-settings.module';
 import { SecretManagerModule } from '../secret-manager/secret-manager.module';
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { GeocodeCacheService } from './geocode-cache.service';
 import { GeocodeController } from './geocode.controller';
 import { GeocodeService } from './geocode.service';
@@ -17,6 +18,7 @@ import { GeocodeService } from './geocode.service';
     ]),
     MapSettingsModule,
     SecretManagerModule,
+    SubscriptionsModule,
   ],
   controllers: [GeocodeController],
   providers: [GeocodeCacheService, GeocodeService],

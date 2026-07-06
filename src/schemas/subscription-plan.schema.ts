@@ -108,6 +108,14 @@ export class SubscriptionPlanModel {
   @Prop({ type: Boolean, default: true })
   mapEngineOsmEnabled: boolean;
 
+  /** API géocodage vendeur (web admin + mobile vendeur) — moteur principal si pool vide. */
+  @Prop({ type: String, default: 'osm', trim: true })
+  vendorGeocodingEngine: string;
+
+  /** Pool géocodage pondéré vendeur (engine + weight). */
+  @Prop({ type: [{ engine: String, weight: Number }], default: [] })
+  vendorGeocodingEnginePool: { engine: string; weight: number }[];
+
   /**
    * Livraison autonome obligatoire : le vendeur doit gérer sa flotte (agents boutique).
    * Hors pool plateforme. Si false, flotte optionnelle via fiche restaurant + pool plateforme.

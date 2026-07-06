@@ -16,6 +16,7 @@ import {
   PlanRegionOrderCommissionDto,
 } from './plan-region-order-commission.dto';
 import { PlanRegionPricingDto } from './plan-region-pricing.dto';
+import { GeocodingEnginePoolEntryDto } from '@modules/map-settings/dto/geocoding-engine-pool-entry.dto';
 
 export class CreateSubscriptionPlanDto {
   @IsString()
@@ -117,6 +118,16 @@ export class CreateSubscriptionPlanDto {
   @IsOptional()
   @IsBoolean()
   mapEngineOsmEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  vendorGeocodingEngine?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => GeocodingEnginePoolEntryDto)
+  vendorGeocodingEnginePool?: GeocodingEnginePoolEntryDto[];
 
   @IsOptional()
   @IsBoolean()
@@ -278,6 +289,16 @@ export class UpdateSubscriptionPlanDto {
   @IsOptional()
   @IsBoolean()
   mapEngineOsmEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  vendorGeocodingEngine?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => GeocodingEnginePoolEntryDto)
+  vendorGeocodingEnginePool?: GeocodingEnginePoolEntryDto[];
 
   @IsOptional()
   @IsBoolean()

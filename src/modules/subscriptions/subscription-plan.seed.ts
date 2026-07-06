@@ -21,6 +21,8 @@ export type SubscriptionPlanSeed = {
   mapEngineMapboxEnabled?: boolean;
   mapEngineGoogleEnabled?: boolean;
   mapEngineOsmEnabled?: boolean;
+  vendorGeocodingEngine?: string;
+  vendorGeocodingEnginePool?: { engine: string; weight: number }[];
   selfDeliveryEnabled?: boolean;
   maxDeliveryAgents?: number;
   maxCatalogItems?: number;
@@ -60,6 +62,8 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     mapEngineMapboxEnabled: false,
     mapEngineGoogleEnabled: false,
     mapEngineOsmEnabled: true,
+    vendorGeocodingEngine: 'osm',
+    vendorGeocodingEnginePool: [{ engine: 'osm', weight: 100 }],
     selfDeliveryEnabled: false,
     maxDeliveryAgents: 0,
     maxCatalogItems: 10,
@@ -96,6 +100,15 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     mapEngineMapboxEnabled: true,
     mapEngineGoogleEnabled: true,
     mapEngineOsmEnabled: true,
+    vendorGeocodingEngine: 'mapbox',
+    vendorGeocodingEnginePool: [
+      { engine: 'osm', weight: 10 },
+      { engine: 'mapsco', weight: 20 },
+      { engine: 'locationiq', weight: 20 },
+      { engine: 'tomtom', weight: 20 },
+      { engine: 'mapbox', weight: 25 },
+      { engine: 'google', weight: 5 },
+    ],
     selfDeliveryEnabled: false,
     maxDeliveryAgents: 0,
     maxCatalogItems: 0,

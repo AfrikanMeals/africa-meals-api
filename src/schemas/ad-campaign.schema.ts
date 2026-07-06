@@ -6,6 +6,7 @@ import {
   AdNotificationAddonSchema,
 } from './ad-notification-addon.schema';
 import { DrinkModel } from './drink.schema';
+import { MarketingOfferListingModel } from './marketing-offer-listing.schema';
 import { ProductModel } from './product.schema';
 import { StoreModel } from './store.schema';
 import { AdModerationStatusEnum, StoreAdActionTypeEnum } from './ad.schema';
@@ -13,6 +14,7 @@ import { AdModerationStatusEnum, StoreAdActionTypeEnum } from './ad.schema';
 export enum AdCampaignItemTypeEnum {
   PRODUCT = 'PRODUCT',
   DRINK = 'DRINK',
+  EXCLUSIVE_OFFER = 'EXCLUSIVE_OFFER',
 }
 
 export enum AdCampaignArchiveReasonEnum {
@@ -38,6 +40,14 @@ export class AdCampaignItemModel {
     ref: DrinkModel.name,
   })
   drink?: DrinkModel;
+
+  @Prop({
+    required: false,
+    type: MongooseSchema.Types.ObjectId,
+    ref: MarketingOfferListingModel.name,
+    name: 'marketing_offer_listing',
+  })
+  marketingOfferListing?: MarketingOfferListingModel;
 }
 
 export const AdCampaignItemSchema =

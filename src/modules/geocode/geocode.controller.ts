@@ -39,6 +39,7 @@ export class GeocodeController {
         proximityLng: query.proximityLng,
         proximityLat: query.proximityLat,
         context: query.context,
+        storeId: query.storeId,
       },
       req.user as UserModel,
     );
@@ -54,6 +55,7 @@ export class GeocodeController {
         lng: query.lng,
         countryCode: query.countryCode ?? '',
         context: query.context,
+        storeId: query.storeId,
       },
       req.user as UserModel,
     );

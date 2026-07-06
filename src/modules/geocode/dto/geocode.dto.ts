@@ -46,6 +46,11 @@ export class ForwardGeocodeQueryDto {
   @IsOptional()
   @IsIn(GEOCODE_CONTEXTS)
   context?: (typeof GEOCODE_CONTEXTS)[number];
+
+  @ApiPropertyOptional({ description: 'Boutique vendeur (contexte vendor)' })
+  @IsOptional()
+  @IsString()
+  storeId?: string;
 }
 
 export class ReverseGeocodeQueryDto {
@@ -68,6 +73,11 @@ export class ReverseGeocodeQueryDto {
   @IsOptional()
   @IsIn(GEOCODE_CONTEXTS)
   context?: (typeof GEOCODE_CONTEXTS)[number];
+
+  @ApiPropertyOptional({ description: 'Boutique vendeur (contexte vendor)' })
+  @IsOptional()
+  @IsString()
+  storeId?: string;
 }
 
 export function isGeocodeQueryLongEnough(raw?: string | null): boolean {

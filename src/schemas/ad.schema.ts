@@ -6,6 +6,7 @@ import {
   AdNotificationAddonSchema,
 } from './ad-notification-addon.schema';
 import { AdModerationStatusEnum } from './ad-moderation-status.enum';
+import { MarketingOfferListingModel } from './marketing-offer-listing.schema';
 import { ProductModel } from './product.schema';
 import { StoreModel } from './store.schema';
 
@@ -13,6 +14,8 @@ import { StoreModel } from './store.schema';
 export enum StoreAdActionTypeEnum {
   SHOP = 'SHOP',
   PRODUCT = 'PRODUCT',
+  /** Offre exclusive (listing marketing_offer_listings) → checkout direct mobile. */
+  EXCLUSIVE_OFFER = 'EXCLUSIVE_OFFER',
   WHATSAPP = 'WHATSAPP',
   CALL = 'CALL',
   EMAIL = 'EMAIL',
@@ -90,6 +93,15 @@ export class AdModel extends BaseSchema {
     required: false,
   })
   product?: MongooseSchema.Types.ObjectId;
+
+  /** Listing offre exclusive (actionType = EXCLUSIVE_OFFER). */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: MarketingOfferListingModel.name,
+    required: false,
+    name: 'marketing_offer_listing',
+  })
+  marketingOfferListing?: MongooseSchema.Types.ObjectId;
 
   /** Date d’archivage (Terminer/Expirée). Null/absent = bannière active dans le cycle de vie. */
   @Prop({ required: false, default: null })
