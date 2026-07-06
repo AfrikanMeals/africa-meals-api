@@ -59,4 +59,17 @@ export const STORAGE_MEDIA_TARGETS: StorageMediaTarget[] = [
     collection: 'vendor_guides',
     fields: [{ kind: 'scalar', field: 'imageUrl' }],
   },
+  {
+    collection: 'platform_theme_settings',
+    fields: [
+      { kind: 'scalar', field: 'appLogoUrl' },
+      { kind: 'scalar', field: 'adminLogoUrl' },
+      { kind: 'scalar', field: 'mobileTabBackgroundLightUrl' },
+      { kind: 'scalar', field: 'mobileTabBackgroundDarkUrl' },
+    ],
+  },
+  {
+    collection: 'blog_articles',
+    fields: [{ kind: 'scalar', field: 'featuredImageUrl' }],
+  },
 ];

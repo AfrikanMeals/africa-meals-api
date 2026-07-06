@@ -44,6 +44,7 @@ describe('MediasService', () => {
             get: jest.fn((key: string) => {
               if (key === 'AWS_S3_BUCKET') return 'wise-eat';
               if (key === 'AWS_REGION') return 'us-east-1';
+              if (key === 'GCS_BUCKET') return 'wise-eat-ca';
               if (key === 'API_PUBLIC_BASE_URL') return 'https://api.wise-eat.com';
               if (key === 'MINIO_PUBLIC_BASE_URL') {
                 return 'https://storage.wise-eat.com/wise-eat';
@@ -124,6 +125,58 @@ describe('MediasService', () => {
       'https://api.wise-eat.com/medias/public/catalog/categories/abc.webp';
     await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(
       'https://storage.wise-eat.com/wise-eat/catalog/categories/abc.webp',
+    );
+  });
+
+  it('rewrites legacy Firebase URLs to GCS when proxy disabled', async () => {
+    const storageSettings = service['storageSettings'] as StorageSettingsService;
+    jest.spyOn(storageSettings, 'getPublicSettings').mockResolvedValue({
+      compressionEnabled: false,
+      maxFileSizeMb: 5,
+      storageEngine: 'gcs',
+      storageEnginePool: ['gcs'],
+      fallbackStorageEngine: null,
+      mediaProxyEnabled: false,
+      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true },
+      moduleStorageEngines: {
+        catalog: 'default',
+        profile: 'default',
+        marketing: 'default',
+        chat: 'default',
+        system: 'default',
+      },
+      updatedAt: null,
+    });
+    const url =
+      'https://firebasestorage.googleapis.com/v0/b/wise-eat-ca/o/platform-theme%2Flogo.png?alt=media&token=abc';
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(
+      'https://storage.googleapis.com/wise-eat-ca/platform-theme/logo.png',
+    );
+  });
+
+  it('rewrites legacy Firebase URLs to proxy when enabled', async () => {
+    const storageSettings = service['storageSettings'] as StorageSettingsService;
+    jest.spyOn(storageSettings, 'getPublicSettings').mockResolvedValue({
+      compressionEnabled: false,
+      maxFileSizeMb: 5,
+      storageEngine: 'gcs',
+      storageEnginePool: ['gcs'],
+      fallbackStorageEngine: null,
+      mediaProxyEnabled: true,
+      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true },
+      moduleStorageEngines: {
+        catalog: 'default',
+        profile: 'default',
+        marketing: 'default',
+        chat: 'default',
+        system: 'default',
+      },
+      updatedAt: null,
+    });
+    const url =
+      'https://firebasestorage.googleapis.com/v0/b/wise-eat-ca/o/catalog%2Fmeal.jpg?alt=media';
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(
+      'https://api.wise-eat.com/medias/public/catalog/meal.jpg',
     );
   });
 });

@@ -41,6 +41,7 @@ import { NotificationsModule } from '@modules/notifications/notifications.module
 import { TeamsModule } from '@modules/teams/teams.module';
 import { BusinessReportsModule } from '@modules/business-reports/business-reports.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
+import { MediasModule } from '@modules/medias/medias.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { OrderInvoicePdfService } from './order-invoice-pdf.service';
 import { OrderPaidInvoiceEmailService } from './order-paid-invoice-email.service';
@@ -73,6 +74,7 @@ import { RatingsModule } from '@modules/ratings/ratings.module';
     WsNotifyModule,
     forwardRef(() => TeamsModule),
     MailerModule,
+    MediasModule,
     forwardRef(() => SupportedCountriesModule),
     forwardRef(() => VendorStatusEmailModule),
     forwardRef(() => VendorNotificationModule),

@@ -11,6 +11,7 @@ import {
   NewsletterSubscriberSchema,
 } from '@schemas/newsletter-subscriber.schema';
 import { MailerModule } from '../mailer/mailer.module';
+import { MediasModule } from '../medias/medias.module';
 import { BlogController } from './blog.controller';
 import { BlogNewsletterDispatchQueueService } from './blog-newsletter-dispatch-queue.service';
 import { BlogNewsletterDispatchService } from './blog-newsletter-dispatch.service';
@@ -19,6 +20,7 @@ import { BlogService } from './blog.service';
 @Module({
   imports: [
     MailerModule,
+    MediasModule,
     MongooseModule.forFeature([
       { name: BlogGroupModel.name, schema: BlogGroupSchema },
       { name: BlogArticleModel.name, schema: BlogArticleSchema },

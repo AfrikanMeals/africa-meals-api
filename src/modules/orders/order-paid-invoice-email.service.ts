@@ -1,5 +1,6 @@
 import { MailerService } from '@modules/mailer/mailer.service';
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
+import { MediasService } from '@modules/medias/medias.service';
 import {
   BadRequestException,
   Injectable,
@@ -72,6 +73,7 @@ export class OrderPaidInvoiceEmailService {
     private readonly emailTemplate: EmailTemplateService,
     private readonly invoicePdf: OrderInvoicePdfService,
     private readonly config: ConfigService,
+    private readonly medias: MediasService,
   ) {}
 
   private isFlagDisabled(key: string): boolean {
@@ -490,6 +492,23 @@ export class OrderPaidInvoiceEmailService {
     return headClose > 0 && ld > 0 && ld < headClose;
   }
 
+  private async resolveSnapshotMediaUrls(
+    snapshot: OrderInvoiceSnapshot,
+  ): Promise<OrderInvoiceSnapshot> {
+    const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+    if (!items.length) return snapshot;
+    const resolvedItems = await Promise.all(
+      items.map(async (it) => {
+        const row = it as { pictureUrl?: string; picture_url?: string };
+        const raw = String(row.pictureUrl ?? row.picture_url ?? '').trim();
+        if (!raw || !/^https?:\/\//i.test(raw)) return it;
+        const url = (await this.medias.resolvePublicMediaUrl(raw)) ?? raw;
+        return { ...it, pictureUrl: url };
+      }),
+    );
+    return { ...snapshot, items: resolvedItems };
+  }
+
   /** Compose l'e-mail (corps + PDF + JSON-LD) sans envoi. */
   private async composeOrderEmail(
     orderId: string,
@@ -499,7 +518,8 @@ export class OrderPaidInvoiceEmailService {
       variant === 'paid' ? 'order-paid-invoice' : 'order-shipped';
     const loaded = await this.loadSnapshot(orderId, logTag);
     if (!loaded) return null;
-    const { snapshot, email } = loaded;
+    const { snapshot: rawSnapshot, email } = loaded;
+    const snapshot = await this.resolveSnapshotMediaUrls(rawSnapshot);
 
     const ref = orderInvoiceRef(snapshot.orderId);
     const esc = this.emailTemplate.escapeHtml.bind(this.emailTemplate);

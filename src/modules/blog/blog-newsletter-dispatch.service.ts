@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { MailerService } from '@modules/mailer/mailer.service';
+import { MediasService } from '@modules/medias/medias.service';
 import {
   BlogArticleDocument,
   BlogArticleModel,
@@ -47,6 +48,7 @@ export class BlogNewsletterDispatchService {
     private readonly config: ConfigService,
     private readonly mailer: MailerService,
     private readonly emailTpl: EmailTemplateService,
+    private readonly medias: MediasService,
     @Inject(forwardRef(() => BlogNewsletterDispatchQueueService))
     private readonly queue: BlogNewsletterDispatchQueueService,
     @InjectModel(BlogArticleModel.name)
@@ -110,6 +112,10 @@ export class BlogNewsletterDispatchService {
       article.slug,
       article.locale,
     );
+    const featuredRaw = article.featuredImageUrl?.trim();
+    const featuredImageUrl = featuredRaw
+      ? (await this.medias.resolvePublicMediaUrl(featuredRaw)) ?? featuredRaw
+      : undefined;
     const batches = this.splitBatches({
       campaignId,
       articleId: String(article._id),
@@ -118,7 +124,7 @@ export class BlogNewsletterDispatchService {
       groupSlug: article.groupSlug,
       title: article.title.trim(),
       description: this.plainDescription(article.description),
-      featuredImageUrl: article.featuredImageUrl?.trim() || undefined,
+      featuredImageUrl,
       articleUrl,
       recipients,
     });

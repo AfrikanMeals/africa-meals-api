@@ -1,4 +1,5 @@
 import { MailerService } from '@modules/mailer/mailer.service';
+import { MediasService } from '@modules/medias/medias.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 import { Injectable, Logger } from '@nestjs/common';
@@ -43,6 +44,7 @@ export class GiftCodeActivationNotifierService {
     private readonly notifications: NotificationsService,
     private readonly mailer: MailerService,
     private readonly wsInboxNotify: WsInboxNotifyService,
+    private readonly medias: MediasService,
   ) {}
 
   /** Déclenchement asynchrone après création / activation admin. */
@@ -185,6 +187,13 @@ export class GiftCodeActivationNotifierService {
     const raw = doc as Record<string, unknown>;
     const code = String(raw.code ?? '').trim();
     const title = String(raw.title ?? code).trim() || code;
+    const imageRaw =
+      typeof raw.imageUrl === 'string' && raw.imageUrl.trim()
+        ? raw.imageUrl.trim()
+        : null;
+    const imageUrl = imageRaw
+      ? (await this.medias.resolvePublicMediaUrl(imageRaw)) ?? imageRaw
+      : null;
     return {
       giftCodeId: String(raw._id ?? giftCodeId),
       code,
@@ -194,10 +203,7 @@ export class GiftCodeActivationNotifierService {
         raw.discountType as GiftCodeDiscountTypeEnum,
         Number(raw.value ?? 0),
       ),
-      imageUrl:
-        typeof raw.imageUrl === 'string' && raw.imageUrl.trim()
-          ? raw.imageUrl.trim()
-          : null,
+      imageUrl,
     };
   }
 

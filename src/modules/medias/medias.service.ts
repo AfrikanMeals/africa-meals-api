@@ -77,14 +77,42 @@ export class MediasService {
       .join('/');
   }
 
+  private isLegacyFirebaseStorageUrl(url: string): boolean {
+    return url.includes('firebasestorage.googleapis.com');
+  }
+
   private isDirectObjectStoreUrl(url: string): boolean {
     return (
       url.includes('storage.googleapis.com') ||
+      this.isLegacyFirebaseStorageUrl(url) ||
       url.includes('.s3.') ||
       url.includes('s3.amazonaws.com') ||
       this.isDirectR2Url(url) ||
       this.isDirectMinioUrl(url)
     );
+  }
+
+  /** Moteur effectif pour les URLs publiques directes (hors proxy). */
+  private async resolveDirectStorageEngine(): Promise<StorageEngineId> {
+    const settings = await this.storageSettings.getPublicSettings();
+    let engine: StorageEngineMode = settings.storageEngine;
+    if (engine === 'auto') {
+      if (this.config.get<string>('AWS_S3_BUCKET')?.trim()) {
+        engine = 's3';
+      } else if (this.config.get<string>('R2_BUCKET')?.trim()) {
+        engine = 'r2';
+      } else if (this.config.get<string>('MINIO_BUCKET')?.trim()) {
+        engine = 'minio';
+      } else if (
+        this.config.get<string>('GCS_BUCKET')?.trim() ||
+        this.config.get<string>('GOOGLE_CLOUD_STORAGE_BUCKET')?.trim()
+      ) {
+        engine = 'gcs';
+      } else {
+        engine = 'firebase';
+      }
+    }
+    return engine;
   }
 
   private isDirectR2Url(url: string): boolean {
@@ -214,26 +242,16 @@ export class MediasService {
 
     if (this.isProxyUrl(raw)) {
       const objectPath = extractObjectPath(raw);
-      const settings = await this.storageSettings.getPublicSettings();
-      let engine: StorageEngineMode = settings.storageEngine;
-      if (engine === 'auto') {
-        if (this.config.get<string>('AWS_S3_BUCKET')?.trim()) {
-          engine = 's3';
-        } else if (this.config.get<string>('R2_BUCKET')?.trim()) {
-          engine = 'r2';
-        } else if (this.config.get<string>('MINIO_BUCKET')?.trim()) {
-          engine = 'minio';
-        } else if (
-          this.config.get<string>('GCS_BUCKET')?.trim() ||
-          this.config.get<string>('GOOGLE_CLOUD_STORAGE_BUCKET')?.trim()
-        ) {
-          engine = 'gcs';
-        } else {
-          engine = 'firebase';
-        }
-      }
+      const engine = await this.resolveDirectStorageEngine();
       if (engine === 'gcs' || engine === 's3' || engine === 'minio' || engine === 'r2') {
         return this.directUrlForObjectPath(objectPath, engine);
+      }
+    }
+
+    if (this.isLegacyFirebaseStorageUrl(raw)) {
+      const engine = await this.resolveDirectStorageEngine();
+      if (engine !== 'firebase') {
+        return this.directUrlForObjectPath(extractObjectPath(raw), engine);
       }
     }
 

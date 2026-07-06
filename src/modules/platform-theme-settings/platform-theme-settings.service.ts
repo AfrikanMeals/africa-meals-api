@@ -117,8 +117,12 @@ export class PlatformThemeSettingsService {
       return this.cachedLogo.url;
     }
     const settings = await this.getPublicSettings();
-    this.cachedLogo = { at: now, url: settings.resolvedAppLogoUrl };
-    return settings.resolvedAppLogoUrl;
+    const raw = settings.resolvedAppLogoUrl;
+    const resolved = raw
+      ? (await this._medias.resolvePublicMediaUrl(raw)) ?? raw
+      : null;
+    this.cachedLogo = { at: now, url: resolved };
+    return resolved;
   }
 
   async updateSettings(

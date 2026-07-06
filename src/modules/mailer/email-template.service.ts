@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { MediasService } from '@modules/medias/medias.service';
 import { PlatformThemeSettingsService } from '@modules/platform-theme-settings/platform-theme-settings.service';
 import {
   resolveEmailBrand,
@@ -41,6 +42,7 @@ export class EmailTemplateService {
   constructor(
     private readonly config: ConfigService,
     private readonly themeSettings: PlatformThemeSettingsService,
+    private readonly medias: MediasService,
   ) {}
 
   getBrand(): EmailBrand {
@@ -57,6 +59,12 @@ export class EmailTemplateService {
       }
     } catch {
       /* repli env */
+    }
+    if (base.logoUrl) {
+      const resolved =
+        (await this.medias.resolvePublicMediaUrl(base.logoUrl)) ??
+        base.logoUrl;
+      return { ...base, logoUrl: resolved };
     }
     return base;
   }
@@ -78,7 +86,16 @@ export class EmailTemplateService {
     options?: WrapEmailOptions,
   ): Promise<string> {
     const brand = await this.getBrandAsync();
-    return wrapEmailHtml(brand, bodyHtml, options);
+    let resolvedOptions = options;
+    const heroRaw = options?.heroImageUrl?.trim();
+    if (heroRaw) {
+      const heroResolved =
+        (await this.medias.resolvePublicMediaUrl(heroRaw)) ?? heroRaw;
+      if (heroResolved !== heroRaw) {
+        resolvedOptions = { ...options, heroImageUrl: heroResolved };
+      }
+    }
+    return wrapEmailHtml(brand, bodyHtml, resolvedOptions);
   }
 
   heading = emailHeading;
