@@ -48,6 +48,9 @@ describe('system-exchange.probes', () => {
       expect(resolveApiHealthProbeUrl('http://localhost:9001')).toBe(
         'http://localhost:9001/api/health',
       );
+      expect(resolveApiHealthProbeUrl('http://localhost:9001/api')).toBe(
+        'http://localhost:9001/api/health',
+      );
     });
 
     it('uses /api/health on VPS k8s api host', () => {

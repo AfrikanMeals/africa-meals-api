@@ -1,4 +1,5 @@
 import type { ConfigService } from '@nestjs/config';
+import { serviceApiSubpath, serviceHealthUrl } from '../../common/http/service-health-url.util';
 
 const DEV_WS_PUBLIC = 'https://ws-dev.wise-eat.com';
 const DEV_ADMIN_HEALTH = 'https://dashboard.wise-eat.com/api/health';
@@ -49,8 +50,7 @@ function isProductionProbeHost(url: string): boolean {
 }
 
 function normalizeAdminHealthUrl(url: string): string {
-  const base = url.replace(/\/+$/, '').replace(/\/api\/health$/, '');
-  return `${base}/api/health`;
+  return serviceHealthUrl(url, 'https://admin.wise-eat.com/api/health');
 }
 
 /** URL publique du dashboard admin (affichage statut / System Exchange). */
@@ -167,31 +167,31 @@ export function resolveWsProbeFetchUrl(config: ConfigService): string {
     ?.trim()
     ?.replace(/\/+$/, '');
   if (wsInternal && isLocalhostUrl(wsInternal)) {
-    return `${wsInternal}/api/health`;
+    return serviceHealthUrl(wsInternal);
   }
 
   if (isDevStatusProbeStack(config)) {
     const port = localPort(config, 'PM2_WS_DEV_PORT', '8001');
-    return `http://localhost:${port}/api/health`;
+    return serviceHealthUrl(`http://localhost:${port}`);
   }
 
   if (wsInternal && isK8sInternalServiceUrl(wsInternal)) {
-    return `${wsInternal}/api/health`;
+    return serviceHealthUrl(wsInternal);
   }
 
-  const base = config.get<string>('WS_BASE_URL')?.trim()?.replace(/\/+$/, '');
-  if (base) return `${base}/api/health`;
-  if (wsInternal) return `${wsInternal}/api/health`;
+  const base = config.get<string>('WS_BASE_URL')?.trim();
+  if (base) return serviceHealthUrl(base);
+  if (wsInternal) return serviceHealthUrl(wsInternal);
   return 'https://ws.wise-eat.com/api/health';
 }
 
 /** URL affichée dans le payload SSE (tunnel dev public ou WS_BASE_URL prod). */
 export function resolveWsProbeEndpointUrl(config: ConfigService): string {
   if (isDevStatusProbeStack(config)) {
-    return `${DEV_WS_PUBLIC}/api/health`;
+    return serviceHealthUrl(DEV_WS_PUBLIC);
   }
-  const base = config.get<string>('WS_BASE_URL')?.trim()?.replace(/\/+$/, '');
-  if (base) return `${base}/api/health`;
+  const base = config.get<string>('WS_BASE_URL')?.trim();
+  if (base) return serviceHealthUrl(base);
   return resolveWsProbeFetchUrl(config);
 }
 
@@ -203,7 +203,7 @@ export function resolveAdminProbeHealthUrl(config: ConfigService): string {
       return normalizeAdminHealthUrl(direct);
     }
     const port = localPort(config, 'PM2_ADMIN_DEV_PORT', '3001');
-    return `http://localhost:${port}/api/health`;
+    return serviceHealthUrl(`http://localhost:${port}`);
   }
 
   const direct = config.get<string>('STATUS_PROBE_ADMIN_URL')?.trim();

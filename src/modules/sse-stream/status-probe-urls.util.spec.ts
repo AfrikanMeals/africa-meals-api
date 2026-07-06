@@ -32,6 +32,17 @@ describe('status-probe-urls.util', () => {
     ).toBe('http://localhost:8000/api/health');
   });
 
+  it('does not double /api when internal WS base already ends with /api', () => {
+    expect(
+      resolveWsProbeFetchUrl(
+        mockConfig({
+          NODE_ENV: 'development',
+          AFRICA_MEALS_WS_INTERNAL_URL: 'http://localhost:8000/api',
+        }),
+      ),
+    ).toBe('http://localhost:8000/api/health');
+  });
+
   it('shows ws-dev public endpoint in dev stack', () => {
     expect(
       resolveWsProbeEndpointUrl(

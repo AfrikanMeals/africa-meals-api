@@ -18,6 +18,9 @@ import {
 } from '../../common/cache/memcached-connection.util';
 import { tlsMemcachedPing } from '../../common/cache/memcached-tls-client';
 import {
+  serviceHealthUrl,
+} from '../../common/http/service-health-url.util';
+import {
   resolveGrpcApiProbeHost,
   resolveGrpcWsProbeHost,
 } from '../sse-stream/status-probe-urls.util';
@@ -172,28 +175,23 @@ export async function probeMinioStorageHealth(
 }
 
 export function resolveApiHealthProbeUrl(serverUrl: string): string {
-  const raw = serverUrl.trim().replace(/\/+$/, '').replace(/\/api\/health$/, '');
+  const raw = serverUrl.trim().replace(/\/+$/, '').replace(/\/api\/health$/i, '');
   if (!raw) return 'http://localhost:9000/api/health';
   try {
     const url = new URL(raw.startsWith('http') ? raw : `http://${raw}`);
     const host = url.hostname.toLowerCase();
-    if (host === 'localhost' || host === '127.0.0.1') {
-      return `${url.origin}/api/health`;
-    }
-    // Façade Worker (clients mobile/admin/web) — /health → origin /api/health
     if (host === 'apis.wise-eat.com') {
       return `${url.origin}/health`;
     }
-    // Origin VPS k8s (nginx → Nest global prefix /api)
     if (/^api(-[a-z0-9-]+)?\.wise-eat\.com$/i.test(host)) {
-      return `${url.origin}/api/health`;
+      return serviceHealthUrl(url.origin);
     }
     if (host.endsWith('.cloudfunctions.net') || host.endsWith('.run.app')) {
       return `${url.origin}/health`;
     }
-    return `${url.origin}/api/health`;
+    return serviceHealthUrl(raw);
   } catch {
-    return `${raw}/api/health`;
+    return serviceHealthUrl(raw);
   }
 }
 

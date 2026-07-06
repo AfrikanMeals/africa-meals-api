@@ -85,6 +85,16 @@ export class DeliveryAgentController {
     return this._deliveryAgent.getActiveOrder(req.user as UserModel);
   }
 
+  @Get('orders/history')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Historique livraisons assignées au livreur (en cours et terminées, détail course).',
+  })
+  listDeliveryHistory(@Req() req: Request) {
+    return this._deliveryAgent.listDeliveryHistory(req.user as UserModel);
+  }
+
   @Get('presence')
   @UseGuards(JwtGuard)
   @ApiOperation({
@@ -93,6 +103,16 @@ export class DeliveryAgentController {
   })
   getPresence(@Req() req: Request) {
     return this._deliveryAgent.getPresence(req.user as UserModel);
+  }
+
+  @Get('performance/daily')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Indicateurs journaliers livreur : expéditions du jour et note moyenne.',
+  })
+  getDailyPerformance(@Req() req: Request) {
+    return this._deliveryAgent.getDailyPerformanceStats(req.user as UserModel);
   }
 
   @Patch('presence')

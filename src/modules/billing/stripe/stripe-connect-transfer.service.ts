@@ -10,6 +10,8 @@ import { PlatformFeesService } from '@modules/platform-fees/platform-fees.servic
 import { SubscriptionPlanOrderCommissionService, mapOrderLineItemsToCommissionLines } from '@modules/subscriptions/subscription-plan-order-commission.service';
 import { OrdeLineItem } from '@schemas/order.schema';
 import { PlatformShippingSettingsService } from '@modules/platform-shipping-settings/platform-shipping-settings.service';
+import { resolvePlatformShippingRegionCode } from '@modules/platform-shipping-settings/platform-shipping-region.util';
+import { countryCodeFromStoreRegion } from '@modules/supported-countries/region-tax.util';
 import {
   BadRequestException,
   Injectable,
@@ -511,8 +513,9 @@ export class StripeConnectTransferService {
     const order = await this.orderModel
       .findById(args.orderId)
       .select(
-        'shouldShip assignedDeliveryUser stripeParentPaymentId stripeChargedGoodsCents stripeChargedShipCents shippingPrice stripeDeliveryTransferId stripeDeliveryTransferAmountCents stripeDeliveryProcessingFeeCents status',
+        'shouldShip assignedDeliveryUser stripeParentPaymentId stripeChargedGoodsCents stripeChargedShipCents shippingPrice stripeDeliveryTransferId stripeDeliveryTransferAmountCents stripeDeliveryProcessingFeeCents status taxCountryCode store',
       )
+      .populate({ path: 'store', select: 'region currency address' })
       .lean()
       .exec();
     if (!order) {
@@ -603,7 +606,12 @@ export class StripeConnectTransferService {
       return { ...empty, skippedReason: 'no_shipping_amount' };
     }
 
-    const shippingSettings = await this.platformShipping.getPublicSettings();
+    const regionCode = resolvePlatformShippingRegionCode([
+      countryCodeFromStoreRegion(order.store),
+      typeof order.taxCountryCode === 'string' ? order.taxCountryCode : null,
+    ]);
+    const shippingSettings =
+      await this.platformShipping.getPublicSettings(regionCode);
     const deliveryNetBeforeStripe = computeDeliveryNetCentsBeforeStripe({
       shipCents,
       deliveryWithheldFeeMode: shippingSettings.deliveryWithheldFeeMode,

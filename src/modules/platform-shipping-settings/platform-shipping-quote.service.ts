@@ -124,8 +124,9 @@ export class PlatformShippingQuoteService {
         : 'beyond_delivery_radius',
       breakdown: {
         rangeFlat: computed.rangeFlat,
+        rangePerKmRate: computed.rangePerKmRate || null,
         deliveryBasePrice: computed.deliveryBasePrice,
-        perKmRate: settings.perKmRate,
+        perKmRate: computed.perKmRateEffective,
         perKmComponent: computed.perKmComponent,
         total: computed.deliverable ? computed.total : null,
       },
@@ -150,6 +151,7 @@ export class PlatformShippingQuoteService {
       undeliverableReason: opts.reason,
       breakdown: {
         rangeFlat: null,
+        rangePerKmRate: null,
         deliveryBasePrice: null,
         perKmRate: settings?.perKmRate ?? null,
         perKmComponent: null,

@@ -4,10 +4,13 @@ import { ProductModel } from '@schemas/product.schema';
 import { ProductRatingModel } from '@schemas/product_rating.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { StoreRatingModel } from '@schemas/store_rating.schema';
+import { DeliveryAgentOrderRatingModel } from '@schemas/delivery-agent-order-rating.schema';
 import { UserModel } from '@schemas/user.schema';
+import { OrderModel } from '@schemas/order.schema';
 import { Model, PipelineStage, Types } from 'mongoose';
 import { DEMO_PRODUCT_RATER_EMAIL_RE } from './demo-product-rating-users';
 import { CreateRatingDto } from './dto/ratings.dto';
+import type { CreateCourierOrderRatingDto } from './dto/courier-order-rating.dto';
 import type {
   LandingProductReviewItem,
   LandingProductReviewsResponse,
@@ -27,6 +30,8 @@ export class RatingsService {
   private readonly _productRatingModel: Model<ProductRatingModel>;
   @InjectModel(StoreRatingModel.name)
   private readonly _storeRatingModel: Model<StoreRatingModel>;
+  @InjectModel(DeliveryAgentOrderRatingModel.name)
+  private readonly _courierOrderRatingModel: Model<DeliveryAgentOrderRatingModel>;
 
   async hasRatedProduct(product: ProductModel, user: UserModel) {
     return (
@@ -75,6 +80,38 @@ export class RatingsService {
       ...args,
       store: store.id,
       user: user.id,
+    });
+  }
+
+  async hasRatedCourierForOrder(order: OrderModel, user: UserModel) {
+    return (
+      (await this._courierOrderRatingModel
+        .countDocuments({ order: order.id, user: user.id })
+        .exec()) > 0
+    );
+  }
+
+  async createCourierOrderRating(
+    dto: CreateCourierOrderRatingDto,
+    order: OrderModel,
+    deliveryAgentId: string,
+    user: UserModel,
+  ) {
+    const exists = await this.hasRatedCourierForOrder(order, user);
+    if (exists) {
+      throw new ConflictException('already_rated');
+    }
+
+    const comment =
+      typeof dto.comment === 'string' ? dto.comment.trim() : undefined;
+
+    return this._courierOrderRatingModel.create({
+      rate: Math.round(dto.rate),
+      experience: Math.round(dto.experience),
+      comment: comment && comment.length > 0 ? comment : undefined,
+      order: order.id,
+      user: user.id,
+      deliveryAgent: new Types.ObjectId(deliveryAgentId),
     });
   }
 

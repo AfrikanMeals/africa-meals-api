@@ -16,6 +16,10 @@ import {
   DeliveryAgentApplicationModel,
   DeliveryAgentApplicationSchema,
 } from '@schemas/delivery-agent-application.schema';
+import {
+  DeliveryAgentOrderRatingModel,
+  DeliveryAgentOrderRatingSchema,
+} from '@schemas/delivery-agent-order-rating.schema';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
@@ -44,6 +48,10 @@ import { DeliveryAgentService } from './delivery-agent.service';
       { name: UserModel.name, schema: UserSchema },
       { name: OrderModel.name, schema: OrderSchema },
       { name: StoreModel.name, schema: StoreSchema },
+      {
+        name: DeliveryAgentOrderRatingModel.name,
+        schema: DeliveryAgentOrderRatingSchema,
+      },
     ]),
   ],
   controllers: [DeliveryAgentController],

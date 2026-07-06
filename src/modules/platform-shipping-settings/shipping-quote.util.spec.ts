@@ -5,39 +5,53 @@ import {
 
 describe('shipping-quote.util range basePrice', () => {
   const settings = {
-    perKmRate: 1,
-    deliveryBasePrice: 100,
-    maxDeliveryRadiusKm: 50,
+    perKmRate: 95,
+    deliveryBasePrice: 500,
+    maxDeliveryRadiusKm: 15,
     ranges: [
-      { minKm: 0, maxKm: 5, basePrice: 200, fee: 50 },
+      { minKm: 0, maxKm: 5, basePrice: 700, fee: 250 },
       { minKm: 5, maxKm: 10, fee: 80 },
     ],
   };
 
-  it('uses range basePrice + fee + km when tranche defines basePrice', () => {
+  it('uses range basePrice + distance × range per-km fee when tranche matches', () => {
     const result = computePlatformShippingFeeFromDistance(settings, 3);
     expect(result.deliverable).toBe(true);
-    expect(result.deliveryBasePrice).toBe(200);
-    expect(result.rangeFlat).toBe(50);
-    expect(result.perKmComponent).toBe(3);
-    expect(result.total).toBe(253);
+    expect(result.deliveryBasePrice).toBe(700);
+    expect(result.rangeFlat).toBe(0);
+    expect(result.rangePerKmRate).toBe(250);
+    expect(result.perKmRateEffective).toBe(250);
+    expect(result.perKmComponent).toBe(750);
+    expect(result.total).toBe(1450);
   });
 
   it('falls back to global deliveryBasePrice when tranche has no basePrice', () => {
     const result = computePlatformShippingFeeFromDistance(settings, 7);
-    expect(result.deliveryBasePrice).toBe(100);
-    expect(result.rangeFlat).toBe(80);
-    expect(result.perKmComponent).toBe(7);
-    expect(result.total).toBe(187);
+    expect(result.deliveryBasePrice).toBe(500);
+    expect(result.rangePerKmRate).toBe(80);
+    expect(result.perKmRateEffective).toBe(80);
+    expect(result.perKmComponent).toBe(560);
+    expect(result.total).toBe(1060);
   });
 
-  it('uses global base when no tranche matches', () => {
+  it('uses global perKmRate when no tranche matches', () => {
+    const result = computePlatformShippingFeeFromDistance(settings, 12);
+    expect(result.deliveryBasePrice).toBe(500);
+    expect(result.rangePerKmRate).toBe(0);
+    expect(result.perKmRateEffective).toBe(95);
+    expect(result.perKmComponent).toBe(1140);
+    expect(result.total).toBe(1640);
+  });
+
+  it('resolvePlatformRangePricing returns global km rate outside tranches', () => {
     const pricing = resolvePlatformRangePricing(
-      [{ minKm: 0, maxKm: 5, basePrice: 500, fee: 0 }],
+      [{ minKm: 0, maxKm: 5, basePrice: 500, fee: 250 }],
       12,
       100,
+      95,
     );
     expect(pricing.deliveryBasePrice).toBe(100);
-    expect(pricing.rangeFlat).toBe(0);
+    expect(pricing.perKmRateEffective).toBe(95);
+    expect(pricing.matchedRange).toBeNull();
   });
 });

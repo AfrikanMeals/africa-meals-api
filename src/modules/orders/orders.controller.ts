@@ -27,6 +27,7 @@ import {
   RejectOrderDto,
   VendorCourierLocationDto,
 } from './dto/orders.dto';
+import { CreateCourierOrderRatingDto } from '@modules/ratings/dto/courier-order-rating.dto';
 import {
   CLIENT_ORDER_CANCEL_REASON_CODES,
   VENDOR_ORDER_CANCEL_REASON_CODES,
@@ -248,6 +249,23 @@ export class OrdersController {
     body: CreateRefundRequestDto,
   ) {
     return this._ordersService.submitRefundRequest(
+      id,
+      req.user as UserModel,
+      body,
+    );
+  }
+
+  /** Client : note le livreur après livraison terminée. */
+  @Post(':id/courier-rating')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Noter le livreur après livraison (CLIENT)' })
+  async submitCourierRating(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: CreateCourierOrderRatingDto,
+  ) {
+    return this._ordersService.submitCourierOrderRating(
       id,
       req.user as UserModel,
       body,

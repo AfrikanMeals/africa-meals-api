@@ -20,6 +20,7 @@ import {
   DeliveryAgentApplicationModel,
   DeliveryAgentApplicationStatus,
 } from '@schemas/delivery-agent-application.schema';
+import { DeliveryAgentOrderRatingModel } from '@schemas/delivery-agent-order-rating.schema';
 import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
@@ -40,6 +41,8 @@ import {
   serializePartnerBadge,
 } from '@common/partner-badges/partner-badge.constants';
 import { PlatformShippingSettingsService } from '@modules/platform-shipping-settings/platform-shipping-settings.service';
+import { resolvePlatformShippingRegionCode } from '@modules/platform-shipping-settings/platform-shipping-region.util';
+import { countryCodeFromStoreRegion } from '@modules/supported-countries/region-tax.util';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { PatchDeliveryAgentApplicationDto } from './dto/delivery-agent-application.dto';
 import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
@@ -121,6 +124,9 @@ export class DeliveryAgentService {
 
   @InjectModel(StoreModel.name)
   private readonly _stores: Model<StoreModel>;
+
+  @InjectModel(DeliveryAgentOrderRatingModel.name)
+  private readonly _courierRatings: Model<DeliveryAgentOrderRatingModel>;
 
   constructor(
     @Inject(NotificationsService)
@@ -1005,6 +1011,53 @@ export class DeliveryAgentService {
 
   async declineStoreDriverInvite(user: UserModel, token: string) {
     return this._storeDeliveryDrivers.declineInvite(user, token);
+  }
+
+  /** Expéditions du jour + note moyenne livreur (carte performance mobile). */
+  async getDailyPerformanceStats(user: UserModel) {
+    this.assertDeliveryAgent(user);
+    const agentId = new Types.ObjectId(String(user._id ?? user.id));
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const [ordersShippedToday, ratingAgg] = await Promise.all([
+      this._orders
+        .countDocuments({
+          assignedDeliveryUser: agentId,
+          shouldShip: true,
+          status: {
+            $in: [OrderStatusEnum.SHIPPED, OrderStatusEnum.COMPLETED],
+          },
+          updatedAt: { $gte: startOfDay },
+        })
+        .exec(),
+      this._courierRatings
+        .aggregate<{ avg?: number; count?: number }>([
+          { $match: { deliveryAgent: agentId } },
+          {
+            $group: {
+              _id: null,
+              avg: { $avg: '$rate' },
+              count: { $sum: 1 },
+            },
+          },
+        ])
+        .exec(),
+    ]);
+
+    const ratingRow = ratingAgg[0];
+    const ratingCount = Math.max(0, Math.round(Number(ratingRow?.count ?? 0)));
+    const avgRaw = Number(ratingRow?.avg ?? NaN);
+    const averageRating =
+      ratingCount > 0 && Number.isFinite(avgRaw)
+        ? Math.round(avgRaw * 10) / 10
+        : null;
+
+    return {
+      ordersShippedToday,
+      averageRating,
+      ratingCount,
+    };
   }
 
   async listPendingOrders(user: UserModel) {
@@ -1947,9 +2000,26 @@ export class DeliveryAgentService {
 
   async listShippingPaymentHistory(user: UserModel) {
     this.assertDeliveryAgent(user);
-    const settings = await this._platformShipping.getPublicSettings(
-      String(user.appCountryCode ?? '').trim().toUpperCase() || undefined,
+    const { items, totals } = await this.loadAgentDeliveryHistory(user, 50);
+    const earningsItems = items.map(
+      ({
+        customerName: _c,
+        shippingAddress: _a,
+        distanceKm: _d,
+        ...earning
+      }) => earning,
     );
+    return { items: earningsItems, totals };
+  }
+
+  /** Historique livraisons (mobile onglet Historique). */
+  async listDeliveryHistory(user: UserModel) {
+    this.assertDeliveryAgent(user);
+    const { items } = await this.loadAgentDeliveryHistory(user, 50);
+    return { items };
+  }
+
+  private async loadAgentDeliveryHistory(user: UserModel, limit: number) {
     const agentId = new Types.ObjectId(String(user.id));
     const rows = await this._orders
       .find({
@@ -1961,61 +2031,131 @@ export class DeliveryAgentService {
         courierAbandonNoPayout: { $ne: true },
       })
       .sort({ updatedAt: -1 })
-      .limit(50)
-      .select(
-        'shippingPrice currency deliveryTipCents deliveryTipStatus stripeDeliveryTipTransferAmountCents updatedAt store',
-      )
-      .populate({ path: 'store', select: 'name' })
+      .limit(Math.max(1, Math.min(limit, 100)))
+      .populate({
+        path: 'store',
+        select: 'name currency address region',
+        populate: {
+          path: 'address',
+          select: 'address city zipCode location countryCode',
+        },
+      })
+      .populate({
+        path: 'user',
+        select: 'fullName addresses appCountryCode',
+        populate: {
+          path: 'addresses',
+          select: 'isDefault address city zipCode location label countryCode',
+        },
+      })
       .lean()
       .exec();
 
+    const settingsCache = new Map<
+      string,
+      Awaited<ReturnType<PlatformShippingSettingsService['getPublicSettings']>>
+    >();
+    const resolveSettings = async (regionCode?: string) => {
+      const key = regionCode?.trim().toUpperCase() || '__global__';
+      let cached = settingsCache.get(key);
+      if (!cached) {
+        cached = await this._platformShipping.getPublicSettings(
+          key === '__global__' ? undefined : key,
+        );
+        settingsCache.set(key, cached);
+      }
+      return cached;
+    };
+
     let totalDriverEarningCad = 0;
     let totalDriverTipEarningCad = 0;
+    let totalPlatformWithheldCad = 0;
 
-    const items = rows.map((row) => {
-      const id = String(row._id);
-      const tail = id.slice(-6).toUpperCase();
-      const shippingCad = Number(row.shippingPrice) || 0;
-      const currency =
-        typeof row.currency === 'string' && row.currency.trim()
-          ? row.currency.trim().toUpperCase()
-          : 'CAD';
-      const driverEarningCad = this.computeDriverEarningFromShipping(
-        shippingCad,
-        settings,
-      );
-      const tipCents = Math.max(0, Math.round(Number(row.deliveryTipCents) || 0));
-      const tipStatus = String(row.deliveryTipStatus ?? 'none');
-      let driverTipEarningCad = 0;
-      if (tipStatus === 'transferred') {
-        driverTipEarningCad =
-          Math.round(Number(row.stripeDeliveryTipTransferAmountCents) || 0) /
-          100;
-      }
-      const driverTotalEarningCad =
-        Math.round((driverEarningCad + driverTipEarningCad) * 100) / 100;
-      totalDriverEarningCad += driverEarningCad;
-      totalDriverTipEarningCad += driverTipEarningCad;
-      const store =
-        row.store && typeof row.store === 'object'
-          ? (row.store as { name?: string })
-          : null;
-      return {
-        id,
-        orderRef: `#AE-${tail}`,
-        storeName: store?.name?.trim() || null,
-        currency,
-        shippingPriceCad: shippingCad,
-        driverEarningCad,
-        deliveryTipCents: tipCents,
-        deliveryTipStatus: tipStatus,
-        driverTipEarningCad,
-        driverTotalEarningCad,
-        status: String(row.status),
-        completedAt:
-          (row as { updatedAt?: Date }).updatedAt?.toISOString?.() ?? null,
-      };
-    });
+    const items = await Promise.all(
+      rows.map(async (row) => {
+        const mapped = this.mapOrderRowForAgent(
+          row as unknown as Record<string, unknown>,
+        );
+        const id = mapped.id;
+        const shippingCad = Number(row.shippingPrice) || 0;
+        const currency = mapped.currency;
+        const storeObj =
+          row.store && typeof row.store === 'object'
+            ? (row.store as Record<string, unknown>)
+            : null;
+        const regionCode = resolvePlatformShippingRegionCode([
+          countryCodeFromStoreRegion(storeObj),
+          typeof row.taxCountryCode === 'string' ? row.taxCountryCode : null,
+          user.appCountryCode,
+        ]);
+        const settings = await resolveSettings(regionCode);
+        const { driverEarning: driverEarningCad, platformWithheld: platformWithheldCad } =
+          this.computeDriverEarningBreakdown(shippingCad, settings);
+        const tipCents = Math.max(
+          0,
+          Math.round(Number(row.deliveryTipCents) || 0),
+        );
+        const tipStatus = String(row.deliveryTipStatus ?? 'none');
+        let driverTipEarningCad = 0;
+        if (tipStatus === 'transferred') {
+          driverTipEarningCad =
+            Math.round(Number(row.stripeDeliveryTipTransferAmountCents) || 0) /
+            100;
+        }
+        const driverTotalEarningCad =
+          Math.round((driverEarningCad + driverTipEarningCad) * 100) / 100;
+        totalDriverEarningCad += driverEarningCad;
+        totalDriverTipEarningCad += driverTipEarningCad;
+        totalPlatformWithheldCad += platformWithheldCad;
+
+        const status = String(row.status);
+        const stripeTransferId =
+          typeof row.stripeDeliveryTransferId === 'string'
+            ? row.stripeDeliveryTransferId.trim()
+            : '';
+        const stripeTransferAmountCad =
+          Math.round(Number(row.stripeDeliveryTransferAmountCents) || 0) / 100;
+        const stripeProcessingFeeCad =
+          Math.round(Number(row.stripeDeliveryProcessingFeeCents) || 0) / 100;
+        const payoutStatus = this.resolveCourierPayoutStatus({
+          orderStatus: status,
+          stripeTransferId,
+          stripeTransferAmountCad,
+          driverEarningCad,
+          stripeProcessingFeeCad,
+        });
+
+        const pickedUpAt = (row as { pickedUpAt?: Date }).pickedUpAt;
+        const updatedAt = (row as { updatedAt?: Date }).updatedAt;
+        const completedAt =
+          status === OrderStatusEnum.COMPLETED
+            ? pickedUpAt ?? updatedAt
+            : updatedAt;
+
+        return {
+          id,
+          orderRef: mapped.orderRef,
+          storeName: mapped.storeName ?? null,
+          customerName: mapped.customerName ?? null,
+          shippingAddress: mapped.shippingAddress ?? null,
+          distanceKm: mapped.distanceKm ?? null,
+          currency,
+          shippingPriceCad: shippingCad,
+          platformWithheldCad,
+          driverEarningCad,
+          stripeProcessingFeeCad,
+          stripeTransferAmountCad,
+          stripeTransferId: stripeTransferId || null,
+          payoutStatus,
+          deliveryTipCents: tipCents,
+          deliveryTipStatus: tipStatus,
+          driverTipEarningCad,
+          driverTotalEarningCad,
+          status,
+          completedAt: completedAt?.toISOString?.() ?? null,
+        };
+      }),
+    );
 
     return {
       items,
@@ -2025,24 +2165,56 @@ export class DeliveryAgentService {
         driverTotalEarningCad:
           Math.round((totalDriverEarningCad + totalDriverTipEarningCad) * 100) /
           100,
+        platformWithheldCad: Math.round(totalPlatformWithheldCad * 100) / 100,
       },
     };
   }
 
-  private computeDriverEarningFromShipping(
+  private resolveCourierPayoutStatus(args: {
+    orderStatus: string;
+    stripeTransferId: string;
+    stripeTransferAmountCad: number;
+    driverEarningCad: number;
+    stripeProcessingFeeCad: number;
+  }): string {
+    if (args.orderStatus !== OrderStatusEnum.COMPLETED) {
+      return 'estimated';
+    }
+    if (args.stripeTransferId) {
+      return 'transferred';
+    }
+    const expectedNet = Math.max(
+      0,
+      args.driverEarningCad - args.stripeProcessingFeeCad,
+    );
+    if (expectedNet <= 0) {
+      return 'no_payout';
+    }
+    return 'pending';
+  }
+
+  private computeDriverEarningBreakdown(
     shippingPriceCad: number,
     settings: {
       deliveryWithheldFeeMode: string;
       deliveryWithheldFeeFixed: number;
       deliveryWithheldFeePercent: number;
     },
-  ): number {
+  ): { driverEarning: number; platformWithheld: number } {
     const ship = Math.max(0, shippingPriceCad);
-    const withheld =
+    const withheldRaw =
       settings.deliveryWithheldFeeMode === 'percent'
         ? (ship * (Number(settings.deliveryWithheldFeePercent) || 0)) / 100
         : Number(settings.deliveryWithheldFeeFixed) || 0;
-    return Math.max(0, Math.round((ship - withheld) * 100) / 100);
+    const platformWithheld = Math.min(ship, Math.max(0, withheldRaw));
+    const driverEarning = Math.max(
+      0,
+      Math.round((ship - platformWithheld) * 100) / 100,
+    );
+    return {
+      driverEarning,
+      platformWithheld: Math.round(platformWithheld * 100) / 100,
+    };
   }
 
   private orderCurrencyFromRow(
@@ -2099,6 +2271,7 @@ export class DeliveryAgentService {
       })(),
       orderRef: `#AE-${tail}`,
       priceCad: Number(row.totalPrice) || 0,
+      shippingPriceCad: Number(row.shippingPrice) || 0,
       currency: this.orderCurrencyFromRow(row, store),
       distanceKm: distanceKm ?? null,
       storeLat: storeLat != null && Number.isFinite(storeLat) ? storeLat : null,

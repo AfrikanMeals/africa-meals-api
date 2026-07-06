@@ -16,11 +16,11 @@ export class PlatformShippingSettingsModel {
   @Prop({ type: String, default: 'default', unique: true, index: true })
   key: string;
 
-  /** Montant ajouté par kilomètre (après application du forfait de tranche). */
+  /** Tarif au km global (repli hors tranche). */
   @Prop({ type: Number, default: 0 })
   perKmRate: number;
 
-  /** Forfait de base ajouté aux frais distance (km × perKmRate). */
+  /** Prix de base global (repli hors tranche ou si une tranche n’a pas de basePrice propre). */
   @Prop({ type: Number, default: 0 })
   deliveryBasePrice: number;
 
@@ -39,6 +39,7 @@ export class PlatformShippingSettingsModel {
         maxKm: { type: Number, required: true },
         /** Prix de base propre à la tranche (remplace le global si défini). */
         basePrice: { type: Number, default: 0 },
+        /** Tarif au km propre à la tranche. */
         fee: { type: Number, required: true },
       },
     ],

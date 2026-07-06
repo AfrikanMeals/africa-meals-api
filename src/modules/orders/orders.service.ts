@@ -5,6 +5,8 @@ import { AdsService } from '@modules/ads/ads.service';
 import { CartService } from '@modules/cart/cart.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { ProductsService } from '@modules/products/products.service';
+import { RatingsService } from '@modules/ratings/ratings.service';
+import type { CreateCourierOrderRatingDto } from '@modules/ratings/dto/courier-order-rating.dto';
 import {
   BadRequestException,
   ForbiddenException,
@@ -200,6 +202,9 @@ export class OrdersService {
 
   @Inject(ConfigService)
   private readonly _config: ConfigService;
+
+  @Inject(RatingsService)
+  private readonly _ratingsService: RatingsService;
 
   /** Expose l’adresse de livraison figée au paiement dans `user.addresses`. */
   static enrichOrdersWithDeliveryAddress(
@@ -3162,7 +3167,7 @@ export class OrdersService {
   }
 
   /**
-   * Vendeur / admin : refuse ou annule la commande avec motif structuré.
+   * Vendeur : refuse ou annule la commande avec motif structuré.
    */
   async rejectOrder(
     orderId: string,
@@ -3179,10 +3184,14 @@ export class OrdersService {
       throw new NotFoundException('order_not_found');
     }
 
-    const source =
-      user.type === UserTypeEnum.ADMIN
-        ? ('admin' as const)
-        : ('vendor' as const);
+    if (user.type === UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('vendor_only');
+    }
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_or_admin_only');
+    }
+
+    const source = 'vendor' as const;
 
     try {
       assertOrderCancelReasonPayload({
@@ -3210,7 +3219,7 @@ export class OrdersService {
       throw new NotFoundException('order_not_found');
     }
 
-    await this.assertUserCanManageOrderStore(user, order);
+    await this.assertUserCanCancelOrderStore(user, order);
 
     const st = order.status as OrderStatusEnum;
     if (st === OrderStatusEnum.CANCELLED) {
@@ -3278,10 +3287,7 @@ export class OrdersService {
       customerUserId: customerId,
       fromStatus: prevStatus,
       toStatus: OrderStatusEnum.CANCELLED,
-      source:
-        source === 'admin'
-          ? OrderStatusChangeSourceEnum.DASHBOARD
-          : OrderStatusChangeSourceEnum.VENDOR,
+      source: OrderStatusChangeSourceEnum.VENDOR,
       actorUserId: String(user.id),
       note: `Refus : ${resolved.details}`.slice(0, 500),
     });
@@ -3300,16 +3306,13 @@ export class OrdersService {
         payload: {
           orderId: oid,
           reason: resolved.details,
-          source: source === 'admin' ? 'admin' : 'vendor',
+          source: 'vendor',
         },
         metadata: {
           actorUserId: String(user.id),
           orderContext: {
             fromStatus: prevStatus,
-            source:
-              source === 'admin'
-                ? OrderStatusChangeSourceEnum.DASHBOARD
-                : OrderStatusChangeSourceEnum.VENDOR,
+            source: OrderStatusChangeSourceEnum.VENDOR,
             ...this.buildOrderDomainDispatchContext(
               order,
               OrderStatusEnum.CANCELLED,
@@ -4498,6 +4501,23 @@ export class OrdersService {
     await this._storeAccess.assertStoreAccess(user, storeId, 'orders.manage');
   }
 
+  private async assertUserCanCancelOrderStore(
+    user: UserModel,
+    order: OrderModel,
+  ): Promise<void> {
+    if (user.type === UserTypeEnum.ADMIN) {
+      return;
+    }
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_or_admin_only');
+    }
+    const storeId = this.storeIdFromOrderDoc(order);
+    if (!storeId) {
+      throw new BadRequestException('order_store_missing');
+    }
+    await this._storeAccess.assertStoreAccess(user, storeId, 'orders.cancel');
+  }
+
   /** Client : annule une commande cash à la collecte (sans journal remboursement Stripe). */
   private async cancelPayOnPickupOrderByClient(
     order: OrderModel,
@@ -5106,5 +5126,52 @@ export class OrdersService {
       return { latitude: app.lastLatitude, longitude: app.lastLongitude };
     }
     return null;
+  }
+
+  /** Client : avis livreur après livraison terminée. */
+  async submitCourierOrderRating(
+    orderId: string,
+    user: UserModel,
+    dto: CreateCourierOrderRatingDto,
+  ) {
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const order = await this._orderModel.findById(new Types.ObjectId(oid)).exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const customerId = String(order.user ?? '');
+    if (customerId !== String(user.id)) {
+      throw new ForbiddenException('order_forbidden');
+    }
+
+    if ((order.status as OrderStatusEnum) !== OrderStatusEnum.COMPLETED) {
+      throw new BadRequestException('order_not_completed');
+    }
+    if (order.shouldShip !== true) {
+      throw new BadRequestException('order_not_delivery');
+    }
+
+    const agentId = this.assignedDeliveryUserIdFromOrderDoc(order);
+    if (!agentId) {
+      throw new BadRequestException('courier_not_assigned');
+    }
+
+    const rating = await this._ratingsService.createCourierOrderRating(
+      dto,
+      order,
+      agentId,
+      user,
+    );
+
+    return {
+      ok: true,
+      orderId: oid,
+      ratingId: String(rating._id),
+    };
   }
 }

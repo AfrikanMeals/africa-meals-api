@@ -90,6 +90,7 @@ import { parseGrpcVersion } from '@africa-meals/proto';
 import type { SystemExchangeResponse, WsGrpcRuntimeStatus } from './system-exchange.types';
 import { MapSettingsService } from '@modules/map-settings/map-settings.service';
 import { osmForwardGeocode } from '@common/osm-geocoding.util';
+import { serviceHealthUrl } from '../../common/http/service-health-url.util';
 import {
   probeMapboxGeocodingApi,
   resolveMapboxGeocodeApiUrl,
@@ -2071,11 +2072,11 @@ export class DbMaintenanceService {
   }
 
   private async isWsHealthReachable(): Promise<boolean> {
-    const base =
+    const url = serviceHealthUrl(
       String(
         this.config.get<string>('AFRICA_MEALS_WS_INTERNAL_URL') ?? '',
-      ).trim() || 'http://localhost:8000';
-    const url = `${base.replace(/\/$/, '')}/api/health`;
+      ).trim() || 'http://localhost:8000',
+    );
     try {
       const res = await this.fetchWithTimeout(url, 4000);
       return res.ok;
@@ -3965,11 +3966,11 @@ export class DbMaintenanceService {
     const startedAtMs = Date.now();
     const key = 'websocket-service-status';
     const label = 'Websocket Service status';
-    const base =
+    const url = serviceHealthUrl(
       String(
         this.config.get<string>('AFRICA_MEALS_WS_INTERNAL_URL') ?? '',
-      ).trim() || 'http://localhost:8000';
-    const url = `${base.replace(/\/$/, '')}/api/health`;
+      ).trim() || 'http://localhost:8000',
+    );
     try {
       const res = await this.fetchWithTimeout(url, 5000);
       if (!res.ok) {

@@ -31,6 +31,7 @@ import {
   resolveGrpcApiDisplayEndpoint,
   resolveGrpcWsDisplayEndpoint,
 } from '../sse-stream/status-probe-urls.util';
+import { serviceApiSubpath, serviceHealthUrl } from '../../common/http/service-health-url.util';
 
 type BuildSystemExchangeInput = {
   config: ConfigService;
@@ -138,8 +139,8 @@ export async function buildSystemExchangeResponse(
     'https://wise-eat.com';
   const adminPublic = resolveAdminPublicUrl(input.config);
 
-  const wsHealthUrl = `${wsInternal.replace(/\/$/, '')}/api/health`;
-  const wsSsePublicUrl = `${wsInternal.replace(/\/$/, '')}/api/sse/public/status`;
+  const wsHealthUrl = serviceHealthUrl(wsInternal);
+  const wsSsePublicUrl = serviceApiSubpath(wsInternal, 'sse/public/status');
   const apiHealthUrl = resolveApiHealthProbeUrlFromConfig(input.config);
   const grpcWsEndpoint = resolveGrpcWsDisplayEndpoint(input.config);
   const grpcApiEndpoint = resolveGrpcApiDisplayEndpoint(input.config);

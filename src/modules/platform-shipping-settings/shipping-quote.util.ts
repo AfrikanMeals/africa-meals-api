@@ -41,6 +41,7 @@ export type PlatformShippingRangeForQuote = {
   minKm: number;
   maxKm: number;
   basePrice?: number;
+  /** Tarif au km propre à la tranche (remplace le global lorsque la distance tombe dans [minKm, maxKm)). */
   fee: number;
 };
 
@@ -82,8 +83,16 @@ export function findMatchingPlatformRange(
   return null;
 }
 
-/** @deprecated Préférer resolvePlatformRangePricing */
+/** @deprecated Préférer `findPlatformRangePerKmRate` */
 export function findPlatformRangeFlat(
+  ranges: PlatformShippingRangeForQuote[],
+  distanceKm: number,
+): number {
+  return findPlatformRangePerKmRate(ranges, distanceKm);
+}
+
+/** Tarif au km de la tranche correspondante, ou 0 si aucune tranche. */
+export function findPlatformRangePerKmRate(
   ranges: PlatformShippingRangeForQuote[],
   distanceKm: number,
 ): number {
@@ -92,39 +101,55 @@ export function findPlatformRangeFlat(
 }
 
 /**
- * Résout prix de base + forfait pour une distance.
- * - Tranche trouvée : base = basePrice tranche si défini, sinon deliveryBasePrice global.
- * - Hors tranche : base = deliveryBasePrice global, forfait = 0.
+ * Résout prix de base et tarif au km effectif pour une distance.
+ * - Tranche trouvée : base = basePrice tranche si défini, sinon deliveryBasePrice global ; km = fee tranche.
+ * - Hors tranche : base = deliveryBasePrice global ; km = perKmRate global.
  */
 export function resolvePlatformRangePricing(
   ranges: PlatformShippingRangeForQuote[],
   distanceKm: number,
   globalDeliveryBasePrice: number,
-): { deliveryBasePrice: number; rangeFlat: number } {
+  globalPerKmRate: number,
+): {
+  deliveryBasePrice: number;
+  perKmRateEffective: number;
+  matchedRange: PlatformShippingRangeForQuote | null;
+} {
   const globalBase = Number(globalDeliveryBasePrice) || 0;
+  const globalKm = Number(globalPerKmRate) || 0;
   const match = findMatchingPlatformRange(ranges ?? [], distanceKm);
   if (!match) {
-    return { deliveryBasePrice: globalBase, rangeFlat: 0 };
+    return {
+      deliveryBasePrice: globalBase,
+      perKmRateEffective: globalKm,
+      matchedRange: null,
+    };
   }
-  const rangeFlat = Number(match.fee) || 0;
   const hasRangeBase =
     match.basePrice !== undefined && match.basePrice !== null;
   const deliveryBasePrice = hasRangeBase
     ? Math.max(0, Number(match.basePrice) || 0)
     : globalBase;
-  return { deliveryBasePrice, rangeFlat };
+  return {
+    deliveryBasePrice,
+    perKmRateEffective: Number(match.fee) || 0,
+    matchedRange: match,
+  };
 }
 
 /**
  * Frais plateforme (dans le rayon max) :
- * **total = prix de base (tranche ou global) + forfait tranche + distance × perKmRate**.
+ * **total = prix de base (tranche ou global) + distance × tarif au km (tranche ou global)**.
  */
 export function computePlatformShippingFeeFromDistance(
   settings: PlatformShippingSettingsForQuote,
   distanceKm: number,
 ): {
   deliverable: boolean;
+  /** @deprecated Toujours 0 — le champ `fee` tranche est un tarif au km, plus un forfait fixe. */
   rangeFlat: number;
+  rangePerKmRate: number;
+  perKmRateEffective: number;
   deliveryBasePrice: number;
   perKmComponent: number;
   total: number;
@@ -133,6 +158,8 @@ export function computePlatformShippingFeeFromDistance(
     return {
       deliverable: false,
       rangeFlat: 0,
+      rangePerKmRate: 0,
+      perKmRateEffective: 0,
       deliveryBasePrice: 0,
       perKmComponent: 0,
       total: 0,
@@ -143,29 +170,32 @@ export function computePlatformShippingFeeFromDistance(
     return {
       deliverable: false,
       rangeFlat: 0,
+      rangePerKmRate: 0,
+      perKmRateEffective: 0,
       deliveryBasePrice: 0,
       perKmComponent: 0,
       total: 0,
     };
   }
-  const perKmRate = Number(settings.perKmRate) || 0;
-  const { deliveryBasePrice, rangeFlat } = resolvePlatformRangePricing(
-    settings.ranges ?? [],
-    d,
-    settings.deliveryBasePrice,
-  );
-  const perKmComponent = d * perKmRate;
-  const rawTotal = deliveryBasePrice + rangeFlat + perKmComponent;
+  const { deliveryBasePrice, perKmRateEffective, matchedRange } =
+    resolvePlatformRangePricing(
+      settings.ranges ?? [],
+      d,
+      settings.deliveryBasePrice,
+      settings.perKmRate,
+    );
+  const perKmComponent = d * perKmRateEffective;
+  const rawTotal = deliveryBasePrice + perKmComponent;
   const total = Math.round((rawTotal + Number.EPSILON) * 100) / 100;
   const perKmRounded =
     Math.round((perKmComponent + Number.EPSILON) * 100) / 100;
   const baseRounded =
     Math.round((deliveryBasePrice + Number.EPSILON) * 100) / 100;
-  const rangeFlatRounded =
-    Math.round((rangeFlat + Number.EPSILON) * 100) / 100;
   return {
     deliverable: true,
-    rangeFlat: rangeFlatRounded,
+    rangeFlat: 0,
+    rangePerKmRate: matchedRange ? perKmRateEffective : 0,
+    perKmRateEffective,
     deliveryBasePrice: baseRounded,
     perKmComponent: perKmRounded,
     total,

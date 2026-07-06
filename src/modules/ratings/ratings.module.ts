@@ -8,6 +8,10 @@ import {
   StoreRatingModel,
   StoreRatingSchema,
 } from '@schemas/store_rating.schema';
+import {
+  DeliveryAgentOrderRatingModel,
+  DeliveryAgentOrderRatingSchema,
+} from '@schemas/delivery-agent-order-rating.schema';
 import { RatingsController } from './ratings.controller';
 import { RatingsService } from './ratings.service';
 
@@ -18,6 +22,10 @@ import { RatingsService } from './ratings.service';
     MongooseModule.forFeature([
       { name: ProductRatingModel.name, schema: ProductRatingSchema },
       { name: StoreRatingModel.name, schema: StoreRatingSchema },
+      {
+        name: DeliveryAgentOrderRatingModel.name,
+        schema: DeliveryAgentOrderRatingSchema,
+      },
     ]),
   ],
   exports: [RatingsService, MongooseModule],
