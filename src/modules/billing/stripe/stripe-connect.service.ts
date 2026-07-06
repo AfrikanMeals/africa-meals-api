@@ -2038,6 +2038,46 @@ export class StripeConnectService {
   }
 
   /**
+   * Après un transfer Connect livraison réussi, aligne le **versement bancaire**
+   * sur le badge partenaire du livreur :
+   * - SILVER / GOLD → calendrier automatique Stripe (délai `payoutDelayDays`),
+   *   aucun payout manuel n'est nécessaire ;
+   * - DIAMOND → calendrier « manuel » côté Stripe : on déclenche un versement
+   *   instantané best-effort dès que le solde est disponible.
+   *
+   * Best-effort : ne lève jamais (ne doit pas bloquer la complétion de commande).
+   * Retourne l'id du payout déclenché le cas échéant (DIAMOND uniquement).
+   */
+  async settlePartnerBadgePayoutAfterTransfer(
+    user: UserModel,
+  ): Promise<string | null> {
+    try {
+      if (!this.isConfigured()) return null;
+      // Garantit que le compte Connect suit le calendrier du badge courant.
+      await this.ensurePartnerBadgePayoutScheduleForUser(user);
+
+      const badgeCode = await this.resolvePartnerBadgeCodeForUser(user);
+      if (partnerBadgePayoutMethod(badgeCode) !== 'instant') {
+        // SILVER / GOLD : Stripe verse automatiquement selon `delay_days`.
+        return null;
+      }
+
+      // DIAMOND : calendrier manuel → versement instantané immédiat.
+      const payout = await this.requestPayout(user);
+      return payout.id;
+    } catch (e) {
+      // Solde encore en attente, payouts non activés, etc. → le livreur pourra
+      // toujours déclencher le versement via `POST /delivery-agent/payments/request-payout`.
+      this.logger.warn(
+        `Delivery badge payout settle skipped user=${this.userId(user)}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Applique le calendrier de versement Stripe selon le badge partenaire.
    * Diamond → versements manuels + instant à la demande ; Silver/Gold → délai en jours.
    */

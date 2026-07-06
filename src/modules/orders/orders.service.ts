@@ -4433,12 +4433,18 @@ export class OrdersService {
   private scheduleDeliveryAgentPayouts(orderId: string): void {
     void this._stripeTransfers
       .transferDeliveryShareForCompletedOrder({ orderId })
-      .then((tr) => {
-        if (!tr.transferred && tr.skippedReason) {
-          this.logger.warn(
-            `Delivery Connect transfer skipped order=${orderId}: ${tr.skippedReason}`,
-          );
+      .then(async (tr) => {
+        if (!tr.transferred) {
+          if (tr.skippedReason) {
+            this.logger.warn(
+              `Delivery Connect transfer skipped order=${orderId}: ${tr.skippedReason}`,
+            );
+          }
+          return;
         }
+        // Transfer Connect livreur enregistré → déclencher le versement bancaire
+        // selon le badge partenaire (DIAMOND = instantané, GOLD/SILVER = calendrier).
+        await this.settleDeliveryBadgePayoutForOrder(orderId);
       })
       .catch((err) => {
         this.logger.warn(
@@ -4463,6 +4469,32 @@ export class OrdersService {
           }`,
         );
       });
+  }
+
+  /** Déclenche le versement badge partenaire du livreur assigné après un transfer réussi. */
+  private async settleDeliveryBadgePayoutForOrder(
+    orderId: string,
+  ): Promise<void> {
+    try {
+      const order = await this._orderModel
+        .findById(orderId)
+        .select('assignedDeliveryUser')
+        .lean()
+        .exec();
+      const agentId = order?.assignedDeliveryUser
+        ? String(order.assignedDeliveryUser)
+        : '';
+      if (!agentId) return;
+      await this._deliveryAgentService.settleDeliveryBadgePayoutAfterTransfer(
+        agentId,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Delivery badge payout settle failed order=${orderId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   private userIdFromOrderDoc(order: OrderModel): string | undefined {

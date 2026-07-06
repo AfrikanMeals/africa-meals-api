@@ -1998,6 +1998,20 @@ export class DeliveryAgentService {
     return this._stripeConnect.requestPayout(user);
   }
 
+  /**
+   * Après le transfer Connect livraison (commande complétée), aligne le
+   * versement bancaire du livreur sur son badge partenaire (SILVER/GOLD =
+   * calendrier automatique ; DIAMOND = versement instantané). Best-effort.
+   */
+  async settleDeliveryBadgePayoutAfterTransfer(
+    agentUserId: string,
+  ): Promise<void> {
+    if (!agentUserId || !Types.ObjectId.isValid(agentUserId)) return;
+    const agent = await this._users.findById(agentUserId).exec();
+    if (!agent || agent.type !== UserTypeEnum.DELIVERY) return;
+    await this._stripeConnect.settlePartnerBadgePayoutAfterTransfer(agent);
+  }
+
   async listShippingPaymentHistory(user: UserModel) {
     this.assertDeliveryAgent(user);
     const { items, totals } = await this.loadAgentDeliveryHistory(user, 50);
