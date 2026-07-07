@@ -25,14 +25,15 @@ import {
   StoreModel,
 } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
-import { randomUUID } from 'crypto';
-import { Model, Types } from 'mongoose';
 import type {
   DeliveryDriverStorePartnerRowDto,
   DeliveryDriverStorePartnersListResponseDto,
   StoreDeliveryDriverRowDto,
   StoreDeliveryDriversListResponseDto,
 } from './dto/store-delivery-drivers.dto';
+import { buildStoreDeliveryDriverInviteAcceptUrl } from './store-delivery-driver-invite-url.util';
+import { randomUUID } from 'crypto';
+import { Model, Types } from 'mongoose';
 
 const DELIVERED_STATUSES = [
   OrderStatusEnum.SHIPPED,
@@ -997,15 +998,10 @@ export class StoreDeliveryDriversService {
   }
 
   private _buildInviteAcceptUrl(token: string): string {
-    const base =
-      this._config.get<string>('MOBILE_APP_DEEP_LINK_BASE')?.trim() ||
-      this._config.get<string>('DASHBOARD_BASE_URL')?.trim() ||
-      'https://app.wiseeat.com';
-    const url = new URL(
-      base.endsWith('/') ? base : `${base}/`,
+    return buildStoreDeliveryDriverInviteAcceptUrl(
+      (key) => this._config.get<string>(key),
+      token,
     );
-    url.searchParams.set('storeDriverInvite', token);
-    return url.toString();
   }
 
   private _escapeHtml(value: string): string {
