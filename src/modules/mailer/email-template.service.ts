@@ -58,6 +58,14 @@ export class EmailTemplateService {
   async getBrandAsync(): Promise<EmailBrand> {
     const base = resolveEmailBrand(this.config);
     const webBase = resolveEmailWebSiteBase(this.config);
+
+    const explicitLogo = this.config.get<string>('EMAIL_LOGO_URL')?.trim();
+    if (explicitLogo) {
+      const resolved =
+        (await resolveEmailImageUrl(explicitLogo, webBase)) ?? explicitLogo;
+      return { ...base, logoUrl: resolved };
+    }
+
     try {
       const logo = await this.themeSettings.getResolvedAppLogoUrl();
       if (logo) {
@@ -117,14 +125,32 @@ export class EmailTemplateService {
     return wrapEmailHtml(brand, bodyResolved, resolvedOptions);
   }
 
-  heading = emailHeading;
-  paragraph = emailParagraph;
-  muted = emailMutedParagraph;
+  private brandColors() {
+    return this.getBrand().colors;
+  }
+
+  heading = (text: string, level: 1 | 2 | 3 = 2) =>
+    emailHeading(text, level, this.brandColors());
+
+  paragraph = (htmlOrText: string) =>
+    emailParagraph(htmlOrText, this.brandColors());
+
+  muted = (htmlOrText: string) =>
+    emailMutedParagraph(htmlOrText, this.brandColors());
+
   divider = emailDivider;
-  button = emailPrimaryButton;
+
+  button = (label: string, href: string) =>
+    emailPrimaryButton(label, href, this.brandColors());
+
   heroBanner = emailHeroBanner;
   sectionImage = emailSectionImage;
-  codeBox = emailCodeBox;
-  infoPanel = emailInfoPanel;
-  keyValues = emailKeyValueRows;
+
+  codeBox = (code: string) => emailCodeBox(code, this.brandColors());
+
+  infoPanel = (innerHtml: string) =>
+    emailInfoPanel(innerHtml, this.brandColors());
+
+  keyValues = (rows: Array<{ label: string; value: string }>) =>
+    emailKeyValueRows(rows, this.brandColors());
 }

@@ -37,7 +37,7 @@ const ONBOARDING_SECTION_IMAGES: Record<
   },
   "Besoin d'aide ?": {
     kind: 'help',
-    alt: 'Support Wise Eat',
+    alt: 'Support partenaire',
   },
 };
 
@@ -68,13 +68,14 @@ export class PartnerOnboardingEmailService {
     const safeName = this.emailTpl.escapeHtml(
       args.name.trim() || 'Partenaire',
     );
+    const safeAppName = this.emailTpl.escapeHtml(appName);
 
     const blocks: OnboardingBlock[] = [
       {
-        title: 'Bienvenue sur Wise Eat',
+        title: `Bienvenue sur ${appName}`,
         paragraphs: [
           `Bonjour <strong>${safeName}</strong>,`,
-          `Merci d'avoir créé votre compte <strong>restaurant</strong> sur <strong>${this.emailTpl.escapeHtml(appName)}</strong>. Vous êtes à quelques étapes de proposer vos plats à nos clients.`,
+          `Merci d'avoir créé votre compte <strong>restaurant</strong> sur <strong>${safeAppName}</strong>. Vous êtes à quelques étapes de proposer vos plats à nos clients.`,
           `Connectez-vous au tableau de bord vendeur pour démarrer votre inscription et suivre l'avancement de votre dossier.`,
         ],
         cta: { label: 'Ouvrir le tableau de bord', url: adminUrl },
@@ -198,8 +199,8 @@ export class PartnerOnboardingEmailService {
     );
     const heroAlt =
       args.heroKind === 'vendor'
-        ? 'Bienvenue restaurant Wise Eat'
-        : 'Bienvenue livreur Wise Eat';
+        ? `Bienvenue restaurant ${this.appName()}`
+        : `Bienvenue livreur ${this.appName()}`;
     try {
       await this.mailer.sendSimple({
         to: args.to,

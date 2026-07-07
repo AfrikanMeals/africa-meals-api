@@ -1,7 +1,18 @@
 import type { ConfigService } from '@nestjs/config';
 
 /** Palette alignée sur le site vitrine (brun / or / crème). */
-export const EMAIL_BRAND_DEFAULTS = {
+export type EmailBrandColors = {
+  primary: string;
+  accent: string;
+  accentLight: string;
+  background: string;
+  card: string;
+  text: string;
+  textMuted: string;
+  textOnDark: string;
+};
+
+export const EMAIL_BRAND_DEFAULTS: EmailBrandColors = {
   primary: '#392800',
   accent: '#aa6900',
   accentLight: '#d4a017',
@@ -10,15 +21,24 @@ export const EMAIL_BRAND_DEFAULTS = {
   text: '#374151',
   textMuted: '#6b7280',
   textOnDark: '#fdf8f0',
-} as const;
+};
 
 export type EmailBrand = {
   appName: string;
   supportEmail: string;
   websiteUrl: string | null;
   logoUrl: string | null;
-  colors: typeof EMAIL_BRAND_DEFAULTS;
+  colors: EmailBrandColors;
 };
+
+/** Retire guillemets entourants (.env `EMAIL_BRAND_PRIMARY="#392800"`). */
+export function normalizeEmailBrandColor(
+  raw: string | undefined,
+  fallback: string,
+): string {
+  const v = raw?.trim().replace(/^["']+|["']+$/g, '') ?? '';
+  return v || fallback;
+}
 
 export function escapeEmailHtml(value: string): string {
   return value
@@ -66,10 +86,14 @@ export function resolveEmailBrand(
     (websiteUrl ? `${websiteUrl}/logo.png` : null) ||
     null;
 
-  const primary =
-    get('EMAIL_BRAND_PRIMARY')?.trim() || EMAIL_BRAND_DEFAULTS.primary;
-  const accent =
-    get('EMAIL_BRAND_ACCENT')?.trim() || EMAIL_BRAND_DEFAULTS.accent;
+  const primary = normalizeEmailBrandColor(
+    get('EMAIL_BRAND_PRIMARY'),
+    EMAIL_BRAND_DEFAULTS.primary,
+  );
+  const accent = normalizeEmailBrandColor(
+    get('EMAIL_BRAND_ACCENT'),
+    EMAIL_BRAND_DEFAULTS.accent,
+  );
 
   return {
     appName,
