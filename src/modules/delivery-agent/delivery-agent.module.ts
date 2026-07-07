@@ -10,6 +10,7 @@ import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/stor
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { FleetModule } from '@modules/fleet/fleet.module';
+import { PendingDeliveryModule } from '@modules/pending-delivery/pending-delivery.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -39,6 +40,7 @@ import { DeliveryAgentService } from './delivery-agent.service';
     StoreDeliveryDriversModule,
     SubscriptionsModule,
     FleetModule,
+    PendingDeliveryModule,
     WsNotifyModule,
     MongooseModule.forFeature([
       {

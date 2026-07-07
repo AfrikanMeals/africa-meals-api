@@ -34,6 +34,8 @@ import {
 } from './order-cancel-reasons';
 import { OrderStatusEventsService } from './order-status-events.service';
 import { OrdersService } from './orders.service';
+import { PendingDeliveryService } from '@modules/pending-delivery/pending-delivery.service';
+import { CustomerPendingDeliveryActionDto } from '@modules/pending-delivery/dto/pending-delivery.dto';
 
 @ApiTags('orders')
 @ApiBearerAuth('bearer')
@@ -47,6 +49,55 @@ export class OrdersController {
 
   @Inject(OrderStatusEventsService)
   private readonly _orderStatusEvents: OrderStatusEventsService;
+
+  @Inject(PendingDeliveryService)
+  private readonly _pendingDelivery: PendingDeliveryService;
+
+  /** Client : confirme réception après livraison client absent. */
+  @Post(':id/pending-delivery/confirm')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Confirmer réception commande déposée (client absent)',
+  })
+  confirmPendingDelivery(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: CustomerPendingDeliveryActionDto,
+  ) {
+    return this._pendingDelivery.confirmByCustomer({
+      user: req.user as UserModel,
+      orderId: id,
+      note: body.note,
+    });
+  }
+
+  /** Client : conteste une livraison déposée (client absent). */
+  @Post(':id/pending-delivery/dispute')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Contester livraison déposée (client absent)',
+  })
+  disputePendingDelivery(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: CustomerPendingDeliveryActionDto,
+  ) {
+    return this._pendingDelivery.disputeByCustomer({
+      user: req.user as UserModel,
+      orderId: id,
+      note: body.note,
+    });
+  }
+
+  /** Détail preuve livraison client absent (client, livreur, admin). */
+  @Get(':id/pending-delivery')
+  @UseGuards(JwtGuard)
+  @ApiOperation({ summary: 'Preuve livraison client absent pour une commande' })
+  async getPendingDeliveryProof(@Req() req: Request, @Param('id') id: string) {
+    return this._pendingDelivery.getProofForOrder(id, req.user as UserModel);
+  }
 
   /** Historique des changements de statut (admin). */
   @Get('admin/status-history')

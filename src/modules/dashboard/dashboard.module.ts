@@ -1,4 +1,5 @@
 import { DeliveryAgentModule } from '@modules/delivery-agent/delivery-agent.module';
+import { PendingDeliveryModule } from '@modules/pending-delivery/pending-delivery.module';
 import { DeliveryAgentService } from '@modules/delivery-agent/delivery-agent.service';
 import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/store-delivery-drivers.module';
 import { Module, forwardRef } from '@nestjs/common';
@@ -88,6 +89,7 @@ import { CartSimulatorService } from './cart-simulator.service';
     SubscriptionsModule,
     PlatformShippingSettingsModule,
     forwardRef(() => DeliveryAgentModule),
+    PendingDeliveryModule,
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       { name: StoreRatingModel.name, schema: StoreRatingSchema },

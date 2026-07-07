@@ -13,7 +13,7 @@ import {
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { AdminVendorFeedbacksQueryDto } from './dto/admin-vendor-feedbacks-query.dto';
@@ -39,6 +39,8 @@ import { CartSimulatorPreviewDto } from './dto/cart-simulator-preview.dto';
 import { CartSimulatorService } from './cart-simulator.service';
 import { DashboardRegionQueryDto } from './dto/dashboard-region-query.dto';
 import { DashboardService } from './dashboard.service';
+import { PendingDeliveryService } from '@modules/pending-delivery/pending-delivery.service';
+import { ReviewPendingDeliveryDto } from '@modules/pending-delivery/dto/pending-delivery.dto';
 
 @ApiTags('dashboard')
 @ApiBearerAuth('bearer')
@@ -49,6 +51,44 @@ export class DashboardController {
 
   @Inject(CartSimulatorService)
   private readonly _cartSimulatorService: CartSimulatorService;
+
+  @Inject(PendingDeliveryService)
+  private readonly _pendingDelivery: PendingDeliveryService;
+
+  @Get('pending-deliveries')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Livraisons client absent en attente de validation admin.',
+  })
+  listPendingDeliveries(
+    @Req() req: Request,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this._pendingDelivery.listForAdmin(
+      req.user as UserModel,
+      storeId,
+    );
+  }
+
+  @Post('pending-deliveries/:proofId/review')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Approuve ou rejette une livraison client absent après confirmation client.',
+  })
+  reviewPendingDelivery(
+    @Req() req: Request,
+    @Param('proofId') proofId: string,
+    @Body() body: ReviewPendingDeliveryDto,
+  ) {
+    return this._pendingDelivery.reviewByAdmin({
+      user: req.user as UserModel,
+      proofId,
+      decision: body.decision,
+      note: body.note,
+    });
+  }
 
   @Get('alerts')
   @UseGuards(JwtGuard)

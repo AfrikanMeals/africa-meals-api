@@ -4377,6 +4377,152 @@ export class OrdersService {
     };
   }
 
+  /**
+   * Admin valide une livraison « client absent » après confirmation client.
+   */
+  async completeDeliveryFromPendingProof(args: {
+    orderId: string;
+    actorUserId?: string;
+    note?: string;
+  }): Promise<{
+    orderId: string;
+    status: OrderStatusEnum;
+    pickedUpAt: Date;
+  }> {
+    const oid = args.orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const order = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .populate('store', 'name owner')
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+    if (order.shouldShip !== true) {
+      throw new BadRequestException('delivery_only');
+    }
+    const st = order.status as OrderStatusEnum;
+    if (st === OrderStatusEnum.COMPLETED) {
+      throw new BadRequestException('pickup_already_completed');
+    }
+    if (st !== OrderStatusEnum.SHIPPED) {
+      throw new BadRequestException('delivery_confirm_invalid_status');
+    }
+
+    const agentId = this.assignedDeliveryUserIdFromOrderDoc(order);
+    const prevStatus = st;
+    const pickedUpAt = new Date();
+    order.status = OrderStatusEnum.COMPLETED;
+    order.pickedUpAt = pickedUpAt;
+    await order.save();
+
+    const storeId = this.storeIdFromOrderDoc(order);
+    const customerId = this.userIdFromOrderDoc(order);
+    await this.recordOrderStatusChangeIfLegacy({
+      orderId: oid,
+      storeId,
+      customerUserId: customerId,
+      fromStatus: prevStatus,
+      toStatus: OrderStatusEnum.COMPLETED,
+      source: OrderStatusChangeSourceEnum.DASHBOARD,
+      actorUserId: args.actorUserId,
+      note:
+        args.note?.trim() ||
+        'Livraison validée par admin (client absent, preuve photo)',
+    });
+
+    if (customerId) {
+      void this._notificationsService
+        .pushCustomerOrderStatusChanged({
+          userId: customerId,
+          orderId: oid,
+          storeName: this.storeNameFromPopulated(order.store),
+          storeId: storeId ?? undefined,
+          previousStatus: prevStatus,
+          newStatus: OrderStatusEnum.COMPLETED,
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `FCM order completed pending proof: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
+    }
+
+    const populated = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .populate({
+        path: 'store',
+        populate: [{ path: 'address' }],
+      })
+      .populate(OrdersService.orderUserWithAddressesPopulate)
+      .exec();
+
+    if (this._orderDomainBridge?.enabled()) {
+      void this._orderDomainBridge.emit({
+        type: 'order.delivered',
+        payload: { orderId: oid },
+        metadata: {
+          actorUserId: args.actorUserId,
+          orderContext: {
+            fromStatus: prevStatus,
+            source: OrderStatusChangeSourceEnum.DASHBOARD,
+            ...this.buildOrderDomainDispatchContext(
+              populated ?? order,
+              OrderStatusEnum.COMPLETED,
+            ),
+          },
+        },
+      });
+    }
+
+    this.notifyOrderPartiesRealtime(
+      populated ?? order,
+      OrderStatusEnum.COMPLETED,
+    );
+    this.notifyStoreVendorsForOrderStatusChange(order, {
+      reason: 'order_completed',
+      status: OrderStatusEnum.COMPLETED,
+      isPickup: false,
+      note: args.note?.trim() || 'Livraison validée (client absent)',
+    });
+
+    if (!this.domainEventsEnabled()) {
+      void this._loyaltyService
+        .creditOrderCompletion(oid)
+        .catch((err) =>
+          this.logger.warn(
+            `Loyalty credit order=${oid}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
+
+      void this._wsChatNotify.archiveOrderChats(oid, 'order_delivered');
+    }
+
+    if (agentId) {
+      void this._deliveryAgentService.publishPresenceWs(
+        agentId,
+        'order_completed',
+      );
+    }
+
+    if (order.shouldShip === true) {
+      this.scheduleDeliveryAgentPayouts(oid);
+    }
+
+    return {
+      orderId: oid,
+      status: OrderStatusEnum.COMPLETED,
+      pickedUpAt,
+    };
+  }
+
   private storeIdFromOrderDoc(order: OrderModel): string | undefined {
     const raw = order.store as unknown;
     if (raw instanceof Types.ObjectId) return raw.toHexString();

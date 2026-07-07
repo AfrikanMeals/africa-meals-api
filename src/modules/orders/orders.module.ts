@@ -51,6 +51,7 @@ import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { DeliveryAgentModule } from '@modules/delivery-agent/delivery-agent.module';
 import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
 import { RatingsModule } from '@modules/ratings/ratings.module';
+import { PendingDeliveryModule } from '@modules/pending-delivery/pending-delivery.module';
 
 @Module({
   controllers: [OrdersController],
@@ -85,6 +86,7 @@ import { RatingsModule } from '@modules/ratings/ratings.module';
     ProductsModule,
     StripeConnectTransferModule,
     forwardRef(() => DeliveryAgentModule),
+    forwardRef(() => PendingDeliveryModule),
     forwardRef(() => DomainEventHandlersModule),
     RatingsModule,
     MongooseModule.forFeature([

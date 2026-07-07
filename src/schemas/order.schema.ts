@@ -247,6 +247,16 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'picked_up_at', type: Date })
   pickedUpAt?: Date;
 
+  /** Preuve livraison « client absent » en cours de validation. */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'PendingDeliveryProofModel',
+    required: false,
+    name: 'pending_delivery_proof_id',
+    index: true,
+  })
+  pendingDeliveryProofId?: MongooseSchema.Types.ObjectId;
+
   /** Code motif annulation / refus (`out_of_stock`, `changed_mind`, `other`, …). */
   @Prop({
     required: false,

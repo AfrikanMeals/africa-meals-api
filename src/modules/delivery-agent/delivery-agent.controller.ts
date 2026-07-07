@@ -9,13 +9,21 @@ import {
   Post,
   Query,
   Req,
+  UploadedFiles,
   UseGuards,
+  UseInterceptors,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
+import {
+  PreviewCustomerAbsentDeliveryDto,
+  SubmitCustomerAbsentDeliveryDto,
+} from '@modules/pending-delivery/dto/pending-delivery.dto';
+import { PendingDeliveryService } from '@modules/pending-delivery/pending-delivery.service';
 import {
   RejectDeliveryAgentApplicationDto,
   SuspendDeliveryAgentApplicationDto,
@@ -37,6 +45,9 @@ import { AssignStripeConnectDto } from '@modules/store/dto/assign-stripe-connect
 export class DeliveryAgentController {
   @Inject(DeliveryAgentService)
   private readonly _deliveryAgent: DeliveryAgentService;
+
+  @Inject(PendingDeliveryService)
+  private readonly _pendingDelivery: PendingDeliveryService;
 
   @Get('application')
   @UseGuards(JwtGuard)
@@ -200,6 +211,52 @@ export class DeliveryAgentController {
       orderId,
       body.code,
     );
+  }
+
+  @Post('orders/:orderId/customer-absent/preview')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Aperçu distance livreur ↔ adresse pour livraison client absent.',
+  })
+  previewCustomerAbsent(
+    @Req() req: Request,
+    @Param('orderId') orderId: string,
+    @Body() body: PreviewCustomerAbsentDeliveryDto,
+  ) {
+    return this._pendingDelivery.previewCustomerAbsent({
+      user: req.user as UserModel,
+      orderId,
+      courierLat: body.courierLat,
+      courierLng: body.courierLng,
+    });
+  }
+
+  @Post('orders/:orderId/customer-absent/submit')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @UseInterceptors(
+    FileFieldsInterceptor([{ name: 'proofPhotos', maxCount: 5 }]),
+  )
+  @ApiOperation({
+    summary:
+      'Soumet une livraison client absent avec photos preuve et position GPS.',
+  })
+  submitCustomerAbsent(
+    @Req() req: Request,
+    @Param('orderId') orderId: string,
+    @Body() body: SubmitCustomerAbsentDeliveryDto,
+    @UploadedFiles()
+    files: { proofPhotos?: Express.Multer.File[] },
+  ) {
+    return this._pendingDelivery.submitCustomerAbsent({
+      user: req.user as UserModel,
+      orderId,
+      courierLat: body.courierLat,
+      courierLng: body.courierLng,
+      proofFiles: files?.proofPhotos ?? [],
+    });
   }
 
   @Get('store-partners')
