@@ -9,6 +9,8 @@ export enum StoreDeliveryDriverMembershipStatus {
   ACTIVE = 'ACTIVE',
   DECLINED = 'DECLINED',
   REVOKED = 'REVOKED',
+  /** Le livreur a quitté volontairement la flotte du restaurant. */
+  LEFT = 'LEFT',
 }
 
 @Schema({

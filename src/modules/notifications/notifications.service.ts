@@ -1216,4 +1216,67 @@ export class NotificationsService implements OnModuleInit {
       } as Record<string, unknown>,
     );
   }
+
+  /** Inbox + push — livreur a quitté la flotte d'un restaurant partenaire. */
+  async notifyStoreDriverLeftPartner(args: {
+    courierUserId: string;
+    courierName: string;
+    storeId: string;
+    storeName: string;
+    vendorUserId: string;
+  }): Promise<void> {
+    const store = (args.storeName ?? '').trim() || 'Restaurant';
+    const courier = (args.courierName ?? '').trim() || 'Livreur';
+    const storeId = args.storeId?.trim() ?? '';
+    const baseData = {
+      storeId,
+      storeName: store,
+      courierName: courier,
+      membershipAction: 'left',
+    };
+
+    const courierTitle = 'Partenariat terminé';
+    const courierBody = `Vous avez quitté la flotte de livraison de ${store}.`;
+    const vendorTitle = 'Livreur partant';
+    const vendorBody = `${courier} a quitté la flotte de livraison de ${store}.`;
+
+    const tasks: Array<Promise<void>> = [];
+
+    if (Types.ObjectId.isValid(args.courierUserId)) {
+      tasks.push(
+        this.createUserScopedNotification({
+          recipientUserId: args.courierUserId,
+          title: courierTitle,
+          body: courierBody,
+          type: 'store_driver_partner_left',
+          data: { ...baseData, audience: 'courier' },
+          sendPush: true,
+          androidChannelId: 'african_meals_courier_orders',
+        }).then(() => undefined),
+      );
+    }
+
+    if (Types.ObjectId.isValid(args.vendorUserId)) {
+      tasks.push(
+        this.createUserScopedNotification({
+          recipientUserId: args.vendorUserId,
+          title: vendorTitle,
+          body: vendorBody,
+          type: 'store_driver_partner_left',
+          data: { ...baseData, audience: 'vendor', courierUserId: args.courierUserId },
+          sendPush: true,
+          androidChannelId: 'african_meals_vendor_orders',
+        }).then(() => undefined),
+      );
+    }
+
+    await Promise.all(
+      tasks.map((p) =>
+        p.catch((e) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          this.logger.warn(`notifyStoreDriverLeftPartner: ${msg}`);
+        }),
+      ),
+    );
+  }
 }

@@ -1,6 +1,8 @@
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { MailerService } from '@modules/mailer/mailer.service';
+import { NotificationsService } from '@modules/notifications/notifications.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 import {
   BadRequestException,
   ConflictException,
@@ -68,6 +70,12 @@ export class StoreDeliveryDriversService {
 
   @Inject(SubscriptionsService)
   private readonly _subscriptions: SubscriptionsService;
+
+  @Inject(NotificationsService)
+  private readonly _notifications: NotificationsService;
+
+  @Inject(WsInboxNotifyService)
+  private readonly _wsInboxNotify: WsInboxNotifyService;
 
   async assertStoreOwner(user: UserModel, storeId: string): Promise<StoreModel> {
     if (!Types.ObjectId.isValid(storeId)) {
@@ -610,7 +618,8 @@ export class StoreDeliveryDriversService {
     if (
       existing &&
       existing.status !== StoreDeliveryDriverMembershipStatus.REVOKED &&
-      existing.status !== StoreDeliveryDriverMembershipStatus.DECLINED
+      existing.status !== StoreDeliveryDriverMembershipStatus.DECLINED &&
+      existing.status !== StoreDeliveryDriverMembershipStatus.LEFT
     ) {
       throw new ConflictException('store_driver_already_invited');
     }
@@ -681,6 +690,66 @@ export class StoreDeliveryDriversService {
     membership.inviteToken = undefined;
     membership.respondedAt = new Date();
     await membership.save();
+    return { ok: true };
+  }
+
+  /** Livreur quitte volontairement un restaurant partenaire (flotte active). */
+  async leaveActivePartner(
+    user: UserModel,
+    membershipId: string,
+  ): Promise<{ ok: true }> {
+    await this._assertApprovedDeliveryAgentUser(user);
+    if (!Types.ObjectId.isValid(membershipId)) {
+      throw new BadRequestException('invalid_id');
+    }
+
+    const membership = await this._membershipModel.findById(membershipId).exec();
+    if (!membership) throw new NotFoundException('membership_not_found');
+
+    const userId = String(user._id ?? user.id ?? '');
+    const userEmail = String(user.email ?? '')
+      .trim()
+      .toLowerCase();
+    const membershipUserId = membership.user
+      ? String(membership.user)
+      : '';
+    const ownsMembership =
+      (membershipUserId && membershipUserId === userId) ||
+      membership.email === userEmail;
+    if (!ownsMembership) {
+      throw new ForbiddenException('membership_not_owned');
+    }
+    if (membership.status !== StoreDeliveryDriverMembershipStatus.ACTIVE) {
+      throw new BadRequestException('membership_not_active');
+    }
+
+    const store = await this._storeModel
+      .findById(membership.store)
+      .select('name owner vendorManagesDeliveryDrivers')
+      .exec();
+    if (!store?.vendorManagesDeliveryDrivers) {
+      throw new BadRequestException('store_delivery_drivers_not_enabled');
+    }
+
+    membership.status = StoreDeliveryDriverMembershipStatus.LEFT;
+    membership.inviteToken = undefined;
+    membership.respondedAt = new Date();
+    await membership.save();
+
+    const storeName = String(store.name ?? 'Restaurant');
+    const storeId = String(store._id);
+    const courierName = user.fullName?.trim() || userEmail || 'Livreur';
+    const vendorUserId = String(store.owner ?? '');
+
+    await this._notifyPartnerLeft({
+      courierUserId: userId,
+      courierEmail: userEmail,
+      courierName,
+      storeId,
+      storeName,
+      vendorUserId,
+    });
+
     return { ok: true };
   }
 
@@ -1056,5 +1125,104 @@ export class StoreDeliveryDriversService {
       html,
       text,
     });
+  }
+
+  private async _notifyPartnerLeft(args: {
+    courierUserId: string;
+    courierEmail: string;
+    courierName: string;
+    storeId: string;
+    storeName: string;
+    vendorUserId: string;
+  }): Promise<void> {
+    const appName = this._config.get<string>('APP_NAME') ?? 'Wise Eat';
+    const safeStore = this._escapeHtml(args.storeName);
+    const safeCourier = this._escapeHtml(args.courierName);
+    const safeApp = this._escapeHtml(appName);
+
+    const courierHtml = [
+      this._emailTpl.heading('Partenariat terminé'),
+      this._emailTpl.paragraph(`Bonjour <strong>${safeCourier}</strong>,`),
+      this._emailTpl.paragraph(
+        `Vous avez quitté la flotte de livraison de <strong>${safeStore}</strong> sur <strong>${safeApp}</strong>.`,
+      ),
+      this._emailTpl.paragraph(
+        'Vous ne recevrez plus de courses assignées par ce restaurant tant qu’une nouvelle invitation n’aura pas été acceptée.',
+      ),
+    ].join('\n');
+    const courierText = [
+      `Bonjour ${args.courierName},`,
+      '',
+      `Vous avez quitté la flotte de livraison de ${args.storeName} sur ${appName}.`,
+    ].join('\n');
+
+    if (args.courierEmail) {
+      await this._mailer
+        .sendSimple({
+          to: args.courierEmail,
+          toName: args.courierName,
+          subject: `${appName} — Partenariat terminé (${args.storeName})`,
+          html: courierHtml,
+          text: courierText,
+        })
+        .catch(() => undefined);
+    }
+
+    if (Types.ObjectId.isValid(args.vendorUserId)) {
+      const vendor = await this._userModel
+        .findById(args.vendorUserId)
+        .select('email fullName')
+        .lean()
+        .exec();
+      const vendorEmail = vendor?.email ? String(vendor.email).trim() : '';
+      const vendorName = vendor?.fullName
+        ? String(vendor.fullName)
+        : vendorEmail || 'Restaurant';
+      if (vendorEmail) {
+        const safeVendor = this._escapeHtml(vendorName);
+        const vendorHtml = [
+          this._emailTpl.heading('Livreur partant'),
+          this._emailTpl.paragraph(`Bonjour <strong>${safeVendor}</strong>,`),
+          this._emailTpl.paragraph(
+            `<strong>${safeCourier}</strong> a quitté la flotte de livraison de <strong>${safeStore}</strong>.`,
+          ),
+          this._emailTpl.paragraph(
+            'Vous pouvez inviter un autre livreur depuis la section « Mes livreurs » de votre espace vendeur.',
+          ),
+        ].join('\n');
+        const vendorText = [
+          `Bonjour ${vendorName},`,
+          '',
+          `${args.courierName} a quitté la flotte de livraison de ${args.storeName}.`,
+        ].join('\n');
+
+        await this._mailer
+          .sendSimple({
+            to: vendorEmail,
+            toName: vendorName,
+            subject: `${appName} — Livreur partant (${args.storeName})`,
+            html: vendorHtml,
+            text: vendorText,
+          })
+          .catch(() => undefined);
+      }
+    }
+
+    await this._notifications
+      .notifyStoreDriverLeftPartner({
+        courierUserId: args.courierUserId,
+        courierName: args.courierName,
+        storeId: args.storeId,
+        storeName: args.storeName,
+        vendorUserId: args.vendorUserId,
+      })
+      .catch(() => undefined);
+
+    if (Types.ObjectId.isValid(args.courierUserId)) {
+      this._wsInboxNotify.notifyUserInboxRefresh(args.courierUserId);
+    }
+    if (Types.ObjectId.isValid(args.vendorUserId)) {
+      this._wsInboxNotify.notifyUserInboxRefresh(args.vendorUserId);
+    }
   }
 }

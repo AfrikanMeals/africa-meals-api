@@ -241,6 +241,14 @@ export const EMAIL_SEND_POINTS: readonly EmailSendPoint[] = [
     mitigation: 'Texte seul + logo en-tête',
   },
   {
+    id: 'store-delivery-driver-left',
+    service: 'store-delivery-drivers.service.ts',
+    description: 'Livreur quitte flotte restaurant partenaire',
+    transport: 'sendSimple',
+    imageRisk: 'header_logo',
+    mitigation: 'Texte seul + logo en-tête',
+  },
+  {
     id: 'delivery-agent',
     service: 'delivery-agent.service.ts',
     description: 'Candidature / statut livreur plateforme',

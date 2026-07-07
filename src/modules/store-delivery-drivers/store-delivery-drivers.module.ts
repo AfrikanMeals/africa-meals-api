@@ -1,4 +1,6 @@
 import { MailerModule } from '@modules/mailer/mailer.module';
+import { NotificationsModule } from '@modules/notifications/notifications.module';
+import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -19,6 +21,8 @@ import { StoreDeliveryDriversService } from './store-delivery-drivers.service';
 @Module({
   imports: [
     forwardRef(() => MailerModule),
+    NotificationsModule,
+    WsNotifyModule,
     MongooseModule.forFeature([
       {
         name: StoreDeliveryDriverMembershipModel.name,

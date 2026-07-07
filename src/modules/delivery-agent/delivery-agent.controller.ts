@@ -2,6 +2,7 @@ import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Inject,
   Param,
@@ -314,6 +315,22 @@ export class DeliveryAgentController {
     return this._deliveryAgent.declineStoreDriverInvite(
       req.user as UserModel,
       body.token,
+    );
+  }
+
+  @Delete('store-partners/:membershipId')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Quitter un restaurant partenaire (flotte active). Notifie le livreur et le vendeur.',
+  })
+  leaveStorePartner(
+    @Req() req: Request,
+    @Param('membershipId') membershipId: string,
+  ) {
+    return this._deliveryAgent.leaveStorePartner(
+      req.user as UserModel,
+      membershipId,
     );
   }
 

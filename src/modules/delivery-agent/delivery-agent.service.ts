@@ -1018,6 +1018,11 @@ export class DeliveryAgentService {
     return this._storeDeliveryDrivers.declineInvite(user, token);
   }
 
+  async leaveStorePartner(user: UserModel, membershipId: string) {
+    this.assertDeliveryAgent(user);
+    return this._storeDeliveryDrivers.leaveActivePartner(user, membershipId);
+  }
+
   /** Expéditions du jour + note moyenne livreur (carte performance mobile). */
   async getDailyPerformanceStats(user: UserModel) {
     this.assertDeliveryAgent(user);
