@@ -106,3 +106,35 @@ export function formatDistanceMetersLabel(meters: number): string {
   if (meters < 1000) return `${Math.round(meters)} m`;
   return `${(meters / 1000).toFixed(1)} km`;
 }
+
+/** Commande encore en cours — le même livreur peut renvoyer / remplacer la preuve. */
+export function canCourierReplacePendingDeliveryProof(args: {
+  orderStatus: string;
+  sameDeliveryAgent: boolean;
+}): boolean {
+  if (!args.sameDeliveryAgent) return false;
+  return String(args.orderStatus).trim().toLowerCase() === 'shipped';
+}
+
+/** Bloque une nouvelle soumission (preuve active + pas de resoumission autorisée). */
+export function shouldBlockPendingDeliveryResubmit(args: {
+  orderStatus: string;
+  existingProofStatus: string;
+  sameDeliveryAgent: boolean;
+}): boolean {
+  if (String(args.existingProofStatus).trim() === 'admin_rejected') {
+    return false;
+  }
+  if (String(args.orderStatus).trim().toLowerCase() === 'completed') {
+    return false;
+  }
+  if (
+    canCourierReplacePendingDeliveryProof({
+      orderStatus: args.orderStatus,
+      sameDeliveryAgent: args.sameDeliveryAgent,
+    })
+  ) {
+    return false;
+  }
+  return true;
+}

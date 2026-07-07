@@ -110,6 +110,15 @@ export const CRON_JOBS_REGISTRY: CronJobDefinition[] = [
     scheduleEnvKey: 'ADS_TARGETING_RETENTION_CRON',
     disableEnvKey: 'DISABLE_ADS_TARGETING_RETENTION_CRON',
   },
+  {
+    key: 'pending_delivery_auto_close',
+    label: 'Clôture livraisons client absent',
+    description:
+      'Clôture automatique des preuves sans confirmation client après le délai configuré.',
+    defaultSchedule: '0 6 * * *',
+    scheduleEnvKey: 'PENDING_DELIVERY_AUTO_CLOSE_CRON',
+    disableEnvKey: 'DISABLE_PENDING_DELIVERY_AUTO_CLOSE_CRON',
+  },
 ];
 
 const BY_KEY = new Map(CRON_JOBS_REGISTRY.map((j) => [j.key, j]));

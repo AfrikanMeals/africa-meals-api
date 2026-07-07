@@ -6,6 +6,7 @@ import {
   isMeaningfulGeoCoordinate,
   multerFileFromProofPhotoJson,
   proofPhotosJsonToMulterFiles,
+  shouldBlockPendingDeliveryResubmit,
 } from './pending-delivery.util';
 
 describe('pending-delivery.util', () => {
@@ -95,6 +96,38 @@ describe('pending-delivery.util', () => {
       expect(inferProofPhotoMimeFromFilename('proof.jpg')).toBe('image/jpeg');
       expect(isAllowedProofPhotoMime('image/webp')).toBe(true);
       expect(isAllowedProofPhotoMime('application/pdf')).toBe(false);
+    });
+  });
+
+  describe('shouldBlockPendingDeliveryResubmit', () => {
+    it('autorise resoumission livreur si commande encore shipped', () => {
+      expect(
+        shouldBlockPendingDeliveryResubmit({
+          orderStatus: 'shipped',
+          existingProofStatus: 'submitted',
+          sameDeliveryAgent: true,
+        }),
+      ).toBe(false);
+    });
+
+    it('bloque si autre livreur', () => {
+      expect(
+        shouldBlockPendingDeliveryResubmit({
+          orderStatus: 'shipped',
+          existingProofStatus: 'submitted',
+          sameDeliveryAgent: false,
+        }),
+      ).toBe(true);
+    });
+
+    it('autorise nouvelle preuve après rejet admin', () => {
+      expect(
+        shouldBlockPendingDeliveryResubmit({
+          orderStatus: 'shipped',
+          existingProofStatus: 'admin_rejected',
+          sameDeliveryAgent: true,
+        }),
+      ).toBe(false);
     });
   });
 });

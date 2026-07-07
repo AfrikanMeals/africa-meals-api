@@ -40,7 +40,11 @@ import { CartSimulatorService } from './cart-simulator.service';
 import { DashboardRegionQueryDto } from './dto/dashboard-region-query.dto';
 import { DashboardService } from './dashboard.service';
 import { PendingDeliveryService } from '@modules/pending-delivery/pending-delivery.service';
-import { ReviewPendingDeliveryDto } from '@modules/pending-delivery/dto/pending-delivery.dto';
+import {
+  ClosePendingDeliveryDto,
+  PendingDeliveriesQueryDto,
+  ReviewPendingDeliveryDto,
+} from '@modules/pending-delivery/dto/pending-delivery.dto';
 
 @ApiTags('dashboard')
 @ApiBearerAuth('bearer')
@@ -57,17 +61,58 @@ export class DashboardController {
 
   @Get('pending-deliveries')
   @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({
-    summary: 'Livraisons client absent en attente de validation admin.',
+    summary:
+      'Livraisons client absent en attente (admin ou vendeur lecture seule).',
   })
   listPendingDeliveries(
     @Req() req: Request,
-    @Query('storeId') storeId?: string,
+    @Query() query: PendingDeliveriesQueryDto,
   ) {
-    return this._pendingDelivery.listForAdmin(
+    return this._pendingDelivery.listPendingDeliveries(
       req.user as UserModel,
-      storeId,
+      {
+        storeId: query.storeId,
+        page: query.page,
+        limit: query.limit,
+      },
     );
+  }
+
+  @Post('pending-deliveries/:proofId/notify-parties')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Renvoie les e-mails vendeur et client pour une livraison client absent.',
+  })
+  notifyPendingDeliveryParties(
+    @Req() req: Request,
+    @Param('proofId') proofId: string,
+  ) {
+    return this._pendingDelivery.notifyThirdPartiesByAdmin({
+      user: req.user as UserModel,
+      proofId,
+    });
+  }
+
+  @Post('pending-deliveries/:proofId/close')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Clôture manuellement une livraison client absent (validation admin).',
+  })
+  closePendingDelivery(
+    @Req() req: Request,
+    @Param('proofId') proofId: string,
+    @Body() body: ClosePendingDeliveryDto,
+  ) {
+    return this._pendingDelivery.closeByAdmin({
+      user: req.user as UserModel,
+      proofId,
+      note: body.note,
+    });
   }
 
   @Post('pending-deliveries/:proofId/review')

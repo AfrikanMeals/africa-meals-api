@@ -3,6 +3,7 @@ import { EmailTemplateService, emailHeading, emailInfoPanel, emailKeyValueRows, 
 import { MediasService } from '@modules/medias/medias.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { OrdersService } from '@modules/orders/orders.service';
+import { StoreAccessService } from '@modules/teams/store-access.service';
 import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-email.service';
 import {
   BadRequestException,
@@ -13,6 +14,7 @@ import {
   NotFoundException,
   forwardRef,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import {
   OrderModel,
@@ -32,11 +34,24 @@ import {
   formatDistanceMetersLabel,
   isMeaningfulGeoCoordinate,
   proofPhotosJsonToMulterFiles,
+  shouldBlockPendingDeliveryResubmit,
   type ProofPhotoJsonInput,
 } from './pending-delivery.util';
+import {
+  isPendingDeliveryAutoCloseEligible,
+  pendingDeliveryAutoCloseDaysFromEnv,
+} from './pending-delivery-auto-close.util';
 
 const MAX_PROOF_PHOTOS = 5;
 const MIN_PROOF_PHOTOS = 1;
+const DEFAULT_LIST_PAGE_SIZE = 10;
+const MAX_LIST_PAGE_SIZE = 100;
+
+const ACTIVE_PROOF_STATUSES = [
+  PendingDeliveryProofStatusEnum.SUBMITTED,
+  PendingDeliveryProofStatusEnum.CUSTOMER_CONFIRMED,
+  PendingDeliveryProofStatusEnum.CUSTOMER_DISPUTED,
+] as const;
 
 @Injectable()
 export class PendingDeliveryService {
@@ -56,6 +71,8 @@ export class PendingDeliveryService {
     private readonly emailTpl: EmailTemplateService,
     private readonly vendorEmails: VendorStatusEmailService,
     private readonly notifications: NotificationsService,
+    private readonly config: ConfigService,
+    private readonly storeAccess: StoreAccessService,
     @Inject(forwardRef(() => OrdersService))
     private readonly ordersService: OrdersService,
   ) {}
@@ -136,6 +153,9 @@ export class PendingDeliveryService {
       args.user,
       args.orderId,
     );
+    const agentId = objectIdStringFromRef(args.user._id ?? args.user.id);
+    if (!agentId) throw new ForbiddenException('delivery_agent_only');
+
     const existing = await this.proofModel
       .findOne({ orderId: order._id })
       .exec();
@@ -156,7 +176,16 @@ export class PendingDeliveryService {
           proofPhotoCount: existing.proofPhotoUrls?.length ?? 0,
         };
       }
-      throw new BadRequestException('pending_delivery_already_submitted');
+      const sameAgent = mongoIdsEqual(existing.deliveryAgentId, agentId);
+      if (
+        shouldBlockPendingDeliveryResubmit({
+          orderStatus: String(order.status),
+          existingProofStatus: String(existing.status),
+          sameDeliveryAgent: sameAgent,
+        })
+      ) {
+        throw new BadRequestException('pending_delivery_already_submitted');
+      }
     }
 
     const dest = this.deliveryCoordsFromOrder(order);
@@ -204,7 +233,6 @@ export class PendingDeliveryService {
 
     const storeId = this.storeIdFromOrder(order);
     const customerUserId = this.customerIdFromOrder(order);
-    const agentId = objectIdStringFromRef(args.user._id ?? args.user.id);
     if (!storeId || !customerUserId || !agentId) {
       throw new BadRequestException('pending_delivery_context_invalid');
     }
@@ -394,32 +422,207 @@ export class PendingDeliveryService {
     };
   }
 
-  async listForAdmin(user: UserModel, storeId?: string) {
-    this.assertAdminAccess(user);
-    const filter: Record<string, unknown> = {
-      status: {
-        $in: [
-          PendingDeliveryProofStatusEnum.SUBMITTED,
-          PendingDeliveryProofStatusEnum.CUSTOMER_CONFIRMED,
-          PendingDeliveryProofStatusEnum.CUSTOMER_DISPUTED,
-        ],
-      },
+  async listPendingDeliveries(
+    user: UserModel,
+    args: { storeId?: string; page?: number; limit?: number },
+  ) {
+    const pageSize = Math.min(
+      Math.max(args.limit ?? DEFAULT_LIST_PAGE_SIZE, 1),
+      MAX_LIST_PAGE_SIZE,
+    );
+    const page = Math.max(args.page ?? 1, 1);
+    const skip = (page - 1) * pageSize;
+    const filter = await this.buildListFilter(user, args.storeId);
+
+    const [total, rows] = await Promise.all([
+      this.proofModel.countDocuments(filter).exec(),
+      this.proofModel
+        .find(filter)
+        .sort({ updatedAt: -1 })
+        .skip(skip)
+        .limit(pageSize)
+        .populate('orderId', 'status totalPrice currency')
+        .populate('deliveryAgentId', 'fullName email phoneNumber')
+        .populate('customerUserId', 'fullName email phoneNumber')
+        .populate('storeId', 'name')
+        .exec(),
+    ]);
+
+    return {
+      items: rows.map((row) => this.serializeProof(row)),
+      total,
+      page,
+      pageSize,
     };
-    if (storeId?.trim()) {
-      filter.storeId = new Types.ObjectId(storeId.trim());
+  }
+
+  /** @deprecated Utiliser listPendingDeliveries */
+  async listForAdmin(user: UserModel, storeId?: string) {
+    const result = await this.listPendingDeliveries(user, {
+      storeId,
+      page: 1,
+      limit: 200,
+    });
+    return result.items;
+  }
+
+  async notifyThirdPartiesByAdmin(args: { user: UserModel; proofId: string }) {
+    this.assertAdminAccess(args.user);
+    const proof = await this.loadProofById(args.proofId);
+    this.assertProofIsActive(proof);
+
+    const order = await this.orderModel.findById(proof.orderId).exec();
+    if (!order) throw new NotFoundException('order_not_found');
+
+    const storeId = objectIdStringFromRef(proof.storeId);
+    const customerUserId = objectIdStringFromRef(proof.customerUserId);
+    if (!storeId || !customerUserId) {
+      throw new BadRequestException('pending_delivery_context_invalid');
     }
 
-    const rows = await this.proofModel
-      .find(filter)
-      .sort({ updatedAt: -1 })
+    await this.sendThirdPartyEmails({
+      proof,
+      order,
+      storeId,
+      customerUserId,
+      reminder: true,
+    });
+
+    return {
+      proofId: String(proof._id),
+      notified: true,
+    };
+  }
+
+  async closeByAdmin(args: {
+    user: UserModel;
+    proofId: string;
+    note?: string;
+  }) {
+    this.assertAdminAccess(args.user);
+    const proof = await this.loadProofById(args.proofId);
+    this.assertProofIsActive(proof);
+
+    const adminId = objectIdStringFromRef(args.user._id ?? args.user.id);
+    proof.status = PendingDeliveryProofStatusEnum.ADMIN_APPROVED;
+    proof.adminReviewedAt = new Date();
+    proof.adminReviewedBy = adminId
+      ? (new Types.ObjectId(adminId) as unknown as PendingDeliveryProofModel['adminReviewedBy'])
+      : undefined;
+    proof.adminNote =
+      args.note?.trim() ||
+      'Clôture manuelle admin — livraison client absent validée.';
+    await proof.save();
+
+    const order = await this.orderModel.findById(proof.orderId).exec();
+    let orderCompleted = order?.status === OrderStatusEnum.COMPLETED;
+    if (order && !orderCompleted) {
+      await this.ordersService.completeDeliveryFromPendingProof({
+        orderId: String(proof.orderId),
+        actorUserId: adminId,
+        note: proof.adminNote,
+      });
+      orderCompleted = true;
+    }
+
+    if (order) {
+      this.ordersService.notifyOrderPartiesRealtime(order, order.status, {
+        pendingDeliveryProofStatus: proof.status,
+      } as Record<string, unknown>);
+    }
+
+    return {
+      proofId: String(proof._id),
+      status: proof.status,
+      orderCompleted,
+    };
+  }
+
+  async runAutoClosePass(): Promise<{
+    scanned: number;
+    closed: number;
+    failed: number;
+  }> {
+    const autoCloseDays = pendingDeliveryAutoCloseDaysFromEnv(
+      this.config.get<string>('PENDING_DELIVERY_AUTO_CLOSE_DAYS'),
+    );
+    const cutoff = new Date(
+      Date.now() - autoCloseDays * 24 * 60 * 60 * 1000,
+    );
+
+    const candidates = await this.proofModel
+      .find({
+        status: PendingDeliveryProofStatusEnum.SUBMITTED,
+        createdAt: { $lte: cutoff },
+      })
       .limit(200)
-      .populate('orderId', 'status totalPrice currency')
-      .populate('deliveryAgentId', 'fullName email phoneNumber')
-      .populate('customerUserId', 'fullName email phoneNumber')
-      .populate('storeId', 'name')
       .exec();
 
-    return rows.map((row) => this.serializeProof(row));
+    let closed = 0;
+    let failed = 0;
+
+    for (const proof of candidates) {
+      if (
+        !isPendingDeliveryAutoCloseEligible({
+          status: proof.status,
+          createdAt: (proof as { createdAt?: Date }).createdAt,
+          autoCloseDays,
+        })
+      ) {
+        continue;
+      }
+
+      try {
+        const adminNote = `Clôture automatique — aucune confirmation client sous ${autoCloseDays} jour(s).`;
+        proof.status = PendingDeliveryProofStatusEnum.ADMIN_APPROVED;
+        proof.adminReviewedAt = new Date();
+        proof.adminNote = adminNote;
+        await proof.save();
+
+        const order = await this.orderModel.findById(proof.orderId).exec();
+        if (order && order.status !== OrderStatusEnum.COMPLETED) {
+          await this.ordersService.completeDeliveryFromPendingProof({
+            orderId: String(proof.orderId),
+            note: adminNote,
+          });
+        }
+
+        if (order) {
+          this.ordersService.notifyOrderPartiesRealtime(order, order.status, {
+            pendingDeliveryProofStatus: proof.status,
+          } as Record<string, unknown>);
+        }
+
+        const storeId = objectIdStringFromRef(proof.storeId);
+        const customerUserId = objectIdStringFromRef(proof.customerUserId);
+        if (order && storeId && customerUserId) {
+          await this.sendThirdPartyEmails({
+            proof,
+            order,
+            storeId,
+            customerUserId,
+            reminder: true,
+            autoClosed: true,
+            autoCloseDays,
+          });
+        }
+
+        closed += 1;
+      } catch (err) {
+        failed += 1;
+        this.logger.warn(
+          `pending delivery auto-close proof=${String(proof._id)}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
+    return {
+      scanned: candidates.length,
+      closed,
+      failed,
+    };
   }
 
   async reviewByAdmin(args: {
@@ -657,12 +860,36 @@ export class PendingDeliveryService {
     storeId: string;
     customerUserId: string;
   }) {
+    await this.sendThirdPartyEmails({
+      proof: args.proof,
+      order: args.order,
+      storeId: args.storeId,
+      customerUserId: args.customerUserId,
+      reminder: false,
+    });
+  }
+
+  private async sendThirdPartyEmails(args: {
+    proof: PendingDeliveryProofModel;
+    order: OrderModel;
+    storeId: string;
+    customerUserId: string;
+    reminder?: boolean;
+    autoClosed?: boolean;
+    autoCloseDays?: number;
+  }) {
     const customer = await this.userModel.findById(args.customerUserId).exec();
     const store = await this.storeModel.findById(args.storeId).exec();
     const orderRef = args.proof.orderRef ?? this.orderRefFromDoc(args.order);
     const distanceLabel = formatDistanceMetersLabel(args.proof.distanceMeters);
     const address = args.proof.shippingAddressLine ?? '—';
     const photoCount = args.proof.proofPhotoUrls?.length ?? 0;
+
+    const vendorNote = args.autoClosed
+      ? `Clôture automatique après ${args.autoCloseDays ?? 7} jour(s) sans confirmation client (${photoCount} photo(s), distance ${distanceLabel}).`
+      : args.reminder
+        ? `Rappel — livraison client absent (${photoCount} photo(s), distance ${distanceLabel}).`
+        : `Client absent — preuve déposée (${photoCount} photo(s), distance ${distanceLabel}). En attente confirmation client.`;
 
     await this.vendorEmails.notifyVendorOrderEvent({
       storeId: args.storeId,
@@ -671,17 +898,28 @@ export class PendingDeliveryService {
       storeName: store?.name,
       totalPrice: Number(args.order.totalPrice) || undefined,
       currency: args.order.currency,
-      note: `Client absent — preuve déposée (${photoCount} photo(s), distance ${distanceLabel}). En attente confirmation client.`,
-      statusLabel: 'Livraison — client absent',
+      note: vendorNote,
+      statusLabel: args.autoClosed
+        ? 'Livraison clôturée automatiquement'
+        : 'Livraison — client absent',
     });
 
     const customerEmail = customer?.email?.trim();
     if (customerEmail) {
+      const heading = args.autoClosed
+        ? 'Votre commande a été clôturée'
+        : args.reminder
+          ? 'Rappel — confirmez la réception'
+          : 'Votre commande a été déposée';
+      const intro = args.autoClosed
+        ? `Bonjour ${customer?.fullName?.trim() || ''}, faute de confirmation sous ${args.autoCloseDays ?? 7} jour(s), la commande ${orderRef} déposée à l'adresse indiquée a été clôturée automatiquement.`
+        : args.reminder
+          ? `Bonjour ${customer?.fullName?.trim() || ''}, nous vous rappelons de confirmer la réception de la commande ${orderRef} déposée à l'adresse indiquée.`
+          : `Bonjour ${customer?.fullName?.trim() || ''}, votre livreur a déposé la commande ${orderRef} à l'adresse indiquée.`;
+
       const bodyHtml = [
-        emailHeading('Votre commande a été déposée'),
-        emailParagraph(
-          `Bonjour ${customer?.fullName?.trim() || ''}, votre livreur a déposé la commande ${orderRef} à l'adresse indiquée.`,
-        ),
+        emailHeading(heading),
+        emailParagraph(intro),
         emailInfoPanel(
           emailKeyValueRows([
             { label: 'Commande', value: orderRef },
@@ -690,20 +928,27 @@ export class PendingDeliveryService {
           ]),
         ),
         emailParagraph(
-          'Merci de confirmer dans l\'application que vous avez bien reçu votre commande.',
+          args.autoClosed
+            ? 'Si vous n\'avez pas reçu votre commande, contactez le support depuis l\'application.'
+            : 'Merci de confirmer dans l\'application que vous avez bien reçu votre commande.',
         ),
       ].join('');
       const html = await this.emailTpl.wrapBodyAsync(bodyHtml);
+      const subject = args.autoClosed
+        ? `Commande ${orderRef} — clôturée automatiquement`
+        : args.reminder
+          ? `Commande ${orderRef} — rappel de confirmation`
+          : `Commande ${orderRef} — confirmez la réception`;
       await this.mailer.sendSimple({
         to: customerEmail,
         toName: customer?.fullName?.trim() || undefined,
-        subject: `Commande ${orderRef} — confirmez la réception`,
+        subject,
         html,
-        logContext: `pending-delivery-customer order=${String(args.order._id)}`,
+        logContext: `pending-delivery-customer order=${String(args.order._id)} reminder=${args.reminder ? '1' : '0'}`,
       });
     }
 
-    if (customer) {
+    if (customer && !args.reminder && !args.autoClosed) {
       void this.notifications
         .pushCustomerOrderStatusChanged({
           userId: args.customerUserId,
@@ -714,6 +959,49 @@ export class PendingDeliveryService {
           newStatus: args.order.status,
         })
         .catch(() => undefined);
+    }
+  }
+
+  private async buildListFilter(user: UserModel, storeId?: string) {
+    const filter: Record<string, unknown> = {
+      status: { $in: [...ACTIVE_PROOF_STATUSES] },
+    };
+
+    if (user.type === UserTypeEnum.ADMIN) {
+      if (storeId?.trim()) {
+        if (!Types.ObjectId.isValid(storeId.trim())) {
+          throw new BadRequestException('invalid_store_id');
+        }
+        filter.storeId = new Types.ObjectId(storeId.trim());
+      }
+      return filter;
+    }
+
+    if (user.type === UserTypeEnum.VENDOR) {
+      const sid = storeId?.trim();
+      if (!sid || !Types.ObjectId.isValid(sid)) {
+        throw new BadRequestException('store_id_required');
+      }
+      await this.storeAccess.assertStoreAccess(user, sid, 'orders.view');
+      filter.storeId = new Types.ObjectId(sid);
+      return filter;
+    }
+
+    throw new ForbiddenException('access_denied');
+  }
+
+  private async loadProofById(proofId: string) {
+    if (!Types.ObjectId.isValid(proofId)) {
+      throw new NotFoundException('pending_delivery_not_found');
+    }
+    const proof = await this.proofModel.findById(proofId).exec();
+    if (!proof) throw new NotFoundException('pending_delivery_not_found');
+    return proof;
+  }
+
+  private assertProofIsActive(proof: PendingDeliveryProofModel) {
+    if (!ACTIVE_PROOF_STATUSES.includes(proof.status as (typeof ACTIVE_PROOF_STATUSES)[number])) {
+      throw new BadRequestException('pending_delivery_not_active');
     }
   }
 

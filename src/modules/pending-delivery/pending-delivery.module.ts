@@ -2,6 +2,7 @@ import { MediasModule } from '@modules/medias/medias.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { OrdersModule } from '@modules/orders/orders.module';
+import { TeamsModule } from '@modules/teams/teams.module';
 import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -12,6 +13,7 @@ import {
 } from '@schemas/pending-delivery-proof.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
+import { PendingDeliveryAutoCloseCron } from './pending-delivery-auto-close.cron';
 import { PendingDeliveryService } from './pending-delivery.service';
 
 @Module({
@@ -20,6 +22,7 @@ import { PendingDeliveryService } from './pending-delivery.service';
     MailerModule,
     NotificationsModule,
     VendorStatusEmailModule,
+    TeamsModule,
     forwardRef(() => OrdersModule),
     MongooseModule.forFeature([
       {
@@ -31,7 +34,7 @@ import { PendingDeliveryService } from './pending-delivery.service';
       { name: StoreModel.name, schema: StoreSchema },
     ]),
   ],
-  providers: [PendingDeliveryService],
+  providers: [PendingDeliveryService, PendingDeliveryAutoCloseCron],
   exports: [PendingDeliveryService],
 })
 export class PendingDeliveryModule {}
