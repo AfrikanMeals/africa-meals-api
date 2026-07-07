@@ -165,16 +165,18 @@ export class PendingDeliveryService {
       throw new BadRequestException('proof_photos_max_exceeded');
     }
 
-    const proofPhotoUrls: string[] = [];
-    for (const file of files) {
-      const url = await this.medias.upload(
-        file,
-        args.user,
-        'delivery-proof',
-      );
-      const normalized = String(url ?? '').trim();
-      if (normalized) proofPhotoUrls.push(normalized);
-    }
+    const proofPhotoUrls = (
+      await Promise.all(
+        files.map(async (file) => {
+          const url = await this.medias.upload(
+            file,
+            args.user,
+            'delivery-proof',
+          );
+          return String(url ?? '').trim();
+        }),
+      )
+    ).filter(Boolean);
     if (proofPhotoUrls.length < MIN_PROOF_PHOTOS) {
       throw new BadRequestException('proof_photos_upload_failed');
     }
@@ -209,11 +211,39 @@ export class PendingDeliveryService {
       orderRef: this.orderRefFromDoc(order),
     };
 
-    const proof = existing
+    let proof = existing
       ? await this.proofModel
           .findByIdAndUpdate(existing._id, payload, { new: true })
           .exec()
-      : await this.proofModel.create(payload);
+      : null;
+
+    if (!proof) {
+      try {
+        proof = await this.proofModel.create(payload);
+      } catch (err) {
+        if (this.isMongoDuplicateKey(err)) {
+          const duplicate = await this.proofModel
+            .findOne({ orderId: order._id })
+            .exec();
+          if (
+            duplicate &&
+            duplicate.status !== PendingDeliveryProofStatusEnum.ADMIN_REJECTED
+          ) {
+            return {
+              proofId: String(duplicate._id),
+              orderId: String(order._id),
+              status: duplicate.status,
+              distanceMeters: duplicate.distanceMeters,
+              distanceLabel: formatDistanceMetersLabel(
+                duplicate.distanceMeters,
+              ),
+              proofPhotoCount: duplicate.proofPhotoUrls?.length ?? 0,
+            };
+          }
+        }
+        throw err;
+      }
+    }
 
     if (!proof) {
       throw new BadRequestException('pending_delivery_save_failed');
@@ -641,5 +671,10 @@ export class PendingDeliveryService {
         })
         .catch(() => undefined);
     }
+  }
+
+  private isMongoDuplicateKey(err: unknown): boolean {
+    const code = (err as { code?: number })?.code;
+    return code === 11000 || code === 11001;
   }
 }
