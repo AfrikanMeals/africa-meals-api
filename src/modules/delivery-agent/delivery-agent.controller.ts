@@ -22,6 +22,7 @@ import { Request } from 'express';
 import {
   PreviewCustomerAbsentDeliveryDto,
   SubmitCustomerAbsentDeliveryDto,
+  SubmitCustomerAbsentDeliveryJsonDto,
 } from '@modules/pending-delivery/dto/pending-delivery.dto';
 import { PendingDeliveryService } from '@modules/pending-delivery/pending-delivery.service';
 import {
@@ -256,6 +257,28 @@ export class DeliveryAgentController {
       courierLat: body.courierLat,
       courierLng: body.courierLng,
       proofFiles: files?.proofPhotos ?? [],
+    });
+  }
+
+  /** JSON + base64 : fiable sur Fastify / Firebase / CF où multipart renvoie 415. */
+  @Post('orders/:orderId/customer-absent/submit-json')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Soumet une livraison client absent (JSON + photos base64) — alternative fiable au multipart.',
+  })
+  submitCustomerAbsentJson(
+    @Req() req: Request,
+    @Param('orderId') orderId: string,
+    @Body() body: SubmitCustomerAbsentDeliveryJsonDto,
+  ) {
+    return this._pendingDelivery.submitCustomerAbsentJson({
+      user: req.user as UserModel,
+      orderId,
+      courierLat: body.courierLat,
+      courierLng: body.courierLng,
+      proofPhotos: body.proofPhotos,
     });
   }
 

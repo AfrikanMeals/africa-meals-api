@@ -1,7 +1,11 @@
 import {
   distanceMetersBetweenPoints,
   formatDistanceMetersLabel,
+  inferProofPhotoMimeFromFilename,
+  isAllowedProofPhotoMime,
   isMeaningfulGeoCoordinate,
+  multerFileFromProofPhotoJson,
+  proofPhotosJsonToMulterFiles,
 } from './pending-delivery.util';
 
 describe('pending-delivery.util', () => {
@@ -45,6 +49,52 @@ describe('pending-delivery.util', () => {
       expect(formatDistanceMetersLabel(450)).toBe('450 m');
       expect(formatDistanceMetersLabel(1500)).toBe('1.5 km');
       expect(formatDistanceMetersLabel(-1)).toBe('—');
+    });
+  });
+
+  describe('proofPhotosJsonToMulterFiles', () => {
+    const tinyPngBase64 =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+    it('décode une photo base64 valide', () => {
+      const [file] = proofPhotosJsonToMulterFiles(
+        [
+          {
+            fileBase64: tinyPngBase64,
+            filename: 'proof.png',
+          },
+        ],
+        1024 * 1024,
+      );
+      expect(file.mimetype).toBe('image/png');
+      expect(file.buffer.length).toBeGreaterThan(0);
+      expect(file.fieldname).toBe('proofPhotos');
+    });
+
+    it('accepte le préfixe data:image', () => {
+      const file = multerFileFromProofPhotoJson(
+        {
+          fileBase64: `data:image/png;base64,${tinyPngBase64}`,
+          filename: 'proof.png',
+        },
+        1024 * 1024,
+      );
+      expect(file.mimetype).toBe('image/png');
+    });
+
+    it('rejette base64 invalide', () => {
+      expect(() =>
+        multerFileFromProofPhotoJson(
+          { fileBase64: '%%%', filename: 'proof.jpg' },
+          1024,
+        ),
+      ).toThrow('invalid_base64');
+    });
+
+    it('infère le mime depuis le nom de fichier', () => {
+      expect(inferProofPhotoMimeFromFilename('proof.jpg')).toBe('image/jpeg');
+      expect(isAllowedProofPhotoMime('image/webp')).toBe(true);
+      expect(isAllowedProofPhotoMime('application/pdf')).toBe(false);
     });
   });
 });

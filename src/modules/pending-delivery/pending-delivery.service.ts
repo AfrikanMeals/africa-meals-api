@@ -30,6 +30,8 @@ import {
   distanceMetersBetweenPoints,
   formatDistanceMetersLabel,
   isMeaningfulGeoCoordinate,
+  proofPhotosJsonToMulterFiles,
+  type ProofPhotoJsonInput,
 } from './pending-delivery.util';
 
 const MAX_PROOF_PHOTOS = 5;
@@ -95,6 +97,31 @@ export class PendingDeliveryService {
       storeName: this.storeNameFromOrder(order),
       customerName: this.customerNameFromOrder(order),
     };
+  }
+
+  async submitCustomerAbsentJson(args: {
+    user: UserModel;
+    orderId: string;
+    courierLat: number;
+    courierLng: number;
+    proofPhotos: ProofPhotoJsonInput[];
+  }) {
+    const maxBytes = await this.medias.getMaxFileSizeBytes();
+    let proofFiles: Express.Multer.File[];
+    try {
+      proofFiles = proofPhotosJsonToMulterFiles(args.proofPhotos, maxBytes);
+    } catch (err) {
+      const code =
+        err instanceof Error && err.message ? err.message : 'invalid_base64';
+      throw new BadRequestException(code);
+    }
+    return this.submitCustomerAbsent({
+      user: args.user,
+      orderId: args.orderId,
+      courierLat: args.courierLat,
+      courierLng: args.courierLng,
+      proofFiles,
+    });
   }
 
   async submitCustomerAbsent(args: {
