@@ -23,3 +23,13 @@ export function resolveDeliveryAgentPresence(
   if (activeOrderCount > 0) return 'en_livraison';
   return 'disponible';
 }
+
+/** Distance restaurant → client dans le rayon max configuré (admin livraison). */
+export function pendingOrderWithinMaxDeliveryRadius(
+  distanceKm: number | null | undefined,
+  maxDeliveryRadiusKm: number,
+): boolean {
+  if (distanceKm == null || !Number.isFinite(distanceKm)) return false;
+  if (maxDeliveryRadiusKm <= 0) return false;
+  return distanceKm <= maxDeliveryRadiusKm + 1e-9;
+}

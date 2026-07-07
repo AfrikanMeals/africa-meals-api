@@ -11,6 +11,10 @@ const IMAGE_MIMES = new Set([
   'image/heif',
 ]);
 
+/** Preuves livraison client absent — plus agressif que l’upload catalogue. */
+const DELIVERY_PROOF_MAX_SIDE = 1280;
+const DELIVERY_PROOF_JPEG_QUALITY = 76;
+
 @Injectable()
 export class ImageCompressionService {
   private readonly logger = new Logger(ImageCompressionService.name);
@@ -72,6 +76,48 @@ export class ImageCompressionService {
     } catch (err) {
       this.logger.warn(
         `compression skipped: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return file;
+    }
+  }
+
+  /** Toujours appliqué aux photos preuve livraison (indépendamment du réglage admin). */
+  async compressDeliveryProof(
+    file: Express.Multer.File,
+  ): Promise<Express.Multer.File> {
+    if (!file?.buffer?.length || !this.isImageMime(file.mimetype)) {
+      return file;
+    }
+    try {
+      const sharp = (await import('sharp')).default;
+      const output = await sharp(file.buffer, { failOn: 'none' })
+        .rotate()
+        .resize({
+          width: DELIVERY_PROOF_MAX_SIDE,
+          height: DELIVERY_PROOF_MAX_SIDE,
+          fit: 'inside',
+          withoutEnlargement: true,
+        })
+        .jpeg({ quality: DELIVERY_PROOF_JPEG_QUALITY, mozjpeg: true })
+        .toBuffer();
+
+      if (!output.length || output.length >= file.buffer.length) {
+        return file;
+      }
+
+      const base = file.originalname.replace(/\.[^.]+$/, '') || 'proof';
+      return {
+        ...file,
+        buffer: output,
+        size: output.length,
+        mimetype: 'image/jpeg',
+        originalname: `${base}.jpg`,
+      };
+    } catch (err) {
+      this.logger.warn(
+        `delivery proof compression skipped: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
       );
       return file;
     }

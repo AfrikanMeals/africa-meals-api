@@ -13,6 +13,8 @@ const LARGE_JSON_BODY_PATH_SUFFIXES = [
   '/drinks-json',
   '/section-image-json',
   '/image-json',
+  '/customer-absent/submit',
+  '/customer-absent/submit-json',
 ] as const;
 
 const LARGE_JSON_BODY_PATH_REGEXES = [

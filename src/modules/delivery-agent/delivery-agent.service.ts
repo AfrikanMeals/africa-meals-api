@@ -76,6 +76,7 @@ import { SubscriptionsService } from '@modules/subscriptions/subscriptions.servi
 import {
   AGENT_LOCATION_EMIT_THROTTLE_MS,
   mapDeliveryPresenceToDomain,
+  pendingOrderWithinMaxDeliveryRadius,
   resolveDeliveryAgentPresence,
 } from './delivery-agent-domain.util';
 
@@ -1062,10 +1063,22 @@ export class DeliveryAgentService {
 
   async listPendingOrders(user: UserModel) {
     this.assertDeliveryAgent(user);
-    const { maxDeliveryRadiusKm } =
-      await this._platformShipping.getPublicSettings(
-        String(user.appCountryCode ?? '').trim().toUpperCase() || undefined,
-      );
+    const agentId = new Types.ObjectId(String(user._id ?? user.id));
+    const app = await this._applications
+      .findOne({
+        user: agentId,
+        status: DeliveryAgentApplicationStatus.APPROVED,
+      })
+      .select('region')
+      .lean()
+      .exec();
+    const agentRegionCode = resolvePlatformShippingRegionCode([
+      typeof app?.region === 'string' ? app.region : null,
+      user.appCountryCode,
+    ]);
+    const agentSettings = await this._platformShipping.getPublicSettings(
+      agentRegionCode,
+    );
     const rows = await this._orders
       .find({
         shouldShip: true,
@@ -1086,18 +1099,18 @@ export class DeliveryAgentService {
       .populate({
         path: 'store',
         select:
-          'name currency address vendorManagesDeliveryDrivers deliveryAssignmentMode',
+          'name currency address region vendorManagesDeliveryDrivers deliveryAssignmentMode',
         populate: {
           path: 'address',
-          select: 'address city zipCode location',
+          select: 'address city zipCode location countryCode',
         },
       })
       .populate({
         path: 'user',
-        select: 'fullName addresses',
+        select: 'fullName addresses appCountryCode',
         populate: {
           path: 'addresses',
-          select: 'isDefault address city zipCode location label',
+          select: 'isDefault address city zipCode location label countryCode',
         },
       })
       .lean()
@@ -1107,9 +1120,10 @@ export class DeliveryAgentService {
       this.mapOrderRowForAgent(row as Record<string, unknown>),
     );
 
-    const agentId = String(user._id ?? user.id);
     const userStoreIds = new Set(
-      await this._storeDeliveryDrivers.listStoreIdsForActiveDriver(agentId),
+      await this._storeDeliveryDrivers.listStoreIdsForActiveDriver(
+        String(agentId),
+      ),
     );
 
     const managedStoreRows = await this._stores
@@ -1126,40 +1140,62 @@ export class DeliveryAgentService {
         managedStoreIds,
       );
 
-    const items = mapped.filter((item) => {
-      const sid = item.storeId ?? '';
-      const managed = sid ? managedStoreMap.get(sid) : undefined;
-      if (managed) {
-        const selfDeliveryRequired = selfDeliveryByStore.get(sid) === true;
-        if (selfDeliveryRequired) {
-          if (!userStoreIds.has(sid)) return false;
-          const mode = String(
-            managed.deliveryAssignmentMode ??
-              StoreDeliveryAssignmentModeEnum.AUTO,
-          ).toUpperCase();
-          if (mode === StoreDeliveryAssignmentModeEnum.MANUAL) return false;
-          return true;
-        }
-        if (userStoreIds.has(sid)) {
-          const mode = String(
-            managed.deliveryAssignmentMode ??
-              StoreDeliveryAssignmentModeEnum.AUTO,
-          ).toUpperCase();
-          if (mode === StoreDeliveryAssignmentModeEnum.MANUAL) return false;
-          return true;
-        }
+    const settingsCache = new Map<
+      string,
+      Awaited<ReturnType<PlatformShippingSettingsService['getPublicSettings']>>
+    >();
+    const resolveSettings = async (regionCode?: string) => {
+      const key = regionCode?.trim().toUpperCase() || '__global__';
+      let cached = settingsCache.get(key);
+      if (!cached) {
+        cached = await this._platformShipping.getPublicSettings(
+          key === '__global__' ? undefined : key,
+        );
+        settingsCache.set(key, cached);
       }
-      if (item.distanceKm == null) return false;
-      return item.distanceKm <= maxDeliveryRadiusKm + 1e-9;
-    });
+      return cached;
+    };
+
+    const items: typeof mapped = [];
+    for (let i = 0; i < mapped.length; i++) {
+      const item = mapped[i];
+      const row = rows[i] as Record<string, unknown>;
+      if (
+        !this.isPendingOrderEligibleForAgent(item, {
+          managedStoreMap,
+          userStoreIds,
+          selfDeliveryByStore,
+        })
+      ) {
+        continue;
+      }
+      const maxDeliveryRadiusKm = await this.resolveMaxDeliveryRadiusKmForOrderRow(
+        row,
+        user,
+        resolveSettings,
+      );
+      if (
+        !pendingOrderWithinMaxDeliveryRadius(
+          item.distanceKm,
+          maxDeliveryRadiusKm,
+        )
+      ) {
+        continue;
+      }
+      items.push(item);
+    }
 
     this._logger.debug(
-      `[DeliveryTrace] listPendingOrders agent=${agentId} ` +
+      `[DeliveryTrace] listPendingOrders agent=${String(agentId)} ` +
         `unassignedFetched=${mapped.length} afterFilter=${items.length} ` +
-        `radiusKm=${maxDeliveryRadiusKm}`,
+        `agentRegion=${agentRegionCode ?? 'global'} ` +
+        `agentRadiusKm=${agentSettings.maxDeliveryRadiusKm}`,
     );
 
-    return { items, maxDeliveryRadiusKm };
+    return {
+      items,
+      maxDeliveryRadiusKm: agentSettings.maxDeliveryRadiusKm,
+    };
   }
 
   /** Commandes expédiées assignées au livreur connecté (carte + suivi). */
@@ -1685,7 +1721,7 @@ export class DeliveryAgentService {
       .findById(oid)
       .populate(
         'store',
-        'name owner address vendorManagesDeliveryDrivers deliveryAssignmentMode',
+        'name owner address region vendorManagesDeliveryDrivers deliveryAssignmentMode',
       )
       .populate({
         path: 'user',
@@ -1740,6 +1776,27 @@ export class DeliveryAgentService {
           throw new ForbiddenException('store_driver_membership_required');
         }
       }
+    }
+
+    const mappedForRadius = this.mapOrderRowForAgent(
+      orderDoc.toObject() as Record<string, unknown>,
+    );
+    const radiusSettings = await this._platformShipping.getPublicSettings(
+      resolvePlatformShippingRegionCode([
+        countryCodeFromStoreRegion(storePop),
+        typeof orderDoc.taxCountryCode === 'string'
+          ? orderDoc.taxCountryCode
+          : null,
+        user.appCountryCode,
+      ]),
+    );
+    if (
+      !pendingOrderWithinMaxDeliveryRadius(
+        mappedForRadius.distanceKm,
+        radiusSettings.maxDeliveryRadiusKm,
+      )
+    ) {
+      throw new BadRequestException('order_outside_delivery_radius');
     }
 
     const prevOrderStatus = orderDoc.status as OrderStatusEnum;
@@ -1797,7 +1854,7 @@ export class DeliveryAgentService {
       .findById(oid)
       .populate(
         'store',
-        'name owner address vendorManagesDeliveryDrivers deliveryAssignmentMode',
+        'name owner address region vendorManagesDeliveryDrivers deliveryAssignmentMode',
       )
       .populate({
         path: 'user',
@@ -2469,6 +2526,61 @@ export class DeliveryAgentService {
       return store.currency.trim().toUpperCase();
     }
     return 'CAD';
+  }
+
+  private isPendingOrderEligibleForAgent(
+    item: { storeId?: string | null },
+    ctx: {
+      managedStoreMap: Map<string, { deliveryAssignmentMode?: string }>;
+      userStoreIds: Set<string>;
+      selfDeliveryByStore: Map<string, boolean>;
+    },
+  ): boolean {
+    const sid = item.storeId ?? '';
+    const managed = sid ? ctx.managedStoreMap.get(sid) : undefined;
+    if (managed) {
+      const selfDeliveryRequired = ctx.selfDeliveryByStore.get(sid) === true;
+      if (selfDeliveryRequired) {
+        if (!ctx.userStoreIds.has(sid)) return false;
+        const mode = String(
+          managed.deliveryAssignmentMode ??
+            StoreDeliveryAssignmentModeEnum.AUTO,
+        ).toUpperCase();
+        if (mode === StoreDeliveryAssignmentModeEnum.MANUAL) return false;
+        return true;
+      }
+      if (ctx.userStoreIds.has(sid)) {
+        const mode = String(
+          managed.deliveryAssignmentMode ??
+            StoreDeliveryAssignmentModeEnum.AUTO,
+        ).toUpperCase();
+        if (mode === StoreDeliveryAssignmentModeEnum.MANUAL) return false;
+        return true;
+      }
+    }
+    return true;
+  }
+
+  private async resolveMaxDeliveryRadiusKmForOrderRow(
+    row: Record<string, unknown>,
+    user: UserModel,
+    resolveSettings: (
+      regionCode?: string,
+    ) => Promise<
+      Awaited<ReturnType<PlatformShippingSettingsService['getPublicSettings']>>
+    >,
+  ): Promise<number> {
+    const storeObj =
+      row.store && typeof row.store === 'object'
+        ? (row.store as Record<string, unknown>)
+        : null;
+    const regionCode = resolvePlatformShippingRegionCode([
+      countryCodeFromStoreRegion(storeObj),
+      typeof row.taxCountryCode === 'string' ? row.taxCountryCode : null,
+      user.appCountryCode,
+    ]);
+    const settings = await resolveSettings(regionCode);
+    return settings.maxDeliveryRadiusKm;
   }
 
   private mapOrderRowForAgent(row: Record<string, unknown>) {

@@ -206,16 +206,7 @@ export class PendingDeliveryService {
     }
 
     const proofPhotoUrls = (
-      await Promise.all(
-        files.map(async (file) => {
-          const url = await this.medias.upload(
-            file,
-            args.user,
-            'delivery-proof',
-          );
-          return String(url ?? '').trim();
-        }),
-      )
+      await this.medias.uploadDeliveryProofBatch(files, args.user)
     ).filter(Boolean);
     if (proofPhotoUrls.length < MIN_PROOF_PHOTOS) {
       throw new BadRequestException('proof_photos_upload_failed');

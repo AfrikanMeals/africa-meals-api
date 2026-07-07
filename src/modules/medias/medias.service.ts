@@ -400,6 +400,59 @@ export class MediasService {
     }
   }
 
+  /**
+   * Photos preuve livraison : compression dédiée (toujours) + un seul chargement
+   * des réglages stockage pour tout le lot.
+   */
+  async uploadDeliveryProofBatch(
+    files: Express.Multer.File[],
+    user: UserModel,
+  ): Promise<string[]> {
+    if (!files.length) return [];
+    try {
+      const settings = await this.storageSettings.getPublicSettings();
+      const maxBytes = settings.maxFileSizeMb * 1024 * 1024;
+      const engine = await this.resolveUploadEngine('delivery-proof');
+      const owner = user._id.toString();
+
+      const prepared = await Promise.all(
+        files.map(async (file) => {
+          let current = prepareIncomingUploadFile(file);
+          assertUploadFileSignature(current);
+          if ((current.buffer?.length ?? current.size ?? 0) > maxBytes) {
+            throw new BadRequestException('file_too_large');
+          }
+          current = await this.compression.compressDeliveryProof(current);
+          if ((current.buffer?.length ?? current.size ?? 0) > maxBytes) {
+            throw new BadRequestException('file_too_large');
+          }
+          return current;
+        }),
+      );
+
+      return Promise.all(
+        prepared.map(async (file) => {
+          const path = `delivery-proof/${uuid()}${extname(file.originalname)}`;
+          const result = await this.uploadWithFallback(engine, settings, {
+            buffer: file.buffer,
+            path,
+            contentType: file.mimetype,
+            owner,
+          });
+          const url = await this.resolveUploadPublicUrl(result);
+          return String(url ?? '').trim();
+        }),
+      );
+    } catch (e) {
+      if (e instanceof BadRequestException) throw e;
+      this.logger.error(
+        'MediasService.uploadDeliveryProofBatch',
+        e instanceof Error ? e.stack : String(e),
+      );
+      throw new ServiceUnavailableException('storage_upload_failed');
+    }
+  }
+
   /** Upload système (e-mails, assets générés) sans utilisateur JWT. */
   async uploadSystemBuffer(args: {
     buffer: Buffer;

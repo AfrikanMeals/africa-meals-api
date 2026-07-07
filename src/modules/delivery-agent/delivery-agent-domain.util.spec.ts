@@ -1,6 +1,7 @@
 import {
   resolveDeliveryAgentPresence,
   AGENT_LOCATION_EMIT_THROTTLE_MS,
+  pendingOrderWithinMaxDeliveryRadius,
 } from './delivery-agent-domain.util';
 
 describe('delivery-agent-domain.util', () => {
@@ -13,5 +14,12 @@ describe('delivery-agent-domain.util', () => {
   it('throttle aligns with mobile GPS interval (~12s)', () => {
     expect(AGENT_LOCATION_EMIT_THROTTLE_MS).toBe(10_000);
     expect(AGENT_LOCATION_EMIT_THROTTLE_MS).toBeLessThanOrEqual(12_000);
+  });
+
+  it('pendingOrderWithinMaxDeliveryRadius respects admin max km', () => {
+    expect(pendingOrderWithinMaxDeliveryRadius(14.9, 15)).toBe(true);
+    expect(pendingOrderWithinMaxDeliveryRadius(15, 15)).toBe(true);
+    expect(pendingOrderWithinMaxDeliveryRadius(15.01, 15)).toBe(false);
+    expect(pendingOrderWithinMaxDeliveryRadius(null, 15)).toBe(false);
   });
 });
