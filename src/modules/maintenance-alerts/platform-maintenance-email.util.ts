@@ -1,4 +1,4 @@
-import { resolveEmailBrand } from '@modules/mailer/email-brand.util';
+import { resolveEmailWebSiteBase } from '@modules/mailer/email-web-asset-url.util';
 import { ConfigService } from '@nestjs/config';
 import { MaintenancePlatformEnum } from '@schemas/platform-maintenance.schema';
 
@@ -11,11 +11,7 @@ export function resolveMaintenanceModeHeroUrl(args: {
   config: ConfigService;
   enabled: boolean;
 }): string {
-  const brand = resolveEmailBrand(args.config);
-  const base =
-    brand.websiteUrl?.replace(/\/+$/, '') ||
-    args.config.get<string>('EMAIL_WEBSITE_URL')?.trim()?.replace(/\/+$/, '') ||
-    'https://wise-eat.com';
+  const base = resolveEmailWebSiteBase(args.config);
   const file = args.enabled ? HERO_FILES.on : HERO_FILES.off;
   return `${base}/images/email-heroes/${file}`;
 }

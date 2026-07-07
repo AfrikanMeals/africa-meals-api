@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
+import { resolveEmailWebAssetUrl, resolveEmailWebSiteBase } from '@modules/mailer/email-web-asset-url.util';
 import { MediasService } from '@modules/medias/medias.service';
 import {
   PlatformThemeSettingsDocument,
@@ -118,9 +119,9 @@ export class PlatformThemeSettingsService {
     }
     const settings = await this.getPublicSettings();
     const raw = settings.resolvedAppLogoUrl;
-    const resolved = raw
-      ? (await this._medias.resolvePublicMediaUrl(raw)) ?? raw
-      : null;
+    const webBase = resolveEmailWebSiteBase(this._config);
+    const web = raw ? resolveEmailWebAssetUrl(raw, webBase) : null;
+    const resolved = web ?? `${webBase}/logo.png`;
     this.cachedLogo = { at: now, url: resolved };
     return resolved;
   }

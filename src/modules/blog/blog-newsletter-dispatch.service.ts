@@ -10,6 +10,10 @@ import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { MailerService } from '@modules/mailer/mailer.service';
 import { MediasService } from '@modules/medias/medias.service';
 import {
+  resolveEmailImageUrl,
+  resolveEmailWebSiteBase,
+} from '@modules/mailer/email-web-asset-url.util';
+import {
   BlogArticleDocument,
   BlogArticleModel,
 } from '@schemas/blog.schema';
@@ -113,8 +117,9 @@ export class BlogNewsletterDispatchService {
       article.locale,
     );
     const featuredRaw = article.featuredImageUrl?.trim();
+    const webBase = resolveEmailWebSiteBase(this.config);
     const featuredImageUrl = featuredRaw
-      ? (await this.medias.resolvePublicMediaUrl(featuredRaw)) ?? featuredRaw
+      ? (await resolveEmailImageUrl(featuredRaw, webBase)) ?? featuredRaw
       : undefined;
     const batches = this.splitBatches({
       campaignId,
@@ -197,12 +202,7 @@ export class BlogNewsletterDispatchService {
   }
 
   private webBaseUrl(): string {
-    return (
-      this.config.get<string>('PUBLIC_WEB_URL')?.trim() ||
-      this.config.get<string>('EMAIL_WEBSITE_URL')?.trim() ||
-      this.config.get<string>('WEBSITE_URL')?.trim() ||
-      'https://wise-eat.com'
-    ).replace(/\/$/, '');
+    return resolveEmailWebSiteBase(this.config);
   }
 
   private buildArticleUrl(

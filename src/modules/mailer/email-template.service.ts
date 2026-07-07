@@ -7,6 +7,11 @@ import {
   escapeEmailHtml,
   type EmailBrand,
 } from './email-brand.util';
+import { resolveAllEmailHtmlStorageUrls } from './email-media-url.util';
+import {
+  resolveEmailImageUrl,
+  resolveEmailWebSiteBase,
+} from './email-web-asset-url.util';
 import {
   shouldWrapEmailHtml,
   wrapEmailHtml,
@@ -52,18 +57,20 @@ export class EmailTemplateService {
 
   async getBrandAsync(): Promise<EmailBrand> {
     const base = resolveEmailBrand(this.config);
+    const webBase = resolveEmailWebSiteBase(this.config);
     try {
       const logo = await this.themeSettings.getResolvedAppLogoUrl();
       if (logo) {
-        return { ...base, logoUrl: logo };
+        const resolved =
+          (await resolveEmailImageUrl(logo, webBase)) ?? logo;
+        return { ...base, logoUrl: resolved };
       }
     } catch {
       /* repli env */
     }
     if (base.logoUrl) {
       const resolved =
-        (await this.medias.resolvePublicMediaUrl(base.logoUrl)) ??
-        base.logoUrl;
+        (await resolveEmailImageUrl(base.logoUrl, webBase)) ?? base.logoUrl;
       return { ...base, logoUrl: resolved };
     }
     return base;
@@ -81,21 +88,33 @@ export class EmailTemplateService {
     return wrapEmailHtml(this.getBrand(), bodyHtml, options);
   }
 
+  /** Réécrit toutes les URLs stockage (img, JSON-LD, etc.) vers le site vitrine. */
+  async resolveHtmlMediaUrls(html: string): Promise<string> {
+    const webBase = resolveEmailWebSiteBase(this.config);
+    return resolveAllEmailHtmlStorageUrls(
+      html,
+      (url) => resolveEmailImageUrl(url, webBase),
+      webBase,
+    );
+  }
+
   async wrapBodyAsync(
     bodyHtml: string,
     options?: WrapEmailOptions,
   ): Promise<string> {
     const brand = await this.getBrandAsync();
+    const bodyResolved = await this.resolveHtmlMediaUrls(bodyHtml);
     let resolvedOptions = options;
     const heroRaw = options?.heroImageUrl?.trim();
     if (heroRaw) {
+      const webBase = resolveEmailWebSiteBase(this.config);
       const heroResolved =
-        (await this.medias.resolvePublicMediaUrl(heroRaw)) ?? heroRaw;
+        (await resolveEmailImageUrl(heroRaw, webBase)) ?? heroRaw;
       if (heroResolved !== heroRaw) {
         resolvedOptions = { ...options, heroImageUrl: heroResolved };
       }
     }
-    return wrapEmailHtml(brand, bodyHtml, resolvedOptions);
+    return wrapEmailHtml(brand, bodyResolved, resolvedOptions);
   }
 
   heading = emailHeading;

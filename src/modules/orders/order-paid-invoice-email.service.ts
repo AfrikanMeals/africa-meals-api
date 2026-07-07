@@ -2,6 +2,10 @@ import { MailerService } from '@modules/mailer/mailer.service';
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { MediasService } from '@modules/medias/medias.service';
 import {
+  resolveEmailImageUrl,
+  resolveEmailWebSiteBase,
+} from '@modules/mailer/email-web-asset-url.util';
+import {
   BadRequestException,
   Injectable,
   Logger,
@@ -502,7 +506,9 @@ export class OrderPaidInvoiceEmailService {
         const row = it as { pictureUrl?: string; picture_url?: string };
         const raw = String(row.pictureUrl ?? row.picture_url ?? '').trim();
         if (!raw || !/^https?:\/\//i.test(raw)) return it;
-        const url = (await this.medias.resolvePublicMediaUrl(raw)) ?? raw;
+        const webBase = resolveEmailWebSiteBase(this.config);
+        const url =
+          (await resolveEmailImageUrl(raw, webBase)) ?? raw;
         return { ...it, pictureUrl: url };
       }),
     );
@@ -637,13 +643,18 @@ export class OrderPaidInvoiceEmailService {
     const text = textLines.filter(Boolean).join('\n');
 
     // Balisage Schema.org « Order » + « Invoice » : carte achat Gmail
+    const webBase = resolveEmailWebSiteBase(this.config);
+    const merchantLogoRaw =
+      brand.logoUrl ?? firstOrderItemImageUrl(snapshot) ?? undefined;
+    const merchantLogoUrl = merchantLogoRaw
+      ? (await resolveEmailImageUrl(merchantLogoRaw, webBase)) ?? merchantLogoRaw
+      : undefined;
     const jsonLdOpts = {
       ref,
       orderStatus,
       orderUrl,
       publicWebUrl,
-      merchantLogoUrl:
-        brand.logoUrl ?? firstOrderItemImageUrl(snapshot) ?? undefined,
+      merchantLogoUrl,
       appName: brand.appName,
       carrierName: snapshot.carrierName,
     };

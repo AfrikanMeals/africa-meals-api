@@ -1,5 +1,9 @@
 import { MailerService } from '@modules/mailer/mailer.service';
 import { MediasService } from '@modules/medias/medias.service';
+import {
+  resolveEmailImageUrl,
+  resolveEmailWebSiteBase,
+} from '@modules/mailer/email-web-asset-url.util';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 import { Injectable, Logger } from '@nestjs/common';
@@ -191,8 +195,9 @@ export class GiftCodeActivationNotifierService {
       typeof raw.imageUrl === 'string' && raw.imageUrl.trim()
         ? raw.imageUrl.trim()
         : null;
+    const webBase = resolveEmailWebSiteBase(this.config);
     const imageUrl = imageRaw
-      ? (await this.medias.resolvePublicMediaUrl(imageRaw)) ?? imageRaw
+      ? (await resolveEmailImageUrl(imageRaw, webBase)) ?? imageRaw
       : null;
     return {
       giftCodeId: String(raw._id ?? giftCodeId),

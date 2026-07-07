@@ -1681,7 +1681,7 @@ export class DeliveryAgentService {
       throw new BadRequestException('delivery_agent_capacity_full');
     }
 
-    const orderDoc = await this._orders
+    let orderDoc = await this._orders
       .findById(oid)
       .populate(
         'store',
@@ -1743,9 +1743,72 @@ export class DeliveryAgentService {
     }
 
     const prevOrderStatus = orderDoc.status as OrderStatusEnum;
-    orderDoc.set('assignedDeliveryUser', agentId);
-    orderDoc.status = OrderStatusEnum.SHIPPED;
-    await orderDoc.save();
+
+    const claimFilter = {
+      _id: oid,
+      shouldShip: true,
+      $or: [
+        { assignedDeliveryUser: { $exists: false } },
+        { assignedDeliveryUser: null },
+      ],
+      status: {
+        $in: [
+          OrderStatusEnum.CREATED,
+          OrderStatusEnum.PAIED,
+          OrderStatusEnum.APPROVED,
+        ],
+      },
+    } as Record<string, unknown>;
+
+    const claimUpdate = {
+      $set: {
+        assignedDeliveryUser: agentId,
+        status: OrderStatusEnum.SHIPPED,
+      },
+    };
+
+    const claimResult = await this._orders.updateOne(claimFilter, claimUpdate).exec();
+
+    if (claimResult.matchedCount === 0) {
+      const fresh = await this._orders
+        .findById(oid)
+        .select('assignedDeliveryUser status shouldShip')
+        .lean()
+        .exec();
+      if (!fresh) {
+        throw new NotFoundException('order_not_found');
+      }
+      const persistedAgent = fresh.assignedDeliveryUser
+        ? String(fresh.assignedDeliveryUser)
+        : '';
+      if (
+        persistedAgent === String(agentId) &&
+        fresh.status === OrderStatusEnum.SHIPPED
+      ) {
+        // Idempotent : déjà assignée à ce livreur.
+      } else if (persistedAgent) {
+        throw new BadRequestException('order_assigned_to_other');
+      } else {
+        throw new BadRequestException('order_not_assignable');
+      }
+    }
+
+    const reloaded = await this._orders
+      .findById(oid)
+      .populate(
+        'store',
+        'name owner address vendorManagesDeliveryDrivers deliveryAssignmentMode',
+      )
+      .populate({
+        path: 'user',
+        select: 'fullName addresses',
+        populate: { path: 'addresses' },
+      })
+      .exec();
+    if (!reloaded) {
+      throw new NotFoundException('order_not_found');
+    }
+    orderDoc = reloaded;
 
     const persisted = await this._orders
       .findById(oid)

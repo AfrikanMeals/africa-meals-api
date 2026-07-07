@@ -66,10 +66,13 @@ export class MailerService {
     subject: string,
     args?: Pick<SendSimpleMailDto, 'heroImageUrl' | 'heroImageAlt'>,
   ): Promise<string> {
-    if (!this._emailTemplate.shouldWrap(html)) {
-      return html;
+    const withResolvedMedia = await this._emailTemplate.resolveHtmlMediaUrls(
+      html,
+    );
+    if (!this._emailTemplate.shouldWrap(withResolvedMedia)) {
+      return withResolvedMedia;
     }
-    return this._emailTemplate.wrapBodyAsync(html, {
+    return this._emailTemplate.wrapBodyAsync(withResolvedMedia, {
       title: subject,
       preheader: subject,
       heroImageUrl: args?.heroImageUrl,
