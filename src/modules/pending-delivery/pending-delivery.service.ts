@@ -34,7 +34,6 @@ import {
   formatDistanceMetersLabel,
   isMeaningfulGeoCoordinate,
   proofPhotosJsonToMulterFiles,
-  shouldBlockPendingDeliveryResubmit,
   type ProofPhotoJsonInput,
 } from './pending-delivery.util';
 import {
@@ -176,16 +175,9 @@ export class PendingDeliveryService {
           proofPhotoCount: existing.proofPhotoUrls?.length ?? 0,
         };
       }
-      const sameAgent = mongoIdsEqual(existing.deliveryAgentId, agentId);
-      if (
-        shouldBlockPendingDeliveryResubmit({
-          orderStatus: String(order.status),
-          existingProofStatus: String(existing.status),
-          sameDeliveryAgent: sameAgent,
-        })
-      ) {
-        throw new BadRequestException('pending_delivery_already_submitted');
-      }
+      // Commande encore expédiée : le livreur assigné est déjà validé par
+      // loadAssignedDeliveryOrder — remplacer / compléter la preuve (retry, timeout,
+      // réassignation avec ancien deliveryAgentId sur la preuve).
     }
 
     const dest = this.deliveryCoordsFromOrder(order);

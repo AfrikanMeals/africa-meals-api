@@ -107,20 +107,26 @@ export function formatDistanceMetersLabel(meters: number): string {
   return `${(meters / 1000).toFixed(1)} km`;
 }
 
-/** Commande encore en cours — le même livreur peut renvoyer / remplacer la preuve. */
+/** Commande encore expédiée — le livreur assigné peut renvoyer / remplacer la preuve. */
 export function canCourierReplacePendingDeliveryProof(args: {
   orderStatus: string;
-  sameDeliveryAgent: boolean;
+  /** True si loadAssignedDeliveryOrder a validé le livreur sur la commande. */
+  assignedAgentVerified?: boolean;
+  sameDeliveryAgent?: boolean;
 }): boolean {
-  if (!args.sameDeliveryAgent) return false;
-  return String(args.orderStatus).trim().toLowerCase() === 'shipped';
+  if (String(args.orderStatus).trim().toLowerCase() !== 'shipped') {
+    return false;
+  }
+  if (args.assignedAgentVerified === true) return true;
+  return args.sameDeliveryAgent === true;
 }
 
 /** Bloque une nouvelle soumission (preuve active + pas de resoumission autorisée). */
 export function shouldBlockPendingDeliveryResubmit(args: {
   orderStatus: string;
   existingProofStatus: string;
-  sameDeliveryAgent: boolean;
+  sameDeliveryAgent?: boolean;
+  assignedAgentVerified?: boolean;
 }): boolean {
   if (String(args.existingProofStatus).trim() === 'admin_rejected') {
     return false;
@@ -131,6 +137,7 @@ export function shouldBlockPendingDeliveryResubmit(args: {
   if (
     canCourierReplacePendingDeliveryProof({
       orderStatus: args.orderStatus,
+      assignedAgentVerified: args.assignedAgentVerified,
       sameDeliveryAgent: args.sameDeliveryAgent,
     })
   ) {

@@ -100,7 +100,17 @@ describe('pending-delivery.util', () => {
   });
 
   describe('shouldBlockPendingDeliveryResubmit', () => {
-    it('autorise resoumission livreur si commande encore shipped', () => {
+    it('autorise resoumission livreur assigné si commande encore shipped', () => {
+      expect(
+        shouldBlockPendingDeliveryResubmit({
+          orderStatus: 'shipped',
+          existingProofStatus: 'submitted',
+          assignedAgentVerified: true,
+        }),
+      ).toBe(false);
+    });
+
+    it('autorise resoumission si même livreur sur la preuve', () => {
       expect(
         shouldBlockPendingDeliveryResubmit({
           orderStatus: 'shipped',
@@ -110,7 +120,7 @@ describe('pending-delivery.util', () => {
       ).toBe(false);
     });
 
-    it('bloque si autre livreur', () => {
+    it('bloque si autre livreur sans assignation vérifiée', () => {
       expect(
         shouldBlockPendingDeliveryResubmit({
           orderStatus: 'shipped',
