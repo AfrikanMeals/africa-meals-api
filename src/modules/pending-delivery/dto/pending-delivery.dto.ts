@@ -4,6 +4,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsEnum,
   IsInt,
   IsLatitude,
   IsLongitude,
@@ -16,6 +17,39 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+
+export enum PendingDeliveryNotifyPartyEnum {
+  CUSTOMER = 'customer',
+  VENDOR = 'vendor',
+  DELIVERY_AGENT = 'delivery_agent',
+}
+
+export class NotifyPendingDeliveryPartiesDto {
+  @ApiProperty({
+    enum: PendingDeliveryNotifyPartyEnum,
+    isArray: true,
+    description: 'Destinataires de l’e-mail.',
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsEnum(PendingDeliveryNotifyPartyEnum, { each: true })
+  recipients: PendingDeliveryNotifyPartyEnum[];
+
+  @ApiPropertyOptional({ maxLength: 200 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  subject?: string;
+
+  @ApiPropertyOptional({
+    maxLength: 50000,
+    description: 'Corps HTML (TinyMCE) — inséré dans le template Wise Eat.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50000)
+  htmlBody?: string;
+}
 
 export class PendingDeliveriesQueryDto {
   @ApiPropertyOptional({ description: 'Filtre boutique (obligatoire pour vendeur).' })

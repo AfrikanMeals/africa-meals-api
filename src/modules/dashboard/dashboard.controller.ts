@@ -42,6 +42,7 @@ import { DashboardService } from './dashboard.service';
 import { PendingDeliveryService } from '@modules/pending-delivery/pending-delivery.service';
 import {
   ClosePendingDeliveryDto,
+  NotifyPendingDeliveryPartiesDto,
   PendingDeliveriesQueryDto,
   ReviewPendingDeliveryDto,
 } from '@modules/pending-delivery/dto/pending-delivery.dto';
@@ -82,17 +83,22 @@ export class DashboardController {
 
   @Post('pending-deliveries/:proofId/notify-parties')
   @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({
     summary:
-      'Renvoie les e-mails vendeur et client pour une livraison client absent.',
+      'Envoie un e-mail aux parties sélectionnées (client, boutique, livreur).',
   })
   notifyPendingDeliveryParties(
     @Req() req: Request,
     @Param('proofId') proofId: string,
+    @Body() body: NotifyPendingDeliveryPartiesDto,
   ) {
     return this._pendingDelivery.notifyThirdPartiesByAdmin({
       user: req.user as UserModel,
       proofId,
+      recipients: body.recipients,
+      subject: body.subject,
+      htmlBody: body.htmlBody,
     });
   }
 

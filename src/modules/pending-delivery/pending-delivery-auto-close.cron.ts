@@ -29,7 +29,6 @@ export class PendingDeliveryAutoCloseCron {
             `Pending delivery auto-close: scanned=${res.scanned} closed=${res.closed} failed=${res.failed}`,
           );
         }
-        return `scanned=${res.scanned} closed=${res.closed} failed=${res.failed}`;
       } catch (e) {
         this.logger.error(
           `Pending delivery auto-close failed: ${
