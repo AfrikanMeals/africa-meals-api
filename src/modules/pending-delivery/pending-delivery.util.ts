@@ -107,6 +107,27 @@ export function formatDistanceMetersLabel(meters: number): string {
   return `${(meters / 1000).toFixed(1)} km`;
 }
 
+export type PendingDeliveryWsExtra = {
+  pendingDeliveryProofId: string;
+  pendingDeliveryProofStatus: string;
+  storeId?: string;
+};
+
+export function buildPendingDeliveryWsExtra(args: {
+  proofId: string;
+  status: string;
+  storeId?: string | null;
+}): PendingDeliveryWsExtra {
+  const proofId = args.proofId.trim();
+  const status = args.status.trim();
+  const storeId = args.storeId?.trim();
+  return {
+    pendingDeliveryProofId: proofId,
+    pendingDeliveryProofStatus: status,
+    ...(storeId ? { storeId } : {}),
+  };
+}
+
 /** Commande encore expédiée — le livreur assigné peut renvoyer / remplacer la preuve. */
 export function canCourierReplacePendingDeliveryProof(args: {
   orderStatus: string;

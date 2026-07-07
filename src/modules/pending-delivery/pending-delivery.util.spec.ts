@@ -1,4 +1,5 @@
 import {
+  buildPendingDeliveryWsExtra,
   distanceMetersBetweenPoints,
   formatDistanceMetersLabel,
   inferProofPhotoMimeFromFilename,
@@ -96,6 +97,22 @@ describe('pending-delivery.util', () => {
       expect(inferProofPhotoMimeFromFilename('proof.jpg')).toBe('image/jpeg');
       expect(isAllowedProofPhotoMime('image/webp')).toBe(true);
       expect(isAllowedProofPhotoMime('application/pdf')).toBe(false);
+    });
+  });
+
+  describe('buildPendingDeliveryWsExtra', () => {
+    it('inclut id, statut et boutique', () => {
+      expect(
+        buildPendingDeliveryWsExtra({
+          proofId: 'abc123',
+          status: 'submitted',
+          storeId: 'store1',
+        }),
+      ).toEqual({
+        pendingDeliveryProofId: 'abc123',
+        pendingDeliveryProofStatus: 'submitted',
+        storeId: 'store1',
+      });
     });
   });
 

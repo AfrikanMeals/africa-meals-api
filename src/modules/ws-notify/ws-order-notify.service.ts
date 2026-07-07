@@ -28,6 +28,9 @@ export type OrderWsTrackingPayload = {
   vendorAcceptedAt?: string;
   /** Adresse livraison modifiée (admin) — resync cartes livreur / client. */
   deliveryAddressUpdated?: boolean;
+  /** Preuve livraison « client absent » — resync admin livraisons en attente. */
+  pendingDeliveryProofId?: string;
+  pendingDeliveryProofStatus?: string;
 };
 
 /**

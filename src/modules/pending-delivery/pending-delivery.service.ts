@@ -30,6 +30,7 @@ import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { mongoIdsEqual, objectIdStringFromRef } from '@utils/mongoose-ref.util';
 import {
+  buildPendingDeliveryWsExtra,
   distanceMetersBetweenPoints,
   formatDistanceMetersLabel,
   isMeaningfulGeoCoordinate,
@@ -260,17 +261,13 @@ export class PendingDeliveryService {
             duplicate.status !== PendingDeliveryProofStatusEnum.ADMIN_REJECTED
           ) {
             const orderId = String(order._id);
-            const completion = await this.completeOrderAfterProofSubmit({
-              orderId,
-              agentId,
-            });
+            this.emitPendingDeliveryRealtime(order, duplicate, storeId);
             return {
               proofId: String(duplicate._id),
               orderId,
               status: duplicate.status,
-              orderStatus: completion.status,
-              orderCompleted: true,
-              pickedUpAt: completion.pickedUpAt,
+              orderStatus: order.status,
+              orderCompleted: false,
               distanceMeters: duplicate.distanceMeters,
               distanceLabel: formatDistanceMetersLabel(
                 duplicate.distanceMeters,
@@ -305,35 +302,41 @@ export class PendingDeliveryService {
       ),
     );
 
-    const completion = await this.completeOrderAfterProofSubmit({
-      orderId: String(order._id),
-      agentId,
-    });
+    this.emitPendingDeliveryRealtime(order, proof, storeId);
 
     return {
       proofId: String(proof._id),
       orderId: String(order._id),
       status: proof.status,
-      orderStatus: completion.status,
-      orderCompleted: true,
-      pickedUpAt: completion.pickedUpAt,
+      orderStatus: order.status,
+      orderCompleted: false,
       distanceMeters,
       distanceLabel: formatDistanceMetersLabel(distanceMeters),
       proofPhotoCount: proofPhotoUrls.length,
     };
   }
 
-  /** Même finalisation que le scan QR : statut, historique, paiement livreur, WS. */
-  private async completeOrderAfterProofSubmit(args: {
-    orderId: string;
-    agentId: string;
-  }) {
-    return this.ordersService.completeDeliveryFromPendingProof({
-      orderId: args.orderId,
-      actorUserId: args.agentId,
-      source: OrderStatusChangeSourceEnum.DELIVERY_AGENT,
-      note: 'Livraison déposée — client absent (preuve photo)',
-    });
+  /** WS + staff broadcast : nouvelle preuve ou changement de statut. */
+  private emitPendingDeliveryRealtime(
+    order: OrderModel,
+    proof: Pick<PendingDeliveryProofModel, '_id' | 'status'>,
+    storeId?: string | null,
+  ): void {
+    const sid =
+      storeId?.trim() ||
+      objectIdStringFromRef(
+        (proof as { storeId?: unknown }).storeId,
+      ) ||
+      this.storeIdFromOrder(order);
+    this.ordersService.notifyOrderPartiesRealtime(
+      order,
+      order.status as OrderStatusEnum,
+      buildPendingDeliveryWsExtra({
+        proofId: String(proof._id),
+        status: String(proof.status),
+        storeId: sid,
+      }),
+    );
   }
 
   async confirmByCustomer(args: {
@@ -362,9 +365,7 @@ export class PendingDeliveryService {
     proof.customerConfirmNote = args.note?.trim() || undefined;
     await proof.save();
 
-    this.ordersService.notifyOrderPartiesRealtime(order, order.status, {
-      pendingDeliveryProofStatus: proof.status,
-    } as Record<string, unknown>);
+    this.emitPendingDeliveryRealtime(order, proof);
 
     return {
       proofId: String(proof._id),
@@ -399,9 +400,7 @@ export class PendingDeliveryService {
     proof.customerDisputeNote = args.note?.trim() || undefined;
     await proof.save();
 
-    this.ordersService.notifyOrderPartiesRealtime(order, order.status, {
-      pendingDeliveryProofStatus: proof.status,
-    } as Record<string, unknown>);
+    this.emitPendingDeliveryRealtime(order, proof);
 
     return {
       proofId: String(proof._id),
@@ -525,9 +524,7 @@ export class PendingDeliveryService {
 
     const order = await this.orderModel.findById(proof.orderId).exec();
     if (order) {
-      this.ordersService.notifyOrderPartiesRealtime(order, order.status, {
-        pendingDeliveryProofStatus: proof.status,
-      } as Record<string, unknown>);
+      this.emitPendingDeliveryRealtime(order, proof);
     }
 
     return {
@@ -585,9 +582,7 @@ export class PendingDeliveryService {
 
         const order = await this.orderModel.findById(proof.orderId).exec();
         if (order) {
-          this.ordersService.notifyOrderPartiesRealtime(order, order.status, {
-            pendingDeliveryProofStatus: proof.status,
-          } as Record<string, unknown>);
+          this.emitPendingDeliveryRealtime(order, proof);
         }
 
         if (!orderCompleted) {
@@ -662,6 +657,12 @@ export class PendingDeliveryService {
 
       proof.status = PendingDeliveryProofStatusEnum.ADMIN_APPROVED;
       await proof.save();
+
+      const order = await this.orderModel.findById(proof.orderId).exec();
+      if (order) {
+        this.emitPendingDeliveryRealtime(order, proof);
+      }
+
       return {
         proofId: String(proof._id),
         status: proof.status,
@@ -674,9 +675,7 @@ export class PendingDeliveryService {
 
     const order = await this.orderModel.findById(proof.orderId).exec();
     if (order) {
-      this.ordersService.notifyOrderPartiesRealtime(order, order.status, {
-        pendingDeliveryProofStatus: proof.status,
-      } as Record<string, unknown>);
+      this.emitPendingDeliveryRealtime(order, proof);
     }
 
     return {

@@ -42,7 +42,10 @@ import {
 } from '@common/partner-badges/partner-badge.constants';
 import { PlatformShippingSettingsService } from '@modules/platform-shipping-settings/platform-shipping-settings.service';
 import { resolvePlatformShippingRegionCode } from '@modules/platform-shipping-settings/platform-shipping-region.util';
-import { countryCodeFromStoreRegion } from '@modules/supported-countries/region-tax.util';
+import {
+  countryCodeFromStoreAddress,
+  countryCodeFromStoreRegion,
+} from '@modules/supported-countries/region-tax.util';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { PatchDeliveryAgentApplicationDto } from './dto/delivery-agent-application.dto';
 import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
@@ -76,6 +79,7 @@ import { SubscriptionsService } from '@modules/subscriptions/subscriptions.servi
 import {
   AGENT_LOCATION_EMIT_THROTTLE_MS,
   mapDeliveryPresenceToDomain,
+  pendingOrderMatchesAgentOperatingRegion,
   pendingOrderWithinMaxDeliveryRadius,
   resolveDeliveryAgentPresence,
 } from './delivery-agent-domain.util';
@@ -1169,6 +1173,15 @@ export class DeliveryAgentService {
       ) {
         continue;
       }
+      const storeRegionCode = this.resolveStoreRegionCodeFromOrderRow(row);
+      if (
+        !pendingOrderMatchesAgentOperatingRegion(
+          storeRegionCode,
+          agentRegionCode,
+        )
+      ) {
+        continue;
+      }
       const maxDeliveryRadiusKm = await this.resolveMaxDeliveryRadiusKmForOrderRow(
         row,
         user,
@@ -1781,6 +1794,21 @@ export class DeliveryAgentService {
     const mappedForRadius = this.mapOrderRowForAgent(
       orderDoc.toObject() as Record<string, unknown>,
     );
+    const storeRegionCode = this.resolveStoreRegionCodeFromOrderRow(
+      orderDoc.toObject() as Record<string, unknown>,
+    );
+    const agentRegionCode = resolvePlatformShippingRegionCode([
+      typeof app.region === 'string' ? app.region : null,
+      user.appCountryCode,
+    ]);
+    if (
+      !pendingOrderMatchesAgentOperatingRegion(
+        storeRegionCode,
+        agentRegionCode,
+      )
+    ) {
+      throw new BadRequestException('order_outside_agent_region');
+    }
     const radiusSettings = await this._platformShipping.getPublicSettings(
       resolvePlatformShippingRegionCode([
         countryCodeFromStoreRegion(storePop),
@@ -2561,6 +2589,20 @@ export class DeliveryAgentService {
     return true;
   }
 
+  private resolveStoreRegionCodeFromOrderRow(
+    row: Record<string, unknown>,
+  ): string | undefined {
+    const storeObj =
+      row.store && typeof row.store === 'object'
+        ? (row.store as Record<string, unknown>)
+        : null;
+    return resolvePlatformShippingRegionCode([
+      countryCodeFromStoreRegion(storeObj),
+      countryCodeFromStoreAddress(storeObj),
+      typeof row.taxCountryCode === 'string' ? row.taxCountryCode : null,
+    ]);
+  }
+
   private async resolveMaxDeliveryRadiusKmForOrderRow(
     row: Record<string, unknown>,
     user: UserModel,
@@ -2574,11 +2616,12 @@ export class DeliveryAgentService {
       row.store && typeof row.store === 'object'
         ? (row.store as Record<string, unknown>)
         : null;
-    const regionCode = resolvePlatformShippingRegionCode([
-      countryCodeFromStoreRegion(storeObj),
-      typeof row.taxCountryCode === 'string' ? row.taxCountryCode : null,
-      user.appCountryCode,
-    ]);
+    const regionCode = this.resolveStoreRegionCodeFromOrderRow(row) ??
+      resolvePlatformShippingRegionCode([
+        countryCodeFromStoreRegion(storeObj),
+        typeof row.taxCountryCode === 'string' ? row.taxCountryCode : null,
+        user.appCountryCode,
+      ]);
     const settings = await resolveSettings(regionCode);
     return settings.maxDeliveryRadiusKm;
   }

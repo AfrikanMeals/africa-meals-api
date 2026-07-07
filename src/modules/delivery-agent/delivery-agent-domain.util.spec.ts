@@ -1,7 +1,9 @@
 import {
   resolveDeliveryAgentPresence,
   AGENT_LOCATION_EMIT_THROTTLE_MS,
+  pendingOrderMatchesAgentOperatingRegion,
   pendingOrderWithinMaxDeliveryRadius,
+  pendingOrderWithinAgentToStoreRadius,
 } from './delivery-agent-domain.util';
 
 describe('delivery-agent-domain.util', () => {
@@ -21,5 +23,18 @@ describe('delivery-agent-domain.util', () => {
     expect(pendingOrderWithinMaxDeliveryRadius(15, 15)).toBe(true);
     expect(pendingOrderWithinMaxDeliveryRadius(15.01, 15)).toBe(false);
     expect(pendingOrderWithinMaxDeliveryRadius(null, 15)).toBe(false);
+  });
+
+  it('pendingOrderMatchesAgentOperatingRegion blocks cross-region orders', () => {
+    expect(pendingOrderMatchesAgentOperatingRegion('CA', 'CA')).toBe(true);
+    expect(pendingOrderMatchesAgentOperatingRegion('CA', 'CM')).toBe(false);
+    expect(pendingOrderMatchesAgentOperatingRegion(null, 'CM')).toBe(false);
+    expect(pendingOrderMatchesAgentOperatingRegion('CA', null)).toBe(true);
+  });
+
+  it('pendingOrderWithinAgentToStoreRadius allows unknown agent distance', () => {
+    expect(pendingOrderWithinAgentToStoreRadius(null, 15)).toBe(true);
+    expect(pendingOrderWithinAgentToStoreRadius(12, 15)).toBe(true);
+    expect(pendingOrderWithinAgentToStoreRadius(9000, 15)).toBe(false);
   });
 });

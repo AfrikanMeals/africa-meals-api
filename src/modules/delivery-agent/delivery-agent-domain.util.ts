@@ -1,4 +1,5 @@
 import type { AgentPresenceValue } from '../../common/domain-events/payloads/agent-domain-event.payloads';
+import { normalizeRegionCode } from '../platform-shipping-settings/platform-shipping-region.util';
 
 export const AGENT_LOCATION_EMIT_THROTTLE_MS = 10_000;
 
@@ -32,4 +33,26 @@ export function pendingOrderWithinMaxDeliveryRadius(
   if (distanceKm == null || !Number.isFinite(distanceKm)) return false;
   if (maxDeliveryRadiusKm <= 0) return false;
   return distanceKm <= maxDeliveryRadiusKm + 1e-9;
+}
+
+/** La boutique doit être dans la même région ISO2 que le livreur. */
+export function pendingOrderMatchesAgentOperatingRegion(
+  storeRegionCode: string | null | undefined,
+  agentRegionCode: string | null | undefined,
+): boolean {
+  const agent = normalizeRegionCode(agentRegionCode);
+  if (!agent) return true;
+  const store = normalizeRegionCode(storeRegionCode);
+  if (!store) return false;
+  return store === agent;
+}
+
+/** Distance livreur → restaurant dans le rayon max (côté mobile avec GPS). */
+export function pendingOrderWithinAgentToStoreRadius(
+  agentToStoreKm: number | null | undefined,
+  maxDeliveryRadiusKm: number,
+): boolean {
+  if (agentToStoreKm == null || !Number.isFinite(agentToStoreKm)) return true;
+  if (maxDeliveryRadiusKm <= 0) return false;
+  return agentToStoreKm <= maxDeliveryRadiusKm + 1e-9;
 }
