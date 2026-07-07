@@ -82,13 +82,13 @@ describe('pending-delivery.util', () => {
       expect(file.mimetype).toBe('image/png');
     });
 
-    it('rejette base64 invalide', () => {
+    it('rejette base64 invalide ou vide', () => {
       expect(() =>
         multerFileFromProofPhotoJson(
           { fileBase64: '%%%', filename: 'proof.jpg' },
           1024,
         ),
-      ).toThrow('invalid_base64');
+      ).toThrow('empty_image');
     });
 
     it('infère le mime depuis le nom de fichier', () => {

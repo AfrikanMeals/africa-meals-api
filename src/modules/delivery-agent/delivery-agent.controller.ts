@@ -9,19 +9,15 @@ import {
   Post,
   Query,
   Req,
-  UploadedFiles,
   UseGuards,
-  UseInterceptors,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
-import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import {
   PreviewCustomerAbsentDeliveryDto,
-  SubmitCustomerAbsentDeliveryDto,
   SubmitCustomerAbsentDeliveryJsonDto,
 } from '@modules/pending-delivery/dto/pending-delivery.dto';
 import { PendingDeliveryService } from '@modules/pending-delivery/pending-delivery.service';
@@ -234,33 +230,29 @@ export class DeliveryAgentController {
     });
   }
 
+  /** JSON + base64 — Fastify ne gère pas multipart/form-data (415). */
   @Post('orders/:orderId/customer-absent/submit')
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  @UseInterceptors(
-    FileFieldsInterceptor([{ name: 'proofPhotos', maxCount: 5 }]),
-  )
   @ApiOperation({
     summary:
-      'Soumet une livraison client absent avec photos preuve et position GPS.',
+      'Soumet une livraison client absent (JSON + photos base64) avec position GPS.',
   })
   submitCustomerAbsent(
     @Req() req: Request,
     @Param('orderId') orderId: string,
-    @Body() body: SubmitCustomerAbsentDeliveryDto,
-    @UploadedFiles()
-    files: { proofPhotos?: Express.Multer.File[] },
+    @Body() body: SubmitCustomerAbsentDeliveryJsonDto,
   ) {
-    return this._pendingDelivery.submitCustomerAbsent({
+    return this._pendingDelivery.submitCustomerAbsentJson({
       user: req.user as UserModel,
       orderId,
       courierLat: body.courierLat,
       courierLng: body.courierLng,
-      proofFiles: files?.proofPhotos ?? [],
+      proofPhotos: body.proofPhotos,
     });
   }
 
-  /** JSON + base64 : fiable sur Fastify / Firebase / CF où multipart renvoie 415. */
+  /** Alias explicite (même corps JSON que /submit). */
   @Post('orders/:orderId/customer-absent/submit-json')
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
