@@ -94,6 +94,9 @@ export class PendingDeliveryProofModel extends BaseSchema {
   @Prop({ required: false, name: 'customer_confirmed_at', type: Date })
   customerConfirmedAt?: Date;
 
+  @Prop({ required: false, name: 'customer_confirm_note', trim: true, maxlength: 2000 })
+  customerConfirmNote?: string;
+
   @Prop({ required: false, name: 'customer_disputed_at', type: Date })
   customerDisputedAt?: Date;
 

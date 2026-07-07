@@ -247,6 +247,7 @@ export class PendingDeliveryService {
 
     proof.status = PendingDeliveryProofStatusEnum.CUSTOMER_CONFIRMED;
     proof.customerConfirmedAt = new Date();
+    proof.customerConfirmNote = args.note?.trim() || undefined;
     await proof.save();
 
     this.ordersService.notifyOrderPartiesRealtime(order, order.status, {
@@ -520,6 +521,7 @@ export class PendingDeliveryService {
       distanceLabel: formatDistanceMetersLabel(proof.distanceMeters),
       proofPhotoUrls: proof.proofPhotoUrls ?? [],
       customerConfirmedAt: proof.customerConfirmedAt ?? null,
+      customerConfirmNote: proof.customerConfirmNote ?? null,
       customerDisputedAt: proof.customerDisputedAt ?? null,
       customerDisputeNote: proof.customerDisputeNote ?? null,
       adminReviewedAt: proof.adminReviewedAt ?? null,
