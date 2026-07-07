@@ -18,6 +18,7 @@ import {
   OrderModel,
   OrderStatusEnum,
 } from '@schemas/order.schema';
+import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema';
 import {
   PendingDeliveryProofModel,
   PendingDeliveryProofStatusEnum,
@@ -142,6 +143,19 @@ export class PendingDeliveryService {
       existing &&
       existing.status !== PendingDeliveryProofStatusEnum.ADMIN_REJECTED
     ) {
+      if (order.status === OrderStatusEnum.COMPLETED) {
+        return {
+          proofId: String(existing._id),
+          orderId: String(order._id),
+          status: existing.status,
+          orderStatus: OrderStatusEnum.COMPLETED,
+          orderCompleted: true,
+          pickedUpAt: order.pickedUpAt ?? new Date(),
+          distanceMeters: existing.distanceMeters,
+          distanceLabel: formatDistanceMetersLabel(existing.distanceMeters),
+          proofPhotoCount: existing.proofPhotoUrls?.length ?? 0,
+        };
+      }
       throw new BadRequestException('pending_delivery_already_submitted');
     }
 
@@ -229,10 +243,18 @@ export class PendingDeliveryService {
             duplicate &&
             duplicate.status !== PendingDeliveryProofStatusEnum.ADMIN_REJECTED
           ) {
+            const orderId = String(order._id);
+            const completion = await this.completeOrderAfterProofSubmit({
+              orderId,
+              agentId,
+            });
             return {
               proofId: String(duplicate._id),
-              orderId: String(order._id),
+              orderId,
               status: duplicate.status,
+              orderStatus: completion.status,
+              orderCompleted: true,
+              pickedUpAt: completion.pickedUpAt,
               distanceMeters: duplicate.distanceMeters,
               distanceLabel: formatDistanceMetersLabel(
                 duplicate.distanceMeters,
@@ -267,18 +289,35 @@ export class PendingDeliveryService {
       ),
     );
 
-    this.ordersService.notifyOrderPartiesRealtime(order, order.status, {
-      pendingDeliveryProofStatus: proof.status,
-    } as Record<string, unknown>);
+    const completion = await this.completeOrderAfterProofSubmit({
+      orderId: String(order._id),
+      agentId,
+    });
 
     return {
       proofId: String(proof._id),
       orderId: String(order._id),
       status: proof.status,
+      orderStatus: completion.status,
+      orderCompleted: true,
+      pickedUpAt: completion.pickedUpAt,
       distanceMeters,
       distanceLabel: formatDistanceMetersLabel(distanceMeters),
       proofPhotoCount: proofPhotoUrls.length,
     };
+  }
+
+  /** Même finalisation que le scan QR : statut, historique, paiement livreur, WS. */
+  private async completeOrderAfterProofSubmit(args: {
+    orderId: string;
+    agentId: string;
+  }) {
+    return this.ordersService.completeDeliveryFromPendingProof({
+      orderId: args.orderId,
+      actorUserId: args.agentId,
+      source: OrderStatusChangeSourceEnum.DELIVERY_AGENT,
+      note: 'Livraison déposée — client absent (preuve photo)',
+    });
   }
 
   async confirmByCustomer(args: {
@@ -411,15 +450,20 @@ export class PendingDeliveryService {
     if (args.decision === 'approve') {
       proof.status = PendingDeliveryProofStatusEnum.ADMIN_APPROVED;
       await proof.save();
-      await this.ordersService.completeDeliveryFromPendingProof({
-        orderId: String(proof.orderId),
-        actorUserId: adminId,
-        note: 'Livraison validée (client absent, preuve photo)',
-      });
+      const order = await this.orderModel.findById(proof.orderId).exec();
+      let orderCompleted = order?.status === OrderStatusEnum.COMPLETED;
+      if (order && !orderCompleted) {
+        await this.ordersService.completeDeliveryFromPendingProof({
+          orderId: String(proof.orderId),
+          actorUserId: adminId,
+          note: 'Livraison validée (client absent, preuve photo)',
+        });
+        orderCompleted = true;
+      }
       return {
         proofId: String(proof._id),
         status: proof.status,
-        orderCompleted: true,
+        orderCompleted,
       };
     }
 

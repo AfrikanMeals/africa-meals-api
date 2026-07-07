@@ -4384,6 +4384,7 @@ export class OrdersService {
     orderId: string;
     actorUserId?: string;
     note?: string;
+    source?: OrderStatusChangeSourceEnum;
   }): Promise<{
     orderId: string;
     status: OrderStatusEnum;
@@ -4406,12 +4407,18 @@ export class OrdersService {
     }
     const st = order.status as OrderStatusEnum;
     if (st === OrderStatusEnum.COMPLETED) {
-      throw new BadRequestException('pickup_already_completed');
+      return {
+        orderId: oid,
+        status: OrderStatusEnum.COMPLETED,
+        pickedUpAt: order.pickedUpAt ?? new Date(),
+      };
     }
     if (st !== OrderStatusEnum.SHIPPED) {
       throw new BadRequestException('delivery_confirm_invalid_status');
     }
 
+    const source =
+      args.source ?? OrderStatusChangeSourceEnum.DASHBOARD;
     const agentId = this.assignedDeliveryUserIdFromOrderDoc(order);
     const prevStatus = st;
     const pickedUpAt = new Date();
@@ -4427,11 +4434,13 @@ export class OrdersService {
       customerUserId: customerId,
       fromStatus: prevStatus,
       toStatus: OrderStatusEnum.COMPLETED,
-      source: OrderStatusChangeSourceEnum.DASHBOARD,
-      actorUserId: args.actorUserId,
+      source,
+      actorUserId: args.actorUserId ?? agentId ?? undefined,
       note:
         args.note?.trim() ||
-        'Livraison validée par admin (client absent, preuve photo)',
+        (source === OrderStatusChangeSourceEnum.DELIVERY_AGENT
+          ? 'Livraison confirmée par le livreur (client absent, preuve photo)'
+          : 'Livraison validée par admin (client absent, preuve photo)'),
     });
 
     if (customerId) {
@@ -4470,7 +4479,7 @@ export class OrdersService {
           actorUserId: args.actorUserId,
           orderContext: {
             fromStatus: prevStatus,
-            source: OrderStatusChangeSourceEnum.DASHBOARD,
+            source,
             ...this.buildOrderDomainDispatchContext(
               populated ?? order,
               OrderStatusEnum.COMPLETED,
