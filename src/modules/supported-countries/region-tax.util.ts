@@ -182,3 +182,64 @@ export function resolveStoreTaxCountryCode(store: unknown): string {
   if (fromCurrency) return fromCurrency;
   return '';
 }
+
+/** Pays ISO du snapshot adresse livraison figé sur la commande. */
+export function countryCodeFromOrderDeliverySnapshot(order: unknown): string {
+  if (!order || typeof order !== 'object') return '';
+  const doc = order as Record<string, unknown>;
+  const snap = doc.deliveryAddressSnapshot ?? doc.delivery_address_snapshot;
+  if (!snap || typeof snap !== 'object' || Array.isArray(snap)) return '';
+  const cc = String(
+    (snap as Record<string, unknown>).countryCode ??
+      (snap as Record<string, unknown>).country_code ??
+      '',
+  )
+    .trim()
+    .toUpperCase();
+  return /^[A-Z]{2}$/.test(cc) ? cc : '';
+}
+
+/** Pays ISO de l’adresse client par défaut (commande peuplée `user.addresses`). */
+export function countryCodeFromUserDefaultAddress(user: unknown): string {
+  if (!user || typeof user !== 'object') return '';
+  const list = (user as Record<string, unknown>).addresses;
+  if (!Array.isArray(list) || list.length === 0) return '';
+
+  let picked: Record<string, unknown> | null = null;
+  for (const raw of list) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const row = raw as Record<string, unknown>;
+    if (row.isDefault === true || row.is_default === true) {
+      picked = row;
+      break;
+    }
+  }
+  if (!picked && list[0] && typeof list[0] === 'object' && !Array.isArray(list[0])) {
+    picked = list[0] as Record<string, unknown>;
+  }
+  if (!picked) return '';
+
+  const cc = String(picked.countryCode ?? picked.country_code ?? '')
+    .trim()
+    .toUpperCase();
+  return /^[A-Z]{2}$/.test(cc) ? cc : '';
+}
+
+/**
+ * Région ISO2 d’une commande pour filtrage livreur :
+ * boutique (region + replis) → taxes commande → adresse livraison → profil client.
+ */
+export function resolveOrderOperatingRegionCode(
+  order: Record<string, unknown>,
+): string {
+  const storeObj =
+    order.store && typeof order.store === 'object' && !Array.isArray(order.store)
+      ? order.store
+      : null;
+  return resolveTaxCountryCode([
+    resolveStoreTaxCountryCode(storeObj),
+    typeof order.taxCountryCode === 'string' ? order.taxCountryCode : null,
+    countryCodeFromOrderDeliverySnapshot(order),
+    countryCodeFromUserDefaultAddress(order.user),
+  ]);
+}
