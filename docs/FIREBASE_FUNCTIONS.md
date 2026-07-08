@@ -6,12 +6,12 @@
 |---------|--------|
 | **`.env`** | Production **k8s VPS** (`host.k3s.internal`, services `.svc.cluster.local`) — **ne pas** utiliser pour Firebase |
 | **`.env.functions`** | Production **Firebase Cloud Functions** (DNS public `*.wise-eat.com`, gRPC désactivé) — source de vérité Functions |
-| **`.env.wise-eat-ca`** | Généré au deploy : copie de `.env.functions` pour le projet Firebase `wise-eat-ca` (gitignored) |
+| **`.env.wise-eat-com`** | Généré au deploy : copie de `.env.functions` pour le projet Firebase `wise-eat-com` (gitignored) |
 
 Le script `npm run deploy:functions` :
 
 1. Copie les packages monorepo `@africa-meals/*` dans `./packages/` (Cloud Build n’a pas le monorepo parent).
-2. Copie **`.env.functions` → `.env.wise-eat-ca`** (le CLI Firebase charge `.env.<projectId>`).
+2. Copie **`.env.functions` → `.env.wise-eat-com`** (le CLI Firebase charge `.env.<projectId>`).
 3. Met **`.env` (k8s) de côté** temporairement (`.env.k8s.stash`) pour éviter qu’il écrase les variables Functions.
 4. Build + `firebase deploy`, puis restaure `.env` et nettoie les artefacts temporaires.
 
@@ -36,7 +36,7 @@ npm install
 npm run deploy:functions
 ```
 
-`deploy:functions` exécute `scripts/firebase-deploy.mjs` : prepare (packages + `.env.wise-eat-ca`), build Nest → `dist/`, puis deploy.  
+`deploy:functions` exécute `scripts/firebase-deploy.mjs` : prepare (packages + `.env.wise-eat-com`), build Nest → `dist/`, puis deploy.  
 **Utilisez `npm run deploy:functions`** (et non un `firebase deploy` manuel avec `.env` k8s) : le dépôt pin `firebase-tools` en devDependency pour un comportement de nettoyage des images aligné avec GCP.
 
 ### Avertissement « Unhandled error cleaning up build images »
@@ -102,7 +102,7 @@ Réponse JSON typique :
 
 ## ⚠️ Préfixe `FIREBASE_` interdit dans les fichiers env (déploiement)
 
-Le CLI Firebase charge **`.env.wise-eat-ca`** (généré depuis `.env.functions`) lors de l’analyse du code. Les clés dont le nom **commence par** `FIREBASE_`, `X_GOOGLE_` ou `EXT_` sont **réservées** et provoquent :
+Le CLI Firebase charge **`.env.wise-eat-com`** (généré depuis `.env.functions`) lors de l’analyse du code. Les clés dont le nom **commence par** `FIREBASE_`, `X_GOOGLE_` ou `EXT_` sont **réservées** et provoquent :
 
 `Error: Failed to load environment variables from .env`  
 `Key FIREBASE_… starts with a reserved prefix`
@@ -118,7 +118,7 @@ Le CLI Firebase charge **`.env.wise-eat-ca`** (généré depuis `.env.functions`
 
 ## Variables d’environnement
 
-En production Functions, les variables proviennent de **`.env.functions`** (copié en `.env.wise-eat-ca` au deploy et inclus dans l’artefact uploadé — voir `firebase.json` `!.env.wise-eat-ca`).
+En production Functions, les variables proviennent de **`.env.functions`** (copié en `.env.wise-eat-com` au deploy et inclus dans l’artefact uploadé — voir `firebase.json` `!.env.wise-eat-com`).
 
 Pour les secrets sensibles (rotation, audit), préférer aussi Secret Manager :
 
@@ -160,7 +160,7 @@ L’API Cloud Functions rejoint le Redis VPS via **Stunnel TLS** (`wise-eat.clou
 
 | Variable | Exemple prod |
 |----------|----------------|
-| `REDIS_URL` | `rediss://wise-eat-cache:***@wise-eat.cloud:6381` |
+| `REDIS_URL` | `rediss://wise-eat-comche:***@wise-eat.cloud:6381` |
 | `REDIS_TLS` | `true` |
 | `REDIS_TLS_REJECT_UNAUTHORIZED` | `true` ou omis avec **Certbot** ; `false` seulement si cert auto-signé |
 | `BULLMQ_REDIS_URL` | `rediss://wise-eat-bull:***@wise-eat.cloud:6382` |

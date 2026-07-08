@@ -40,6 +40,7 @@ lerna-debug.log*
 .env.functions
 .env.local
 .env.docker
+.env.wise-eat-com
 .env.wise-eat-ca
 .env.k8s.stash
 .firebase-package.json.bak

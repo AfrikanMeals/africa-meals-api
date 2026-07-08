@@ -16,7 +16,7 @@ function readServiceAccountFile(pathEnv: string): Record<string, unknown> {
 
 /**
  * Credentials dédiés reCAPTCHA Enterprise (projet wise-eat-com).
- * Indépendant de GOOGLE_APPLICATION_CREDENTIALS / Firebase (wise-eat-ca, FCM).
+ * Indépendant de GOOGLE_APPLICATION_CREDENTIALS / Firebase (wise-eat-com, FCM).
  */
 export function resolveRecaptchaGoogleAuthOptions(
   config: ConfigService,

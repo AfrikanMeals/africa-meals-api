@@ -1,7 +1,7 @@
 /**
  * Prépare africa-meals-api pour Firebase Cloud Functions :
  * - vend @africa-meals/* dans ./packages/ (chemins file: locaux pour yarn/npm en Cloud Build)
- * - copie .env.functions → .env.wise-eat-ca (projet Firebase, sans utiliser .env k8s)
+ * - copie .env.functions → .env.<projectId> (projet Firebase, sans utiliser .env k8s)
  */
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { execSync } from 'child_process';
@@ -58,9 +58,27 @@ export function resolveMonorepoPackagesDir(apiRoot) {
   );
 }
 
+export function readDefaultFirebaseProjectId(apiRoot) {
+  try {
+    const rc = JSON.parse(
+      readFileSync(path.join(apiRoot, '.firebaserc'), 'utf8'),
+    );
+    const id = rc.projects?.default;
+    if (typeof id === 'string' && id.trim()) return id.trim();
+  } catch {
+    /* ignore */
+  }
+  return 'wise-eat-com';
+}
+
+export function firebaseEnvProjectPath(apiRoot) {
+  const projectId = readDefaultFirebaseProjectId(apiRoot);
+  return path.join(apiRoot, `.env.${projectId}`);
+}
+
 export function prepareFirebaseFunctionsDeploy(apiRoot = path.join(__dirname, '..')) {
   const envFunctions = path.join(apiRoot, '.env.functions');
-  const envProject = path.join(apiRoot, '.env.wise-eat-ca');
+  const envProject = firebaseEnvProjectPath(apiRoot);
   const pkgPath = path.join(apiRoot, 'package.json');
   const pkgBackupPath = path.join(apiRoot, '.firebase-package.json.bak');
   const packagesDir = path.join(apiRoot, 'packages');
@@ -102,7 +120,7 @@ export function cleanupFirebaseFunctionsDeploy(apiRoot = path.join(__dirname, '.
   const pkgPath = path.join(apiRoot, 'package.json');
   const pkgBackupPath = path.join(apiRoot, '.firebase-package.json.bak');
   const packagesDir = path.join(apiRoot, 'packages');
-  const envProject = path.join(apiRoot, '.env.wise-eat-ca');
+  const envProject = firebaseEnvProjectPath(apiRoot);
 
   if (existsSync(pkgBackupPath)) {
     writeFileSync(pkgPath, readFileSync(pkgBackupPath, 'utf8'), 'utf8');
@@ -117,6 +135,6 @@ const isMain =
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (isMain) {
-  prepareFirebaseFunctionsDeploy();
-  console.log('OK — packages/ + .env.wise-eat-ca prêts pour Firebase Functions');
+  const { envProject } = prepareFirebaseFunctionsDeploy();
+  console.log(`OK — packages/ + ${path.basename(envProject)} prêts pour Firebase Functions`);
 }

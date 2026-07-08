@@ -2,7 +2,7 @@
 
 Synthèse des prestataires externes utilisés par les 5 applications du monorepo, pour évaluer la facturation.
 
-**Projet Firebase / GCP principal :** `wise-eat-ca` / `afrikanmeals`  
+**Projet Firebase / GCP principal :** `wise-eat-com`  
 **Domaine public :** `wise-eat.com`
 
 ### Colonnes à compléter
@@ -122,7 +122,7 @@ Synthèse des prestataires externes utilisés par les 5 applications du monorepo
 
 | Service                     | Utilisé par             | Usage                                                         | Facturation typique               | Gratuit ? | Lien tarifs |
 | --------------------------- | ----------------------- | ------------------------------------------------------------- | --------------------------------- | --------- | ----------- |
-| **Firebase Authentication** | API, Admin, Mobile, Web | Auth sociale + tokens ; domaine `wise-eat-ca.firebaseapp.com` | Gratuit jusqu'aux quotas Firebase | ✅         |             |
+| **Firebase Authentication** | API, Admin, Mobile, Web | Auth sociale + tokens ; domaine `wise-eat-com.firebaseapp.com` | Gratuit jusqu'aux quotas Firebase | ✅         |             |
 | **Google Sign-In**          | Mobile, Admin           | OAuth via Firebase + `GOOGLE_WEB_CLIENT_ID`                   | Gratuit                           | ✅         |             |
 | **Facebook Login**          | Mobile                  | `flutter_facebook_auth` + Firebase                            | Gratuit (Meta Developer)          | ✅         |             |
 | **Apple Sign-In**           | Mobile                  | `apple_firebase_sign_in`                                      | Compte Apple Developer (99 $/an)  | ✅         |             |

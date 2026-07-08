@@ -71,9 +71,9 @@ describe('system-exchange.probes', () => {
     it('uses /health on Cloud Functions host', () => {
       expect(
         resolveApiHealthProbeUrl(
-          'https://us-east1-wise-eat-ca.cloudfunctions.net/api',
+          'https://us-east1-wise-eat-com.cloudfunctions.net/api',
         ),
-      ).toBe('https://us-east1-wise-eat-ca.cloudfunctions.net/health');
+      ).toBe('https://us-east1-wise-eat-com.cloudfunctions.net/health');
     });
   });
 });

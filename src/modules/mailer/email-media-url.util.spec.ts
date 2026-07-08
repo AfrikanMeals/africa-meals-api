@@ -9,7 +9,7 @@ describe('email-media-url.util', () => {
     it('detects legacy Firebase Storage URLs', () => {
       expect(
         emailHtmlImageNeedsMediaResolve(
-          'https://firebasestorage.googleapis.com/v0/b/wise-eat-ca/o/logo.png?alt=media',
+          'https://firebasestorage.googleapis.com/v0/b/wise-eat-com/o/logo.png?alt=media',
         ),
       ).toBe(true);
     });
@@ -26,7 +26,7 @@ describe('email-media-url.util', () => {
   describe('resolveEmailHtmlMediaUrls', () => {
   it('rewrites Firebase img src to web vitrine', async () => {
     const legacy =
-      'https://firebasestorage.googleapis.com/v0/b/wise-eat-ca/o/catalog%2Fmeal.jpg?alt=media';
+      'https://firebasestorage.googleapis.com/v0/b/wise-eat-com/o/catalog%2Fmeal.jpg?alt=media';
     const web = 'https://wise-eat.com/images/email/catalog/meal.jpg';
     const html = `<p><img src="${legacy}" alt="Plat" width="64" /></p>`;
 
@@ -52,9 +52,9 @@ describe('email-media-url.util', () => {
 
     it('decodes HTML entities before resolving', async () => {
       const legacy =
-        'https://firebasestorage.googleapis.com/v0/b/wise-eat-ca/o/a%2Fb.png?alt=media&amp;token=abc';
+        'https://firebasestorage.googleapis.com/v0/b/wise-eat-com/o/a%2Fb.png?alt=media&amp;token=abc';
       const decoded =
-        'https://firebasestorage.googleapis.com/v0/b/wise-eat-ca/o/a%2Fb.png?alt=media&token=abc';
+        'https://firebasestorage.googleapis.com/v0/b/wise-eat-com/o/a%2Fb.png?alt=media&token=abc';
       const web = 'https://wise-eat.com/images/email/fallback.png';
       const html = `<img src="${legacy}" alt="" />`;
 
@@ -67,7 +67,7 @@ describe('email-media-url.util', () => {
 
     it('rewrites JSON-LD merchant.logo (HTML pré-enveloppé commande)', async () => {
       const legacy =
-        'https://firebasestorage.googleapis.com/v0/b/wise-eat-ca/o/platform-theme%2Flogo.png?alt=media';
+        'https://firebasestorage.googleapis.com/v0/b/wise-eat-com/o/platform-theme%2Flogo.png?alt=media';
       const web = 'https://wise-eat.com/logo.png';
       const html = `<!DOCTYPE html><html><head>
   <script type="application/ld+json">{"@type":"Order","merchant":{"logo":"${legacy}"}}</script>

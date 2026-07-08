@@ -25,15 +25,15 @@ const DEFAULT_TO = 'borissandeu0@gmail.com';
 const LEGACY_SAMPLE_URLS = [
   {
     label: 'Logo thème (platform-theme)',
-    url: 'https://firebasestorage.googleapis.com/v0/b/wise-eat-ca/o/platform-theme%2Flogo.png?alt=media&token=legacy-test',
+    url: 'https://firebasestorage.googleapis.com/v0/b/wise-eat-com/o/platform-theme%2Flogo.png?alt=media&token=legacy-test',
   },
   {
     label: 'Image catalogue (plat)',
-    url: 'https://firebasestorage.googleapis.com/v0/b/wise-eat-ca/o/catalog%2Fmeal.jpg?alt=media',
+    url: 'https://firebasestorage.googleapis.com/v0/b/wise-eat-com/o/catalog%2Fmeal.jpg?alt=media',
   },
   {
     label: 'Hero onboarding (email-heroes)',
-    url: 'https://firebasestorage.googleapis.com/v0/b/wise-eat-ca/o/email-heroes%2Fonboarding%2Fvendor%2Fsample.png?alt=media',
+    url: 'https://firebasestorage.googleapis.com/v0/b/wise-eat-com/o/email-heroes%2Fonboarding%2Fvendor%2Fsample.png?alt=media',
   },
 ] as const;
 

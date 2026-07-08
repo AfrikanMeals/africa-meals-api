@@ -32,7 +32,7 @@ describe('email-web-asset-url.util', () => {
 
   it('rewrites Firebase URL to web static asset', () => {
     const legacy =
-      'https://firebasestorage.googleapis.com/v0/b/wise-eat-ca/o/platform-theme%2Flogo.png?alt=media';
+      'https://firebasestorage.googleapis.com/v0/b/wise-eat-com/o/platform-theme%2Flogo.png?alt=media';
     expect(resolveEmailWebAssetUrl(legacy, BASE)).toBe(
       'https://wise-eat.com/logo.png',
     );

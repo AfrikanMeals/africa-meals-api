@@ -6,8 +6,8 @@ Un fichier `accounts.json` (clé privée Firebase Admin SDK) a été versionné 
 
 ## Actions immédiates (ops)
 
-1. **Firebase Console** → Projet `wise-eat-ca` → **Paramètres** → **Comptes de service**
-2. Ouvrir le compte `firebase-adminsdk-fbsvc@wise-eat-ca.iam.gserviceaccount.com`
+1. **Firebase Console** → Projet `wise-eat-com` → **Paramètres** → **Comptes de service**
+2. Ouvrir le compte `firebase-adminsdk-fbsvc@wise-eat-com.iam.gserviceaccount.com`
 3. **Gérer les clés** → supprimer la clé dont l’ID était exposé dans l’historique Git (`private_key_id` visible dans les commits)
 4. **Générer une nouvelle clé privée** et la stocker uniquement via :
    - `AM_FIREBASE_SERVICE_ACCOUNT_JSON` (Secret Manager / CI), ou
@@ -26,7 +26,7 @@ Un fichier `accounts.json` (clé privée Firebase Admin SDK) a été versionné 
 
 ```bash
 # FCM / Storage : logs au démarrage
-# Attendu : FirebaseAdmin Initialisé (projet=wise-eat-ca, bucket=...)
+# Attendu : FirebaseAdmin Initialisé (projet=wise-eat-com, bucket=...)
 
 # Optionnel : test upload média ou envoi notification push en staging
 ```
