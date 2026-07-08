@@ -1,4 +1,5 @@
 import {
+  normalizeMapboxTokenString,
   probeMapboxGeocodingApi,
   resolveMapboxPublicAccessToken,
   resolveMapboxServerTokenFromEnv,
@@ -20,6 +21,13 @@ describe('mapbox-geocoding.util', () => {
     expect(sanitizeMapboxPublicAccessToken('pk.test')).toBe('pk.test');
     expect(sanitizeMapboxPublicAccessToken('sk.secret')).toBe('');
     expect(sanitizeMapboxPublicAccessToken('invalid')).toBe('');
+  });
+
+  it('normalizeMapboxTokenString strips quotes and internal whitespace', () => {
+    expect(
+      normalizeMapboxTokenString('"pk.eyJ1.test part"\n'),
+    ).toBe('pk.eyJ1.testpart');
+    expect(normalizeMapboxTokenString('pk.ab cd.ef')).toBe('pk.abcd.ef');
   });
 
   it('resolveMapboxPublicAccessToken prefers secret manager pk', async () => {

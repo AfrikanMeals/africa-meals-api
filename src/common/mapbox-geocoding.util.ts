@@ -8,7 +8,29 @@ export function readMapboxEnvToken(
   config: ConfigService | undefined,
   key: string,
 ): string {
-  return String(config?.get<string>(key) ?? process.env[key] ?? '').trim();
+  return normalizeMapboxTokenString(
+    String(config?.get<string>(key) ?? process.env[key] ?? ''),
+  );
+}
+
+/** Retire guillemets et espaces (copier-coller .env / kubectl --from-env-file). */
+export function normalizeMapboxTokenString(raw: string): string {
+  let t = String(raw ?? '').trim();
+  if (
+    (t.startsWith('"') && t.endsWith('"')) ||
+    (t.startsWith("'") && t.endsWith("'"))
+  ) {
+    t = t.slice(1, -1);
+  }
+  return t.replace(/\s+/g, '');
+}
+
+/** Ne jamais exposer un token secret (sk.) ni une valeur non pk. aux clients. */
+export function sanitizeMapboxPublicAccessToken(raw: string): string {
+  const t = normalizeMapboxTokenString(raw);
+  if (!t || t.startsWith('sk.')) return '';
+  if (!t.startsWith('pk.')) return '';
+  return t;
 }
 
 /** Token serveur (MAPBOX_ACCESS_TOKEN) — géocodage API uniquement, jamais le pk. public frontend. */
@@ -16,14 +38,6 @@ export function resolveMapboxServerTokenFromEnv(
   config?: ConfigService,
 ): string {
   return readMapboxEnvToken(config, 'MAPBOX_ACCESS_TOKEN');
-}
-
-/** Ne jamais exposer un token secret (sk.) ni une valeur non pk. aux clients. */
-export function sanitizeMapboxPublicAccessToken(raw: string): string {
-  const t = String(raw ?? '').trim();
-  if (!t || t.startsWith('sk.')) return '';
-  if (!t.startsWith('pk.')) return '';
-  return t;
 }
 
 /** Token public (pk.) — tuiles / Directions admin & mobile via GET /platform/map-settings. */
@@ -57,7 +71,7 @@ export async function probeMapboxGeocodingApi(
   token: string,
   apiUrl?: string,
 ): Promise<{ ok: boolean; message: string; details?: string }> {
-  const trimmed = token.trim();
+  const trimmed = normalizeMapboxTokenString(token);
   if (!trimmed) {
     return { ok: false, message: 'non configuré' };
   }
