@@ -1246,12 +1246,12 @@ export class StoreService {
     slots: DailyMenuSlotDto[],
   ) {
     this.assertVendorStripeConnectReadyForWrites(user);
-    const store = await this._storeModel
-      .findOne({ _id: storeId, owner: user._id })
-      .exec();
-    if (!store) {
-      throw new NotFoundException('store_not_found');
-    }
+    // Admin / équipe boutique : pas seulement le propriétaire (owner-only cassait le filtre admin).
+    await this._storeAccess.assertStoreAccess(
+      user,
+      storeId,
+      'catalog.daily_menu.edit',
+    );
 
     const merged = new Map<
       number,
@@ -1329,7 +1329,7 @@ export class StoreService {
 
     await this._invalidatePublicCatalogCachesForStore(storeId);
 
-    return this.findMyStoreSummary(user);
+    return this.findMyStoreSummary(user, storeId);
   }
 
   /** Changements menu / commandes / livraison → listing client (recherche, accueil, menu boutique). */
