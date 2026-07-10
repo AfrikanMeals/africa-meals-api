@@ -43,6 +43,7 @@ import {
   jsDayOfWeekInTimezone,
   resolveEffectiveTimezone,
 } from '@modules/supported-countries/region-timezone.util';
+import { serializeStoreWorkingHoursForApi } from '@modules/store/store-working-hours.util';
 import { mapInChunks } from '@utils/map-in-chunks';
 import {
   productDailyMenuEnrichmentPipelineStages,
@@ -1567,6 +1568,15 @@ export class SearchService {
                 : [],
               averageRating: Number(st['averageRating'] ?? 0),
               paymentsReady: true,
+              ...(typeof st['timezone'] === 'string' &&
+              String(st['timezone']).trim()
+                ? { timezone: String(st['timezone']).trim() }
+                : {}),
+              workingHours: serializeStoreWorkingHoursForApi(
+                (st['workingHours'] ?? st['working_hours']) as
+                  | Record<string, unknown>
+                  | undefined,
+              ),
               ...(storeLatNum !== undefined && storeLngNum !== undefined
                 ? {
                     latitude: storeLatNum,
@@ -2274,6 +2284,7 @@ export class SearchService {
                 likedBy: { $ifNull: ['$likedBy', []] },
                 timezone: 1,
                 working_hours: 1,
+                workingHours: 1,
                 averageRating: 1,
                 owner: {
                   $convert: {
