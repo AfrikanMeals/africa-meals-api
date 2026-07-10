@@ -267,7 +267,7 @@ export class ProductModel extends BaseSchema {
     required: true,
     name: 'status',
     enum: ProductStatusEnum,
-    default: ProductStatusEnum.PENDING,
+    default: ProductStatusEnum.ACTIVE,
   })
   status: ProductStatusEnum;
 
