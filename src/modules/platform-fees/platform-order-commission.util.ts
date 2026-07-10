@@ -275,6 +275,78 @@ export function resolveCustomerUnitPrice(
   return applyCommissionMarkup(vendorPrice, config, currency, strategy);
 }
 
+/**
+ * Majore prix / promo catalogue pour les listes publiques quand la stratégie
+ * effective est `add_to_price`. Sinon renvoie les montants vendeur inchangés.
+ */
+export function markupCatalogListUnitPrices(args: {
+  vendorPrice: number;
+  vendorDiscountPrice?: number;
+  config: OrderCommissionConfig;
+  currency: string;
+  strategy: CommissionRetrieveStrategy;
+}): { price: number; discountPrice: number } {
+  const vendorPrice = Math.max(0, Number(args.vendorPrice) || 0);
+  const vendorDiscount = Math.max(0, Number(args.vendorDiscountPrice) || 0);
+  if (args.strategy !== 'add_to_price') {
+    return { price: vendorPrice, discountPrice: vendorDiscount };
+  }
+  return {
+    price: resolveCustomerUnitPrice(
+      vendorPrice,
+      args.config,
+      args.currency,
+      args.strategy,
+    ),
+    discountPrice:
+      vendorDiscount > 0
+        ? resolveCustomerUnitPrice(
+            vendorDiscount,
+            args.config,
+            args.currency,
+            args.strategy,
+          )
+        : 0,
+  };
+}
+
+/**
+ * Recalcule prix / promo stockés selon le mode d’ajustement catalogue.
+ * - assume_customer_prices : DB = prix client → net vendeur (reverse markup)
+ * - assume_vendor_net : DB = net → prix client (apply markup)
+ */
+export function adjustStoredCatalogUnitPrices(args: {
+  vendorPrice: number;
+  vendorDiscountPrice?: number;
+  config: OrderCommissionConfig;
+  currency: string;
+  mode: 'assume_customer_prices' | 'assume_vendor_net';
+}): { price: number; discountPrice: number } {
+  const price = Math.max(0, Number(args.vendorPrice) || 0);
+  const discount = Math.max(0, Number(args.vendorDiscountPrice) || 0);
+  if (args.mode === 'assume_customer_prices') {
+    return {
+      price: reverseCommissionMarkup(price, args.config, args.currency),
+      discountPrice:
+        discount > 0
+          ? reverseCommissionMarkup(discount, args.config, args.currency)
+          : 0,
+    };
+  }
+  return {
+    price: applyCommissionMarkup(price, args.config, args.currency, 'add_to_price'),
+    discountPrice:
+      discount > 0
+        ? applyCommissionMarkup(
+            discount,
+            args.config,
+            args.currency,
+            'add_to_price',
+          )
+        : 0,
+  };
+}
+
 /** Somme des extras vendeur (priceDelta compléments + prix suppléments). */
 export function sumVendorCustomizationExtras(args: {
   complements?: Array<{ options?: Array<{ priceDelta?: number }> }>;

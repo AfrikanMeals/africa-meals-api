@@ -51,6 +51,8 @@ import {
   productDailyMenuListingPipelineStages,
 } from '@utils/product-daily-menu-listing.pipeline';
 import { storeArticlesAvailabilityPipelineStages } from '@utils/store-articles-availability.pipeline';
+import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
+import { parseOptionalCommissionStrategy } from '@modules/platform-fees/platform-order-commission.util';
 
 @Injectable()
 export class SearchService {
@@ -650,6 +652,12 @@ export class SearchService {
           },
           price: 1,
           discountPrice: { $ifNull: ['$discountPrice', 0] },
+          commissionRetrieveStrategy: {
+            $ifNull: [
+              '$commissionRetrieveStrategy',
+              '$commission_retrieve_strategy',
+            ],
+          },
           currency: { $ifNull: ['$currency', 'CAD'] },
           profileImage: { $ifNull: ['$profileImage', ''] },
           status: 1,
@@ -846,6 +854,34 @@ export class SearchService {
 
   @Inject(ModuleCacheLayerService)
   private readonly _cacheLayer: ModuleCacheLayerService;
+
+  @Inject(SubscriptionPlanOrderCommissionService)
+  private readonly _planOrderCommission: SubscriptionPlanOrderCommissionService;
+
+  /**
+   * Majore les prix lean catalogue (`add_to_price`) avant mapping client.
+   * Conserve la stratégie item sur le doc le temps du batch.
+   */
+  private async _applyCustomerPricingToLeanProductDocs(
+    leanRows: Record<string, unknown>[],
+  ): Promise<void> {
+    if (!leanRows.length) return;
+    for (const doc of leanRows) {
+      if (
+        doc['commissionRetrieveStrategy'] == null &&
+        doc['commission_retrieve_strategy'] != null
+      ) {
+        doc['commissionRetrieveStrategy'] = doc['commission_retrieve_strategy'];
+      }
+    }
+    await this._planOrderCommission.applyCustomerCatalogListPricing(leanRows, {
+      getItemStrategy: (row) =>
+        parseOptionalCommissionStrategy(
+          row['commissionRetrieveStrategy'] ??
+            row['commission_retrieve_strategy'],
+        ),
+    });
+  }
 
   private async _applyPlatformSearchSettings(
     args: SearchDto,
@@ -1183,6 +1219,7 @@ export class SearchService {
 
     const regionTimezoneMap =
       await this._supportedCountries.getRegionTimezoneMap();
+    await this._applyCustomerPricingToLeanProductDocs(leanRows);
     const items = leanRows.map((doc) =>
       this._mapHomeFeedLeanDoc(doc, regionTimezoneMap),
     );
@@ -1779,6 +1816,12 @@ export class SearchService {
           },
           price: 1,
           discountPrice: { $ifNull: ['$discountPrice', 0] },
+          commissionRetrieveStrategy: {
+            $ifNull: [
+              '$commissionRetrieveStrategy',
+              '$commission_retrieve_strategy',
+            ],
+          },
           currency: { $ifNull: ['$currency', 'CAD'] },
           profileImage: { $ifNull: ['$profileImage', ''] },
           status: 1,
@@ -1964,7 +2007,9 @@ export class SearchService {
       .option({ allowDiskUse: true })
       .exec();
 
-    return (raw as Record<string, unknown>[]).map((doc) =>
+    const leanRows = raw as Record<string, unknown>[];
+    await this._applyCustomerPricingToLeanProductDocs(leanRows);
+    return leanRows.map((doc) =>
       this._mapHomeFeedLeanDoc(doc, regionTimezoneMap),
     );
   }
@@ -2176,6 +2221,7 @@ export class SearchService {
       | undefined;
     const total = bucket?.total?.[0]?.n ?? 0;
     const rows = bucket?.rows ?? [];
+    await this._applyCustomerPricingToLeanProductDocs(rows);
     return {
       items: rows.map((d) => this._mapHomeFeedLeanDoc(d, regionTimezoneMap)),
       total,

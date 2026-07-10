@@ -16,6 +16,7 @@ import {
 import { MediasService } from '@modules/medias/medias.service';
 import { ProductCategoryService } from '@modules/products/product-category.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import {
   ForbiddenException,
@@ -177,6 +178,9 @@ export class DrinksService {
 
   @Inject(ModuleCacheLayerService)
   private readonly _cacheLayer: ModuleCacheLayerService;
+
+  @Inject(SubscriptionPlanOrderCommissionService)
+  private readonly _planOrderCommission: SubscriptionPlanOrderCommissionService;
 
   private async _bustStoreCatalogCaches(storeId: string): Promise<void> {
     const sid = String(storeId ?? '').trim();
@@ -667,10 +671,23 @@ export class DrinksService {
         ...(storeId ? { storeId } : {}),
         ...(storeName ? { storeName } : {}),
         ...(store?.currency != null
-            ? { storeCurrency: String(store.currency) }
-            : {}),
+          ? { storeCurrency: String(store.currency) }
+          : {}),
       };
     });
+    await this._planOrderCommission.applyCustomerCatalogListPricing(
+      items as unknown as Array<Record<string, unknown>>,
+      {
+        priceKey: 'priceCad',
+        discountKey: null,
+        getStoreId: (row) => String(row['storeId'] ?? '').trim(),
+        getItemStrategy: (row) =>
+          row['commissionRetrieveStrategy'] === 'add_to_price' ||
+          row['commissionRetrieveStrategy'] === 'on_payout'
+            ? row['commissionRetrieveStrategy']
+            : null,
+      },
+    );
     return { items, total, page, limit: take };
   }
 
@@ -719,7 +736,7 @@ export class DrinksService {
       .limit(limit)
       .lean()
       .exec();
-    return rows.map((r) => {
+    const items = rows.map((r) => {
       const raw = r as unknown as Record<string, unknown>;
       const storeRef = raw['store'];
       const storeId =
@@ -735,6 +752,20 @@ export class DrinksService {
         storeId,
       };
     });
+    await this._planOrderCommission.applyCustomerCatalogListPricing(
+      items as unknown as Array<Record<string, unknown>>,
+      {
+        priceKey: 'priceCad',
+        discountKey: null,
+        getStoreId: (row) => String(row['storeId'] ?? '').trim(),
+        getItemStrategy: (row) =>
+          row['commissionRetrieveStrategy'] === 'add_to_price' ||
+          row['commissionRetrieveStrategy'] === 'on_payout'
+            ? row['commissionRetrieveStrategy']
+            : null,
+      },
+    );
+    return items;
   }
 
   /** Validation panier : boisson de la boutique même si stock à 0. */

@@ -21,6 +21,7 @@ import {
   resolveCustomerUnitPrice,
   resolveEffectiveCommissionStrategy,
   reverseCommissionMarkup,
+  markupCatalogListUnitPrices,
   sumVendorCustomizationExtras,
   UnitCommissionBreakdown,
 } from '@modules/platform-fees/platform-order-commission.util';
@@ -535,6 +536,114 @@ export class SubscriptionPlanOrderCommissionService {
       settings.currency,
       strategy,
     );
+  }
+
+  /**
+   * Majore `price` / `discountPrice` (ou `priceCad`) sur des lignes catalogue
+   * publiques quand la stratégie effective est `add_to_price`.
+   * Batch par boutique (1 résolution commission + 1 lecture stratégie / store).
+   */
+  async applyCustomerCatalogListPricing(
+    rows: Array<Record<string, unknown>>,
+    opts?: {
+      /** Clé du prix principal (défaut `price`). */
+      priceKey?: 'price' | 'priceCad';
+      /** Clé promo ; `null` pour ignorer (défaut `discountPrice` si priceKey=price). */
+      discountKey?: 'discountPrice' | null;
+      getStoreId?: (row: Record<string, unknown>) => string;
+      getItemStrategy?: (
+        row: Record<string, unknown>,
+      ) => CommissionRetrieveStrategy | null;
+    },
+  ): Promise<void> {
+    if (!rows.length) return;
+    const priceKey = opts?.priceKey ?? 'price';
+    const discountKey =
+      opts?.discountKey !== undefined
+        ? opts.discountKey
+        : priceKey === 'price'
+          ? 'discountPrice'
+          : null;
+    const getStoreId =
+      opts?.getStoreId ??
+      ((row: Record<string, unknown>) => {
+        const st = row['store'] as Record<string, unknown> | null | undefined;
+        if (st != null && typeof st === 'object') {
+          const id = st['id'] ?? st['_id'];
+          if (id != null && String(id).trim()) return String(id).trim();
+        }
+        const sid = row['storeId'] ?? row['store_id'];
+        return sid != null ? String(sid).trim() : '';
+      });
+    const getItemStrategy =
+      opts?.getItemStrategy ??
+      ((row: Record<string, unknown>) =>
+        parseOptionalCommissionStrategy(
+          row['commissionRetrieveStrategy'] ??
+            row['commission_retrieve_strategy'],
+        ));
+
+    const storeIds = [
+      ...new Set(
+        rows
+          .map((r) => getStoreId(r))
+          .filter((id) => id && Types.ObjectId.isValid(id)),
+      ),
+    ];
+    if (!storeIds.length) return;
+
+    const storeOids = storeIds.map((id) => new Types.ObjectId(id));
+    const storeDocs = await this.storeModel
+      .find({ _id: { $in: storeOids } })
+      .select('commissionRetrieveStrategy')
+      .lean()
+      .exec();
+    const storeStrategyById = new Map<
+      string,
+      CommissionRetrieveStrategy | null
+    >();
+    for (const doc of storeDocs) {
+      const raw = doc as unknown as {
+        _id?: Types.ObjectId | string;
+        commissionRetrieveStrategy?: string;
+      };
+      storeStrategyById.set(
+        String(raw._id),
+        parseOptionalCommissionStrategy(raw.commissionRetrieveStrategy),
+      );
+    }
+
+    const settingsById = new Map<
+      string,
+      Awaited<ReturnType<SubscriptionPlanOrderCommissionService['resolveOrderCommissionForStore']>>
+    >();
+    await Promise.all(
+      storeIds.map(async (id) => {
+        settingsById.set(id, await this.resolveOrderCommissionForStore(id));
+      }),
+    );
+
+    for (const row of rows) {
+      const storeId = getStoreId(row);
+      if (!storeId || !settingsById.has(storeId)) continue;
+      const settings = settingsById.get(storeId)!;
+      const strategy = resolveEffectiveCommissionStrategy(
+        getItemStrategy(row),
+        storeStrategyById.get(storeId) ?? null,
+      );
+      const marked = markupCatalogListUnitPrices({
+        vendorPrice: Number(row[priceKey] ?? 0),
+        vendorDiscountPrice:
+          discountKey != null ? Number(row[discountKey] ?? 0) : 0,
+        config: settings.config,
+        currency: settings.currency,
+        strategy,
+      });
+      row[priceKey] = marked.price;
+      if (discountKey != null) {
+        row[discountKey] = marked.discountPrice;
+      }
+    }
   }
 
   /**

@@ -5,6 +5,7 @@ import { StoreModule } from '@modules/store/store.module';
 import { DrinksModule } from '@modules/drinks/drinks.module';
 import { SearchSettingsModule } from '@modules/search-settings/search-settings.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
+import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { Module } from '@nestjs/common';
 import { SearchController } from './search.controller';
 import { SearchService } from './search.service';
@@ -12,7 +13,16 @@ import { SearchService } from './search.service';
 @Module({
   controllers: [SearchController],
   providers: [SearchService],
-  imports: [AddressesModule, ProductsModule, StoreModule, OffersModule, DrinksModule, SearchSettingsModule, SupportedCountriesModule],
+  imports: [
+    AddressesModule,
+    ProductsModule,
+    StoreModule,
+    OffersModule,
+    DrinksModule,
+    SearchSettingsModule,
+    SupportedCountriesModule,
+    SubscriptionsModule,
+  ],
   exports: [SearchService],
 })
 export class SearchModule {}

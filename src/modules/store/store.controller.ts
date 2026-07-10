@@ -76,6 +76,7 @@ import {
   AdminVendorStoreStatusDto,
 } from './dto/admin-vendor-store.dto';
 import {
+  AdjustVendorCommissionCatalogPricesDto,
   CreateStoreDto,
   PatchDailyMenuDto,
   PatchVendorCommissionStrategyDto,
@@ -1162,6 +1163,25 @@ export class StoreController {
     @Query('storeId') storeId?: string,
   ) {
     return this._storeService.updateVendorCommissionStrategy(
+      req.user as UserModel,
+      body,
+      storeId,
+    );
+  }
+
+  /**
+   * Recalcule les prix saisis (plats + boissons) pour `add_to_price`
+   * sans changer la stratégie boutique.
+   */
+  @Post('vendor/commission-catalog-adjust')
+  @UseGuards(JwtGuard)
+  async postVendorCommissionCatalogAdjust(
+    @Req() req: Request,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: AdjustVendorCommissionCatalogPricesDto,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this._storeService.adjustVendorCommissionCatalogPrices(
       req.user as UserModel,
       body,
       storeId,

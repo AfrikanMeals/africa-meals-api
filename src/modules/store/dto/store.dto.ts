@@ -290,6 +290,44 @@ export class PatchVendorCommissionStrategyDto {
   priceAction: CommissionPriceActionDto;
 }
 
+/**
+ * Recalcule les prix catalogue saisis sans changer la stratégie boutique.
+ * Utile si les prix ont été saisis comme prix client alors que la boutique
+ * est en `add_to_price` (double majoration à l’affichage).
+ */
+export enum CommissionCatalogAdjustModeDto {
+  /** Prix DB = prix client → convertir en net vendeur (retire la commission). */
+  ASSUME_CUSTOMER_PRICES = 'assume_customer_prices',
+  /** Prix DB = net vendeur → stocker le prix client (rare). */
+  ASSUME_VENDOR_NET = 'assume_vendor_net',
+}
+
+export class AdjustVendorCommissionCatalogPricesDto {
+  @ApiProperty({
+    enum: CommissionCatalogAdjustModeDto,
+    description:
+      'assume_customer_prices = retirer la commission des prix saisis ; assume_vendor_net = majorer les prix saisis',
+  })
+  @IsEnum(CommissionCatalogAdjustModeDto)
+  mode: CommissionCatalogAdjustModeDto;
+
+  @ApiPropertyOptional({
+    description:
+      'Inclure aussi les plats/boissons avec stratégie article explicite add_to_price (défaut true).',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === false || value === 'false' || value === 0 || value === '0') {
+      return false;
+    }
+    if (value === true || value === 'true' || value === 1 || value === '1') {
+      return true;
+    }
+    return true;
+  })
+  includeItemOverrides?: boolean;
+}
+
 /** Horaires d’ouverture et fuseau horaire (tous statuts sauf INACTIVE). */
 export class PatchVendorWorkingHoursDto {
   @ApiPropertyOptional({

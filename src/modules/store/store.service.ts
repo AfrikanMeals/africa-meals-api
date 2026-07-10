@@ -65,12 +65,14 @@ import {
   DailyMenuItemDto,
   DailyMenuSlotDto,
   PatchVendorCommissionStrategyDto,
+  AdjustVendorCommissionCatalogPricesDto,
   PatchVendorShippingZonesDto,
   PatchVendorWorkingHoursDto,
 } from './dto/store.dto';
 import { DrinkModel } from '@schemas/drink.schema';
 import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
 import {
+  adjustStoredCatalogUnitPrices,
   applyCommissionMarkup,
   normalizeCommissionRetrieveStrategy,
   reverseCommissionMarkup,
@@ -2460,6 +2462,150 @@ export class StoreService {
       priceAction,
       productsUpdated,
       drinksUpdated,
+    };
+  }
+
+  /**
+   * Ajuste les prix saisis du catalogue pour la stratégie `add_to_price`
+   * sans changer la stratégie boutique (ex. prix saisis comme prix client).
+   */
+  async adjustVendorCommissionCatalogPrices(
+    user: UserModel,
+    args: AdjustVendorCommissionCatalogPricesDto,
+    storeId?: string,
+  ) {
+    const { targetId, store } = await this._resolveVendorStoreTarget(
+      user,
+      storeId,
+    );
+    const storeStrategy = normalizeCommissionRetrieveStrategy(
+      store.commissionRetrieveStrategy,
+    );
+    const mode =
+      args.mode === 'assume_vendor_net'
+        ? ('assume_vendor_net' as const)
+        : ('assume_customer_prices' as const);
+    const includeItemOverrides = args.includeItemOverrides !== false;
+
+    const settings =
+      await this._planOrderCommission.resolveOrderCommissionForStore(targetId);
+    const currency = settings.currency;
+    const config = settings.config;
+
+    const productFilter: Record<string, unknown> = { store: store._id };
+    if (includeItemOverrides) {
+      productFilter.$or = [
+        { commissionRetrieveStrategy: null },
+        { commissionRetrieveStrategy: { $exists: false } },
+        { commissionRetrieveStrategy: 'add_to_price' },
+      ];
+    } else {
+      productFilter.$or = [
+        { commissionRetrieveStrategy: null },
+        { commissionRetrieveStrategy: { $exists: false } },
+      ];
+    }
+
+    // Ne toucher que les articles effectivement en add_to_price
+    // (héritage boutique ou override article).
+    const products = await this._productModel
+      .find(productFilter)
+      .select(
+        'price discountPrice listPrice listDiscountPrice commissionRetrieveStrategy',
+      )
+      .exec();
+
+    let productsUpdated = 0;
+    for (const product of products) {
+      const itemRaw = product.commissionRetrieveStrategy;
+      const itemStrategy =
+        itemRaw === 'add_to_price' || itemRaw === 'on_payout' ? itemRaw : null;
+      const effective =
+        itemStrategy ??
+        (storeStrategy === 'add_to_price' ? 'add_to_price' : 'on_payout');
+      if (effective !== 'add_to_price') continue;
+
+      const adjusted = adjustStoredCatalogUnitPrices({
+        vendorPrice: Number(product.price ?? 0),
+        vendorDiscountPrice: Number(product.discountPrice ?? 0),
+        config,
+        currency,
+        mode,
+      });
+      const $set: Record<string, number> = {
+        price: adjusted.price,
+        discountPrice: adjusted.discountPrice,
+      };
+      if (product.listPrice != null) {
+        $set.listPrice = adjustStoredCatalogUnitPrices({
+          vendorPrice: Number(product.listPrice),
+          config,
+          currency,
+          mode,
+        }).price;
+      }
+      if (
+        product.listDiscountPrice != null &&
+        Number(product.listDiscountPrice) > 0
+      ) {
+        $set.listDiscountPrice = adjustStoredCatalogUnitPrices({
+          vendorPrice: Number(product.listDiscountPrice),
+          config,
+          currency,
+          mode,
+        }).price;
+      }
+      await this._productModel.updateOne({ _id: product._id }, { $set });
+      productsUpdated += 1;
+    }
+
+    const drinkFilter: Record<string, unknown> = { store: store._id };
+    if (includeItemOverrides) {
+      drinkFilter.$or = [
+        { commissionRetrieveStrategy: null },
+        { commissionRetrieveStrategy: { $exists: false } },
+        { commissionRetrieveStrategy: 'add_to_price' },
+      ];
+    } else {
+      drinkFilter.$or = [
+        { commissionRetrieveStrategy: null },
+        { commissionRetrieveStrategy: { $exists: false } },
+      ];
+    }
+    const drinks = await this._drinkModel
+      .find(drinkFilter)
+      .select('priceCad commissionRetrieveStrategy')
+      .exec();
+    let drinksUpdated = 0;
+    for (const drink of drinks) {
+      const itemRaw = drink.commissionRetrieveStrategy;
+      const itemStrategy =
+        itemRaw === 'add_to_price' || itemRaw === 'on_payout' ? itemRaw : null;
+      const effective =
+        itemStrategy ??
+        (storeStrategy === 'add_to_price' ? 'add_to_price' : 'on_payout');
+      if (effective !== 'add_to_price') continue;
+      const nextCad = adjustStoredCatalogUnitPrices({
+        vendorPrice: Number(drink.priceCad ?? 0),
+        config,
+        currency,
+        mode,
+      }).price;
+      await this._drinkModel.updateOne(
+        { _id: drink._id },
+        { $set: { priceCad: nextCad } },
+      );
+      drinksUpdated += 1;
+    }
+
+    await this._invalidatePublicCatalogCachesForStore(targetId);
+    return {
+      storeId: targetId,
+      mode,
+      storeStrategy,
+      productsUpdated,
+      drinksUpdated,
+      currency,
     };
   }
 
