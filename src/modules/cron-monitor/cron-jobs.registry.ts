@@ -119,6 +119,15 @@ export const CRON_JOBS_REGISTRY: CronJobDefinition[] = [
     scheduleEnvKey: 'PENDING_DELIVERY_AUTO_CLOSE_CRON',
     disableEnvKey: 'DISABLE_PENDING_DELIVERY_AUTO_CLOSE_CRON',
   },
+  {
+    key: 'delivery_agent_payout_settle',
+    label: 'Versements livreurs (badge)',
+    description:
+      'Relance les transfers Connect manqués et les versements DIAMOND quand le solde devient disponible.',
+    defaultSchedule: '*/15 * * * *',
+    scheduleEnvKey: 'DELIVERY_AGENT_PAYOUT_SETTLE_CRON',
+    disableEnvKey: 'DISABLE_DELIVERY_AGENT_PAYOUT_SETTLE_CRON',
+  },
 ];
 
 const BY_KEY = new Map(CRON_JOBS_REGISTRY.map((j) => [j.key, j]));

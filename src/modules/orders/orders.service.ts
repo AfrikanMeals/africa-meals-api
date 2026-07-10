@@ -4610,12 +4610,17 @@ export class OrdersService {
       });
     void this._stripeTransfers
       .transferDeliveryTipForCompletedOrder({ orderId })
-      .then((tr) => {
-        if (!tr.transferred && tr.skippedReason) {
-          this.logger.warn(
-            `Delivery tip transfer skipped order=${orderId}: ${tr.skippedReason}`,
-          );
+      .then(async (tr) => {
+        if (!tr.transferred) {
+          if (tr.skippedReason) {
+            this.logger.warn(
+              `Delivery tip transfer skipped order=${orderId}: ${tr.skippedReason}`,
+            );
+          }
+          return;
         }
+        // Tip crédité → re-tenter settle DIAMOND (solde peut devenir disponible).
+        await this.settleDeliveryBadgePayoutForOrder(orderId);
       })
       .catch((err) => {
         this.logger.warn(

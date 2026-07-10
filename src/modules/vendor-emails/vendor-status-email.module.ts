@@ -1,5 +1,6 @@
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { MobileAppSettingsModule } from '@modules/mobile-app-settings/mobile-app-settings.module';
+import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { VendorNotificationModule } from '@modules/vendor-notifications/vendor-notification.module';
 import { TeamsModule } from '@modules/teams/teams.module';
 import { forwardRef, Module } from '@nestjs/common';
@@ -14,6 +15,7 @@ import { AdCashEmailService } from './ad-cash-email.service';
   imports: [
     MailerModule,
     MobileAppSettingsModule,
+    NotificationsModule,
     forwardRef(() => TeamsModule),
     forwardRef(() => VendorNotificationModule),
     MongooseModule.forFeature([

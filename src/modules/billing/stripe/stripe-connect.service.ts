@@ -32,6 +32,11 @@ import {
   type PartnerBadgeSnapshot,
 } from '@common/partner-badges/partner-badge.constants';
 import {
+  isStripePayoutNoBalanceError,
+  parseStripeMinDelayDaysFromError,
+  resolveStripePayoutDelayDays,
+} from '@common/partner-badges/partner-badge-payout-schedule.util';
+import {
   resolveStorePublicUrl,
 } from '@common/catalog-public-url.util';
 import Stripe = require('stripe');
@@ -1703,6 +1708,56 @@ export class StripeConnectService {
     return { payouts, hasMore: list.has_more };
   }
 
+  /** Détail d’un transfer Connect plateforme → compte livreur/vendeur. */
+  async retrievePlatformTransfer(transferId: string): Promise<{
+    id: string;
+    amount: number;
+    currency: string;
+    createdAt: string;
+    destination: string | null;
+    reversed: boolean;
+    description: string | null;
+    sourceTransaction: string | null;
+  }> {
+    const id = String(transferId ?? '').trim();
+    if (!id.startsWith('tr_')) {
+      throw new BadRequestException('invalid_stripe_transfer_id');
+    }
+    if (!this.isConfigured()) {
+      throw new BadRequestException('stripe_not_configured');
+    }
+    try {
+      const tr = await this.stripe().transfers.retrieve(id);
+      return {
+        id: tr.id,
+        amount: (tr.amount ?? 0) / 100,
+        currency: String(tr.currency ?? 'cad').toUpperCase(),
+        createdAt: new Date((tr.created ?? 0) * 1000).toISOString(),
+        destination:
+          typeof tr.destination === 'string'
+            ? tr.destination
+            : tr.destination &&
+                typeof tr.destination === 'object' &&
+                'id' in tr.destination
+              ? String((tr.destination as { id: string }).id)
+              : null,
+        reversed: Boolean(tr.reversed),
+        description: tr.description ?? null,
+        sourceTransaction:
+          typeof tr.source_transaction === 'string'
+            ? tr.source_transaction
+            : null,
+      };
+    } catch (e) {
+      this.logger.warn(
+        `Stripe transfer retrieve failed ${id}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      throw new BadRequestException('stripe_transfer_not_found');
+    }
+  }
+
   async getConnectBalance(user: UserModel): Promise<StripeConnectBalance> {
     this.assertConnectRecipient(user);
     const status = await this.getConnectStatus(user);
@@ -1871,9 +1926,14 @@ export class StripeConnectService {
   }
 
   /**
-   * Versement manuel du solde disponible vers le compte bancaire du vendeur (Express).
+   * Versement manuel du solde disponible vers le compte bancaire (Express).
+   * `forceInstant` : ignore le badge partenaire et tente un payout `instant`
+   * (repli `standard` si non supporté) — réservé aux actions admin.
    */
-  async requestPayout(user: UserModel): Promise<StripeConnectPayoutRow> {
+  async requestPayout(
+    user: UserModel,
+    opts?: { forceInstant?: boolean },
+  ): Promise<StripeConnectPayoutRow> {
     this.assertConnectRecipient(user);
     const uid = this.userId(user);
     const status = await this.getConnectStatus(user);
@@ -1885,7 +1945,14 @@ export class StripeConnectService {
     }
 
     const partnerBadgeCode = await this.resolvePartnerBadgeCodeForUser(user);
-    await this.ensurePartnerBadgePayoutScheduleForUser(user);
+    const forceInstant = opts?.forceInstant === true;
+    if (!forceInstant) {
+      await this.ensurePartnerBadgePayoutScheduleForUser(user);
+    } else {
+      // Admin force : calendrier manuel pour autoriser un payout immédiat.
+      const accountIdForSchedule = status.accountId;
+      await this.applyPartnerBadgePayoutSchedule(accountIdForSchedule, 'DIAMOND');
+    }
 
     const accountId = status.accountId;
     const currency = (status.defaultCurrency ?? 'cad').toLowerCase();
@@ -1924,14 +1991,17 @@ export class StripeConnectService {
     }
 
     const badge = getPartnerBadgeDefinition(partnerBadgeCode);
-    const useInstantPayout = badge?.payoutDelayDays === 0;
+    const useInstantPayout =
+      forceInstant || badge?.payoutDelayDays === 0;
 
     const payoutBase = {
       amount: payoutCents,
       currency: payoutCurrency,
-      description: useInstantPayout
-        ? 'Versement instantané (badge Diamond)'
-        : `Versement demandé (badge ${badge?.name ?? 'SILVER'})`,
+      description: forceInstant
+        ? 'Versement admin (forcé, hors badge)'
+        : useInstantPayout
+          ? 'Versement instantané (badge Diamond)'
+          : `Versement demandé (badge ${badge?.name ?? 'SILVER'})`,
       metadata: {
         platformPayoutFeeCents: String(payoutFeeCents),
         platformPayoutFeeMode: payoutSplit.feeMode,
@@ -1939,6 +2009,7 @@ export class StripeConnectService {
         platformPayoutFeeFixed: String(payoutSplit.feeFixedCad),
         partnerBadgeCode: badge?.code ?? resolveEffectivePartnerBadgeCode(null),
         partnerBadgePayoutDelayDays: String(badge?.payoutDelayDays ?? 7),
+        adminForceInstant: forceInstant ? 'true' : 'false',
       },
     };
 
@@ -1976,7 +2047,7 @@ export class StripeConnectService {
       this.logger.log(
         `Stripe payout ${payout.id} for ${accountId} badge=${
           badge?.code ?? 'SILVER'
-        } method=${methodUsed}: gross=${
+        } method=${methodUsed} forceInstant=${forceInstant}: gross=${
           availableCents / 100
         } ${currency}, fee=${payoutFeeCents / 100}, net=${payoutCents / 100}`,
       );
@@ -2008,8 +2079,22 @@ export class StripeConnectService {
             }`,
           ),
         );
+
+      // Restaure le calendrier badge après un force admin.
+      if (forceInstant) {
+        void this.ensurePartnerBadgePayoutScheduleForUser(user).catch((e) =>
+          this.logger.warn(
+            `restore badge payout schedule after admin force: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          ),
+        );
+      }
       return row;
     } catch (e) {
+      if (forceInstant) {
+        void this.ensurePartnerBadgePayoutScheduleForUser(user).catch(() => undefined);
+      }
       this.logger.error(
         `Stripe payout create failed: ${
           e instanceof Error ? e.message : String(e)
@@ -2050,7 +2135,9 @@ export class StripeConnectService {
    */
   async settlePartnerBadgePayoutAfterTransfer(
     user: UserModel,
+    opts?: { scheduleRetry?: boolean },
   ): Promise<string | null> {
+    const scheduleRetry = opts?.scheduleRetry !== false;
     try {
       if (!this.isConfigured()) return null;
       // Garantit que le compte Connect suit le calendrier du badge courant.
@@ -2064,10 +2151,13 @@ export class StripeConnectService {
 
       // DIAMOND : calendrier manuel → versement instantané immédiat.
       const payout = await this.requestPayout(user);
+      this.clearDiamondPayoutRetry(String(this.userId(user)));
       return payout.id;
     } catch (e) {
-      // Solde encore en attente, payouts non activés, etc. → le livreur pourra
-      // toujours déclencher le versement via `POST /delivery-agent/payments/request-payout`.
+      // Solde encore en attente juste après le transfer → retries différés + cron.
+      if (scheduleRetry && isStripePayoutNoBalanceError(e)) {
+        this.scheduleDiamondPayoutRetry(String(this.userId(user)));
+      }
       this.logger.warn(
         `Delivery badge payout settle skipped user=${this.userId(user)}: ${
           e instanceof Error ? e.message : String(e)
@@ -2078,8 +2168,91 @@ export class StripeConnectService {
   }
 
   /**
+   * Cron / retry — tente un settle DIAMOND pour tous les livreurs Connect
+   * dont le badge effectif est instantané et qui ont un solde disponible.
+   */
+  async runDiamondPayoutSettlePass(opts?: {
+    limit?: number;
+  }): Promise<{ scanned: number; settled: number; skipped: number }> {
+    if (!this.isConfigured()) {
+      return { scanned: 0, settled: 0, skipped: 0 };
+    }
+    const limit = Math.max(1, Math.min(opts?.limit ?? 40, 100));
+    const users = await this.userModel
+      .find({
+        type: UserTypeEnum.DELIVERY,
+        stripeConnectAccountId: { $exists: true, $nin: [null, ''] },
+        stripeConnectPayoutsEnabled: true,
+      })
+      .limit(limit * 3)
+      .exec();
+
+    let scanned = 0;
+    let settled = 0;
+    let skipped = 0;
+    for (const user of users) {
+      if (settled + skipped >= limit) break;
+      const badgeCode = await this.resolvePartnerBadgeCodeForUser(user);
+      if (partnerBadgePayoutMethod(badgeCode) !== 'instant') continue;
+      scanned += 1;
+      const payoutId = await this.settlePartnerBadgePayoutAfterTransfer(user, {
+        scheduleRetry: false,
+      });
+      if (payoutId) settled += 1;
+      else skipped += 1;
+    }
+    return { scanned, settled, skipped };
+  }
+
+  private readonly diamondPayoutRetryTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>[]
+  >();
+
+  private clearDiamondPayoutRetry(userId: string): void {
+    const timers = this.diamondPayoutRetryTimers.get(userId);
+    if (!timers?.length) return;
+    for (const t of timers) clearTimeout(t);
+    this.diamondPayoutRetryTimers.delete(userId);
+  }
+
+  /** Retries différés quand le solde Connect est encore `pending` après transfer. */
+  private scheduleDiamondPayoutRetry(userId: string): void {
+    const uid = String(userId ?? '').trim();
+    if (!uid || !Types.ObjectId.isValid(uid)) return;
+    if (this.diamondPayoutRetryTimers.has(uid)) return;
+
+    const delaysMs = [60_000, 5 * 60_000, 30 * 60_000];
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    for (const delayMs of delaysMs) {
+      timers.push(
+        setTimeout(() => {
+          void this.userModel
+            .findById(uid)
+            .exec()
+            .then(async (user) => {
+              if (!user || user.type !== UserTypeEnum.DELIVERY) return;
+              await this.settlePartnerBadgePayoutAfterTransfer(user, {
+                scheduleRetry: false,
+              });
+            })
+            .catch((e) =>
+              this.logger.warn(
+                `Diamond payout retry failed user=${uid}: ${
+                  e instanceof Error ? e.message : String(e)
+                }`,
+              ),
+            );
+        }, delayMs),
+      );
+    }
+    this.diamondPayoutRetryTimers.set(uid, timers);
+  }
+
+  /**
    * Applique le calendrier de versement Stripe selon le badge partenaire.
    * Diamond → versements manuels + instant à la demande ; Silver/Gold → délai en jours.
+   * Si Stripe refuse le délai badge (minimum pays), on clamp au minimum autorisé.
    */
   async applyPartnerBadgePayoutSchedule(
     accountId: string,
@@ -2103,16 +2276,41 @@ export class StripeConnectService {
         return;
       }
 
-      await this.stripe().accounts.update(trimmedAccount, {
-        settings: {
-          payouts: {
-            schedule: {
-              interval: 'daily',
-              delay_days: badge.payoutDelayDays,
+      const delayDays = resolveStripePayoutDelayDays(badge.payoutDelayDays, null);
+      try {
+        await this.stripe().accounts.update(trimmedAccount, {
+          settings: {
+            payouts: {
+              schedule: {
+                interval: 'daily',
+                delay_days: delayDays,
+              },
             },
           },
-        },
-      });
+        });
+      } catch (firstErr) {
+        const msg =
+          firstErr instanceof Error ? firstErr.message : String(firstErr);
+        const stripeMin = parseStripeMinDelayDaysFromError(msg) ?? 7;
+        const clamped = resolveStripePayoutDelayDays(
+          badge.payoutDelayDays,
+          stripeMin,
+        );
+        if (clamped === delayDays) throw firstErr;
+        this.logger.warn(
+          `Stripe payout schedule delay_days=${delayDays} rejected for ${trimmedAccount}; retrying with ${clamped} (badge=${effectiveCode})`,
+        );
+        await this.stripe().accounts.update(trimmedAccount, {
+          settings: {
+            payouts: {
+              schedule: {
+                interval: 'daily',
+                delay_days: clamped,
+              },
+            },
+          },
+        });
+      }
     } catch (e) {
       this.logger.warn(
         `Stripe payout schedule update failed for ${trimmedAccount} badge=${effectiveCode}: ${

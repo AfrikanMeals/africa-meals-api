@@ -31,6 +31,7 @@ import {
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { haversineDistance } from 'src/utils/helpers';
 import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
+import { StripeConnectTransferService } from '@modules/billing/stripe/stripe-connect-transfer.service';
 import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-email.service';
 import { PartnerOnboardingEmailService } from '@modules/vendor-emails/partner-onboarding-email.service';
 import { resolveStripeOnboardingStatusLabel } from '@modules/billing/stripe/stripe-connect-visibility';
@@ -145,6 +146,8 @@ export class DeliveryAgentService {
     private readonly _supportedCountries: SupportedCountriesService,
     @Inject(StripeConnectService)
     private readonly _stripeConnect: StripeConnectService,
+    @Inject(StripeConnectTransferService)
+    private readonly _stripeTransfers: StripeConnectTransferService,
     @Inject(VendorStatusEmailService)
     private readonly _vendorStatusEmail: VendorStatusEmailService,
     @Inject(PartnerOnboardingEmailService)
@@ -2207,7 +2210,7 @@ export class DeliveryAgentService {
       OrderStatusEnum.SHIPPED,
       OrderStatusEnum.COMPLETED,
     ];
-    const earningsWindow = 25;
+    const earningsWindow = 50;
 
     const [
       deliveredAgg,
@@ -2299,7 +2302,7 @@ export class DeliveryAgentService {
         : Promise.resolve(null),
       agentUser.stripeConnectAccountId?.trim()
         ? this._stripeConnect
-            .listPayouts(agentUser, 5)
+            .listPayouts(agentUser, 20)
             .catch(() => ({ payouts: [], hasMore: false }))
         : Promise.resolve({ payouts: [], hasMore: false }),
     ]);
@@ -2349,6 +2352,198 @@ export class DeliveryAgentService {
         recentPayouts: recentPayouts.payouts ?? [],
         hasMorePayouts: recentPayouts.hasMore === true,
       },
+    };
+  }
+
+  /**
+   * Admin — (re)transfer des commandes sélectionnées et/ou payout forcé
+   * du solde Connect, indépendamment du badge partenaire.
+   */
+  async processPaymentsForAdmin(
+    admin: UserModel,
+    applicationId: string,
+    dto: {
+      orderIds?: string[];
+      forceInstantPayout?: boolean;
+      payoutOnly?: boolean;
+    },
+  ) {
+    this.assertAdmin(admin);
+    const app = await this._requireApprovedApplication(applicationId);
+    const agentUser = await this._users.findById(app.user).exec();
+    if (!agentUser) {
+      throw new NotFoundException('user_not_found');
+    }
+    const agentId = String(agentUser._id);
+
+    const payoutOnly = dto.payoutOnly === true;
+    const forceInstantPayout = dto.forceInstantPayout !== false;
+    const orderIds = [
+      ...new Set(
+        (dto.orderIds ?? [])
+          .map((id) => String(id ?? '').trim())
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ].slice(0, 50);
+
+    const transfers: Array<{
+      orderId: string;
+      transferred: boolean;
+      transferId?: string;
+      transferCents?: number;
+      tipTransferred?: boolean;
+      tipTransferId?: string;
+      skippedReason?: string;
+    }> = [];
+
+    if (!payoutOnly && orderIds.length > 0) {
+      for (const orderId of orderIds) {
+        const order = await this._orders
+          .findById(orderId)
+          .select('assignedDeliveryUser shouldShip status')
+          .lean()
+          .exec();
+        if (!order) {
+          transfers.push({
+            orderId,
+            transferred: false,
+            skippedReason: 'order_not_found',
+          });
+          continue;
+        }
+        const assigned = order.assignedDeliveryUser
+          ? String(order.assignedDeliveryUser)
+          : '';
+        if (assigned !== agentId) {
+          transfers.push({
+            orderId,
+            transferred: false,
+            skippedReason: 'order_not_assigned_to_agent',
+          });
+          continue;
+        }
+        if (!order.shouldShip) {
+          transfers.push({
+            orderId,
+            transferred: false,
+            skippedReason: 'not_delivery_order',
+          });
+          continue;
+        }
+
+        const shipTr =
+          await this._stripeTransfers.transferDeliveryShareForCompletedOrder({
+            orderId,
+          });
+        const tipTr =
+          await this._stripeTransfers.transferDeliveryTipForCompletedOrder({
+            orderId,
+          });
+        transfers.push({
+          orderId,
+          transferred: shipTr.transferred,
+          transferId: shipTr.transferId,
+          transferCents: shipTr.transferCents,
+          tipTransferred: tipTr.transferred,
+          tipTransferId: tipTr.transferId,
+          skippedReason: shipTr.transferred
+            ? undefined
+            : shipTr.skippedReason,
+        });
+      }
+    }
+
+    let payout: Awaited<
+      ReturnType<StripeConnectService['requestPayout']>
+    > | null = null;
+    let payoutError: string | null = null;
+    if (forceInstantPayout) {
+      try {
+        payout = await this._stripeConnect.requestPayout(agentUser, {
+          forceInstant: true,
+        });
+      } catch (e) {
+        const msg =
+          e && typeof e === 'object' && 'getResponse' in e
+            ? (() => {
+                try {
+                  const r = (
+                    e as { getResponse: () => unknown }
+                  ).getResponse();
+                  if (typeof r === 'string') return r;
+                  if (
+                    r &&
+                    typeof r === 'object' &&
+                    'message' in r
+                  ) {
+                    const m = (r as { message?: unknown }).message;
+                    return Array.isArray(m)
+                      ? m.join(', ')
+                      : String(m ?? '');
+                  }
+                  return JSON.stringify(r);
+                } catch {
+                  return e instanceof Error ? e.message : String(e);
+                }
+              })()
+            : e instanceof Error
+              ? e.message
+              : String(e);
+        payoutError = msg || 'stripe_payout_request_failed';
+        this._logger.warn(
+          `Admin force payout failed application=${applicationId}: ${payoutError}`,
+        );
+      }
+    }
+
+    return {
+      applicationId: String(app._id),
+      userId: agentId,
+      transfers,
+      payout,
+      payoutError,
+      forceInstantPayout,
+    };
+  }
+
+  /** Admin — détail Stripe d’un transfer Connect lié au livreur. */
+  async getStripeTransferDetailsForAdmin(
+    admin: UserModel,
+    applicationId: string,
+    transferId: string,
+  ) {
+    this.assertAdmin(admin);
+    const app = await this._requireApprovedApplication(applicationId);
+    const agentUser = await this._users.findById(app.user).exec();
+    if (!agentUser) {
+      throw new NotFoundException('user_not_found');
+    }
+    const accountId = String(agentUser.stripeConnectAccountId ?? '').trim();
+    const details =
+      await this._stripeConnect.retrievePlatformTransfer(transferId);
+    if (
+      accountId &&
+      details.destination &&
+      details.destination !== accountId
+    ) {
+      throw new BadRequestException('stripe_transfer_not_for_agent');
+    }
+    // Vérifie aussi qu’une commande de ce livreur référence ce transfer.
+    const linkedOrder = await this._orders
+      .findOne({
+        assignedDeliveryUser: agentUser._id,
+        $or: [
+          { stripeDeliveryTransferId: transferId },
+          { stripeDeliveryTipTransferId: transferId },
+        ],
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    return {
+      ...details,
+      linkedOrderId: linkedOrder?._id ? String(linkedOrder._id) : null,
+      agentAccountId: accountId || null,
     };
   }
 

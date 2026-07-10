@@ -1,5 +1,6 @@
 import { MailerService } from '@modules/mailer/mailer.service';
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
+import { NotificationsService } from '@modules/notifications/notifications.service';
 import {
   partnerBadgeChangeDirection,
   partnerBadgePayoutTimingLabelFr,
@@ -58,6 +59,7 @@ export class VendorStatusEmailService {
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
     private readonly vendorDispatch: VendorNotificationDispatchService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   buildVendorOrderEmailPayload(args: {
@@ -569,6 +571,33 @@ export class VendorStatusEmailService {
       infoRows: rows,
       logTag: `payout_status user=${args.userId} payout=${args.payoutId} status=${status}`,
     });
+
+    try {
+      await this.notifications.createUserScopedNotification({
+        recipientUserId: args.userId,
+        title,
+        body,
+        type: 'payout_status',
+        data: {
+          type: 'payout_status',
+          audience: 'partner',
+          payoutId: args.payoutId,
+          status,
+          amount: String(args.amount),
+          currency: String(args.currency ?? '').toUpperCase(),
+          ...(args.arrivalDate?.trim()
+            ? { arrivalDate: args.arrivalDate.trim() }
+            : {}),
+        },
+        sendPush: true,
+      });
+    } catch (e) {
+      this.logger.warn(
+        `payout_status push user=${args.userId} payout=${args.payoutId}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
   }
 
   /** E-mail vendeur (équipe boutique) ou livreur lors d’un changement de badge partenaire. */

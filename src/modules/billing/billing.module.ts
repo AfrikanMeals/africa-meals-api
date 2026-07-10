@@ -12,6 +12,7 @@ import { UsersModule } from '@modules/users/users.module';
 import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
 import { VendorNotificationModule } from '@modules/vendor-notifications/vendor-notification.module';
 import { MarketingOfferListingsModule } from '@modules/marketing-offer-listings/marketing-offer-listings.module';
+import { CronMonitorModule } from '@modules/cron-monitor/cron-monitor.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { StripeConnectTransferModule } from './stripe/stripe-connect-transfer.module';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -38,6 +39,8 @@ import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import { StripeConnectService } from './stripe/stripe-connect.service';
 import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.service';
 import { StripeWebhookMetricsService } from './stripe/stripe-webhook-metrics.service';
+import { DeliveryAgentPayoutSettleService } from './stripe/delivery-agent-payout-settle.service';
+import { DeliveryAgentPayoutSettleCron } from './stripe/delivery-agent-payout-settle.cron';
 import { CheckoutSessionSseModule } from '@modules/sse-stream/checkout-session-sse.module';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 
@@ -50,6 +53,8 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
     StripeGroupedCheckoutService,
     StripeConnectService,
     StripeWebhookMetricsService,
+    DeliveryAgentPayoutSettleService,
+    DeliveryAgentPayoutSettleCron,
   ],
   imports: [
     WsNotifyModule,
@@ -69,6 +74,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
     VendorStatusEmailModule,
     forwardRef(() => VendorNotificationModule),
     CheckoutSessionSseModule,
+    CronMonitorModule,
     MongooseModule.forFeature([
       { name: PaymentMethodModel.name, schema: PaymentMethodSchema },
       { name: StoreModel.name, schema: StoreSchema },
@@ -92,6 +98,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
     StripeGroupedCheckoutService,
     StripeWebhookMetricsService,
     StripeConnectTransferModule,
+    DeliveryAgentPayoutSettleService,
   ],
 })
 export class BillingModule {}

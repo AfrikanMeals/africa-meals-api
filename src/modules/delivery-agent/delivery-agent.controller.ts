@@ -26,6 +26,7 @@ import {
   RejectDeliveryAgentApplicationDto,
   SuspendDeliveryAgentApplicationDto,
 } from './dto/admin-review-delivery-agent.dto';
+import { AdminProcessDeliveryAgentPaymentsDto } from './dto/admin-process-delivery-agent-payments.dto';
 import { PatchDeliveryAgentApplicationDto } from './dto/delivery-agent-application.dto';
 import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
 import { PatchDeliveryAgentPresenceDto } from './dto/patch-delivery-agent-presence.dto';
@@ -562,6 +563,41 @@ export class DeliveryAgentController {
     return this._deliveryAgent.getApplicationFinanceOverviewForAdmin(
       req.user as UserModel,
       applicationId,
+    );
+  }
+
+  @Post('admin/applications/:applicationId/process-payments')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Admin — (re)transfer commandes sélectionnées et/ou payout forcé hors badge.',
+  })
+  async processPaymentsAdmin(
+    @Req() req: Request,
+    @Param('applicationId') applicationId: string,
+    @Body() dto: AdminProcessDeliveryAgentPaymentsDto,
+  ) {
+    return this._deliveryAgent.processPaymentsForAdmin(
+      req.user as UserModel,
+      applicationId,
+      dto,
+    );
+  }
+
+  @Get('admin/applications/:applicationId/stripe-transfers/:transferId')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Admin — détail Stripe d’un transfer Connect livreur.',
+  })
+  async getStripeTransferDetailsAdmin(
+    @Req() req: Request,
+    @Param('applicationId') applicationId: string,
+    @Param('transferId') transferId: string,
+  ) {
+    return this._deliveryAgent.getStripeTransferDetailsForAdmin(
+      req.user as UserModel,
+      applicationId,
+      transferId,
     );
   }
 }

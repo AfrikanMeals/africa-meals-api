@@ -16,6 +16,7 @@ import { ShopHomeService } from '@modules/shop-home/shop-home.service';
 import { SubscriptionTrialReminderService } from '@modules/subscriptions/subscription-trial-reminder.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { PendingDeliveryService } from '@modules/pending-delivery/pending-delivery.service';
+import { DeliveryAgentPayoutSettleService } from '@modules/billing/stripe/delivery-agent-payout-settle.service';
 import { UserModel } from '@schemas/user.schema';
 import { ModuleRef } from '@nestjs/core';
 
@@ -101,6 +102,12 @@ export class CronJobRunnerService {
           const res =
             await this.resolve(PendingDeliveryService).runAutoClosePass();
           return `scanned=${res.scanned} closed=${res.closed} failed=${res.failed}`;
+        };
+      case 'delivery_agent_payout_settle':
+        return async () => {
+          const res =
+            await this.resolve(DeliveryAgentPayoutSettleService).runPass();
+          return `transfers=${res.transfersSucceeded}/${res.transfersScanned} diamond=${res.diamondSettled}/${res.diamondScanned}`;
         };
       default:
         throw new BadRequestException('unknown_cron_job');
