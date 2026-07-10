@@ -40,6 +40,10 @@ import { RefundsModule } from './modules/refunds/refunds.module';
 import { PenaltiesModule } from './modules/penalties/penalties.module';
 import { PlatformShippingSettingsModule } from './modules/platform-shipping-settings/platform-shipping-settings.module';
 import { buildMongooseRootOptions } from './config/mongoose-connection.factory';
+import {
+  normalizeMongoUriForDriver,
+  readMongoTlsServername,
+} from './config/mongoose-uri-diagnostics';
 import { nestEnvFilePaths } from './config/nest-env-files';
 import { AppPoliciesModule } from './modules/app-policies/app-policies.module';
 import { DocumentationModule } from './modules/documentation/documentation.module';
@@ -150,9 +154,14 @@ async function readRedisManagerEnabledAtBootstrap(
   let client: import('mongodb').MongoClient | null = null;
   try {
     const { MongoClient } = await import('mongodb');
-    client = new MongoClient(uri, {
+    const normalized = normalizeMongoUriForDriver(uri);
+    const tlsServername = readMongoTlsServername(normalized, (key) =>
+      config.get(key),
+    );
+    client = new MongoClient(normalized, {
       serverSelectionTimeoutMS: 5000,
       connectTimeoutMS: 5000,
+      ...(tlsServername ? { tls: true, servername: tlsServername } : {}),
     });
     await client.connect();
     const dbName =
