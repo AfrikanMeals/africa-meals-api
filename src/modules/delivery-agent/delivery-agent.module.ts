@@ -21,6 +21,10 @@ import {
   DeliveryAgentOrderRatingModel,
   DeliveryAgentOrderRatingSchema,
 } from '@schemas/delivery-agent-order-rating.schema';
+import {
+  DeliveryAgentDailyPerformanceModel,
+  DeliveryAgentDailyPerformanceSchema,
+} from '@schemas/delivery-agent-daily-performance.schema';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
@@ -53,6 +57,10 @@ import { DeliveryAgentService } from './delivery-agent.service';
       {
         name: DeliveryAgentOrderRatingModel.name,
         schema: DeliveryAgentOrderRatingSchema,
+      },
+      {
+        name: DeliveryAgentDailyPerformanceModel.name,
+        schema: DeliveryAgentDailyPerformanceSchema,
       },
     ]),
   ],

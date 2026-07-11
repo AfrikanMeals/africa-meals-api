@@ -30,6 +30,7 @@ import { AdminProcessDeliveryAgentPaymentsDto } from './dto/admin-process-delive
 import { PatchDeliveryAgentApplicationDto } from './dto/delivery-agent-application.dto';
 import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
 import { PatchDeliveryAgentPresenceDto } from './dto/patch-delivery-agent-presence.dto';
+import { SyncDeliveryAgentDailyPerformanceDto } from './dto/sync-delivery-agent-daily-performance.dto';
 import {
   ConfirmDeliveryHandoffDto,
   PreviewDeliveryHandoffDto,
@@ -128,10 +129,27 @@ export class DeliveryAgentController {
   @UseGuards(JwtGuard)
   @ApiOperation({
     summary:
-      'Indicateurs journaliers livreur : expéditions du jour et note moyenne.',
+      'Indicateurs journaliers livreur (snapshot Mongo 1×/jour ; pas d’agrégat à chaque appel).',
   })
   getDailyPerformance(@Req() req: Request) {
     return this._deliveryAgent.getDailyPerformanceStats(req.user as UserModel);
+  }
+
+  @Post('performance/daily/sync')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+  @ApiOperation({
+    summary:
+      'Sync quotidien mobile → Mongo (expéditions locales + distance ; note recalculée 1×).',
+  })
+  syncDailyPerformance(
+    @Req() req: Request,
+    @Body() body: SyncDeliveryAgentDailyPerformanceDto,
+  ) {
+    return this._deliveryAgent.syncDailyPerformanceStats(
+      req.user as UserModel,
+      body,
+    );
   }
 
   @Patch('presence')

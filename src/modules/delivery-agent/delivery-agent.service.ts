@@ -21,6 +21,7 @@ import {
   DeliveryAgentApplicationStatus,
 } from '@schemas/delivery-agent-application.schema';
 import { DeliveryAgentOrderRatingModel } from '@schemas/delivery-agent-order-rating.schema';
+import { DeliveryAgentDailyPerformanceModel } from '@schemas/delivery-agent-daily-performance.schema';
 import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
@@ -54,6 +55,13 @@ import {
   resolveDeliveryHistoryStatusFilter,
 } from './delivery-agent-history.util';
 import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
+import { SyncDeliveryAgentDailyPerformanceDto } from './dto/sync-delivery-agent-daily-performance.dto';
+import {
+  deliveryAgentPerformanceDayKey,
+  deliveryAgentPerformanceStartOfDay,
+  mergeDailyPerformanceShippedCount,
+  type DeliveryAgentDailyPerformancePayload,
+} from './delivery-agent-daily-performance.util';
 import {
   defaultDeliveryCapacity,
   driverLicenseRequired,
@@ -138,6 +146,9 @@ export class DeliveryAgentService {
 
   @InjectModel(DeliveryAgentOrderRatingModel.name)
   private readonly _courierRatings: Model<DeliveryAgentOrderRatingModel>;
+
+  @InjectModel(DeliveryAgentDailyPerformanceModel.name)
+  private readonly _dailyPerformance: Model<DeliveryAgentDailyPerformanceModel>;
 
   constructor(
     @Inject(NotificationsService)
@@ -1031,13 +1042,108 @@ export class DeliveryAgentService {
     return this._storeDeliveryDrivers.leaveActivePartner(user, membershipId);
   }
 
-  /** Expéditions du jour + note moyenne livreur (carte performance mobile). */
-  async getDailyPerformanceStats(user: UserModel) {
+  /** Expéditions du jour + note moyenne (snapshot Mongo 1×/jour, pas d’agrégat à chaque GET). */
+  async getDailyPerformanceStats(
+    user: UserModel,
+  ): Promise<DeliveryAgentDailyPerformancePayload> {
     this.assertDeliveryAgent(user);
     const agentId = new Types.ObjectId(String(user._id ?? user.id));
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    const dayKey = deliveryAgentPerformanceDayKey();
 
+    const cached = await this._dailyPerformance
+      .findOne({ deliveryAgent: agentId, dayKey })
+      .lean()
+      .exec();
+    if (cached) {
+      return {
+        ordersShippedToday: Math.max(
+          0,
+          Math.round(Number(cached.ordersShippedToday ?? 0)),
+        ),
+        averageRating:
+          cached.averageRating != null &&
+          Number.isFinite(Number(cached.averageRating))
+            ? Math.round(Number(cached.averageRating) * 10) / 10
+            : null,
+        ratingCount: Math.max(0, Math.round(Number(cached.ratingCount ?? 0))),
+        distanceKmToday:
+          cached.distanceKmToday != null
+            ? Number(cached.distanceKmToday)
+            : null,
+        dayKey,
+        fromCache: true,
+      };
+    }
+
+    const live = await this._computeLiveDailyPerformance(agentId);
+    await this._upsertDailyPerformanceSnapshot({
+      agentId,
+      dayKey,
+      ordersShippedToday: live.ordersShippedToday,
+      averageRating: live.averageRating,
+      ratingCount: live.ratingCount,
+      distanceKmToday: null,
+    });
+    return { ...live, dayKey, fromCache: false };
+  }
+
+  /**
+   * Sync quotidien mobile → Mongo (compteurs locaux + note recalculée 1×).
+   * Idempotent pour la journée (`dayKey`).
+   */
+  async syncDailyPerformanceStats(
+    user: UserModel,
+    dto: SyncDeliveryAgentDailyPerformanceDto,
+  ): Promise<DeliveryAgentDailyPerformancePayload> {
+    this.assertDeliveryAgent(user);
+    const agentId = new Types.ObjectId(String(user._id ?? user.id));
+    const dayKey = deliveryAgentPerformanceDayKey();
+    const live = await this._computeLiveDailyPerformance(agentId);
+    const existing = await this._dailyPerformance
+      .findOne({ deliveryAgent: agentId, dayKey })
+      .lean()
+      .exec();
+
+    const clientShipped =
+      dto.ordersShippedToday != null
+        ? Math.max(0, Math.round(Number(dto.ordersShippedToday)))
+        : live.ordersShippedToday;
+    const ordersShippedToday = mergeDailyPerformanceShippedCount(
+      existing?.ordersShippedToday,
+      mergeDailyPerformanceShippedCount(live.ordersShippedToday, clientShipped),
+    );
+    const distanceKmToday =
+      dto.distanceKmToday != null && Number.isFinite(Number(dto.distanceKmToday))
+        ? Math.max(0, Math.round(Number(dto.distanceKmToday) * 100) / 100)
+        : existing?.distanceKmToday != null
+          ? Number(existing.distanceKmToday)
+          : null;
+
+    await this._upsertDailyPerformanceSnapshot({
+      agentId,
+      dayKey,
+      ordersShippedToday,
+      averageRating: live.averageRating,
+      ratingCount: live.ratingCount,
+      distanceKmToday,
+    });
+
+    return {
+      ordersShippedToday,
+      averageRating: live.averageRating,
+      ratingCount: live.ratingCount,
+      distanceKmToday,
+      dayKey,
+      fromCache: false,
+    };
+  }
+
+  private async _computeLiveDailyPerformance(agentId: Types.ObjectId): Promise<{
+    ordersShippedToday: number;
+    averageRating: number | null;
+    ratingCount: number;
+  }> {
+    const startOfDay = deliveryAgentPerformanceStartOfDay();
     const [ordersShippedToday, ratingAgg] = await Promise.all([
       this._orders
         .countDocuments({
@@ -1076,6 +1182,36 @@ export class DeliveryAgentService {
       averageRating,
       ratingCount,
     };
+  }
+
+  private async _upsertDailyPerformanceSnapshot(args: {
+    agentId: Types.ObjectId;
+    dayKey: string;
+    ordersShippedToday: number;
+    averageRating: number | null;
+    ratingCount: number;
+    distanceKmToday: number | null;
+  }): Promise<void> {
+    const now = new Date();
+    await this._dailyPerformance
+      .findOneAndUpdate(
+        { deliveryAgent: args.agentId, dayKey: args.dayKey },
+        {
+          $set: {
+            ordersShippedToday: args.ordersShippedToday,
+            averageRating: args.averageRating,
+            ratingCount: args.ratingCount,
+            distanceKmToday: args.distanceKmToday,
+            syncedAt: now,
+          },
+          $setOnInsert: {
+            deliveryAgent: args.agentId,
+            dayKey: args.dayKey,
+          },
+        },
+        { upsert: true },
+      )
+      .exec();
   }
 
   async listPendingOrders(user: UserModel) {
