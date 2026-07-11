@@ -14,6 +14,7 @@ import {
   favoritesCacheTtlMs,
   fieldProjectionCacheTtlMs,
   productCategoriesCacheTtlMs,
+  recommendationsCacheTtlMs,
   setRuntimeCacheTtlOverrides,
 } from '@common/redis-app-cache';
 import { setFieldProjectionCacheEnabled } from '@common/field-selection/field-projection-cache.interceptor';
@@ -36,15 +37,18 @@ export type CacheSettingsResponse = {
   favoritesTtlMs: number;
   productCategoriesTtlMs: number;
   fieldProjectionTtlMs: number;
+  recommendationsTtlMs: number;
   fieldProjectionEnabled: boolean;
   effectivePublicCatalogTtlMs: number;
   effectiveFavoritesTtlMs: number;
   effectiveProductCategoriesTtlMs: number;
   effectiveFieldProjectionTtlMs: number;
+  effectiveRecommendationsTtlMs: number;
   envPublicCatalogTtlMs: number;
   envFavoritesTtlMs: number;
   envProductCategoriesTtlMs: number;
   envFieldProjectionTtlMs: number;
+  envRecommendationsTtlMs: number;
   moduleEngines: ModuleEngineMap;
   effectiveModuleEngines: ModuleEngineMap;
   enginesAvailable: {
@@ -96,6 +100,7 @@ export class CacheSettingsService implements OnModuleInit {
       favoritesTtlMs: doc.favoritesTtlMs,
       productCategoriesTtlMs: doc.productCategoriesTtlMs,
       fieldProjectionTtlMs: doc.fieldProjectionTtlMs,
+      recommendationsTtlMs: doc.recommendationsTtlMs,
     });
     setFieldProjectionCacheEnabled(doc.fieldProjectionEnabled !== false);
     this._cacheLayer.applyModuleEngines(moduleEnginesFromDoc(doc));
@@ -114,11 +119,13 @@ export class CacheSettingsService implements OnModuleInit {
       favoritesTtlMs: doc.favoritesTtlMs,
       productCategoriesTtlMs: doc.productCategoriesTtlMs,
       fieldProjectionTtlMs: doc.fieldProjectionTtlMs ?? 120_000,
+      recommendationsTtlMs: doc.recommendationsTtlMs ?? 45_000,
       fieldProjectionEnabled: doc.fieldProjectionEnabled !== false,
       effectivePublicCatalogTtlMs: apiPublicCacheTtlMs(),
       effectiveFavoritesTtlMs: favoritesCacheTtlMs(),
       effectiveProductCategoriesTtlMs: productCategoriesCacheTtlMs(),
       effectiveFieldProjectionTtlMs: fieldProjectionCacheTtlMs(),
+      effectiveRecommendationsTtlMs: recommendationsCacheTtlMs(),
       envPublicCatalogTtlMs: this.envTtl('API_PUBLIC_CACHE_TTL_MS', 90_000),
       envFavoritesTtlMs: this.envTtl('FAVORITES_CACHE_TTL_MS', 25_000),
       envProductCategoriesTtlMs: this.envTtl(
@@ -129,6 +136,7 @@ export class CacheSettingsService implements OnModuleInit {
         'FIELD_PROJECTION_CACHE_TTL_MS',
         120_000,
       ),
+      envRecommendationsTtlMs: this.envTtl('RECOMMENDATIONS_CACHE_TTL_MS', 45_000),
       moduleEngines,
       effectiveModuleEngines: this._cacheLayer.getEffectiveModuleEngines(),
       enginesAvailable: this._cacheLayer.getAvailability(),
@@ -154,6 +162,10 @@ export class CacheSettingsService implements OnModuleInit {
               'FIELD_PROJECTION_CACHE_TTL_MS',
               120_000,
             ),
+            recommendationsTtlMs: this.envTtl(
+              'RECOMMENDATIONS_CACHE_TTL_MS',
+              45_000,
+            ),
             fieldProjectionEnabled: true,
           },
         },
@@ -178,6 +190,7 @@ export class CacheSettingsService implements OnModuleInit {
       favoritesTtlMs: dto.favoritesTtlMs,
       productCategoriesTtlMs: dto.productCategoriesTtlMs,
       fieldProjectionTtlMs: dto.fieldProjectionTtlMs,
+      recommendationsTtlMs: dto.recommendationsTtlMs,
     };
     if (dto.fieldProjectionEnabled !== undefined) {
       $set.fieldProjectionEnabled = dto.fieldProjectionEnabled;

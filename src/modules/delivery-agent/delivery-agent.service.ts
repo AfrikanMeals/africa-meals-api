@@ -97,6 +97,7 @@ import {
   resolveAgentOperatingRegionCode,
   resolveDeliveryAgentPresence,
 } from './delivery-agent-domain.util';
+import { buildDeliveryPendingOrdersMongoFilter } from './delivery-pending-orders-query.util';
 
 export type DeliveryAgentPresence =
   | 'disponible'
@@ -1232,21 +1233,11 @@ export class DeliveryAgentService {
     const agentSettings = await this._platformShipping.getPublicSettings(
       agentRegionCode,
     );
+    const pendingFilter = buildDeliveryPendingOrdersMongoFilter({
+      agentRegionCode,
+    });
     const rows = await this._orders
-      .find({
-        shouldShip: true,
-        $or: [
-          { assignedDeliveryUser: { $exists: false } },
-          { assignedDeliveryUser: null },
-        ],
-        status: {
-          $in: [
-            OrderStatusEnum.CREATED,
-            OrderStatusEnum.PAIED,
-            OrderStatusEnum.APPROVED,
-          ],
-        },
-      })
+      .find(pendingFilter)
       .sort({ createdAt: -1 })
       .limit(50)
       .populate({
@@ -1279,19 +1270,42 @@ export class DeliveryAgentService {
       ),
     );
 
-    const managedStoreRows = await this._stores
-      .find({ vendorManagesDeliveryDrivers: true })
-      .select('_id deliveryAssignmentMode')
-      .lean()
-      .exec();
+    // Borné aux boutiques des candidats (évite scan global vendorManagesDeliveryDrivers).
+    const candidateStoreIds = [
+      ...new Set(
+        rows
+          .map((row) => {
+            const st = row.store;
+            if (st && typeof st === 'object' && st !== null && '_id' in st) {
+              return String((st as { _id: unknown })._id);
+            }
+            if (st != null) return String(st);
+            return '';
+          })
+          .filter((id) => id.length > 0),
+      ),
+    ];
+    const managedStoreRows =
+      candidateStoreIds.length === 0
+        ? []
+        : await this._stores
+            .find({
+              _id: { $in: candidateStoreIds.map((id) => new Types.ObjectId(id)) },
+              vendorManagesDeliveryDrivers: true,
+            })
+            .select('_id deliveryAssignmentMode')
+            .lean()
+            .exec();
     const managedStoreMap = new Map(
       managedStoreRows.map((s) => [String(s._id), s]),
     );
     const managedStoreIds = [...managedStoreMap.keys()];
     const selfDeliveryByStore =
-      await this._subscriptions.resolveSelfDeliveryRequiredByStoreIds(
-        managedStoreIds,
-      );
+      managedStoreIds.length === 0
+        ? new Map<string, boolean>()
+        : await this._subscriptions.resolveSelfDeliveryRequiredByStoreIds(
+            managedStoreIds,
+          );
 
     const settingsCache = new Map<
       string,

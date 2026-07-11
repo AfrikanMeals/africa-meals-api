@@ -17,6 +17,7 @@ type RuntimeCacheTtlOverrides = {
   productCategoriesTtlMs?: number;
   checkoutPreviewTtlMs?: number;
   fieldProjectionTtlMs?: number;
+  recommendationsTtlMs?: number;
 };
 
 let runtimeCacheTtlOverrides: RuntimeCacheTtlOverrides = {};
@@ -55,6 +56,12 @@ export function setRuntimeCacheTtlOverrides(
       Number.isFinite(overrides.fieldProjectionTtlMs) &&
       overrides.fieldProjectionTtlMs > 0
         ? Math.trunc(overrides.fieldProjectionTtlMs)
+        : undefined,
+    recommendationsTtlMs:
+      overrides.recommendationsTtlMs != null &&
+      Number.isFinite(overrides.recommendationsTtlMs) &&
+      overrides.recommendationsTtlMs > 0
+        ? Math.trunc(overrides.recommendationsTtlMs)
         : undefined,
   };
 }
@@ -98,6 +105,35 @@ export function fieldProjectionCacheTtlMs(raw?: string): number {
     raw ?? process.env.FIELD_PROJECTION_CACHE_TTL_MS,
     120_000,
   );
+}
+
+/** TTL feed recommandations (ms) — court, perso ; invalidé au track / order / training. */
+export function recommendationsCacheTtlMs(raw?: string): number {
+  const override = runtimeCacheTtlOverrides.recommendationsTtlMs;
+  if (override != null) return override;
+  return parseCacheTtlMs(
+    raw ?? process.env.RECOMMENDATIONS_CACHE_TTL_MS,
+    45_000,
+  );
+}
+
+/** Prefixe Redis feed reco (`reco:feed:v1:{userScope}:{region}:t{take}`). */
+export const RECO_FEED_CACHE_PREFIX = 'reco:feed:v1:';
+
+/** Invalide tous les feeds reco d’un utilisateur (ou anon). */
+export async function bustRecommendationFeedCachesForUser(
+  cache: Cache,
+  userScope: string,
+): Promise<number> {
+  const scope = String(userScope ?? '').trim() || 'anon';
+  return bustCacheKeysByPrefix(cache, `${RECO_FEED_CACHE_PREFIX}${scope}:`);
+}
+
+/** Invalide tous les feeds reco (training snapshot / admin clear). */
+export async function bustAllRecommendationFeedCaches(
+  cache: Cache,
+): Promise<number> {
+  return bustCacheKeysByPrefix(cache, RECO_FEED_CACHE_PREFIX);
 }
 
 /** Invalide les previews pricing checkout d’un utilisateur. */
@@ -472,6 +508,7 @@ const EXTENDED_PUBLIC_CACHE_PREFIXES = [
   'product-categories:public:',
   'favlist:',
   'favlistgql:',
+  RECO_FEED_CACHE_PREFIX,
 ] as const;
 
 const ENTIRE_APP_CACHE_PREFIXES = [
@@ -600,6 +637,19 @@ export const AppCacheKeys = {
   searchFilter: (hash: string) => `search-filter:v1:${hash}`,
   cartPricing: (userId: string, inputHash: string) =>
     `cart-pricing:v1:${userId}:${inputHash}`,
+  /**
+   * Feed recommandations — userScope d’abord pour bust `reco:feed:v1:{user}:`.
+   * Region + take pour personnalisation / taille de page.
+   */
+  recoFeed: (userScope: string, region: string, take: number) => {
+    const scope = String(userScope ?? '').trim() || 'anon';
+    const code = String(region ?? '')
+      .trim()
+      .toUpperCase();
+    const regionPart = /^[A-Z]{2}$/.test(code) ? code : 'CA';
+    const t = Number.isFinite(take) && take > 0 ? Math.trunc(take) : 24;
+    return `${RECO_FEED_CACHE_PREFIX}${scope}:${regionPart}:t${t}`;
+  },
   policiesPublicList: (locale: string) => `policies:public:v1:list:${locale}`,
   policiesPublicDoc: (slug: string, locale: string) =>
     `policies:public:v1:doc:${slug}:${locale}`,

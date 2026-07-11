@@ -5,6 +5,7 @@ import {
 } from '@modules/supported-countries/client-market-region.util';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import { DRINK_IN_STOCK_FILTER } from '@modules/drinks/drinks.service';
 import { DrinkModel } from '@schemas/drink.schema';
 import {
@@ -51,6 +52,7 @@ export class RecommendationTrainingService {
     @InjectModel(UserRecommendationDigestModel.name)
     private readonly _digestModel: Model<UserRecommendationDigestModel>,
     private readonly _searchSettings: SearchSettingsService,
+    private readonly _cacheLayer: ModuleCacheLayerService,
   ) {}
 
   /** Pass complet : snapshot global + digests pour les utilisateurs actifs récents. */
@@ -331,6 +333,7 @@ export class RecommendationTrainingService {
     this._logger.log(
       `recommendation training ok in ${durationMs}ms (products=${trendProductIds.length}, stores=${trendStoreIds.length}, drinks=${trendDrinkIds.length}, digests=${digestsWritten})`,
     );
+    void this._cacheLayer.bustAllRecommendationFeeds();
   }
 
   /** Conserve l’ordre de pertinence ; exclut les ids invalides ou boutiques absentes / inactives. */

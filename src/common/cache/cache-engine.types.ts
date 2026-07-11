@@ -5,7 +5,8 @@ export type AppCacheModuleKey =
   | 'favorites'
   | 'productCategories'
   | 'checkoutPreview'
-  | 'fieldProjection';
+  | 'fieldProjection'
+  | 'recommendations';
 
 export const APP_CACHE_MODULE_KEYS: AppCacheModuleKey[] = [
   'publicCatalog',
@@ -13,6 +14,7 @@ export const APP_CACHE_MODULE_KEYS: AppCacheModuleKey[] = [
   'productCategories',
   'checkoutPreview',
   'fieldProjection',
+  'recommendations',
 ];
 
 export type ModuleEngineMap = Record<AppCacheModuleKey, CacheEngine>;
@@ -23,6 +25,7 @@ export const DEFAULT_MODULE_ENGINES: ModuleEngineMap = {
   productCategories: 'redis',
   checkoutPreview: 'redis',
   fieldProjection: 'redis',
+  recommendations: 'redis',
 };
 
 export type CacheEngineAvailability = {
@@ -54,5 +57,10 @@ export const CACHE_MODULE_LABELS: Record<
   fieldProjection: {
     label: 'Projection de champs',
     description: 'Cache des réponses GET filtrées (`fields`, `include`, etc.).',
+  },
+  recommendations: {
+    label: 'Recommandations',
+    description:
+      'Feed reco (Mongo aujourd’hui, Neo4j plus tard) — hit/miss/backfill.',
   },
 };

@@ -11,6 +11,12 @@ import {
 } from '@modules/supported-countries/client-market-region.util';
 import { BadRequestException, Injectable, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
+import {
+  AppCacheKeys,
+  cacheUserScope,
+  recommendationsCacheTtlMs,
+} from '@common/redis-app-cache';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
 import { ProductRatingModel } from '@schemas/product_rating.schema';
@@ -50,6 +56,7 @@ export class RecommendationsService {
     private readonly _storeSubscribers: StoreSubscribersService,
     private readonly _searchSettings: SearchSettingsService,
     private readonly _supportedCountries: SupportedCountriesService,
+    private readonly _cacheLayer: ModuleCacheLayerService,
     @InjectModel(UserRecommendationSignalModel.name)
     private readonly _signalModel: Model<UserRecommendationSignalModel>,
     @InjectModel(OrderModel.name)
@@ -136,6 +143,21 @@ export class RecommendationsService {
       refId: refOid,
       ...(searchStored != null ? { searchTerm: searchStored } : {}),
     });
+    void this._cacheLayer.bustRecommendationFeedsForUser(
+      cacheUserScope(user),
+    );
+  }
+
+  /** Bust feeds reco pour un user (order completed, etc.). */
+  async bustFeedCacheForUser(userId: string | undefined | null): Promise<void> {
+    const id = String(userId ?? '').trim();
+    if (!id) return;
+    await this._cacheLayer.bustRecommendationFeedsForUser(id);
+  }
+
+  /** Bust global (après training snapshot). */
+  async bustAllFeedCaches(): Promise<void> {
+    await this._cacheLayer.bustAllRecommendationFeeds();
   }
 
   /** Poids du scoring fil (admin + variables d’environnement). */
@@ -171,12 +193,41 @@ export class RecommendationsService {
     drinks: Record<string, unknown>[];
   }> {
     const take = Math.min(48, Math.max(4, parseInt(takeRaw ?? '24', 10) || 24));
-    const poolLimit = Math.min(120, Math.max(take * 4, 60));
     const clientRegion =
       (await this._supportedCountries.resolveOptionalClientCatalogRegion(
         user,
         countryCode,
       )) ?? '';
+
+    // Shop-home passe des candidats déjà chargés : ne pas cacher une clé partielle.
+    if (productCandidates != null && productCandidates.length > 0) {
+      return this._computeFeed(user, take, productCandidates, clientRegion);
+    }
+
+    const key = AppCacheKeys.recoFeed(
+      cacheUserScope(user),
+      clientRegion,
+      take,
+    );
+    return this._cacheLayer.getOrSet(
+      'recommendations',
+      key,
+      recommendationsCacheTtlMs(),
+      () => this._computeFeed(user, take, undefined, clientRegion),
+    );
+  }
+
+  private async _computeFeed(
+    user: UserModel | undefined,
+    take: number,
+    productCandidates: Record<string, unknown>[] | undefined,
+    clientRegion: string,
+  ): Promise<{
+    products: Record<string, unknown>[];
+    stores: Record<string, unknown>[];
+    drinks: Record<string, unknown>[];
+  }> {
+    const poolLimit = Math.min(120, Math.max(take * 4, 60));
 
     const userOid = this._userOid(user);
 

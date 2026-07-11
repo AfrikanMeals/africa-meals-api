@@ -365,6 +365,9 @@ export const StoreSchema = SchemaFactory.createForClass(StoreModel);
 /** Recherche / liste boutiques par statut + tri. */
 StoreSchema.index({ status: 1, createdAt: -1 });
 
+/** Filtre / join région ISO (livreur, shipping, taxes). */
+StoreSchema.index({ region: 1 });
+
 StoreSchema.virtual('averageRating').get(function () {
   const items = this.ratings || [];
   if (!items.length) {

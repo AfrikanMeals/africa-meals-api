@@ -338,9 +338,22 @@ export class OrderModel extends BaseSchema {
   })
   taxLines?: OrderTaxLineSnapshot[];
 
-  /** Pays utilisé pour le calcul des taxes (ISO2). */
+  /** Pays ISO utilisé pour le calcul des taxes (ISO2). */
   @Prop({ required: false, name: 'tax_country_code', trim: true, uppercase: true })
   taxCountryCode?: string;
+
+  /**
+   * Région boutique (ISO2) dénormalisée pour file pending livreur / indexes.
+   * Remplie à la création et au paiement ; filtre Mongo avant limit.
+   */
+  @Prop({
+    required: false,
+    name: 'store_region_code',
+    trim: true,
+    uppercase: true,
+    maxlength: 2,
+  })
+  storeRegionCode?: string;
 
   /** Points fidélité déjà crédités pour cette commande (évite double crédit). */
   @Prop({ default: false, name: 'loyalty_points_credited' })
@@ -625,6 +638,15 @@ OrderSchema.index({
   assignedDeliveryUser: 1,
   status: 1,
   shouldShip: 1,
+});
+
+/** File pending livreur : shouldShip + statut + non assigné + région + récence. */
+OrderSchema.index({
+  shouldShip: 1,
+  status: 1,
+  assignedDeliveryUser: 1,
+  storeRegionCode: 1,
+  createdAt: -1,
 });
 
 OrderSchema.index({

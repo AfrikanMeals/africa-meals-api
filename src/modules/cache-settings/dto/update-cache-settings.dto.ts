@@ -40,6 +40,10 @@ export class ModuleEnginesDto implements ModuleEngineMap {
   @ApiProperty({ enum: CACHE_ENGINES })
   @IsIn(CACHE_ENGINES)
   fieldProjection: CacheEngine;
+
+  @ApiProperty({ enum: CACHE_ENGINES })
+  @IsIn(CACHE_ENGINES)
+  recommendations: CacheEngine;
 }
 
 export class UpdateCacheSettingsDto {
@@ -69,6 +73,15 @@ export class UpdateCacheSettingsDto {
   @Min(5_000)
   @Max(3_600_000)
   fieldProjectionTtlMs: number;
+
+  @ApiProperty({
+    example: 45_000,
+    description: 'TTL feed recommandations (ms).',
+  })
+  @IsInt()
+  @Min(5_000)
+  @Max(600_000)
+  recommendationsTtlMs: number;
 
   @ApiPropertyOptional({
     description: 'Active le cache des réponses GET filtrées.',

@@ -110,6 +110,7 @@ import {
   CourierGpsThrottle,
   readCourierGpsThrottleConfig,
 } from './courier-gps-throttle';
+import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import { domainEventIdFromCourierTracking } from '../../common/domain-events/domain-event-id.util';
 
 import dayjs = require('dayjs');
@@ -196,6 +197,9 @@ export class OrdersService {
 
   @Inject(VendorNotificationDispatchService)
   private readonly _vendorNotificationDispatch: VendorNotificationDispatchService;
+
+  @Inject(ModuleCacheLayerService)
+  private readonly _cacheLayer: ModuleCacheLayerService;
 
   @Inject(forwardRef(() => OrderDomainBridgeService))
   @Optional()
@@ -1148,6 +1152,15 @@ export class OrdersService {
       0,
     );
 
+    const storeLean = await this._storeModel
+      .findById(storeId)
+      .populate('address', 'countryCode')
+      .select('region phoneNumber currency address')
+      .lean()
+      .exec();
+    const storeRegionCode =
+      resolveStoreTaxCountryCode(storeLean) || undefined;
+
     const order = await this._orderModel.create({
       status: OrderStatusEnum.CREATED,
       store: new Types.ObjectId(String(storeId)),
@@ -1158,6 +1171,7 @@ export class OrdersService {
       isPreOrder: options?.isPreOrder === true,
       scheduledAt: options?.scheduledAt,
       customerNote: options?.customerNote?.trim() || undefined,
+      ...(storeRegionCode ? { storeRegionCode } : {}),
     });
 
     const orderIdStr = order._id.toString();
@@ -2057,6 +2071,20 @@ export class OrdersService {
     const paidStatus = isPayOnPickup
       ? OrderStatusEnum.AWAITING_CASH
       : OrderStatusEnum.PAIED;
+    let storeRegionCode = String(
+      (o as { storeRegionCode?: string }).storeRegionCode ?? '',
+    )
+      .trim()
+      .toUpperCase();
+    if (!/^[A-Z]{2}$/.test(storeRegionCode)) {
+      const storeForRegion = await this._storeModel
+        .findById(o.store)
+        .populate('address', 'countryCode')
+        .select('region phoneNumber currency address')
+        .lean()
+        .exec();
+      storeRegionCode = resolveStoreTaxCountryCode(storeForRegion) || '';
+    }
     const $set: Record<string, unknown> = {
       status: paidStatus,
       shippingPrice: shippingStored,
@@ -2073,6 +2101,7 @@ export class OrdersService {
       })),
       taxCountryCode: taxCountryCode || undefined,
       shouldShip: !isPickup,
+      ...(storeRegionCode ? { storeRegionCode } : {}),
     };
     if (
       isPickup &&
@@ -3803,6 +3832,12 @@ export class OrdersService {
     extra?: Partial<OrderWsTrackingPayload>,
     notifyOptions?: { additionalPartyUserIds?: string[] },
   ): void {
+    if (status === OrderStatusEnum.COMPLETED && typeof orderOrId !== 'string') {
+      const customerId = this.userIdFromOrderDoc(orderOrId);
+      if (customerId) {
+        void this._cacheLayer.bustRecommendationFeedsForUser(customerId);
+      }
+    }
     if (!this._wsOrderNotifyHandler) return;
     if (typeof orderOrId === 'string') {
       void this._wsOrderNotifyHandler.notifyPartiesByOrderId(

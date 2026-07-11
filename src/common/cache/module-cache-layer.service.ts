@@ -14,6 +14,8 @@ import {
   bustCatalogListingPublicCaches,
   bustProductDetailCachesForProduct,
   bustPublicCatalogAppCaches,
+  bustAllRecommendationFeedCaches,
+  bustRecommendationFeedCachesForUser,
   clearInflightCache,
   detectCacheStoreKind,
   getOrSetCache,
@@ -315,6 +317,22 @@ export class ModuleCacheLayerService implements OnModuleInit {
     let total = 0;
     for (const cache of this.allStores()) {
       total += await bustCartPricingCachesForUser(cache, userId);
+    }
+    return total;
+  }
+
+  async bustRecommendationFeedsForUser(userScope: string): Promise<number> {
+    let total = 0;
+    for (const cache of this.allStores()) {
+      total += await bustRecommendationFeedCachesForUser(cache, userScope);
+    }
+    return total;
+  }
+
+  async bustAllRecommendationFeeds(): Promise<number> {
+    let total = 0;
+    for (const cache of this.allStores()) {
+      total += await bustAllRecommendationFeedCaches(cache);
     }
     return total;
   }

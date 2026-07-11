@@ -24,6 +24,10 @@ export class CacheSettingsModel {
   @Prop({ type: Number, default: 120_000, min: 5_000, max: 3_600_000 })
   fieldProjectionTtlMs: number;
 
+  /** TTL feed recommandations — ms. */
+  @Prop({ type: Number, default: 45_000, min: 5_000, max: 600_000 })
+  recommendationsTtlMs: number;
+
   /** Active le cache des réponses GET filtrées. */
   @Prop({ type: Boolean, default: true })
   fieldProjectionEnabled: boolean;
@@ -55,6 +59,11 @@ export class CacheSettingsModel {
         type: String,
         enum: ['redis', 'memcached', 'memory'],
         default: DEFAULT_MODULE_ENGINES.fieldProjection,
+      },
+      recommendations: {
+        type: String,
+        enum: ['redis', 'memcached', 'memory'],
+        default: DEFAULT_MODULE_ENGINES.recommendations,
       },
     },
     default: () => ({ ...DEFAULT_MODULE_ENGINES }),
