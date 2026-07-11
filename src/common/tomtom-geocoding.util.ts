@@ -23,13 +23,26 @@ export async function resolveTomTomGeocodingApiKey(
   secrets: SecretManagerService,
   config?: ConfigService,
 ): Promise<string> {
-  const fromDb = await secrets.resolveString('api', 'TOMTOM_GEOCODING_API_KEY');
-  const fromEnv = String(
-    config?.get<string>('TOMTOM_GEOCODING_API_KEY') ??
-      process.env.TOMTOM_GEOCODING_API_KEY ??
-      '',
-  ).trim();
-  return fromDb.trim() || fromEnv;
+  const strip = (v: string) => v.trim().replace(/^["']|["']$/g, '').trim();
+  const fromDbGeocode = await secrets.resolveString(
+    'api',
+    'TOMTOM_GEOCODING_API_KEY',
+  );
+  const fromDbRouting = await secrets.resolveString(
+    'api',
+    'TOMTOM_ROUTING_API_KEY',
+  );
+  const fromDbGeneric = await secrets.resolveString('api', 'TOMTOM_API_KEY');
+  const env = (name: string) =>
+    strip(String(config?.get<string>(name) ?? process.env[name] ?? ''));
+  return (
+    strip(fromDbGeocode) ||
+    strip(fromDbRouting) ||
+    strip(fromDbGeneric) ||
+    env('TOMTOM_GEOCODING_API_KEY') ||
+    env('TOMTOM_ROUTING_API_KEY') ||
+    env('TOMTOM_API_KEY')
+  );
 }
 
 function parseTomTomResult(

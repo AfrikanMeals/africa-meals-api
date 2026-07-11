@@ -152,6 +152,20 @@ export const API_SECRET_REGISTRY: SecretKeyDefinition[] = [
     category: 'Cartographie',
   },
   {
+    envVarName: 'GOOGLE_MAPS_API_KEY',
+    label: 'Google Maps — clé API',
+    description:
+      'Clé Google Maps Platform (Geocoding serveur + Routes/Directions clients via map-settings). Restreindre par domaine / bundle / IP.',
+    category: 'Cartographie',
+  },
+  {
+    envVarName: 'TOMTOM_ROUTING_API_KEY',
+    label: 'TomTom — clé Routing (optionnel)',
+    description:
+      'Clé TomTom dédiée au routing. Si vide, repli sur TOMTOM_GEOCODING_API_KEY. Exposée aux clients via map-settings (tomtomApiKey).',
+    category: 'Cartographie',
+  },
+  {
     envVarName: 'MAPS_CO_GEOCODING_API_KEY',
     label: 'Maps.co — clé API géocodage',
     description:

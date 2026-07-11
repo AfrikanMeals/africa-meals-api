@@ -31,6 +31,12 @@ import {
   tomtomSearchStructuredAddress,
   resolveTomTomGeocodingApiKey,
 } from '@common/tomtom-geocoding.util';
+import {
+  googleForwardGeocode,
+  googleReverseGeocode,
+  googleSearchStructuredAddress,
+  resolveGoogleGeocodingApiKey,
+} from '@common/google-geocoding.util';
 import type { OsmGeocodeResult } from '@common/osm-geocoding.util';
 import {
   osmForwardGeocode,
@@ -325,11 +331,10 @@ export class GeocodeService {
     const hasMapbox = Boolean(
       await resolveMapboxGeocodingToken(this.secrets, this.config),
     );
-    const googleKey = String(
-      this.config.get<string>('GOOGLE_MAPS_API_KEY') ??
-        process.env.GOOGLE_MAPS_API_KEY ??
-        '',
-    ).trim();
+    const googleKey = await resolveGoogleGeocodingApiKey(
+      this.secrets,
+      this.config,
+    );
     const mapsCoKey = await resolveMapsCoGeocodingApiKey(
       this.secrets,
       this.config,
@@ -511,6 +516,18 @@ export class GeocodeService {
       );
       return this.nominatimRowsToFeatures(rows, 'tomtom');
     }
+    if (engine === 'google') {
+      const apiKey = await resolveGoogleGeocodingApiKey(
+        this.secrets,
+        this.config,
+      );
+      if (!apiKey) return [];
+      const rows = await googleForwardGeocode(args.query, apiKey, {
+        limit: args.limit ?? 5,
+        countryCode: args.countryCode,
+      });
+      return this.nominatimRowsToFeatures(rows, 'google');
+    }
     const rows = await osmForwardGeocode(args.query, this.config, {
       limit: args.limit ?? 5,
       countryCode: args.countryCode,
@@ -640,6 +657,27 @@ export class GeocodeService {
         },
       });
     }
+    if (engine === 'google') {
+      const apiKey = await resolveGoogleGeocodingApiKey(
+        this.secrets,
+        this.config,
+      );
+      if (!apiKey) return null;
+      const row = await googleReverseGeocode(lat, lng, apiKey);
+      if (!row) return null;
+      return nominatimToFeature({
+        lat: row.latitude,
+        lon: row.longitude,
+        display_name: row.address,
+        address: {
+          road: row.address,
+          postcode: row.zipCode,
+          city: row.city,
+          country: row.country,
+          country_code: row.countryCode.toLowerCase(),
+        },
+      });
+    }
     const row = await osmReverseGeocode(lat, lng, this.config);
     if (!row) return null;
     return nominatimToFeature({
@@ -682,7 +720,12 @@ export class GeocodeService {
                 await resolveTomTomGeocodingApiKey(this.secrets, this.config),
                 this.config,
               )
-            : await osmSearchStructuredAddress(args, this.config);
+            : engine === 'google'
+              ? await googleSearchStructuredAddress(
+                  args,
+                  await resolveGoogleGeocodingApiKey(this.secrets, this.config),
+                )
+              : await osmSearchStructuredAddress(args, this.config);
     if (!item) {
       throw new NotFoundException('address_not_found');
     }
