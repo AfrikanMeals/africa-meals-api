@@ -28,7 +28,7 @@ describe('delivery-agent-domain.util', () => {
   it('pendingOrderMatchesAgentOperatingRegion blocks cross-region orders', () => {
     expect(pendingOrderMatchesAgentOperatingRegion('CA', 'CA')).toBe(true);
     expect(pendingOrderMatchesAgentOperatingRegion('CA', 'CM')).toBe(false);
-    expect(pendingOrderMatchesAgentOperatingRegion(null, 'CM')).toBe(false);
+    expect(pendingOrderMatchesAgentOperatingRegion(null, 'CM')).toBe(true);
     expect(pendingOrderMatchesAgentOperatingRegion('CA', null)).toBe(true);
   });
 

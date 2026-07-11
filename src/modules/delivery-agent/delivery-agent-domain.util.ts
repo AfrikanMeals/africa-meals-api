@@ -43,7 +43,8 @@ export function pendingOrderMatchesAgentOperatingRegion(
   const agent = normalizeRegionCode(agentRegionCode);
   if (!agent) return true;
   const store = normalizeRegionCode(storeRegionCode);
-  if (!store) return false;
+  // Boutique sans région connue : ne pas masquer la course (données incomplètes).
+  if (!store) return true;
   return store === agent;
 }
 

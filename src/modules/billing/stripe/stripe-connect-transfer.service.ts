@@ -1,6 +1,11 @@
 import { isStripeConnectOnboardingCompleteUser } from '@modules/billing/stripe/stripe-connect-visibility';
 import { StripeChargeFeeService } from '@modules/billing/stripe/stripe-charge-fee.service';
 import {
+  buildConnectTransferIdempotencyKey,
+  isStripeIdempotencyMismatchError,
+  type ConnectTransferIdempotencyKind,
+} from '@modules/billing/stripe/stripe-connect-transfer-idempotency.util';
+import {
   allocatePlatformFeeToGoodsCents,
   computeDeliveryNetCentsBeforeStripe,
   scaleStorePayoutMinorToPaymentShare,
@@ -82,6 +87,80 @@ export class StripeConnectTransferService {
   /** Résout l’id charge `ch_…` liée à un `pi_…` ou `cs_…`. */
   async resolveChargeId(stripeParentPaymentId: string): Promise<string | null> {
     return this.stripeFees.resolveChargeId(stripeParentPaymentId);
+  }
+
+  /**
+   * Retrouve un transfer déjà créé (retry admin / webhook) via transfer_group
+   * ou destination + metadata orderId/transferKind — évite un double versement
+   * quand la clé d’idempotency change (montant / compte Connect).
+   */
+  private async findExistingConnectTransfer(args: {
+    orderId: string;
+    transferKind: string;
+    transferGroup?: string;
+    destination?: string;
+    chargeId?: string;
+  }): Promise<Stripe.Transfer | null> {
+    const orderId = String(args.orderId ?? '').trim();
+    const transferKind = String(args.transferKind ?? '').trim();
+    if (!orderId || !transferKind) return null;
+
+    const stripe = this.stripe();
+    const matches = (t: Stripe.Transfer): boolean => {
+      if (
+        t.metadata?.orderId === orderId &&
+        t.metadata?.transferKind === transferKind
+      ) {
+        return true;
+      }
+      if (
+        args.chargeId &&
+        t.source_transaction === args.chargeId &&
+        t.metadata?.orderId === orderId &&
+        (!t.metadata?.transferKind || t.metadata.transferKind === transferKind)
+      ) {
+        return true;
+      }
+      return false;
+    };
+
+    const listOpts: Stripe.TransferListParams = { limit: 100 };
+    if (args.transferGroup) {
+      listOpts.transfer_group = args.transferGroup;
+    } else if (args.destination) {
+      listOpts.destination = args.destination;
+    }
+
+    try {
+      let startingAfter: string | undefined;
+      for (let page = 0; page < 5; page++) {
+        const batch = await stripe.transfers.list({
+          ...listOpts,
+          ...(startingAfter ? { starting_after: startingAfter } : {}),
+        });
+        const hit = batch.data.find(matches);
+        if (hit) return hit;
+        if (!batch.has_more || !batch.data.length) break;
+        startingAfter = batch.data[batch.data.length - 1]?.id;
+      }
+    } catch (e) {
+      this.logger.warn(
+        `findExistingConnectTransfer order=${orderId} kind=${transferKind}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+    return null;
+  }
+
+  private transferIdempotencyKey(args: {
+    kind: ConnectTransferIdempotencyKind;
+    orderId: string;
+    amountCents: number;
+    destination: string;
+    chargeId: string;
+  }): string {
+    return buildConnectTransferIdempotencyKey(args);
   }
 
   private async totalPayoutGrossCentsForPayment(
@@ -435,6 +514,45 @@ export class StripeConnectTransferService {
       );
     }
 
+    const existingVendor = await this.findExistingConnectTransfer({
+      orderId: args.orderId,
+      transferKind: 'vendor_goods',
+      transferGroup: parentId || undefined,
+      destination: accountId,
+      chargeId,
+    });
+    if (existingVendor) {
+      const existingCents = Math.max(
+        0,
+        Math.round(Number(existingVendor.amount ?? 0)),
+      );
+      await this.orderModel.updateOne(
+        { _id: args.orderId },
+        {
+          $set: {
+            stripeTransferId: existingVendor.id,
+            stripeTransferAmountCents: existingCents,
+            platformFeeCents: platformFeeOnGoods,
+            stripeProcessingFeeCents: stripeProcessingFeeShareCents,
+            stripeTransferReversalId: null,
+          },
+          $unset: { stripeTransferReversalAmountCents: '' },
+        },
+      );
+      this.logger.log(
+        `Connect vendor transfer reconciled ${existingVendor.id}: ${existingCents} → ${accountId} (order ${args.orderId})`,
+      );
+      return {
+        transferred: true,
+        transferId: existingVendor.id,
+        transferCents: existingCents,
+        platformFeeCents: platformFeeOnGoods,
+        stripeProcessingFeeCents: stripeProcessingFeeShareCents,
+        grossCents: goodsCents,
+        skippedReason: 'already_transferred',
+      };
+    }
+
     try {
       const transfer = await this.stripe().transfers.create(
         {
@@ -454,7 +572,15 @@ export class StripeConnectTransferService {
             shipCentsHeld: String(shipCents),
           },
         },
-        { idempotencyKey: `transfer-order-vendor-${args.orderId}` },
+        {
+          idempotencyKey: this.transferIdempotencyKey({
+            kind: 'vendor',
+            orderId: args.orderId,
+            amountCents: transferCents,
+            destination: accountId,
+            chargeId,
+          }),
+        },
       );
 
       await this.orderModel.updateOne(
@@ -486,6 +612,46 @@ export class StripeConnectTransferService {
         grossCents: goodsCents,
       };
     } catch (e) {
+      if (isStripeIdempotencyMismatchError(e)) {
+        const recovered = await this.findExistingConnectTransfer({
+          orderId: args.orderId,
+          transferKind: 'vendor_goods',
+          transferGroup: parentId || undefined,
+          destination: accountId,
+          chargeId,
+        });
+        if (recovered) {
+          const existingCents = Math.max(
+            0,
+            Math.round(Number(recovered.amount ?? 0)),
+          );
+          await this.orderModel.updateOne(
+            { _id: args.orderId },
+            {
+              $set: {
+                stripeTransferId: recovered.id,
+                stripeTransferAmountCents: existingCents,
+                platformFeeCents: platformFeeOnGoods,
+                stripeProcessingFeeCents: stripeProcessingFeeShareCents,
+                stripeTransferReversalId: null,
+              },
+              $unset: { stripeTransferReversalAmountCents: '' },
+            },
+          );
+          this.logger.warn(
+            `Connect vendor transfer recovered after idempotency mismatch ${recovered.id} order ${args.orderId}`,
+          );
+          return {
+            transferred: true,
+            transferId: recovered.id,
+            transferCents: existingCents,
+            platformFeeCents: platformFeeOnGoods,
+            stripeProcessingFeeCents: stripeProcessingFeeShareCents,
+            grossCents: goodsCents,
+            skippedReason: 'already_transferred',
+          };
+        }
+      }
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.error(
         `Connect transfer failed order ${args.orderId}: ${msg}`,
@@ -713,6 +879,41 @@ export class StripeConnectTransferService {
 
     const transferCurrency = await this.connectTransferCurrency(chargeId);
 
+    const existingDelivery = await this.findExistingConnectTransfer({
+      orderId: args.orderId,
+      transferKind: 'delivery_shipping',
+      transferGroup: parentId || undefined,
+      destination: accountId,
+      chargeId,
+    });
+    if (existingDelivery) {
+      const existingCents = Math.max(
+        0,
+        Math.round(Number(existingDelivery.amount ?? 0)),
+      );
+      await this.orderModel.updateOne(
+        { _id: args.orderId },
+        {
+          $set: {
+            stripeDeliveryTransferId: existingDelivery.id,
+            stripeDeliveryTransferAmountCents: existingCents,
+            stripeDeliveryProcessingFeeCents: stripeProcessingFeeShareCents,
+          },
+        },
+      );
+      this.logger.log(
+        `Connect delivery transfer reconciled ${existingDelivery.id}: ${existingCents} → ${accountId} (order ${args.orderId})`,
+      );
+      return {
+        transferred: true,
+        transferId: existingDelivery.id,
+        transferCents: existingCents,
+        stripeProcessingFeeCents: stripeProcessingFeeShareCents,
+        grossShipCents: shipCents,
+        skippedReason: 'already_transferred',
+      };
+    }
+
     try {
       const transfer = await this.stripe().transfers.create(
         {
@@ -730,7 +931,15 @@ export class StripeConnectTransferService {
             grossShipCents: String(shipCents),
           },
         },
-        { idempotencyKey: `transfer-order-delivery-${args.orderId}` },
+        {
+          idempotencyKey: this.transferIdempotencyKey({
+            kind: 'delivery',
+            orderId: args.orderId,
+            amountCents: transferCents,
+            destination: accountId,
+            chargeId,
+          }),
+        },
       );
 
       await this.orderModel.updateOne(
@@ -758,6 +967,42 @@ export class StripeConnectTransferService {
         grossShipCents: shipCents,
       };
     } catch (e) {
+      if (isStripeIdempotencyMismatchError(e)) {
+        const recovered = await this.findExistingConnectTransfer({
+          orderId: args.orderId,
+          transferKind: 'delivery_shipping',
+          transferGroup: parentId || undefined,
+          destination: accountId,
+          chargeId,
+        });
+        if (recovered) {
+          const existingCents = Math.max(
+            0,
+            Math.round(Number(recovered.amount ?? 0)),
+          );
+          await this.orderModel.updateOne(
+            { _id: args.orderId },
+            {
+              $set: {
+                stripeDeliveryTransferId: recovered.id,
+                stripeDeliveryTransferAmountCents: existingCents,
+                stripeDeliveryProcessingFeeCents: stripeProcessingFeeShareCents,
+              },
+            },
+          );
+          this.logger.warn(
+            `Connect delivery transfer recovered after idempotency mismatch ${recovered.id} order ${args.orderId}`,
+          );
+          return {
+            transferred: true,
+            transferId: recovered.id,
+            transferCents: existingCents,
+            stripeProcessingFeeCents: stripeProcessingFeeShareCents,
+            grossShipCents: shipCents,
+            skippedReason: 'already_transferred',
+          };
+        }
+      }
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(
         `Connect delivery transfer failed order ${args.orderId}: ${msg}`,
@@ -927,6 +1172,42 @@ export class StripeConnectTransferService {
 
     const transferCurrency = await this.connectTransferCurrency(chargeId);
 
+    const existingTip = await this.findExistingConnectTransfer({
+      orderId: args.orderId,
+      transferKind: 'delivery_tip',
+      transferGroup: parentId || undefined,
+      destination: accountId,
+      chargeId,
+    });
+    if (existingTip) {
+      const existingCents = Math.max(
+        0,
+        Math.round(Number(existingTip.amount ?? 0)),
+      );
+      await this.orderModel.updateOne(
+        { _id: args.orderId },
+        {
+          $set: {
+            stripeDeliveryTipTransferId: existingTip.id,
+            stripeDeliveryTipTransferAmountCents: existingCents,
+            stripeDeliveryTipProcessingFeeCents: stripeProcessingFeeShareCents,
+            deliveryTipStatus: 'transferred',
+          },
+        },
+      );
+      this.logger.log(
+        `Connect delivery tip transfer reconciled ${existingTip.id}: ${existingCents} → ${accountId} (order ${args.orderId})`,
+      );
+      return {
+        transferred: true,
+        transferId: existingTip.id,
+        transferCents: existingCents,
+        stripeProcessingFeeCents: stripeProcessingFeeShareCents,
+        grossShipCents: tipCents,
+        skippedReason: 'already_transferred',
+      };
+    }
+
     try {
       const transfer = await this.stripe().transfers.create(
         {
@@ -944,7 +1225,15 @@ export class StripeConnectTransferService {
             grossTipCents: String(tipCents),
           },
         },
-        { idempotencyKey: `transfer-order-delivery-tip-${args.orderId}` },
+        {
+          idempotencyKey: this.transferIdempotencyKey({
+            kind: 'delivery-tip',
+            orderId: args.orderId,
+            amountCents: transferCents,
+            destination: accountId,
+            chargeId,
+          }),
+        },
       );
 
       await this.orderModel.updateOne(
@@ -971,6 +1260,44 @@ export class StripeConnectTransferService {
         grossShipCents: tipCents,
       };
     } catch (e) {
+      if (isStripeIdempotencyMismatchError(e)) {
+        const recovered = await this.findExistingConnectTransfer({
+          orderId: args.orderId,
+          transferKind: 'delivery_tip',
+          transferGroup: parentId || undefined,
+          destination: accountId,
+          chargeId,
+        });
+        if (recovered) {
+          const existingCents = Math.max(
+            0,
+            Math.round(Number(recovered.amount ?? 0)),
+          );
+          await this.orderModel.updateOne(
+            { _id: args.orderId },
+            {
+              $set: {
+                stripeDeliveryTipTransferId: recovered.id,
+                stripeDeliveryTipTransferAmountCents: existingCents,
+                stripeDeliveryTipProcessingFeeCents:
+                  stripeProcessingFeeShareCents,
+                deliveryTipStatus: 'transferred',
+              },
+            },
+          );
+          this.logger.warn(
+            `Connect delivery tip transfer recovered after idempotency mismatch ${recovered.id} order ${args.orderId}`,
+          );
+          return {
+            transferred: true,
+            transferId: recovered.id,
+            transferCents: existingCents,
+            stripeProcessingFeeCents: stripeProcessingFeeShareCents,
+            grossShipCents: tipCents,
+            skippedReason: 'already_transferred',
+          };
+        }
+      }
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(
         `Connect delivery tip transfer failed order ${args.orderId}: ${msg}`,
