@@ -211,6 +211,10 @@ export class OrdersService {
   @Inject(RatingsService)
   private readonly _ratingsService: RatingsService;
 
+  @Inject(forwardRef(() => GraphSyncQueueService))
+  @Optional()
+  private readonly _graphSyncQueue?: GraphSyncQueueService;
+
   /** Expose l’adresse de livraison figée au paiement dans `user.addresses`. */
   static enrichOrdersWithDeliveryAddress(
     rows: Record<string, unknown>[],

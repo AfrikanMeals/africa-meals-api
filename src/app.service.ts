@@ -1,9 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
+import {
+  Neo4jService,
+  type Neo4jHealthState,
+} from '@modules/neo4j/neo4j.service';
 
 export type HealthProcessMemory = {
   rssBytes: number;
@@ -46,6 +50,7 @@ export type HealthPayload = {
   /**
    * `ok` : processus vivant et MongoDB répond au ping.
    * `degraded` : API up mais base injoignable ou ping en échec (toujours HTTP 200).
+   * Neo4j down n’altère jamais le status global (fail-open ops).
    */
   status: 'ok' | 'degraded';
   service: string;
@@ -54,6 +59,8 @@ export type HealthPayload = {
   uptimeSeconds: number;
   process: HealthProcess;
   mongodb: HealthMongodb;
+  /** `disabled` | `up` | `down` — indépendant du status HTTP. */
+  neo4j: Neo4jHealthState;
   runtime: HealthRuntime;
 };
 
@@ -80,7 +87,10 @@ function readCgroupMemoryLimitBytes(): number | null {
 
 @Injectable()
 export class AppService {
-  constructor(@InjectConnection() private readonly _mongo: Connection) {}
+  constructor(
+    @InjectConnection() private readonly _mongo: Connection,
+    @Optional() private readonly _neo4j?: Neo4jService,
+  ) {}
 
   getHello(): string {
     return 'Hello World!';
@@ -158,6 +168,15 @@ export class AppService {
       ? 'ok'
       : 'degraded';
 
+    let neo4j: Neo4jHealthState = 'disabled';
+    try {
+      neo4j = this._neo4j
+        ? await this._neo4j.getHealthState()
+        : 'disabled';
+    } catch {
+      neo4j = 'down';
+    }
+
     return {
       status,
       service: 'africa-meals-api',
@@ -166,6 +185,7 @@ export class AppService {
       uptimeSeconds: Math.round(process.uptime() * 1000) / 1000,
       process: processBlock,
       mongodb,
+      neo4j,
       runtime,
     };
   }

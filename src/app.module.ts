@@ -86,6 +86,8 @@ import { StorageSettingsModule } from './modules/storage-settings/storage-settin
 import { CacheSettingsModule } from './modules/cache-settings/cache-settings.module';
 import { DatabaseSettingsModule } from './modules/database-settings/database-settings.module';
 import { GraphdbSettingsModule } from './modules/graphdb-settings/graphdb-settings.module';
+import { Neo4jModule } from './modules/neo4j/neo4j.module';
+import { GraphModule } from './modules/graph/graph.module';
 import { GeocodeModule } from './modules/geocode/geocode.module';
 import { MapGeocodeUsageModule } from './common/map-geocode/map-geocode-usage.module';
 import { MapSettingsModule } from './modules/map-settings/map-settings.module';
@@ -355,6 +357,8 @@ async function readRedisManagerEnabledAtBootstrap(
     CacheSettingsModule,
     DatabaseSettingsModule,
     GraphdbSettingsModule,
+    Neo4jModule,
+    GraphModule,
     MapGeocodeUsageModule,
     GeocodeModule,
     MapSettingsModule,

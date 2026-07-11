@@ -155,3 +155,26 @@ export function shouldEnqueueGraphSync(opts?: {
 }): boolean {
   return isGraphSyncEnabled(opts?.env);
 }
+
+const DEFAULT_RECO_GRAPH_TIMEOUT_MS = 200;
+const DEFAULT_GRAPH_SYNC_QUEUE = 'graph-sync';
+
+/**
+ * Timeout lectures Cypher reco (ms). Defaut 200 ; min 50, max 5000.
+ */
+export function parseRecoGraphTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env.RECO_GRAPH_TIMEOUT_MS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_RECO_GRAPH_TIMEOUT_MS;
+  return Math.min(5000, Math.max(50, Math.floor(n)));
+}
+
+/** Nom de file BullMQ graph-sync (defaut `graph-sync`). */
+export function parseGraphSyncQueueName(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const raw = (env.GRAPH_SYNC_QUEUE ?? '').trim();
+  return raw || DEFAULT_GRAPH_SYNC_QUEUE;
+}
