@@ -1,6 +1,7 @@
 import {
   resolveMapboxPublicAccessToken,
 } from '@common/mapbox-geocoding.util';
+import { resolveHereApiKey } from '@common/here-routing.util';
 import {
   BadRequestException,
   ForbiddenException,
@@ -268,9 +269,11 @@ export class MapSettingsService {
       this._secrets,
       this._config,
     );
+    const hereApiKey = await resolveHereApiKey(this._secrets, this._config);
     return {
       ...base,
       mapboxPublicAccessToken: mapboxPublicAccessToken || null,
+      hereApiKey: hereApiKey || null,
     };
   }
 

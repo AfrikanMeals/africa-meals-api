@@ -145,6 +145,13 @@ export const API_SECRET_REGISTRY: SecretKeyDefinition[] = [
     category: 'Cartographie',
   },
   {
+    envVarName: 'HERE_API_KEY',
+    label: 'HERE — clé API Routing',
+    description:
+      'Clé API HERE (Routing v8) exposée aux clients via GET /platform/map-settings (hereApiKey). Restreindre par domaine / bundle dans le portail HERE.',
+    category: 'Cartographie',
+  },
+  {
     envVarName: 'MAPS_CO_GEOCODING_API_KEY',
     label: 'Maps.co — clé API géocodage',
     description:
