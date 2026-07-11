@@ -86,6 +86,7 @@ import {
   mapDeliveryPresenceToDomain,
   pendingOrderMatchesAgentOperatingRegion,
   pendingOrderWithinMaxDeliveryRadius,
+  resolveAgentOperatingRegionCode,
   resolveDeliveryAgentPresence,
 } from './delivery-agent-domain.util';
 
@@ -1088,10 +1089,10 @@ export class DeliveryAgentService {
       .select('region')
       .lean()
       .exec();
-    const agentRegionCode = resolvePlatformShippingRegionCode([
-      typeof app?.region === 'string' ? app.region : null,
+    const agentRegionCode = resolveAgentOperatingRegionCode(
+      app?.region,
       user.appCountryCode,
-    ]);
+    );
     const agentSettings = await this._platformShipping.getPublicSettings(
       agentRegionCode,
     );
@@ -1837,16 +1838,23 @@ export class DeliveryAgentService {
     const storeRegionCode = this.resolveStoreRegionCodeFromOrderRow(
       orderDoc.toObject() as Record<string, unknown>,
     );
-    const agentRegionCode = resolvePlatformShippingRegionCode([
-      typeof app.region === 'string' ? app.region : null,
+    const agentRegionCode = resolveAgentOperatingRegionCode(
+      app.region,
       user.appCountryCode,
-    ]);
+    );
     if (
       !pendingOrderMatchesAgentOperatingRegion(
         storeRegionCode,
         agentRegionCode,
       )
     ) {
+      this._logger.warn(
+        `[DeliveryTrace] assignSelfToOrder region reject order=${oid.toString()} ` +
+          `storeRegion=${storeRegionCode ?? 'null'} ` +
+          `agentRegion=${agentRegionCode ?? 'null'} ` +
+          `appRegion=${typeof app.region === 'string' ? app.region : 'null'} ` +
+          `userAppCountry=${user.appCountryCode ?? 'null'}`,
+      );
       throw new BadRequestException('order_outside_agent_region');
     }
     const radiusSettings = await this._platformShipping.getPublicSettings(

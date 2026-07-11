@@ -4,6 +4,7 @@ import {
   pendingOrderMatchesAgentOperatingRegion,
   pendingOrderWithinMaxDeliveryRadius,
   pendingOrderWithinAgentToStoreRadius,
+  resolveAgentOperatingRegionCode,
 } from './delivery-agent-domain.util';
 
 describe('delivery-agent-domain.util', () => {
@@ -32,6 +33,15 @@ describe('delivery-agent-domain.util', () => {
     expect(pendingOrderMatchesAgentOperatingRegion('CA', 'CM')).toBe(false);
     expect(pendingOrderMatchesAgentOperatingRegion(null, 'CM')).toBe(true);
     expect(pendingOrderMatchesAgentOperatingRegion('CA', null)).toBe(true);
+  });
+
+  it('resolveAgentOperatingRegionCode prefers application region over user appCountryCode', () => {
+    // Régression assign-self : sans app.region chargé, user.appCountryCode=CA
+    // faisait rejeter une course CM alors que le dossier livreur est CM.
+    expect(resolveAgentOperatingRegionCode('CM', 'CA')).toBe('CM');
+    expect(resolveAgentOperatingRegionCode(null, 'CM')).toBe('CM');
+    expect(resolveAgentOperatingRegionCode('CM', null)).toBe('CM');
+    expect(resolveAgentOperatingRegionCode(undefined, undefined)).toBeUndefined();
   });
 
   it('pendingOrderWithinAgentToStoreRadius allows unknown agent distance', () => {

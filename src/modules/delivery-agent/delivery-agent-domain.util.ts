@@ -1,7 +1,24 @@
 import type { AgentPresenceValue } from '../../common/domain-events/payloads/agent-domain-event.payloads';
-import { normalizeRegionCode } from '../platform-shipping-settings/platform-shipping-region.util';
+import {
+  normalizeRegionCode,
+  resolvePlatformShippingRegionCode,
+} from '../platform-shipping-settings/platform-shipping-region.util';
 
 export const AGENT_LOCATION_EMIT_THROTTLE_MS = 10_000;
+
+/**
+ * Région d’exercice du livreur : dossier candidature (`region`) prioritaire
+ * sur `user.appCountryCode` (profil client / legacy).
+ */
+export function resolveAgentOperatingRegionCode(
+  applicationRegion?: string | null,
+  userAppCountryCode?: string | null,
+): string | undefined {
+  return resolvePlatformShippingRegionCode([
+    applicationRegion,
+    userAppCountryCode,
+  ]);
+}
 
 export type DeliveryAgentPresenceLabel =
   | 'disponible'
