@@ -1480,8 +1480,19 @@ export class ProductsService {
                 profileImage: 1,
                 bio: 1,
                 about: 1,
-                estimated_cooking_time: 1,
-                estimated_cooking_time_unit: 1,
+                // Mongo stocke le camelCase mongoose ; snake_case = legacy / Prop name.
+                estimatedCookingTime: {
+                  $ifNull: [
+                    '$estimatedCookingTime',
+                    '$estimated_cooking_time',
+                  ],
+                },
+                estimatedCookingTimeUnit: {
+                  $ifNull: [
+                    '$estimatedCookingTimeUnit',
+                    '$estimated_cooking_time_unit',
+                  ],
+                },
                 category: 1,
                 averageRating: 1,
                 categoryTitle: {

@@ -9,11 +9,14 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { KNOWN_GEOCODING_ENGINES } from '@common/geocoding-engine-pool.util';
+import { KNOWN_ROUTING_ENGINES } from '@common/routing-engine-pool.util';
 import { GeocodingEnginePoolEntryDto } from './geocoding-engine-pool-entry.dto';
+import { RoutingEnginePoolEntryDto } from './routing-engine-pool-entry.dto';
 
 const VENDOR_ENGINES = ['mapbox', 'google', 'osm'] as const;
 const MOBILE_ENGINES = ['mapbox', 'google', 'osm'] as const;
 const GEOCODING_ENGINES = [...KNOWN_GEOCODING_ENGINES] as const;
+const ROUTING_ENGINES = [...KNOWN_ROUTING_ENGINES] as const;
 const GEOCODE_CACHE_STORES = ['redis', 'memcached', 'mongodb'] as const;
 
 export class UpdateMapSettingsDto {
@@ -109,6 +112,45 @@ export class UpdateMapSettingsDto {
   @ValidateNested({ each: true })
   @Type(() => GeocodingEnginePoolEntryDto)
   mobileDeliveryGeocodingEnginePool?: GeocodingEnginePoolEntryDto[];
+
+  @ApiPropertyOptional({ enum: ROUTING_ENGINES, default: 'osrm' })
+  @IsOptional()
+  @IsString()
+  @IsIn(ROUTING_ENGINES)
+  vendorRoutingEngine?: string;
+
+  @ApiPropertyOptional({ enum: ROUTING_ENGINES, default: 'osrm' })
+  @IsOptional()
+  @IsString()
+  @IsIn(ROUTING_ENGINES)
+  mobileUserRoutingEngine?: string;
+
+  @ApiPropertyOptional({ enum: ROUTING_ENGINES, default: 'osrm' })
+  @IsOptional()
+  @IsString()
+  @IsIn(ROUTING_ENGINES)
+  mobileDeliveryRoutingEngine?: string;
+
+  @ApiPropertyOptional({ type: [RoutingEnginePoolEntryDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RoutingEnginePoolEntryDto)
+  vendorRoutingEnginePool?: RoutingEnginePoolEntryDto[];
+
+  @ApiPropertyOptional({ type: [RoutingEnginePoolEntryDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RoutingEnginePoolEntryDto)
+  mobileUserRoutingEnginePool?: RoutingEnginePoolEntryDto[];
+
+  @ApiPropertyOptional({ type: [RoutingEnginePoolEntryDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RoutingEnginePoolEntryDto)
+  mobileDeliveryRoutingEnginePool?: RoutingEnginePoolEntryDto[];
 
   @ApiPropertyOptional({
     type: [String],

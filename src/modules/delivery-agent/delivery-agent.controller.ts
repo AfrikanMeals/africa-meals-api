@@ -99,10 +99,19 @@ export class DeliveryAgentController {
   @UseGuards(JwtGuard)
   @ApiOperation({
     summary:
-      'Historique livraisons assignées au livreur (en cours et terminées, détail course).',
+      'Historique livraisons assignées au livreur. Query status=pending|cancelled|approved, page, take.',
   })
-  listDeliveryHistory(@Req() req: Request) {
-    return this._deliveryAgent.listDeliveryHistory(req.user as UserModel);
+  listDeliveryHistory(
+    @Req() req: Request,
+    @Query('status') status?: string,
+    @Query('page') page?: string,
+    @Query('take') take?: string,
+  ) {
+    return this._deliveryAgent.listDeliveryHistory(req.user as UserModel, {
+      status,
+      page,
+      take,
+    });
   }
 
   @Get('presence')

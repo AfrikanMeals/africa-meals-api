@@ -41,6 +41,11 @@ export type MapGeocodeUsageStatsResponse = {
       mobileUser: Array<{ engine: string; weight: number }>;
       mobileDelivery: Array<{ engine: string; weight: number }>;
     };
+    routingPools: {
+      vendor: Array<{ engine: string; weight: number }>;
+      mobileUser: Array<{ engine: string; weight: number }>;
+      mobileDelivery: Array<{ engine: string; weight: number }>;
+    };
     geocodeCache: {
       storePriority: string[];
       storeAvailability: Record<string, boolean>;
@@ -97,6 +102,11 @@ export class MapGeocodeUsageService {
           mobileUser: publicSettings.mobileUser.geocodingEnginePool ?? [],
           mobileDelivery: publicSettings.mobileDelivery.geocodingEnginePool ?? [],
         },
+        routingPools: {
+          vendor: [],
+          mobileUser: publicSettings.mobileUser.routingEnginePool ?? [],
+          mobileDelivery: publicSettings.mobileDelivery.routingEnginePool ?? [],
+        },
         geocodeCache: {
           storePriority: publicSettings.geocodeCache?.storePriority ?? [],
           storeAvailability: publicSettings.geocodeCache?.storeAvailability ?? {},
@@ -104,8 +114,8 @@ export class MapGeocodeUsageService {
       },
       notes: [
         'Les compteurs « processus API » sont remis à zéro au redémarrage du serveur.',
-        'Le pool géocodage vendeur est configuré par formule d’abonnement (non listé ici).',
-        'Les tuiles carte et itinéraires côté client (Mapbox, Google, OSM) ne passent pas par l’API : non comptabilisés ici.',
+        'Les pools géocodage et itinéraires vendeur sont configurés par formule d’abonnement (non listés ici).',
+        'Les tuiles carte et itinéraires encore appelés côté client (Mapbox, Google, OSRM) ne passent pas par l’API : non comptabilisés ici.',
         'Les hits cache MongoDB incluent l’historique persistant (toutes instances).',
       ],
     };

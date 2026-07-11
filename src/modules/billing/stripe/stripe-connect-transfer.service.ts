@@ -354,24 +354,36 @@ export class StripeConnectTransferService {
       chargeId,
       paymentAmountCents: chargeAmountCents,
     });
+    // Montants commande en devise charge ; transfer Stripe = devise settlement (BT).
+    const vendorBeforeStripeSettlement = this.stripeFees.toTransferMinorUnits(
+      vendorBeforeStripe,
+      chargeSnap,
+    );
     const stripeProcessingFeeShareCents =
       this.stripeFees.allocateProcessingFeeShareCents({
         totalStripeFeeCents,
         paymentAmountCents: chargeAmountCents,
         sliceAmountCents: goodsCents,
-        maxDeductibleCents: vendorBeforeStripe,
+        maxDeductibleCents: vendorBeforeStripeSettlement,
       });
     let transferCents = Math.max(
       0,
-      vendorBeforeStripe - stripeProcessingFeeShareCents,
+      vendorBeforeStripeSettlement - stripeProcessingFeeShareCents,
     );
 
     const remainingOnCharge =
       await this.stripeFees.remainingTransferableCents(chargeId);
     if (remainingOnCharge > 0) {
       transferCents = Math.min(transferCents, remainingOnCharge);
-    } else if (chargeAmountCents > 0) {
-      transferCents = Math.min(transferCents, chargeAmountCents);
+    } else {
+      const settlementCap =
+        chargeSnap?.settlementAmountCents &&
+        chargeSnap.settlementAmountCents > 0
+          ? chargeSnap.settlementAmountCents
+          : this.stripeFees.toTransferMinorUnits(chargeAmountCents, chargeSnap);
+      if (settlementCap > 0) {
+        transferCents = Math.min(transferCents, settlementCap);
+      }
     }
 
     if (transferCents < 1) {
@@ -398,17 +410,27 @@ export class StripeConnectTransferService {
     const configuredCurrency =
       this.config.get<string>('STRIPE_CONNECT_TRANSFER_CURRENCY')?.trim() ||
       'cad';
+    // Devise BT (settlement), pas charge.currency — sinon Stripe refuse source_transaction.
     const transferCurrency = normalizeStripeCurrencyCode(
       chargeSnap?.currency ||
         args.paymentCurrency ||
         configuredCurrency,
     ).toLowerCase();
     if (
+      chargeSnap?.chargeCurrency &&
+      chargeSnap.chargeCurrency !== transferCurrency
+    ) {
+      this.logger.log(
+        `Connect vendor transfer FX order=${args.orderId}: ` +
+          `charge=${chargeSnap.chargeCurrency} → settlement=${transferCurrency} ` +
+          `rate=${chargeSnap.exchangeRate}`,
+      );
+    } else if (
       chargeSnap?.currency &&
       configuredCurrency.toLowerCase() !== chargeSnap.currency
     ) {
       this.logger.warn(
-        `Connect transfer currency ${transferCurrency} (charge) ` +
+        `Connect transfer currency ${transferCurrency} (settlement) ` +
           `≠ STRIPE_CONNECT_TRANSFER_CURRENCY=${configuredCurrency} order=${args.orderId}`,
       );
     }
@@ -639,24 +661,35 @@ export class StripeConnectTransferService {
       chargeId,
       paymentAmountCents: chargeAmountCents,
     });
+    const deliveryNetSettlement = this.stripeFees.toTransferMinorUnits(
+      deliveryNetBeforeStripe,
+      chargeSnap,
+    );
     const stripeProcessingFeeShareCents =
       this.stripeFees.allocateProcessingFeeShareCents({
         totalStripeFeeCents,
         paymentAmountCents: chargeAmountCents,
         sliceAmountCents: shipCents,
-        maxDeductibleCents: deliveryNetBeforeStripe,
+        maxDeductibleCents: deliveryNetSettlement,
       });
     let transferCents = Math.max(
       0,
-      deliveryNetBeforeStripe - stripeProcessingFeeShareCents,
+      deliveryNetSettlement - stripeProcessingFeeShareCents,
     );
 
     const remainingOnCharge =
       await this.stripeFees.remainingTransferableCents(chargeId);
     if (remainingOnCharge > 0) {
       transferCents = Math.min(transferCents, remainingOnCharge);
-    } else if (chargeAmountCents > 0) {
-      transferCents = Math.min(transferCents, chargeAmountCents);
+    } else {
+      const settlementCap =
+        chargeSnap?.settlementAmountCents &&
+        chargeSnap.settlementAmountCents > 0
+          ? chargeSnap.settlementAmountCents
+          : this.stripeFees.toTransferMinorUnits(chargeAmountCents, chargeSnap);
+      if (settlementCap > 0) {
+        transferCents = Math.min(transferCents, settlementCap);
+      }
     }
 
     if (transferCents < 1) {
@@ -844,21 +877,32 @@ export class StripeConnectTransferService {
       chargeId,
       paymentAmountCents: chargeAmountCents,
     });
+    const tipSettlement = this.stripeFees.toTransferMinorUnits(
+      tipCents,
+      chargeSnap,
+    );
     const stripeProcessingFeeShareCents =
       this.stripeFees.allocateProcessingFeeShareCents({
         totalStripeFeeCents,
         paymentAmountCents: chargeAmountCents,
         sliceAmountCents: tipCents,
-        maxDeductibleCents: tipCents,
+        maxDeductibleCents: tipSettlement,
       });
-    let transferCents = Math.max(0, tipCents - stripeProcessingFeeShareCents);
+    let transferCents = Math.max(0, tipSettlement - stripeProcessingFeeShareCents);
 
     const remainingOnCharge =
       await this.stripeFees.remainingTransferableCents(chargeId);
     if (remainingOnCharge > 0) {
       transferCents = Math.min(transferCents, remainingOnCharge);
-    } else if (chargeAmountCents > 0) {
-      transferCents = Math.min(transferCents, chargeAmountCents);
+    } else {
+      const settlementCap =
+        chargeSnap?.settlementAmountCents &&
+        chargeSnap.settlementAmountCents > 0
+          ? chargeSnap.settlementAmountCents
+          : this.stripeFees.toTransferMinorUnits(chargeAmountCents, chargeSnap);
+      if (settlementCap > 0) {
+        transferCents = Math.min(transferCents, settlementCap);
+      }
     }
 
     if (transferCents < 1) {

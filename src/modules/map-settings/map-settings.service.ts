@@ -27,11 +27,18 @@ import {
   GeocodingEnginePoolEntry,
   primaryGeocodingEngineFromPool,
 } from '@common/geocoding-engine-pool.util';
+import {
+  RoutingEnginePoolEntry,
+  normalizeRoutingEngineId,
+  primaryRoutingEngineFromPool,
+} from '@common/routing-engine-pool.util';
 import { UpdateMapSettingsDto } from './dto/update-map-settings.dto';
 import {
   geocodingEnginePoolForGroup,
   normalizeStoredGeocodingEnginePool,
+  normalizeStoredRoutingEnginePool,
   resolveMapSettingsForRegion,
+  routingEnginePoolForGroup,
 } from './map-settings-region.util';
 
 const SETTINGS_KEY = 'default';
@@ -39,6 +46,13 @@ const SETTINGS_KEY = 'default';
 type VendorEngine = 'mapbox' | 'google' | 'osm';
 type MobileEngine = 'mapbox' | 'google' | 'osm';
 type GeocodingEngine = 'mapbox' | 'google' | 'osm' | 'mapsco' | 'locationiq' | 'tomtom';
+type RoutingEngine =
+  | 'osrm'
+  | 'mapbox'
+  | 'google_routes'
+  | 'google_directions'
+  | 'here'
+  | 'tomtom';
 
 function assertAdmin(user: UserModel) {
   if (user.type !== UserTypeEnum.ADMIN) {
@@ -87,11 +101,22 @@ function normalizeGeocodingEngine(raw: unknown): GeocodingEngine {
   return 'osm';
 }
 
+function normalizeRoutingEngine(raw: unknown): RoutingEngine {
+  return normalizeRoutingEngineId(raw) ?? 'osrm';
+}
+
 function poolForResponse(
   doc: MapSettingsModel,
   group: 'vendor' | 'mobileUser' | 'mobileDelivery',
 ): GeocodingEnginePoolEntry[] {
   return geocodingEnginePoolForGroup(doc, group);
+}
+
+function routingPoolForResponse(
+  doc: MapSettingsModel,
+  group: 'vendor' | 'mobileUser' | 'mobileDelivery',
+): RoutingEnginePoolEntry[] {
+  return routingEnginePoolForGroup(doc, group);
 }
 
 function assertDefaultEngineEnabled(
@@ -149,6 +174,8 @@ export class MapSettingsService {
         defaultMapEngine: vendorDefault,
         geocodingEngine: normalizeGeocodingEngine(scoped.vendorGeocodingEngine),
         geocodingEnginePool: poolForResponse(scoped, 'vendor'),
+        routingEngine: normalizeRoutingEngine(scoped.vendorRoutingEngine),
+        routingEnginePool: routingPoolForResponse(scoped, 'vendor'),
       },
       mobileUser: {
         mapboxEnabled: scoped.mobileUserMapboxEnabled !== false,
@@ -159,6 +186,8 @@ export class MapSettingsService {
           scoped.mobileUserGeocodingEngine,
         ),
         geocodingEnginePool: poolForResponse(scoped, 'mobileUser'),
+        routingEngine: normalizeRoutingEngine(scoped.mobileUserRoutingEngine),
+        routingEnginePool: routingPoolForResponse(scoped, 'mobileUser'),
       },
       mobileDelivery: {
         mapboxEnabled: scoped.mobileDeliveryMapboxEnabled !== false,
@@ -169,6 +198,10 @@ export class MapSettingsService {
           scoped.mobileDeliveryGeocodingEngine,
         ),
         geocodingEnginePool: poolForResponse(scoped, 'mobileDelivery'),
+        routingEngine: normalizeRoutingEngine(
+          scoped.mobileDeliveryRoutingEngine,
+        ),
+        routingEnginePool: routingPoolForResponse(scoped, 'mobileDelivery'),
       },
       resolvedRegionCode,
       geocodeCache: {
@@ -206,6 +239,12 @@ export class MapSettingsService {
             vendorGeocodingEnginePool: [],
             mobileUserGeocodingEnginePool: [],
             mobileDeliveryGeocodingEnginePool: [],
+            vendorRoutingEngine: 'osrm',
+            mobileUserRoutingEngine: 'osrm',
+            mobileDeliveryRoutingEngine: 'osrm',
+            vendorRoutingEnginePool: [],
+            mobileUserRoutingEnginePool: [],
+            mobileDeliveryRoutingEnginePool: [],
             geocodeCacheStorePriority: [...DEFAULT_GEOCODE_CACHE_STORE_PRIORITY],
             settingsByRegion: {},
           },
@@ -301,6 +340,40 @@ export class MapSettingsService {
               ?.mobileDeliveryGeocodingEnginePool,
           );
 
+    const vendorRouting = normalizeRoutingEngine(
+      dto.vendorRoutingEngine ??
+        (existing as MapSettingsModel | null)?.vendorRoutingEngine,
+    );
+    const mobileUserRouting = normalizeRoutingEngine(
+      dto.mobileUserRoutingEngine ??
+        (existing as MapSettingsModel | null)?.mobileUserRoutingEngine,
+    );
+    const mobileDeliveryRouting = normalizeRoutingEngine(
+      dto.mobileDeliveryRoutingEngine ??
+        (existing as MapSettingsModel | null)?.mobileDeliveryRoutingEngine,
+    );
+    const vendorRoutingPool =
+      dto.vendorRoutingEnginePool !== undefined
+        ? normalizeStoredRoutingEnginePool(dto.vendorRoutingEnginePool)
+        : normalizeStoredRoutingEnginePool(
+            (existing as MapSettingsModel | null)?.vendorRoutingEnginePool,
+          );
+    const mobileUserRoutingPool =
+      dto.mobileUserRoutingEnginePool !== undefined
+        ? normalizeStoredRoutingEnginePool(dto.mobileUserRoutingEnginePool)
+        : normalizeStoredRoutingEnginePool(
+            (existing as MapSettingsModel | null)?.mobileUserRoutingEnginePool,
+          );
+    const mobileDeliveryRoutingPool =
+      dto.mobileDeliveryRoutingEnginePool !== undefined
+        ? normalizeStoredRoutingEnginePool(
+            dto.mobileDeliveryRoutingEnginePool,
+          )
+        : normalizeStoredRoutingEnginePool(
+            (existing as MapSettingsModel | null)
+              ?.mobileDeliveryRoutingEnginePool,
+          );
+
     const vendorGeocodingResolved = primaryGeocodingEngineFromPool(
       vendorGeocodingPool.length
         ? vendorGeocodingPool
@@ -318,6 +391,24 @@ export class MapSettingsService {
         ? mobileDeliveryGeocodingPool
         : [{ engine: mobileDeliveryGeocoding, weight: 100 }],
       mobileDeliveryGeocoding,
+    );
+    const vendorRoutingResolved = primaryRoutingEngineFromPool(
+      vendorRoutingPool.length
+        ? vendorRoutingPool
+        : [{ engine: vendorRouting, weight: 100 }],
+      vendorRouting,
+    );
+    const mobileUserRoutingResolved = primaryRoutingEngineFromPool(
+      mobileUserRoutingPool.length
+        ? mobileUserRoutingPool
+        : [{ engine: mobileUserRouting, weight: 100 }],
+      mobileUserRouting,
+    );
+    const mobileDeliveryRoutingResolved = primaryRoutingEngineFromPool(
+      mobileDeliveryRoutingPool.length
+        ? mobileDeliveryRoutingPool
+        : [{ engine: mobileDeliveryRouting, weight: 100 }],
+      mobileDeliveryRouting,
     );
     let geocodeCacheStorePriority = normalizeGeocodeCacheStorePriority(
       (existing as MapSettingsModel | null)?.geocodeCacheStorePriority,
@@ -355,13 +446,14 @@ export class MapSettingsService {
     );
 
     const assertPoolHasWeight = (
-      pool: GeocodingEnginePoolEntry[],
+      pool: Array<{ weight: number }>,
       scope: string,
+      kind: 'geocoding' | 'routing' = 'geocoding',
     ) => {
       if (!pool.length) return;
       const total = pool.reduce((sum, entry) => sum + entry.weight, 0);
       if (total <= 0) {
-        throw new BadRequestException(`geocoding_engine_pool_empty_${scope}`);
+        throw new BadRequestException(`${kind}_engine_pool_empty_${scope}`);
       }
     };
     if (dto.vendorGeocodingEnginePool !== undefined) {
@@ -372,6 +464,19 @@ export class MapSettingsService {
     }
     if (dto.mobileDeliveryGeocodingEnginePool !== undefined) {
       assertPoolHasWeight(mobileDeliveryGeocodingPool, 'mobile_delivery');
+    }
+    if (dto.vendorRoutingEnginePool !== undefined) {
+      assertPoolHasWeight(vendorRoutingPool, 'vendor', 'routing');
+    }
+    if (dto.mobileUserRoutingEnginePool !== undefined) {
+      assertPoolHasWeight(mobileUserRoutingPool, 'mobile_user', 'routing');
+    }
+    if (dto.mobileDeliveryRoutingEnginePool !== undefined) {
+      assertPoolHasWeight(
+        mobileDeliveryRoutingPool,
+        'mobile_delivery',
+        'routing',
+      );
     }
 
     const updated = await this._settings
@@ -397,6 +502,12 @@ export class MapSettingsService {
             vendorGeocodingEnginePool: vendorGeocodingPool,
             mobileUserGeocodingEnginePool: mobileUserGeocodingPool,
             mobileDeliveryGeocodingEnginePool: mobileDeliveryGeocodingPool,
+            vendorRoutingEngine: vendorRoutingResolved,
+            mobileUserRoutingEngine: mobileUserRoutingResolved,
+            mobileDeliveryRoutingEngine: mobileDeliveryRoutingResolved,
+            vendorRoutingEnginePool: vendorRoutingPool,
+            mobileUserRoutingEnginePool: mobileUserRoutingPool,
+            mobileDeliveryRoutingEnginePool: mobileDeliveryRoutingPool,
             geocodeCacheStorePriority,
           },
         },

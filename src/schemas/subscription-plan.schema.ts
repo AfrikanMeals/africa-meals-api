@@ -116,6 +116,14 @@ export class SubscriptionPlanModel {
   @Prop({ type: [{ engine: String, weight: Number }], default: [] })
   vendorGeocodingEnginePool: { engine: string; weight: number }[];
 
+  /** API itinéraires / ETA vendeur — moteur principal si pool vide. */
+  @Prop({ type: String, default: 'osrm', trim: true })
+  vendorRoutingEngine: string;
+
+  /** Pool itinéraires pondéré vendeur (engine + weight). */
+  @Prop({ type: [{ engine: String, weight: Number }], default: [] })
+  vendorRoutingEnginePool: { engine: string; weight: number }[];
+
   /**
    * Livraison autonome obligatoire : le vendeur doit gérer sa flotte (agents boutique).
    * Hors pool plateforme. Si false, flotte optionnelle via fiche restaurant + pool plateforme.

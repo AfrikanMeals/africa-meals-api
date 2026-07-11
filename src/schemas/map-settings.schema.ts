@@ -73,6 +73,30 @@ export class MapSettingsModel {
   @Prop({ type: [{ engine: String, weight: Number }], default: [] })
   mobileDeliveryGeocodingEnginePool: { engine: string; weight: number }[];
 
+  /** API itinéraires / ETA — vendeur (fallback si formule sans pool). */
+  @Prop({ type: String, default: 'osrm', trim: true })
+  vendorRoutingEngine: string;
+
+  /** API itinéraires / ETA — client mobile. */
+  @Prop({ type: String, default: 'osrm', trim: true })
+  mobileUserRoutingEngine: string;
+
+  /** API itinéraires / ETA — livreur mobile. */
+  @Prop({ type: String, default: 'osrm', trim: true })
+  mobileDeliveryRoutingEngine: string;
+
+  /** Pool itinéraires pondéré — vendeur. */
+  @Prop({ type: [{ engine: String, weight: Number }], default: [] })
+  vendorRoutingEnginePool: { engine: string; weight: number }[];
+
+  /** Pool itinéraires pondéré — client mobile. */
+  @Prop({ type: [{ engine: String, weight: Number }], default: [] })
+  mobileUserRoutingEnginePool: { engine: string; weight: number }[];
+
+  /** Pool itinéraires pondéré — livreur mobile. */
+  @Prop({ type: [{ engine: String, weight: Number }], default: [] })
+  mobileDeliveryRoutingEnginePool: { engine: string; weight: number }[];
+
   /** Priorité des backends cache géocodage (redis | memcached | mongodb). */
   @Prop({
     type: [String],

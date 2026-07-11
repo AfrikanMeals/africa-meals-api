@@ -17,6 +17,7 @@ import {
 } from './plan-region-order-commission.dto';
 import { PlanRegionPricingDto } from './plan-region-pricing.dto';
 import { GeocodingEnginePoolEntryDto } from '@modules/map-settings/dto/geocoding-engine-pool-entry.dto';
+import { RoutingEnginePoolEntryDto } from '@modules/map-settings/dto/routing-engine-pool-entry.dto';
 
 export class CreateSubscriptionPlanDto {
   @IsString()
@@ -128,6 +129,16 @@ export class CreateSubscriptionPlanDto {
   @ValidateNested({ each: true })
   @Type(() => GeocodingEnginePoolEntryDto)
   vendorGeocodingEnginePool?: GeocodingEnginePoolEntryDto[];
+
+  @IsOptional()
+  @IsString()
+  vendorRoutingEngine?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RoutingEnginePoolEntryDto)
+  vendorRoutingEnginePool?: RoutingEnginePoolEntryDto[];
 
   @IsOptional()
   @IsBoolean()
@@ -299,6 +310,16 @@ export class UpdateSubscriptionPlanDto {
   @ValidateNested({ each: true })
   @Type(() => GeocodingEnginePoolEntryDto)
   vendorGeocodingEnginePool?: GeocodingEnginePoolEntryDto[];
+
+  @IsOptional()
+  @IsString()
+  vendorRoutingEngine?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RoutingEnginePoolEntryDto)
+  vendorRoutingEnginePool?: RoutingEnginePoolEntryDto[];
 
   @IsOptional()
   @IsBoolean()

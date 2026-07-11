@@ -2,6 +2,11 @@ import {
   allocateStripeProcessingFeeShareCents,
   effectiveStripeProcessingFeeCents,
 } from '@modules/billing/stripe/stripe-processing-fee.util';
+import {
+  convertChargeMinorToSettlementMinor,
+  normalizeFxCurrency,
+  resolveChargeSettlementExchangeRate,
+} from '@modules/billing/stripe/stripe-charge-settlement-fx.util';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -12,9 +17,18 @@ import Stripe = require('stripe');
 type StripeClient = InstanceType<typeof Stripe>;
 
 export type ChargeFeeSnapshot = {
+  /** Montant charge (devise client, ex. XAF). */
   amountCents: number;
+  /** Frais Stripe (devise de règlement plateforme, ex. CAD). */
   feeCents: number;
+  /**
+   * Devise pour `transfers.create` = devise du balance_transaction
+   * (peut différer de la devise charge, ex. XAF → CAD).
+   */
   currency: string;
+  chargeCurrency: string;
+  settlementAmountCents: number;
+  exchangeRate: number;
 };
 
 /**
@@ -70,16 +84,51 @@ export class StripeChargeFeeService {
       expand: ['balance_transaction'],
     });
     const amountCents = Math.max(0, Math.round(Number(charge.amount ?? 0)));
-    const currency = String(charge.currency ?? 'cad').toLowerCase();
+    const chargeCurrency = normalizeFxCurrency(charge.currency ?? 'cad');
     const bt = charge.balance_transaction;
     if (!bt || typeof bt === 'string' || typeof bt !== 'object') {
-      return { amountCents, feeCents: 0, currency };
+      return {
+        amountCents,
+        feeCents: 0,
+        currency: chargeCurrency,
+        chargeCurrency,
+        settlementAmountCents: amountCents,
+        exchangeRate: 1,
+      };
     }
-    const feeCents = Math.max(
-      0,
-      Math.round(Number((bt as { fee?: number }).fee ?? 0)),
+    const btObj = bt as {
+      fee?: number;
+      amount?: number;
+      currency?: string;
+      exchange_rate?: number | null;
+    };
+    const settlementCurrency = normalizeFxCurrency(
+      btObj.currency ?? chargeCurrency,
     );
-    return { amountCents, feeCents, currency };
+    const feeCents = Math.max(0, Math.round(Number(btObj.fee ?? 0)));
+    const settlementAmountCents = Math.max(
+      0,
+      Math.round(Number(btObj.amount ?? 0)),
+    );
+    const exchangeRate = resolveChargeSettlementExchangeRate({
+      chargeCurrency,
+      settlementCurrency,
+      exchangeRate: btObj.exchange_rate,
+      chargeAmountMinor: amountCents,
+      settlementAmountMinor: settlementAmountCents,
+    });
+
+    return {
+      amountCents,
+      feeCents,
+      currency: settlementCurrency,
+      chargeCurrency,
+      settlementAmountCents:
+        settlementAmountCents > 0
+          ? settlementAmountCents
+          : convertChargeMinorToSettlementMinor(amountCents, { exchangeRate }),
+      exchangeRate,
+    };
   }
 
   chargeFeeSnapshot(chargeId: string): Promise<ChargeFeeSnapshot | null> {
@@ -95,6 +144,17 @@ export class StripeChargeFeeService {
     return p;
   }
 
+  /** Convertit une tranche (devise charge) vers la devise de transfer Connect. */
+  toTransferMinorUnits(
+    chargeMinor: number,
+    snap: ChargeFeeSnapshot | null | undefined,
+  ): number {
+    if (!snap) return Math.max(0, Math.round(chargeMinor));
+    return convertChargeMinorToSettlementMinor(chargeMinor, {
+      exchangeRate: snap.exchangeRate,
+    });
+  }
+
   async totalProcessingFeeCents(args: {
     chargeId: string;
     paymentAmountCents: number;
@@ -104,8 +164,16 @@ export class StripeChargeFeeService {
 
     const snap = await this.chargeFeeSnapshot(args.chargeId);
     const chargeAmount = snap?.amountCents ?? paymentAmount;
+    const settlementCap =
+      snap?.settlementAmountCents && snap.settlementAmountCents > 0
+        ? snap.settlementAmountCents
+        : this.toTransferMinorUnits(chargeAmount, snap);
     const actualFee = snap?.feeCents ?? 0;
-    return effectiveStripeProcessingFeeCents(actualFee, chargeAmount);
+    // Les frais BT sont déjà en devise de règlement : plafonner sur le montant settlement.
+    if (actualFee > 0) {
+      return Math.min(settlementCap, Math.round(actualFee));
+    }
+    return effectiveStripeProcessingFeeCents(null, settlementCap);
   }
 
   allocateProcessingFeeShareCents(args: {
@@ -122,10 +190,15 @@ export class StripeChargeFeeService {
     });
   }
 
-  /** Montant encore transférable depuis une charge (source_transaction). */
+  /** Montant encore transférable depuis une charge (source_transaction), devise settlement. */
   async remainingTransferableCents(chargeId: string): Promise<number> {
     const snap = await this.chargeFeeSnapshot(chargeId);
-    if (!snap || snap.amountCents < 1) return 0;
+    if (!snap) return 0;
+    const capacity =
+      snap.settlementAmountCents > 0
+        ? snap.settlementAmountCents
+        : this.toTransferMinorUnits(snap.amountCents, snap);
+    if (capacity < 1) return 0;
     const stripe = this.stripe();
     let transferred = 0;
     let startingAfter: string | undefined;
@@ -142,7 +215,7 @@ export class StripeChargeFeeService {
       if (!batch.has_more || !batch.data.length) break;
       startingAfter = batch.data[batch.data.length - 1]?.id;
     }
-    return Math.max(0, snap.amountCents - transferred);
+    return Math.max(0, capacity - transferred);
   }
 
   /** Résout l’id charge `ch_…` liée à un `pi_…` ou `cs_…`. */
@@ -177,6 +250,7 @@ export class StripeChargeFeeService {
         return chargeFromPi(String((pi as { id: string }).id));
       }
     }
+    if (id.startsWith('ch_')) return id;
     return null;
   }
 }

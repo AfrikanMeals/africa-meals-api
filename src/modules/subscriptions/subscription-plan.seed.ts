@@ -23,6 +23,8 @@ export type SubscriptionPlanSeed = {
   mapEngineOsmEnabled?: boolean;
   vendorGeocodingEngine?: string;
   vendorGeocodingEnginePool?: { engine: string; weight: number }[];
+  vendorRoutingEngine?: string;
+  vendorRoutingEnginePool?: { engine: string; weight: number }[];
   selfDeliveryEnabled?: boolean;
   maxDeliveryAgents?: number;
   maxCatalogItems?: number;
@@ -64,6 +66,8 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
     mapEngineOsmEnabled: true,
     vendorGeocodingEngine: 'osm',
     vendorGeocodingEnginePool: [{ engine: 'osm', weight: 100 }],
+    vendorRoutingEngine: 'osrm',
+    vendorRoutingEnginePool: [{ engine: 'osrm', weight: 100 }],
     selfDeliveryEnabled: false,
     maxDeliveryAgents: 0,
     maxCatalogItems: 10,
@@ -108,6 +112,12 @@ export const DEFAULT_SUBSCRIPTION_PLAN_SEEDS: SubscriptionPlanSeed[] = [
       { engine: 'tomtom', weight: 20 },
       { engine: 'mapbox', weight: 25 },
       { engine: 'google', weight: 5 },
+    ],
+    vendorRoutingEngine: 'mapbox',
+    vendorRoutingEnginePool: [
+      { engine: 'osrm', weight: 20 },
+      { engine: 'mapbox', weight: 60 },
+      { engine: 'google_routes', weight: 20 },
     ],
     selfDeliveryEnabled: false,
     maxDeliveryAgents: 0,

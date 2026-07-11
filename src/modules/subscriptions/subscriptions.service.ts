@@ -8,7 +8,19 @@ import {
   primaryGeocodingEngineFromPool,
   resolveGeocodingPool,
 } from '@common/geocoding-engine-pool.util';
-import { normalizeStoredGeocodingEnginePool } from '@modules/map-settings/map-settings-region.util';
+import {
+  RoutingEngineId,
+  RoutingEnginePoolEntry,
+  normalizeRoutingEngineId,
+  normalizeRoutingEnginePool,
+  primaryRoutingEngineFromPool,
+  resolveRoutingPool,
+  routingPoolFromScalar,
+} from '@common/routing-engine-pool.util';
+import {
+  normalizeStoredGeocodingEnginePool,
+  normalizeStoredRoutingEnginePool,
+} from '@modules/map-settings/map-settings-region.util';
 import {
   BadRequestException,
   ConflictException,
@@ -84,6 +96,42 @@ function resolveVendorGeocodingFieldsFromDto(dto: {
   return {
     vendorGeocodingEngine: resolvedScalar,
     vendorGeocodingEnginePool: pool,
+  };
+}
+
+function normalizeVendorRoutingScalar(raw: unknown): RoutingEngineId {
+  return normalizeRoutingEngineId(raw) ?? 'osrm';
+}
+
+function normalizeVendorRoutingPoolResponse(
+  poolRaw: unknown,
+  scalarRaw: unknown,
+): RoutingEnginePoolEntry[] {
+  const scalar = normalizeVendorRoutingScalar(scalarRaw);
+  return resolveRoutingPool(poolRaw, scalar);
+}
+
+function resolveVendorRoutingFieldsFromDto(dto: {
+  vendorRoutingEngine?: string;
+  vendorRoutingEnginePool?: { engine: string; weight: number }[];
+}) {
+  const scalar = normalizeVendorRoutingScalar(dto.vendorRoutingEngine);
+  const pool =
+    dto.vendorRoutingEnginePool !== undefined
+      ? normalizeStoredRoutingEnginePool(dto.vendorRoutingEnginePool)
+      : routingPoolFromScalar(scalar);
+  if (pool.length) {
+    const total = pool.reduce((sum, entry) => sum + entry.weight, 0);
+    if (total <= 0) {
+      throw new BadRequestException('routing_engine_pool_empty_vendor');
+    }
+  }
+  const resolvedScalar = pool.length
+    ? primaryRoutingEngineFromPool(pool, scalar)
+    : scalar;
+  return {
+    vendorRoutingEngine: resolvedScalar,
+    vendorRoutingEnginePool: pool,
   };
 }
 
@@ -181,6 +229,11 @@ function mapPlan(doc: Record<string, unknown>) {
     vendorGeocodingEnginePool: normalizeVendorGeocodingPoolResponse(
       doc.vendorGeocodingEnginePool,
       doc.vendorGeocodingEngine,
+    ),
+    vendorRoutingEngine: normalizeVendorRoutingScalar(doc.vendorRoutingEngine),
+    vendorRoutingEnginePool: normalizeVendorRoutingPoolResponse(
+      doc.vendorRoutingEnginePool,
+      doc.vendorRoutingEngine,
     ),
     selfDeliveryEnabled: doc.selfDeliveryEnabled === true,
     maxDeliveryAgents: Math.max(0, Number(doc.maxDeliveryAgents ?? 0)),
@@ -604,6 +657,12 @@ export class SubscriptionsService implements OnModuleInit {
         vendorGeocodingEnginePool: normalizeGeocodingEnginePool(
           seed.vendorGeocodingEnginePool,
         ),
+        vendorRoutingEngine: normalizeVendorRoutingScalar(
+          seed.vendorRoutingEngine,
+        ),
+        vendorRoutingEnginePool: normalizeRoutingEnginePool(
+          seed.vendorRoutingEnginePool,
+        ),
         selfDeliveryEnabled: seed.selfDeliveryEnabled === true,
         maxDeliveryAgents: Math.max(0, Number(seed.maxDeliveryAgents ?? 0)),
         maxCatalogItems: Math.max(0, Number(seed.maxCatalogItems ?? 0)),
@@ -699,6 +758,15 @@ export class SubscriptionsService implements OnModuleInit {
         ) {
           patch.vendorGeocodingEngine = docFields.vendorGeocodingEngine;
           patch.vendorGeocodingEnginePool = docFields.vendorGeocodingEnginePool;
+        }
+        if (
+          (!Array.isArray(existingDoc.vendorRoutingEnginePool) ||
+            (existingDoc.vendorRoutingEnginePool as unknown[]).length === 0) &&
+          Array.isArray(docFields.vendorRoutingEnginePool) &&
+          docFields.vendorRoutingEnginePool.length > 0
+        ) {
+          patch.vendorRoutingEngine = docFields.vendorRoutingEngine;
+          patch.vendorRoutingEnginePool = docFields.vendorRoutingEnginePool;
         }
         if (
           existingDoc.selfDeliveryEnabled == null &&
@@ -1653,6 +1721,52 @@ export class SubscriptionsService implements OnModuleInit {
     return { pool: geocodingPoolFromScalar(scalar), fallback: scalar };
   }
 
+  async resolveVendorRoutingForStore(storeId: string): Promise<{
+    pool: RoutingEnginePoolEntry[];
+    fallback: RoutingEngineId;
+  }> {
+    const id = String(storeId ?? '').trim();
+    if (!Types.ObjectId.isValid(id)) {
+      return { pool: routingPoolFromScalar('osrm'), fallback: 'osrm' };
+    }
+    const planByStore = await this.resolveActivePlanNamesByStoreIds([id]);
+    const planName = String(planByStore.get(id) ?? '').trim();
+    return this.resolveVendorRoutingForPlanName(planName);
+  }
+
+  async resolveVendorRoutingForPlanName(planName: string): Promise<{
+    pool: RoutingEnginePoolEntry[];
+    fallback: RoutingEngineId;
+  }> {
+    const name = String(planName ?? '').trim();
+    if (!name) {
+      return { pool: routingPoolFromScalar('osrm'), fallback: 'osrm' };
+    }
+    const escaped = buildCaseInsensitiveExactRegex(name);
+    const doc = await this.planModel
+      .findOne({
+        name: { $regex: escaped },
+        active: { $ne: false },
+      })
+      .select('vendorRoutingEngine vendorRoutingEnginePool')
+      .lean()
+      .exec();
+    const scalar = normalizeVendorRoutingScalar(
+      (doc as { vendorRoutingEngine?: unknown } | null)?.vendorRoutingEngine,
+    );
+    const pool = normalizeRoutingEnginePool(
+      (doc as { vendorRoutingEnginePool?: unknown } | null)
+        ?.vendorRoutingEnginePool,
+    );
+    if (pool.length) {
+      return {
+        pool,
+        fallback: primaryRoutingEngineFromPool(pool, scalar),
+      };
+    }
+    return { pool: routingPoolFromScalar(scalar), fallback: scalar };
+  }
+
   async assertMarketingToolsEnabledForStore(
     storeId: string,
     user?: UserModel,
@@ -1993,6 +2107,7 @@ export class SubscriptionsService implements OnModuleInit {
       osm: dto.mapEngineOsmEnabled !== false,
     });
     const vendorGeocoding = resolveVendorGeocodingFieldsFromDto(dto);
+    const vendorRouting = resolveVendorRoutingFieldsFromDto(dto);
     let storeOid: Types.ObjectId | null = null;
     if (dto.storeId?.trim()) {
       if (!Types.ObjectId.isValid(dto.storeId)) {
@@ -2034,6 +2149,8 @@ export class SubscriptionsService implements OnModuleInit {
       mapEngineOsmEnabled: dto.mapEngineOsmEnabled !== false,
       vendorGeocodingEngine: vendorGeocoding.vendorGeocodingEngine,
       vendorGeocodingEnginePool: vendorGeocoding.vendorGeocodingEnginePool,
+      vendorRoutingEngine: vendorRouting.vendorRoutingEngine,
+      vendorRoutingEnginePool: vendorRouting.vendorRoutingEnginePool,
       selfDeliveryEnabled: dto.selfDeliveryEnabled === true,
       maxDeliveryAgents: Math.max(
         0,
@@ -2153,6 +2270,25 @@ export class SubscriptionsService implements OnModuleInit {
       });
       patch.vendorGeocodingEngine = vendorGeocoding.vendorGeocodingEngine;
       patch.vendorGeocodingEnginePool = vendorGeocoding.vendorGeocodingEnginePool;
+    }
+    if (
+      dto.vendorRoutingEngine != null ||
+      dto.vendorRoutingEnginePool != null
+    ) {
+      const current = await this.planModel.findById(planId).lean().exec();
+      if (!current) throw new NotFoundException('plan_not_found');
+      const currentDoc = current as {
+        vendorRoutingEngine?: string;
+        vendorRoutingEnginePool?: { engine: string; weight: number }[];
+      };
+      const vendorRouting = resolveVendorRoutingFieldsFromDto({
+        vendorRoutingEngine:
+          dto.vendorRoutingEngine ?? currentDoc.vendorRoutingEngine,
+        vendorRoutingEnginePool:
+          dto.vendorRoutingEnginePool ?? currentDoc.vendorRoutingEnginePool,
+      });
+      patch.vendorRoutingEngine = vendorRouting.vendorRoutingEngine;
+      patch.vendorRoutingEnginePool = vendorRouting.vendorRoutingEnginePool;
     }
     if (dto.selfDeliveryEnabled != null) {
       patch.selfDeliveryEnabled = dto.selfDeliveryEnabled === true;

@@ -5,6 +5,14 @@ import {
   pickWeightedGeocodingEngine,
   resolveGeocodingPool,
 } from '@common/geocoding-engine-pool.util';
+import {
+  RoutingEngineId,
+  RoutingEnginePoolEntry,
+  normalizeRoutingEngineId,
+  normalizeRoutingEnginePool,
+  pickWeightedRoutingEngine,
+  resolveRoutingPool,
+} from '@common/routing-engine-pool.util';
 import { normalizeRegionCode } from '@modules/platform-shipping-settings/platform-shipping-region.util';
 import { MapSettingsModel } from '@schemas/map-settings.schema';
 
@@ -15,18 +23,24 @@ export type RegionMapSettingsOverride = Partial<{
   vendorDefaultMapEngine: string;
   vendorGeocodingEngine: string;
   vendorGeocodingEnginePool: GeocodingEnginePoolEntry[];
+  vendorRoutingEngine: string;
+  vendorRoutingEnginePool: RoutingEnginePoolEntry[];
   mobileUserMapboxEnabled: boolean;
   mobileUserGoogleEnabled: boolean;
   mobileUserOsmEnabled: boolean;
   mobileUserDefaultMapEngine: string;
   mobileUserGeocodingEngine: string;
   mobileUserGeocodingEnginePool: GeocodingEnginePoolEntry[];
+  mobileUserRoutingEngine: string;
+  mobileUserRoutingEnginePool: RoutingEnginePoolEntry[];
   mobileDeliveryMapboxEnabled: boolean;
   mobileDeliveryGoogleEnabled: boolean;
   mobileDeliveryOsmEnabled: boolean;
   mobileDeliveryDefaultMapEngine: string;
   mobileDeliveryGeocodingEngine: string;
   mobileDeliveryGeocodingEnginePool: GeocodingEnginePoolEntry[];
+  mobileDeliveryRoutingEngine: string;
+  mobileDeliveryRoutingEnginePool: RoutingEnginePoolEntry[];
 }>;
 
 export function readMapSettingsByRegion(
@@ -100,6 +114,32 @@ export function geocodingEnginePoolForGroup(
   return resolveGeocodingPool(raw, geocodingEngineForGroup(doc, group));
 }
 
+export function routingEngineForGroup(
+  doc: MapSettingsModel,
+  group: MapSettingsGroupKey,
+): RoutingEngineId {
+  const raw =
+    group === 'vendor'
+      ? doc.vendorRoutingEngine
+      : group === 'mobileDelivery'
+        ? doc.mobileDeliveryRoutingEngine
+        : doc.mobileUserRoutingEngine;
+  return normalizeRoutingEngineId(raw) ?? 'osrm';
+}
+
+export function routingEnginePoolForGroup(
+  doc: MapSettingsModel,
+  group: MapSettingsGroupKey,
+): RoutingEnginePoolEntry[] {
+  const raw =
+    group === 'vendor'
+      ? doc.vendorRoutingEnginePool
+      : group === 'mobileDelivery'
+        ? doc.mobileDeliveryRoutingEnginePool
+        : doc.mobileUserRoutingEnginePool;
+  return resolveRoutingPool(raw, routingEngineForGroup(doc, group));
+}
+
 export function isEngineEnabledForGroup(
   doc: MapSettingsModel,
   group: MapSettingsGroupKey,
@@ -131,6 +171,36 @@ export function isEngineEnabledForGroup(
   return flags.osm;
 }
 
+/** Éligibilité routing : OSRM toujours ; mapbox/google liés aux flags display. */
+export function isRoutingEngineEnabledForGroup(
+  doc: MapSettingsModel,
+  group: MapSettingsGroupKey,
+  engine: RoutingEngineId,
+): boolean {
+  const flags =
+    group === 'vendor'
+      ? {
+          mapbox: doc.vendorMapboxEnabled !== false,
+          google: doc.vendorGoogleEnabled !== false,
+        }
+      : group === 'mobileDelivery'
+        ? {
+            mapbox: doc.mobileDeliveryMapboxEnabled !== false,
+            google: doc.mobileDeliveryGoogleEnabled !== false,
+          }
+        : {
+            mapbox: doc.mobileUserMapboxEnabled !== false,
+            google: doc.mobileUserGoogleEnabled !== false,
+          };
+  if (engine === 'osrm') return true;
+  if (engine === 'mapbox') return flags.mapbox;
+  if (engine === 'google_routes' || engine === 'google_directions') {
+    return flags.google;
+  }
+  if (engine === 'here' || engine === 'tomtom') return true;
+  return true;
+}
+
 export function resolveGeocodingEngineForRegion(
   doc: MapSettingsModel,
   group: MapSettingsGroupKey,
@@ -148,8 +218,31 @@ export function resolveGeocodingEngineForRegion(
   );
 }
 
+export function resolveRoutingEngineForRegion(
+  doc: MapSettingsModel,
+  group: MapSettingsGroupKey,
+  regionCode?: string | null,
+  random: () => number = Math.random,
+): RoutingEngineId {
+  const merged = resolveMapSettingsForRegion(doc, regionCode);
+  const fallback = routingEngineForGroup(merged, group);
+  const pool = routingEnginePoolForGroup(merged, group);
+  return pickWeightedRoutingEngine(
+    pool,
+    (engine) => isRoutingEngineEnabledForGroup(merged, group, engine),
+    fallback,
+    random,
+  );
+}
+
 export function normalizeStoredGeocodingEnginePool(
   raw: unknown,
 ): GeocodingEnginePoolEntry[] {
   return normalizeGeocodingEnginePool(raw);
+}
+
+export function normalizeStoredRoutingEnginePool(
+  raw: unknown,
+): RoutingEnginePoolEntry[] {
+  return normalizeRoutingEnginePool(raw);
 }

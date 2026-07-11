@@ -48,6 +48,11 @@ import {
 } from '@modules/supported-countries/region-tax.util';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { PatchDeliveryAgentApplicationDto } from './dto/delivery-agent-application.dto';
+import {
+  parseDeliveryHistoryPage,
+  parseDeliveryHistoryTake,
+  resolveDeliveryHistoryStatusFilter,
+} from './delivery-agent-history.util';
 import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
 import {
   defaultDeliveryCapacity,
@@ -1371,6 +1376,10 @@ export class DeliveryAgentService {
     const availability: 'disponible' | 'hors_ligne' =
       dto.availability === 'hors_ligne' ? 'hors_ligne' : 'disponible';
 
+    if (availability === 'disponible') {
+      await this.assertAgentStripeOnboardingComplete(user);
+    }
+
     await this._applications
       .updateOne(
         {
@@ -1569,6 +1578,16 @@ export class DeliveryAgentService {
     return app;
   }
 
+  /** Stripe Connect requis pour passer disponible / prendre une course. */
+  private async assertAgentStripeOnboardingComplete(user: UserModel) {
+    const status = await this._stripeConnect.getConnectStatus(user);
+    if (!status?.onboardingComplete) {
+      throw new BadRequestException(
+        'delivery_agent_stripe_onboarding_incomplete',
+      );
+    }
+  }
+
   /** Met à jour la position GPS et notifie le suivi temps réel de la course active. */
   async reportLocation(user: UserModel, dto: DeliveryAgentLocationDto) {
     this.assertDeliveryAgent(user);
@@ -1724,6 +1743,7 @@ export class DeliveryAgentService {
     const oid = new Types.ObjectId(orderId);
 
     const app = await this.assertAgentApprovedApplication(agentId);
+    await this.assertAgentStripeOnboardingComplete(user);
     if (app.dashboardAvailability === 'hors_ligne') {
       throw new BadRequestException('delivery_agent_offline');
     }
@@ -2172,7 +2192,9 @@ export class DeliveryAgentService {
 
   async listShippingPaymentHistory(user: UserModel) {
     this.assertDeliveryAgent(user);
-    const { items, totals } = await this.loadAgentDeliveryHistory(user, 50);
+    const { items, totals } = await this.loadAgentDeliveryHistory(user, {
+      limit: 50,
+    });
     const earningsItems = items.map(
       ({
         customerName: _c,
@@ -2185,10 +2207,20 @@ export class DeliveryAgentService {
   }
 
   /** Historique livraisons (mobile onglet Historique). */
-  async listDeliveryHistory(user: UserModel) {
+  async listDeliveryHistory(
+    user: UserModel,
+    query?: { status?: string; page?: string; take?: string },
+  ) {
     this.assertDeliveryAgent(user);
-    const { items } = await this.loadAgentDeliveryHistory(user, 50);
-    return { items };
+    const page = parseDeliveryHistoryPage(query?.page);
+    const take = parseDeliveryHistoryTake(query?.take, 20);
+    const statuses = resolveDeliveryHistoryStatusFilter(query?.status);
+    const { items, hasMore } = await this.loadAgentDeliveryHistory(user, {
+      limit: take,
+      skip: (page - 1) * take,
+      statuses,
+    });
+    return { items, page, take, hasMore };
   }
 
   /** Admin — synthèse performance + gains + Stripe pour un livreur approuvé. */
@@ -2293,7 +2325,7 @@ export class DeliveryAgentService {
           },
         ])
         .exec(),
-      this.loadAgentDeliveryHistory(agentUser, earningsWindow),
+      this.loadAgentDeliveryHistory(agentUser, { limit: earningsWindow }),
       this._stripeConnect
         .getConnectStatus(agentUser)
         .catch(() => null),
@@ -2547,19 +2579,31 @@ export class DeliveryAgentService {
     };
   }
 
-  private async loadAgentDeliveryHistory(user: UserModel, limit: number) {
+  private async loadAgentDeliveryHistory(
+    user: UserModel,
+    opts: {
+      limit: number;
+      skip?: number;
+      statuses?: OrderStatusEnum[];
+    },
+  ) {
     const agentId = new Types.ObjectId(String(user.id));
+    const limit = Math.max(1, Math.min(opts.limit, 100));
+    const skip = Math.max(0, Math.floor(opts.skip ?? 0));
+    const statuses =
+      opts.statuses && opts.statuses.length > 0
+        ? opts.statuses
+        : [OrderStatusEnum.SHIPPED, OrderStatusEnum.COMPLETED];
     const rows = await this._orders
       .find({
         shouldShip: true,
         assignedDeliveryUser: agentId,
-        status: {
-          $in: [OrderStatusEnum.SHIPPED, OrderStatusEnum.COMPLETED],
-        },
+        status: { $in: statuses },
         courierAbandonNoPayout: { $ne: true },
       })
       .sort({ updatedAt: -1 })
-      .limit(Math.max(1, Math.min(limit, 100)))
+      .skip(skip)
+      .limit(limit + 1)
       .populate({
         path: 'store',
         select: 'name currency address region',
@@ -2578,6 +2622,9 @@ export class DeliveryAgentService {
       })
       .lean()
       .exec();
+
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
 
     const settingsCache = new Map<
       string,
@@ -2600,7 +2647,7 @@ export class DeliveryAgentService {
     let totalPlatformWithheldCad = 0;
 
     const items = await Promise.all(
-      rows.map(async (row) => {
+      pageRows.map(async (row) => {
         const mapped = this.mapOrderRowForAgent(
           row as unknown as Record<string, unknown>,
         );
@@ -2682,6 +2729,7 @@ export class DeliveryAgentService {
 
     return {
       items,
+      hasMore,
       totals: {
         driverEarningCad: Math.round(totalDriverEarningCad * 100) / 100,
         driverTipEarningCad: Math.round(totalDriverTipEarningCad * 100) / 100,
