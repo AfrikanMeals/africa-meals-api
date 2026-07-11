@@ -15,7 +15,7 @@ describe('recommendations cache keys & TTL', () => {
     expect(AppCacheKeys.recoFeed('u123', 'CM', 24)).toBe(
       'reco:feed:v1:u123:CM:t24',
     );
-    expect(AppCacheKeys.recoFeed('', 'xx', 0)).toBe('reco:feed:v1:anon:CA:t24');
+    expect(AppCacheKeys.recoFeed('', 'x', 0)).toBe('reco:feed:v1:anon:CA:t24');
     expect(AppCacheKeys.recoFeed('anon', 'CA', 12)).toBe(
       'reco:feed:v1:anon:CA:t12',
     );

@@ -74,14 +74,15 @@ export class UpdateCacheSettingsDto {
   @Max(3_600_000)
   fieldProjectionTtlMs: number;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 45_000,
-    description: 'TTL feed recommandations (ms).',
+    description: 'TTL feed recommandations (ms). Défaut 45000 si omis.',
   })
+  @IsOptional()
   @IsInt()
   @Min(5_000)
   @Max(600_000)
-  recommendationsTtlMs: number;
+  recommendationsTtlMs?: number;
 
   @ApiPropertyOptional({
     description: 'Active le cache des réponses GET filtrées.',

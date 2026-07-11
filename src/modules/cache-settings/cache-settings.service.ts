@@ -190,8 +190,10 @@ export class CacheSettingsService implements OnModuleInit {
       favoritesTtlMs: dto.favoritesTtlMs,
       productCategoriesTtlMs: dto.productCategoriesTtlMs,
       fieldProjectionTtlMs: dto.fieldProjectionTtlMs,
-      recommendationsTtlMs: dto.recommendationsTtlMs,
     };
+    if (dto.recommendationsTtlMs !== undefined) {
+      $set.recommendationsTtlMs = dto.recommendationsTtlMs;
+    }
     if (dto.fieldProjectionEnabled !== undefined) {
       $set.fieldProjectionEnabled = dto.fieldProjectionEnabled;
     }
