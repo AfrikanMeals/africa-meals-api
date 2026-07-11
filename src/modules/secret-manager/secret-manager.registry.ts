@@ -153,9 +153,16 @@ export const API_SECRET_REGISTRY: SecretKeyDefinition[] = [
   },
   {
     envVarName: 'GOOGLE_MAPS_API_KEY',
-    label: 'Google Maps — clé API',
+    label: 'Google Maps — clé API serveur',
     description:
-      'Clé Google Maps Platform (Geocoding serveur + Routes/Directions clients via map-settings). Restreindre par domaine / bundle / IP.',
+      'Clé Google Maps Platform pour géocodage / Routes côté API (souvent restreinte par IP). Ne pas exposer au navigateur.',
+    category: 'Cartographie',
+  },
+  {
+    envVarName: 'GOOGLE_MAPS_BROWSER_API_KEY',
+    label: 'Google Maps — clé navigateur / mobile',
+    description:
+      'Clé Maps JavaScript / apps (restreindre par domaine HTTP ou bundle). Servie via GET /platform/map-settings (googleMapsApiKey). Préférer NEXT_PUBLIC_GOOGLE_MAPS_API_KEY côté admin local.',
     category: 'Cartographie',
   },
   {

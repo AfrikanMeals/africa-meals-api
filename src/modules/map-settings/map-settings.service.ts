@@ -3,7 +3,7 @@ import {
 } from '@common/mapbox-geocoding.util';
 import { resolveHereApiKey } from '@common/here-routing.util';
 import { resolveTomTomApiKey } from '@common/tomtom-api-key.util';
-import { resolveGoogleMapsApiKey } from '@common/google-maps-api-key.util';
+import { resolveGoogleMapsBrowserApiKey } from '@common/google-maps-api-key.util';
 import {
   BadRequestException,
   ForbiddenException,
@@ -273,7 +273,7 @@ export class MapSettingsService {
     );
     const hereApiKey = await resolveHereApiKey(this._secrets, this._config);
     const tomtomApiKey = await resolveTomTomApiKey(this._secrets, this._config);
-    const googleMapsApiKey = await resolveGoogleMapsApiKey(
+    const googleMapsApiKey = await resolveGoogleMapsBrowserApiKey(
       this._secrets,
       this._config,
     );
