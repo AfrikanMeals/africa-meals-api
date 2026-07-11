@@ -22,6 +22,7 @@ import {
   resolveEffectiveCommissionStrategy,
   reverseCommissionMarkup,
   markupCatalogListUnitPrices,
+  markupCatalogRowComponentPrices,
   sumVendorCustomizationExtras,
   UnitCommissionBreakdown,
 } from '@modules/platform-fees/platform-order-commission.util';
@@ -631,10 +632,12 @@ export class SubscriptionPlanOrderCommissionService {
         getItemStrategy(row),
         storeStrategyById.get(storeId) ?? null,
       );
+      const vendorPrice = Number(row[priceKey] ?? 0);
+      const vendorDiscount =
+        discountKey != null ? Number(row[discountKey] ?? 0) : 0;
       const marked = markupCatalogListUnitPrices({
-        vendorPrice: Number(row[priceKey] ?? 0),
-        vendorDiscountPrice:
-          discountKey != null ? Number(row[discountKey] ?? 0) : 0,
+        vendorPrice,
+        vendorDiscountPrice: vendorDiscount,
         config: settings.config,
         currency: settings.currency,
         strategy,
@@ -643,6 +646,14 @@ export class SubscriptionPlanOrderCommissionService {
       if (discountKey != null) {
         row[discountKey] = marked.discountPrice;
       }
+      // Variantes / compléments / suppléments (menu boutique, détail listé, etc.)
+      markupCatalogRowComponentPrices({
+        row,
+        config: settings.config,
+        currency: settings.currency,
+        strategy,
+        vendorBasePrice: vendorPrice,
+      });
     }
   }
 

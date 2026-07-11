@@ -347,6 +347,199 @@ export function adjustStoredCatalogUnitPrices(args: {
   };
 }
 
+/** Ajuste un montant unitaire stocké (variante, priceDelta, supplément). */
+export function adjustStoredCatalogAmount(
+  amount: number,
+  config: OrderCommissionConfig,
+  currency: string,
+  mode: 'assume_customer_prices' | 'assume_vendor_net' | 'to_vendor_net' | 'to_customer',
+): number {
+  const n = Math.max(0, Number(amount) || 0);
+  if (n <= 0) return 0;
+  if (mode === 'assume_customer_prices' || mode === 'to_vendor_net') {
+    return reverseCommissionMarkup(n, config, currency);
+  }
+  return applyCommissionMarkup(n, config, currency, 'add_to_price');
+}
+
+/**
+ * Ajuste in-place variantes / compléments / suppléments d’un document produit
+ * lors d’un reset ou d’un adjust de stratégie catalogue.
+ */
+export function adjustStoredCatalogComponentPrices(args: {
+  variants?: Array<Record<string, unknown>> | null;
+  complements?: Array<Record<string, unknown>> | null;
+  supplements?: Array<Record<string, unknown>> | null;
+  config: OrderCommissionConfig;
+  currency: string;
+  mode: 'assume_customer_prices' | 'assume_vendor_net' | 'to_vendor_net' | 'to_customer';
+}): {
+  variants?: Array<Record<string, unknown>>;
+  complements?: Array<Record<string, unknown>>;
+  supplements?: Array<Record<string, unknown>>;
+} {
+  const out: {
+    variants?: Array<Record<string, unknown>>;
+    complements?: Array<Record<string, unknown>>;
+    supplements?: Array<Record<string, unknown>>;
+  } = {};
+
+  if (Array.isArray(args.variants) && args.variants.length) {
+    out.variants = args.variants.map((v) => {
+      const row = { ...v };
+      const adj = adjustStoredCatalogUnitPrices({
+        vendorPrice: Number(row.price ?? 0),
+        vendorDiscountPrice: Number(row.discountPrice ?? row.discount_price ?? 0),
+        config: args.config,
+        currency: args.currency,
+        mode:
+          args.mode === 'to_vendor_net'
+            ? 'assume_customer_prices'
+            : args.mode === 'to_customer'
+              ? 'assume_vendor_net'
+              : args.mode,
+      });
+      row.price = adj.price;
+      if (row.discountPrice != null || row.discount_price != null) {
+        row.discountPrice = adj.discountPrice;
+      }
+      return row;
+    });
+  }
+
+  if (Array.isArray(args.complements) && args.complements.length) {
+    out.complements = args.complements.map((g) => {
+      const group = { ...g };
+      const opts = Array.isArray(g.options) ? g.options : [];
+      group.options = opts.map((o) => {
+        if (!o || typeof o !== 'object') return o;
+        const opt = { ...(o as Record<string, unknown>) };
+        opt.priceDelta = adjustStoredCatalogAmount(
+          Number(opt.priceDelta ?? opt.price_delta ?? 0),
+          args.config,
+          args.currency,
+          args.mode,
+        );
+        return opt;
+      });
+      return group;
+    });
+  }
+
+  if (Array.isArray(args.supplements) && args.supplements.length) {
+    out.supplements = args.supplements.map((s) => {
+      const row = { ...s };
+      row.price = adjustStoredCatalogAmount(
+        Number(row.price ?? 0),
+        args.config,
+        args.currency,
+        args.mode,
+      );
+      return row;
+    });
+  }
+
+  return out;
+}
+
+/**
+ * Majore in-place les prix client d’une ligne catalogue (variantes + extras)
+ * pour `add_to_price`. No-op si `on_payout`.
+ */
+export function markupCatalogRowComponentPrices(args: {
+  row: Record<string, unknown>;
+  config: OrderCommissionConfig;
+  currency: string;
+  strategy: CommissionRetrieveStrategy;
+  /** Prix de base vendeur (avant markup ligne) pour répartir la commission extras. */
+  vendorBasePrice?: number;
+}): void {
+  if (args.strategy !== 'add_to_price') return;
+  const row = args.row;
+
+  const variants = row.variants;
+  if (Array.isArray(variants)) {
+    for (const raw of variants) {
+      if (!raw || typeof raw !== 'object') continue;
+      const v = raw as Record<string, unknown>;
+      const marked = markupCatalogListUnitPrices({
+        vendorPrice: Number(v.price ?? 0),
+        vendorDiscountPrice: Number(v.discountPrice ?? v.discount_price ?? 0),
+        config: args.config,
+        currency: args.currency,
+        strategy: 'add_to_price',
+      });
+      v.price = marked.price;
+      if (v.discountPrice != null || v.discount_price != null) {
+        v.discountPrice = marked.discountPrice;
+      }
+    }
+  }
+
+  const complements = row.complements;
+  const supplements = row.supplements;
+  const hasExtras =
+    (Array.isArray(complements) && complements.length > 0) ||
+    (Array.isArray(supplements) && supplements.length > 0);
+  if (!hasExtras) return;
+
+  const vendorBase = Math.max(
+    0,
+    Number(
+      args.vendorBasePrice ??
+        row.vendorPrice ??
+        row.price ??
+        0,
+    ) || 0,
+  );
+
+  type CompGroup = {
+    options?: Array<{ priceDelta?: number; [k: string]: unknown }>;
+    [k: string]: unknown;
+  };
+  type SuppRow = { price?: number; [k: string]: unknown };
+
+  const compGroups = (Array.isArray(complements) ? complements : []) as CompGroup[];
+  const suppRows = (Array.isArray(supplements) ? supplements : []) as SuppRow[];
+  const extras: number[] = [];
+  const meta: Array<
+    | { kind: 'complement'; gi: number; oi: number }
+    | { kind: 'supplement'; si: number }
+  > = [];
+
+  compGroups.forEach((g, gi) => {
+    (g.options ?? []).forEach((o, oi) => {
+      extras.push(Math.max(0, Number(o.priceDelta) || 0));
+      meta.push({ kind: 'complement', gi, oi });
+    });
+  });
+  suppRows.forEach((s, si) => {
+    extras.push(Math.max(0, Number(s.price) || 0));
+    meta.push({ kind: 'supplement', si });
+  });
+
+  if (!extras.length) return;
+
+  const components = applyCommissionMarkupToPriceComponents(
+    vendorBase,
+    extras,
+    args.config,
+    args.currency,
+    'add_to_price',
+  );
+
+  meta.forEach((m, idx) => {
+    const customerExtra = components.customerExtras[idx] ?? 0;
+    if (m.kind === 'complement') {
+      const opt = compGroups[m.gi]?.options?.[m.oi];
+      if (opt) opt.priceDelta = customerExtra;
+    } else {
+      const s = suppRows[m.si];
+      if (s) s.price = customerExtra;
+    }
+  });
+}
+
 /** Somme des extras vendeur (priceDelta compléments + prix suppléments). */
 export function sumVendorCustomizationExtras(args: {
   complements?: Array<{ options?: Array<{ priceDelta?: number }> }>;

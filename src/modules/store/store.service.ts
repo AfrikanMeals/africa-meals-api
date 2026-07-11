@@ -72,6 +72,7 @@ import {
 import { DrinkModel } from '@schemas/drink.schema';
 import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
 import {
+  adjustStoredCatalogComponentPrices,
   adjustStoredCatalogUnitPrices,
   applyCommissionMarkup,
   normalizeCommissionRetrieveStrategy,
@@ -2356,13 +2357,19 @@ export class StoreService {
             { commissionRetrieveStrategy: { $exists: false } },
           ],
         })
-        .select('price discountPrice listPrice listDiscountPrice')
+        .select(
+          'price discountPrice listPrice listDiscountPrice variants complements supplements',
+        )
         .exec();
       for (const product of products) {
         const price = Number(product.price ?? 0);
         const discount = Number(product.discountPrice ?? 0);
         let nextPrice = price;
         let nextDiscount = discount;
+        const componentMode =
+          previous === 'on_payout' && next === 'add_to_price'
+            ? ('to_vendor_net' as const)
+            : ('to_customer' as const);
         if (previous === 'on_payout' && next === 'add_to_price') {
           nextPrice = reverseCommissionMarkup(price, config, currency);
           nextDiscount =
@@ -2381,7 +2388,7 @@ export class StoreService {
               ? applyCommissionMarkup(discount, config, currency, 'add_to_price')
               : 0;
         }
-        const $set: Record<string, number> = {
+        const $set: Record<string, unknown> = {
           price: nextPrice,
           discountPrice: nextDiscount,
         };
@@ -2409,6 +2416,23 @@ export class StoreService {
                   'add_to_price',
                 );
         }
+        const components = adjustStoredCatalogComponentPrices({
+          variants: Array.isArray(product.variants)
+            ? (product.variants as unknown as Array<Record<string, unknown>>)
+            : null,
+          complements: Array.isArray(product.complements)
+            ? (product.complements as unknown as Array<Record<string, unknown>>)
+            : null,
+          supplements: Array.isArray(product.supplements)
+            ? (product.supplements as unknown as Array<Record<string, unknown>>)
+            : null,
+          config,
+          currency,
+          mode: componentMode,
+        });
+        if (components.variants) $set.variants = components.variants;
+        if (components.complements) $set.complements = components.complements;
+        if (components.supplements) $set.supplements = components.supplements;
         await this._productModel.updateOne({ _id: product._id }, { $set });
         productsUpdated += 1;
       }
@@ -2515,7 +2539,7 @@ export class StoreService {
     const products = await this._productModel
       .find(productFilter)
       .select(
-        'price discountPrice listPrice listDiscountPrice commissionRetrieveStrategy',
+        'price discountPrice listPrice listDiscountPrice commissionRetrieveStrategy variants complements supplements',
       )
       .exec();
 
@@ -2536,7 +2560,7 @@ export class StoreService {
         currency,
         mode,
       });
-      const $set: Record<string, number> = {
+      const $set: Record<string, unknown> = {
         price: adjusted.price,
         discountPrice: adjusted.discountPrice,
       };
@@ -2559,6 +2583,23 @@ export class StoreService {
           mode,
         }).price;
       }
+      const components = adjustStoredCatalogComponentPrices({
+        variants: Array.isArray(product.variants)
+          ? (product.variants as unknown as Array<Record<string, unknown>>)
+          : null,
+        complements: Array.isArray(product.complements)
+          ? (product.complements as unknown as Array<Record<string, unknown>>)
+          : null,
+        supplements: Array.isArray(product.supplements)
+          ? (product.supplements as unknown as Array<Record<string, unknown>>)
+          : null,
+        config,
+        currency,
+        mode,
+      });
+      if (components.variants) $set.variants = components.variants;
+      if (components.complements) $set.complements = components.complements;
+      if (components.supplements) $set.supplements = components.supplements;
       await this._productModel.updateOne({ _id: product._id }, { $set });
       productsUpdated += 1;
     }
