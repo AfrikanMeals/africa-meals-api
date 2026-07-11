@@ -33,6 +33,7 @@ import { MediasService } from '@modules/medias/medias.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { storePermissionGranted } from '../../common/permissions/store-permissions';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
 import { SearchSettingsService } from '@modules/search-settings/search-settings.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { RegionPricingService } from '@modules/supported-countries/region-pricing.service';
@@ -594,6 +595,9 @@ export class AdsService implements OnModuleInit {
 
   @Inject(SubscriptionsService)
   private readonly _subscriptions: SubscriptionsService;
+
+  @Inject(SubscriptionPlanOrderCommissionService)
+  private readonly _planOrderCommission: SubscriptionPlanOrderCommissionService;
 
   @Inject(SearchSettingsService)
   private readonly _searchSettings: SearchSettingsService;
@@ -1927,9 +1931,51 @@ export class AdsService implements OnModuleInit {
     }
   }
 
-  private _toCampaignRow(
+  private _catalogCommissionStrategy(
+    entity: Record<string, unknown> | null | undefined,
+  ): 'on_payout' | 'add_to_price' | null {
+    if (!entity) return null;
+    const raw =
+      entity['commissionRetrieveStrategy'] ??
+      entity['commission_retrieve_strategy'];
+    return raw === 'add_to_price' || raw === 'on_payout' ? raw : null;
+  }
+
+  private async _applyCustomerPricingToCampaignItems(
+    row: AdCampaignManagementRow,
+    itemStrategies: Array<'on_payout' | 'add_to_price' | null>,
+  ): Promise<void> {
+    if (!row.items.length || !row.storeId) return;
+    const pricingRows: Array<Record<string, unknown>> = row.items.map(
+      (it, i) => ({
+        priceCad: it.priceCad,
+        storeId: row.storeId,
+        commissionRetrieveStrategy: itemStrategies[i] ?? null,
+      }),
+    );
+    await this._planOrderCommission.applyCustomerCatalogListPricing(
+      pricingRows,
+      {
+        priceKey: 'priceCad',
+        discountKey: null,
+        getStoreId: (r) => String(r['storeId'] ?? ''),
+        getItemStrategy: (r) => {
+          const s = r['commissionRetrieveStrategy'];
+          return s === 'add_to_price' || s === 'on_payout' ? s : null;
+        },
+      },
+    );
+    for (let i = 0; i < row.items.length; i++) {
+      row.items[i] = {
+        ...row.items[i],
+        priceCad: Number(pricingRows[i]['priceCad'] ?? 0),
+      };
+    }
+  }
+
+  private async _toCampaignRow(
     doc: Record<string, unknown>,
-  ): AdCampaignManagementRow {
+  ): Promise<AdCampaignManagementRow> {
     const rawStore = doc.store as Record<string, unknown> | undefined | null;
     const storeId = String(rawStore?._id ?? '');
     const storeName = String(rawStore?.name ?? '').trim() || storeId;
@@ -1939,39 +1985,51 @@ export class AdsService implements OnModuleInit {
     const rawItems = Array.isArray(doc.items)
       ? (doc.items as Record<string, unknown>[])
       : [];
-    const items: AdCampaignItemRow[] = rawItems
-      .map((it) => {
-        const itemType = it.itemType as AdCampaignItemTypeEnum;
-        const p = it.product as Record<string, unknown> | undefined | null;
-        const d = it.drink as Record<string, unknown> | undefined | null;
-        if (itemType === AdCampaignItemTypeEnum.PRODUCT) {
-          return {
+    const built: Array<{
+      item: AdCampaignItemRow;
+      strategy: 'on_payout' | 'add_to_price' | null;
+    }> = [];
+    for (const it of rawItems) {
+      const itemType = it.itemType as AdCampaignItemTypeEnum;
+      const p = it.product as Record<string, unknown> | undefined | null;
+      const d = it.drink as Record<string, unknown> | undefined | null;
+      if (itemType === AdCampaignItemTypeEnum.PRODUCT) {
+        const productId = p?._id ? String(p._id) : null;
+        if (!productId) continue;
+        built.push({
+          strategy: this._catalogCommissionStrategy(p),
+          item: {
             itemType,
-            productId: p?._id ? String(p._id) : null,
+            productId,
             drinkId: null,
             marketingOfferListingId: null,
             title: String(p?.title ?? '(produit supprimé)'),
             imageUrl: p?.profileImage ? String(p.profileImage) : null,
             priceCad: Number(p?.price ?? 0),
-          };
-        }
-        if (itemType === AdCampaignItemTypeEnum.EXCLUSIVE_OFFER) {
-          const listing = it.marketingOfferListing as
-            | Record<string, unknown>
-            | undefined
-            | null;
-          const product = listing?.productId as
-            | Record<string, unknown>
-            | undefined
-            | null;
-          const offer = listing?.marketingOfferId as
-            | Record<string, unknown>
-            | undefined
-            | null;
-          const listingId = listing?._id ? String(listing._id) : null;
-          const strategyName = offer?.name ? String(offer.name) : null;
-          const productTitle = product?.title ? String(product.title) : '';
-          return {
+          },
+        });
+        continue;
+      }
+      if (itemType === AdCampaignItemTypeEnum.EXCLUSIVE_OFFER) {
+        const listing = it.marketingOfferListing as
+          | Record<string, unknown>
+          | undefined
+          | null;
+        const product = listing?.productId as
+          | Record<string, unknown>
+          | undefined
+          | null;
+        const offer = listing?.marketingOfferId as
+          | Record<string, unknown>
+          | undefined
+          | null;
+        const listingId = listing?._id ? String(listing._id) : null;
+        if (!listingId) continue;
+        const strategyName = offer?.name ? String(offer.name) : null;
+        const productTitle = product?.title ? String(product.title) : '';
+        built.push({
+          strategy: this._catalogCommissionStrategy(product),
+          item: {
             itemType,
             productId: null,
             drinkId: null,
@@ -1982,29 +2040,34 @@ export class AdsService implements OnModuleInit {
                 : productTitle ||
                   strategyName ||
                   '(offre exclusive supprimée)',
-            imageUrl: product?.profileImage ? String(product.profileImage) : null,
+            imageUrl: product?.profileImage
+              ? String(product.profileImage)
+              : null,
             priceCad: Number(product?.price ?? 0),
             strategyName,
-          };
-        }
-        return {
+          },
+        });
+        continue;
+      }
+      const drinkId = d?._id ? String(d._id) : null;
+      if (!drinkId) continue;
+      built.push({
+        strategy: this._catalogCommissionStrategy(d),
+        item: {
           itemType: AdCampaignItemTypeEnum.DRINK,
           productId: null,
-          drinkId: d?._id ? String(d._id) : null,
+          drinkId,
           marketingOfferListingId: null,
           title: String(d?.name ?? '(boisson supprimée)'),
           imageUrl: d?.imageUrl ? String(d.imageUrl) : null,
           priceCad: Number(d?.priceCad ?? 0),
-        };
-      })
-      .filter(
-        (it) =>
-          it.productId != null ||
-          it.drinkId != null ||
-          it.marketingOfferListingId != null,
-      );
+        },
+      });
+    }
+    const items = built.map((b) => b.item);
+    const itemStrategies = built.map((b) => b.strategy);
 
-    return {
+    const row: AdCampaignManagementRow = {
       id: String(doc._id ?? ''),
       storeId,
       storeName,
@@ -2062,6 +2125,8 @@ export class AdsService implements OnModuleInit {
           ? String(doc.updatedAt)
           : undefined,
     };
+    await this._applyCustomerPricingToCampaignItems(row, itemStrategies);
+    return row;
   }
 
   private async _campaignBillingMetrics(campaignId: Types.ObjectId): Promise<{
@@ -2445,20 +2510,20 @@ export class AdsService implements OnModuleInit {
     const docs = await this._adCampaignModel
       .find(query)
       .populate('store', 'name profileImage')
-      .populate('items.product', 'title profileImage price store')
-      .populate('items.drink', 'name imageUrl priceCad store')
+      .populate('items.product', 'title profileImage price store commissionRetrieveStrategy')
+      .populate('items.drink', 'name imageUrl priceCad store commissionRetrieveStrategy')
       .populate({
         path: 'items.marketingOfferListing',
         populate: [
-          { path: 'productId', select: 'title profileImage price' },
+          { path: 'productId', select: 'title profileImage price commissionRetrieveStrategy' },
           { path: 'marketingOfferId', select: 'name rule type' },
         ],
       })
       .sort({ createdAt: -1 })
       .lean()
       .exec();
-    return (docs as Record<string, unknown>[]).map((d) =>
-      this._toCampaignRow(d),
+    return Promise.all(
+      (docs as Record<string, unknown>[]).map((d) => this._toCampaignRow(d)),
     );
   }
 
@@ -2482,20 +2547,20 @@ export class AdsService implements OnModuleInit {
     const docs = await this._adCampaignModel
       .find(query)
       .populate('store', 'name profileImage')
-      .populate('items.product', 'title profileImage price store')
-      .populate('items.drink', 'name imageUrl priceCad store')
+      .populate('items.product', 'title profileImage price store commissionRetrieveStrategy')
+      .populate('items.drink', 'name imageUrl priceCad store commissionRetrieveStrategy')
       .populate({
         path: 'items.marketingOfferListing',
         populate: [
-          { path: 'productId', select: 'title profileImage price' },
+          { path: 'productId', select: 'title profileImage price commissionRetrieveStrategy' },
           { path: 'marketingOfferId', select: 'name rule type' },
         ],
       })
       .sort({ archivedAt: -1, createdAt: -1 })
       .lean()
       .exec();
-    return (docs as Record<string, unknown>[]).map((d) =>
-      this._toCampaignRow(d),
+    return Promise.all(
+      (docs as Record<string, unknown>[]).map((d) => this._toCampaignRow(d)),
     );
   }
 
@@ -2578,12 +2643,12 @@ export class AdsService implements OnModuleInit {
     const row = await this._adCampaignModel
       .findById(created._id)
       .populate('store', 'name profileImage')
-      .populate('items.product', 'title profileImage price store')
-      .populate('items.drink', 'name imageUrl priceCad store')
+      .populate('items.product', 'title profileImage price store commissionRetrieveStrategy')
+      .populate('items.drink', 'name imageUrl priceCad store commissionRetrieveStrategy')
       .populate({
         path: 'items.marketingOfferListing',
         populate: [
-          { path: 'productId', select: 'title profileImage price' },
+          { path: 'productId', select: 'title profileImage price commissionRetrieveStrategy' },
           { path: 'marketingOfferId', select: 'name rule type' },
         ],
       })
@@ -2741,12 +2806,12 @@ export class AdsService implements OnModuleInit {
     const row = await this._adCampaignModel
       .findById(existing._id)
       .populate('store', 'name profileImage')
-      .populate('items.product', 'title profileImage price store')
-      .populate('items.drink', 'name imageUrl priceCad store')
+      .populate('items.product', 'title profileImage price store commissionRetrieveStrategy')
+      .populate('items.drink', 'name imageUrl priceCad store commissionRetrieveStrategy')
       .populate({
         path: 'items.marketingOfferListing',
         populate: [
-          { path: 'productId', select: 'title profileImage price' },
+          { path: 'productId', select: 'title profileImage price commissionRetrieveStrategy' },
           { path: 'marketingOfferId', select: 'name rule type' },
         ],
       })
@@ -2845,21 +2910,23 @@ export class AdsService implements OnModuleInit {
         ],
       })
       .populate('store', 'name status profileImage')
-      .populate('items.product', 'title profileImage price status')
-      .populate('items.drink', 'name imageUrl priceCad')
+      .populate('items.product', 'title profileImage price status commissionRetrieveStrategy')
+      .populate('items.drink', 'name imageUrl priceCad commissionRetrieveStrategy')
       .populate({
         path: 'items.marketingOfferListing',
         populate: [
-          { path: 'productId', select: 'title profileImage price' },
+          { path: 'productId', select: 'title profileImage price commissionRetrieveStrategy' },
           { path: 'marketingOfferId', select: 'name rule type' },
         ],
       })
       .sort({ startsAt: -1, createdAt: -1 })
       .lean()
       .exec();
-    const rows = (docs as Record<string, unknown>[])
-      .map((d) => this._toCampaignRow(d))
-      .filter((row) => row.items.length > 0);
+    const rows = (
+      await Promise.all(
+        (docs as Record<string, unknown>[]).map((d) => this._toCampaignRow(d)),
+      )
+    ).filter((row) => row.items.length > 0);
     const storeIds = [
       ...new Set(rows.map((row) => row.storeId).filter(Boolean)),
     ];
@@ -6373,8 +6440,8 @@ export class AdsService implements OnModuleInit {
       this._adCampaignModel
         .find(campaignFilter)
         .populate('store', 'name profileImage')
-        .populate('items.product', 'title profileImage price')
-        .populate('items.drink', 'name imageUrl priceCad')
+        .populate('items.product', 'title profileImage price commissionRetrieveStrategy')
+        .populate('items.drink', 'name imageUrl priceCad commissionRetrieveStrategy')
         .sort({ createdAt: -1 })
         .lean()
         .exec(),
@@ -6385,12 +6452,15 @@ export class AdsService implements OnModuleInit {
         ...(await this.toManagementRowResolved(d)),
       })),
     );
+    const campaignItems = await Promise.all(
+      (campaignDocs as Record<string, unknown>[]).map(async (d) => ({
+        kind: 'CAMPAIGN' as const,
+        ...(await this._toCampaignRow(d)),
+      })),
+    );
     const items: AdModerationQueueItem[] = [
       ...bannerItems,
-      ...(campaignDocs as Record<string, unknown>[]).map((d) => ({
-        kind: 'CAMPAIGN' as const,
-        ...this._toCampaignRow(d),
-      })),
+      ...campaignItems,
     ].sort((a, b) => {
       const aTs = Date.parse(a.createdAt ?? '') || 0;
       const bTs = Date.parse(b.createdAt ?? '') || 0;
@@ -6549,8 +6619,8 @@ export class AdsService implements OnModuleInit {
     const row = await this._adCampaignModel
       .findById(existing._id)
       .populate('store', 'name profileImage')
-      .populate('items.product', 'title profileImage price store')
-      .populate('items.drink', 'name imageUrl priceCad store')
+      .populate('items.product', 'title profileImage price store commissionRetrieveStrategy')
+      .populate('items.drink', 'name imageUrl priceCad store commissionRetrieveStrategy')
       .lean()
       .exec();
     return this._toCampaignRow(row as unknown as Record<string, unknown>);
@@ -6598,8 +6668,8 @@ export class AdsService implements OnModuleInit {
     const row = await this._adCampaignModel
       .findById(existing._id)
       .populate('store', 'name profileImage')
-      .populate('items.product', 'title profileImage price store')
-      .populate('items.drink', 'name imageUrl priceCad store')
+      .populate('items.product', 'title profileImage price store commissionRetrieveStrategy')
+      .populate('items.drink', 'name imageUrl priceCad store commissionRetrieveStrategy')
       .lean()
       .exec();
     return this._toCampaignRow(row as unknown as Record<string, unknown>);
@@ -6703,8 +6773,8 @@ export class AdsService implements OnModuleInit {
     const row = await this._adCampaignModel
       .findById(existing._id)
       .populate('store', 'name profileImage')
-      .populate('items.product', 'title profileImage price store')
-      .populate('items.drink', 'name imageUrl priceCad store')
+      .populate('items.product', 'title profileImage price store commissionRetrieveStrategy')
+      .populate('items.drink', 'name imageUrl priceCad store commissionRetrieveStrategy')
       .lean()
       .exec();
     return this._toCampaignRow(row as unknown as Record<string, unknown>);

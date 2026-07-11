@@ -1765,7 +1765,9 @@ export class DeliveryAgentService {
           'name owner phoneNumber currency address region vendorManagesDeliveryDrivers deliveryAssignmentMode',
         populate: {
           path: 'address',
-          select: 'countryCode',
+          // Même projection que listPendingOrders — sans `location`, distanceKm
+          // est null et pendingOrderWithinMaxDeliveryRadius refuse l’assignation.
+          select: 'address city zipCode location countryCode',
         },
       })
       .populate({
@@ -1773,7 +1775,7 @@ export class DeliveryAgentService {
         select: 'fullName addresses appCountryCode',
         populate: {
           path: 'addresses',
-          select: 'isDefault countryCode',
+          select: 'isDefault address city zipCode location label countryCode',
         },
       })
       .exec();
@@ -1854,6 +1856,12 @@ export class DeliveryAgentService {
         radiusSettings.maxDeliveryRadiusKm,
       )
     ) {
+      this._logger.warn(
+        `[DeliveryTrace] assignSelfToOrder radius reject order=${oid.toString()} ` +
+          `distanceKm=${mappedForRadius.distanceKm} ` +
+          `maxKm=${radiusSettings.maxDeliveryRadiusKm} ` +
+          `storeLat=${mappedForRadius.storeLat} storeLng=${mappedForRadius.storeLng}`,
+      );
       throw new BadRequestException('order_outside_delivery_radius');
     }
 

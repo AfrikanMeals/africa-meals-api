@@ -2091,6 +2091,12 @@ export class ProductsService {
                   profileImage: 1,
                   price: 1,
                   discountPrice: { $ifNull: ['$discountPrice', 0] },
+                  commissionRetrieveStrategy: {
+                    $ifNull: [
+                      '$commissionRetrieveStrategy',
+                      '$commission_retrieve_strategy',
+                    ],
+                  },
                   currency: 1,
                   bio: 1,
                   originCountry: { $ifNull: ['$originCountry', ''] },
@@ -2150,6 +2156,11 @@ export class ProductsService {
           likesCount: Number(doc.likesCount ?? 0),
           averageRating: Number(doc.averageRating ?? 0),
           inCart: Boolean(doc.inCart),
+          commissionRetrieveStrategy:
+            doc.commissionRetrieveStrategy === 'add_to_price' ||
+            doc.commissionRetrieveStrategy === 'on_payout'
+              ? doc.commissionRetrieveStrategy
+              : null,
           category:
             cat && typeof cat.id === 'string'
               ? {
@@ -2169,6 +2180,23 @@ export class ProductsService {
               : null,
         };
       });
+
+      await this._planOrderCommission.applyCustomerCatalogListPricing(
+        items as unknown as Array<Record<string, unknown>>,
+        {
+          getStoreId: (row) => {
+            const st = row['store'] as Record<string, unknown> | null;
+            return st?.id != null ? String(st.id).trim() : '';
+          },
+          getItemStrategy: (row) =>
+            row['commissionRetrieveStrategy'] === 'add_to_price' ||
+            row['commissionRetrieveStrategy'] === 'on_payout'
+              ? (row['commissionRetrieveStrategy'] as
+                  | 'add_to_price'
+                  | 'on_payout')
+              : null,
+        },
+      );
 
       const result: FavoriteListingPagePayload = {
         items,
@@ -2522,6 +2550,16 @@ export class ProductsService {
       const total = typeof pack?.total === 'number' ? pack.total : 0;
       const rows = Array.isArray(pack?.data) ? pack.data : [];
       const data = this.stripHeavyFavoriteProductFields(rows);
+      await this._planOrderCommission.applyCustomerCatalogListPricing(data, {
+        getStoreId: (row) => {
+          const st = row['store'] as Record<string, unknown> | null | undefined;
+          if (st != null && typeof st === 'object') {
+            const id = st['id'] ?? st['_id'];
+            if (id != null && String(id).trim()) return String(id).trim();
+          }
+          return '';
+        },
+      });
 
       if (pagination) {
         return {

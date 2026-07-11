@@ -658,6 +658,10 @@ export class SearchService {
               '$commission_retrieve_strategy',
             ],
           },
+          /** Requis pour markupCatalogRowComponentPrices (add_to_price). */
+          variants: { $ifNull: ['$variants', []] },
+          complements: { $ifNull: ['$complements', []] },
+          supplements: { $ifNull: ['$supplements', []] },
           currency: { $ifNull: ['$currency', 'CAD'] },
           profileImage: { $ifNull: ['$profileImage', ''] },
           status: 1,

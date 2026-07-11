@@ -207,6 +207,60 @@ export class DrinksService {
     };
   }
 
+  /** Liste vendeur : conserve priceCad = net + expose customerPrice (add_to_price). */
+  private async attachVendorDrinkCommissionPricing<
+    T extends {
+      priceCad: number;
+      commissionRetrieveStrategy?: 'on_payout' | 'add_to_price' | null;
+    },
+  >(
+    storeId: string,
+    row: T,
+  ): Promise<
+    T & {
+      vendorPrice: number;
+      customerPrice: number;
+      commissionAmount: number;
+      commissionRetrieveStrategy: string;
+      commissionRetrieveStrategyItem: 'on_payout' | 'add_to_price' | null;
+      commissionRetrieveStrategySource: string;
+    }
+  > {
+    const vendorPrice = Number(row.priceCad ?? 0);
+    const itemStrategy =
+      row.commissionRetrieveStrategy === 'add_to_price' ||
+      row.commissionRetrieveStrategy === 'on_payout'
+        ? row.commissionRetrieveStrategy
+        : null;
+    try {
+      const preview =
+        await this._planOrderCommission.previewUnitCommissionForStore(
+          storeId,
+          vendorPrice,
+          itemStrategy,
+        );
+      return {
+        ...row,
+        vendorPrice,
+        commissionAmount: preview.commissionAmount,
+        customerPrice: preview.customerPrice,
+        commissionRetrieveStrategy: preview.strategy,
+        commissionRetrieveStrategyItem: itemStrategy,
+        commissionRetrieveStrategySource: preview.strategySource,
+      };
+    } catch {
+      return {
+        ...row,
+        vendorPrice,
+        commissionAmount: 0,
+        customerPrice: vendorPrice,
+        commissionRetrieveStrategy: 'on_payout',
+        commissionRetrieveStrategyItem: itemStrategy,
+        commissionRetrieveStrategySource: 'default',
+      };
+    }
+  }
+
   private async _invalidateCategoryCountsCache(): Promise<void> {
     await this._productCategoryService.invalidatePublicListCache();
   }
@@ -347,7 +401,12 @@ export class DrinksService {
       .lean()
       .exec();
     const mapped = rows.map((r) => mapDrinkDoc(r as Record<string, unknown>));
-    return Promise.all(mapped.map((row) => this.enrichDrinkMedia(row)));
+    const withMedia = await Promise.all(
+      mapped.map((row) => this.enrichDrinkMedia(row)),
+    );
+    return Promise.all(
+      withMedia.map((row) => this.attachVendorDrinkCommissionPricing(storeId, row)),
+    );
   }
 
   async countByStoreId(storeId: string): Promise<number> {
@@ -410,6 +469,8 @@ export class DrinksService {
                   priceCad: 1,
                   image_url: 1,
                   imageUrl: 1,
+                  commissionRetrieveStrategy: 1,
+                  commission_retrieve_strategy: 1,
                 },
               },
             ],
@@ -423,9 +484,17 @@ export class DrinksService {
       | undefined;
     const total = bucket?.total?.[0]?.n ?? 0;
     const rows = bucket?.rows ?? [];
+    const items = await Promise.all(
+      rows.map((r) =>
+        this.attachVendorDrinkCommissionPricing(
+          storeId,
+          mapDrinkCatalogListRow(r),
+        ),
+      ),
+    );
 
     return {
-      items: rows.map((r) => mapDrinkCatalogListRow(r)),
+      items,
       total,
       page,
       limit: take,
@@ -498,7 +567,23 @@ export class DrinksService {
       query = query.limit(80);
     }
     const rows = await query.exec();
-    return rows.map((r) => mapDrinkDoc(r as Record<string, unknown>));
+    const items = rows.map((r) => mapDrinkDoc(r as Record<string, unknown>));
+    await this._planOrderCommission.applyCustomerCatalogListPricing(
+      items as unknown as Array<Record<string, unknown>>,
+      {
+        priceKey: 'priceCad',
+        discountKey: null,
+        getStoreId: () => storeId,
+        getItemStrategy: (row) =>
+          row['commissionRetrieveStrategy'] === 'add_to_price' ||
+          row['commissionRetrieveStrategy'] === 'on_payout'
+            ? (row['commissionRetrieveStrategy'] as
+                | 'add_to_price'
+                | 'on_payout')
+            : null,
+      },
+    );
+    return items;
   }
 
   /**
@@ -523,10 +608,24 @@ export class DrinksService {
     if (!row) {
       return null;
     }
-    return this.enrichDrinkMedia(mapDrinkDoc(row as Record<string, unknown>));
+    const mapped = await this.enrichDrinkMedia(
+      mapDrinkDoc(row as Record<string, unknown>),
+    );
+    await this._planOrderCommission.applyCustomerCatalogListPricing(
+      [mapped as unknown as Record<string, unknown>],
+      {
+        priceKey: 'priceCad',
+        discountKey: null,
+        getStoreId: () => storeId,
+        getItemStrategy: (r) =>
+          r['commissionRetrieveStrategy'] === 'add_to_price' ||
+          r['commissionRetrieveStrategy'] === 'on_payout'
+            ? (r['commissionRetrieveStrategy'] as 'add_to_price' | 'on_payout')
+            : null,
+      },
+    );
+    return mapped;
   }
-
-  /** Boisson catalogue vitrine web (boutique visible + stock > 0). */
   async findOneInStoreCatalogForWeb(
     storeId: string,
     drinkId: string,

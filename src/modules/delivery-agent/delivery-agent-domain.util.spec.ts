@@ -22,6 +22,8 @@ describe('delivery-agent-domain.util', () => {
     expect(pendingOrderWithinMaxDeliveryRadius(14.9, 15)).toBe(true);
     expect(pendingOrderWithinMaxDeliveryRadius(15, 15)).toBe(true);
     expect(pendingOrderWithinMaxDeliveryRadius(15.01, 15)).toBe(false);
+    // assign-self doit peupler store.address.location ; sinon distanceKm=null → rejet
+    // (régression : populate countryCode seul → 400 order_outside_delivery_radius).
     expect(pendingOrderWithinMaxDeliveryRadius(null, 15)).toBe(false);
   });
 
