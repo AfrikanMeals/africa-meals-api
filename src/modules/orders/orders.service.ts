@@ -1,3 +1,4 @@
+import { isStripeConnectOnboardingCompleteUser } from '@modules/billing/stripe/stripe-connect-visibility';
 import { StripeConnectTransferService } from '@modules/billing/stripe/stripe-connect-transfer.service';
 import { StripeDeferredCaptureService } from '@modules/billing/stripe/stripe-deferred-capture.service';
 import { BusinessReportsService } from '@modules/business-reports/business-reports.service';
@@ -2914,6 +2915,8 @@ export class OrdersService {
 
   /**
    * Vendeur : s’assigne la livraison (passe la commande en `shipped` + livreur assigné).
+   * Stripe Connect (vendeur ou owner boutique) requis — même contrainte que le livreur
+   * pour pouvoir verser frais de livraison + tip sur le compte Connect.
    */
   async assignVendorSelfDelivery(
     orderId: string,
@@ -2951,6 +2954,7 @@ export class OrdersService {
     }
 
     await this.assertUserCanManageOrderStore(user, order);
+    await this.assertVendorSelfDeliveryConnectReady(user, order);
 
     if (!order.shouldShip) {
       throw new BadRequestException('order_not_shippable');
@@ -3102,6 +3106,47 @@ export class OrdersService {
       orderRef,
       status: OrderStatusEnum.SHIPPED,
     };
+  }
+
+  /**
+   * Connect prêt sur le vendeur assigné **ou** sur le owner boutique
+   * (frais livraison + tip versés sur ce compte, comme le livreur).
+   */
+  private async assertVendorSelfDeliveryConnectReady(
+    user: UserModel,
+    order: OrderModel,
+  ): Promise<void> {
+    if (
+      isStripeConnectOnboardingCompleteUser(user) &&
+      String(user.stripeConnectAccountId ?? '').trim()
+    ) {
+      return;
+    }
+    const storeId = this.storeIdFromOrderDoc(order);
+    if (storeId && Types.ObjectId.isValid(storeId)) {
+      const store = await this._storeModel
+        .findById(new Types.ObjectId(storeId))
+        .select('owner')
+        .lean()
+        .exec();
+      const ownerId = store?.owner ? String(store.owner) : '';
+      if (ownerId && Types.ObjectId.isValid(ownerId)) {
+        const owner = await this._userModel
+          .findById(new Types.ObjectId(ownerId))
+          .select(
+            'stripeConnectAccountId stripeConnectChargesEnabled stripeConnectPayoutsEnabled stripeConnectDetailsSubmitted stripeConnectDisabledReason stripeConnectRequirementsDue stripeConnectRequirementsPastDue',
+          )
+          .lean()
+          .exec();
+        if (
+          isStripeConnectOnboardingCompleteUser(owner) &&
+          String(owner?.stripeConnectAccountId ?? '').trim()
+        ) {
+          return;
+        }
+      }
+    }
+    throw new BadRequestException('vendor_stripe_onboarding_incomplete');
   }
 
   /** Vendeur assigné : met à jour la position GPS pour le suivi client. */
@@ -4076,6 +4121,19 @@ export class OrdersService {
     const provided = normalizePickupCodeInput(dto.code);
     if (!expected || expected !== provided) {
       throw new BadRequestException('pickup_code_invalid');
+    }
+
+    // Livraison sans assignee : auto-assign le vendeur pour que shipping+tip
+    // partent sur le Connect boutique (même flux que le livreur).
+    if (!isPickup && order.shouldShip === true) {
+      const existingAssignee = this.assignedDeliveryUserIdFromOrderDoc(order);
+      if (!existingAssignee) {
+        await this.assertVendorSelfDeliveryConnectReady(user, order);
+        order.set(
+          'assignedDeliveryUser',
+          new Types.ObjectId(String(user._id ?? user.id)),
+        );
+      }
     }
 
     const prevStatus = st;

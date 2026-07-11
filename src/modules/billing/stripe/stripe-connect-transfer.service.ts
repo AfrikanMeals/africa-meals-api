@@ -30,6 +30,7 @@ import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import Stripe = require('stripe');
+import { shouldFallbackDeliveryPayoutToStoreOwner } from '@common/vendor-self-delivery-payout.util';
 
 type StripeClient = InstanceType<typeof Stripe>;
 
@@ -321,13 +322,49 @@ export class StripeConnectTransferService {
     const agent = await this.userModel
       .findById(agentUserId)
       .select(
-        'stripeConnectAccountId stripeConnectChargesEnabled stripeConnectPayoutsEnabled stripeConnectDetailsSubmitted stripeConnectDisabledReason stripeConnectRequirementsDue stripeConnectRequirementsPastDue',
+        'stripeConnectAccountId stripeConnectChargesEnabled stripeConnectPayoutsEnabled stripeConnectDetailsSubmitted stripeConnectDisabledReason stripeConnectRequirementsDue stripeConnectRequirementsPastDue type',
       )
       .lean()
       .exec();
     const accountId = agent?.stripeConnectAccountId?.trim() || null;
     const agentReady = isStripeConnectOnboardingCompleteUser(agent);
     return { accountId, agentReady };
+  }
+
+  /**
+   * Destination payout shipping/tip : Connect de l’assignee, ou owner boutique
+   * si l’assignee est un vendeur sans Connect (self-delivery).
+   */
+  private async resolveDeliveryPayoutConnectAccount(
+    agentUserId: string,
+    storeId?: string | null,
+  ): Promise<{ accountId: string | null; ready: boolean }> {
+    const agent = await this.agentConnectAccountId(agentUserId);
+    if (agent.agentReady && agent.accountId) {
+      return { accountId: agent.accountId, ready: true };
+    }
+    if (!storeId || !Types.ObjectId.isValid(agentUserId)) {
+      return { accountId: agent.accountId, ready: false };
+    }
+    const assignee = await this.userModel
+      .findById(agentUserId)
+      .select('type')
+      .lean()
+      .exec();
+    if (
+      !shouldFallbackDeliveryPayoutToStoreOwner({
+        agentReady: agent.agentReady,
+        agentHasAccount: Boolean(agent.accountId),
+        assigneeType: assignee?.type,
+      })
+    ) {
+      return { accountId: agent.accountId, ready: false };
+    }
+    const owner = await this.ownerConnectAccountId(storeId);
+    if (owner.ownerReady && owner.accountId) {
+      return { accountId: owner.accountId, ready: true };
+    }
+    return { accountId: agent.accountId, ready: false };
   }
 
   /**
@@ -862,8 +899,17 @@ export class StripeConnectTransferService {
       };
     }
 
-    const { accountId, agentReady } = await this.agentConnectAccountId(agentId);
-    if (!agentReady || !accountId) {
+    const storeId = (() => {
+      const raw = order.store as { _id?: unknown } | string | null | undefined;
+      if (!raw) return null;
+      if (typeof raw === 'object' && raw._id != null) return String(raw._id);
+      return String(raw);
+    })();
+    const { accountId, ready } = await this.resolveDeliveryPayoutConnectAccount(
+      agentId,
+      storeId,
+    );
+    if (!ready || !accountId) {
       return {
         ...empty,
         grossShipCents: shipCents,
@@ -1049,7 +1095,7 @@ export class StripeConnectTransferService {
     const order = await this.orderModel
       .findById(args.orderId)
       .select(
-        'shouldShip assignedDeliveryUser stripeParentPaymentId deliveryTipCents deliveryTipStatus stripeDeliveryTipTransferId stripeDeliveryTipTransferAmountCents status',
+        'shouldShip assignedDeliveryUser stripeParentPaymentId deliveryTipCents deliveryTipStatus stripeDeliveryTipTransferId stripeDeliveryTipTransferAmountCents status store',
       )
       .lean()
       .exec();
@@ -1099,8 +1145,12 @@ export class StripeConnectTransferService {
       return { ...empty, grossShipCents: tipCents, skippedReason: 'no_assigned_delivery_agent' };
     }
 
-    const { accountId, agentReady } = await this.agentConnectAccountId(agentId);
-    if (!agentReady || !accountId) {
+    const tipStoreId = order.store ? String(order.store) : null;
+    const { accountId, ready } = await this.resolveDeliveryPayoutConnectAccount(
+      agentId,
+      tipStoreId,
+    );
+    if (!ready || !accountId) {
       return {
         ...empty,
         grossShipCents: tipCents,
