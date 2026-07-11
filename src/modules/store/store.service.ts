@@ -1194,6 +1194,8 @@ export class StoreService {
       );
     const vendorGeocoding =
       await this._subscriptionsService.resolveVendorGeocodingForStore(targetId);
+    const vendorRouting =
+      await this._subscriptionsService.resolveVendorRoutingForStore(targetId);
     const deliveryPlanExtras = await this._deliveryPlanExtrasForStore(targetId);
 
     return {
@@ -1222,6 +1224,8 @@ export class StoreService {
         mapEngineOsmPlanEnabled: planMapEngines.osm,
         vendorGeocodingEngine: vendorGeocoding.fallback,
         vendorGeocodingEnginePool: vendorGeocoding.pool,
+        vendorRoutingEngine: vendorRouting.fallback,
+        vendorRoutingEnginePool: vendorRouting.pool,
         ...deliveryPlanExtras,
         vendorManagesDeliveryDrivers: !!doc.vendorManagesDeliveryDrivers,
         deliveryAssignmentMode: String(
