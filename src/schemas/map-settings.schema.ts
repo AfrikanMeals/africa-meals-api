@@ -104,6 +104,32 @@ export class MapSettingsModel {
   })
   geocodeCacheStorePriority: string[];
 
+  /**
+   * Cache / perf itinéraires (TTL, invalidation GPS, alternatives).
+   * GPS marqueur reste précis ; re-routing Directions seulement si déplacement significatif.
+   */
+  @Prop({
+    type: Object,
+    default: {
+      staticTtlSeconds: 900,
+      dynamicTtlSeconds: 45,
+      agentMoveInvalidateMeters: 100,
+      requestAlternatives: false,
+      adminTtlMs: 120000,
+      gpsMarkerDistanceFilterMeters: 5,
+      routeRefreshDebounceMs: 1200,
+    },
+  })
+  routingCache: {
+    staticTtlSeconds: number;
+    dynamicTtlSeconds: number;
+    agentMoveInvalidateMeters: number;
+    requestAlternatives: boolean;
+    adminTtlMs: number;
+    gpsMarkerDistanceFilterMeters: number;
+    routeRefreshDebounceMs: number;
+  };
+
   /** Overrides moteurs carte / géocodage par région active (ISO2). */
   @Prop({ type: Object, default: {} })
   settingsByRegion: Record<string, Record<string, unknown>>;

@@ -32,6 +32,10 @@ import {
   normalizeRoutingEngineId,
   primaryRoutingEngineFromPool,
 } from '@common/routing-engine-pool.util';
+import {
+  DEFAULT_ROUTING_CACHE_SETTINGS,
+  normalizeRoutingCacheSettings,
+} from '@common/routing-cache-settings.util';
 import { UpdateMapSettingsDto } from './dto/update-map-settings.dto';
 import {
   geocodingEnginePoolForGroup,
@@ -210,6 +214,7 @@ export class MapSettingsService {
         ),
         storeAvailability: this._geocodeCacheAvailability(),
       },
+      routingCache: normalizeRoutingCacheSettings(doc.routingCache),
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
   }
@@ -246,6 +251,7 @@ export class MapSettingsService {
             mobileUserRoutingEnginePool: [],
             mobileDeliveryRoutingEnginePool: [],
             geocodeCacheStorePriority: [...DEFAULT_GEOCODE_CACHE_STORE_PRIORITY],
+            routingCache: { ...DEFAULT_ROUTING_CACHE_SETTINGS },
             settingsByRegion: {},
           },
         },
@@ -423,6 +429,13 @@ export class MapSettingsService {
       }
     }
 
+    const routingCache = normalizeRoutingCacheSettings({
+      ...normalizeRoutingCacheSettings(
+        (existing as MapSettingsModel | null)?.routingCache,
+      ),
+      ...(dto.routingCache ?? {}),
+    });
+
     assertDefaultEngineEnabled(
       vendorDefault,
       dto.vendorMapboxEnabled,
@@ -509,6 +522,7 @@ export class MapSettingsService {
             mobileUserRoutingEnginePool: mobileUserRoutingPool,
             mobileDeliveryRoutingEnginePool: mobileDeliveryRoutingPool,
             geocodeCacheStorePriority,
+            routingCache,
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },

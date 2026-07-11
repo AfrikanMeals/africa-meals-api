@@ -12,6 +12,7 @@ import { KNOWN_GEOCODING_ENGINES } from '@common/geocoding-engine-pool.util';
 import { KNOWN_ROUTING_ENGINES } from '@common/routing-engine-pool.util';
 import { GeocodingEnginePoolEntryDto } from './geocoding-engine-pool-entry.dto';
 import { RoutingEnginePoolEntryDto } from './routing-engine-pool-entry.dto';
+import { RoutingCacheSettingsDto } from './routing-cache-settings.dto';
 
 const VENDOR_ENGINES = ['mapbox', 'google', 'osm'] as const;
 const MOBILE_ENGINES = ['mapbox', 'google', 'osm'] as const;
@@ -163,4 +164,10 @@ export class UpdateMapSettingsDto {
   @IsString({ each: true })
   @IsIn(GEOCODE_CACHE_STORES, { each: true })
   geocodeCacheStorePriority?: string[];
+
+  @ApiPropertyOptional({ type: RoutingCacheSettingsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => RoutingCacheSettingsDto)
+  routingCache?: RoutingCacheSettingsDto;
 }
