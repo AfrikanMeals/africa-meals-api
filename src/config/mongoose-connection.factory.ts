@@ -127,12 +127,22 @@ export function buildMongooseRootOptions(
 
   const tlsServername = readMongoTlsServername(uri, (key) => config.get(key));
 
+  /**
+   * Lectures : `secondaryPreferred` déporte le load sur les replicas (rs0 / Atlas).
+   * Les écritures restent sur le primary. Override : `MONGO_READ_PREFERENCE`.
+   * Attention au lag (~ms–s) juste après une écriture critique.
+   */
+  const readPreference = resolveMongoReadPreference(
+    config.get<string>('MONGO_READ_PREFERENCE'),
+  );
+
   return {
     uri,
     ...(!dbInUri && dbName ? { dbName } : {}),
     ...(ipFamily != null ? { family: ipFamily } : {}),
     // Driver MongoDB v6+ : option URI/client = servername (pas tlsServername).
     ...(tlsServername ? { tls: true, servername: tlsServername } : {}),
+    readPreference,
     maxPoolSize,
     minPoolSize,
     maxIdleTimeMS,
@@ -142,4 +152,33 @@ export function buildMongooseRootOptions(
     heartbeatFrequencyMS,
     maxConnecting,
   };
+}
+
+/** Normalise `MONGO_READ_PREFERENCE` (défaut secondaryPreferred). */
+export function resolveMongoReadPreference(
+  raw?: string | null,
+):
+  | 'primary'
+  | 'primaryPreferred'
+  | 'secondary'
+  | 'secondaryPreferred'
+  | 'nearest' {
+  const key = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, '');
+  switch (key) {
+    case 'primary':
+      return 'primary';
+    case 'primarypreferred':
+      return 'primaryPreferred';
+    case 'secondary':
+      return 'secondary';
+    case 'nearest':
+      return 'nearest';
+    case 'secondarypreferred':
+    case '':
+    default:
+      return 'secondaryPreferred';
+  }
 }

@@ -1998,6 +1998,11 @@ export class OrdersService {
     let taxCountryCode = String(opts?.taxCountryCode ?? '')
       .trim()
       .toUpperCase();
+    let storeRegionCode = String(
+      (o as { storeRegionCode?: string }).storeRegionCode ?? '',
+    )
+      .trim()
+      .toUpperCase();
     let subtotalBeforeTax =
       opts?.subtotalBeforeTax != null
         ? Math.max(0, Number(opts.subtotalBeforeTax) || 0)
@@ -2016,6 +2021,9 @@ export class OrdersService {
         .lean()
         .exec();
       const storeCc = resolveStoreTaxCountryCode(storePop);
+      if (/^[A-Z]{2}$/.test(storeCc)) {
+        storeRegionCode = storeCc;
+      }
       let deliveryCc: string | undefined;
       const aid = opts?.deliveryAddressId?.trim();
       if (aid) {
@@ -2045,6 +2053,16 @@ export class OrdersService {
       taxCountryCode = breakdown.countryCode;
     }
 
+    if (!/^[A-Z]{2}$/.test(storeRegionCode)) {
+      const storeForRegion = await this._storeModel
+        .findById(o.store)
+        .populate('address', 'countryCode')
+        .select('region phoneNumber currency address')
+        .lean()
+        .exec();
+      storeRegionCode = resolveStoreTaxCountryCode(storeForRegion) || '';
+    }
+
     const currencyCode = (
       opts?.currency ??
       (o as { currency?: string }).currency ??
@@ -2071,20 +2089,6 @@ export class OrdersService {
     const paidStatus = isPayOnPickup
       ? OrderStatusEnum.AWAITING_CASH
       : OrderStatusEnum.PAIED;
-    let storeRegionCode = String(
-      (o as { storeRegionCode?: string }).storeRegionCode ?? '',
-    )
-      .trim()
-      .toUpperCase();
-    if (!/^[A-Z]{2}$/.test(storeRegionCode)) {
-      const storeForRegion = await this._storeModel
-        .findById(o.store)
-        .populate('address', 'countryCode')
-        .select('region phoneNumber currency address')
-        .lean()
-        .exec();
-      storeRegionCode = resolveStoreTaxCountryCode(storeForRegion) || '';
-    }
     const $set: Record<string, unknown> = {
       status: paidStatus,
       shippingPrice: shippingStored,
