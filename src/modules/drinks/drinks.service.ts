@@ -211,7 +211,7 @@ export class DrinksService {
   private async attachVendorDrinkCommissionPricing<
     T extends {
       priceCad: number;
-      commissionRetrieveStrategy?: 'on_payout' | 'add_to_price' | null;
+      commissionRetrieveStrategy?: string | null;
     },
   >(
     storeId: string,

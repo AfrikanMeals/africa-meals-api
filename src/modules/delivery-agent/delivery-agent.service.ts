@@ -1569,7 +1569,10 @@ export class DeliveryAgentService {
         user: agentId,
         status: DeliveryAgentApplicationStatus.APPROVED,
       })
-      .select('dashboardAvailability vehicle maxConcurrentOrders')
+      // `region` obligatoire pour assign-self : sans elle, le filtre tombe sur
+      // user.appCountryCode et peut rejeter une course CM alors que le dossier
+      // livreur est bien en CM (régression : commande visible en pending, 400 au claim).
+      .select('dashboardAvailability vehicle maxConcurrentOrders region')
       .lean()
       .exec();
     if (!app) {
