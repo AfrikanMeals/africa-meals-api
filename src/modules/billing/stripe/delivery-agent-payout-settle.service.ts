@@ -2,13 +2,17 @@ import { StripeConnectTransferService } from '@modules/billing/stripe/stripe-con
 import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
+import {
+  DeliveryTipStatusEnum,
+  OrderModel,
+  OrderStatusEnum,
+} from '@schemas/order.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 
 /**
- * Relance les transfers Connect livreur manqués + settles DIAMOND
- * (solde encore pending juste après confirmation).
+ * Relance les transfers Connect livreur manqués (frais livraison + tips)
+ * + settles DIAMOND (solde encore pending juste après confirmation).
  */
 @Injectable()
 export class DeliveryAgentPayoutSettleService {
@@ -42,12 +46,26 @@ export class DeliveryAgentPayoutSettleService {
         status: OrderStatusEnum.COMPLETED,
         shouldShip: true,
         assignedDeliveryUser: { $exists: true, $ne: null },
+        updatedAt: { $gte: since },
         $or: [
           { stripeDeliveryTransferId: { $exists: false } },
           { stripeDeliveryTransferId: null },
           { stripeDeliveryTransferId: '' },
+          {
+            deliveryTipCents: { $gt: 0 },
+            deliveryTipStatus: {
+              $nin: [
+                DeliveryTipStatusEnum.TRANSFERRED,
+                DeliveryTipStatusEnum.REFUNDED,
+              ],
+            },
+            $or: [
+              { stripeDeliveryTipTransferId: { $exists: false } },
+              { stripeDeliveryTipTransferId: null },
+              { stripeDeliveryTipTransferId: '' },
+            ],
+          },
         ],
-        updatedAt: { $gte: since },
       })
       .select('_id assignedDeliveryUser')
       .sort({ updatedAt: -1 })
@@ -59,16 +77,27 @@ export class DeliveryAgentPayoutSettleService {
     for (const row of pendingOrders) {
       const orderId = String(row._id);
       try {
-        const tr =
+        const shipTr =
           await this.stripeTransfers.transferDeliveryShareForCompletedOrder({
             orderId,
           });
-        if (!tr.transferred) {
-          if (tr.skippedReason) {
-            this.logger.debug(
-              `Delivery transfer retry skipped order=${orderId}: ${tr.skippedReason}`,
-            );
-          }
+        if (!shipTr.transferred && shipTr.skippedReason) {
+          this.logger.debug(
+            `Delivery transfer retry skipped order=${orderId}: ${shipTr.skippedReason}`,
+          );
+        }
+
+        const tipTr =
+          await this.stripeTransfers.transferDeliveryTipForCompletedOrder({
+            orderId,
+          });
+        if (!tipTr.transferred && tipTr.skippedReason) {
+          this.logger.debug(
+            `Delivery tip transfer retry skipped order=${orderId}: ${tipTr.skippedReason}`,
+          );
+        }
+
+        if (!shipTr.transferred && !tipTr.transferred) {
           continue;
         }
         transfersSucceeded += 1;

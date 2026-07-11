@@ -33,6 +33,14 @@ import Stripe = require('stripe');
 
 type StripeClient = InstanceType<typeof Stripe>;
 
+/** Shape minimale d’un transfer Connect (évite `Stripe.Transfer` sous import CJS). */
+type ConnectTransferRow = {
+  id: string;
+  amount?: number | null;
+  source_transaction?: string | { id?: string } | null;
+  metadata?: Record<string, string> | null;
+};
+
 export type StoreTransferResult = {
   transferred: boolean;
   transferId?: string;
@@ -100,48 +108,68 @@ export class StripeConnectTransferService {
     transferGroup?: string;
     destination?: string;
     chargeId?: string;
-  }): Promise<Stripe.Transfer | null> {
+  }): Promise<ConnectTransferRow | null> {
     const orderId = String(args.orderId ?? '').trim();
     const transferKind = String(args.transferKind ?? '').trim();
     if (!orderId || !transferKind) return null;
 
     const stripe = this.stripe();
-    const matches = (t: Stripe.Transfer): boolean => {
-      if (
-        t.metadata?.orderId === orderId &&
-        t.metadata?.transferKind === transferKind
-      ) {
-        return true;
-      }
+    const sourceTxId = (t: ConnectTransferRow): string => {
+      const src = t.source_transaction;
+      if (typeof src === 'string') return src;
+      if (src && typeof src === 'object' && src.id) return String(src.id);
+      return '';
+    };
+    const matches = (t: ConnectTransferRow): boolean => {
+      const metaOrder = String(t.metadata?.orderId ?? '').trim();
+      const metaKind = String(t.metadata?.transferKind ?? '').trim();
+      if (metaOrder === orderId && metaKind === transferKind) return true;
+      // Transfers legacy sans transferKind mais même orderId + charge.
       if (
         args.chargeId &&
-        t.source_transaction === args.chargeId &&
-        t.metadata?.orderId === orderId &&
-        (!t.metadata?.transferKind || t.metadata.transferKind === transferKind)
+        sourceTxId(t) === args.chargeId &&
+        metaOrder === orderId &&
+        (!metaKind || metaKind === transferKind)
       ) {
         return true;
       }
       return false;
     };
 
-    const listOpts: Stripe.TransferListParams = { limit: 100 };
-    if (args.transferGroup) {
-      listOpts.transfer_group = args.transferGroup;
-    } else if (args.destination) {
-      listOpts.destination = args.destination;
-    }
-
-    try {
+    const scan = async (listOpts: {
+      transfer_group?: string;
+      destination?: string;
+      limit?: number;
+      starting_after?: string;
+    }): Promise<ConnectTransferRow | null> => {
       let startingAfter: string | undefined;
-      for (let page = 0; page < 5; page++) {
+      for (let page = 0; page < 8; page++) {
         const batch = await stripe.transfers.list({
           ...listOpts,
+          limit: listOpts.limit ?? 100,
           ...(startingAfter ? { starting_after: startingAfter } : {}),
         });
-        const hit = batch.data.find(matches);
+        const hit = (batch.data as ConnectTransferRow[]).find(matches);
         if (hit) return hit;
         if (!batch.has_more || !batch.data.length) break;
         startingAfter = batch.data[batch.data.length - 1]?.id;
+      }
+      return null;
+    };
+
+    try {
+      if (args.transferGroup) {
+        const byGroup = await scan({ transfer_group: args.transferGroup });
+        if (byGroup) return byGroup;
+      }
+      if (args.destination) {
+        const byDest = await scan({ destination: args.destination });
+        if (byDest) return byDest;
+      }
+      // Dernier recours : pages récentes (dev / peu de volume) filtrées charge.
+      if (args.chargeId) {
+        const recent = await scan({});
+        if (recent) return recent;
       }
     } catch (e) {
       this.logger.warn(
@@ -161,6 +189,70 @@ export class StripeConnectTransferService {
     chargeId: string;
   }): string {
     return buildConnectTransferIdempotencyKey(args);
+  }
+
+  /**
+   * Crée un transfer Connect avec clé paramétrée.
+   * Si Stripe renvoie un conflit d’idempotency (clé legacy empoisonnée) :
+   * 1) réconcilie un transfer existant ; 2) sinon retente avec une clé unique.
+   */
+  private async createConnectTransfer(args: {
+    kind: ConnectTransferIdempotencyKind;
+    orderId: string;
+    amountCents: number;
+    currency: string;
+    destination: string;
+    chargeId: string;
+    transferGroup?: string;
+    metadata: Record<string, string>;
+    transferKind: string;
+  }): Promise<ConnectTransferRow> {
+    const params = {
+      amount: args.amountCents,
+      currency: args.currency,
+      destination: args.destination,
+      source_transaction: args.chargeId,
+      transfer_group: args.transferGroup || undefined,
+      metadata: args.metadata,
+    };
+    const baseKey = this.transferIdempotencyKey({
+      kind: args.kind,
+      orderId: args.orderId,
+      amountCents: args.amountCents,
+      destination: args.destination,
+      chargeId: args.chargeId,
+    });
+    const stripe = this.stripe();
+
+    try {
+      return (await stripe.transfers.create(params, {
+        idempotencyKey: baseKey,
+      })) as ConnectTransferRow;
+    } catch (e) {
+      if (!isStripeIdempotencyMismatchError(e)) throw e;
+
+      const existing = await this.findExistingConnectTransfer({
+        orderId: args.orderId,
+        transferKind: args.transferKind,
+        transferGroup: args.transferGroup,
+        destination: args.destination,
+        chargeId: args.chargeId,
+      });
+      if (existing) {
+        this.logger.warn(
+          `Connect transfer ${args.transferKind} reconciled after idempotency mismatch ${existing.id} order ${args.orderId}`,
+        );
+        return existing;
+      }
+
+      const retryKey = `${baseKey}-r${Date.now()}`.slice(0, 255);
+      this.logger.warn(
+        `Connect transfer ${args.transferKind} idempotency mismatch without existing transfer — retry key order=${args.orderId}`,
+      );
+      return (await stripe.transfers.create(params, {
+        idempotencyKey: retryKey,
+      })) as ConnectTransferRow;
+    }
   }
 
   private async totalPayoutGrossCentsForPayment(
@@ -554,41 +646,37 @@ export class StripeConnectTransferService {
     }
 
     try {
-      const transfer = await this.stripe().transfers.create(
-        {
-          amount: transferCents,
-          currency: transferCurrency,
-          destination: accountId,
-          source_transaction: chargeId,
-          transfer_group: parentId || undefined,
-          metadata: {
-            orderId: args.orderId,
-            storeId: args.storeId,
-            platform: 'wise-eat',
-            transferKind: 'vendor_goods',
-            platformFeeCents: String(platformFeeOnGoods),
-            stripeProcessingFeeCents: String(stripeProcessingFeeShareCents),
-            grossGoodsCents: String(goodsCents),
-            shipCentsHeld: String(shipCents),
-          },
+      const transfer = await this.createConnectTransfer({
+        kind: 'vendor',
+        orderId: args.orderId,
+        amountCents: transferCents,
+        currency: transferCurrency,
+        destination: accountId,
+        chargeId,
+        transferGroup: parentId || undefined,
+        transferKind: 'vendor_goods',
+        metadata: {
+          orderId: args.orderId,
+          storeId: args.storeId,
+          platform: 'wise-eat',
+          transferKind: 'vendor_goods',
+          platformFeeCents: String(platformFeeOnGoods),
+          stripeProcessingFeeCents: String(stripeProcessingFeeShareCents),
+          grossGoodsCents: String(goodsCents),
+          shipCentsHeld: String(shipCents),
         },
-        {
-          idempotencyKey: this.transferIdempotencyKey({
-            kind: 'vendor',
-            orderId: args.orderId,
-            amountCents: transferCents,
-            destination: accountId,
-            chargeId,
-          }),
-        },
-      );
+      });
 
+      const savedCents = Math.max(
+        0,
+        Math.round(Number(transfer.amount ?? transferCents)),
+      );
       await this.orderModel.updateOne(
         { _id: args.orderId },
         {
           $set: {
             stripeTransferId: transfer.id,
-            stripeTransferAmountCents: transferCents,
+            stripeTransferAmountCents: savedCents,
             platformFeeCents: platformFeeOnGoods,
             stripeProcessingFeeCents: stripeProcessingFeeShareCents,
             stripeTransferReversalId: null,
@@ -598,7 +686,7 @@ export class StripeConnectTransferService {
       );
 
       this.logger.log(
-        `Connect vendor transfer ${transfer.id}: ${transferCents} ${transferCurrency} → ${accountId} (order ${args.orderId}, stripeFee=${
+        `Connect vendor transfer ${transfer.id}: ${savedCents} ${transferCurrency} → ${accountId} (order ${args.orderId}, stripeFee=${
           stripeProcessingFeeShareCents
         })`,
       );
@@ -606,52 +694,12 @@ export class StripeConnectTransferService {
       return {
         transferred: true,
         transferId: transfer.id,
-        transferCents,
+        transferCents: savedCents,
         platformFeeCents: platformFeeOnGoods,
         stripeProcessingFeeCents: stripeProcessingFeeShareCents,
         grossCents: goodsCents,
       };
     } catch (e) {
-      if (isStripeIdempotencyMismatchError(e)) {
-        const recovered = await this.findExistingConnectTransfer({
-          orderId: args.orderId,
-          transferKind: 'vendor_goods',
-          transferGroup: parentId || undefined,
-          destination: accountId,
-          chargeId,
-        });
-        if (recovered) {
-          const existingCents = Math.max(
-            0,
-            Math.round(Number(recovered.amount ?? 0)),
-          );
-          await this.orderModel.updateOne(
-            { _id: args.orderId },
-            {
-              $set: {
-                stripeTransferId: recovered.id,
-                stripeTransferAmountCents: existingCents,
-                platformFeeCents: platformFeeOnGoods,
-                stripeProcessingFeeCents: stripeProcessingFeeShareCents,
-                stripeTransferReversalId: null,
-              },
-              $unset: { stripeTransferReversalAmountCents: '' },
-            },
-          );
-          this.logger.warn(
-            `Connect vendor transfer recovered after idempotency mismatch ${recovered.id} order ${args.orderId}`,
-          );
-          return {
-            transferred: true,
-            transferId: recovered.id,
-            transferCents: existingCents,
-            platformFeeCents: platformFeeOnGoods,
-            stripeProcessingFeeCents: stripeProcessingFeeShareCents,
-            grossCents: goodsCents,
-            skippedReason: 'already_transferred',
-          };
-        }
-      }
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.error(
         `Connect transfer failed order ${args.orderId}: ${msg}`,
@@ -915,46 +963,42 @@ export class StripeConnectTransferService {
     }
 
     try {
-      const transfer = await this.stripe().transfers.create(
-        {
-          amount: transferCents,
-          currency: transferCurrency,
-          destination: accountId,
-          source_transaction: chargeId,
-          transfer_group: parentId || undefined,
-          metadata: {
-            orderId: args.orderId,
-            agentUserId: agentId,
-            platform: 'wise-eat',
-            transferKind: 'delivery_shipping',
-            stripeProcessingFeeCents: String(stripeProcessingFeeShareCents),
-            grossShipCents: String(shipCents),
-          },
+      const transfer = await this.createConnectTransfer({
+        kind: 'delivery',
+        orderId: args.orderId,
+        amountCents: transferCents,
+        currency: transferCurrency,
+        destination: accountId,
+        chargeId,
+        transferGroup: parentId || undefined,
+        transferKind: 'delivery_shipping',
+        metadata: {
+          orderId: args.orderId,
+          agentUserId: agentId,
+          platform: 'wise-eat',
+          transferKind: 'delivery_shipping',
+          stripeProcessingFeeCents: String(stripeProcessingFeeShareCents),
+          grossShipCents: String(shipCents),
         },
-        {
-          idempotencyKey: this.transferIdempotencyKey({
-            kind: 'delivery',
-            orderId: args.orderId,
-            amountCents: transferCents,
-            destination: accountId,
-            chargeId,
-          }),
-        },
-      );
+      });
 
+      const savedCents = Math.max(
+        0,
+        Math.round(Number(transfer.amount ?? transferCents)),
+      );
       await this.orderModel.updateOne(
         { _id: args.orderId },
         {
           $set: {
             stripeDeliveryTransferId: transfer.id,
-            stripeDeliveryTransferAmountCents: transferCents,
+            stripeDeliveryTransferAmountCents: savedCents,
             stripeDeliveryProcessingFeeCents: stripeProcessingFeeShareCents,
           },
         },
       );
 
       this.logger.log(
-        `Connect delivery transfer ${transfer.id}: ${transferCents} ${transferCurrency} → ${accountId} (order ${args.orderId}, stripeFee=${
+        `Connect delivery transfer ${transfer.id}: ${savedCents} ${transferCurrency} → ${accountId} (order ${args.orderId}, stripeFee=${
           stripeProcessingFeeShareCents
         })`,
       );
@@ -962,47 +1006,11 @@ export class StripeConnectTransferService {
       return {
         transferred: true,
         transferId: transfer.id,
-        transferCents,
+        transferCents: savedCents,
         stripeProcessingFeeCents: stripeProcessingFeeShareCents,
         grossShipCents: shipCents,
       };
     } catch (e) {
-      if (isStripeIdempotencyMismatchError(e)) {
-        const recovered = await this.findExistingConnectTransfer({
-          orderId: args.orderId,
-          transferKind: 'delivery_shipping',
-          transferGroup: parentId || undefined,
-          destination: accountId,
-          chargeId,
-        });
-        if (recovered) {
-          const existingCents = Math.max(
-            0,
-            Math.round(Number(recovered.amount ?? 0)),
-          );
-          await this.orderModel.updateOne(
-            { _id: args.orderId },
-            {
-              $set: {
-                stripeDeliveryTransferId: recovered.id,
-                stripeDeliveryTransferAmountCents: existingCents,
-                stripeDeliveryProcessingFeeCents: stripeProcessingFeeShareCents,
-              },
-            },
-          );
-          this.logger.warn(
-            `Connect delivery transfer recovered after idempotency mismatch ${recovered.id} order ${args.orderId}`,
-          );
-          return {
-            transferred: true,
-            transferId: recovered.id,
-            transferCents: existingCents,
-            stripeProcessingFeeCents: stripeProcessingFeeShareCents,
-            grossShipCents: shipCents,
-            skippedReason: 'already_transferred',
-          };
-        }
-      }
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(
         `Connect delivery transfer failed order ${args.orderId}: ${msg}`,
@@ -1068,9 +1076,10 @@ export class StripeConnectTransferService {
         skippedReason: 'already_transferred',
       };
     }
-    if (tipStatus === 'refunded' || tipStatus === 'none') {
+    if (tipStatus === 'refunded') {
       return { ...empty, grossShipCents: tipCents, skippedReason: 'tip_not_payable' };
     }
+    // `none` + tipCents>0 (legacy) : on verse quand même (déjà filtré tipCents>=1).
 
     if (order.stripeDeliveryTipTransferId) {
       return {
@@ -1209,39 +1218,35 @@ export class StripeConnectTransferService {
     }
 
     try {
-      const transfer = await this.stripe().transfers.create(
-        {
-          amount: transferCents,
-          currency: transferCurrency,
-          destination: accountId,
-          source_transaction: chargeId,
-          transfer_group: parentId || undefined,
-          metadata: {
-            orderId: args.orderId,
-            agentUserId: agentId,
-            platform: 'wise-eat',
-            transferKind: 'delivery_tip',
-            stripeProcessingFeeCents: String(stripeProcessingFeeShareCents),
-            grossTipCents: String(tipCents),
-          },
+      const transfer = await this.createConnectTransfer({
+        kind: 'delivery-tip',
+        orderId: args.orderId,
+        amountCents: transferCents,
+        currency: transferCurrency,
+        destination: accountId,
+        chargeId,
+        transferGroup: parentId || undefined,
+        transferKind: 'delivery_tip',
+        metadata: {
+          orderId: args.orderId,
+          agentUserId: agentId,
+          platform: 'wise-eat',
+          transferKind: 'delivery_tip',
+          stripeProcessingFeeCents: String(stripeProcessingFeeShareCents),
+          grossTipCents: String(tipCents),
         },
-        {
-          idempotencyKey: this.transferIdempotencyKey({
-            kind: 'delivery-tip',
-            orderId: args.orderId,
-            amountCents: transferCents,
-            destination: accountId,
-            chargeId,
-          }),
-        },
-      );
+      });
 
+      const savedCents = Math.max(
+        0,
+        Math.round(Number(transfer.amount ?? transferCents)),
+      );
       await this.orderModel.updateOne(
         { _id: args.orderId },
         {
           $set: {
             stripeDeliveryTipTransferId: transfer.id,
-            stripeDeliveryTipTransferAmountCents: transferCents,
+            stripeDeliveryTipTransferAmountCents: savedCents,
             stripeDeliveryTipProcessingFeeCents: stripeProcessingFeeShareCents,
             deliveryTipStatus: 'transferred',
           },
@@ -1249,55 +1254,17 @@ export class StripeConnectTransferService {
       );
 
       this.logger.log(
-        `Connect delivery tip transfer ${transfer.id}: ${transferCents} ${transferCurrency} → ${accountId} (order ${args.orderId})`,
+        `Connect delivery tip transfer ${transfer.id}: ${savedCents} ${transferCurrency} → ${accountId} (order ${args.orderId})`,
       );
 
       return {
         transferred: true,
         transferId: transfer.id,
-        transferCents,
+        transferCents: savedCents,
         stripeProcessingFeeCents: stripeProcessingFeeShareCents,
         grossShipCents: tipCents,
       };
     } catch (e) {
-      if (isStripeIdempotencyMismatchError(e)) {
-        const recovered = await this.findExistingConnectTransfer({
-          orderId: args.orderId,
-          transferKind: 'delivery_tip',
-          transferGroup: parentId || undefined,
-          destination: accountId,
-          chargeId,
-        });
-        if (recovered) {
-          const existingCents = Math.max(
-            0,
-            Math.round(Number(recovered.amount ?? 0)),
-          );
-          await this.orderModel.updateOne(
-            { _id: args.orderId },
-            {
-              $set: {
-                stripeDeliveryTipTransferId: recovered.id,
-                stripeDeliveryTipTransferAmountCents: existingCents,
-                stripeDeliveryTipProcessingFeeCents:
-                  stripeProcessingFeeShareCents,
-                deliveryTipStatus: 'transferred',
-              },
-            },
-          );
-          this.logger.warn(
-            `Connect delivery tip transfer recovered after idempotency mismatch ${recovered.id} order ${args.orderId}`,
-          );
-          return {
-            transferred: true,
-            transferId: recovered.id,
-            transferCents: existingCents,
-            stripeProcessingFeeCents: stripeProcessingFeeShareCents,
-            grossShipCents: tipCents,
-            skippedReason: 'already_transferred',
-          };
-        }
-      }
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(
         `Connect delivery tip transfer failed order ${args.orderId}: ${msg}`,

@@ -4586,49 +4586,40 @@ export class OrdersService {
   }
 
   private scheduleDeliveryAgentPayouts(orderId: string): void {
-    void this._stripeTransfers
-      .transferDeliveryShareForCompletedOrder({ orderId })
-      .then(async (tr) => {
-        if (!tr.transferred) {
-          if (tr.skippedReason) {
-            this.logger.warn(
-              `Delivery Connect transfer skipped order=${orderId}: ${tr.skippedReason}`,
-            );
-          }
-          return;
+    void (async () => {
+      try {
+        // Séquentiel : frais livraison (net retenue plateforme) puis tip.
+        const shipTr =
+          await this._stripeTransfers.transferDeliveryShareForCompletedOrder({
+            orderId,
+          });
+        if (!shipTr.transferred && shipTr.skippedReason) {
+          this.logger.warn(
+            `Delivery Connect transfer skipped order=${orderId}: ${shipTr.skippedReason}`,
+          );
         }
-        // Transfer Connect livreur enregistré → déclencher le versement bancaire
-        // selon le badge partenaire (DIAMOND = instantané, GOLD/SILVER = calendrier).
-        await this.settleDeliveryBadgePayoutForOrder(orderId);
-      })
-      .catch((err) => {
+
+        const tipTr =
+          await this._stripeTransfers.transferDeliveryTipForCompletedOrder({
+            orderId,
+          });
+        if (!tipTr.transferred && tipTr.skippedReason) {
+          this.logger.warn(
+            `Delivery tip transfer skipped order=${orderId}: ${tipTr.skippedReason}`,
+          );
+        }
+
+        if (shipTr.transferred || tipTr.transferred) {
+          await this.settleDeliveryBadgePayoutForOrder(orderId);
+        }
+      } catch (err) {
         this.logger.warn(
-          `Delivery Connect transfer error order=${orderId}: ${
+          `Delivery Connect payouts error order=${orderId}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
-      });
-    void this._stripeTransfers
-      .transferDeliveryTipForCompletedOrder({ orderId })
-      .then(async (tr) => {
-        if (!tr.transferred) {
-          if (tr.skippedReason) {
-            this.logger.warn(
-              `Delivery tip transfer skipped order=${orderId}: ${tr.skippedReason}`,
-            );
-          }
-          return;
-        }
-        // Tip crédité → re-tenter settle DIAMOND (solde peut devenir disponible).
-        await this.settleDeliveryBadgePayoutForOrder(orderId);
-      })
-      .catch((err) => {
-        this.logger.warn(
-          `Delivery tip transfer error order=${orderId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      });
+      }
+    })();
   }
 
   /** Déclenche le versement badge partenaire du livreur assigné après un transfer réussi. */
