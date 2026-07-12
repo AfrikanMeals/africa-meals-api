@@ -39,7 +39,6 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-,
   Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
