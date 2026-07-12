@@ -32,9 +32,16 @@ setGlobalOptions({
   region: FUNCTIONS_REGION,
   // Chaque instance warm garde un pool Mongo (`MONGOOSE_MAX_POOL`) : trop
   // d’instances × pool ≈ limite Atlas M0 (~500 connexions cluster).
-  maxInstances: Number(process.env.MAX_INSTANCES || 4),
+  maxInstances: Number(process.env.MAX_INSTANCES || 5),
   secrets: birdSecrets,
 });
+
+function resolveFunctionsCpu(): number | 'gcf_gen1' {
+  const raw = String(process.env.APP_CPU ?? '1').trim();
+  if (raw === 'gcf_gen1') return 'gcf_gen1';
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
 
 export const api = onRequest(
   {
@@ -43,6 +50,7 @@ export const api = onRequest(
     memory:
       (process.env.APP_MEMORY as '256MiB' | '512MiB' | '1GiB' | '2GiB') ||
       '512MiB',
+    cpu: resolveFunctionsCpu(),
     cors: false,
     secrets: birdSecrets,
   },

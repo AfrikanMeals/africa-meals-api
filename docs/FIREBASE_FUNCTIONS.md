@@ -135,10 +135,10 @@ Variables utiles (alignées sur `.env.functions`) :
 | `MONGOOSE_MIN_POOL`, `MONGOOSE_MAX_IDLE_MS`, `MONGOOSE_WAIT_QUEUE_MS` | Affinage pool / fermeture des sockets inactives |
 | `MONGOOSE_SERVER_SELECTION_MS` | Timeout sélection serveur (défaut `8000`) |
 | `MONGODB_APP_NAME` | Libellé client Atlas (défaut `africa-meals-api` si URI construite depuis `DB_*`) |
-| `MAX_INSTANCES` | Plafond d’instances HTTP concurrentes (défaut `4` — aligné `.env.functions`) |
+| `MAX_INSTANCES` | Plafond d’instances HTTP concurrentes (défaut `5` — aligné `.env.functions`) |
 | `DISABLE_SWAGGER` | `true` pour désactiver Swagger (cold start plus léger) |
 | `APP_REGION` | Région Cloud Functions (défaut `us-east1` — aligné `.env.functions`) |
-| `TIMEOUT_SEC`, `APP_MEMORY` | Options fonction (`APP_MEMORY` défaut `512MiB` ; valeurs : `256MiB`, `512MiB`, `1GiB`, `2GiB`) |
+| `TIMEOUT_SEC`, `APP_MEMORY`, `APP_CPU` | Options fonction (`APP_MEMORY` défaut `512MiB` ; `APP_CPU` défaut `1` ; mémoire : `256MiB`, `512MiB`, `1GiB`, `2GiB`) |
 | `AM_FIREBASE_PROJECT_ID` | ID projet Firebase / GCP (Admin SDK) |
 | `AM_FIREBASE_STORAGE_BUCKET` | Bucket Storage (sinon `<project_id>.appspot.com`) |
 | `AM_FIREBASE_SERVICE_ACCOUNT_JSON` | JSON compte de service (une ligne) |
