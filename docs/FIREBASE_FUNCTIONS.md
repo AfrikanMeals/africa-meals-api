@@ -156,17 +156,18 @@ Variables utiles (alignées sur `.env.functions`) :
 | `AD_NOTIFICATION_WHATSAPP_TEMPLATE_PROJECT_ID` | UUID template Bird Studio (mode template) |
 | `API_PUBLIC_BASE_URL` | URL publique API (liens trackés SMS / WhatsApp ads) |
 
-### Redis (Mode A-lite — VPS Stunnel, prod)
+### Redis (Mode A-lite — VPS HAProxy TLS, prod)
 
-L’API Cloud Functions rejoint le Redis VPS via **Stunnel TLS** (`wise-eat.cloud:6381` / `:6382`), **sans Cloud NAT** (A-lite). Runbook : [../../docs/REDIS_VPS_PRODUCTION.md](../../docs/REDIS_VPS_PRODUCTION.md).
+L’API Cloud Functions rejoint le Redis VPS via **HAProxy TLS** (`cache.wise-eat.com:6381` cache / `:6382` BullMQ), **sans Cloud NAT** (A-lite). ACL : user **`wise-eat-cache`** (pas `wise-eat-comche` — typo → `WRONGPASS`). Runbook : [../../docs/REDIS_VPS_PRODUCTION.md](../../docs/REDIS_VPS_PRODUCTION.md).
 
 | Variable | Exemple prod |
 |----------|----------------|
-| `REDIS_URL` | `rediss://wise-eat-comche:***@wise-eat.cloud:6381` |
+| `REDIS_URL` | `rediss://wise-eat-cache:***@cache.wise-eat.com:6381` |
+| `REDIS_USERNAME` / `REDIS_PASSWORD` | `wise-eat-cache` + même mot de passe que l’URL |
 | `REDIS_TLS` | `true` |
-| `REDIS_TLS_REJECT_UNAUTHORIZED` | `true` ou omis avec **Certbot** ; `false` seulement si cert auto-signé |
-| `BULLMQ_REDIS_URL` | `rediss://wise-eat-bull:***@wise-eat.cloud:6382` |
-| `BULLMQ_REDIS_TLS_REJECT_UNAUTHORIZED` | idem |
+| `REDIS_TLS_REJECT_UNAUTHORIZED` | `true` (cert Let’s Encrypt via HAProxy) |
+| `BULLMQ_REDIS_URL` | `rediss://wise-eat-bull:***@cache.wise-eat.com:6382` |
+| `BULLMQ_REDIS_USERNAME` / `BULLMQ_REDIS_PASSWORD` | `wise-eat-bull` + mot de passe ACL |
 | `SSE_REDIS_BRIDGE_ENABLED` | `true` |
 
 Définir via Secret Manager / variables Firebase (comme MongoDB). Redéployer après mise à jour : `npm run deploy:functions`.

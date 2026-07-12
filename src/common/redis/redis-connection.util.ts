@@ -376,22 +376,31 @@ export function readRedisUrlFromConfig(
 }
 
 /** Options `cache-manager-redis-yet` / node-redis (socket TLS HAProxy / Stunnel). */
-export function readRedisCacheStoreOptionsFromConfig(
-  config: ConfigService,
-): {
-  url?: string;
-  socket: {
-    host: string;
-    port: number;
-    tls?: true;
-    servername?: string;
-    rejectUnauthorized?: boolean;
-    family?: number;
-    connectTimeout?: number;
-  };
+export type RedisCacheStoreOptions = {
   username?: string;
   password?: string;
-} | null {
+  socket:
+    | {
+        host: string;
+        port: number;
+        tls: true;
+        servername?: string;
+        rejectUnauthorized?: boolean;
+        family?: number;
+        connectTimeout?: number;
+      }
+    | {
+        host: string;
+        port: number;
+        family?: number;
+        connectTimeout?: number;
+      };
+};
+
+/** Options `cache-manager-redis-yet` / node-redis (socket TLS HAProxy / Stunnel). */
+export function readRedisCacheStoreOptionsFromConfig(
+  config: ConfigService,
+): RedisCacheStoreOptions | null {
   const conn = readRedisConnectionFromConfig(config);
   if (!conn) return null;
   const rejectUnauthorized =
@@ -401,24 +410,31 @@ export function readRedisCacheStoreOptionsFromConfig(
     config.get<string>('REDIS_CONNECT_TIMEOUT_MS'),
     15_000,
   );
+  const familyOpts = ipFamily != null ? { family: ipFamily } : {};
+  // Auth explicite (évite les divergences de parsing URL node-redis → WRONGPASS).
+  // Union discriminée : `tls` requis si présent (sinon TS refuse RedisTlsSocketOptions).
+  if (conn.tls) {
+    return {
+      username: conn.username,
+      password: conn.password,
+      socket: {
+        host: conn.host,
+        port: conn.port,
+        tls: true,
+        servername: (conn.tls.servername as string | undefined) || conn.host,
+        ...(rejectUnauthorized === false ? { rejectUnauthorized: false } : {}),
+        ...familyOpts,
+        connectTimeout,
+      },
+    };
+  }
   return {
-    // Auth explicite (évite les divergences de parsing URL node-redis → WRONGPASS).
     username: conn.username,
     password: conn.password,
     socket: {
       host: conn.host,
       port: conn.port,
-      ...(conn.tls
-        ? {
-            tls: true as const,
-            servername:
-              (conn.tls.servername as string | undefined) || conn.host,
-            ...(rejectUnauthorized === false
-              ? { rejectUnauthorized: false }
-              : {}),
-          }
-        : {}),
-      ...(ipFamily != null ? { family: ipFamily } : {}),
+      ...familyOpts,
       connectTimeout,
     },
   };
