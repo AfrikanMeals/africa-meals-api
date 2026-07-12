@@ -140,8 +140,50 @@ export class GraphSyncService {
         SET u.spend30d = coalesce(u.spend30d, 0) + $totalSpent
         `,
         { userId: payload.userId, totalSpent },
-        { timeoutMs: 5_000 },
+        { timeoutMs: 5_000, op: 'order_spend' },
       );
+    }
+
+    // Phase 2 — FBT co-occurrence (paires de produits dans la même commande)
+    const productIds = (payload.items ?? [])
+      .filter((i) => i.itemType === 'product')
+      .map((i) => String(i.entityId ?? '').trim())
+      .filter(Boolean);
+    const uniqueProducts = [...new Set(productIds)];
+    for (let i = 0; i < uniqueProducts.length; i++) {
+      for (let j = i + 1; j < uniqueProducts.length; j++) {
+        const a = uniqueProducts[i]!;
+        const b = uniqueProducts[j]!;
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        await this.neo4j.runCypher(
+          `
+          MERGE (pa:Product {productId: $a})
+          MERGE (pb:Product {productId: $b})
+          MERGE (pa)-[r:FREQUENTLY_BOUGHT_WITH]->(pb)
+          ON CREATE SET r.score = 0
+          SET r.score = r.score + 1, r.lastAt = datetime($completedAt)
+          MERGE (pb)-[r2:FREQUENTLY_BOUGHT_WITH]->(pa)
+          ON CREATE SET r2.score = 0
+          SET r2.score = r2.score + 1, r2.lastAt = datetime($completedAt)
+          `,
+          { a: lo, b: hi, completedAt },
+          { timeoutMs: 8_000, op: 'fbt_pair' },
+        );
+      }
+    }
+
+    // Phase 5 — tags dérivés du libellé ligne
+    for (const item of payload.items ?? []) {
+      if (item.itemType !== 'product') continue;
+      const tags = deriveProductTagsFromText([
+        item.label,
+        item.categoryTitle,
+      ]);
+      if (!tags.length) continue;
+      await this.applyProductTags({
+        productId: item.entityId,
+        tags,
+      });
     }
   }
 
@@ -207,20 +249,119 @@ export class GraphSyncService {
   ): Promise<void> {
     await this.ensureConstraints();
     const at = payload.at || new Date().toISOString();
+    // Phase 6 — FOLLOWS = alias social de SUBSCRIBED_TO
     await this.neo4j.runCypher(
       `
       MERGE (u:User {userId: $userId})
       MERGE (s:Store {storeId: $storeId})
       MERGE (u)-[r:SUBSCRIBED_TO]->(s)
       SET r.at = datetime($at)
+      MERGE (u)-[f:FOLLOWS]->(s)
+      SET f.at = datetime($at)
       `,
       {
         userId: payload.userId,
         storeId: payload.storeId,
         at,
       },
-      { timeoutMs: 8_000 },
+      { timeoutMs: 8_000, op: 'store_subscribed' },
     );
+  }
+
+  async applyProductTags(payload: GraphProductTagsPayload): Promise<void> {
+    await this.ensureConstraints();
+    const productId = String(payload.productId ?? '').trim();
+    const tags = (payload.tags ?? [])
+      .map((t) => String(t ?? '').trim().toLowerCase())
+      .filter(Boolean);
+    if (!productId || !tags.length) return;
+    for (const tag of tags) {
+      await this.neo4j.runCypher(
+        `
+        MERGE (p:Product {productId: $productId})
+        MERGE (t:Tag {slug: $tag})
+        MERGE (p)-[:HAS_TAG]->(t)
+        `,
+        { productId, tag },
+        { timeoutMs: 5_000, op: 'product_tag' },
+      );
+    }
+    for (const ing of payload.ingredients ?? []) {
+      const slug = String(ing ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '-')
+        .slice(0, 64);
+      if (!slug) continue;
+      await this.neo4j.runCypher(
+        `
+        MERGE (p:Product {productId: $productId})
+        MERGE (i:Ingredient {slug: $slug})
+        ON CREATE SET i.name = $name
+        MERGE (p)-[:CONTAINS_INGREDIENT]->(i)
+        `,
+        { productId, slug, name: String(ing).trim() },
+        { timeoutMs: 5_000, op: 'product_ingredient' },
+      );
+    }
+  }
+
+  /** Phase 6 — anneaux shipping_zones → Zone + DELIVERS_TO. */
+  async applyStoreZones(payload: GraphStoreZonesPayload): Promise<void> {
+    await this.ensureConstraints();
+    const storeId = String(payload.storeId ?? '').trim();
+    if (!storeId) return;
+    const region = (payload.region ?? '').trim().toUpperCase() || null;
+    await this.neo4j.runCypher(
+      `
+      MERGE (s:Store {storeId: $storeId})
+      FOREACH (_ IN CASE WHEN $region IS NULL THEN [] ELSE [1] END |
+        SET s.region = $region
+      )
+      `,
+      { storeId, region },
+      { timeoutMs: 5_000, op: 'store_zone_meta' },
+    );
+    for (const z of payload.zones ?? []) {
+      const minD = Number(z.minDistance) || 0;
+      const maxD = Number(z.maxDistance) || minD;
+      const zoneId = zoneIdFromShippingRing(storeId, minD, maxD);
+      await this.neo4j.runCypher(
+        `
+        MERGE (s:Store {storeId: $storeId})
+        MERGE (z:Zone {zoneId: $zoneId})
+        SET z.minKm = $minD, z.maxKm = $maxD, z.kind = 'shipping_ring'
+        MERGE (s)-[r:DELIVERS_TO]->(z)
+        SET r.updatedAt = datetime()
+        `,
+        { storeId, zoneId, minD, maxD },
+        { timeoutMs: 5_000, op: 'store_delivers_to' },
+      );
+    }
+  }
+
+  /** Phase 2 — SIMILAR_TO produits via co-FBT. */
+  async recomputeProductSimilarity(
+    payload: GraphProductSimilarityPayload = {},
+  ): Promise<{ pairs: number }> {
+    await this.ensureConstraints();
+    const minShared = Math.max(1, Number(payload.minShared) || 2);
+    const rows = await this.neo4j.runCypher<{ pairs: number }>(
+      `
+      MATCH (a:Product)-[f:FREQUENTLY_BOUGHT_WITH]->(b:Product)
+      WHERE a.productId < b.productId AND f.score >= $minShared
+      MERGE (a)-[r:SIMILAR_TO]->(b)
+      SET r.score = f.score, r.updatedAt = datetime(), r.source = 'fbt'
+      MERGE (b)-[r2:SIMILAR_TO]->(a)
+      SET r2.score = f.score, r2.updatedAt = datetime(), r2.source = 'fbt'
+      RETURN count(*) AS pairs
+      `,
+      { minShared },
+      { timeoutMs: 120_000, op: 'product_similar' },
+    );
+    const pairs = Number(rows[0]?.pairs ?? 0);
+    this.logger.log(`SIMILAR_TO products recomputed pairs≈${pairs}`);
+    return { pairs };
   }
 
   /**

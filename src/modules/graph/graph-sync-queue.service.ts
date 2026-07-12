@@ -3,6 +3,7 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -15,24 +16,34 @@ import {
   parseGraphSyncQueueName,
   shouldEnqueueGraphSync,
 } from '@modules/graphdb-settings/graph-config.util';
+import { GraphMetricsService } from '@modules/neo4j/graph-metrics.service';
 import { JobsOptions, Queue, Worker } from 'bullmq';
 import { GraphSyncService } from './graph-sync.service';
 import {
   GRAPH_JOB_ORDER_COMPLETED,
+  GRAPH_JOB_PRODUCT_TAGS,
+  GRAPH_JOB_RECOMPUTE_PRODUCT_SIMILARITY,
   GRAPH_JOB_RECOMPUTE_STORE_SIMILARITY,
   GRAPH_JOB_SIGNAL_TRACKED,
   GRAPH_JOB_STORE_SUBSCRIBED,
+  GRAPH_JOB_STORE_ZONES,
   type GraphOrderCompletedPayload,
+  type GraphProductSimilarityPayload,
+  type GraphProductTagsPayload,
   type GraphSignalTrackedPayload,
   type GraphStoreSimilarityPayload,
   type GraphStoreSubscribedPayload,
+  type GraphStoreZonesPayload,
 } from './graph-sync.types';
 
 type GraphJobPayload =
   | GraphOrderCompletedPayload
   | GraphSignalTrackedPayload
   | GraphStoreSubscribedPayload
-  | GraphStoreSimilarityPayload;
+  | GraphStoreSimilarityPayload
+  | GraphProductSimilarityPayload
+  | GraphStoreZonesPayload
+  | GraphProductTagsPayload;
 
 @Injectable()
 export class GraphSyncQueueService implements OnModuleInit, OnModuleDestroy {
@@ -45,6 +56,7 @@ export class GraphSyncQueueService implements OnModuleInit, OnModuleDestroy {
     private readonly config: ConfigService,
     private readonly bullRedis: BullmqRedisConnectionsService,
     private readonly sync: GraphSyncService,
+    @Optional() private readonly metrics?: GraphMetricsService,
   ) {}
 
   isEnabled(): boolean {
@@ -73,30 +85,8 @@ export class GraphSyncQueueService implements OnModuleInit, OnModuleDestroy {
         if (!shouldEnqueueGraphSync()) {
           return;
         }
-        switch (job.name) {
-          case GRAPH_JOB_ORDER_COMPLETED:
-            await this.sync.applyOrderCompleted(
-              job.data as GraphOrderCompletedPayload,
-            );
-            break;
-          case GRAPH_JOB_SIGNAL_TRACKED:
-            await this.sync.applySignalTracked(
-              job.data as GraphSignalTrackedPayload,
-            );
-            break;
-          case GRAPH_JOB_STORE_SUBSCRIBED:
-            await this.sync.applyStoreSubscribed(
-              job.data as GraphStoreSubscribedPayload,
-            );
-            break;
-          case GRAPH_JOB_RECOMPUTE_STORE_SIMILARITY:
-            await this.sync.recomputeStoreSimilarity(
-              job.data as GraphStoreSimilarityPayload,
-            );
-            break;
-          default:
-            break;
-        }
+        await this.runDirect(job.name, job.data);
+        this.metrics?.markSyncProcessed();
       },
       this.bullRedis.workerOpts('graph-sync', { concurrency }),
     );
@@ -130,7 +120,6 @@ export class GraphSyncQueueService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  /** Enqueue (ou exécution sync) — no-op si GRAPH_SYNC off. */
   async enqueueOrderCompleted(
     payload: GraphOrderCompletedPayload,
   ): Promise<void> {
@@ -181,13 +170,44 @@ export class GraphSyncQueueService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  async enqueueProductSimilarityRecompute(
+    payload: GraphProductSimilarityPayload = {},
+  ): Promise<void> {
+    if (!shouldEnqueueGraphSync()) return;
+    await this.addOrRun(
+      GRAPH_JOB_RECOMPUTE_PRODUCT_SIMILARITY,
+      payload,
+      bullmqJobId('g-psim', Date.now().toString().slice(0, -5)),
+    );
+  }
+
+  async enqueueStoreZones(payload: GraphStoreZonesPayload): Promise<void> {
+    if (!shouldEnqueueGraphSync()) return;
+    await this.addOrRun(
+      GRAPH_JOB_STORE_ZONES,
+      payload,
+      bullmqJobId('g-zones', payload.storeId),
+    );
+  }
+
+  async enqueueProductTags(payload: GraphProductTagsPayload): Promise<void> {
+    if (!shouldEnqueueGraphSync()) return;
+    await this.addOrRun(
+      GRAPH_JOB_PRODUCT_TAGS,
+      payload,
+      bullmqJobId('g-tags', payload.productId),
+    );
+  }
+
   private async addOrRun(
     name: string,
     data: GraphJobPayload,
     jobId: string,
   ): Promise<void> {
+    this.metrics?.markSyncEnqueued();
     if (!this.queue) {
       await this.runDirect(name, data);
+      this.metrics?.markSyncProcessed();
       return;
     }
     try {
@@ -202,6 +222,7 @@ export class GraphSyncQueueService implements OnModuleInit, OnModuleDestroy {
         } — fallback direct`,
       );
       await this.runDirect(name, data);
+      this.metrics?.markSyncProcessed();
     }
   }
 
@@ -225,6 +246,17 @@ export class GraphSyncQueueService implements OnModuleInit, OnModuleDestroy {
           await this.sync.recomputeStoreSimilarity(
             data as GraphStoreSimilarityPayload,
           );
+          break;
+        case GRAPH_JOB_RECOMPUTE_PRODUCT_SIMILARITY:
+          await this.sync.recomputeProductSimilarity(
+            data as GraphProductSimilarityPayload,
+          );
+          break;
+        case GRAPH_JOB_STORE_ZONES:
+          await this.sync.applyStoreZones(data as GraphStoreZonesPayload);
+          break;
+        case GRAPH_JOB_PRODUCT_TAGS:
+          await this.sync.applyProductTags(data as GraphProductTagsPayload);
           break;
         default:
           break;

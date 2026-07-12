@@ -50,6 +50,10 @@ export function buildGraphOrderCompletedPayload(
       itemType,
       quantity: Math.max(1, Number(line.quantity) || 1),
       price: Number(line.price) || 0,
+      ...(line.label ? { label: String(line.label) } : {}),
+      ...(line.categoryTitle
+        ? { categoryTitle: String(line.categoryTitle) }
+        : {}),
     });
   }
 

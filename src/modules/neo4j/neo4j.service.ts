@@ -3,6 +3,7 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import neo4j, {
   Driver,
@@ -15,6 +16,7 @@ import {
   isNeo4jEnabled,
   parseRecoGraphTimeoutMs,
 } from '@modules/graphdb-settings/graph-config.util';
+import { GraphMetricsService } from './graph-metrics.service';
 
 export type Neo4jHealthState = 'disabled' | 'up' | 'down';
 
@@ -29,6 +31,8 @@ export class Neo4jService implements OnModuleInit, OnModuleDestroy {
   private driver: Driver | null = null;
   private lastHealthy = false;
   private lastProbeAt = 0;
+
+  constructor(@Optional() private readonly metrics?: GraphMetricsService) {}
 
   async onModuleInit(): Promise<void> {
     // Les flags Admin (Mongo) peuvent arriver juste après via GraphdbSettingsService.
@@ -122,10 +126,15 @@ export class Neo4jService implements OnModuleInit, OnModuleDestroy {
   async runCypher<T = Record<string, unknown>>(
     query: string,
     params: Record<string, unknown> = {},
-    opts?: RunCypherOptions,
+    opts?: RunCypherOptions & { op?: string },
   ): Promise<T[]> {
     const driver = await this.ensureDriver();
     if (!driver) {
+      this.metrics?.recordCypher({
+        op: opts?.op ?? 'query',
+        ok: false,
+        latencyMs: 0,
+      });
       throw new Error('neo4j_driver_unavailable');
     }
 
@@ -134,12 +143,14 @@ export class Neo4jService implements OnModuleInit, OnModuleDestroy {
       opts?.database?.trim() ||
       (process.env.NEO4J_DATABASE ?? 'neo4j').trim() ||
       'neo4j';
+    const op = (opts?.op ?? 'query').slice(0, 64);
 
     const sessionConfig: SessionConfig = {
       database,
       defaultAccessMode: neo4j.session.WRITE,
     };
     const session: Session = driver.session(sessionConfig);
+    const t0 = Date.now();
 
     try {
       const result = await Promise.race([
@@ -156,9 +167,19 @@ export class Neo4jService implements OnModuleInit, OnModuleDestroy {
       ]);
       this.lastHealthy = true;
       this.lastProbeAt = Date.now();
+      this.metrics?.recordCypher({
+        op,
+        ok: true,
+        latencyMs: Date.now() - t0,
+      });
       return this.recordsToObjects<T>(result);
     } catch (err) {
       this.lastHealthy = false;
+      this.metrics?.recordCypher({
+        op,
+        ok: false,
+        latencyMs: Date.now() - t0,
+      });
       throw err;
     } finally {
       await session.close();
