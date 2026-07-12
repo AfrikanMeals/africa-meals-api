@@ -126,7 +126,30 @@ export function cleanupFirebaseFunctionsDeploy(apiRoot = path.join(__dirname, '.
     writeFileSync(pkgPath, readFileSync(pkgBackupPath, 'utf8'), 'utf8');
     rmSync(pkgBackupPath, { force: true });
   }
-  rmSync(packagesDir, { recursive: true, force: true });
+
+  // package.json local pointe souvent vers file:packages/* : ne pas laisser
+  // packages/ vide après deploy (casse nest --watch / @africa-meals/proto).
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+  const needsLocalPackages = Object.values(pkg.dependencies ?? {}).some(
+    (v) => typeof v === 'string' && v.startsWith('file:packages/'),
+  );
+  if (needsLocalPackages) {
+    const srcPackages = resolveMonorepoPackagesDir(apiRoot);
+    rmSync(packagesDir, { recursive: true, force: true });
+    mkdirSync(packagesDir, { recursive: true });
+    for (const name of MONOREPO_PACKAGES) {
+      const dest = path.join(packagesDir, name);
+      copyMonorepoPackage(path.join(srcPackages, name), dest);
+      ensureVendoredPackageBuilt(dest);
+    }
+    execSync('npm install --legacy-peer-deps --no-audit --no-fund', {
+      cwd: apiRoot,
+      stdio: 'inherit',
+    });
+  } else {
+    rmSync(packagesDir, { recursive: true, force: true });
+  }
+
   rmSync(envProject, { force: true });
 }
 
