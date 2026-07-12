@@ -304,6 +304,10 @@ export class PendingDeliveryService {
 
     this.emitPendingDeliveryRealtime(order, proof, storeId);
 
+    if (agentId) {
+      this.ordersService.notifyDeliveryAgentPresenceAfterDutyRelease(agentId);
+    }
+
     return {
       proofId: String(proof._id),
       orderId: String(order._id),

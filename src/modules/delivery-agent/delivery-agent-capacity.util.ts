@@ -1,4 +1,5 @@
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
+import { PendingDeliveryProofStatusEnum } from '@schemas/pending-delivery-proof.schema';
 import { defaultDeliveryCapacity } from './delivery-agent-vehicle.util';
 import { Model, Types } from 'mongoose';
 
@@ -6,6 +7,15 @@ export type AgentApplicationCapacitySource = {
   vehicle?: string | null;
   maxConcurrentOrders?: number | null;
 };
+
+/** Preuves « dépôt fait » : le livreur n’a plus la course en navigation active. */
+export const COURIER_DUTY_RELEASED_PROOF_STATUSES: PendingDeliveryProofStatusEnum[] =
+  [
+    PendingDeliveryProofStatusEnum.SUBMITTED,
+    PendingDeliveryProofStatusEnum.CUSTOMER_CONFIRMED,
+    PendingDeliveryProofStatusEnum.CUSTOMER_DISPUTED,
+    PendingDeliveryProofStatusEnum.ADMIN_APPROVED,
+  ];
 
 export function maxConcurrentOrdersFromApplication(
   app: AgentApplicationCapacitySource | null | undefined,
@@ -17,14 +27,89 @@ export function maxConcurrentOrdersFromApplication(
   return defaultDeliveryCapacity(app?.vehicle);
 }
 
+/**
+ * Courses SHIPPED encore à livrer (exclut client-absent déjà déposé / validé).
+ * `ADMIN_REJECTED` reste compté (nouvelle tentative possible).
+ */
 export async function countActiveShippedOrdersForAgent(
   orderModel: Model<OrderModel>,
   agentId: Types.ObjectId,
 ): Promise<number> {
-  return orderModel.countDocuments({
-    assignedDeliveryUser: agentId,
-    shouldShip: true,
-    status: OrderStatusEnum.SHIPPED,
+  const result = await orderModel
+    .aggregate<{ n: number }>([
+      {
+        $match: {
+          assignedDeliveryUser: agentId,
+          shouldShip: true,
+          status: OrderStatusEnum.SHIPPED,
+        },
+      },
+      {
+        $lookup: {
+          from: 'pending_delivery_proofs',
+          localField: 'pending_delivery_proof_id',
+          foreignField: '_id',
+          as: 'proof',
+        },
+      },
+      {
+        $addFields: {
+          proofStatus: { $arrayElemAt: ['$proof.status', 0] },
+        },
+      },
+      {
+        $match: {
+          $or: [
+            { proofStatus: { $exists: false } },
+            { proofStatus: null },
+            {
+              proofStatus: {
+                $nin: COURIER_DUTY_RELEASED_PROOF_STATUSES,
+              },
+            },
+          ],
+        },
+      },
+      { $count: 'n' },
+    ])
+    .exec();
+  return result[0]?.n ?? 0;
+}
+
+export type AgentOrderRowWithProofRef = {
+  pendingDeliveryProofId?: Types.ObjectId | string | null;
+  [key: string]: unknown;
+};
+
+/** Filtre post-query les lignes actives (même règle que le count). */
+export async function filterCourierActiveShippedRows<
+  T extends AgentOrderRowWithProofRef,
+>(
+  orderModel: Model<OrderModel>,
+  rows: T[],
+): Promise<T[]> {
+  if (rows.length === 0) return rows;
+  const proofIds = rows
+    .map((row) => row.pendingDeliveryProofId)
+    .filter((id): id is Types.ObjectId | string => id != null && String(id).length > 0)
+    .map((id) => new Types.ObjectId(String(id)));
+  if (proofIds.length === 0) return rows;
+
+  const released = await orderModel.db
+    .collection('pending_delivery_proofs')
+    .find(
+      {
+        _id: { $in: proofIds },
+        status: { $in: COURIER_DUTY_RELEASED_PROOF_STATUSES },
+      },
+      { projection: { _id: 1 } },
+    )
+    .toArray();
+  const releasedSet = new Set(released.map((doc) => String(doc._id)));
+  return rows.filter((row) => {
+    const pid = row.pendingDeliveryProofId;
+    if (pid == null) return true;
+    return !releasedSet.has(String(pid));
   });
 }
 

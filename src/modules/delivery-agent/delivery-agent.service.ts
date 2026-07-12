@@ -71,6 +71,7 @@ import {
 import {
   agentHasDeliveryCapacity,
   countActiveShippedOrdersForAgent,
+  filterCourierActiveShippedRows,
   maxConcurrentOrdersFromApplication,
 } from './delivery-agent-capacity.util';
 import { courierTrackingExtraFromApplication } from '@modules/dashboard/dashboard-fleet-seed.util';
@@ -1394,7 +1395,7 @@ export class DeliveryAgentService {
         status: OrderStatusEnum.SHIPPED,
       })
       .sort({ updatedAt: -1 })
-      .limit(Math.max(capacity, 1))
+      .limit(Math.max(capacity * 3, 3))
       .populate({
         path: 'store',
         select: 'name currency address',
@@ -1413,7 +1414,12 @@ export class DeliveryAgentService {
       })
       .lean()
       .exec();
-    const items = rows.map((row) =>
+    const activeRows = await filterCourierActiveShippedRows(
+      this._orders,
+      rows as Array<Record<string, unknown> & { pendingDeliveryProofId?: unknown }>,
+    );
+    const capped = activeRows.slice(0, Math.max(capacity, 1));
+    const items = capped.map((row) =>
       this.mapOrderRowForAgent(row as Record<string, unknown>),
     );
     this._logger.debug(

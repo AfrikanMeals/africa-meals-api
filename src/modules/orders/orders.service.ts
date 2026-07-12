@@ -4650,6 +4650,16 @@ export class OrdersService {
     };
   }
 
+  /**
+   * Après dépôt client-absent (commande encore SHIPPED) : recalcule présence livreur
+   * hors course active pour les clients temps réel.
+   */
+  notifyDeliveryAgentPresenceAfterDutyRelease(agentUserId: string): void {
+    const uid = agentUserId?.trim();
+    if (!uid) return;
+    void this._deliveryAgentService.publishPresenceWs(uid, 'order_completed');
+  }
+
   /** Fire-and-forget sync Neo4j (gated GRAPH_SYNC) — fail-open. */
   private enqueueGraphOrderCompleted(
     order: OrderModel,
