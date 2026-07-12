@@ -1,7 +1,7 @@
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { PendingDeliveryProofStatusEnum } from '@schemas/pending-delivery-proof.schema';
 import { defaultDeliveryCapacity } from './delivery-agent-vehicle.util';
-import { Model, Types } from 'mongoose';
+import { Model, Types, type PipelineStage } from 'mongoose';
 
 export type AgentApplicationCapacitySource = {
   vehicle?: string | null;
@@ -44,32 +44,7 @@ export async function countActiveShippedOrdersForAgent(
           status: OrderStatusEnum.SHIPPED,
         },
       },
-      {
-        $lookup: {
-          from: 'pending_delivery_proofs',
-          localField: 'pending_delivery_proof_id',
-          foreignField: '_id',
-          as: 'proof',
-        },
-      },
-      {
-        $addFields: {
-          proofStatus: { $arrayElemAt: ['$proof.status', 0] },
-        },
-      },
-      {
-        $match: {
-          $or: [
-            { proofStatus: { $exists: false } },
-            { proofStatus: null },
-            {
-              proofStatus: {
-                $nin: COURIER_DUTY_RELEASED_PROOF_STATUSES,
-              },
-            },
-          ],
-        },
-      },
+      ...courierActiveDutyLookupStages(),
       { $count: 'n' },
     ])
     .exec();
@@ -78,8 +53,19 @@ export async function countActiveShippedOrdersForAgent(
 
 export type AgentOrderRowWithProofRef = {
   pendingDeliveryProofId?: Types.ObjectId | string | null;
+  pending_delivery_proof_id?: Types.ObjectId | string | null;
   [key: string]: unknown;
 };
+
+/** Lit l’id preuve dépôt (camelCase lean ou snake Mongo). */
+export function pendingDeliveryProofIdFromRow(
+  row: AgentOrderRowWithProofRef,
+): string | null {
+  const raw = row.pendingDeliveryProofId ?? row.pending_delivery_proof_id;
+  if (raw == null) return null;
+  const id = String(raw).trim();
+  return id.length > 0 ? id : null;
+}
 
 /** Filtre post-query les lignes actives (même règle que le count). */
 export async function filterCourierActiveShippedRows<
@@ -90,9 +76,9 @@ export async function filterCourierActiveShippedRows<
 ): Promise<T[]> {
   if (rows.length === 0) return rows;
   const proofIds = rows
-    .map((row) => row.pendingDeliveryProofId)
-    .filter((id): id is Types.ObjectId | string => id != null && String(id).length > 0)
-    .map((id) => new Types.ObjectId(String(id)));
+    .map((row) => pendingDeliveryProofIdFromRow(row))
+    .filter((id): id is string => id != null)
+    .map((id) => new Types.ObjectId(id));
   if (proofIds.length === 0) return rows;
 
   const released = await orderModel.db
@@ -107,10 +93,45 @@ export async function filterCourierActiveShippedRows<
     .toArray();
   const releasedSet = new Set(released.map((doc) => String(doc._id)));
   return rows.filter((row) => {
-    const pid = row.pendingDeliveryProofId;
+    const pid = pendingDeliveryProofIdFromRow(row);
     if (pid == null) return true;
-    return !releasedSet.has(String(pid));
+    return !releasedSet.has(pid);
   });
+}
+
+/**
+ * Stages d’agrégation après `$match` shipped+assigned :
+ * exclut les courses déjà déposées (client absent).
+ */
+export function courierActiveDutyLookupStages(): PipelineStage[] {
+  return [
+    {
+      $lookup: {
+        from: 'pending_delivery_proofs',
+        localField: 'pending_delivery_proof_id',
+        foreignField: '_id',
+        as: 'proof',
+      },
+    },
+    {
+      $addFields: {
+        proofStatus: { $arrayElemAt: ['$proof.status', 0] },
+      },
+    },
+    {
+      $match: {
+        $or: [
+          { proofStatus: { $exists: false } },
+          { proofStatus: null },
+          {
+            proofStatus: {
+              $nin: [...COURIER_DUTY_RELEASED_PROOF_STATUSES],
+            },
+          },
+        ],
+      },
+    },
+  ];
 }
 
 export async function agentHasDeliveryCapacity(

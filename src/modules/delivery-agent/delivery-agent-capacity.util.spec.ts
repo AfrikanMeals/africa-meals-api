@@ -3,6 +3,7 @@ import { PendingDeliveryProofStatusEnum } from '@schemas/pending-delivery-proof.
 import {
   COURIER_DUTY_RELEASED_PROOF_STATUSES,
   maxConcurrentOrdersFromApplication,
+  pendingDeliveryProofIdFromRow,
 } from './delivery-agent-capacity.util';
 
 describe('delivery-agent-capacity.util', () => {
@@ -26,7 +27,13 @@ describe('delivery-agent-capacity.util', () => {
     );
   });
 
-  it('active duty still requires SHIPPED status enum', () => {
-    expect(OrderStatusEnum.SHIPPED).toBe('shipped');
+  it('pendingDeliveryProofIdFromRow lit camel et snake', () => {
+    expect(
+      pendingDeliveryProofIdFromRow({ pendingDeliveryProofId: 'abc' }),
+    ).toBe('abc');
+    expect(
+      pendingDeliveryProofIdFromRow({ pending_delivery_proof_id: 'def' }),
+    ).toBe('def');
+    expect(pendingDeliveryProofIdFromRow({})).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { maxConcurrentOrdersFromApplication } from '@modules/delivery-agent/delivery-agent-capacity.util';
+import { courierActiveDutyLookupStages } from '@modules/delivery-agent/delivery-agent-capacity.util';
 import { resolveDeliveryAgentPresence } from '@modules/delivery-agent/delivery-agent-domain.util';
 import {
   DeliveryAgentApplicationModel,
@@ -49,6 +50,7 @@ export class FleetBootstrapService {
                 status: OrderStatusEnum.SHIPPED,
               },
             },
+            ...courierActiveDutyLookupStages(),
             { $group: { _id: '$assignedDeliveryUser', count: { $sum: 1 } } },
           ])
           .exec();

@@ -1422,6 +1422,13 @@ export class DeliveryAgentService {
       this._orders,
       rows as Array<Record<string, unknown> & { pendingDeliveryProofId?: unknown }>,
     );
+    if (rows.length > 0 && activeRows.length === 0) {
+      this._logger.warn(
+        `[DeliveryTrace] getActiveOrder agent=${agentId.toString()} ` +
+          `${rows.length} shipped assignée(s) exclue(s) (preuve client absent / dépôt) — ` +
+          `ids=[${rows.map((r) => String((r as { _id?: unknown })._id)).join(',')}]`,
+      );
+    }
     const capped = activeRows.slice(0, Math.max(capacity, 1));
     const items = capped.map((row) =>
       this.mapOrderRowForAgent(row as Record<string, unknown>),

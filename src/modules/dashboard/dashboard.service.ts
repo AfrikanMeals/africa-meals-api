@@ -19,6 +19,7 @@ import utc = require('dayjs/plugin/utc');
 import timezone = require('dayjs/plugin/timezone');
 import isoWeek = require('dayjs/plugin/isoWeek');
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
+import { filterCourierActiveShippedRows } from '@modules/delivery-agent/delivery-agent-capacity.util';
 import { ProductModel } from '@schemas/product.schema';
 import { ProductRatingModel } from '@schemas/product_rating.schema';
 import {
@@ -4691,8 +4692,17 @@ export class DashboardService {
     const vendorUnassignTotalByUser = new Map(
       vendorUnassignTotalAgg.map((x) => [String(x._id), x.count]),
     );
-    const activeByUser = new Map<string, (typeof activeOrders)[0]>();
-    for (const o of activeOrders) {
+    const activeDutyOrders = await filterCourierActiveShippedRows(
+      this.orderModel,
+      activeOrders as Array<
+        (typeof activeOrders)[number] & {
+          pendingDeliveryProofId?: unknown;
+          pending_delivery_proof_id?: unknown;
+        }
+      >,
+    );
+    const activeByUser = new Map<string, (typeof activeDutyOrders)[0]>();
+    for (const o of activeDutyOrders) {
       const uid = o.assignedDeliveryUser ? String(o.assignedDeliveryUser) : '';
       if (uid && !activeByUser.has(uid)) activeByUser.set(uid, o);
     }
