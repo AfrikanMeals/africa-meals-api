@@ -964,6 +964,65 @@ export class NotificationsService implements OnModuleInit {
     }
   }
 
+  /**
+   * Inbox + push FCM — offre course exclusive flotte boutique.
+   */
+  async notifyCourierDeliveryOffer(args: {
+    recipientUserId: string;
+    orderId: string;
+    offerId: string;
+    orderRef?: string;
+    storeName?: string;
+    storeId?: string;
+    expiresAt: string;
+    timeoutSec: number;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.recipientUserId)) {
+      return;
+    }
+    const orderId = args.orderId?.trim();
+    const offerId = args.offerId?.trim();
+    if (!orderId || !offerId) return;
+
+    const store = (args.storeName ?? '').trim() || 'Restaurant';
+    const ref =
+      (args.orderRef ?? '').trim() ||
+      `#AE-${orderId.slice(-6).toUpperCase()}`;
+    const title = 'Course proposée';
+    const body = `${store} : acceptez la course ${ref} (${args.timeoutSec}s).`;
+
+    const data: Record<string, unknown> = {
+      type: 'courier_delivery_offer',
+      audience: 'courier',
+      reason: 'delivery_offer',
+      orderId,
+      offerId,
+      orderRef: ref,
+      storeName: store,
+      expiresAt: args.expiresAt,
+      timeoutSec: String(args.timeoutSec),
+    };
+    const storeId = args.storeId?.trim();
+    if (storeId) {
+      data.storeId = storeId;
+    }
+
+    try {
+      await this.createUserScopedNotification({
+        recipientUserId: args.recipientUserId,
+        title,
+        body,
+        type: 'courier_delivery_offer',
+        data,
+        sendPush: true,
+        androidChannelId: 'african_meals_courier_orders',
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`notifyCourierDeliveryOffer: ${msg}`);
+    }
+  }
+
   async notifyVendorDailyMenuMissing(args: {
     recipientUserId: string;
     storeId: string;

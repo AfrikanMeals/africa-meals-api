@@ -49,6 +49,7 @@ import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-em
 import { VendorNotificationModule } from '@modules/vendor-notifications/vendor-notification.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { DeliveryAgentModule } from '@modules/delivery-agent/delivery-agent.module';
+import { DeliveryOrderOfferModule } from '@modules/delivery-order-offer/delivery-order-offer.module';
 import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
 import { RatingsModule } from '@modules/ratings/ratings.module';
 import { PendingDeliveryModule } from '@modules/pending-delivery/pending-delivery.module';
@@ -87,6 +88,7 @@ import { GraphModule } from '@modules/graph/graph.module';
     ProductsModule,
     StripeConnectTransferModule,
     forwardRef(() => DeliveryAgentModule),
+    forwardRef(() => DeliveryOrderOfferModule),
     forwardRef(() => PendingDeliveryModule),
     forwardRef(() => DomainEventHandlersModule),
     RatingsModule,

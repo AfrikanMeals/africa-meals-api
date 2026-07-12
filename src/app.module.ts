@@ -27,6 +27,7 @@ import { OrdersModule } from './modules/orders/orders.module';
 import { SupportChatModule } from './modules/support-chat/support-chat.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { DeliveryAgentModule } from './modules/delivery-agent/delivery-agent.module';
+import { DeliveryOrderOfferModule } from './modules/delivery-order-offer/delivery-order-offer.module';
 import { GraphqlApiModule } from './graphql/graphql.module';
 import { isFastifyHttpAdapter } from './http-adapter.util';
 import { RecommendationsModule } from './modules/recommendations/recommendations.module';
@@ -328,6 +329,7 @@ async function readRedisManagerEnabledAtBootstrap(
     SupportChatModule,
     DashboardModule,
     DeliveryAgentModule,
+    DeliveryOrderOfferModule,
     ...(isFastifyHttpAdapter() ? [] : [GraphqlApiModule]),
     RecommendationsModule,
     PlatformShippingSettingsModule,

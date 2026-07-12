@@ -7,6 +7,7 @@ import { NotificationsModule } from '@modules/notifications/notifications.module
 import { PlatformShippingSettingsModule } from '@modules/platform-shipping-settings/platform-shipping-settings.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/store-delivery-drivers.module';
+import { DeliveryOrderOfferModule } from '@modules/delivery-order-offer/delivery-order-offer.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { FleetModule } from '@modules/fleet/fleet.module';
@@ -42,6 +43,7 @@ import { DeliveryAgentService } from './delivery-agent.service';
     PlatformShippingSettingsModule,
     SupportedCountriesModule,
     StoreDeliveryDriversModule,
+    forwardRef(() => DeliveryOrderOfferModule),
     SubscriptionsModule,
     FleetModule,
     PendingDeliveryModule,

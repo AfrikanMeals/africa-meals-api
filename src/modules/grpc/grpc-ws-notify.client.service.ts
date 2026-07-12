@@ -219,6 +219,7 @@ export class GrpcWsNotifyClientService implements OnModuleDestroy {
       'order/tracking',
       'order/changed',
       'order/staff-broadcast',
+      'order/delivery-offer',
     ]);
     if (orderPaths.has(suffix)) {
       return runRpc('OrderDispatch', payloadJson.length, (cb) =>

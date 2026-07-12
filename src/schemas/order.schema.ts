@@ -257,6 +257,16 @@ export class OrderModel extends BaseSchema {
   })
   pendingDeliveryProofId?: MongooseSchema.Types.ObjectId;
 
+  /** Offre course flotte boutique en cours (cascade AUTO) — exclusivité claim. */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'DeliveryOrderOfferModel',
+    required: false,
+    name: 'active_delivery_offer_id',
+    index: true,
+  })
+  activeDeliveryOfferId?: MongooseSchema.Types.ObjectId;
+
   /** Code motif annulation / refus (`out_of_stock`, `changed_mind`, `other`, …). */
   @Prop({
     required: false,

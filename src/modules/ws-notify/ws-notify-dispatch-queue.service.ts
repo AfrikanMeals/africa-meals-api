@@ -38,6 +38,7 @@ const WS_NOTIFY_SUFFIX_TO_TOPIC = {
   'order/tracking': 'order/tracking',
   'order/changed': 'order/changed',
   'order/staff-broadcast': 'order/staff-broadcast',
+  'order/delivery-offer': 'order/delivery-offer',
   'stripe/connect-status': 'stripe/connect-status',
   'ads-targeting/event': 'ads-targeting/event',
   'ad-manager/event': 'ad-manager/event',
@@ -220,7 +221,8 @@ export class WsNotifyDispatchQueueService
       suffix === 'order/staff-broadcast' ||
       suffix === 'order/changed' ||
       suffix === 'order/update' ||
-      suffix === 'order/tracking';
+      suffix === 'order/tracking' ||
+      suffix === 'order/delivery-offer';
     let mqttPublished = false;
     if (infraSettings.mqBrokerEnabled) {
       mqttPublished = await this.publishViaMqtt(

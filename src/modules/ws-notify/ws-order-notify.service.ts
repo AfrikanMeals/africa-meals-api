@@ -31,6 +31,11 @@ export type OrderWsTrackingPayload = {
   /** Preuve livraison « client absent » — resync admin livraisons en attente. */
   pendingDeliveryProofId?: string;
   pendingDeliveryProofStatus?: string;
+  /** Cascade auto-offer flotte boutique. */
+  deliveryOfferStatus?: 'offered' | 'accepted' | 'exhausted' | 'expired' | 'rejected';
+  deliveryOfferId?: string;
+  deliveryOfferAgentUserId?: string;
+  deliveryOfferExpiresAt?: string;
 };
 
 /**

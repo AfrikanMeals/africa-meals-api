@@ -25,6 +25,7 @@ import { DeliveryAgentDailyPerformanceModel } from '@schemas/delivery-agent-dail
 import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
+import { DeliveryOrderOfferService } from '@modules/delivery-order-offer/delivery-order-offer.service';
 import {
   StoreDeliveryAssignmentModeEnum,
   StoreModel,
@@ -176,6 +177,9 @@ export class DeliveryAgentService {
     @Inject(forwardRef(() => OrdersService))
     private readonly _ordersService: OrdersService,
     private readonly _storeDeliveryDrivers: StoreDeliveryDriversService,
+    @Inject(forwardRef(() => DeliveryOrderOfferService))
+    @Optional()
+    private readonly _deliveryOrderOffers?: DeliveryOrderOfferService,
     private readonly _wsDeliveryAgent: WsDeliveryAgentNotifyService,
     private readonly _fleet: FleetSnapshotService,
     private readonly _fleetAudience: FleetAudienceService,
@@ -1945,6 +1949,14 @@ export class DeliveryAgentService {
     if (!orderDoc.shouldShip) {
       throw new BadRequestException('order_not_shippable');
     }
+
+    if (this._deliveryOrderOffers) {
+      await this._deliveryOrderOffers.assertClaimAllowedDuringOffer(
+        orderId,
+        String(agentId),
+      );
+    }
+
     const existingAssignee = orderDoc.assignedDeliveryUser;
     if (existingAssignee && String(existingAssignee) !== String(agentId)) {
       throw new BadRequestException('order_assigned_to_other');
@@ -2119,6 +2131,16 @@ export class DeliveryAgentService {
           `assignation NON persistée (attendu=${agentId.toString()} ` +
           `obtenu=${persistedAgent})`,
       );
+    } else if (this._deliveryOrderOffers) {
+      void this._deliveryOrderOffers
+        .markAcceptedAfterDirectClaim(orderId, String(agentId))
+        .catch((err) =>
+          this._logger.warn(
+            `markAcceptedAfterDirectClaim: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
     }
 
     const customerId = this.customerUserIdFromOrder(orderDoc);

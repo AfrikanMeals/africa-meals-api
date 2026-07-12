@@ -36,6 +36,7 @@ import {
   PreviewDeliveryHandoffDto,
 } from './dto/confirm-delivery-handoff.dto';
 import { DeliveryAgentService } from './delivery-agent.service';
+import { DeliveryOrderOfferService } from '@modules/delivery-order-offer/delivery-order-offer.service';
 import { SetPartnerBadgeDto } from '@common/partner-badges/dto/set-partner-badge.dto';
 import { AssignStripeConnectDto } from '@modules/store/dto/assign-stripe-connect.dto';
 
@@ -48,6 +49,9 @@ export class DeliveryAgentController {
 
   @Inject(PendingDeliveryService)
   private readonly _pendingDelivery: PendingDeliveryService;
+
+  @Inject(DeliveryOrderOfferService)
+  private readonly _deliveryOffers: DeliveryOrderOfferService;
 
   @Get('application')
   @UseGuards(JwtGuard)
@@ -186,6 +190,49 @@ export class DeliveryAgentController {
     return this._deliveryAgent.assignSelfToOrder(
       req.user as UserModel,
       orderId,
+    );
+  }
+
+  @Get('orders/offers/pending')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Offre course flotte boutique en cours pour le livreur connecté.',
+  })
+  getPendingDeliveryOffer(@Req() req: Request) {
+    return this._deliveryOffers.getPendingOfferForAgent(req.user as UserModel);
+  }
+
+  @Post('orders/:orderId/offers/:offerId/accept')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Accepte une offre course exclusive (auto-dispatch flotte boutique).',
+  })
+  acceptDeliveryOffer(
+    @Req() req: Request,
+    @Param('orderId') orderId: string,
+    @Param('offerId') offerId: string,
+  ) {
+    return this._deliveryOffers.acceptOffer(
+      req.user as UserModel,
+      orderId,
+      offerId,
+    );
+  }
+
+  @Post('orders/:orderId/offers/:offerId/reject')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Refuse une offre course exclusive (passe au livreur suivant).',
+  })
+  rejectDeliveryOffer(
+    @Req() req: Request,
+    @Param('orderId') orderId: string,
+    @Param('offerId') offerId: string,
+  ) {
+    return this._deliveryOffers.rejectOffer(
+      req.user as UserModel,
+      orderId,
+      offerId,
     );
   }
 

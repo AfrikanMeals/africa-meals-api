@@ -114,6 +114,7 @@ import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.servic
 import { domainEventIdFromCourierTracking } from '../../common/domain-events/domain-event-id.util';
 import { GraphSyncQueueService } from '@modules/graph/graph-sync-queue.service';
 import { buildGraphOrderCompletedPayload } from '@modules/graph/graph-order-payload.util';
+import { DeliveryOrderOfferService } from '@modules/delivery-order-offer/delivery-order-offer.service';
 
 import dayjs = require('dayjs');
 import utc = require('dayjs/plugin/utc');
@@ -216,6 +217,10 @@ export class OrdersService {
   @Inject(forwardRef(() => GraphSyncQueueService))
   @Optional()
   private readonly _graphSyncQueue?: GraphSyncQueueService;
+
+  @Inject(forwardRef(() => DeliveryOrderOfferService))
+  @Optional()
+  private readonly _deliveryOrderOffers?: DeliveryOrderOfferService;
 
   /** Expose l’adresse de livraison figée au paiement dans `user.addresses`. */
   static enrichOrdersWithDeliveryAddress(
@@ -2948,6 +2953,18 @@ export class OrdersService {
           }`,
         ),
       );
+
+    if (!isPickup && this._deliveryOrderOffers) {
+      void this._deliveryOrderOffers
+        .startCascadeAfterMarkReady(order)
+        .catch((err) =>
+          this.logger.warn(
+            `auto-offer cascade order=${oid}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
+    }
 
     return { orderId: oid, status: OrderStatusEnum.APPROVED, isPickup };
   }

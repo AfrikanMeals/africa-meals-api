@@ -120,6 +120,15 @@ export const CRON_JOBS_REGISTRY: CronJobDefinition[] = [
     disableEnvKey: 'DISABLE_PENDING_DELIVERY_AUTO_CLOSE_CRON',
   },
   {
+    key: 'delivery_order_offer_expire',
+    label: 'Expiration offres course flotte',
+    description:
+      'Expire les offres auto-dispatch livreur boutique et propose le candidat suivant.',
+    defaultSchedule: '*/15 * * * * *',
+    scheduleEnvKey: 'DELIVERY_ORDER_OFFER_CRON',
+    disableEnvKey: 'DISABLE_DELIVERY_ORDER_OFFER_CRON',
+  },
+  {
     key: 'delivery_agent_payout_settle',
     label: 'Versements livreurs (badge)',
     description:
