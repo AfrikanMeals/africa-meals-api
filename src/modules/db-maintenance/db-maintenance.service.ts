@@ -89,6 +89,7 @@ import {
 import { parseGrpcVersion } from '@africa-meals/proto';
 import type { SystemExchangeResponse, WsGrpcRuntimeStatus } from './system-exchange.types';
 import { MapSettingsService } from '@modules/map-settings/map-settings.service';
+import { Neo4jService } from '@modules/neo4j/neo4j.service';
 import { osmForwardGeocode } from '@common/osm-geocoding.util';
 import { serviceHealthUrl } from '../../common/http/service-health-url.util';
 import {
@@ -97,6 +98,11 @@ import {
   resolveMapboxGeocodingToken,
 } from '@common/mapbox-geocoding.util';
 import { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
+import {
+  isNeo4jUriConfigured,
+  mapNeo4jHealthToSystemCheck,
+} from './neo4j-system-health.util';
+import { isNeo4jEnabled } from '@modules/graphdb-settings/graph-config.util';
 import Stripe = require('stripe');
 import { randomUUID } from 'crypto';
 import { AdminJobEmitterService } from '@modules/admin-jobs/admin-job-emitter.service';
@@ -298,6 +304,12 @@ export class DbMaintenanceService {
       description: 'Vérifie la connectivité MongoDB via ping.',
     },
     {
+      key: 'neo4j-status',
+      label: 'Neo4j status',
+      description:
+        'Vérifie Neo4j (Bolt) + flags GraphDB effectifs (NEO4J / RECO / SYNC).',
+    },
+    {
       key: 'redis-cache-status',
       label: 'Redis cache status',
       description:
@@ -444,6 +456,8 @@ export class DbMaintenanceService {
     @Inject(forwardRef(() => StripeWebhookMetricsService))
     @Optional()
     private readonly stripeWebhookMetrics?: StripeWebhookMetricsService,
+    @Optional()
+    private readonly neo4j?: Neo4jService,
   ) {}
 
   private assertMaintenanceEnabled(): void {
@@ -697,6 +711,8 @@ export class DbMaintenanceService {
     switch (normalized) {
       case 'mongodb-status':
         return this.runMongoHealthCheck();
+      case 'neo4j-status':
+        return this.runNeo4jHealthCheck();
       case 'redis-cache-status':
         return this.runRedisCacheHealthCheck();
       case 'bullmq-redis-status':
@@ -760,6 +776,25 @@ export class DbMaintenanceService {
           details: db
             ? `Connexion initialisée${hint}`
             : 'MongoDB indisponible (connexion non initialisée).',
+        });
+      }
+      case 'neo4j-status': {
+        const uriConfigured = isNeo4jUriConfigured();
+        const enabled = isNeo4jEnabled();
+        return this.normalizeHealthResult({
+          key,
+          label,
+          startedAtMs,
+          status: enabled
+            ? uriConfigured
+              ? 'healthy'
+              : 'down'
+            : 'degraded',
+          details: enabled
+            ? uriConfigured
+              ? `Neo4j activé · URI configurée${hint}`
+              : 'Neo4j activé mais NEO4J_URI manquante.'
+            : `Neo4j désactivé (flags)${hint}`,
         });
       }
       case 'redis-cache-status':
@@ -3905,6 +3940,44 @@ export class DbMaintenanceService {
         startedAtMs,
         status: 'down',
         details: `Erreur ping MongoDB: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      });
+    }
+  }
+
+  private async runNeo4jHealthCheck(): Promise<SystemHealthCheckResult> {
+    const startedAtMs = Date.now();
+    const key = 'neo4j-status';
+    const label = 'Neo4j status';
+    const uriConfigured = isNeo4jUriConfigured();
+    if (!this.neo4j) {
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: 'down',
+        details: 'Neo4jService non injecté (module Neo4j absent).',
+      });
+    }
+    try {
+      await this.neo4j.syncWithRuntimeFlags();
+      const health = await this.neo4j.getHealthState();
+      const mapped = mapNeo4jHealthToSystemCheck({ health, uriConfigured });
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: mapped.status,
+        details: mapped.details,
+      });
+    } catch (e) {
+      return this.normalizeHealthResult({
+        key,
+        label,
+        startedAtMs,
+        status: 'down',
+        details: `Erreur sonde Neo4j: ${
           e instanceof Error ? e.message : String(e)
         }`,
       });

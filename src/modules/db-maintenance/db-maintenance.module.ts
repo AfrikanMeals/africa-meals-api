@@ -52,6 +52,7 @@ import { DbMaintenanceService } from './db-maintenance.service';
 import { GrpcModule } from '@modules/grpc/grpc.module';
 import { GrpcDebugAdminController } from '@modules/grpc/grpc-debug-admin.controller';
 import { MapSettingsModule } from '../map-settings/map-settings.module';
+import { Neo4jModule } from '@modules/neo4j/neo4j.module';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { MapSettingsModule } from '../map-settings/map-settings.module';
     MailerModule,
     OrdersModule,
     MapSettingsModule,
+    Neo4jModule,
     GrpcModule,
     forwardRef(() => BillingModule),
     DomainEventHandlersModule,
