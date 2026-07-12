@@ -144,6 +144,31 @@ export function courierActiveDutyLookupStages(): PipelineStage[] {
   ];
 }
 
+/**
+ * Champs à `$unset` quand une course est (ré)assignée : route publiée par
+ * l’ancien livreur + preuve dépôt « client absent » périmée. Sans cette purge,
+ * une preuve `submitted` d’une tentative précédente exclut immédiatement la
+ * nouvelle course active (perte route/statut mobile + capacité libérée à tort).
+ */
+export function courierClaimStaleStateUnset(): Record<string, 1> {
+  return {
+    courierRoutePolyline: 1,
+    courierRouteFormat: 1,
+    courierRouteLeg: 1,
+    courierRouteDistanceM: 1,
+    courierRouteDurationS: 1,
+    courierRouteUpdatedAt: 1,
+    courier_route_polyline: 1,
+    courier_route_format: 1,
+    courier_route_leg: 1,
+    courier_route_distance_m: 1,
+    courier_route_duration_s: 1,
+    courier_route_updated_at: 1,
+    pendingDeliveryProofId: 1,
+    pending_delivery_proof_id: 1,
+  };
+}
+
 export async function agentHasDeliveryCapacity(
   orderModel: Model<OrderModel>,
   app: AgentApplicationCapacitySource | null | undefined,

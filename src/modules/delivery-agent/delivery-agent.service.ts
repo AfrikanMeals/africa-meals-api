@@ -73,6 +73,7 @@ import {
 import {
   agentHasDeliveryCapacity,
   countActiveShippedOrdersForAgent,
+  courierClaimStaleStateUnset,
   filterCourierActiveShippedRows,
   maxConcurrentOrdersFromApplication,
 } from './delivery-agent-capacity.util';
@@ -2170,20 +2171,7 @@ export class DeliveryAgentService {
         assignedDeliveryUser: agentId,
         status: OrderStatusEnum.SHIPPED,
       },
-      $unset: {
-        courierRoutePolyline: 1,
-        courierRouteFormat: 1,
-        courierRouteLeg: 1,
-        courierRouteDistanceM: 1,
-        courierRouteDurationS: 1,
-        courierRouteUpdatedAt: 1,
-        courier_route_polyline: 1,
-        courier_route_format: 1,
-        courier_route_leg: 1,
-        courier_route_distance_m: 1,
-        courier_route_duration_s: 1,
-        courier_route_updated_at: 1,
-      },
+      $unset: courierClaimStaleStateUnset(),
     };
 
     const claimResult = await this._orders.updateOne(claimFilter, claimUpdate).exec();

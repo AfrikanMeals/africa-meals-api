@@ -58,3 +58,5 @@ scripts/reports/
 
 proxy.yml
 .env.prod
+
+.yarn-cache/

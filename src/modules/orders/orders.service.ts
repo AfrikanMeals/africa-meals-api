@@ -76,6 +76,7 @@ import { LoyaltyService } from '@modules/loyalty/loyalty.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 import { DeliveryAgentService } from '@modules/delivery-agent/delivery-agent.service';
+import { courierClaimStaleStateUnset } from '@modules/delivery-agent/delivery-agent-capacity.util';
 import {
   buildVendorOrderCreatedInboxMessage,
   buildVendorOrderCreatedPushBody,
@@ -3059,6 +3060,9 @@ export class OrdersService {
       order.status = OrderStatusEnum.SHIPPED;
     }
     await order.save();
+    await this._orderModel
+      .updateOne({ _id: order._id }, { $unset: courierClaimStaleStateUnset() })
+      .exec();
 
     const storeId = this.storeIdFromOrderDoc(order);
     const customerId = this.userIdFromOrderDoc(order);

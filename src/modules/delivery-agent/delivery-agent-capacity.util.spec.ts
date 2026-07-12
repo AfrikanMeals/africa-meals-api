@@ -2,6 +2,7 @@ import { PendingDeliveryProofStatusEnum } from '@schemas/pending-delivery-proof.
 import {
   COURIER_DUTY_RELEASED_PROOF_STATUSES,
   courierActiveDutyLookupStages,
+  courierClaimStaleStateUnset,
   maxConcurrentOrdersFromApplication,
   pendingDeliveryProofIdFromRow,
 } from './delivery-agent-capacity.util';
@@ -35,6 +36,15 @@ describe('delivery-agent-capacity.util', () => {
       pendingDeliveryProofIdFromRow({ pending_delivery_proof_id: 'def' }),
     ).toBe('def');
     expect(pendingDeliveryProofIdFromRow({})).toBeNull();
+  });
+
+  it('courierClaimStaleStateUnset purge preuve dépôt ET route (camel + snake)', () => {
+    const unset = courierClaimStaleStateUnset();
+    expect(unset.pendingDeliveryProofId).toBe(1);
+    expect(unset.pending_delivery_proof_id).toBe(1);
+    expect(unset.courierRoutePolyline).toBe(1);
+    expect(unset.courier_route_polyline).toBe(1);
+    expect(unset.courierRouteUpdatedAt).toBe(1);
   });
 
   it('courierActiveDutyLookupStages lit camelCase et snake_case', () => {

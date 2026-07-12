@@ -15,7 +15,6 @@ import { configureApplication } from './configure-app';
 import { httpRateLimitMiddleware } from './common/rate-limit/http-rate-limit.middleware';
 import { RateLimitService } from './common/rate-limit/rate-limit.service';
 import { httpDryRunMiddleware } from './common/http/dry-run.middleware';
-import { isFastifyHttpAdapter } from './http-adapter.util';
 import { registerFastifyBodyParsing } from './register-fastify-body-parsing';
 
 async function bootstrap() {
@@ -46,11 +45,8 @@ async function bootstrap() {
   const port = Number(process.env.NODE_PORT || process.env.PORT || 3000);
   await app.listen(port, '0.0.0.0');
   applyHttpServerTimeouts(app.getHttpServer());
-  const graphqlNote = isFastifyHttpAdapter()
-    ? ' — GraphQL désactivé (PR2 : @apollo/server + Fastify 4)'
-    : '';
   console.warn(
-    `🚀 API (Fastify): http://0.0.0.0:${port}/api (docs: /api/docs, health: /api/health)${graphqlNote}`,
+    `🚀 API (Fastify): http://0.0.0.0:${port}/api (docs: /api/docs, health: /api/health, graphql: /api/graphql via Mercurius)`,
   );
 }
 bootstrap();

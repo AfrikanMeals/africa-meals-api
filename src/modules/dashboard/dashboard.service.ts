@@ -114,6 +114,7 @@ import {
 import {
   agentHasDeliveryCapacity,
   countActiveShippedOrdersForAgent,
+  courierClaimStaleStateUnset,
 } from '@modules/delivery-agent/delivery-agent-capacity.util';
 import { resolveDashboardLivreurAvatar } from './dashboard-livreur-avatar.util';
 
@@ -4175,6 +4176,12 @@ export class DashboardService {
 
     orderDoc.set('assignedDeliveryUser', agentOid);
     await orderDoc.save();
+    await this.orderModel
+      .updateOne(
+        { _id: orderDoc._id },
+        { $unset: courierClaimStaleStateUnset() },
+      )
+      .exec();
 
     const agentName = deliveryUser.fullName?.trim() || 'Livreur app';
     const customerId = this.customerUserIdForOrderPush(orderDoc);
@@ -4371,6 +4378,12 @@ export class DashboardService {
     orderDoc.set('assignedDeliveryUser', agentOid);
     orderDoc.status = OrderStatusEnum.SHIPPED;
     await orderDoc.save();
+    await this.orderModel
+      .updateOne(
+        { _id: orderDoc._id },
+        { $unset: courierClaimStaleStateUnset() },
+      )
+      .exec();
 
     const persistedAssign = await this.orderModel
       .findById(orderOid)
