@@ -177,13 +177,13 @@ export class DeliveryAgentService {
     @Inject(forwardRef(() => OrdersService))
     private readonly _ordersService: OrdersService,
     private readonly _storeDeliveryDrivers: StoreDeliveryDriversService,
-    @Inject(forwardRef(() => DeliveryOrderOfferService))
-    @Optional()
-    private readonly _deliveryOrderOffers?: DeliveryOrderOfferService,
     private readonly _wsDeliveryAgent: WsDeliveryAgentNotifyService,
     private readonly _fleet: FleetSnapshotService,
     private readonly _fleetAudience: FleetAudienceService,
     private readonly _subscriptions: SubscriptionsService,
+    @Inject(forwardRef(() => DeliveryOrderOfferService))
+    @Optional()
+    private readonly _deliveryOrderOffers?: DeliveryOrderOfferService,
     @Optional()
     private readonly _domainPublisher?: DomainEventPublisherService,
   ) {}
@@ -2411,6 +2411,13 @@ export class DeliveryAgentService {
     this.assertDeliveryAgent(user);
     const page = parseDeliveryHistoryPage(query?.page);
     const take = parseDeliveryHistoryTake(query?.take, 20);
+    const statusKey = (query?.status ?? '').trim().toLowerCase();
+
+    // Onglet « En attente » : courses actives assignées + file claimable (comme la carte).
+    if (statusKey === 'pending') {
+      return this.listPendingDeliveryHistoryTab(user, { page, take });
+    }
+
     const statuses = resolveDeliveryHistoryStatusFilter(query?.status);
     const { items, hasMore } = await this.loadAgentDeliveryHistory(user, {
       limit: take,
@@ -2418,6 +2425,94 @@ export class DeliveryAgentService {
       statuses,
     });
     return { items, page, take, hasMore };
+  }
+
+  /**
+   * Onglet historique pending : SHIPPED assignés + packages unassigned éligibles.
+   */
+  private async listPendingDeliveryHistoryTab(
+    user: UserModel,
+    opts: { page: number; take: number },
+  ) {
+    const [{ items: activeItems }, pendingPool] = await Promise.all([
+      this.loadAgentDeliveryHistory(user, {
+        limit: 100,
+        skip: 0,
+        statuses: [OrderStatusEnum.SHIPPED],
+      }),
+      this.listPendingOrders(user),
+    ]);
+
+    const settingsCache = new Map<
+      string,
+      Awaited<ReturnType<PlatformShippingSettingsService['getPublicSettings']>>
+    >();
+    const resolveSettings = async (regionCode?: string) => {
+      const key = regionCode?.trim().toUpperCase() || '__global__';
+      let cached = settingsCache.get(key);
+      if (!cached) {
+        cached = await this._platformShipping.getPublicSettings(
+          key === '__global__' ? undefined : key,
+        );
+        settingsCache.set(key, cached);
+      }
+      return cached;
+    };
+
+    const poolItems = await Promise.all(
+      (pendingPool.items ?? []).map(async (mapped) => {
+        const shippingCad = Number(mapped.shippingPriceCad) || 0;
+        const currency = String(mapped.currency ?? 'CAD');
+        const regionCode = resolvePlatformShippingRegionCode([
+          user.appCountryCode,
+        ]);
+        const settings = await resolveSettings(regionCode);
+        const {
+          driverEarning: driverEarningCad,
+          platformWithheld: platformWithheldCad,
+        } = this.computeDriverEarningBreakdown(shippingCad, settings);
+        return {
+          id: mapped.id,
+          orderRef: mapped.orderRef,
+          storeName: mapped.storeName ?? null,
+          customerName: mapped.customerName ?? null,
+          shippingAddress: mapped.shippingAddress ?? null,
+          distanceKm: mapped.distanceKm ?? null,
+          currency,
+          shippingPriceCad: shippingCad,
+          platformWithheldCad,
+          driverEarningCad,
+          stripeProcessingFeeCad: 0,
+          stripeTransferAmountCad: 0,
+          stripeTransferId: null as string | null,
+          payoutStatus: 'estimated',
+          deliveryTipCents: 0,
+          deliveryTipStatus: 'none',
+          driverTipEarningCad: 0,
+          driverTotalEarningCad: driverEarningCad,
+          status: String(mapped.status ?? OrderStatusEnum.APPROVED),
+          completedAt: null as string | null,
+          claimable: true,
+        };
+      }),
+    );
+
+    const activeIds = new Set(activeItems.map((i) => String(i.id)));
+    const merged = [
+      ...activeItems.map((i) => ({ ...i, claimable: false })),
+      ...poolItems.filter((i) => !activeIds.has(String(i.id))),
+    ];
+
+    const skip = (opts.page - 1) * opts.take;
+    const pageRows = merged.slice(skip, skip + opts.take);
+    const hasMore = skip + opts.take < merged.length;
+
+    return {
+      items: pageRows,
+      page: opts.page,
+      take: opts.take,
+      hasMore,
+    };
   }
 
   /** Admin — synthèse performance + gains + Stripe pour un livreur approuvé. */
@@ -3116,6 +3211,7 @@ export class DeliveryAgentService {
         .trim()
         .toUpperCase() || null,
       shouldShip: row.shouldShip === true,
+      status: String(row.status ?? '').trim().toLowerCase() || null,
     };
   }
 

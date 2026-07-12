@@ -7,7 +7,7 @@ import {
 
 describe('delivery-agent-history.util', () => {
   describe('resolveDeliveryHistoryStatusFilter', () => {
-    it('maps pending → shipped', () => {
+    it('maps pending → shipped (legacy filter ; tab merges claimable pool in service)', () => {
       expect(resolveDeliveryHistoryStatusFilter('pending')).toEqual([
         OrderStatusEnum.SHIPPED,
       ]);

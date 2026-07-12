@@ -18,7 +18,10 @@ import {
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { OrdersService } from '@modules/orders/orders.service';
 import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
-import { StoreDeliveryAssignmentModeEnum } from '@schemas/store.schema';
+import {
+  StoreDeliveryAssignmentModeEnum,
+  StoreModel,
+} from '@schemas/store.schema';
 import {
   DeliveryAgentApplicationModel,
   DeliveryAgentApplicationStatus,
@@ -28,7 +31,6 @@ import {
   DeliveryOrderOfferStatus,
 } from '@schemas/delivery-order-offer.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
-import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { WsDeliveryOfferNotifyService } from '@modules/ws-notify/ws-delivery-offer-notify.service';

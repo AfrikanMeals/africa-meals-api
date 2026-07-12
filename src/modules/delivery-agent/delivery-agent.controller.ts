@@ -104,7 +104,8 @@ export class DeliveryAgentController {
   @UseGuards(JwtGuard)
   @ApiOperation({
     summary:
-      'Historique livraisons assignées au livreur. Query status=pending|cancelled|approved, page, take.',
+      'Historique livraisons assignées au livreur. Query status=pending|cancelled|approved, page, take. '
+      'pending = courses actives (shipped) + packages claimables (file carte).',
   })
   listDeliveryHistory(
     @Req() req: Request,
