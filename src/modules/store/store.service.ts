@@ -24,6 +24,7 @@ import {
 } from '@modules/supported-countries/region-timezone.util';
 import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
 import { UsersService } from '@modules/users/users.service';
+import { GraphSyncQueueService } from '@modules/graph/graph-sync-queue.service';
 import {
   AppCacheKeys,
   apiPublicCacheTtlMs,
@@ -38,6 +39,8 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -114,6 +117,10 @@ import { StoreLaunchNotifierService } from './store-launch-notifier.service';
 @Injectable()
 export class StoreService {
   private readonly _logger = new Logger(StoreService.name);
+
+  @Inject(GraphSyncQueueService)
+  @Optional()
+  private readonly _graphSyncQueue?: GraphSyncQueueService;
 
   private assertVendorStripeConnectReadyForWrites(user: UserModel): void {
     if (user.type !== UserTypeEnum.VENDOR) return;
@@ -2194,6 +2201,25 @@ export class StoreService {
       (user._id as { toString(): string }).toString(),
     );
     await this._invalidatePublicCatalogCachesForStore(targetId);
+    if (this._graphSyncQueue) {
+      const region = String((store as { region?: string }).region ?? '')
+        .trim()
+        .toUpperCase();
+      void this._graphSyncQueue
+        .enqueueStoreZones({
+          storeId: String(store._id),
+          ...(region ? { region } : {}),
+          zones: (shippingZones as Array<{
+            minDistance?: number;
+            maxDistance?: number;
+          }>).map((z) => ({
+            minDistance: Number(z.minDistance) || 0,
+            maxDistance: Number(z.maxDistance) || 0,
+          })),
+        })
+        .catch(() => undefined);
+    }
+
     return this.findMyStoreSummary(user, targetId);
   }
 

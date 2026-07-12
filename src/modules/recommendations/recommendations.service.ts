@@ -215,6 +215,7 @@ export class RecommendationsService {
     products: Record<string, unknown>[];
     stores: Record<string, unknown>[];
     drinks: Record<string, unknown>[];
+    frequentlyBoughtTogether: Record<string, unknown>[];
   }> {
     const take = Math.min(48, Math.max(4, parseInt(takeRaw ?? '24', 10) || 24));
     const clientRegion =
@@ -250,6 +251,7 @@ export class RecommendationsService {
     products: Record<string, unknown>[];
     stores: Record<string, unknown>[];
     drinks: Record<string, unknown>[];
+    frequentlyBoughtTogether: Record<string, unknown>[];
   }> {
     const poolLimit = Math.min(120, Math.max(take * 4, 60));
 
@@ -509,7 +511,87 @@ export class RecommendationsService {
       });
     }
 
-    return { products, stores, drinks };
+    let frequentlyBoughtTogether: Record<string, unknown>[] = [];
+    if (userOid && this._recoFacade) {
+      const fbtIds = await this._recoFacade.personalizedFbtProductIdsOrNull({
+        userId: userOid.toHexString(),
+        limit: 12,
+      });
+      if (fbtIds?.length) {
+        const byId = new Map(
+          candidates.map((p) => [String(p.id ?? p._id ?? ''), p]),
+        );
+        for (const id of fbtIds) {
+          const hit = byId.get(id);
+          if (hit) frequentlyBoughtTogether.push(hit);
+          if (frequentlyBoughtTogether.length >= 12) break;
+        }
+        if (frequentlyBoughtTogether.length < Math.min(4, fbtIds.length)) {
+          const missing = fbtIds.filter((id) => !byId.has(id)).slice(0, 12);
+          const extra = await this._activeProductsByIds(missing, clientRegion);
+          frequentlyBoughtTogether = [
+            ...frequentlyBoughtTogether,
+            ...extra,
+          ].slice(0, 12);
+        }
+      }
+    }
+
+    return { products, stores, drinks, frequentlyBoughtTogether };
+  }
+
+  private async _activeProductsByIds(
+    ids: string[],
+    clientRegion: string,
+  ): Promise<Record<string, unknown>[]> {
+    const oids = ids
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    if (!oids.length) return [];
+    const rows = await this._productModel
+      .find({
+        _id: { $in: oids },
+        status: ProductStatusEnum.ACTIVE,
+      })
+      .populate({
+        path: 'store',
+        select: 'name profileImage currency region status acceptsOrders',
+      })
+      .lean()
+      .exec();
+    const byId = new Map(rows.map((r) => [String(r._id), r]));
+    const out: Record<string, unknown>[] = [];
+    for (const id of ids) {
+      const row = byId.get(id) as Record<string, unknown> | undefined;
+      if (!row) continue;
+      const store = row.store as Record<string, unknown> | undefined;
+      if (clientRegion && store) {
+        const region = String(
+          store.region ?? store.regionCode ?? '',
+        )
+          .trim()
+          .toUpperCase();
+        if (region && region !== clientRegion.toUpperCase()) continue;
+      }
+      out.push({
+        id: String(row._id),
+        _id: row._id,
+        title: row.title,
+        bio: row.bio,
+        price: row.price,
+        pictures: row.pictures,
+        store: store
+          ? {
+              id: String(store._id ?? store.id ?? ''),
+              name: store.name,
+              currency: store.currency,
+            }
+          : undefined,
+        averageRating: row.averageRating,
+        likesCount: Array.isArray(row.likedBy) ? row.likedBy.length : 0,
+      });
+    }
+    return out;
   }
 
   private _readRegionalTrendStoreIds(

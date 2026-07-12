@@ -1,10 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Neo4jService } from '@modules/neo4j/neo4j.service';
+import { deriveProductTagsFromText, zoneIdFromShippingRing } from './graph-knowledge.util';
 import type {
   GraphOrderCompletedPayload,
+  GraphProductSimilarityPayload,
+  GraphProductTagsPayload,
   GraphSignalTrackedPayload,
   GraphStoreSimilarityPayload,
   GraphStoreSubscribedPayload,
+  GraphStoreZonesPayload,
 } from './graph-sync.types';
 
 const CONSTRAINTS_CYPHER = `

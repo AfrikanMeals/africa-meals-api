@@ -21,6 +21,7 @@ import { BusinessTypesModule } from '@modules/business-types/business-types.modu
 import { AuthModule } from '@modules/auth/auth.module';
 import { DashboardAuditModule } from '@modules/dashboard-audit/dashboard-audit.module';
 import { PublicSeoModule } from '@modules/public-seo/public-seo.module';
+import { GraphModule } from '@modules/graph/graph.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -67,6 +68,7 @@ import { StoreSubscribersModule } from '@modules/store-subscribers/store-subscri
     StoreRegionBackfillService,
   ],
   imports: [
+    GraphModule,
     AuthModule,
     NotificationsModule,
     WsNotifyModule,

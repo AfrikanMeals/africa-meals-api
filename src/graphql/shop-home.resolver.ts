@@ -64,6 +64,7 @@ export class ShopHomeResolver {
         products: rec.products,
         stores: rec.stores,
         drinks: rec.drinks,
+        frequentlyBoughtTogether: rec.frequentlyBoughtTogether ?? [],
       },
     };
   }

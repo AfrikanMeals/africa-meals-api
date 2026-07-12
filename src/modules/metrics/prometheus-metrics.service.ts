@@ -5,6 +5,7 @@ import { Connection } from 'mongoose';
 import { GrpcWsNotifyMetricsService } from '@modules/grpc/grpc-ws-notify.metrics.service';
 import { RequestStatsPrometheusAggregator } from '@modules/request-stats/request-stats-prometheus.aggregator';
 import { RequestStatsStore } from '@modules/request-stats/request-stats.store';
+import { GraphMetricsService } from '@modules/neo4j/graph-metrics.service';
 
 function escLabel(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
@@ -41,6 +42,8 @@ export class PrometheusMetricsService {
     private readonly requestStatsPrometheus?: RequestStatsPrometheusAggregator,
     @Optional()
     private readonly grpcClientMetrics?: GrpcWsNotifyMetricsService,
+    @Optional()
+    private readonly graphMetrics?: GraphMetricsService,
     @Optional() @InjectConnection() private readonly mongoose?: Connection,
   ) {}
 
@@ -91,6 +94,10 @@ export class PrometheusMetricsService {
     if (this.requestStatsPrometheus) {
       lines.push(...this.requestStatsPrometheus.render('api', pod));
     }
+    if (this.graphMetrics) {
+      lines.push(...this.graphMetrics.renderPrometheus(pod));
+    }
+
     if (this.grpcClientMetrics) {
       lines.push(...this.grpcClientMetrics.renderPrometheus('api', pod));
       const snap = this.grpcClientMetrics.snapshot();

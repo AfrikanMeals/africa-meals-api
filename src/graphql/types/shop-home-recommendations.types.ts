@@ -1,7 +1,7 @@
 import { Field, ObjectType } from '@nestjs/graphql';
 import { GraphQLJSONObject } from 'graphql-scalars';
 
-/** Même forme que `GET /api/recommendations/feed` (produits / boutiques / boissons). */
+/** Même forme que `GET /api/recommendations/feed` (produits / boutiques / boissons / FBT). */
 @ObjectType({
   description: 'Fil recommandations aligné sur le REST `recommendations/feed`.',
 })
@@ -14,4 +14,8 @@ export class ShopHomeRecommendationsGql {
 
   @Field(() => [GraphQLJSONObject])
   drinks: Record<string, unknown>[];
+
+  /** Phase 2 — Frequently Bought Together (Home). */
+  @Field(() => [GraphQLJSONObject], { nullable: true })
+  frequentlyBoughtTogether?: Record<string, unknown>[];
 }

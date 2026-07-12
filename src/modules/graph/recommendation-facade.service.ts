@@ -4,7 +4,9 @@ import {
   parseRecoGraphTimeoutMs,
   shouldUseGraphRecommendations,
 } from '@modules/graphdb-settings/graph-config.util';
+import { GraphMetricsService } from '@modules/neo4j/graph-metrics.service';
 import { Neo4jService } from '@modules/neo4j/neo4j.service';
+import { Optional } from '@nestjs/common';
 import { GraphRecommendationService } from './graph-recommendation.service';
 
 /**
@@ -17,11 +19,9 @@ export class RecommendationFacade {
   constructor(
     private readonly neo4j: Neo4jService,
     private readonly graphReco: GraphRecommendationService,
+    @Optional() private readonly metrics?: GraphMetricsService,
   ) {}
 
-  /**
-   * @returns storeIds Neo4j ou `null` pour fail-open Mongo.
-   */
   async personalizedStoreIdsOrNull(opts: {
     userId?: string | null;
     region?: string;
@@ -29,9 +29,10 @@ export class RecommendationFacade {
   }): Promise<string[] | null> {
     const userId = String(opts.userId ?? '').trim();
     if (!userId) return null;
-
-    // Flags Admin/env d’abord — évite d’ouvrir le driver si reco off.
-    if (!isRecoGraphEnabled()) return null;
+    if (!isRecoGraphEnabled()) {
+      this.metrics?.recordRecoFallback('reco_flag_off');
+      return null;
+    }
 
     let neo4jHealthy = false;
     try {
@@ -41,6 +42,9 @@ export class RecommendationFacade {
     }
 
     if (!shouldUseGraphRecommendations({ neo4jHealthy })) {
+      this.metrics?.recordRecoFallback(
+        neo4jHealthy ? 'gate' : 'neo4j_unhealthy',
+      );
       return null;
     }
 
@@ -59,13 +63,88 @@ export class RecommendationFacade {
           ),
         ),
       ]);
+      this.metrics?.recordRecoHit();
       return ids;
     } catch (err) {
+      this.metrics?.recordRecoFallback(
+        err instanceof Error ? err.message : 'error',
+      );
       this.logger.debug(
         `graph reco fail-open: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
+      return null;
+    }
+  }
+
+  async personalizedFbtProductIdsOrNull(opts: {
+    userId?: string | null;
+    limit?: number;
+  }): Promise<string[] | null> {
+    const userId = String(opts.userId ?? '').trim();
+    if (!userId || !isRecoGraphEnabled()) return null;
+    const healthy = await this.neo4j.ensureHealthy().catch(() => false);
+    if (!shouldUseGraphRecommendations({ neo4jHealthy: healthy })) {
+      this.metrics?.recordRecoFallback('fbt_unhealthy');
+      return null;
+    }
+    try {
+      const ids = await this.graphReco.personalizedFbtProductIds(
+        userId,
+        opts.limit ?? 12,
+      );
+      if (ids.length) this.metrics?.recordRecoHit();
+      return ids;
+    } catch (err) {
+      this.metrics?.recordRecoFallback('fbt_error');
+      this.logger.debug(
+        `FBT fail-open: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
+  async relatedProductsOrNull(opts: {
+    productId: string;
+    limit?: number;
+  }): Promise<{
+    frequentlyBoughtWith: Array<{ productId: string; score: number }>;
+    similar: Array<{ productId: string; score: number }>;
+  } | null> {
+    if (!isRecoGraphEnabled()) return null;
+    const healthy = await this.neo4j.ensureHealthy().catch(() => false);
+    if (!shouldUseGraphRecommendations({ neo4jHealthy: healthy })) return null;
+    const limit = opts.limit ?? 8;
+    try {
+      const [frequentlyBoughtWith, similar] = await Promise.all([
+        this.graphReco.frequentlyBoughtWith(opts.productId, limit),
+        this.graphReco.similarProductIds(opts.productId, limit),
+      ]);
+      this.metrics?.recordRecoHit();
+      return { frequentlyBoughtWith, similar };
+    } catch {
+      this.metrics?.recordRecoFallback('related_error');
+      return null;
+    }
+  }
+
+  async knowledgeProductIdsOrNull(opts: {
+    tag: string;
+    region?: string;
+    limit?: number;
+  }): Promise<string[] | null> {
+    if (!isRecoGraphEnabled()) return null;
+    const healthy = await this.neo4j.ensureHealthy().catch(() => false);
+    if (!shouldUseGraphRecommendations({ neo4jHealthy: healthy })) return null;
+    try {
+      return await this.graphReco.productIdsByTag(
+        opts.tag,
+        opts.region ?? '',
+        opts.limit ?? 24,
+      );
+    } catch {
+      this.metrics?.recordRecoFallback('knowledge_error');
       return null;
     }
   }

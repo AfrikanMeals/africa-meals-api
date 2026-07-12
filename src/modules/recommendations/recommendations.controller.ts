@@ -1,10 +1,12 @@
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import { OptionalAuthGuard } from '@modules/auth/guards/optional.auth.guard';
+import { RecommendationFacade } from '@modules/graph/recommendation-facade.service';
 import {
   Body,
   Controller,
   Get,
   HttpCode,
+  Param,
   Post,
   Query,
   Req,
@@ -20,7 +22,10 @@ import { RecommendationsService } from './recommendations.service';
 @ApiTags('recommendations')
 @Controller('recommendations')
 export class RecommendationsController {
-  constructor(private readonly _svc: RecommendationsService) {}
+  constructor(
+    private readonly _svc: RecommendationsService,
+    private readonly _facade: RecommendationFacade,
+  ) {}
 
   @Get('feed')
   @UseGuards(OptionalAuthGuard)
@@ -32,8 +37,66 @@ export class RecommendationsController {
     products: Record<string, unknown>[];
     stores: Record<string, unknown>[];
     drinks: Record<string, unknown>[];
+    frequentlyBoughtTogether: Record<string, unknown>[];
   }> {
-    return this._svc.getFeed(req.user as UserModel | undefined, take, undefined, countryCode);
+    return this._svc.getFeed(
+      req.user as UserModel | undefined,
+      take,
+      undefined,
+      countryCode,
+    );
+  }
+
+  /** Phase 2 — FBT + similar (IDs Neo4j ; enrichir côté client ou Mongo). */
+  @Get('products/:id/related')
+  @UseGuards(OptionalAuthGuard)
+  async relatedProducts(
+    @Param('id') id: string,
+    @Query('limit') limitRaw?: string,
+  ): Promise<{
+    frequentlyBoughtWith: Array<{ productId: string; score: number }>;
+    similar: Array<{ productId: string; score: number }>;
+    source: 'neo4j' | 'empty';
+  }> {
+    const limit = Math.min(24, Math.max(1, parseInt(limitRaw ?? '8', 10) || 8));
+    const related = await this._facade.relatedProductsOrNull({
+      productId: id,
+      limit,
+    });
+    if (!related) {
+      return {
+        frequentlyBoughtWith: [],
+        similar: [],
+        source: 'empty',
+      };
+    }
+    return { ...related, source: 'neo4j' };
+  }
+
+  /**
+   * Phase 5 — knowledge graph lecture (tags).
+   * Toujours valider stock/prix via Mongo avant checkout.
+   */
+  @Get('knowledge/search')
+  @UseGuards(OptionalAuthGuard)
+  async knowledgeSearch(
+    @Query('tag') tag: string,
+    @Query('region') region?: string,
+    @Query('limit') limitRaw?: string,
+  ): Promise<{ productIds: string[]; source: 'neo4j' | 'empty' }> {
+    const limit = Math.min(
+      48,
+      Math.max(1, parseInt(limitRaw ?? '24', 10) || 24),
+    );
+    const ids = await this._facade.knowledgeProductIdsOrNull({
+      tag: tag ?? '',
+      region,
+      limit,
+    });
+    return {
+      productIds: ids ?? [],
+      source: ids?.length ? 'neo4j' : 'empty',
+    };
   }
 
   @Post('track')
