@@ -52,6 +52,7 @@ import { DeliveryAgentModule } from '@modules/delivery-agent/delivery-agent.modu
 import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
 import { RatingsModule } from '@modules/ratings/ratings.module';
 import { PendingDeliveryModule } from '@modules/pending-delivery/pending-delivery.module';
+import { GraphModule } from '@modules/graph/graph.module';
 
 @Module({
   controllers: [OrdersController],
@@ -89,6 +90,7 @@ import { PendingDeliveryModule } from '@modules/pending-delivery/pending-deliver
     forwardRef(() => PendingDeliveryModule),
     forwardRef(() => DomainEventHandlersModule),
     RatingsModule,
+    GraphModule,
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       {

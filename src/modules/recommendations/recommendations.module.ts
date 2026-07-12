@@ -5,6 +5,7 @@ import { SearchSettingsModule } from '@modules/search-settings/search-settings.m
 import { StoreSubscribersModule } from '@modules/store-subscribers/store-subscribers.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
+import { GraphModule } from '@modules/graph/graph.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { DrinkModel, DrinkSchema } from '@schemas/drink.schema';
@@ -41,6 +42,7 @@ import { RecommendationsService } from './recommendations.service';
     SubscriptionsModule,
     StoreSubscribersModule,
     SupportedCountriesModule,
+    GraphModule,
     MongooseModule.forFeature([
       {
         name: UserRecommendationSignalModel.name,

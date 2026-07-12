@@ -9,7 +9,7 @@ import {
   normalizeCountryCode,
   storeDirectRegionMatch,
 } from '@modules/supported-countries/client-market-region.util';
-import { BadRequestException, Injectable, Inject } from '@nestjs/common';
+import { BadRequestException, Injectable, Inject, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import {
@@ -37,6 +37,8 @@ import {
   searchTermToRefObjectId,
 } from '@utils/recommendation-search.util';
 import { TrackRecommendationDto } from './dto/track-recommendation.dto';
+import { RecommendationFacade } from '@modules/graph/recommendation-facade.service';
+import { GraphSyncQueueService } from '@modules/graph/graph-sync-queue.service';
 
 const PAID_LIKE_STATUSES: OrderStatusEnum[] = [
   OrderStatusEnum.PAIED,
@@ -71,6 +73,10 @@ export class RecommendationsService {
     private readonly _trainingSnapshotModel: Model<RecommendationTrainingSnapshotModel>,
     @InjectModel(UserRecommendationDigestModel.name)
     private readonly _userDigestModel: Model<UserRecommendationDigestModel>,
+    @Optional()
+    private readonly _recoFacade?: RecommendationFacade,
+    @Optional()
+    private readonly _graphSyncQueue?: GraphSyncQueueService,
   ) {}
 
   private _userOid(user?: UserModel): Types.ObjectId | null {
@@ -146,6 +152,24 @@ export class RecommendationsService {
     void this._cacheLayer.bustRecommendationFeedsForUser(
       cacheUserScope(user),
     );
+
+    if (this._graphSyncQueue) {
+      const kind =
+        dto.kind === UserRecommendationSignalKind.STORE_VIEW
+          ? 'store_view'
+          : dto.kind === UserRecommendationSignalKind.SEARCH_QUERY
+            ? 'search_query'
+            : 'product_view';
+      void this._graphSyncQueue
+        .enqueueSignalTracked({
+          userId: userOid.toHexString(),
+          kind,
+          refId: refOid.toHexString(),
+          ...(searchStored != null ? { searchTerm: searchStored } : {}),
+          at: new Date().toISOString(),
+        })
+        .catch(() => undefined);
+    }
   }
 
   /** Bust feeds reco pour un user (order completed, etc.). */
@@ -430,9 +454,26 @@ export class RecommendationsService {
       clientRegion,
     );
 
+    let graphBoostStores: string[] = [];
+    if (userOid && this._recoFacade) {
+      const graphIds = await this._recoFacade.personalizedStoreIdsOrNull({
+        userId: userOid.toHexString(),
+        region: clientRegion,
+        limit: 12,
+      });
+      if (graphIds?.length) {
+        graphBoostStores = await this._filterActiveStoreIdsForRegion(
+          graphIds,
+          clientRegion,
+          12,
+        );
+      }
+    }
+
     const stores = await this._trendingStores(
       12,
       [
+        ...graphBoostStores,
         ...storeIdsFromProducts,
         ...extraBoostStores,
         ...subscribedStoreIds,

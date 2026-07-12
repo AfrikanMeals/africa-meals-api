@@ -4,7 +4,9 @@ import {
   isGraphSyncEnabled,
   isNeo4jEnabled,
   isRecoGraphEnabled,
+  parseGraphSyncQueueName,
   parseOptInBoolean,
+  parseRecoGraphTimeoutMs,
   resolveEffectiveGraphFlags,
   setGraphRuntimeFlagOverrides,
   shouldEnqueueGraphSync,
@@ -130,5 +132,37 @@ describe('graph-config.util', () => {
     expect(GRAPH_ACTIVATION_MATRIX.length).toBeGreaterThanOrEqual(5);
     const off = GRAPH_ACTIVATION_MATRIX.find((r) => !r.neo4jEnabled);
     expect(off?.behavior).toMatch(/Mongo/i);
+  });
+
+  describe('parseRecoGraphTimeoutMs / parseGraphSyncQueueName', () => {
+    it('defaults timeout to 200ms and clamps range', () => {
+      expect(parseRecoGraphTimeoutMs({} as NodeJS.ProcessEnv)).toBe(200);
+      expect(
+        parseRecoGraphTimeoutMs({
+          RECO_GRAPH_TIMEOUT_MS: '120',
+        } as NodeJS.ProcessEnv),
+      ).toBe(120);
+      expect(
+        parseRecoGraphTimeoutMs({
+          RECO_GRAPH_TIMEOUT_MS: '10',
+        } as NodeJS.ProcessEnv),
+      ).toBe(50);
+      expect(
+        parseRecoGraphTimeoutMs({
+          RECO_GRAPH_TIMEOUT_MS: '99999',
+        } as NodeJS.ProcessEnv),
+      ).toBe(5000);
+    });
+
+    it('defaults queue name to graph-sync', () => {
+      expect(parseGraphSyncQueueName({} as NodeJS.ProcessEnv)).toBe(
+        'graph-sync',
+      );
+      expect(
+        parseGraphSyncQueueName({
+          GRAPH_SYNC_QUEUE: '  my-graph  ',
+        } as NodeJS.ProcessEnv),
+      ).toBe('my-graph');
+    });
   });
 });

@@ -112,6 +112,8 @@ import {
 } from './courier-gps-throttle';
 import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import { domainEventIdFromCourierTracking } from '../../common/domain-events/domain-event-id.util';
+import { GraphSyncQueueService } from '@modules/graph/graph-sync-queue.service';
+import { buildGraphOrderCompletedPayload } from '@modules/graph/graph-order-payload.util';
 
 import dayjs = require('dayjs');
 import utc = require('dayjs/plugin/utc');
@@ -4299,6 +4301,11 @@ export class OrdersService {
       this.scheduleDeliveryAgentPayouts(oid);
     }
 
+    this.enqueueGraphOrderCompleted(order, {
+      userId: customerId,
+      storeId: storeId ?? undefined,
+    });
+
     return {
       orderId: oid,
       status: OrderStatusEnum.COMPLETED,
@@ -4471,6 +4478,11 @@ export class OrdersService {
       this.scheduleDeliveryAgentPayouts(oid);
     }
 
+    this.enqueueGraphOrderCompleted(order, {
+      userId: customerId,
+      storeId: storeId ?? undefined,
+    });
+
     return {
       orderId: oid,
       status: OrderStatusEnum.COMPLETED,
@@ -4626,11 +4638,35 @@ export class OrdersService {
       this.scheduleDeliveryAgentPayouts(oid);
     }
 
+    this.enqueueGraphOrderCompleted(order, {
+      userId: customerId,
+      storeId: storeId ?? undefined,
+    });
+
     return {
       orderId: oid,
       status: OrderStatusEnum.COMPLETED,
       pickedUpAt,
     };
+  }
+
+  /** Fire-and-forget sync Neo4j (gated GRAPH_SYNC) — fail-open. */
+  private enqueueGraphOrderCompleted(
+    order: OrderModel,
+    opts?: { userId?: string; storeId?: string },
+  ): void {
+    if (!this._graphSyncQueue) return;
+    const payload = buildGraphOrderCompletedPayload(order, opts);
+    if (!payload) return;
+    void this._graphSyncQueue
+      .enqueueOrderCompleted(payload)
+      .catch((err) =>
+        this.logger.warn(
+          `graph-sync order completed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
   }
 
   private storeIdFromOrderDoc(order: OrderModel): string | undefined {

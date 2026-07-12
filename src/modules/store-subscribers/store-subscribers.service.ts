@@ -3,10 +3,12 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
+import { GraphSyncQueueService } from '@modules/graph/graph-sync-queue.service';
 import {
   StoreSubscriberDocument,
   StoreSubscriberModel,
@@ -44,6 +46,8 @@ export class StoreSubscribersService {
     private readonly _storeModel: Model<StoreModelDocument>,
     private readonly _subscriptionsService: SubscriptionsService,
     private readonly _storeAccess: StoreAccessService,
+    @Optional()
+    private readonly _graphSyncQueue?: GraphSyncQueueService,
   ) {}
 
   private _userId(user: UserModel): string {
@@ -107,6 +111,15 @@ export class StoreSubscribersService {
         throw new ConflictException('already_subscribed');
       }
       throw e;
+    }
+    if (this._graphSyncQueue) {
+      void this._graphSyncQueue
+        .enqueueStoreSubscribed({
+          userId: uid,
+          storeId,
+          at: new Date().toISOString(),
+        })
+        .catch(() => undefined);
     }
     return { subscribed: true, storeId };
   }

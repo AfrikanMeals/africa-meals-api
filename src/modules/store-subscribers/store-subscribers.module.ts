@@ -1,5 +1,6 @@
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { TeamsModule } from '@modules/teams/teams.module';
+import { GraphModule } from '@modules/graph/graph.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -13,6 +14,7 @@ import { StoreSubscribersService } from './store-subscribers.service';
   imports: [
     SubscriptionsModule,
     TeamsModule,
+    GraphModule,
     MongooseModule.forFeature([
       { name: StoreSubscriberModel.name, schema: StoreSubscriberSchema },
       { name: StoreModel.name, schema: StoreSchema },
