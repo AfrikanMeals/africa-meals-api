@@ -1421,11 +1421,7 @@ export class DeliveryAgentService {
       .exec();
     const activeRows = await filterCourierActiveShippedRows(
       this._orders,
-      rows as Array<{
-        pendingDeliveryProofId?: Types.ObjectId | string | null
-        pending_delivery_proof_id?: Types.ObjectId | string | null
-        [key: string]: unknown
-      }>,
+      rows,
     );
     if (rows.length > 0 && activeRows.length === 0) {
       this._logger.warn(
@@ -1473,17 +1469,27 @@ export class DeliveryAgentService {
           { assignedDeliveryUser: null },
         ],
       });
+      /** `completed` / `cancelled` avec assignee = historique normal, pas une anomalie. */
+      const historicalStatuses = new Set<string>([
+        OrderStatusEnum.COMPLETED,
+        OrderStatusEnum.CANCELLED,
+      ]);
+      const anomalous = assignedNotShipped.filter(
+        (o) => !historicalStatuses.has(String(o.status ?? '')),
+      );
+      const historicalCount = assignedNotShipped.length - anomalous.length;
       this._logger.debug(
         `[DeliveryTrace] getActiveOrder agent=${agentId.toString()} ` +
-          `AUCUNE course active. shippedAssigned(anyShouldShip)=${shippedAny} ` +
-          `assignedNotShipped=${assignedNotShipped.length} ` +
+          `AUCUNE course active. shippedAssigned=${shippedAny} ` +
+          `assignedHistorical=${historicalCount} ` +
+          `assignedAnomalous=${anomalous.length} ` +
           `orphanShippedSansLivreur=${orphanShipped}`,
       );
-      for (const o of assignedNotShipped) {
+      for (const o of anomalous) {
         this._logger.warn(
           `[DeliveryTrace] ALERTE order=${String(o._id)} assigné à ` +
             `agent=${agentId.toString()} mais status=${o.status} (≠ shipped) — ` +
-            `incohérent : livreur assigné sans expédition`,
+            `incohérent : livreur assigné sans course active`,
         );
       }
       if (orphanShipped > 0) {
@@ -2610,6 +2616,7 @@ export class DeliveryAgentService {
           status: String(mapped.status ?? OrderStatusEnum.APPROVED),
           completedAt: null as string | null,
           claimable: true,
+          storeId: mapped.storeId ?? null,
         };
       }),
     );

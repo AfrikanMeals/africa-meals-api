@@ -4694,12 +4694,7 @@ export class DashboardService {
     );
     const activeDutyOrders = await filterCourierActiveShippedRows(
       this.orderModel,
-      activeOrders as Array<
-        (typeof activeOrders)[number] & {
-          pendingDeliveryProofId?: unknown;
-          pending_delivery_proof_id?: unknown;
-        }
-      >,
+      activeOrders,
     );
     const activeByUser = new Map<string, (typeof activeDutyOrders)[0]>();
     for (const o of activeDutyOrders) {

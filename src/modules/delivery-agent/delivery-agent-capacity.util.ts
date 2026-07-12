@@ -52,9 +52,9 @@ export async function countActiveShippedOrdersForAgent(
 }
 
 export type AgentOrderRowWithProofRef = {
-  pendingDeliveryProofId?: Types.ObjectId | string | null;
-  pending_delivery_proof_id?: Types.ObjectId | string | null;
-  [key: string]: unknown;
+  /** Lean Mongo peut typers ObjectId en FlattenMaps — on accepte unknown. */
+  pendingDeliveryProofId?: unknown;
+  pending_delivery_proof_id?: unknown;
 };
 
 /** Lit l’id preuve dépôt (camelCase lean ou snake Mongo). */
