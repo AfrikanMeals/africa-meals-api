@@ -14,6 +14,17 @@ function toBool(raw: string | undefined): boolean {
   return v === '1' || v === 'true' || v === 'yes' || v === 'on';
 }
 
+/** Décode user/password issus de `new URL()` (souvent déjà décodés ; no-op si invalide). */
+function decodeUriAuth(raw: string | undefined): string {
+  const v = (raw ?? '').trim();
+  if (!v) return '';
+  try {
+    return decodeURIComponent(v);
+  } catch {
+    return v;
+  }
+}
+
 /** 4 ou 6 — utile si l’IPv4 vers le VPS est bloquée (FAI) et seul l’AAAA répond. */
 export function readRedisIpFamily(
   get: RedisEnvGetter = (key) => process.env[key],
@@ -122,8 +133,15 @@ function readRedisConnectionWithKeys(
           parsed.port,
           parsed.protocol === 'rediss:' ? 6380 : 6379,
         ),
-        username: parsed.username || undefined,
-        password: parsed.password || undefined,
+        // URL d’abord ; REDIS_USERNAME / REDIS_PASSWORD en secours si absents de l’URL.
+        username:
+          decodeUriAuth(parsed.username) ||
+          get(keys.username)?.trim() ||
+          undefined,
+        password:
+          decodeUriAuth(parsed.password) ||
+          get(keys.password)?.trim() ||
+          undefined,
         tls: buildTlsOptions(get, keys, parsed.protocol === 'rediss:'),
       };
       return enrichTlsSni(conn, get, keys);
@@ -176,8 +194,8 @@ function readRedisConnectionFromUrlString(
         parsed.port,
         parsed.protocol === 'rediss:' ? 6380 : 6379,
       ),
-      username: parsed.username || undefined,
-      password: parsed.password || undefined,
+      username: decodeUriAuth(parsed.username) || undefined,
+      password: decodeUriAuth(parsed.password) || undefined,
       tls: buildTlsOptions(get, keys, parsed.protocol === 'rediss:'),
     };
     return enrichTlsSni(conn, get, keys);
@@ -357,33 +375,51 @@ export function readRedisUrlFromConfig(
   return buildRedisUrlFromConnection(conn);
 }
 
-/** Options `cache-manager-redis-yet` / node-redis (socket TLS Stunnel Mode A). */
+/** Options `cache-manager-redis-yet` / node-redis (socket TLS HAProxy / Stunnel). */
 export function readRedisCacheStoreOptionsFromConfig(
   config: ConfigService,
 ): {
-  url: string;
-  socket?: {
-    tls: true;
+  url?: string;
+  socket: {
+    host: string;
+    port: number;
+    tls?: true;
     servername?: string;
     rejectUnauthorized?: boolean;
     family?: number;
+    connectTimeout?: number;
   };
+  username?: string;
+  password?: string;
 } | null {
-  const url = readRedisUrlFromConfig(config);
-  if (!url) return null;
   const conn = readRedisConnectionFromConfig(config);
-  if (!conn?.tls) return { url };
+  if (!conn) return null;
   const rejectUnauthorized =
-    conn.tls.rejectUnauthorized !== false ? undefined : false;
+    conn.tls && conn.tls.rejectUnauthorized === false ? false : undefined;
   const ipFamily = readRedisIpFamily((key) => config.get(key));
+  const connectTimeout = parsePositiveInt(
+    config.get<string>('REDIS_CONNECT_TIMEOUT_MS'),
+    15_000,
+  );
   return {
-    url,
+    // Auth explicite (évite les divergences de parsing URL node-redis → WRONGPASS).
+    username: conn.username,
+    password: conn.password,
     socket: {
-      tls: true,
-      servername:
-        (conn.tls?.servername as string | undefined) || conn.host,
+      host: conn.host,
+      port: conn.port,
+      ...(conn.tls
+        ? {
+            tls: true as const,
+            servername:
+              (conn.tls.servername as string | undefined) || conn.host,
+            ...(rejectUnauthorized === false
+              ? { rejectUnauthorized: false }
+              : {}),
+          }
+        : {}),
       ...(ipFamily != null ? { family: ipFamily } : {}),
-      ...(rejectUnauthorized === false ? { rejectUnauthorized: false } : {}),
+      connectTimeout,
     },
   };
 }

@@ -60,4 +60,24 @@ describe('redis-connection.util write vs read lists', () => {
     expect(opts.keepAlive).toBe(30_000);
     expect(opts.reconnectOnError).toBeDefined();
   });
+
+  it('readRedisCacheStoreOptionsFromConfig expose username/password hors URL', () => {
+    const { readRedisCacheStoreOptionsFromConfig } = require('./redis-connection.util');
+    const config = {
+      get: (key: string) =>
+        ({
+          REDIS_URL: 'rediss://wise-eat-cache:secret@cache.wise-eat.com:6381',
+          REDIS_TLS_SERVERNAME: 'cache.wise-eat.com',
+          REDIS_IP_FAMILY: '6',
+        })[key],
+    };
+    const opts = readRedisCacheStoreOptionsFromConfig(config as never);
+    expect(opts?.username).toBe('wise-eat-cache');
+    expect(opts?.password).toBe('secret');
+    expect(opts?.socket.host).toBe('cache.wise-eat.com');
+    expect(opts?.socket.port).toBe(6381);
+    expect(opts?.socket.tls).toBe(true);
+    expect(opts?.socket.family).toBe(6);
+    expect(opts?.url).toBeUndefined();
+  });
 });

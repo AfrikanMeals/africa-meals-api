@@ -70,7 +70,6 @@ import { AppCacheBustSubscriber } from './common/app-cache-bust.subscriber';
 import { registerAppCacheBustRedis } from './common/redis-app-cache';
 import {
   readRedisCacheStoreOptionsFromConfig,
-  redactRedisUrl,
 } from './common/redis/redis-connection.util';
 import { SseRedisModule } from './common/sse/sse-redis.module';
 import { RecommendationAutomationSettingsModule } from './modules/recommendation-automation-settings/recommendation-automation-settings.module';
@@ -262,7 +261,7 @@ async function readRedisManagerEnabledAtBootstrap(
             );
           });
           Logger.log(
-            `Cache store: redis (${redactRedisUrl(redisOpts.url)})`,
+            `Cache store: redis (${redisOpts.socket.host}:${redisOpts.socket.port}${redisOpts.username ? ` user=${redisOpts.username}` : ''})`,
             'CacheModule',
           );
           registerAppCacheBustRedis(redisClient);
