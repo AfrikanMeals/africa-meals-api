@@ -1,10 +1,13 @@
 import {
   ForbiddenException,
   Injectable,
+  Logger,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { StoreAccessService } from '@modules/teams/store-access.service';
+import { Neo4jService } from '@modules/neo4j/neo4j.service';
 import {
   GraphdbSettingsDocument,
   GraphdbSettingsModel,
@@ -33,20 +36,25 @@ export type GraphdbSettingsResponse = {
   activationMatrix: GraphActivationRow[];
   /** URI configurée (sans secret) — informative. */
   neo4jUriConfigured: boolean;
+  /** État driver après sync flags (disabled|up|down). */
+  neo4jHealth: 'disabled' | 'up' | 'down';
   updatedAt: string | null;
 };
 
 @Injectable()
 export class GraphdbSettingsService implements OnModuleInit {
+  private readonly logger = new Logger(GraphdbSettingsService.name);
+
   constructor(
     @InjectModel(GraphdbSettingsModel.name)
     private readonly _settings: Model<GraphdbSettingsDocument>,
     private readonly _storeAccess: StoreAccessService,
+    @Optional() private readonly _neo4j?: Neo4jService,
   ) {}
 
   async onModuleInit(): Promise<void> {
     const doc = await this.ensureSettingsDoc();
-    this.applyRuntimeSettings(doc);
+    await this.applyRuntimeSettings(doc);
   }
 
   private async assertAdminSettings(user: UserModel): Promise<void> {
@@ -64,11 +72,33 @@ export class GraphdbSettingsService implements OnModuleInit {
     };
   }
 
-  private applyRuntimeSettings(doc: GraphdbSettingsModel): void {
+  private async applyRuntimeSettings(
+    doc: GraphdbSettingsModel,
+  ): Promise<'disabled' | 'up' | 'down'> {
     setGraphRuntimeFlagOverrides(this.storedFromDoc(doc));
+    if (!this._neo4j) return 'disabled';
+    try {
+      const health = await this._neo4j.syncWithRuntimeFlags();
+      this.logger.log(
+        `GraphDB runtime flags applied — neo4j=${health} reco=${
+          doc.recoGraphEnabled === true
+        } sync=${doc.graphSyncEnabled === true}`,
+      );
+      return health;
+    } catch (err) {
+      this.logger.warn(
+        `Neo4j sync after GraphDB flags: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return 'down';
+    }
   }
 
-  private toResponse(doc: GraphdbSettingsModel): GraphdbSettingsResponse {
+  private toResponse(
+    doc: GraphdbSettingsModel,
+    neo4jHealth: 'disabled' | 'up' | 'down' = 'disabled',
+  ): GraphdbSettingsResponse {
     const typed = doc as unknown as { updatedAt?: Date };
     const stored = this.storedFromDoc(doc);
     const env = graphFlagsFromEnv();
@@ -80,6 +110,7 @@ export class GraphdbSettingsService implements OnModuleInit {
       neo4jUriConfigured: Boolean(
         String(process.env.NEO4J_URI ?? '').trim(),
       ),
+      neo4jHealth,
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
   }
@@ -105,8 +136,8 @@ export class GraphdbSettingsService implements OnModuleInit {
   async getSettings(user: UserModel): Promise<GraphdbSettingsResponse> {
     await this.assertAdminSettings(user);
     const doc = await this.ensureSettingsDoc();
-    this.applyRuntimeSettings(doc);
-    return this.toResponse(doc);
+    const health = await this.applyRuntimeSettings(doc);
+    return this.toResponse(doc, health);
   }
 
   async updateSettings(
@@ -128,7 +159,7 @@ export class GraphdbSettingsService implements OnModuleInit {
         { upsert: true, new: true, setDefaultsOnInsert: true },
       )
       .exec();
-    this.applyRuntimeSettings(updated);
-    return this.toResponse(updated);
+    const health = await this.applyRuntimeSettings(updated);
+    return this.toResponse(updated, health);
   }
 }

@@ -4785,8 +4785,10 @@ export class OrdersService {
     }
   }
 
-  private userIdFromOrderDoc(order: OrderModel): string | undefined {
-    const raw = order.user as unknown;
+  private userIdFromOrderDoc(
+    order: OrderModel | Record<string, unknown>,
+  ): string | undefined {
+    const raw = (order as { user?: unknown }).user as unknown;
     if (raw instanceof Types.ObjectId) return raw.toHexString();
     if (raw && typeof raw === 'object' && '_id' in raw) {
       const id = (raw as { _id: unknown })._id;

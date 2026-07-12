@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
+  isRecoGraphEnabled,
   parseRecoGraphTimeoutMs,
   shouldUseGraphRecommendations,
 } from '@modules/graphdb-settings/graph-config.util';
@@ -7,7 +8,7 @@ import { Neo4jService } from '@modules/neo4j/neo4j.service';
 import { GraphRecommendationService } from './graph-recommendation.service';
 
 /**
- * Orchestration reco : Neo4j si healthy + flags, sinon null (Mongo inchangé).
+ * Orchestration reco : Neo4j si healthy + flags runtime Admin, sinon null (Mongo).
  */
 @Injectable()
 export class RecommendationFacade {
@@ -29,11 +30,17 @@ export class RecommendationFacade {
     const userId = String(opts.userId ?? '').trim();
     if (!userId) return null;
 
-    if (
-      !shouldUseGraphRecommendations({
-        neo4jHealthy: this.neo4j.isHealthy(),
-      })
-    ) {
+    // Flags Admin/env d’abord — évite d’ouvrir le driver si reco off.
+    if (!isRecoGraphEnabled()) return null;
+
+    let neo4jHealthy = false;
+    try {
+      neo4jHealthy = await this.neo4j.ensureHealthy();
+    } catch {
+      neo4jHealthy = false;
+    }
+
+    if (!shouldUseGraphRecommendations({ neo4jHealthy })) {
       return null;
     }
 

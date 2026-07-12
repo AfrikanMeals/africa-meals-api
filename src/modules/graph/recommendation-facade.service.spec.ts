@@ -9,46 +9,51 @@ describe('RecommendationFacade', () => {
     jest.useRealTimers();
   });
 
-  it('returns null when graph reco flags off (fail-open Mongo)', async () => {
-    const facade = new RecommendationFacade(
-      { isHealthy: () => true } as Neo4jService,
+  function makeFacade(opts: {
+    ensureHealthy: jest.Mock;
+    personalizedStoreIds?: jest.Mock;
+  }) {
+    return new RecommendationFacade(
+      { ensureHealthy: opts.ensureHealthy } as unknown as Neo4jService,
       {
-        personalizedStoreIds: jest.fn(),
+        personalizedStoreIds:
+          opts.personalizedStoreIds ?? jest.fn().mockResolvedValue(['s1']),
       } as unknown as GraphRecommendationService,
     );
+  }
+
+  it('returns null when graph reco flags off (fail-open Mongo)', async () => {
+    const ensureHealthy = jest.fn().mockResolvedValue(true);
+    const facade = makeFacade({ ensureHealthy });
     await expect(
       facade.personalizedStoreIdsOrNull({ userId: 'u1', region: 'CM' }),
     ).resolves.toBeNull();
+    expect(ensureHealthy).not.toHaveBeenCalled();
   });
 
-  it('returns null when Neo4j unhealthy', async () => {
+  it('returns null when Neo4j unhealthy after ensureHealthy', async () => {
     setGraphRuntimeFlagOverrides({
       neo4jEnabled: true,
       recoGraphEnabled: true,
       graphSyncEnabled: true,
     });
-    const facade = new RecommendationFacade(
-      { isHealthy: () => false } as Neo4jService,
-      {
-        personalizedStoreIds: jest.fn().mockResolvedValue(['s1']),
-      } as unknown as GraphRecommendationService,
-    );
+    const facade = makeFacade({
+      ensureHealthy: jest.fn().mockResolvedValue(false),
+    });
     await expect(
       facade.personalizedStoreIdsOrNull({ userId: 'u1' }),
     ).resolves.toBeNull();
   });
 
-  it('returns ids on success', async () => {
+  it('opens driver via ensureHealthy when Admin reco flags ON', async () => {
     setGraphRuntimeFlagOverrides({
       neo4jEnabled: true,
       recoGraphEnabled: true,
       graphSyncEnabled: true,
     });
     const personalizedStoreIds = jest.fn().mockResolvedValue(['s1', 's2']);
-    const facade = new RecommendationFacade(
-      { isHealthy: () => true } as Neo4jService,
-      { personalizedStoreIds } as unknown as GraphRecommendationService,
-    );
+    const ensureHealthy = jest.fn().mockResolvedValue(true);
+    const facade = makeFacade({ ensureHealthy, personalizedStoreIds });
     await expect(
       facade.personalizedStoreIdsOrNull({
         userId: 'u1',
@@ -56,6 +61,7 @@ describe('RecommendationFacade', () => {
         limit: 8,
       }),
     ).resolves.toEqual(['s1', 's2']);
+    expect(ensureHealthy).toHaveBeenCalled();
     expect(personalizedStoreIds).toHaveBeenCalledWith('u1', 'CA', 8);
   });
 
@@ -72,10 +78,10 @@ describe('RecommendationFacade', () => {
           setTimeout(() => resolve(['s1']), 500);
         }),
     );
-    const facade = new RecommendationFacade(
-      { isHealthy: () => true } as Neo4jService,
-      { personalizedStoreIds } as unknown as GraphRecommendationService,
-    );
+    const facade = makeFacade({
+      ensureHealthy: jest.fn().mockResolvedValue(true),
+      personalizedStoreIds,
+    });
     await expect(
       facade.personalizedStoreIdsOrNull({ userId: 'u1' }),
     ).resolves.toBeNull();

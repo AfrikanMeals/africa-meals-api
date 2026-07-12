@@ -31,16 +31,35 @@ export class Neo4jService implements OnModuleInit, OnModuleDestroy {
   private lastProbeAt = 0;
 
   async onModuleInit(): Promise<void> {
-    await this.ensureDriver();
+    // Les flags Admin (Mongo) peuvent arriver juste après via GraphdbSettingsService.
+    // Connexion lazy : syncWithRuntimeFlags / ensureDriver à l’usage.
+    await this.syncWithRuntimeFlags();
   }
 
   async onModuleDestroy(): Promise<void> {
     await this.closeDriver();
   }
 
+  /**
+   * Aligne le driver sur les flags effectifs (env + overrides Admin runtime).
+   * À appeler après PUT GraphDB / bootstrap settings.
+   */
+  async syncWithRuntimeFlags(): Promise<Neo4jHealthState> {
+    if (!isNeo4jEnabled()) {
+      if (this.driver) {
+        this.logger.log('Neo4j disabled (runtime) — closing driver');
+        await this.closeDriver();
+      }
+      return 'disabled';
+    }
+    const driver = await this.ensureDriver();
+    return driver && this.lastHealthy ? 'up' : 'down';
+  }
+
   /** État health : never throws (fail-open ops). */
   async getHealthState(): Promise<Neo4jHealthState> {
     if (!isNeo4jEnabled()) {
+      if (this.driver) await this.closeDriver();
       return 'disabled';
     }
     const ok = await this.probeConnectivity();
@@ -50,6 +69,19 @@ export class Neo4jService implements OnModuleInit, OnModuleDestroy {
   isHealthy(): boolean {
     if (!isNeo4jEnabled() || !this.driver) return false;
     return this.lastHealthy;
+  }
+
+  /**
+   * Ouvre le driver si flags ON, puis retourne l’état santé courant.
+   * Utilisé par la facade reco pour ne pas bloquer sur un driver encore fermé après toggle Admin.
+   */
+  async ensureHealthy(): Promise<boolean> {
+    if (!isNeo4jEnabled()) {
+      if (this.driver) await this.closeDriver();
+      return false;
+    }
+    const driver = await this.ensureDriver();
+    return Boolean(driver && this.lastHealthy);
   }
 
   async ensureDriver(): Promise<Driver | null> {
@@ -103,7 +135,10 @@ export class Neo4jService implements OnModuleInit, OnModuleDestroy {
       (process.env.NEO4J_DATABASE ?? 'neo4j').trim() ||
       'neo4j';
 
-    const sessionConfig: SessionConfig = { database, defaultAccessMode: neo4j.session.WRITE };
+    const sessionConfig: SessionConfig = {
+      database,
+      defaultAccessMode: neo4j.session.WRITE,
+    };
     const session: Session = driver.session(sessionConfig);
 
     try {
@@ -150,7 +185,6 @@ export class Neo4jService implements OnModuleInit, OnModuleDestroy {
       return value.map((v) => this.normalizeValue(v));
     }
     if (typeof value === 'object') {
-      // Node / Relationship — expose properties if present
       const maybe = value as { properties?: Record<string, unknown> };
       if (maybe.properties && typeof maybe.properties === 'object') {
         const out: Record<string, unknown> = {};
