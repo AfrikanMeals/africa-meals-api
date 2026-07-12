@@ -43,6 +43,12 @@ try {
     cwd: apiRoot,
     stdio: 'inherit',
     shell: true,
+    env: {
+      ...process.env,
+      // Nest/AppModule est gros : laisser plus que 10s si le lazy-load ne suffit pas.
+      FUNCTIONS_DISCOVERY_TIMEOUT:
+        process.env.FUNCTIONS_DISCOVERY_TIMEOUT || '60',
+    },
   });
 } finally {
   cleanupFirebaseFunctionsDeploy(apiRoot);

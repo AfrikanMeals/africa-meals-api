@@ -6,11 +6,14 @@
  * Le préfixe Nest est vide ici pour éviter …/api/api/…
  * Ex. auth : https://<region>-<project>.cloudfunctions.net/api/auth/login
  * Voir docs/FIREBASE_FUNCTIONS.md et docs/BIRD_CHANNELS.md
+ *
+ * Important : ne pas importer `./firebase-bootstrap` / `AppModule` au top-level —
+ * le CLI Firebase charge ce fichier pendant la discovery (timeout 10s par défaut).
  */
 import { defineSecret } from 'firebase-functions/params';
 import { setGlobalOptions } from 'firebase-functions/v2/options';
 import { onRequest } from 'firebase-functions/v2/https';
-import { getExpressServer } from './firebase-bootstrap';
+import type { Express } from 'express';
 
 /** Région prod Functions — us-east1 (Montréal clients + cohérence URL existante). */
 const FUNCTIONS_REGION = 'us-east1' as const;
@@ -43,6 +46,11 @@ function resolveFunctionsCpu(): number | 'gcf_gen1' {
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
+async function getServer(): Promise<Express> {
+  const { getExpressServer } = await import('./firebase-bootstrap');
+  return getExpressServer();
+}
+
 export const api = onRequest(
   {
     region: FUNCTIONS_REGION,
@@ -55,7 +63,7 @@ export const api = onRequest(
     secrets: birdSecrets,
   },
   async (req, res) => {
-    const server = await getExpressServer();
+    const server = await getServer();
     server(req, res);
   },
 );

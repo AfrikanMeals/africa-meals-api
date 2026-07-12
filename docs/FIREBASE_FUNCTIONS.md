@@ -39,6 +39,8 @@ npm run deploy:functions
 `deploy:functions` exécute `scripts/firebase-deploy.mjs` : prepare (packages + `.env.wise-eat-com`), build Nest → `dist/`, puis deploy.  
 **Utilisez `npm run deploy:functions`** (et non un `firebase deploy` manuel avec `.env` k8s) : le dépôt pin `firebase-tools` en devDependency pour un comportement de nettoyage des images aligné avec GCP.
 
+Le script fixe aussi `FUNCTIONS_DISCOVERY_TIMEOUT=60` (défaut CLI = 10s). `src/firebase-main.ts` charge Nest via **import dynamique** pour ne pas bloquer la discovery.
+
 ### Avertissement « Unhandled error cleaning up build images »
 
 Après le déploiement, le CLI tente de supprimer d’anciennes images (GCR / Artifact Registry). Un **404** (dépôt inexistant ou déjà nettoyé) ou des **droits IAM** insuffisants produisent ce message ; le déploiement peut quand même être **réussi**.
