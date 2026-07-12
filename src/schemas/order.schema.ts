@@ -257,6 +257,37 @@ export class OrderModel extends BaseSchema {
   })
   pendingDeliveryProofId?: MongooseSchema.Types.ObjectId;
 
+  /**
+   * Polyline itinéraire calculée par le livreur (source de vérité cartes admin/client).
+   * Format Google Encoded Polyline (précision 5) sauf indication contraire.
+   */
+  @Prop({ required: false, name: 'courier_route_polyline', maxlength: 100_000 })
+  courierRoutePolyline?: string;
+
+  @Prop({
+    required: false,
+    name: 'courier_route_format',
+    enum: ['google'],
+    default: 'google',
+  })
+  courierRouteFormat?: 'google';
+
+  @Prop({
+    required: false,
+    name: 'courier_route_leg',
+    enum: ['to_store', 'to_customer', 'full'],
+  })
+  courierRouteLeg?: 'to_store' | 'to_customer' | 'full';
+
+  @Prop({ required: false, name: 'courier_route_distance_m' })
+  courierRouteDistanceM?: number;
+
+  @Prop({ required: false, name: 'courier_route_duration_s' })
+  courierRouteDurationS?: number;
+
+  @Prop({ required: false, name: 'courier_route_updated_at', type: Date })
+  courierRouteUpdatedAt?: Date;
+
   /** Offre course flotte boutique en cours (cascade AUTO) — exclusivité claim. */
   @Prop({
     type: MongooseSchema.Types.ObjectId,

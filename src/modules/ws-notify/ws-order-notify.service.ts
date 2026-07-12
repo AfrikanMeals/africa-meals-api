@@ -36,6 +36,16 @@ export type OrderWsTrackingPayload = {
   deliveryOfferId?: string;
   deliveryOfferAgentUserId?: string;
   deliveryOfferExpiresAt?: string;
+  /**
+   * Itinéraire livreur (source de vérité) — Google Encoded Polyline.
+   * `null` = effacement explicite (fin de course / abandon).
+   */
+  routePolylineEncoded?: string | null;
+  routePolylineFormat?: 'google';
+  routeLeg?: 'to_store' | 'to_customer' | 'full';
+  routeDistanceMeters?: number;
+  routeDurationSeconds?: number;
+  routeUpdatedAt?: string;
 };
 
 /**

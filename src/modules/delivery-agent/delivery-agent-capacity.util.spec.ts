@@ -1,7 +1,7 @@
-import { OrderStatusEnum } from '@schemas/order.schema';
 import { PendingDeliveryProofStatusEnum } from '@schemas/pending-delivery-proof.schema';
 import {
   COURIER_DUTY_RELEASED_PROOF_STATUSES,
+  courierActiveDutyLookupStages,
   maxConcurrentOrdersFromApplication,
   pendingDeliveryProofIdFromRow,
 } from './delivery-agent-capacity.util';
@@ -35,5 +35,13 @@ describe('delivery-agent-capacity.util', () => {
       pendingDeliveryProofIdFromRow({ pending_delivery_proof_id: 'def' }),
     ).toBe('def');
     expect(pendingDeliveryProofIdFromRow({})).toBeNull();
+  });
+
+  it('courierActiveDutyLookupStages lit camelCase et snake_case', () => {
+    const stages = courierActiveDutyLookupStages();
+    const addFields = stages[0] as { $addFields?: { _dutyProofId?: unknown } };
+    expect(addFields.$addFields?._dutyProofId).toEqual({
+      $ifNull: ['$pendingDeliveryProofId', '$pending_delivery_proof_id'],
+    });
   });
 });

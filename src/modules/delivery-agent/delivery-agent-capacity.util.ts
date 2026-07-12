@@ -102,13 +102,23 @@ export async function filterCourierActiveShippedRows<
 /**
  * Stages d’agrégation après `$match` shipped+assigned :
  * exclut les courses déjà déposées (client absent).
+ *
+ * Les docs `orders` en prod stockent souvent le camelCase Nest
+ * (`pendingDeliveryProofId`) malgré le `name` snake du schema — on lit les deux.
  */
 export function courierActiveDutyLookupStages(): PipelineStage[] {
   return [
     {
+      $addFields: {
+        _dutyProofId: {
+          $ifNull: ['$pendingDeliveryProofId', '$pending_delivery_proof_id'],
+        },
+      },
+    },
+    {
       $lookup: {
         from: 'pending_delivery_proofs',
-        localField: 'pending_delivery_proof_id',
+        localField: '_dutyProofId',
         foreignField: '_id',
         as: 'proof',
       },

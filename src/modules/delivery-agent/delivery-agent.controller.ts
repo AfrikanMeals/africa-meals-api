@@ -29,6 +29,7 @@ import {
 import { AdminProcessDeliveryAgentPaymentsDto } from './dto/admin-process-delivery-agent-payments.dto';
 import { PatchDeliveryAgentApplicationDto } from './dto/delivery-agent-application.dto';
 import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
+import { DeliveryAgentRouteSnapshotDto } from './dto/delivery-agent-route-snapshot.dto';
 import { PatchDeliveryAgentPresenceDto } from './dto/patch-delivery-agent-presence.dto';
 import { SyncDeliveryAgentDailyPerformanceDto } from './dto/sync-delivery-agent-daily-performance.dto';
 import {
@@ -178,6 +179,25 @@ export class DeliveryAgentController {
     @Body() body: DeliveryAgentLocationDto,
   ) {
     return this._deliveryAgent.reportLocation(req.user as UserModel, body);
+  }
+
+  @Post('orders/:orderId/route-snapshot')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+  @ApiOperation({
+    summary:
+      'Publie la polyline d’itinéraire calculée par le livreur (sync admin/client WS).',
+  })
+  publishRouteSnapshot(
+    @Req() req: Request,
+    @Param('orderId') orderId: string,
+    @Body() body: DeliveryAgentRouteSnapshotDto,
+  ) {
+    return this._deliveryAgent.publishRouteSnapshot(
+      req.user as UserModel,
+      orderId,
+      body,
+    );
   }
 
   @Post('orders/:orderId/assign-self')

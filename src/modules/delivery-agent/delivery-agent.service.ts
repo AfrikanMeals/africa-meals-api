@@ -56,6 +56,7 @@ import {
   resolveDeliveryHistoryStatusFilter,
 } from './delivery-agent-history.util';
 import { DeliveryAgentLocationDto } from './dto/delivery-agent-location.dto';
+import { DeliveryAgentRouteSnapshotDto } from './dto/delivery-agent-route-snapshot.dto';
 import { SyncDeliveryAgentDailyPerformanceDto } from './dto/sync-delivery-agent-daily-performance.dto';
 import {
   deliveryAgentPerformanceDayKey,
@@ -1420,7 +1421,11 @@ export class DeliveryAgentService {
       .exec();
     const activeRows = await filterCourierActiveShippedRows(
       this._orders,
-      rows as Array<Record<string, unknown> & { pendingDeliveryProofId?: unknown }>,
+      rows as Array<{
+        pendingDeliveryProofId?: Types.ObjectId | string | null
+        pending_delivery_proof_id?: Types.ObjectId | string | null
+        [key: string]: unknown
+      }>,
     );
     if (rows.length > 0 && activeRows.length === 0) {
       this._logger.warn(
@@ -1796,6 +1801,91 @@ export class DeliveryAgentService {
     return { ok: true };
   }
 
+  /**
+   * Le livreur publie la polyline calculée localement — source de vérité
+   * pour admin / client (WS `order:tracking`).
+   */
+  async publishRouteSnapshot(
+    user: UserModel,
+    orderId: string,
+    dto: DeliveryAgentRouteSnapshotDto,
+  ) {
+    this.assertDeliveryAgent(user);
+    if (!Types.ObjectId.isValid(orderId)) {
+      throw new BadRequestException('invalid_order_id');
+    }
+    const encoded = String(dto.encodedPolyline ?? '').trim();
+    if (encoded.length < 4) {
+      throw new BadRequestException('invalid_route_polyline');
+    }
+    const agentId = new Types.ObjectId(String(user._id ?? user.id));
+    const oid = new Types.ObjectId(orderId);
+    const order = await this._orders
+      .findOne({
+        _id: oid,
+        assignedDeliveryUser: agentId,
+        status: OrderStatusEnum.SHIPPED,
+        shouldShip: true,
+      })
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const format = dto.format === 'google' ? 'google' : 'google';
+    const leg = dto.leg;
+    const distanceMeters =
+      typeof dto.distanceMeters === 'number' && Number.isFinite(dto.distanceMeters)
+        ? Math.max(0, Math.round(dto.distanceMeters))
+        : undefined;
+    const durationSeconds =
+      typeof dto.durationSeconds === 'number' &&
+      Number.isFinite(dto.durationSeconds)
+        ? Math.max(0, Math.round(dto.durationSeconds))
+        : undefined;
+    const updatedAt = new Date();
+
+    await this._orders
+      .updateOne(
+        { _id: oid },
+        {
+          $set: {
+            courierRoutePolyline: encoded,
+            courierRouteFormat: format,
+            ...(leg ? { courierRouteLeg: leg } : {}),
+            ...(distanceMeters != null
+              ? { courierRouteDistanceM: distanceMeters }
+              : {}),
+            ...(durationSeconds != null
+              ? { courierRouteDurationS: durationSeconds }
+              : {}),
+            courierRouteUpdatedAt: updatedAt,
+          },
+        },
+      )
+      .exec();
+
+    this._ordersService.notifyOrderPartiesRealtime(
+      order,
+      OrderStatusEnum.SHIPPED,
+      {
+        routePolylineEncoded: encoded,
+        routePolylineFormat: format,
+        ...(leg ? { routeLeg: leg } : {}),
+        ...(distanceMeters != null
+          ? { routeDistanceMeters: distanceMeters }
+          : {}),
+        ...(durationSeconds != null
+          ? { routeDurationSeconds: durationSeconds }
+          : {}),
+        routeUpdatedAt: updatedAt.toISOString(),
+        assignedDeliveryUserId: String(agentId),
+      },
+    );
+
+    return { ok: true, orderId: String(oid), updatedAt: updatedAt.toISOString() };
+  }
+
   async previewHandoffByCode(
     user: UserModel,
     rawCode: string,
@@ -2074,6 +2164,20 @@ export class DeliveryAgentService {
         assignedDeliveryUser: agentId,
         status: OrderStatusEnum.SHIPPED,
       },
+      $unset: {
+        courierRoutePolyline: 1,
+        courierRouteFormat: 1,
+        courierRouteLeg: 1,
+        courierRouteDistanceM: 1,
+        courierRouteDurationS: 1,
+        courierRouteUpdatedAt: 1,
+        courier_route_polyline: 1,
+        courier_route_format: 1,
+        courier_route_leg: 1,
+        courier_route_distance_m: 1,
+        courier_route_duration_s: 1,
+        courier_route_updated_at: 1,
+      },
     };
 
     const claimResult = await this._orders.updateOne(claimFilter, claimUpdate).exec();
@@ -2278,6 +2382,12 @@ export class DeliveryAgentService {
     orderDoc.set('deliveryUnassignedFromUser', agentId);
     orderDoc.set('deliveryUnassignedByUser', agentId);
     orderDoc.courierAbandonNoPayout = true;
+    orderDoc.set('courierRoutePolyline', undefined);
+    orderDoc.set('courierRouteFormat', undefined);
+    orderDoc.set('courierRouteLeg', undefined);
+    orderDoc.set('courierRouteDistanceM', undefined);
+    orderDoc.set('courierRouteDurationS', undefined);
+    orderDoc.set('courierRouteUpdatedAt', undefined);
     await orderDoc.save();
 
     const customerId = this.customerUserIdFromOrder(orderDoc);
@@ -2295,7 +2405,7 @@ export class DeliveryAgentService {
     this._ordersService.notifyOrderPartiesRealtime(
       orderDoc,
       OrderStatusEnum.APPROVED,
-      { assignedDeliveryUserId: null },
+      { assignedDeliveryUserId: null, routePolylineEncoded: null },
       { additionalPartyUserIds: [prevAssignee] },
     );
 

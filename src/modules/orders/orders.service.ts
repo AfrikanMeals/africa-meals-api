@@ -3477,6 +3477,56 @@ export class OrdersService {
         : {}),
       storeId: this.storeIdFromOrderDoc(order as OrderModel) ?? undefined,
       ...(vendorAcceptedAt ? { vendorAcceptedAt } : {}),
+      ...this.courierRouteFieldsFromOrder(order as Record<string, unknown>),
+    };
+  }
+
+  /** Polyline publiée par le livreur (si présente sur le doc commande). */
+  private courierRouteFieldsFromOrder(
+    order: Record<string, unknown>,
+  ): Partial<OrderWsTrackingPayload> {
+    const encoded = String(
+      order.courierRoutePolyline ?? order.courier_route_polyline ?? '',
+    ).trim();
+    if (!encoded) return {};
+    const formatRaw = String(
+      order.courierRouteFormat ?? order.courier_route_format ?? 'google',
+    ).trim();
+    const format = formatRaw === 'google' ? 'google' : 'google';
+    const legRaw = String(
+      order.courierRouteLeg ?? order.courier_route_leg ?? '',
+    ).trim();
+    const leg =
+      legRaw === 'to_store' ||
+      legRaw === 'to_customer' ||
+      legRaw === 'full'
+        ? legRaw
+        : undefined;
+    const distanceMeters = Number(
+      order.courierRouteDistanceM ?? order.courier_route_distance_m,
+    );
+    const durationSeconds = Number(
+      order.courierRouteDurationS ?? order.courier_route_duration_s,
+    );
+    const updatedRaw =
+      order.courierRouteUpdatedAt ?? order.courier_route_updated_at;
+    const routeUpdatedAt =
+      updatedRaw instanceof Date
+        ? updatedRaw.toISOString()
+        : typeof updatedRaw === 'string' && updatedRaw.trim()
+          ? updatedRaw.trim()
+          : undefined;
+    return {
+      routePolylineEncoded: encoded,
+      routePolylineFormat: format,
+      ...(leg ? { routeLeg: leg } : {}),
+      ...(Number.isFinite(distanceMeters)
+        ? { routeDistanceMeters: distanceMeters }
+        : {}),
+      ...(Number.isFinite(durationSeconds)
+        ? { routeDurationSeconds: durationSeconds }
+        : {}),
+      ...(routeUpdatedAt ? { routeUpdatedAt } : {}),
     };
   }
 
