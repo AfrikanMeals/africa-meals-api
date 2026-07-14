@@ -38,18 +38,22 @@ const sharedDevApp = {
   exp_backoff_restart_delay: 300,
 };
 
+const devApiEnv = apiPm2Env.devEnvVars();
 const apiDevEnv = {
   NODE_ENV: 'development',
   FORCE_COLOR: '1',
-  API_HTTP_ADAPTER: 'fastify',
-  ...apiPm2Env.devEnvVars(),
+  ...devApiEnv,
+  // Autorise un env partagé `both`; le bootstrap serveur choisit Fastify.
+  API_HTTP_ADAPTER:
+    process.env.API_HTTP_ADAPTER || devApiEnv.API_HTTP_ADAPTER || 'fastify',
   ...apiPortEnv,
 };
 
 const apiInstances = Math.max(
   1,
-  Number(process.env.PM2_DEV_API_INSTANCES || process.env.PM2_DEV_INSTANCES || '1') ||
-    1,
+  Number(
+    process.env.PM2_DEV_API_INSTANCES || process.env.PM2_DEV_INSTANCES || '1',
+  ) || 1,
 );
 
 const watchApp = {

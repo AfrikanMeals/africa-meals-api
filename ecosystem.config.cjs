@@ -28,6 +28,7 @@ const wsPort = String(
   process.env.PM2_WS_PROD_PORT || process.env.PM2_WS_PORT || '8000',
 );
 const apiInstances = resolveApiInstances();
+const prodApiEnv = apiPm2Env.prodEnvVars();
 
 module.exports = {
   apps: [
@@ -49,8 +50,13 @@ module.exports = {
       exp_backoff_restart_delay: 200,
       max_memory_restart: '1500M',
       env: {
-        ...apiPm2Env.prodEnvVars(),
-        API_HTTP_ADAPTER: 'fastify',
+        ...prodApiEnv,
+        // `both` peut être injecté pour partager le même env avec Firebase ;
+        // ce point d’entrée résout toujours l’adaptateur réel vers Fastify.
+        API_HTTP_ADAPTER:
+          process.env.API_HTTP_ADAPTER ||
+          prodApiEnv.API_HTTP_ADAPTER ||
+          'fastify',
         NODE_PORT: apiPort,
         PORT: apiPort,
         SERVER_URL: `http://localhost:${apiPort}`,

@@ -66,6 +66,24 @@ En application : n’utilisez pas `ObjectId` depuis le paquet `mongodb` avec **M
 - **`package.json` → `main`** : `dist/firebase-main.js` (export de la fonction HTTP `api`)
 - **Local (sans Firebase)** : `npm run start:prod` → `dist/main.js` (préfixe global `/api`)
 
+### Adaptateurs HTTP et GraphQL
+
+`API_HTTP_ADAPTER` accepte trois modes :
+
+| Valeur | Déploiement autorisé |
+|--------|----------------------|
+| `both` (défaut) | Fastify + Mercurius sur `main.ts`, Express + Apollo sur Firebase |
+| `fastify` | Serveur `main.ts` uniquement ; Firebase refuse de démarrer |
+| `express` | Firebase uniquement ; `main.ts` refuse de démarrer |
+
+Chaque bootstrap résout l’adaptateur réel **avant** l’import dynamique de
+`AppModule`. Cet ordre est un invariant : GraphQL choisit son driver pendant le
+chargement du module, et Mercurius ne peut pas démarrer sur Express.
+
+Pour partager une configuration entre k8s et Functions, définir
+`API_HTTP_ADAPTER=both`. Dans `.env.functions`, utiliser `both` ou `express`,
+jamais `fastify`.
+
 ## URLs
 
 - Fonction nommée **`api`** (Gen 2) :  
@@ -131,6 +149,7 @@ Variables utiles (alignées sur `.env.functions`) :
 
 | Variable | Rôle |
 |----------|------|
+| `API_HTTP_ADAPTER` | `both` (défaut), `express` pour Functions seulement, ou `fastify` pour le serveur principal seulement |
 | `MONGODB_URI` ou `MONGO_URI` | URI MongoDB complète (prioritaire sur `DB_*`) |
 | `DB_USERNAME`, `DB_PASSWORD`, `DB_HOST`, `DB_DATABASE` | Construction de l’URI si pas d’URI complète |
 | `MONGOOSE_MAX_POOL` | Taille max du pool par instance (défaut `20`, plafond lecture env `100` ; chaque conteneur Functions a son propre pool) |

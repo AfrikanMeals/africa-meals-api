@@ -6,9 +6,9 @@ import { httpRequestTimeoutMiddleware } from './http-request-timeout';
 import { NestFactory } from '@nestjs/core';
 import { ExpressAdapter } from '@nestjs/platform-express';
 import express from 'express';
-import { AppModule } from './app.module';
 import { configureApplication } from './configure-app';
 import { httpDryRunMiddleware } from './common/http/dry-run.middleware';
+import { configureHttpAdapterForRuntime } from './http-adapter.util';
 
 let cachedServer: express.Express | undefined;
 
@@ -20,6 +20,12 @@ export async function getExpressServer(): Promise<express.Express> {
   if (cachedServer) {
     return cachedServer;
   }
+
+  // Firebase reste sur Express/Apollo, même en mode `both`. Le chargement différé
+  // empêche une variable Fastify héritée d’instancier Mercurius sur Express.
+  configureHttpAdapterForRuntime('express');
+  const { AppModule } = await import('./app.module');
+
   const expressApp = express();
   expressApp.use(httpRequestTimeoutMiddleware());
   expressApp.use(compressionMiddleware({ threshold: 1024 }));
