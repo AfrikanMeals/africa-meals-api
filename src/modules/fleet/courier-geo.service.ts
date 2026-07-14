@@ -40,6 +40,10 @@ export class CourierGeoService {
     longitude: number;
     regionCode?: string | null;
     availability?: string | null;
+    headingDegrees?: number | null;
+    speedMps?: number | null;
+    batteryPercent?: number | null;
+    recordedAt?: string | null;
   }): Promise<boolean> {
     const agentUserId = String(args.agentUserId ?? '').trim();
     if (!agentUserId || !isValidWgs84(args.latitude, args.longitude)) {
@@ -62,14 +66,33 @@ export class CourierGeoService {
         agentUserId,
       );
       const metaKey = courierGeoMetaKey(agentUserId);
-      await redis.hset(metaKey, {
+      const meta: Record<string, string> = {
         lat: String(args.latitude),
         lng: String(args.longitude),
         updatedAt: String(Date.now()),
         region: String(args.regionCode ?? '').trim(),
         availability:
           String(args.availability ?? 'disponible').trim() || 'disponible',
-      });
+      };
+      if (
+        args.headingDegrees != null &&
+        Number.isFinite(args.headingDegrees)
+      ) {
+        meta.heading = String(args.headingDegrees);
+      }
+      if (args.speedMps != null && Number.isFinite(args.speedMps)) {
+        meta.speed = String(args.speedMps);
+      }
+      if (
+        args.batteryPercent != null &&
+        Number.isFinite(args.batteryPercent)
+      ) {
+        meta.battery = String(Math.round(args.batteryPercent));
+      }
+      if (args.recordedAt) {
+        meta.recordedAt = String(args.recordedAt);
+      }
+      await redis.hset(metaKey, meta);
       await redis.expire(metaKey, COURIER_GEO_META_TTL_SEC);
       return true;
     } catch (err) {

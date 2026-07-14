@@ -10,6 +10,10 @@ export type FleetAgentSnapshot = {
   maxConcurrentOrders?: number;
   latitude?: number;
   longitude?: number;
+  headingDegrees?: number;
+  speedMps?: number;
+  batteryPercent?: number;
+  recordedAt?: string;
   orderId?: string;
   notifyStoreIds?: string[];
   updatedAt: string;

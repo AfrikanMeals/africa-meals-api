@@ -1,7 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Neo4jService } from '@modules/neo4j/neo4j.service';
 import { deriveProductTagsFromText, zoneIdFromShippingRing } from './graph-knowledge.util';
+import {
+  regionAvailabilityZoneId,
+  trafficFactorFromAvgSpeedKmh,
+} from './graph-map-cell.util';
 import type {
+  GraphCourierPresencePayload,
   GraphOrderCompletedPayload,
   GraphProductSimilarityPayload,
   GraphProductTagsPayload,
@@ -9,6 +14,7 @@ import type {
   GraphStoreSimilarityPayload,
   GraphStoreSubscribedPayload,
   GraphStoreZonesPayload,
+  GraphTrafficSamplePayload,
 } from './graph-sync.types';
 
 const CONSTRAINTS_CYPHER = `
@@ -16,6 +22,9 @@ CREATE CONSTRAINT user_userId IF NOT EXISTS FOR (u:User) REQUIRE u.userId IS UNI
 CREATE CONSTRAINT store_storeId IF NOT EXISTS FOR (s:Store) REQUIRE s.storeId IS UNIQUE;
 CREATE CONSTRAINT product_productId IF NOT EXISTS FOR (p:Product) REQUIRE p.productId IS UNIQUE;
 CREATE CONSTRAINT drink_drinkId IF NOT EXISTS FOR (d:Drink) REQUIRE d.drinkId IS UNIQUE;
+CREATE CONSTRAINT courier_agentUserId IF NOT EXISTS FOR (c:Courier) REQUIRE c.agentUserId IS UNIQUE;
+CREATE CONSTRAINT zone_zoneId IF NOT EXISTS FOR (z:Zone) REQUIRE z.zoneId IS UNIQUE;
+CREATE CONSTRAINT traffic_cellId IF NOT EXISTS FOR (t:TrafficCell) REQUIRE t.cellId IS UNIQUE;
 `;
 
 @Injectable()
@@ -308,6 +317,95 @@ export class GraphSyncService {
         { timeoutMs: 5_000, op: 'product_ingredient' },
       );
     }
+  }
+
+  /**
+   * Map engine — Courier + AVAILABLE_IN Zone(région).
+   * GPS live reste Redis GEO ; Neo4j = disponibilité / zone (pas routage OSRM).
+   */
+  async applyCourierPresence(payload: GraphCourierPresencePayload): Promise<void> {
+    await this.ensureConstraints();
+    const agentUserId = String(payload.agentUserId ?? '').trim();
+    if (!agentUserId) return;
+    const at = payload.at || new Date().toISOString();
+    const region = (payload.region ?? '').trim().toUpperCase() || null;
+    const zoneId = regionAvailabilityZoneId(region ?? '');
+    const availability = String(payload.availability ?? '')
+      .trim()
+      .toLowerCase() || null;
+    const lat =
+      typeof payload.latitude === 'number' && Number.isFinite(payload.latitude)
+        ? payload.latitude
+        : null;
+    const lng =
+      typeof payload.longitude === 'number' && Number.isFinite(payload.longitude)
+        ? payload.longitude
+        : null;
+
+    await this.neo4j.runCypher(
+      `
+      MERGE (c:Courier {agentUserId: $agentUserId})
+      SET c.availability = coalesce($availability, c.availability),
+          c.lastSeenAt = datetime($at),
+          c.region = coalesce($region, c.region),
+          c.lat = coalesce($lat, c.lat),
+          c.lng = coalesce($lng, c.lng)
+      MERGE (z:Zone {zoneId: $zoneId})
+      SET z.kind = coalesce(z.kind, 'region'),
+          z.region = coalesce($region, z.region)
+      MERGE (c)-[r:AVAILABLE_IN]->(z)
+      SET r.updatedAt = datetime($at),
+          r.availability = coalesce($availability, r.availability)
+      `,
+      { agentUserId, at, region, zoneId, availability, lat, lng },
+      { timeoutMs: 8_000, op: 'courier_presence' },
+    );
+  }
+
+  /**
+   * Map engine — cellule TrafficCell + OBSERVED_IN (prédiction, pas plus court chemin).
+   */
+  async applyTrafficSample(payload: GraphTrafficSamplePayload): Promise<void> {
+    await this.ensureConstraints();
+    const cellId = String(payload.cellId ?? '').trim();
+    if (!cellId) return;
+    const at = payload.at || new Date().toISOString();
+    const speedKmh = Number(payload.speedKmh);
+    if (!Number.isFinite(speedKmh) || speedKmh < 0) return;
+    const factor = trafficFactorFromAvgSpeedKmh(speedKmh);
+    const lat = Number(payload.latitude);
+    const lng = Number(payload.longitude);
+    const heading =
+      typeof payload.headingDegrees === 'number' &&
+      Number.isFinite(payload.headingDegrees)
+        ? payload.headingDegrees
+        : null;
+
+    await this.neo4j.runCypher(
+      `
+      MERGE (t:TrafficCell {cellId: $cellId})
+      ON CREATE SET t.sampleCount = 0, t.lat = $lat, t.lng = $lng
+      SET t.lat = coalesce(t.lat, $lat),
+          t.lng = coalesce(t.lng, $lng),
+          t.lastSpeedKmh = $speedKmh,
+          t.lastFactor = $factor,
+          t.lastAt = datetime($at),
+          t.sampleCount = coalesce(t.sampleCount, 0) + 1,
+          t.avgSpeedKmh = CASE
+            WHEN coalesce(t.avgSpeedKmh, 0) = 0 THEN $speedKmh
+            ELSE (t.avgSpeedKmh * 0.85) + ($speedKmh * 0.15)
+          END,
+          t.avgFactor = CASE
+            WHEN coalesce(t.avgFactor, 0) = 0 THEN $factor
+            ELSE (t.avgFactor * 0.85) + ($factor * 0.15)
+          END
+      FOREACH (_ IN CASE WHEN $heading IS NULL THEN [] ELSE [1] END |
+        SET t.lastHeading = $heading
+      )
+      `,
+      { cellId, at, speedKmh, factor, lat, lng, heading },
+      { timeoutMs: 8_000, op: 'traffic_sample' },
+    );
   }
 
   /** Phase 6 — anneaux shipping_zones → Zone + DELIVERS_TO. */

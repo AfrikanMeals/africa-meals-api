@@ -20,6 +20,7 @@ import { GraphMetricsService } from '@modules/neo4j/graph-metrics.service';
 import { JobsOptions, Queue, Worker } from 'bullmq';
 import { GraphSyncService } from './graph-sync.service';
 import {
+  GRAPH_JOB_COURIER_PRESENCE,
   GRAPH_JOB_ORDER_COMPLETED,
   GRAPH_JOB_PRODUCT_TAGS,
   GRAPH_JOB_RECOMPUTE_PRODUCT_SIMILARITY,
@@ -27,6 +28,8 @@ import {
   GRAPH_JOB_SIGNAL_TRACKED,
   GRAPH_JOB_STORE_SUBSCRIBED,
   GRAPH_JOB_STORE_ZONES,
+  GRAPH_JOB_TRAFFIC_SAMPLE,
+  type GraphCourierPresencePayload,
   type GraphOrderCompletedPayload,
   type GraphProductSimilarityPayload,
   type GraphProductTagsPayload,
@@ -34,6 +37,7 @@ import {
   type GraphStoreSimilarityPayload,
   type GraphStoreSubscribedPayload,
   type GraphStoreZonesPayload,
+  type GraphTrafficSamplePayload,
 } from './graph-sync.types';
 
 type GraphJobPayload =
@@ -43,7 +47,9 @@ type GraphJobPayload =
   | GraphStoreSimilarityPayload
   | GraphProductSimilarityPayload
   | GraphStoreZonesPayload
-  | GraphProductTagsPayload;
+  | GraphProductTagsPayload
+  | GraphCourierPresencePayload
+  | GraphTrafficSamplePayload;
 
 @Injectable()
 export class GraphSyncQueueService implements OnModuleInit, OnModuleDestroy {
@@ -199,6 +205,32 @@ export class GraphSyncQueueService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  /** Throttle ~30s / livreur — map intelligence disponibilité. */
+  async enqueueCourierPresence(
+    payload: GraphCourierPresencePayload,
+  ): Promise<void> {
+    if (!shouldEnqueueGraphSync()) return;
+    const bucket = String(Math.floor(Date.now() / 30_000));
+    await this.addOrRun(
+      GRAPH_JOB_COURIER_PRESENCE,
+      payload,
+      bullmqJobId('g-cou', payload.agentUserId, bucket),
+    );
+  }
+
+  /** Throttle ~45s / cellule — prédiction trafic (pas OSRM). */
+  async enqueueTrafficSample(
+    payload: GraphTrafficSamplePayload,
+  ): Promise<void> {
+    if (!shouldEnqueueGraphSync()) return;
+    const bucket = String(Math.floor(Date.now() / 45_000));
+    await this.addOrRun(
+      GRAPH_JOB_TRAFFIC_SAMPLE,
+      payload,
+      bullmqJobId('g-traf', payload.cellId, bucket),
+    );
+  }
+
   private async addOrRun(
     name: string,
     data: GraphJobPayload,
@@ -257,6 +289,14 @@ export class GraphSyncQueueService implements OnModuleInit, OnModuleDestroy {
           break;
         case GRAPH_JOB_PRODUCT_TAGS:
           await this.sync.applyProductTags(data as GraphProductTagsPayload);
+          break;
+        case GRAPH_JOB_COURIER_PRESENCE:
+          await this.sync.applyCourierPresence(
+            data as GraphCourierPresencePayload,
+          );
+          break;
+        case GRAPH_JOB_TRAFFIC_SAMPLE:
+          await this.sync.applyTrafficSample(data as GraphTrafficSamplePayload);
           break;
         default:
           break;

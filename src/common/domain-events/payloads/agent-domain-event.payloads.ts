@@ -1,10 +1,13 @@
 import {
   IsIn,
   IsInt,
+  IsISO8601,
   IsLatitude,
   IsLongitude,
   IsMongoId,
+  IsNumber,
   IsOptional,
+  Max,
   Min,
 } from 'class-validator';
 
@@ -42,6 +45,28 @@ export class AgentLocationUpdatedPayload {
   @IsOptional()
   @IsMongoId()
   orderId?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(360)
+  headingDegrees?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(80)
+  speedMps?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  batteryPercent?: number;
+
+  @IsOptional()
+  @IsISO8601()
+  recordedAt?: string;
 }
 
 export class AgentCapacityChangedPayload {

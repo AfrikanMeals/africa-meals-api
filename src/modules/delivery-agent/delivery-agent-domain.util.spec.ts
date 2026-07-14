@@ -15,8 +15,8 @@ describe('delivery-agent-domain.util', () => {
   });
 
   it('throttle aligns with mobile GPS interval (~12s)', () => {
-    expect(AGENT_LOCATION_EMIT_THROTTLE_MS).toBe(10_000);
-    expect(AGENT_LOCATION_EMIT_THROTTLE_MS).toBeLessThanOrEqual(12_000);
+    expect(AGENT_LOCATION_EMIT_THROTTLE_MS).toBe(3_000);
+    expect(AGENT_LOCATION_EMIT_THROTTLE_MS).toBeLessThanOrEqual(5_000);
   });
 
   it('pendingOrderWithinMaxDeliveryRadius respects admin max km', () => {

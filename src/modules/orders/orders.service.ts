@@ -38,6 +38,11 @@ import { Model, Types } from 'mongoose';
 import { haversineDistance } from 'src/utils/helpers';
 import { mapInChunks } from '@utils/map-in-chunks';
 import {
+  courierTelemetryWsFields,
+  normalizeCourierLiveTelemetry,
+  type CourierLiveTelemetry,
+} from '@common/courier-live-telemetry.util';
+import {
   fromStripeMinorUnits,
   stripeAmountFactor,
   toStripeMinorUnits,
@@ -4078,6 +4083,7 @@ export class OrdersService {
     agentUserId: string,
     courierLat: number,
     courierLng: number,
+    telemetry?: CourierLiveTelemetry | null,
   ): Promise<string[]> {
     const orders = await this.findShippedOrdersForCourierTracking(agentUserId);
     const orderIds: string[] = [];
@@ -4092,6 +4098,7 @@ export class OrdersService {
         courierLat,
         courierLng,
         agentUserId,
+        telemetry,
       );
     }
     return orderIds;
@@ -5411,6 +5418,7 @@ export class OrdersService {
     courierLat: number,
     courierLng: number,
     agentUserId: string,
+    telemetry?: CourierLiveTelemetry | null,
   ): void {
     const oid =
       (plain._id as Types.ObjectId | undefined)?.toString?.() ??
@@ -5436,6 +5444,7 @@ export class OrdersService {
       courierLat,
       courierLng,
       status,
+      telemetry,
     );
     if (!extra) return;
 
@@ -5472,6 +5481,7 @@ export class OrdersService {
     courierLat: number,
     courierLng: number,
     status: OrderStatusEnum,
+    telemetry?: CourierLiveTelemetry | null,
   ): Partial<OrderWsTrackingPayload> | null {
     const storeCoords = this.coordsFromAddressLike(
       plain.store &&
@@ -5500,12 +5510,16 @@ export class OrdersService {
         ? Math.min(0.98, Math.max(0.1, fromStore / totalKm))
         : this.trackingProgressForStatus(status, false);
 
+    const tel = normalizeCourierLiveTelemetry(telemetry);
+    const telFields = courierTelemetryWsFields(tel);
+
     return {
       distanceKm: totalKm,
       remainingDistanceKm: remainingKm,
       progress,
       courierLatitude: courierLat,
       courierLongitude: courierLng,
+      ...(telFields as Partial<OrderWsTrackingPayload>),
     };
   }
 

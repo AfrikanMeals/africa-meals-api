@@ -4,7 +4,8 @@ import {
   resolvePlatformShippingRegionCode,
 } from '../platform-shipping-settings/platform-shipping-region.util';
 
-export const AGENT_LOCATION_EMIT_THROTTLE_MS = 10_000;
+/** Throttle flotte WS/SSE — tip realtime 2–3 s (aligné COURIER_GPS_THROTTLE_MS). */
+export const AGENT_LOCATION_EMIT_THROTTLE_MS = 3_000;
 
 /**
  * Région d’exercice du livreur : dossier candidature (`region`) prioritaire

@@ -15,6 +15,14 @@ export type OrderWsTrackingPayload = {
   pickupCode?: string;
   courierLatitude?: number;
   courierLongitude?: number;
+  /** Cap livreur (0–360°) pour cône / marqueur animé. */
+  courierHeadingDegrees?: number;
+  /** Vitesse m/s. */
+  courierSpeedMps?: number;
+  /** Batterie appareil livreur 0–100. */
+  courierBatteryPercent?: number;
+  /** Horodatage GPS appareil (ISO-8601). */
+  courierRecordedAt?: string;
   remainingDistanceKm?: number;
   elapsedMinutes?: number;
   /** Livreur mobile assigné (`User` DELIVERY) — chat client ↔ livreur ; `null` = retrait explicite. */

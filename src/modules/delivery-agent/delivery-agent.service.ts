@@ -96,9 +96,11 @@ import { DomainEventType } from '../../common/domain-events/domain-event-types';
 import { isDomainEventsEnabled } from '@modules/domain-event-handlers/domain-event-handlers.util';
 import { CourierGeoService } from '@modules/fleet/courier-geo.service';
 import { TrafficService } from '@modules/traffic/traffic.service';
+import { GraphSyncQueueService } from '@modules/graph/graph-sync-queue.service';
 import { FleetAudienceService } from '@modules/fleet/fleet-audience.service';
 import { FleetSnapshotService } from '@modules/fleet/fleet-snapshot.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import { normalizeCourierLiveTelemetry } from '@common/courier-live-telemetry.util';
 import {
   deliveryLngLatFromOrder,
   storeLngLatFromOrder,
@@ -204,6 +206,8 @@ export class DeliveryAgentService {
     private readonly _traffic?: TrafficService,
     @Optional()
     private readonly _vroomDispatch?: VroomDispatchService,
+    @Optional()
+    private readonly _graphSync?: GraphSyncQueueService,
   ) {}
 
   private async publishAgentDomainEvent<T extends DomainEventType>(
@@ -1709,6 +1713,10 @@ export class DeliveryAgentService {
     latitude: number;
     longitude: number;
     orderId?: string;
+    headingDegrees?: number | null;
+    speedMps?: number | null;
+    batteryPercent?: number | null;
+    recordedAt?: string | null;
   }): Promise<void> {
     const agentUserId = params.agentUserId.trim();
     if (!agentUserId) return;
@@ -1722,6 +1730,14 @@ export class DeliveryAgentService {
       latitude: params.latitude,
       longitude: params.longitude,
       orderId: params.orderId,
+      ...(params.headingDegrees != null
+        ? { headingDegrees: params.headingDegrees }
+        : {}),
+      ...(params.speedMps != null ? { speedMps: params.speedMps } : {}),
+      ...(params.batteryPercent != null
+        ? { batteryPercent: params.batteryPercent }
+        : {}),
+      ...(params.recordedAt ? { recordedAt: params.recordedAt } : {}),
       notifyStoreIds: await this._fleetAudience.resolveNotifyStoreIds(agentUserId),
     });
 
@@ -1736,6 +1752,14 @@ export class DeliveryAgentService {
         latitude: params.latitude,
         longitude: params.longitude,
         orderId: params.orderId,
+        ...(params.headingDegrees != null
+          ? { headingDegrees: params.headingDegrees }
+          : {}),
+        ...(params.speedMps != null ? { speedMps: params.speedMps } : {}),
+        ...(params.batteryPercent != null
+          ? { batteryPercent: params.batteryPercent }
+          : {}),
+        ...(params.recordedAt ? { recordedAt: params.recordedAt } : {}),
       },
       metadata: { source: 'delivery-agent' },
     });
@@ -1802,6 +1826,13 @@ export class DeliveryAgentService {
     const agentId = new Types.ObjectId(String(user._id ?? user.id));
     const agentUserId = String(agentId);
 
+    const telemetry = normalizeCourierLiveTelemetry({
+      headingDegrees: dto.headingDegrees,
+      speedMps: dto.speedMps,
+      batteryPercent: dto.batteryPercent,
+      recordedAt: dto.recordedAt,
+    });
+
     const appLean = await this._applications
       .findOneAndUpdate(
         { user: agentId },
@@ -1828,6 +1859,10 @@ export class DeliveryAgentService {
       regionCode: (appLean as { region?: string } | null)?.region,
       availability: (appLean as { dashboardAvailability?: string } | null)
         ?.dashboardAvailability,
+      headingDegrees: telemetry.headingDegrees,
+      speedMps: telemetry.speedMps,
+      batteryPercent: telemetry.batteryPercent,
+      recordedAt: telemetry.recordedAt,
     });
 
     // Traffic Engine — collecte flotte (GPS + vitesse + cap) → vitesses moyennes/route.
@@ -1838,11 +1873,23 @@ export class DeliveryAgentService {
       headingDegrees: dto.headingDegrees,
     });
 
+    // Neo4j map intelligence — disponibilité + zone (throttle queue). Routage = OSRM.
+    void this._graphSync?.enqueueCourierPresence({
+      agentUserId,
+      region: (appLean as { region?: string } | null)?.region,
+      availability: (appLean as { dashboardAvailability?: string } | null)
+        ?.dashboardAvailability,
+      latitude: lat,
+      longitude: lng,
+      at: new Date().toISOString(),
+    });
+
     const activeOrderIds =
       await this._ordersService.publishCourierPositionsForAgent(
         agentUserId,
         lat,
         lng,
+        telemetry,
       );
     const primaryOrderId = activeOrderIds[0];
     await this.emitAgentLocationUpdated({
@@ -1850,6 +1897,10 @@ export class DeliveryAgentService {
       latitude: lat,
       longitude: lng,
       orderId: primaryOrderId,
+      headingDegrees: telemetry.headingDegrees,
+      speedMps: telemetry.speedMps,
+      batteryPercent: telemetry.batteryPercent,
+      recordedAt: telemetry.recordedAt,
     });
     return { ok: true };
   }

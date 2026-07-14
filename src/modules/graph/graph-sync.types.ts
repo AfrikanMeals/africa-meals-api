@@ -9,6 +9,10 @@ export const GRAPH_JOB_RECOMPUTE_PRODUCT_SIMILARITY =
   'graph.product.similarity.recompute';
 export const GRAPH_JOB_STORE_ZONES = 'graph.store.zones';
 export const GRAPH_JOB_PRODUCT_TAGS = 'graph.product.tags';
+/** Map engine — disponibilité livreur (dérivé Redis GEO / présence). */
+export const GRAPH_JOB_COURIER_PRESENCE = 'graph.courier.presence';
+/** Map engine — échantillon trafic cellule (pas routage OSRM). */
+export const GRAPH_JOB_TRAFFIC_SAMPLE = 'graph.traffic.sample';
 
 export type GraphOrderLineItem = {
   entityId: string;
@@ -63,4 +67,24 @@ export type GraphProductTagsPayload = {
   productId: string;
   tags: string[];
   ingredients?: string[];
+};
+
+/** Sync graphique disponibilité livreur (map intelligence). */
+export type GraphCourierPresencePayload = {
+  agentUserId: string;
+  region?: string | null;
+  availability?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  at: string;
+};
+
+/** Sync graphique prédiction trafic (cellules, pas réseau routier). */
+export type GraphTrafficSamplePayload = {
+  cellId: string;
+  latitude: number;
+  longitude: number;
+  speedKmh: number;
+  headingDegrees?: number | null;
+  at: string;
 };

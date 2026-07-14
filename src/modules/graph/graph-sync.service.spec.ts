@@ -67,4 +67,31 @@ describe('GraphSyncService', () => {
     expect(runCypher).toHaveBeenCalledTimes(2);
     expect(String(runCypher.mock.calls[0][0])).toContain('SIMILAR_TO');
   });
+
+  it('applyCourierPresence MERGEs AVAILABLE_IN', async () => {
+    await svc.applyCourierPresence({
+      agentUserId: 'agent1',
+      region: 'CM',
+      availability: 'disponible',
+      latitude: 3.85,
+      longitude: 11.5,
+      at: '2026-07-14T00:00:00.000Z',
+    });
+    const q = String(runCypher.mock.calls.at(-1)?.[0] ?? '');
+    expect(q).toContain('AVAILABLE_IN');
+    expect(q).toContain('Courier');
+  });
+
+  it('applyTrafficSample MERGEs TrafficCell', async () => {
+    await svc.applyTrafficSample({
+      cellId: 'tcell:385_1150',
+      latitude: 3.85,
+      longitude: 11.5,
+      speedKmh: 12,
+      at: '2026-07-14T00:00:00.000Z',
+    });
+    const q = String(runCypher.mock.calls.at(-1)?.[0] ?? '');
+    expect(q).toContain('TrafficCell');
+    expect(q).toContain('avgFactor');
+  });
 });

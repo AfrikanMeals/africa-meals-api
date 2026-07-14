@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { Neo4jModule } from '@modules/neo4j/neo4j.module';
 import { BullmqRedisModule } from '../../common/redis/bullmq-redis-connections.service';
+import { GraphMapIntelligenceService } from './graph-map-intelligence.service';
 import { GraphRecommendationService } from './graph-recommendation.service';
 import { GraphSimilarityCron } from './graph-similarity.cron';
 import { GraphSyncQueueService } from './graph-sync-queue.service';
@@ -14,6 +15,7 @@ import { RecommendationFacade } from './recommendation-facade.service';
     GraphSyncService,
     GraphSyncQueueService,
     GraphRecommendationService,
+    GraphMapIntelligenceService,
     RecommendationFacade,
     GraphSimilarityCron,
   ],
@@ -21,6 +23,7 @@ import { RecommendationFacade } from './recommendation-facade.service';
     GraphSyncService,
     GraphSyncQueueService,
     GraphRecommendationService,
+    GraphMapIntelligenceService,
     RecommendationFacade,
   ],
 })

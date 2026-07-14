@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MapSettingsService } from '@modules/map-settings/map-settings.service';
 import {
@@ -8,6 +8,11 @@ import {
   type TrafficEngineId,
   type TrafficEnginePrimary,
 } from '@common/traffic-engine-pool.util';
+import { GraphMapIntelligenceService } from '@modules/graph/graph-map-intelligence.service';
+import { GraphSyncQueueService } from '@modules/graph/graph-sync-queue.service';
+import {
+  trafficCellId,
+} from '@modules/graph/graph-map-cell.util';
 import { TrafficFleetService } from './traffic-fleet.service';
 import { TrafficExternalProviders } from './traffic-external.providers';
 
@@ -36,6 +41,8 @@ export class TrafficService {
     private readonly fleet: TrafficFleetService,
     private readonly external: TrafficExternalProviders,
     private readonly config: ConfigService,
+    @Optional() private readonly graphMap?: GraphMapIntelligenceService,
+    @Optional() private readonly graphSync?: GraphSyncQueueService,
   ) {}
 
   envFallbackFactor(): number {
@@ -139,6 +146,11 @@ export class TrafficService {
         );
       }
 
+      // Hint Neo4j TrafficCell (prédiction) — jamais remplace OSRM.
+      if (factor == null) {
+        factor = await this.graphMap?.averageTrafficFactorNear(lat, lng);
+      }
+
       const resolved = factor ?? this.envFallbackFactor();
       const engine: TrafficEnginePrimary =
         factor != null ? (picked === 'none' ? 'fleet' : picked) : 'none';
@@ -179,6 +191,33 @@ export class TrafficService {
           .toLowerCase() !== 'false';
       if (!wantsFleet) return;
       await this.fleet.ingestPing(args);
+
+      // Neo4j traffic prediction graph (cellules) — throttle via queue jobId.
+      const lat = Number(args.latitude);
+      const lng = Number(args.longitude);
+      let speedKmh =
+        typeof args.speedKmh === 'number' && Number.isFinite(args.speedKmh)
+          ? args.speedKmh
+          : null;
+      if (
+        speedKmh == null &&
+        typeof args.speedMps === 'number' &&
+        Number.isFinite(args.speedMps) &&
+        args.speedMps >= 0
+      ) {
+        speedKmh = args.speedMps * 3.6;
+      }
+      const cellId = trafficCellId(lat, lng);
+      if (cellId && speedKmh != null && speedKmh > 0.5) {
+        void this.graphSync?.enqueueTrafficSample({
+          cellId,
+          latitude: lat,
+          longitude: lng,
+          speedKmh,
+          headingDegrees: args.headingDegrees,
+          at: new Date().toISOString(),
+        });
+      }
     } catch {
       // ignore
     }
