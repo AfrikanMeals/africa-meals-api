@@ -30,11 +30,17 @@ import {
   DeliveryAgentDailyPerformanceModel,
   DeliveryAgentDailyPerformanceSchema,
 } from '@schemas/delivery-agent-daily-performance.schema';
+import {
+  DeliveryAgentPerformanceStatsModel,
+  DeliveryAgentPerformanceStatsSchema,
+} from '@schemas/delivery-agent-performance-stats.schema';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import { DeliveryAgentController } from './delivery-agent.controller';
 import { DeliveryAgentService } from './delivery-agent.service';
+import { CourierMarketplaceDispatchService } from './courier-marketplace-dispatch.service';
+import { CourierPerformanceStatsService } from './courier-performance-stats.service';
 
 @Module({
   imports: [
@@ -72,10 +78,22 @@ import { DeliveryAgentService } from './delivery-agent.service';
         name: DeliveryAgentDailyPerformanceModel.name,
         schema: DeliveryAgentDailyPerformanceSchema,
       },
+      {
+        name: DeliveryAgentPerformanceStatsModel.name,
+        schema: DeliveryAgentPerformanceStatsSchema,
+      },
     ]),
   ],
   controllers: [DeliveryAgentController],
-  providers: [DeliveryAgentService],
-  exports: [DeliveryAgentService],
+  providers: [
+    DeliveryAgentService,
+    CourierPerformanceStatsService,
+    CourierMarketplaceDispatchService,
+  ],
+  exports: [
+    DeliveryAgentService,
+    CourierPerformanceStatsService,
+    CourierMarketplaceDispatchService,
+  ],
 })
 export class DeliveryAgentModule {}

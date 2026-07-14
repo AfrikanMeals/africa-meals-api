@@ -246,6 +246,25 @@ export class ChatMediaJsonDto {
   mimeType?: string;
 }
 
+/**
+ * Photo de profil utilisateur : JSON + base64.
+ * Fastify / Firebase / proxys rejettent souvent multipart (415 Unsupported Media Type).
+ * @see StoreProfileImageJsonDto
+ */
+export class ProfileImageJsonDto {
+  @ApiProperty({
+    description: 'Image en base64 (pur ou préfixe data:image/...;base64,)',
+  })
+  @IsNotEmpty()
+  @IsString()
+  imageBase64: string;
+
+  @ApiPropertyOptional({ example: 'photo.jpg' })
+  @IsOptional()
+  @IsString()
+  filename?: string;
+}
+
 /** Jeton Firebase ID (utilisateur connecté via Google dans Firebase Auth), vérifié côté serveur. */
 export class GoogleAuthDto {
   @ApiProperty({

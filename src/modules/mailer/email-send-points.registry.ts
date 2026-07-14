@@ -298,6 +298,15 @@ export const EMAIL_SEND_POINTS: readonly EmailSendPoint[] = [
     mitigation: 'Logo en-tête via wrapBodyAsync',
   },
   {
+    id: 'courier-marketplace-available',
+    service: 'courier-marketplace-dispatch.service.ts',
+    description: 'Nouvelle course disponible (rayon livreur)',
+    transport: 'sendSimple',
+    logContext: 'courier-marketplace-available',
+    imageRisk: 'header_logo',
+    mitigation: 'Texte seul + logo en-tête',
+  },
+  {
     id: 'test-email-media',
     service: 'scripts/test-email-media-images.ts',
     description: 'Diagnostic migration images',

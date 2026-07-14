@@ -965,8 +965,121 @@ export class NotificationsService implements OnModuleInit {
   }
 
   /**
-   * Inbox + push FCM — offre course exclusive flotte boutique.
+   * Inbox + push — course marketplace disponible dans le rayon du livreur.
    */
+  async notifyCourierMarketplaceAvailable(args: {
+    recipientUserId: string;
+    orderId: string;
+    orderRef?: string;
+    storeName?: string;
+    storeId?: string;
+    distanceMeters?: number | null;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.recipientUserId)) {
+      return;
+    }
+    const orderId = args.orderId?.trim();
+    if (!orderId) return;
+
+    const store = (args.storeName ?? '').trim() || 'Restaurant';
+    const ref =
+      (args.orderRef ?? '').trim() ||
+      `#AE-${orderId.slice(-6).toUpperCase()}`;
+    const distKm =
+      args.distanceMeters != null && Number.isFinite(args.distanceMeters)
+        ? Math.round((args.distanceMeters / 1000) * 10) / 10
+        : null;
+    const distSuffix = distKm != null ? ` (~${distKm} km)` : '';
+    const title = 'Nouvelle course disponible';
+    const body = `${store} : ${ref} est à prendre près de vous${distSuffix}.`;
+
+    const data: Record<string, unknown> = {
+      type: 'courier_marketplace_available',
+      audience: 'courier',
+      reason: 'marketplace_available',
+      orderId,
+      orderRef: ref,
+      storeName: store,
+      claimable: 'true',
+    };
+    if (distKm != null) {
+      data.distanceKm = String(distKm);
+    }
+    const storeId = args.storeId?.trim();
+    if (storeId) {
+      data.storeId = storeId;
+    }
+
+    try {
+      await this.createUserScopedNotification({
+        recipientUserId: args.recipientUserId,
+        title,
+        body,
+        type: 'courier_marketplace_available',
+        data,
+        sendPush: true,
+        androidChannelId: 'african_meals_courier_orders',
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`notifyCourierMarketplaceAvailable: ${msg}`);
+    }
+  }
+
+  /**
+   * Push — un autre livreur a pris la course (soft guard : claim encore tentable).
+   */
+  async notifyCourierOrderClaimedByOther(args: {
+    recipientUserId: string;
+    orderId: string;
+    orderRef?: string;
+    storeName?: string;
+    claimedByUserId?: string;
+    softGuardSec?: number;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.recipientUserId)) {
+      return;
+    }
+    const orderId = args.orderId?.trim();
+    if (!orderId) return;
+
+    const store = (args.storeName ?? '').trim() || 'Restaurant';
+    const ref =
+      (args.orderRef ?? '').trim() ||
+      `#AE-${orderId.slice(-6).toUpperCase()}`;
+    const title = 'Course prise';
+    const body = `${store} : ${ref} a été acceptée par un autre livreur. Vous pouvez encore tenter si besoin.`;
+
+    const data: Record<string, unknown> = {
+      type: 'courier_order_claimed_by_other',
+      audience: 'courier',
+      reason: 'order_claimed_by_other',
+      orderId,
+      orderRef: ref,
+      storeName: store,
+      claimable: 'soft_guard',
+      softGuardSec: String(args.softGuardSec ?? 45),
+    };
+    if (args.claimedByUserId) {
+      data.claimedByUserId = args.claimedByUserId;
+    }
+
+    try {
+      await this.createUserScopedNotification({
+        recipientUserId: args.recipientUserId,
+        title,
+        body,
+        type: 'courier_order_claimed_by_other',
+        data,
+        sendPush: true,
+        androidChannelId: 'african_meals_courier_orders',
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`notifyCourierOrderClaimedByOther: ${msg}`);
+    }
+  }
+
   async notifyCourierDeliveryOffer(args: {
     recipientUserId: string;
     orderId: string;
@@ -977,6 +1090,7 @@ export class NotificationsService implements OnModuleInit {
     expiresAt: string;
     timeoutSec: number;
   }): Promise<void> {
+    // Inbox + push FCM — offre course exclusive flotte boutique.
     if (!Types.ObjectId.isValid(args.recipientUserId)) {
       return;
     }

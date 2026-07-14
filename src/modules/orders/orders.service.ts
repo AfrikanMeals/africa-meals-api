@@ -81,6 +81,8 @@ import { LoyaltyService } from '@modules/loyalty/loyalty.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 import { DeliveryAgentService } from '@modules/delivery-agent/delivery-agent.service';
+import { CourierMarketplaceDispatchService } from '@modules/delivery-agent/courier-marketplace-dispatch.service';
+import { CourierPerformanceStatsService } from '@modules/delivery-agent/courier-performance-stats.service';
 import { courierClaimStaleStateUnset } from '@modules/delivery-agent/delivery-agent-capacity.util';
 import {
   buildVendorOrderCreatedInboxMessage,
@@ -227,6 +229,14 @@ export class OrdersService {
   @Inject(forwardRef(() => DeliveryOrderOfferService))
   @Optional()
   private readonly _deliveryOrderOffers?: DeliveryOrderOfferService;
+
+  @Inject(forwardRef(() => CourierMarketplaceDispatchService))
+  @Optional()
+  private readonly _marketplaceDispatch?: CourierMarketplaceDispatchService;
+
+  @Inject(forwardRef(() => CourierPerformanceStatsService))
+  @Optional()
+  private readonly _courierPerfStats?: CourierPerformanceStatsService;
 
   /** Expose l’adresse de livraison figée au paiement dans `user.addresses`. */
   static enrichOrdersWithDeliveryAddress(
@@ -2969,6 +2979,30 @@ export class OrdersService {
               err instanceof Error ? err.message : String(err)
             }`,
           ),
+        )
+        .finally(() => {
+          // File ouverte : fan-out géo si pas d’offre exclusive active.
+          if (this._marketplaceDispatch) {
+            void this._marketplaceDispatch
+              .notifyClaimableOrder(order)
+              .catch((err) =>
+                this.logger.warn(
+                  `marketplace notify order=${oid}: ${
+                    err instanceof Error ? err.message : String(err)
+                  }`,
+                ),
+              );
+          }
+        });
+    } else if (!isPickup && this._marketplaceDispatch) {
+      void this._marketplaceDispatch
+        .notifyClaimableOrder(order)
+        .catch((err) =>
+          this.logger.warn(
+            `marketplace notify order=${oid}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
         );
     }
 
@@ -3923,6 +3957,7 @@ export class OrdersService {
       if (customerId) {
         void this._cacheLayer.bustRecommendationFeedsForUser(customerId);
       }
+      void this.recordCourierDeliveryCompletionStats(orderOrId);
     }
     if (!this._wsOrderNotifyHandler) return;
     if (typeof orderOrId === 'string') {
@@ -3940,6 +3975,92 @@ export class OrdersService {
       extra,
       notifyOptions,
     );
+  }
+
+  /** Agrège durée / distance pour le score perf livreur. */
+  private async recordCourierDeliveryCompletionStats(
+    order: OrderModel | Record<string, unknown>,
+  ): Promise<void> {
+    if (!this._courierPerfStats) return;
+    if (
+      (order as { shouldShip?: boolean }).shouldShip !== true &&
+      (order as { should_ship?: boolean }).should_ship !== true
+    ) {
+      return;
+    }
+    const agentId = this.assignedDeliveryUserIdFromOrderDoc(order);
+    if (!agentId) return;
+    const orderId =
+      (order as { _id?: Types.ObjectId })._id?.toString() ??
+      String((order as { id?: string }).id ?? '');
+    if (!orderId || !Types.ObjectId.isValid(orderId)) return;
+
+    let distanceKm: number | null = null;
+    try {
+      const store =
+        (order as { store?: unknown }).store &&
+        typeof (order as { store?: unknown }).store === 'object'
+          ? ((
+              order as {
+                store: {
+                  address?: { location?: { coordinates?: number[] } };
+                };
+              }
+            ).store)
+          : null;
+      const storeCoords = store?.address?.location?.coordinates;
+      const snap = (
+        order as {
+          deliveryAddressSnapshot?: {
+            location?: { coordinates?: number[] };
+          };
+        }
+      ).deliveryAddressSnapshot;
+      const dest = snap?.location?.coordinates;
+      if (
+        Array.isArray(storeCoords) &&
+        storeCoords.length >= 2 &&
+        Array.isArray(dest) &&
+        dest.length >= 2
+      ) {
+        distanceKm = +haversineDistance(
+          [Number(storeCoords[0]), Number(storeCoords[1])],
+          [Number(dest[0]), Number(dest[1])],
+        ).toFixed(2);
+      }
+    } catch {
+      distanceKm = null;
+    }
+
+    let durationSec: number | null = null;
+    try {
+      const timeline = await this._orderStatusEvents.listTimelineByOrderIds([
+        orderId,
+      ]);
+      const events = timeline.get(orderId) ?? [];
+      const shipped = [...events]
+        .reverse()
+        .find((e) => e.toStatus === OrderStatusEnum.SHIPPED);
+      const completedAt = (order as { pickedUpAt?: Date | string }).pickedUpAt
+        ? new Date(
+            (order as { pickedUpAt: Date | string }).pickedUpAt,
+          ).getTime()
+        : Date.now();
+      if (shipped?.createdAt) {
+        const start = new Date(shipped.createdAt).getTime();
+        if (Number.isFinite(start) && completedAt > start) {
+          durationSec = Math.round((completedAt - start) / 1000);
+        }
+      }
+    } catch {
+      durationSec = null;
+    }
+
+    await this._courierPerfStats.recordCompletedDelivery({
+      agentUserId: agentId,
+      durationSec,
+      distanceKm,
+    });
   }
 
   /** Audit synchrone uniquement hors bus domaine (évite double enregistrement EDA-004). */

@@ -40,6 +40,7 @@ import {
   FacebookAuthDto,
   GoogleAuthDto,
   LoginDto,
+  ProfileImageJsonDto,
   RefreshTokenDto,
   RegisterDto,
   RegisterFcmTokenDto,
@@ -52,6 +53,11 @@ import {
 } from './dto/auth.dto';
 import { JwtGuard } from './guards/jwt.guard';
 import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard';
+import {
+  decodeProfileImageBase64,
+  isAllowedProfileImageFilename,
+  profileImageMimeFromFilename,
+} from './profile-image-json.util';
 import { AuthRateLimit } from './decorators/auth-rate-limit.decorator';
 import { buildLoginRequestContext } from './login-notification/login-request-context.util';
 
@@ -660,6 +666,60 @@ export class AuthController {
     } as Express.Multer.File;
     const user = req.user as UserModel;
     return this._authService.uploadChatMediaFile(
+      user._id.toString(),
+      file,
+      user,
+    );
+  }
+
+  /**
+   * JSON + base64 — chemin recommandé (Fastify / Firebase / proxys → 415 sur multipart).
+   * POST : certains runtimes tronquent le corps sur PATCH.
+   */
+  @Post('me/profile-image-json')
+  @Patch('me/profile-image-json')
+  @ApiBearerAuth('bearer')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Photo de profil (JSON + base64) — alternative fiable au multipart (évite 415 Fastify).',
+  })
+  async uploadProfileImageJson(
+    @Req() req: Request,
+    @Body(ValidationPipe) body: ProfileImageJsonDto,
+  ) {
+    let buffer: Buffer;
+    try {
+      buffer = decodeProfileImageBase64(body.imageBase64);
+    } catch {
+      throw new BadRequestException('invalid_base64');
+    }
+    if (!buffer.length) {
+      throw new BadRequestException('empty_image');
+    }
+    const max = await this._mediasService.getMaxFileSizeBytes();
+    if (buffer.length > max) {
+      throw new BadRequestException('file_too_large');
+    }
+    const name = (body.filename || 'photo.jpg').trim() || 'photo.jpg';
+    if (!isAllowedProfileImageFilename(name)) {
+      throw new BadRequestException('invalid_file_type');
+    }
+    const mimetype = profileImageMimeFromFilename(name);
+    const file = {
+      fieldname: 'image',
+      originalname: name,
+      encoding: '7bit',
+      mimetype,
+      buffer,
+      size: buffer.length,
+      destination: '',
+      filename: '',
+      path: '',
+      stream: undefined,
+    } as Express.Multer.File;
+    const user = req.user as UserModel;
+    return this._authService.updateProfileImage(
       user._id.toString(),
       file,
       user,

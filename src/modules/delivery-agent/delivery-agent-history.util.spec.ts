@@ -19,6 +19,12 @@ describe('delivery-agent-history.util', () => {
       ]);
     });
 
+    it('maps rejected → cancelled (vendor refuse alias)', () => {
+      expect(resolveDeliveryHistoryStatusFilter('rejected')).toEqual([
+        OrderStatusEnum.CANCELLED,
+      ]);
+    });
+
     it('maps approved → completed', () => {
       expect(resolveDeliveryHistoryStatusFilter('approved')).toEqual([
         OrderStatusEnum.COMPLETED,

@@ -30,6 +30,12 @@ export type DispatchCostInput = {
   routeRemainingSeconds?: number | null;
   /** Minutes de délai prédit (traffic / prep / historique). */
   predictedDelayMinutes?: number | null;
+  /**
+   * Pénalités soft déjà calculées (acceptance + perf score).
+   * Plus haut = pire candidat.
+   */
+  acceptancePenalty?: number | null;
+  performancePenalty?: number | null;
 };
 
 export function resolveDispatchCostWeights(
@@ -89,11 +95,23 @@ export function computeDispatchCost(
       ? Math.max(0, input.predictedDelayMinutes)
       : 0;
 
+  const acceptPen =
+    input.acceptancePenalty != null && Number.isFinite(input.acceptancePenalty)
+      ? Math.max(0, Number(input.acceptancePenalty))
+      : 0;
+  const perfPen =
+    input.performancePenalty != null &&
+    Number.isFinite(input.performancePenalty)
+      ? Math.max(0, Number(input.performancePenalty))
+      : 0;
+
   let cost =
     weights.distanceKm * distKm +
     weights.workload * workloadRatio * 30 +
     weights.routeMinutes * routeMin +
-    weights.delayMinutes * delayMin;
+    weights.delayMinutes * delayMin +
+    acceptPen +
+    perfPen;
 
   if (!input.hasGps) {
     cost += 1e6;

@@ -124,6 +124,30 @@ describe('delivery-order-offer.ranking', () => {
     expect(ranked[0]!.dispatchCost).toBeLessThan(ranked[1]!.dispatchCost);
   });
 
+  it('pénalise un faible taux d’acceptation dans le coût dispatch', () => {
+    const ranked = rankDeliveryOfferCandidates(
+      [
+        base({
+          agentUserId: 'low-accept',
+          lastLatitude: 3.851,
+          lastLongitude: 11.501,
+          acceptanceRate: 0.2,
+          performanceScore: 40,
+        }),
+        base({
+          agentUserId: 'high-accept',
+          lastLatitude: 3.851,
+          lastLongitude: 11.501,
+          acceptanceRate: 0.95,
+          performanceScore: 90,
+        }),
+      ],
+      store,
+    );
+    expect(ranked[0]!.agentUserId).toBe('high-accept');
+    expect(ranked[0]!.dispatchCost).toBeLessThan(ranked[1]!.dispatchCost);
+  });
+
   it('parse timeout avec défaut 45', () => {
     expect(parseOfferTimeoutSec(undefined)).toBe(45);
     expect(parseOfferTimeoutSec('0')).toBe(45);

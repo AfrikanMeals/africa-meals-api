@@ -1,0 +1,140 @@
+/**
+ * Métriques pures livreur — taux d’acceptation, score perf, coût dispatch enrichi.
+ */
+
+export type CourierPerformanceCounters = {
+  offersPresented?: number;
+  offersAccepted?: number;
+  offersRejected?: number;
+  offersExpired?: number;
+  marketplaceNotified?: number;
+  marketplaceClaims?: number;
+  marketplaceMissed?: number;
+  unassignByCourier?: number;
+  unassignByOther?: number;
+  completedDeliveries?: number;
+  totalDeliveryDurationSec?: number;
+  totalDistanceKm?: number;
+};
+
+export type CourierPerformanceDerived = {
+  acceptanceRate: number | null;
+  rejectionCount: number;
+  unassignCount: number;
+  avgDeliveryDurationSec: number | null;
+  avgDistanceKm: number | null;
+  /** 0–100 — plus haut = meilleur. */
+  performanceScore: number;
+};
+
+function n(v: unknown): number {
+  const x = Number(v ?? 0);
+  return Number.isFinite(x) && x > 0 ? Math.trunc(x) : 0;
+}
+
+function nFloat(v: unknown): number {
+  const x = Number(v ?? 0);
+  return Number.isFinite(x) && x > 0 ? x : 0;
+}
+
+/**
+ * Taux d’acceptation sur décisions explicites + expirations (flotte + marketplace claims).
+ * null si aucun échantillon.
+ */
+export function computeCourierAcceptanceRate(
+  c: CourierPerformanceCounters,
+): number | null {
+  const accepted = n(c.offersAccepted) + n(c.marketplaceClaims);
+  const rejected = n(c.offersRejected);
+  const expired = n(c.offersExpired);
+  const missed = n(c.marketplaceMissed);
+  const denom = accepted + rejected + expired + missed;
+  if (denom <= 0) return null;
+  return Math.round((accepted / denom) * 1000) / 1000;
+}
+
+export function computeCourierAvgDeliveryDurationSec(
+  c: CourierPerformanceCounters,
+): number | null {
+  const completed = n(c.completedDeliveries);
+  const total = n(c.totalDeliveryDurationSec);
+  if (completed <= 0 || total <= 0) return null;
+  return Math.round(total / completed);
+}
+
+export function computeCourierAvgDistanceKm(
+  c: CourierPerformanceCounters,
+): number | null {
+  const completed = n(c.completedDeliveries);
+  const total = nFloat(c.totalDistanceKm);
+  if (completed <= 0 || total <= 0) return null;
+  return Math.round((total / completed) * 100) / 100;
+}
+
+/**
+ * Score 0–100 : acceptance (55) + faible abandon (25) + volume completed (20).
+ * Nouveau livreur (pas d’échantillon) → 70 (neutre-positif).
+ */
+export function computeCourierPerformanceScore(
+  c: CourierPerformanceCounters,
+): number {
+  const acceptance = computeCourierAcceptanceRate(c);
+  const unassignCourier = n(c.unassignByCourier);
+  const completed = n(c.completedDeliveries);
+  const presented =
+    n(c.offersPresented) +
+    n(c.marketplaceNotified) +
+    n(c.offersAccepted) +
+    n(c.offersRejected);
+
+  if (acceptance == null && completed === 0 && presented === 0) {
+    return 70;
+  }
+
+  const acceptPart = (acceptance ?? 0.7) * 55;
+  const abandonPenalty = Math.min(25, unassignCourier * 5);
+  const abandonPart = 25 - abandonPenalty;
+  const volumePart = Math.min(20, completed * 2);
+
+  return Math.max(
+    0,
+    Math.min(100, Math.round(acceptPart + abandonPart + volumePart)),
+  );
+}
+
+export function deriveCourierPerformance(
+  c: CourierPerformanceCounters,
+): CourierPerformanceDerived {
+  return {
+    acceptanceRate: computeCourierAcceptanceRate(c),
+    rejectionCount: n(c.offersRejected),
+    unassignCount: n(c.unassignByCourier) + n(c.unassignByOther),
+    avgDeliveryDurationSec: computeCourierAvgDeliveryDurationSec(c),
+    avgDistanceKm: computeCourierAvgDistanceKm(c),
+    performanceScore: computeCourierPerformanceScore(c),
+  };
+}
+
+/**
+ * Pénalité dispatch (plus haut = pire) à partir du score perf 0–100.
+ * Score 100 → 0 ; score 0 → maxPenalty.
+ */
+export function performanceDispatchPenalty(
+  performanceScore: number,
+  maxPenalty = 25,
+): number {
+  const score = Math.max(0, Math.min(100, Number(performanceScore) || 0));
+  return Math.round(((100 - score) / 100) * maxPenalty * 100) / 100;
+}
+
+/**
+ * Pénalité si taux d’acceptation bas (0–1). null → 0.
+ */
+export function acceptanceDispatchPenalty(
+  acceptanceRate: number | null,
+  maxPenalty = 20,
+): number {
+  if (acceptanceRate == null || !Number.isFinite(acceptanceRate)) return 0;
+  const rate = Math.max(0, Math.min(1, acceptanceRate));
+  return Math.round((1 - rate) * maxPenalty * 100) / 100;
+}

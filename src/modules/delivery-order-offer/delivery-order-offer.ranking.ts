@@ -3,6 +3,10 @@ import {
   resolveDispatchCostWeights,
   type DispatchCostWeights,
 } from '@common/dispatch-cost.util';
+import {
+  acceptanceDispatchPenalty,
+  performanceDispatchPenalty,
+} from '@modules/delivery-agent/courier-performance.util';
 
 /** Candidat livreur pour auto-offer flotte boutique. */
 export type DeliveryOfferCandidateInput = {
@@ -23,6 +27,10 @@ export type DeliveryOfferCandidateInput = {
   routeRemainingSeconds?: number | null;
   /** Délai prédit (ETA engine) en minutes. */
   predictedDelayMinutes?: number | null;
+  /** Taux d’acceptation 0–1 (null = neutre). */
+  acceptanceRate?: number | null;
+  /** Score perf 0–100 (null = neutre). */
+  performanceScore?: number | null;
 };
 
 export type RankedDeliveryOfferCandidate = {
@@ -113,6 +121,12 @@ export function rankDeliveryOfferCandidates(
         maxConcurrentOrders: c.maxConcurrentOrders,
         routeRemainingSeconds: c.routeRemainingSeconds,
         predictedDelayMinutes: c.predictedDelayMinutes,
+        acceptancePenalty: acceptanceDispatchPenalty(
+          c.acceptanceRate ?? null,
+        ),
+        performancePenalty: performanceDispatchPenalty(
+          c.performanceScore ?? 70,
+        ),
       },
       weights,
     );

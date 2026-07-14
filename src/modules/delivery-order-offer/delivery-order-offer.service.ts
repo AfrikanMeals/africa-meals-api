@@ -11,6 +11,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { DeliveryAgentService } from '@modules/delivery-agent/delivery-agent.service';
+import { CourierMarketplaceDispatchService } from '@modules/delivery-agent/courier-marketplace-dispatch.service';
+import { CourierPerformanceStatsService } from '@modules/delivery-agent/courier-performance-stats.service';
 import {
   agentHasDeliveryCapacity,
   maxConcurrentOrdersFromApplication,
@@ -80,6 +82,10 @@ export class DeliveryOrderOfferService {
     private readonly _deliveryAgent: DeliveryAgentService,
     @Inject(forwardRef(() => OrdersService))
     private readonly _ordersService: OrdersService,
+    @Optional()
+    private readonly _courierPerf?: CourierPerformanceStatsService,
+    @Optional()
+    private readonly _marketplaceDispatch?: CourierMarketplaceDispatchService,
   ) {}
 
   offerTimeoutSec(): number {
@@ -188,7 +194,7 @@ export class DeliveryOrderOfferService {
       apps.map((a) => [String((a as { user?: unknown }).user), a]),
     );
 
-    const inputs: DeliveryOfferCandidateInput[] = [];
+      const inputs: DeliveryOfferCandidateInput[] = [];
     for (const uid of driverIds) {
       const app = appByUser.get(uid);
       if (!app) continue;
@@ -209,6 +215,18 @@ export class DeliveryOrderOfferService {
         lastLatitude: (app as { lastLatitude?: number }).lastLatitude ?? null,
         lastLongitude: (app as { lastLongitude?: number }).lastLongitude ?? null,
       });
+    }
+
+    if (this._courierPerf && inputs.length > 0) {
+      const perfByUser = await this._courierPerf.getMany(
+        inputs.map((i) => i.agentUserId),
+      );
+      for (const input of inputs) {
+        const perf = perfByUser.get(input.agentUserId);
+        if (!perf) continue;
+        input.acceptanceRate = perf.acceptanceRate;
+        input.performanceScore = perf.performanceScore;
+      }
     }
 
     const storeDoc =
@@ -464,6 +482,10 @@ export class DeliveryOrderOfferService {
       assignedDeliveryUserId: agentId,
     });
 
+    if (this._courierPerf) {
+      void this._courierPerf.recordOfferAccepted(agentId);
+    }
+
     return {
       ok: true,
       offerId,
@@ -501,6 +523,10 @@ export class DeliveryOrderOfferService {
       .exec();
     if (updated.matchedCount === 0) {
       throw new BadRequestException('delivery_offer_not_pending');
+    }
+
+    if (this._courierPerf) {
+      void this._courierPerf.recordOfferRejected(agentId);
     }
 
     await this._orders
@@ -547,6 +573,10 @@ export class DeliveryOrderOfferService {
         .exec();
       if (res.matchedCount === 0) continue;
       count += 1;
+
+      if (this._courierPerf) {
+        void this._courierPerf.recordOfferExpired(String(row.agentUserId));
+      }
 
       await this._orders
         .updateOne(
@@ -730,6 +760,10 @@ export class DeliveryOrderOfferService {
           ),
         );
 
+      if (this._courierPerf) {
+        void this._courierPerf.recordOfferPresented(agentUserId);
+      }
+
       this.logger.log(
         `auto-offer order=${orderId} → agent=${agentUserId} rank=${rank} expires=${expiresAt.toISOString()}`,
       );
@@ -881,6 +915,24 @@ export class DeliveryOrderOfferService {
     });
 
     this.logger.log(`auto-offer exhausted order=${orderId} store=${storeId}`);
+
+    if (this._marketplaceDispatch) {
+      const order = await this._orders
+        .findById(new Types.ObjectId(orderId))
+        .lean()
+        .exec();
+      if (order) {
+        void this._marketplaceDispatch
+          .notifyClaimableOrder(order)
+          .catch((err) =>
+            this.logger.warn(
+              `marketplace after cascade exhausted: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            ),
+          );
+      }
+    }
   }
 
   private async notifyStaffOfferOutcome(

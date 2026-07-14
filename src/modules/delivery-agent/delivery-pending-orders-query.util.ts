@@ -1,5 +1,6 @@
 import { OrderStatusEnum } from '@schemas/order.schema';
 import { normalizeRegionCode } from '../platform-shipping-settings/platform-shipping-region.util';
+import { Types } from 'mongoose';
 
 /** Statuts éligibles à la file pending livreur. */
 export const DELIVERY_PENDING_ORDER_STATUSES = [
@@ -57,5 +58,71 @@ export function buildDeliveryPendingOrdersMongoFilter(opts: {
         ],
       },
     ],
+  };
+}
+
+/**
+ * Filtre Mongo historique onglet « Annulées » livreur.
+ *
+ * Inclut :
+ * - commandes annulées / refus vendeur liées au livreur
+ *   (`assignedDeliveryUser` ou `deliveryUnassignedFromUser`)
+ * - annulations de la file claimable (même région que pending), sans assignee
+ */
+export function buildDeliveryCancelledHistoryMongoFilter(opts: {
+  agentId: Types.ObjectId | string;
+  agentRegionCode?: string | null;
+}): Record<string, unknown> {
+  const agentId =
+    opts.agentId instanceof Types.ObjectId
+      ? opts.agentId
+      : new Types.ObjectId(String(opts.agentId));
+
+  const linkedToAgent = {
+    $or: [
+      { assignedDeliveryUser: agentId },
+      { deliveryUnassignedFromUser: agentId },
+    ],
+  };
+
+  const unassigned = {
+    $or: [
+      { assignedDeliveryUser: { $exists: false } },
+      { assignedDeliveryUser: null },
+    ],
+  };
+
+  const region = normalizeRegionCode(opts.agentRegionCode);
+  const regionPool: Record<string, unknown>[] = [];
+  if (region) {
+    regionPool.push({
+      $and: [
+        unassigned,
+        {
+          $or: [
+            { storeRegionCode: region },
+            {
+              $and: [
+                {
+                  $or: [
+                    { storeRegionCode: { $exists: false } },
+                    { storeRegionCode: null },
+                    { storeRegionCode: '' },
+                  ],
+                },
+                { taxCountryCode: region },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+  }
+
+  return {
+    shouldShip: true,
+    status: OrderStatusEnum.CANCELLED,
+    courierAbandonNoPayout: { $ne: true },
+    $or: [linkedToAgent, ...regionPool],
   };
 }

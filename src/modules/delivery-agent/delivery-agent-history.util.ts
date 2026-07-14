@@ -14,6 +14,7 @@ export function resolveDeliveryHistoryStatusFilter(
     case 'pending':
       return [OrderStatusEnum.SHIPPED];
     case 'cancelled':
+    case 'rejected':
       return [OrderStatusEnum.CANCELLED];
     case 'approved':
       return [OrderStatusEnum.COMPLETED];

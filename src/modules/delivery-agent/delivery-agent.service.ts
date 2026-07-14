@@ -26,6 +26,8 @@ import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema'
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
 import { DeliveryOrderOfferService } from '@modules/delivery-order-offer/delivery-order-offer.service';
+import { CourierMarketplaceDispatchService } from './courier-marketplace-dispatch.service';
+import { CourierPerformanceStatsService } from './courier-performance-stats.service';
 import {
   StoreDeliveryAssignmentModeEnum,
   StoreModel,
@@ -115,7 +117,10 @@ import {
   resolveAgentOperatingRegionCode,
   resolveDeliveryAgentPresence,
 } from './delivery-agent-domain.util';
-import { buildDeliveryPendingOrdersMongoFilter } from './delivery-pending-orders-query.util';
+import {
+  buildDeliveryCancelledHistoryMongoFilter,
+  buildDeliveryPendingOrdersMongoFilter,
+} from './delivery-pending-orders-query.util';
 
 export type DeliveryAgentPresence =
   | 'disponible'
@@ -201,6 +206,10 @@ export class DeliveryAgentService {
     @Inject(forwardRef(() => DeliveryOrderOfferService))
     @Optional()
     private readonly _deliveryOrderOffers?: DeliveryOrderOfferService,
+    @Optional()
+    private readonly _courierPerf?: CourierPerformanceStatsService,
+    @Optional()
+    private readonly _marketplaceDispatch?: CourierMarketplaceDispatchService,
     @Optional()
     private readonly _domainPublisher?: DomainEventPublisherService,
     @Optional()
@@ -1116,6 +1125,47 @@ export class DeliveryAgentService {
       distanceKmToday: null,
     });
     return { ...live, dayKey, fromCache: false };
+  }
+
+  /** Compteurs lifetime : acceptance, refus, durée moyenne, score perf. */
+  async getPerformanceStats(user: UserModel) {
+    this.assertDeliveryAgent(user);
+    const agentId = String(user._id ?? user.id);
+    if (!this._courierPerf) {
+      return {
+        deliveryAgentId: agentId,
+        acceptanceRate: null,
+        rejectionCount: 0,
+        unassignCount: 0,
+        avgDeliveryDurationSec: null,
+        avgDistanceKm: null,
+        performanceScore: 70,
+        offersPresented: 0,
+        offersAccepted: 0,
+        offersRejected: 0,
+        offersExpired: 0,
+        marketplaceNotified: 0,
+        marketplaceClaims: 0,
+        marketplaceMissed: 0,
+        unassignByCourier: 0,
+        unassignByOther: 0,
+        completedDeliveries: 0,
+        totalDeliveryDurationSec: 0,
+        totalDistanceKm: 0,
+      };
+    }
+    const payload = await this._courierPerf.getOrCreate(agentId);
+    return (
+      payload ?? {
+        deliveryAgentId: agentId,
+        acceptanceRate: null,
+        rejectionCount: 0,
+        unassignCount: 0,
+        avgDeliveryDurationSec: null,
+        avgDistanceKm: null,
+        performanceScore: 70,
+      }
+    );
   }
 
   /**
@@ -2437,6 +2487,21 @@ export class DeliveryAgentService {
 
     await this.publishPresenceWs(String(agentId), 'order_assigned');
 
+    if (this._courierPerf && prevOrderStatus !== OrderStatusEnum.SHIPPED) {
+      void this._courierPerf.recordMarketplaceClaim(String(agentId));
+    }
+    if (
+      this._marketplaceDispatch &&
+      prevOrderStatus !== OrderStatusEnum.SHIPPED
+    ) {
+      void this._marketplaceDispatch.onOrderClaimedByCourier({
+        orderId: orderDoc._id.toString(),
+        winnerAgentUserId: String(agentId),
+        storeName: this.storeNameFromPopulatedOrder(orderDoc),
+        orderRef,
+      });
+    }
+
     void this.refreshCourierTourOptimization(String(agentId)).catch((err) =>
       this._logger.warn(
         `refreshCourierTourOptimization: ${
@@ -2651,6 +2716,10 @@ export class DeliveryAgentService {
     orderDoc.set('courierTourDurationS', undefined);
     await orderDoc.save();
 
+    if (this._courierPerf) {
+      void this._courierPerf.recordUnassignByCourier(String(agentId));
+    }
+
     const customerId = this.customerUserIdFromOrder(orderDoc);
     await this._ordersService.recordOrderStatusChangeIfLegacy({
       orderId: orderDoc._id.toString(),
@@ -2681,6 +2750,18 @@ export class DeliveryAgentService {
           sname ?? 'Boutique'
         } : ${agentName} a abandonné la course — à réassigner.`,
       });
+    }
+
+    if (this._marketplaceDispatch) {
+      void this._marketplaceDispatch
+        .notifyClaimableOrder(orderDoc)
+        .catch((err) =>
+          this._logger.warn(
+            `marketplace notify after abandon: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
     }
 
     await this.publishPresenceWs(prevAssignee, 'order_unassigned');
@@ -3273,13 +3354,38 @@ export class DeliveryAgentService {
       opts.statuses && opts.statuses.length > 0
         ? opts.statuses
         : [OrderStatusEnum.SHIPPED, OrderStatusEnum.COMPLETED];
-    const rows = await this._orders
-      .find({
+    const cancelledOnly =
+      statuses.length === 1 && statuses[0] === OrderStatusEnum.CANCELLED;
+
+    let filter: Record<string, unknown>;
+    if (cancelledOnly) {
+      const app = await this._applications
+        .findOne({
+          user: agentId,
+          status: DeliveryAgentApplicationStatus.APPROVED,
+        })
+        .select('region')
+        .lean()
+        .exec();
+      const agentRegionCode = resolveAgentOperatingRegionCode(
+        app?.region,
+        user.appCountryCode,
+      );
+      filter = buildDeliveryCancelledHistoryMongoFilter({
+        agentId,
+        agentRegionCode,
+      });
+    } else {
+      filter = {
         shouldShip: true,
         assignedDeliveryUser: agentId,
         status: { $in: statuses },
         courierAbandonNoPayout: { $ne: true },
-      })
+      };
+    }
+
+    const rows = await this._orders
+      .find(filter)
       .sort({ updatedAt: -1 })
       .skip(skip)
       .limit(limit + 1)

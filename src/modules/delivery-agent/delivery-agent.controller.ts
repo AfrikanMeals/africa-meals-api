@@ -140,6 +140,16 @@ export class DeliveryAgentController {
     return this._deliveryAgent.getDailyPerformanceStats(req.user as UserModel);
   }
 
+  @Get('performance/stats')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Stats lifetime livreur : taux d’acceptation, refus, abandons, durée/distance moyennes, score perf.',
+  })
+  getPerformanceStats(@Req() req: Request) {
+    return this._deliveryAgent.getPerformanceStats(req.user as UserModel);
+  }
+
   @Post('performance/daily/sync')
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
