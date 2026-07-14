@@ -32,4 +32,18 @@ export class InternalChatPushDto {
   @IsOptional()
   @IsString()
   storeName?: string;
+
+  @ApiPropertyOptional({
+    description: 'Id commande (chat livraison ORDER) — deep-link mobile',
+  })
+  @IsOptional()
+  @IsString()
+  orderId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Contexte conversation WS : ORDER | DIRECT | …',
+  })
+  @IsOptional()
+  @IsString()
+  contextType?: string;
 }

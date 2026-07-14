@@ -1238,6 +1238,8 @@ export class NotificationsService implements OnModuleInit {
     conversationId?: string;
     storeId?: string;
     storeName?: string;
+    orderId?: string;
+    contextType?: string;
   }): Promise<void> {
     const valid = [...new Set(args.recipientUserIds)].filter((id) =>
       Types.ObjectId.isValid(id),
@@ -1260,6 +1262,14 @@ export class NotificationsService implements OnModuleInit {
     const sname = args.storeName?.trim();
     if (sname) {
       data.storeName = sname;
+    }
+    const oid = args.orderId?.trim();
+    if (oid) {
+      data.orderId = oid;
+    }
+    const ctx = args.contextType?.trim();
+    if (ctx) {
+      data.contextType = ctx;
     }
 
     const displayTitle = sname || args.title?.trim() || 'Wise Eat';
@@ -1284,6 +1294,8 @@ export class NotificationsService implements OnModuleInit {
     conversationId?: string;
     storeId?: string;
     storeName?: string;
+    orderId?: string;
+    contextType?: string;
   }): Promise<{ sent: number; failures: number }> {
     try {
       await this.persistChatInboxNotifications(args);
@@ -1304,6 +1316,12 @@ export class NotificationsService implements OnModuleInit {
     if (args.storeName?.trim()) {
       data.storeName = args.storeName.trim();
     }
+    if (args.orderId?.trim()) {
+      data.orderId = args.orderId.trim();
+    }
+    if (args.contextType?.trim()) {
+      data.contextType = args.contextType.trim();
+    }
     const displayTitle =
       args.storeName?.trim() || args.title?.trim() || 'Wise Eat';
     const r = await this.sendMulticastNotification({
@@ -1313,6 +1331,11 @@ export class NotificationsService implements OnModuleInit {
       data,
       androidChannelId: 'african_meals_chat',
     });
+    if (r.deviceCount === 0) {
+      this.logger.warn(
+        `sendChatMessagePush: no FCM tokens recipients=${args.recipientUserIds.join(',')} conversation=${args.conversationId ?? ''}`,
+      );
+    }
     return { sent: r.sent, failures: r.failures };
   }
 

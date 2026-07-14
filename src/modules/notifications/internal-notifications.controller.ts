@@ -31,6 +31,8 @@ export class InternalNotificationsController {
       conversationId: body.conversationId,
       storeId: body.storeId,
       storeName: body.storeName,
+      orderId: body.orderId,
+      contextType: body.contextType,
     });
     return { ok: true };
   }
