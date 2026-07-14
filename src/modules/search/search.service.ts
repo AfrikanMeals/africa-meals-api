@@ -53,6 +53,11 @@ import {
 import { storeArticlesAvailabilityPipelineStages } from '@utils/store-articles-availability.pipeline';
 import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
 import { parseOptionalCommissionStrategy } from '@modules/platform-fees/platform-order-commission.util';
+import { CatalogElasticsearchService } from '@modules/elasticsearch/catalog-elasticsearch.service';
+import {
+  resolveCatalogTextSearchMode,
+  toObjectIdStrings,
+} from '@common/catalog-text-search.util';
 
 @Injectable()
 export class SearchService {
@@ -511,8 +516,16 @@ export class SearchService {
   /**
    * Filtre texte catalogue (nom, bio, e-mail, téléphone, adresse postale).
    * Appliqué après les étapes Stripe / distance pour une pagination correcte.
+   * Si `entityIds` fourni (hits Elasticsearch), filtre par `_id` au lieu du regex.
    */
-  private _storeCatalogTextQueryStages(query: string): PipelineStage[] {
+  private _storeCatalogTextQueryStages(
+    query: string,
+    entityIds?: Types.ObjectId[],
+  ): PipelineStage[] {
+    if (entityIds?.length) {
+      return [{ $match: { _id: { $in: entityIds } } }];
+    }
+    if (!query.trim()) return [];
     const esc = escapeMongoRegex(query.trim());
     const regex = { $regex: esc, $options: 'i' };
     return [
@@ -862,6 +875,43 @@ export class SearchService {
   @Inject(SubscriptionPlanOrderCommissionService)
   private readonly _planOrderCommission: SubscriptionPlanOrderCommissionService;
 
+  @Inject(CatalogElasticsearchService)
+  private readonly _catalogEs: CatalogElasticsearchService;
+
+  private async _resolveTextEntityIds(
+    entityType: 'store' | 'product' | 'drink',
+    query: string,
+  ): Promise<{ mode: 'elasticsearch' | 'regex' | 'empty'; ids: Types.ObjectId[] }> {
+    const q = query.trim();
+    const runtime = await this._searchSettings.getSearchRuntimeConfig();
+    const esWanted =
+      runtime.elasticsearchSearchEnabled && this._catalogEs.isEnabledByEnv();
+    let attempted = false;
+    let hitIds: string[] = [];
+    if (esWanted && q) {
+      attempted = true;
+      const hits = await this._catalogEs.searchEntityIds({
+        query: q,
+        entityType,
+        limit: 120,
+      });
+      hitIds = toObjectIdStrings(hits.map((h) => h.entityId));
+    }
+    const mode = resolveCatalogTextSearchMode({
+      elasticsearchSearchEnabled: esWanted,
+      regexSearchEnabled: runtime.regexSearchEnabled,
+      elasticsearchHitCount: hitIds.length,
+      elasticsearchAttempted: attempted,
+    });
+    if (mode === 'elasticsearch') {
+      return {
+        mode,
+        ids: hitIds.map((id) => new Types.ObjectId(id)),
+      };
+    }
+    return { mode, ids: [] };
+  }
+
   /**
    * Majore les prix lean catalogue (`add_to_price`) avant mapping client.
    * Conserve la stratégie item sur le doc le temps du batch.
@@ -998,9 +1048,17 @@ export class SearchService {
     }
 
     if (searchContent.includes(SearchContent.DRINKS)) {
+      const drinkText = args.query?.trim()
+        ? await this._resolveTextEntityIds('drink', args.query)
+        : { mode: 'regex' as const, ids: [] as Types.ObjectId[] };
       response.drinks = await this._drinksService.filterMarketplaceCatalog(
         args,
         region,
+        drinkText.mode === 'elasticsearch'
+          ? { entityIds: drinkText.ids }
+          : drinkText.mode === 'empty'
+            ? { entityIds: [] }
+            : undefined,
       );
     }
 
@@ -1127,6 +1185,21 @@ export class SearchService {
       '';
     const queryEsc = escapeMongoRegex(args.query ?? '');
     const dailyMenuStages = await this._productDailyMenuListingStagesAsync();
+    const textRes = args.query?.trim()
+      ? await this._resolveTextEntityIds('product', args.query)
+      : { mode: 'regex' as const, ids: [] as Types.ObjectId[] };
+    const textMatch =
+      textRes.mode === 'elasticsearch'
+        ? { _id: { $in: textRes.ids } }
+        : textRes.mode === 'empty'
+          ? { _id: { $in: [] as Types.ObjectId[] } }
+          : {
+              $or: [
+                { title: { $regex: queryEsc, $options: 'i' } },
+                { bio: { $regex: queryEsc, $options: 'i' } },
+                { about: { $regex: queryEsc, $options: 'i' } },
+              ],
+            };
     const pipeline = [
       {
         $lookup: {
@@ -1153,13 +1226,7 @@ export class SearchService {
             args.categoryId && {
               category: { $eq: new Types.ObjectId(args.categoryId) },
             },
-            {
-              $or: [
-                { title: { $regex: queryEsc, $options: 'i' } },
-                { bio: { $regex: queryEsc, $options: 'i' } },
-                { about: { $regex: queryEsc, $options: 'i' } },
-              ],
-            },
+            textMatch,
             args.storeId && {
               'store._id': { $eq: new Types.ObjectId(args.storeId) },
             },
@@ -2254,6 +2321,17 @@ export class SearchService {
       args,
       region,
     );
+    const textRes = q
+      ? await this._resolveTextEntityIds('store', q)
+      : { mode: 'regex' as const, ids: [] as Types.ObjectId[] };
+    const textStages =
+      textRes.mode === 'empty'
+        ? [{ $match: { _id: { $in: [] as Types.ObjectId[] } } }]
+        : textRes.mode === 'elasticsearch'
+          ? this._storeCatalogTextQueryStages(q ?? '', textRes.ids)
+          : q
+            ? this._storeCatalogTextQueryStages(q)
+            : [];
     const pipeline: PipelineStage[] = [
       {
         $match: {
@@ -2262,7 +2340,7 @@ export class SearchService {
       },
       ...storeOwnerStripeOnboardedPipelineStages(),
       ...storeDistanceStages,
-      ...(q ? this._storeCatalogTextQueryStages(q) : []),
+      ...textStages,
     ];
 
     const sortKeys = this._storeSortKeys(args);

@@ -32,6 +32,10 @@ import {
 } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { haversineDistance } from 'src/utils/helpers';
+import {
+  formatEtaMinutesLabel,
+  predictDeliveryEta,
+} from '@common/eta-engine.util';
 import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
 import { StripeConnectTransferService } from '@modules/billing/stripe/stripe-connect-transfer.service';
 import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-email.service';
@@ -90,9 +94,16 @@ import { DomainEventPublisherService } from '../../common/domain-events/domain-e
 import { DomainEventDraft } from '../../common/domain-events/domain-event.types';
 import { DomainEventType } from '../../common/domain-events/domain-event-types';
 import { isDomainEventsEnabled } from '@modules/domain-event-handlers/domain-event-handlers.util';
+import { CourierGeoService } from '@modules/fleet/courier-geo.service';
+import { TrafficService } from '@modules/traffic/traffic.service';
 import { FleetAudienceService } from '@modules/fleet/fleet-audience.service';
 import { FleetSnapshotService } from '@modules/fleet/fleet-snapshot.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
+import {
+  deliveryLngLatFromOrder,
+  storeLngLatFromOrder,
+} from '@modules/route-optimization/order-delivery-coords.util';
+import { VroomDispatchService } from '@modules/route-optimization/vroom-dispatch.service';
 import {
   AGENT_LOCATION_EMIT_THROTTLE_MS,
   mapDeliveryPresenceToDomain,
@@ -182,12 +193,17 @@ export class DeliveryAgentService {
     private readonly _wsDeliveryAgent: WsDeliveryAgentNotifyService,
     private readonly _fleet: FleetSnapshotService,
     private readonly _fleetAudience: FleetAudienceService,
+    private readonly _courierGeo: CourierGeoService,
     private readonly _subscriptions: SubscriptionsService,
     @Inject(forwardRef(() => DeliveryOrderOfferService))
     @Optional()
     private readonly _deliveryOrderOffers?: DeliveryOrderOfferService,
     @Optional()
     private readonly _domainPublisher?: DomainEventPublisherService,
+    @Optional()
+    private readonly _traffic?: TrafficService,
+    @Optional()
+    private readonly _vroomDispatch?: VroomDispatchService,
   ) {}
 
   private async publishAgentDomainEvent<T extends DomainEventType>(
@@ -1570,6 +1586,10 @@ export class DeliveryAgentService {
       )
       .exec();
 
+    if (availability === 'hors_ligne') {
+      void this._courierGeo.removeCourier(String(agentId));
+    }
+
     const presence = resolveDeliveryAgentPresence(availability, activeCount);
     const maxConcurrentOrders = maxConcurrentOrdersFromApplication(app);
     const result = {
@@ -1780,8 +1800,10 @@ export class DeliveryAgentService {
       throw new BadRequestException('invalid_coordinates');
     }
     const agentId = new Types.ObjectId(String(user._id ?? user.id));
-    await this._applications
-      .updateOne(
+    const agentUserId = String(agentId);
+
+    const appLean = await this._applications
+      .findOneAndUpdate(
         { user: agentId },
         {
           $set: {
@@ -1790,17 +1812,41 @@ export class DeliveryAgentService {
             locationUpdatedAt: new Date(),
           },
         },
+        {
+          new: true,
+          select: 'region dashboardAvailability',
+        },
       )
+      .lean()
       .exec();
 
-    const activeOrderIds = await this._ordersService.publishCourierPositionsForAgent(
-      String(agentId),
-          lat,
-          lng,
-        );
+    // Redis GEO live (nearest / rayon) — best-effort, hors chemin critique WS.
+    void this._courierGeo.upsertCourierPosition({
+      agentUserId,
+      latitude: lat,
+      longitude: lng,
+      regionCode: (appLean as { region?: string } | null)?.region,
+      availability: (appLean as { dashboardAvailability?: string } | null)
+        ?.dashboardAvailability,
+    });
+
+    // Traffic Engine — collecte flotte (GPS + vitesse + cap) → vitesses moyennes/route.
+    void this._traffic?.ingestFleetTelemetry({
+      latitude: lat,
+      longitude: lng,
+      speedMps: dto.speedMps,
+      headingDegrees: dto.headingDegrees,
+    });
+
+    const activeOrderIds =
+      await this._ordersService.publishCourierPositionsForAgent(
+        agentUserId,
+        lat,
+        lng,
+      );
     const primaryOrderId = activeOrderIds[0];
     await this.emitAgentLocationUpdated({
-      agentUserId: String(agentId),
+      agentUserId,
       latitude: lat,
       longitude: lng,
       orderId: primaryOrderId,
@@ -2328,7 +2374,162 @@ export class DeliveryAgentService {
 
     await this.publishPresenceWs(String(agentId), 'order_assigned');
 
+    void this.refreshCourierTourOptimization(String(agentId)).catch((err) =>
+      this._logger.warn(
+        `refreshCourierTourOptimization: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
+    );
+
     return { ok: true, orderId: orderDoc._id.toString(), orderRef };
+  }
+
+  /**
+   * VROOM (ou fallback naïf) : séquence multi-stops pour les courses actives.
+   * Ex. Pickup A → Pickup B → Deliver A → Deliver B — pas N Directions Google isolés.
+   */
+  async refreshCourierTourOptimization(agentUserId: string): Promise<{
+    ok: boolean;
+    stopCount: number;
+  }> {
+    if (!Types.ObjectId.isValid(agentUserId)) {
+      return { ok: false, stopCount: 0 };
+    }
+    const agentId = new Types.ObjectId(agentUserId);
+    const app = await this._applications
+      .findOne({ user: agentId })
+      .select('lastLatitude lastLongitude')
+      .lean()
+      .exec();
+    const lat = Number((app as { lastLatitude?: number } | null)?.lastLatitude);
+    const lng = Number(
+      (app as { lastLongitude?: number } | null)?.lastLongitude,
+    );
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return { ok: false, stopCount: 0 };
+    }
+
+    const rows = await this._orders
+      .find({
+        assignedDeliveryUser: agentId,
+        shouldShip: true,
+        status: OrderStatusEnum.SHIPPED,
+      })
+      .select(
+        'deliveryAddressSnapshot shippingAddress assignedDeliveryUser status shouldShip courierRouteLeg pendingDeliveryProofId pending_delivery_proof_id store user',
+      )
+      .populate({
+        path: 'store',
+        select: 'name address',
+        populate: { path: 'address', select: 'location address city zipCode' },
+      })
+      .populate({
+        path: 'user',
+        select: 'addresses',
+        populate: {
+          path: 'addresses',
+          select: 'location isDefault address city zipCode',
+        },
+      })
+      .lean()
+      .exec();
+
+    const active = await filterCourierActiveShippedRows(
+      this._orders,
+      rows as Array<Record<string, unknown>>,
+    );
+    if (active.length < 2) {
+      // Nettoie une ancienne tournée multi si plus qu’une course.
+      if (active.length === 1) {
+        const onlyId = String((active[0] as { _id?: unknown })._id ?? '');
+        if (onlyId) {
+          await this._orders
+            .updateOne(
+              { _id: new Types.ObjectId(onlyId) },
+              {
+                $unset: {
+                  courierTourStops: 1,
+                  courierTourUpdatedAt: 1,
+                  courierTourDurationS: 1,
+                },
+              },
+            )
+            .exec();
+        }
+      }
+      return { ok: true, stopCount: 0 };
+    }
+
+    const shipments: Array<{
+      orderId: string;
+      pickupLngLat: [number, number];
+      deliveryLngLat: [number, number];
+    }> = [];
+    for (const row of active) {
+      const orderId = String((row as { _id?: unknown })._id ?? '');
+      if (!orderId) continue;
+      const pickup = storeLngLatFromOrder(row as Record<string, unknown>);
+      const delivery = deliveryLngLatFromOrder(row as Record<string, unknown>);
+      if (!pickup || !delivery) continue;
+      shipments.push({
+        orderId,
+        pickupLngLat: pickup,
+        deliveryLngLat: delivery,
+      });
+    }
+    if (shipments.length < 2) {
+      return { ok: false, stopCount: 0 };
+    }
+
+    const tour = this._vroomDispatch
+      ? await this._vroomDispatch.optimizeCourierTour({
+          agentUserId,
+          startLngLat: [lng, lat],
+          shipments,
+          allowNaiveFallback: true,
+        })
+      : null;
+    if (!tour || tour.stops.length < 2) {
+      return { ok: false, stopCount: 0 };
+    }
+
+    const updatedAt = new Date();
+    const orderIds = shipments.map((s) => new Types.ObjectId(s.orderId));
+    await this._orders
+      .updateMany(
+        { _id: { $in: orderIds } },
+        {
+          $set: {
+            courierTourStops: tour.stops,
+            courierTourUpdatedAt: updatedAt,
+            ...(tour.durationSeconds != null
+              ? { courierTourDurationS: tour.durationSeconds }
+              : {}),
+          },
+        },
+      )
+      .exec();
+
+    for (const s of shipments) {
+      try {
+        this._ordersService.notifyOrderPartiesRealtime(
+          s.orderId,
+          OrderStatusEnum.SHIPPED,
+          {
+            courierTourStops: tour.stops,
+            courierTourUpdatedAt: updatedAt.toISOString(),
+            ...(tour.durationSeconds != null
+              ? { courierTourDurationS: tour.durationSeconds }
+              : {}),
+          },
+        );
+      } catch {
+        // best-effort WS
+      }
+    }
+
+    return { ok: true, stopCount: tour.stops.length };
   }
 
   /**
@@ -2382,6 +2583,9 @@ export class DeliveryAgentService {
     orderDoc.set('courierRouteDistanceM', undefined);
     orderDoc.set('courierRouteDurationS', undefined);
     orderDoc.set('courierRouteUpdatedAt', undefined);
+    orderDoc.set('courierTourStops', undefined);
+    orderDoc.set('courierTourUpdatedAt', undefined);
+    orderDoc.set('courierTourDurationS', undefined);
     await orderDoc.save();
 
     const customerId = this.customerUserIdFromOrder(orderDoc);
@@ -2417,6 +2621,14 @@ export class DeliveryAgentService {
     }
 
     await this.publishPresenceWs(prevAssignee, 'order_unassigned');
+
+    void this.refreshCourierTourOptimization(prevAssignee).catch((err) =>
+      this._logger.warn(
+        `refreshCourierTourOptimization after abandon: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
+    );
 
     return {
       ok: true,
@@ -3324,6 +3536,44 @@ export class DeliveryAgentService {
         .toUpperCase() || null,
       shouldShip: row.shouldShip === true,
       status: String(row.status ?? '').trim().toLowerCase() || null,
+      courierTourStops: (() => {
+        const raw =
+          row.courierTourStops ?? row.courier_tour_stops;
+        if (!Array.isArray(raw) || raw.length === 0) return null;
+        const stops = raw
+          .map((s, i) => {
+            if (!s || typeof s !== 'object') return null;
+            const o = s as Record<string, unknown>;
+            const orderId = String(o.orderId ?? o.order_id ?? '').trim();
+            const kind = String(o.kind ?? '').trim();
+            const longitude = Number(o.longitude ?? o.lng);
+            const latitude = Number(o.latitude ?? o.lat);
+            const sequence = Number(o.sequence ?? i);
+            if (
+              !orderId ||
+              (kind !== 'pickup' && kind !== 'delivery') ||
+              !Number.isFinite(longitude) ||
+              !Number.isFinite(latitude)
+            ) {
+              return null;
+            }
+            return {
+              orderId,
+              kind: kind as 'pickup' | 'delivery',
+              longitude,
+              latitude,
+              sequence: Number.isFinite(sequence) ? sequence : i,
+            };
+          })
+          .filter((x): x is NonNullable<typeof x> => x != null);
+        return stops.length > 0 ? stops : null;
+      })(),
+      courierTourDurationS: (() => {
+        const n = Number(
+          row.courierTourDurationS ?? row.courier_tour_duration_s,
+        );
+        return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+      })(),
     };
   }
 
@@ -3360,9 +3610,42 @@ export class DeliveryAgentService {
     return parts.join(', ');
   }
 
-  private etaLabelFromKm(km: number): string {
-    const minutes = Math.max(15, Math.round(km * 4 + 10));
-    return `${minutes} min`;
+  private etaLabelFromKm(km: number, trafficFactor?: number): string {
+    const factor =
+      trafficFactor ??
+      this._traffic?.envFallbackFactor() ??
+      (Number(process.env.ETA_TRAFFIC_FACTOR) || 1);
+    const pred = predictDeliveryEta({
+      distanceKm: km,
+      trafficFactor: factor,
+      weatherFactor: Number(process.env.ETA_WEATHER_FACTOR) || 1,
+    });
+    return formatEtaMinutesLabel(pred.etaMinutes);
+  }
+
+  /**
+   * ETA avec résolution trafic live (flotte / TomTom / Mapbox) selon Map Settings.
+   */
+  async etaLabelFromKmAsync(
+    km: number,
+    opts?: { latitude?: number; longitude?: number; headingDegrees?: number },
+  ): Promise<string> {
+    let factor: number | undefined;
+    if (
+      this._traffic &&
+      opts?.latitude != null &&
+      opts?.longitude != null &&
+      Number.isFinite(opts.latitude) &&
+      Number.isFinite(opts.longitude)
+    ) {
+      const resolved = await this._traffic.resolveTrafficFactor({
+        latitude: opts.latitude,
+        longitude: opts.longitude,
+        headingDegrees: opts.headingDegrees,
+      });
+      factor = resolved.factor;
+    }
+    return this.etaLabelFromKm(km, factor);
   }
 
   private isPopulatedAddressDoc(raw: unknown): raw is Record<string, unknown> {

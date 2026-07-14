@@ -97,6 +97,17 @@ export class MapSettingsModel {
   @Prop({ type: [{ engine: String, weight: Number }], default: [] })
   mobileDeliveryRoutingEnginePool: { engine: string; weight: number }[];
 
+  /**
+   * Moteur trafic primaire : none | fleet | tomtom | mapbox.
+   * OSM n’a pas de trafic natif — couche propriétaire ou API tierce.
+   */
+  @Prop({ type: String, default: 'none', trim: true })
+  trafficEngine: string;
+
+  /** Pool trafic pondéré (fleet / tomtom / mapbox). */
+  @Prop({ type: [{ engine: String, weight: Number }], default: [] })
+  trafficEnginePool: { engine: string; weight: number }[];
+
   /** Priorité des backends cache géocodage (redis | memcached | mongodb). */
   @Prop({
     type: [String],

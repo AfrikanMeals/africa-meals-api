@@ -680,7 +680,11 @@ export class DrinksService {
    * Catalogue marketplace : boissons en stock, boutiques visibles client.
    * Pas de filtre géo (aligné sur le filtre catégorie côté mobile).
    */
-  async filterMarketplaceCatalog(args: SearchDto, clientRegion?: string) {
+  async filterMarketplaceCatalog(
+    args: SearchDto,
+    clientRegion?: string,
+    opts?: { entityIds?: Types.ObjectId[] },
+  ) {
     const page = Math.max(1, Math.floor(args.page ?? 1));
     const take = Math.min(80, Math.max(1, Math.floor(args.take ?? 40)));
     const match: Record<string, unknown> = { ...DRINK_IN_STOCK_FILTER };
@@ -689,7 +693,9 @@ export class DrinksService {
       match.category = new Types.ObjectId(cid);
     }
     const q = args.query?.trim();
-    if (q) {
+    if (opts?.entityIds) {
+      match._id = { $in: opts.entityIds };
+    } else if (q) {
       const esc = this._escapeRegex(q);
       match.$or = [
         { name: { $regex: esc, $options: 'i' } },

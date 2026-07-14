@@ -10,6 +10,7 @@ import {
   RoutingEnginePoolEntry,
   normalizeRoutingEngineId,
   normalizeRoutingEnginePool,
+  pickPrimaryRoutingEngine,
   pickWeightedRoutingEngine,
   resolveRoutingPool,
 } from '@common/routing-engine-pool.util';
@@ -98,6 +99,7 @@ export function geocodingEngineForGroup(
     return 'locationiq';
   }
   if (v === 'tomtom') return 'tomtom';
+  if (v === 'pelias') return 'pelias';
   return 'osm';
 }
 
@@ -137,7 +139,9 @@ export function routingEnginePoolForGroup(
       : group === 'mobileDelivery'
         ? doc.mobileDeliveryRoutingEnginePool
         : doc.mobileUserRoutingEnginePool;
-  return resolveRoutingPool(raw, routingEngineForGroup(doc, group));
+  return resolveRoutingPool(raw, routingEngineForGroup(doc, group), {
+    foodDelivery: group === 'mobileDelivery',
+  });
 }
 
 export function isEngineEnabledForGroup(
@@ -168,6 +172,7 @@ export function isEngineEnabledForGroup(
   if (engine === 'mapsco') return true;
   if (engine === 'locationiq') return true;
   if (engine === 'tomtom') return true;
+  if (engine === 'pelias') return true;
   return flags.osm;
 }
 
@@ -192,7 +197,7 @@ export function isRoutingEngineEnabledForGroup(
             mapbox: doc.mobileUserMapboxEnabled !== false,
             google: doc.mobileUserGoogleEnabled !== false,
           };
-  if (engine === 'osrm') return true;
+  if (engine === 'osrm' || engine === 'valhalla') return true;
   if (engine === 'mapbox') return flags.mapbox;
   if (engine === 'google_routes' || engine === 'google_directions') {
     return flags.google;
@@ -227,12 +232,13 @@ export function resolveRoutingEngineForRegion(
   const merged = resolveMapSettingsForRegion(doc, regionCode);
   const fallback = routingEngineForGroup(merged, group);
   const pool = routingEnginePoolForGroup(merged, group);
-  return pickWeightedRoutingEngine(
-    pool,
-    (engine) => isRoutingEngineEnabledForGroup(merged, group, engine),
-    fallback,
-    random,
-  );
+  const isEligible = (engine: RoutingEngineId) =>
+    isRoutingEngineEnabledForGroup(merged, group, engine);
+  // Livraison repas : OSRM-first déterministe (ETA stables, coût bas).
+  if (group === 'mobileDelivery') {
+    return pickPrimaryRoutingEngine(pool, isEligible, fallback);
+  }
+  return pickWeightedRoutingEngine(pool, isEligible, fallback, random);
 }
 
 export function normalizeStoredGeocodingEnginePool(

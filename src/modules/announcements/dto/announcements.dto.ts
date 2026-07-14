@@ -143,11 +143,12 @@ export class AnnouncementBaseDto {
   @IsBoolean()
   dismissible?: boolean;
 
-  /** URL déjà uploadée (ex. via POST /announcements/image-json). */
+  /** URL déjà uploadée (ex. via POST /announcements/image-json). `null` = retirer. */
   @IsOptional()
+  @ValidateIf((_, value) => value != null && String(value).trim() !== '')
   @IsString()
-  @MaxLength(2048)
-  pictureUrl?: string;
+  @MaxLength(4096)
+  pictureUrl?: string | null;
 
   /** Fond bandeau (#RGB / #RRGGBB / #RRGGBBAA). */
   @IsOptional()

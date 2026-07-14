@@ -14,6 +14,10 @@ import {
   normalizePostalCode,
 } from '@common/normalize-geocode-query.util';
 import {
+  peliasForwardGeocode,
+  resolvePeliasBaseUrl,
+} from '@common/pelias-geocoding.util';
+import {
   locationIqForwardGeocode,
   locationIqReverseGeocode,
   locationIqSearchStructuredAddress,
@@ -325,6 +329,7 @@ export class GeocodeService {
       .trim()
       .toLowerCase();
     if (envEngine === 'osm') return 'osm';
+    if (envEngine === 'pelias') return 'pelias';
 
     const doc = await this.mapSettings.getSettingsDocument();
     const merged = resolveMapSettingsForRegion(doc, countryCode);
@@ -347,6 +352,7 @@ export class GeocodeService {
       this.secrets,
       this.config,
     );
+    const hasPelias = Boolean(resolvePeliasBaseUrl({ get: (k) => this.config.get<string>(k) }));
 
     const isAvailable = (engine: GeocodingEngineId): boolean => {
       if (!isEngineEnabledForGroup(merged, context, engine)) return false;
@@ -355,6 +361,7 @@ export class GeocodeService {
       if (engine === 'mapsco') return Boolean(mapsCoKey);
       if (engine === 'locationiq') return Boolean(locationIqKey);
       if (engine === 'tomtom') return Boolean(tomtomKey);
+      if (engine === 'pelias') return hasPelias;
       return true;
     };
 
@@ -375,6 +382,7 @@ export class GeocodeService {
     );
     if (isAvailable(picked)) return picked;
     if (isAvailable('osm')) return 'osm';
+    if (isAvailable('pelias')) return 'pelias';
     if (isAvailable('mapsco')) return 'mapsco';
     if (isAvailable('locationiq')) return 'locationiq';
     if (isAvailable('tomtom')) return 'tomtom';
@@ -527,6 +535,23 @@ export class GeocodeService {
         countryCode: args.countryCode,
       });
       return this.nominatimRowsToFeatures(rows, 'google');
+    }
+    if (engine === 'pelias') {
+      const features = await peliasForwardGeocode({
+        query: args.query,
+        limit: args.limit ?? 5,
+        countryCode: args.countryCode,
+        baseUrl: resolvePeliasBaseUrl({
+          get: (k) => this.config.get<string>(k),
+        }),
+      });
+      return features.map((f) => ({
+        id: f.id,
+        place_name: f.place_name,
+        text: f.text,
+        center: f.center,
+        context: f.context,
+      }));
     }
     const rows = await osmForwardGeocode(args.query, this.config, {
       limit: args.limit ?? 5,

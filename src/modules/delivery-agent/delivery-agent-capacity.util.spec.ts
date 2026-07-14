@@ -45,6 +45,8 @@ describe('delivery-agent-capacity.util', () => {
     expect(unset.courierRoutePolyline).toBe(1);
     expect(unset.courier_route_polyline).toBe(1);
     expect(unset.courierRouteUpdatedAt).toBe(1);
+    expect(unset.courierTourStops).toBe(1);
+    expect(unset.courier_tour_stops).toBe(1);
   });
 
   it('courierActiveDutyLookupStages lit camelCase et snake_case', () => {

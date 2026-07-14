@@ -20,7 +20,13 @@ import { MapSettingsService } from '@modules/map-settings/map-settings.service';
 import { Model } from 'mongoose';
 
 export type GeocodeEngine =
-  'osm' | 'mapsco' | 'locationiq' | 'tomtom' | 'mapbox' | 'google';
+  | 'osm'
+  | 'mapsco'
+  | 'locationiq'
+  | 'tomtom'
+  | 'mapbox'
+  | 'google'
+  | 'pelias';
 
 export type GeocodeCacheLookupArgs = {
   kind: GeocodeCacheKind;
@@ -66,7 +72,8 @@ export class GeocodeCacheService {
       engine === 'osm' ||
       engine === 'mapsco' ||
       engine === 'locationiq' ||
-      engine === 'tomtom'
+      engine === 'tomtom' ||
+      engine === 'pelias'
     ) {
       return true;
     }

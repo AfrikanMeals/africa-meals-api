@@ -8,6 +8,7 @@ const GEOCODING_ENGINES = [
   'mapsco',
   'locationiq',
   'tomtom',
+  'pelias',
 ] as const;
 
 export class GeocodingEnginePoolEntryDto {

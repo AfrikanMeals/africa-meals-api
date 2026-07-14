@@ -5,6 +5,8 @@ export const KNOWN_GEOCODING_ENGINES = [
   'tomtom',
   'mapbox',
   'google',
+  /** Pelias (géocodeur OSM indexé dans Elasticsearch). */
+  'pelias',
 ] as const;
 
 export type GeocodingEngineId = (typeof KNOWN_GEOCODING_ENGINES)[number];
@@ -27,6 +29,7 @@ export function normalizeGeocodingEngineId(raw: unknown): GeocodingEngineId | nu
     return 'locationiq';
   }
   if (v === 'tomtom') return 'tomtom';
+  if (v === 'pelias') return 'pelias';
   if (v === 'osm') return 'osm';
   return null;
 }

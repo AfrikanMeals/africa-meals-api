@@ -8,6 +8,7 @@ import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/store-delivery-drivers.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
+import { CourierGeoService } from './courier-geo.service';
 import { FleetAudienceService } from './fleet-audience.service';
 import { FleetBootstrapService } from './fleet-bootstrap.service';
 import { FleetSnapshotService } from './fleet-snapshot.service';
@@ -25,7 +26,17 @@ import { FleetSnapshotService } from './fleet-snapshot.service';
       { name: StoreModel.name, schema: StoreSchema },
     ]),
   ],
-  providers: [FleetSnapshotService, FleetBootstrapService, FleetAudienceService],
-  exports: [FleetSnapshotService, FleetBootstrapService, FleetAudienceService],
+  providers: [
+    FleetSnapshotService,
+    FleetBootstrapService,
+    FleetAudienceService,
+    CourierGeoService,
+  ],
+  exports: [
+    FleetSnapshotService,
+    FleetBootstrapService,
+    FleetAudienceService,
+    CourierGeoService,
+  ],
 })
 export class FleetModule {}

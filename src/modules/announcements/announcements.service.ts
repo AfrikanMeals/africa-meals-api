@@ -34,6 +34,7 @@ import {
   UpdateAnnouncementDto,
 } from './dto/announcements.dto';
 import { AnnouncementImageJsonDto } from './dto/announcement-image.dto';
+import { applyAnnouncementPictureUrl } from './announcement-picture-url.util';
 
 function assertAdmin(user: UserModel) {
   if (user.type !== UserTypeEnum.ADMIN) {
@@ -120,12 +121,14 @@ export class AnnouncementsService {
       .limit(80)
       .lean()
       .exec();
-    return docs.filter((doc) => {
-      const id = String(doc._id ?? '');
-      if (dismissed.has(id)) return false;
-      if (!isWithinSchedule(doc)) return false;
-      return this._matchesAudience(doc, audience, args.user._id.toString());
-    });
+    return this._resolveDocsPictureUrls(
+      docs.filter((doc) => {
+        const id = String(doc._id ?? '');
+        if (dismissed.has(id)) return false;
+        if (!isWithinSchedule(doc)) return false;
+        return this._matchesAudience(doc, audience, args.user._id.toString());
+      }),
+    );
   }
 
   /** Liste publique legacy (shop home) — client home before ads. */
@@ -161,20 +164,23 @@ export class AnnouncementsService {
           .limit(40)
           .lean()
           .exec();
-        return docs.filter((doc) =>
+        const filtered = docs.filter((doc) =>
           this._matchesAudience(doc, AnnouncementAudienceTypeEnum.CUSTOMER, ''),
         );
+        return this._resolveDocsPictureUrls(filtered);
       },
     );
   }
 
   async listManage(user: UserModel) {
     assertAdmin(user);
-    return this._announcementModel
+    const docs = await this._announcementModel
       .find({})
       .sort({ sortOrder: 1, updatedAt: -1 })
       .lean()
       .exec();
+    // Comme les bannières : résoudre l’URL publique à la lecture (proxy / signed).
+    return this._resolveDocsPictureUrls(docs);
   }
 
   async create(
@@ -200,7 +206,7 @@ export class AnnouncementsService {
     await this._bustAnnouncementsCache();
     const doc = await this._announcementModel.findById(created._id).lean().exec();
     if (!doc) throw new NotFoundException('announcement_not_found');
-    return doc;
+    return this._resolveDocPictureUrl(doc);
   }
 
   async update(
@@ -222,7 +228,7 @@ export class AnnouncementsService {
     await this._bustAnnouncementsCache();
     const doc = await this._announcementModel.findById(id).lean().exec();
     if (!doc) throw new NotFoundException('announcement_not_found');
-    return doc;
+    return this._resolveDocPictureUrl(doc);
   }
 
   async remove(id: string, user: UserModel) {
@@ -354,10 +360,34 @@ export class AnnouncementsService {
         user,
         'announcements',
       );
-    } else if (args.pictureUrl?.trim()) {
-      payload.pictureUrl = args.pictureUrl.trim();
+    } else if (args.pictureUrl !== undefined) {
+      // null / '' → effacer l’image ; sinon persister l’URL uploadée (image-json).
+      const next = applyAnnouncementPictureUrl(args.pictureUrl);
+      payload.pictureUrl = next;
     }
     return payload;
+  }
+
+  /** Résout l’URL publique d’une annonce (proxy / signed), comme les bannières Ads. */
+  private async _resolveDocPictureUrl<
+    T extends { pictureUrl?: string | null },
+  >(doc: T): Promise<T> {
+    const raw = doc.pictureUrl?.trim();
+    if (!raw) return doc;
+    const resolved =
+      (await this._mediasService.resolvePublicMediaUrl(raw)) ?? raw;
+    if (resolved === raw) return doc;
+    return { ...doc, pictureUrl: resolved };
+  }
+
+  private async _resolveDocsPictureUrls<
+    T extends { pictureUrl?: string | null },
+  >(docs: T[]): Promise<T[]> {
+    const out: T[] = [];
+    for (const doc of docs) {
+      out.push(await this._resolveDocPictureUrl(doc));
+    }
+    return out;
   }
 
   private async _bustAnnouncementsCache(): Promise<void> {

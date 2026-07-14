@@ -1,8 +1,12 @@
 import {
+  FOOD_DELIVERY_DEFAULT_ROUTING_POOL,
   KNOWN_ROUTING_ENGINES,
   normalizeRoutingEngineId,
   normalizeRoutingEnginePool,
+  pickPrimaryRoutingEngine,
   primaryRoutingEngineFromPool,
+  resolveRoutingPool,
+  routingEngineTryOrder,
   routingPoolFromScalar,
   type RoutingEngineId,
   type RoutingEnginePoolEntry,
@@ -14,6 +18,7 @@ describe('routing-engine-pool.util', () => {
     expect(normalizeRoutingEngineId('google')).toBe('google_directions');
     expect(normalizeRoutingEngineId('google_routes_api')).toBe('google_routes');
     expect(normalizeRoutingEngineId('OSRM')).toBe('osrm');
+    expect(normalizeRoutingEngineId('valhalla')).toBe('valhalla');
     expect(normalizeRoutingEngineId('nope')).toBeNull();
   });
 
@@ -30,26 +35,45 @@ describe('routing-engine-pool.util', () => {
     expect(primaryRoutingEngineFromPool(pool, 'osrm')).toBe('mapbox');
   });
 
-  it('falls back to scalar pool when empty', () => {
+  it('food delivery empty pool → OSRM-dominant defaults', () => {
+    expect(resolveRoutingPool([], 'mapbox', { foodDelivery: true })).toEqual(
+      FOOD_DELIVERY_DEFAULT_ROUTING_POOL,
+    );
+    expect(FOOD_DELIVERY_DEFAULT_ROUTING_POOL[0]?.engine).toBe('osrm');
+    expect(
+      primaryRoutingEngineFromPool(
+        FOOD_DELIVERY_DEFAULT_ROUTING_POOL,
+        'mapbox',
+      ),
+    ).toBe('osrm');
+  });
+
+  it('falls back to scalar pool when empty (non food)', () => {
     expect(routingPoolFromScalar('osrm')).toEqual([
       { engine: 'osrm', weight: 100 },
     ]);
   });
 
-  it('lists known engines', () => {
+  it('lists known engines including valhalla', () => {
     expect(KNOWN_ROUTING_ENGINES).toContain('osrm');
+    expect(KNOWN_ROUTING_ENGINES).toContain('valhalla');
     expect(KNOWN_ROUTING_ENGINES).toContain('google_routes');
   });
 
-  it('picks weighted engine among eligible', () => {
+  it('pickPrimary prefers OSRM when eligible and heaviest', () => {
     const pool: RoutingEnginePoolEntry[] = [
-      { engine: 'osrm', weight: 0 },
-      { engine: 'mapbox', weight: 100 },
+      { engine: 'osrm', weight: 70 },
+      { engine: 'mapbox', weight: 20 },
     ];
-    const picked = primaryRoutingEngineFromPool(
-      pool.filter((e) => e.weight > 0),
-      'osrm' as RoutingEngineId,
-    );
-    expect(picked).toBe('mapbox');
+    expect(
+      pickPrimaryRoutingEngine(pool, () => true, 'mapbox' as RoutingEngineId),
+    ).toBe('osrm');
+  });
+
+  it('try order puts OSRM then Valhalla in cascade', () => {
+    const order = routingEngineTryOrder('mapbox');
+    expect(order[0]).toBe('mapbox');
+    expect(order[1]).toBe('osrm');
+    expect(order[2]).toBe('valhalla');
   });
 });

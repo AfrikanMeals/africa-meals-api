@@ -18,9 +18,11 @@ import {
 } from './search-settings.service';
 import { SearchReindexProgressService } from './search-reindex-progress.service';
 import { SearchVectorReindexCron } from './search-vector-reindex.cron';
+import { ElasticsearchModule } from '@modules/elasticsearch/elasticsearch.module';
 
 @Module({
   imports: [
+    ElasticsearchModule,
     MongooseModule.forFeature([
       { name: SearchSettingsModel.name, schema: SearchSettingsSchema },
       { name: SearchIndexEntryModel.name, schema: SearchIndexEntrySchema },

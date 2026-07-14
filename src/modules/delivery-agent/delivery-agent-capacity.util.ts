@@ -164,6 +164,12 @@ export function courierClaimStaleStateUnset(): Record<string, 1> {
     courier_route_distance_m: 1,
     courier_route_duration_s: 1,
     courier_route_updated_at: 1,
+    courierTourStops: 1,
+    courierTourUpdatedAt: 1,
+    courierTourDurationS: 1,
+    courier_tour_stops: 1,
+    courier_tour_updated_at: 1,
+    courier_tour_duration_s: 1,
     pendingDeliveryProofId: 1,
     pending_delivery_proof_id: 1,
   };

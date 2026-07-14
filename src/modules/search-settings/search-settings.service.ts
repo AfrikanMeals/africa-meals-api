@@ -22,6 +22,8 @@ import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { SearchReindexProgressService } from './search-reindex-progress.service';
+import { CatalogElasticsearchService } from '@modules/elasticsearch/catalog-elasticsearch.service';
+import type { EsCatalogDocument } from '@modules/elasticsearch/elasticsearch.client';
 
 const SETTINGS_KEY = 'default';
 const CACHE_TTL_MS = 45_000;
@@ -122,6 +124,7 @@ export class SearchSettingsService {
             key: SETTINGS_KEY,
             regexSearchEnabled: true,
             vectorSearchEnabled: false,
+            elasticsearchSearchEnabled: false,
             vectorIndexName: 'search_vector_index',
             embeddingModel: 'text-embedding-3-small',
             embeddingProvider: EmbeddingProviderEnum.OPENAI,
@@ -359,6 +362,7 @@ export class SearchSettingsService {
       search: {
         regexSearchEnabled: doc.regexSearchEnabled !== false,
         vectorSearchEnabled: doc.vectorSearchEnabled === true,
+        elasticsearchSearchEnabled: doc.elasticsearchSearchEnabled === true,
         vectorIndexName: String(doc.vectorIndexName ?? 'search_vector_index'),
         embeddingModel: String(doc.embeddingModel ?? 'text-embedding-3-small'),
         embeddingProvider: this._normalizeEmbeddingProvider(doc.embeddingProvider),
@@ -471,6 +475,7 @@ export class SearchSettingsService {
     return {
       regexSearchEnabled: doc.regexSearchEnabled !== false,
       vectorSearchEnabled: doc.vectorSearchEnabled === true,
+      elasticsearchSearchEnabled: doc.elasticsearchSearchEnabled === true,
       vectorIndexName: String(doc.vectorIndexName ?? 'search_vector_index'),
       minQueryLength: Math.max(1, Number(doc.minQueryLength ?? 2)),
       defaultMaxDistanceKm: Math.min(
@@ -494,13 +499,18 @@ export class SearchSettingsService {
 
   async updateSettings(user: UserModel, dto: import('./dto/update-search-settings.dto').UpdateSearchSettingsDto) {
     assertAdmin(user);
-    if (!dto.regexSearchEnabled && !dto.vectorSearchEnabled) {
+    if (
+      !dto.regexSearchEnabled &&
+      !dto.vectorSearchEnabled &&
+      !dto.elasticsearchSearchEnabled
+    ) {
       throw new BadRequestException('at_least_one_search_mode_required');
     }
 
     const patch: Record<string, unknown> = {
       regexSearchEnabled: dto.regexSearchEnabled,
       vectorSearchEnabled: dto.vectorSearchEnabled,
+      elasticsearchSearchEnabled: dto.elasticsearchSearchEnabled,
       vectorIndexName: dto.vectorIndexName.trim(),
       embeddingModel: dto.embeddingModel.trim(),
       embeddingProvider: this._normalizeEmbeddingProvider(dto.embeddingProvider),
@@ -616,7 +626,19 @@ export class SearchVectorReindexService {
     private readonly _drinkModel: Model<DrinkModel>,
     private readonly _settings: SearchSettingsService,
     private readonly _progress: SearchReindexProgressService,
+    private readonly _catalogEs: CatalogElasticsearchService,
   ) {}
+
+  private async _flushEsDocs(docs: EsCatalogDocument[]): Promise<void> {
+    if (!docs.length || !this._catalogEs.isEnabledByEnv()) return;
+    try {
+      await this._catalogEs.upsertDocuments(docs);
+    } catch (e) {
+      this._logger.warn(
+        `ES bulk skip: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
 
   private _emitProgress(
     phase: 'stores' | 'products' | 'drinks' | 'complete' | 'error',
@@ -678,6 +700,12 @@ export class SearchVectorReindexService {
         .exec();
       this._emitProgress('stores', 0, storeRows.length, 'Boutiques');
       let storeIndex = 0;
+      const esBatch: EsCatalogDocument[] = [];
+      const flushEsBatch = async (force = false) => {
+        if (!force && esBatch.length < 40) return;
+        const chunk = esBatch.splice(0, esBatch.length);
+        await this._flushEsDocs(chunk);
+      };
       for (const row of storeRows as Record<string, unknown>[]) {
         storeIndex += 1;
         const entityId = new Types.ObjectId(String(row._id));
@@ -723,9 +751,18 @@ export class SearchVectorReindexService {
           { $set: patch },
           { upsert: true },
         );
+        esBatch.push({
+          entityType: 'store',
+          entityId: String(entityId),
+          storeId: String(entityId),
+          title,
+          searchText,
+        });
+        await flushEsBatch();
         stores += 1;
         this._emitProgress('stores', storeIndex, storeRows.length, 'Boutiques');
       }
+      await flushEsBatch(true);
 
       const productRows = await this._productModel
         .find({ status: ProductStatusEnum.ACTIVE })
@@ -785,6 +822,14 @@ export class SearchVectorReindexService {
           { $set: patch },
           { upsert: true },
         );
+        esBatch.push({
+          entityType: 'product',
+          entityId: String(entityId),
+          storeId: storeId ? String(storeId) : null,
+          title,
+          searchText,
+        });
+        await flushEsBatch();
         products += 1;
         if (productIndex % 10 === 0 || productIndex === productRows.length) {
           this._emitProgress(
@@ -795,6 +840,7 @@ export class SearchVectorReindexService {
           );
         }
       }
+      await flushEsBatch(true);
 
       const drinkRows = await this._drinkModel
         .find({ statut: DrinkStatutEnum.OK, quantite: { $gt: 0 } })
@@ -832,6 +878,14 @@ export class SearchVectorReindexService {
           },
           { upsert: true },
         );
+        esBatch.push({
+          entityType: 'drink',
+          entityId: String(entityId),
+          storeId: storeId ? String(storeId) : null,
+          title,
+          searchText,
+        });
+        await flushEsBatch();
         drinks += 1;
         if (drinkIndex % 20 === 0 || drinkIndex === drinkRows.length) {
           this._emitProgress(
@@ -842,6 +896,7 @@ export class SearchVectorReindexService {
           );
         }
       }
+      await flushEsBatch(true);
 
       const providerLabel =
         settingsDoc.search.embeddingProvider === 'ollama'

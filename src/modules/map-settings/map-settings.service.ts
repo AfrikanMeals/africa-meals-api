@@ -36,6 +36,14 @@ import {
   primaryRoutingEngineFromPool,
 } from '@common/routing-engine-pool.util';
 import {
+  normalizeTrafficEnginePool,
+  normalizeTrafficEnginePrimary,
+  primaryTrafficEngineFromPool,
+  resolveTrafficPool,
+  type TrafficEnginePoolEntry,
+  type TrafficEnginePrimary,
+} from '@common/traffic-engine-pool.util';
+import {
   DEFAULT_ROUTING_CACHE_SETTINGS,
   normalizeRoutingCacheSettings,
 } from '@common/routing-cache-settings.util';
@@ -52,9 +60,17 @@ const SETTINGS_KEY = 'default';
 
 type VendorEngine = 'mapbox' | 'google' | 'osm';
 type MobileEngine = 'mapbox' | 'google' | 'osm';
-type GeocodingEngine = 'mapbox' | 'google' | 'osm' | 'mapsco' | 'locationiq' | 'tomtom';
+type GeocodingEngine =
+  | 'mapbox'
+  | 'google'
+  | 'osm'
+  | 'mapsco'
+  | 'locationiq'
+  | 'tomtom'
+  | 'pelias';
 type RoutingEngine =
   | 'osrm'
+  | 'valhalla'
   | 'mapbox'
   | 'google_routes'
   | 'google_directions'
@@ -105,6 +121,7 @@ function normalizeGeocodingEngine(raw: unknown): GeocodingEngine {
     return 'locationiq';
   }
   if (v === 'tomtom') return 'tomtom';
+  if (v === 'pelias') return 'pelias';
   return 'osm';
 }
 
@@ -218,6 +235,13 @@ export class MapSettingsService {
         storeAvailability: this._geocodeCacheAvailability(),
       },
       routingCache: normalizeRoutingCacheSettings(doc.routingCache),
+      traffic: {
+        engine: normalizeTrafficEnginePrimary(doc.trafficEngine),
+        enginePool: resolveTrafficPool(
+          doc.trafficEnginePool,
+          normalizeTrafficEnginePrimary(doc.trafficEngine),
+        ),
+      },
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
   }
@@ -253,6 +277,8 @@ export class MapSettingsService {
             vendorRoutingEnginePool: [],
             mobileUserRoutingEnginePool: [],
             mobileDeliveryRoutingEnginePool: [],
+            trafficEngine: 'none',
+            trafficEnginePool: [],
             geocodeCacheStorePriority: [...DEFAULT_GEOCODE_CACHE_STORE_PRIORITY],
             routingCache: { ...DEFAULT_ROUTING_CACHE_SETTINGS },
             settingsByRegion: {},
@@ -504,6 +530,42 @@ export class MapSettingsService {
       );
     }
 
+    let trafficEngine: TrafficEnginePrimary = normalizeTrafficEnginePrimary(
+      (existing as MapSettingsModel | null)?.trafficEngine,
+    );
+    let trafficEnginePool: TrafficEnginePoolEntry[] = resolveTrafficPool(
+      (existing as MapSettingsModel | null)?.trafficEnginePool,
+      trafficEngine,
+    );
+    if (dto.trafficEnginePool !== undefined) {
+      trafficEnginePool = normalizeTrafficEnginePool(dto.trafficEnginePool);
+      if (trafficEnginePool.length) {
+        const total = trafficEnginePool.reduce((s, e) => s + e.weight, 0);
+        if (total <= 0) {
+          throw new BadRequestException('traffic_engine_pool_empty');
+        }
+      }
+    }
+    if (dto.trafficEngine !== undefined) {
+      trafficEngine = normalizeTrafficEnginePrimary(dto.trafficEngine);
+    } else if (
+      dto.trafficEnginePool !== undefined &&
+      trafficEnginePool.length
+    ) {
+      trafficEngine = primaryTrafficEngineFromPool(
+        trafficEnginePool,
+        trafficEngine,
+      );
+    }
+    if (trafficEngine === 'none') {
+      trafficEnginePool = [];
+    } else if (
+      dto.trafficEnginePool === undefined &&
+      dto.trafficEngine !== undefined
+    ) {
+      trafficEnginePool = [{ engine: trafficEngine, weight: 100 }];
+    }
+
     const updated = await this._settings
       .findOneAndUpdate(
         { key: SETTINGS_KEY },
@@ -533,6 +595,8 @@ export class MapSettingsService {
             vendorRoutingEnginePool: vendorRoutingPool,
             mobileUserRoutingEnginePool: mobileUserRoutingPool,
             mobileDeliveryRoutingEnginePool: mobileDeliveryRoutingPool,
+            trafficEngine,
+            trafficEnginePool,
             geocodeCacheStorePriority,
             routingCache,
           },

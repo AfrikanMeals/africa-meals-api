@@ -15,9 +15,13 @@ import {
   agentHasDeliveryCapacity,
   maxConcurrentOrdersFromApplication,
 } from '@modules/delivery-agent/delivery-agent-capacity.util';
+import { CourierGeoService } from '@modules/fleet/courier-geo.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { OrdersService } from '@modules/orders/orders.service';
+import { deliveryLngLatFromOrder } from '@modules/route-optimization/order-delivery-coords.util';
+import { VroomDispatchService } from '@modules/route-optimization/vroom-dispatch.service';
 import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
+import { TrafficService } from '@modules/traffic/traffic.service';
 import {
   StoreDeliveryAssignmentModeEnum,
   StoreModel,
@@ -34,6 +38,10 @@ import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { WsDeliveryOfferNotifyService } from '@modules/ws-notify/ws-delivery-offer-notify.service';
+import {
+  applyDispatchEnrichment,
+  loadRouteRemainingSecondsByAgent,
+} from './delivery-order-offer.dispatch-enrich';
 import {
   parseOfferTimeoutSec,
   rankDeliveryOfferCandidates,
@@ -64,6 +72,10 @@ export class DeliveryOrderOfferService {
     private readonly _notifications: NotificationsService,
     private readonly _wsOffer: WsDeliveryOfferNotifyService,
     private readonly _config: ConfigService,
+    private readonly _courierGeo: CourierGeoService,
+    private readonly _vroomDispatch: VroomDispatchService,
+    @Optional()
+    private readonly _traffic: TrafficService | undefined,
     @Inject(forwardRef(() => DeliveryAgentService))
     private readonly _deliveryAgent: DeliveryAgentService,
     @Inject(forwardRef(() => OrdersService))
@@ -120,7 +132,9 @@ export class DeliveryOrderOfferService {
 
       await this.cancelPendingOffersForOrder(orderId, 'cascade_restart');
 
-      const ranked = await this.rankCandidates(storeId, store);
+      const ranked = await this.rankCandidates(storeId, store, {
+        order: order as Record<string, unknown>,
+      });
       if (ranked.length === 0) {
         this.logger.log(
           `auto-offer order=${orderId}: aucun candidat disponible`,
@@ -147,6 +161,10 @@ export class DeliveryOrderOfferService {
   async rankCandidates(
     storeId: string,
     storeLean?: Record<string, unknown> | null,
+    opts?: {
+      order?: Record<string, unknown> | null;
+      deliveryLngLat?: [number, number] | null;
+    },
   ): Promise<
     Array<{ agentUserId: string; distanceMeters: number | null }>
   > {
@@ -203,9 +221,104 @@ export class DeliveryOrderOfferService {
         .exec()) as Record<string, unknown> | null);
 
     const storeLngLat = this.storeLngLatFromDoc(storeDoc);
-    return rankDeliveryOfferCandidates(inputs, storeLngLat).map((r) => ({
+
+    if (storeLngLat && inputs.length > 0) {
+      const geoDist = await this._courierGeo.distancesFromPointMeters(
+        storeLngLat[0],
+        storeLngLat[1],
+        inputs.map((i) => i.agentUserId),
+      );
+      for (const input of inputs) {
+        const meters = geoDist.get(input.agentUserId);
+        if (meters != null) {
+          input.geoDistanceMeters = meters;
+        }
+      }
+    }
+
+    const deliveryLngLat =
+      opts?.deliveryLngLat ??
+      deliveryLngLatFromOrder(opts?.order ?? null);
+
+    // Soft pipeline : workload + route restante + délai prédit (avant VROOM).
+    if (inputs.length > 0) {
+      let trafficFactor: number | null = null;
+      if (this._traffic && storeLngLat) {
+        try {
+          const tf = await this._traffic.resolveTrafficFactor({
+            latitude: storeLngLat[1],
+            longitude: storeLngLat[0],
+          });
+          trafficFactor = tf.factor;
+        } catch {
+          trafficFactor = null;
+        }
+      }
+      const routeByAgent = await loadRouteRemainingSecondsByAgent(
+        this._orders,
+        inputs.map((i) => i.agentUserId),
+      );
+      const prepRaw = Number(
+        (opts?.order as { estimatedPrepMinutes?: unknown } | null | undefined)
+          ?.estimatedPrepMinutes ??
+          (opts?.order as { preparationMinutes?: unknown } | null | undefined)
+            ?.preparationMinutes ??
+          0,
+      );
+      applyDispatchEnrichment(inputs, {
+        routeByAgent,
+        storeLngLat,
+        deliveryLngLat,
+        trafficFactor,
+        restaurantPrepMinutes: Number.isFinite(prepRaw) ? prepRaw : 0,
+      });
+    }
+
+    const softRanked = rankDeliveryOfferCandidates(inputs, storeLngLat);
+    const fallback = softRanked.map((r) => ({
       agentUserId: r.agentUserId,
       distanceMeters: r.distanceMeters,
+    }));
+
+    if (
+      !this._vroomDispatch.isEnabled() ||
+      !storeLngLat ||
+      !deliveryLngLat ||
+      inputs.length === 0
+    ) {
+      return fallback;
+    }
+
+    const vroomRanked = await this._vroomDispatch.rankCouriersForSingleShipment({
+      storeLngLat,
+      deliveryLngLat,
+      orderLabel: opts?.order
+        ? String((opts.order as { _id?: unknown })._id ?? '')
+        : undefined,
+      fallbackOrder: fallback.map((f) => f.agentUserId),
+      couriers: inputs.map((i) => ({
+        agentUserId: i.agentUserId,
+        lastLatitude: i.lastLatitude,
+        lastLongitude: i.lastLongitude,
+        remainingCapacity: Math.max(
+          0,
+          (Math.max(1, Math.trunc(i.maxConcurrentOrders) || 1) -
+            Math.max(0, Math.trunc(i.activeOrderCount) || 0)),
+        ),
+      })),
+    });
+
+    if (!vroomRanked || vroomRanked.length === 0) {
+      return fallback;
+    }
+
+    const geoDistByUser = new Map(
+      fallback.map((f) => [f.agentUserId, f.distanceMeters] as const),
+    );
+    return vroomRanked.map((r) => ({
+      agentUserId: r.agentUserId,
+      distanceMeters:
+        r.distanceMeters ?? geoDistByUser.get(r.agentUserId) ?? null,
     }));
   }
 
@@ -485,6 +598,7 @@ export class DeliveryOrderOfferService {
       const ranked = await this.rankCandidates(
         storeId,
         order.store as Record<string, unknown>,
+        { order: order as Record<string, unknown> },
       );
       const alreadyOffered = await this._offers
         .find({ orderId: new Types.ObjectId(orderId) })
@@ -528,6 +642,7 @@ export class DeliveryOrderOfferService {
       const rankedAgain = await this.rankCandidates(
         storeId,
         order.store as Record<string, unknown>,
+        { order: order as Record<string, unknown> },
       );
       const dist =
         rankedAgain.find((r) => r.agentUserId === agentUserId)

@@ -12,6 +12,8 @@ import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { FleetModule } from '@modules/fleet/fleet.module';
 import { PendingDeliveryModule } from '@modules/pending-delivery/pending-delivery.module';
+import { TrafficModule } from '@modules/traffic/traffic.module';
+import { RouteOptimizationModule } from '@modules/route-optimization/route-optimization.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -48,6 +50,8 @@ import { DeliveryAgentService } from './delivery-agent.service';
     FleetModule,
     PendingDeliveryModule,
     WsNotifyModule,
+    TrafficModule,
+    RouteOptimizationModule,
     MongooseModule.forFeature([
       {
         name: DeliveryAgentApplicationModel.name,

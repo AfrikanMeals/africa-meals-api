@@ -46,6 +46,16 @@ export type OrderWsTrackingPayload = {
   routeDistanceMeters?: number;
   routeDurationSeconds?: number;
   routeUpdatedAt?: string;
+  /** Tournée multi-commandes (VROOM) — séquence pickup/delivery. */
+  courierTourStops?: Array<{
+    orderId: string;
+    kind: 'pickup' | 'delivery';
+    longitude: number;
+    latitude: number;
+    sequence: number;
+  }>;
+  courierTourUpdatedAt?: string;
+  courierTourDurationS?: number;
 };
 
 /**

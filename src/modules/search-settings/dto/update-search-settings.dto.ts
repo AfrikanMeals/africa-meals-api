@@ -19,6 +19,9 @@ export class UpdateSearchSettingsDto {
   @IsBoolean()
   vectorSearchEnabled: boolean;
 
+  @IsBoolean()
+  elasticsearchSearchEnabled: boolean;
+
   @IsString()
   @MaxLength(120)
   vectorIndexName: string;

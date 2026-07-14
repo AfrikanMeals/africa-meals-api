@@ -1,9 +1,13 @@
 /**
- * Moteurs d’itinéraires / ETA (Directions, Routes, OSRM…).
+ * Moteurs d’itinéraires / ETA (Directions, Routes, OSRM, Valhalla…).
  * Indépendants des moteurs d’affichage carte (tuiles) et du géocodage.
+ *
+ * Food delivery : **OSRM** = moteur primaire (latence / coût) ; Mapbox / Google = repli.
+ * VROOM : OSRM + Valhalla en natif ; tous les autres via matrices custom injectées.
  */
 export const KNOWN_ROUTING_ENGINES = [
   'osrm',
+  'valhalla',
   'mapbox',
   'google_routes',
   'google_directions',
@@ -18,12 +22,46 @@ export type RoutingEnginePoolEntry = {
   weight: number;
 };
 
+/** Cascade de repli — OSRM d’abord (livraison repas). */
+export const ROUTING_ENGINE_FALLBACK_ORDER: RoutingEngineId[] = [
+  'osrm',
+  'valhalla',
+  'mapbox',
+  'here',
+  'tomtom',
+  'google_directions',
+  'google_routes',
+];
+
+/**
+ * Pool par défaut mode livreur quand `routingEnginePool` est vide.
+ * OSRM dominant ; payants en file d’attente.
+ */
+export const FOOD_DELIVERY_DEFAULT_ROUTING_POOL: RoutingEnginePoolEntry[] = [
+  { engine: 'osrm', weight: 70 },
+  { engine: 'mapbox', weight: 20 },
+  { engine: 'google_routes', weight: 10 },
+];
+
+/** Routeurs que VROOM interroge nativement (sans matrice custom). */
+export const VROOM_NATIVE_ROUTERS: RoutingEngineId[] = ['osrm', 'valhalla'];
+
+/** Tous les moteurs pouvant produire une matrice durée pour VROOM. */
+export const VROOM_MATRIX_CAPABLE_ENGINES: RoutingEngineId[] = [
+  ...KNOWN_ROUTING_ENGINES,
+];
+
+export function isVroomNativeRouter(engine: RoutingEngineId): boolean {
+  return VROOM_NATIVE_ROUTERS.includes(engine);
+}
+
 export function normalizeRoutingEngineId(raw: unknown): RoutingEngineId | null {
   const v = String(raw ?? '')
     .trim()
     .toLowerCase()
     .replace(/[\s-]+/g, '_');
   if (v === 'osrm' || v === 'open_source_routing_machine') return 'osrm';
+  if (v === 'valhalla') return 'valhalla';
   if (v === 'mapbox' || v === 'mapbox_directions') return 'mapbox';
   if (
     v === 'google_routes' ||
@@ -74,9 +112,13 @@ export function routingPoolFromScalar(
 export function resolveRoutingPool(
   poolRaw: unknown,
   scalar: RoutingEngineId,
+  opts?: { foodDelivery?: boolean },
 ): RoutingEnginePoolEntry[] {
   const pool = normalizeRoutingEnginePool(poolRaw);
   if (pool.length) return pool;
+  if (opts?.foodDelivery) {
+    return FOOD_DELIVERY_DEFAULT_ROUTING_POOL.map((e) => ({ ...e }));
+  }
   return routingPoolFromScalar(scalar);
 }
 
@@ -92,6 +134,28 @@ export function primaryRoutingEngineFromPool(
   return best.engine;
 }
 
+/**
+ * Sélection déterministe (poids max) — ETA stables pour le mode livreur.
+ * Filtre par éligibilité ; repli cascade OSRM-first.
+ */
+export function pickPrimaryRoutingEngine(
+  pool: RoutingEnginePoolEntry[],
+  isEligible: (engine: RoutingEngineId) => boolean,
+  fallback: RoutingEngineId,
+): RoutingEngineId {
+  const eligible = pool.filter(
+    (entry) => entry.weight > 0 && isEligible(entry.engine),
+  );
+  if (eligible.length) {
+    return primaryRoutingEngineFromPool(eligible, fallback);
+  }
+  if (isEligible(fallback)) return fallback;
+  for (const engine of ROUTING_ENGINE_FALLBACK_ORDER) {
+    if (isEligible(engine)) return engine;
+  }
+  return 'osrm';
+}
+
 export function pickWeightedRoutingEngine(
   pool: RoutingEnginePoolEntry[],
   isEligible: (engine: RoutingEngineId) => boolean,
@@ -103,7 +167,7 @@ export function pickWeightedRoutingEngine(
   );
   if (!eligible.length) {
     if (isEligible(fallback)) return fallback;
-    for (const engine of KNOWN_ROUTING_ENGINES) {
+    for (const engine of ROUTING_ENGINE_FALLBACK_ORDER) {
       if (isEligible(engine)) return engine;
     }
     return 'osrm';
@@ -119,10 +183,23 @@ export function pickWeightedRoutingEngine(
   return eligible[eligible.length - 1]!.engine;
 }
 
+/** Ordre d’essai : préféré puis cascade OSRM-first. */
+export function routingEngineTryOrder(
+  preferred: RoutingEngineId,
+): RoutingEngineId[] {
+  const out: RoutingEngineId[] = [preferred];
+  for (const engine of ROUTING_ENGINE_FALLBACK_ORDER) {
+    if (!out.includes(engine)) out.push(engine);
+  }
+  return out;
+}
+
 export function routingEngineLabel(engine: RoutingEngineId): string {
   switch (engine) {
     case 'osrm':
       return 'OSRM (OpenStreetMap)';
+    case 'valhalla':
+      return 'Valhalla';
     case 'mapbox':
       return 'Mapbox Directions';
     case 'google_routes':

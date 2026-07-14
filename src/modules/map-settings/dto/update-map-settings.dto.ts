@@ -10,14 +10,17 @@ import {
 import { Type } from 'class-transformer';
 import { KNOWN_GEOCODING_ENGINES } from '@common/geocoding-engine-pool.util';
 import { KNOWN_ROUTING_ENGINES } from '@common/routing-engine-pool.util';
+import { KNOWN_TRAFFIC_ENGINES } from '@common/traffic-engine-pool.util';
 import { GeocodingEnginePoolEntryDto } from './geocoding-engine-pool-entry.dto';
 import { RoutingEnginePoolEntryDto } from './routing-engine-pool-entry.dto';
+import { TrafficEnginePoolEntryDto } from './traffic-engine-pool-entry.dto';
 import { RoutingCacheSettingsDto } from './routing-cache-settings.dto';
 
 const VENDOR_ENGINES = ['mapbox', 'google', 'osm'] as const;
 const MOBILE_ENGINES = ['mapbox', 'google', 'osm'] as const;
 const GEOCODING_ENGINES = [...KNOWN_GEOCODING_ENGINES] as const;
 const ROUTING_ENGINES = [...KNOWN_ROUTING_ENGINES] as const;
+const TRAFFIC_PRIMARY = ['none', ...KNOWN_TRAFFIC_ENGINES] as const;
 const GEOCODE_CACHE_STORES = ['redis', 'memcached', 'mongodb'] as const;
 
 export class UpdateMapSettingsDto {
@@ -152,6 +155,24 @@ export class UpdateMapSettingsDto {
   @ValidateNested({ each: true })
   @Type(() => RoutingEnginePoolEntryDto)
   mobileDeliveryRoutingEnginePool?: RoutingEnginePoolEntryDto[];
+
+  @ApiPropertyOptional({
+    enum: TRAFFIC_PRIMARY,
+    default: 'none',
+    description:
+      'Moteur trafic : none | fleet (télémétrie livreurs) | tomtom | mapbox',
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(TRAFFIC_PRIMARY)
+  trafficEngine?: string;
+
+  @ApiPropertyOptional({ type: [TrafficEnginePoolEntryDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TrafficEnginePoolEntryDto)
+  trafficEnginePool?: TrafficEnginePoolEntryDto[];
 
   @ApiPropertyOptional({
     type: [String],

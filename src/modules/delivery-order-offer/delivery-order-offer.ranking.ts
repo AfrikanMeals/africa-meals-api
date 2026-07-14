@@ -1,3 +1,9 @@
+import {
+  computeDispatchCost,
+  resolveDispatchCostWeights,
+  type DispatchCostWeights,
+} from '@common/dispatch-cost.util';
+
 /** Candidat livreur pour auto-offer flotte boutique. */
 export type DeliveryOfferCandidateInput = {
   agentUserId: string;
@@ -8,12 +14,23 @@ export type DeliveryOfferCandidateInput = {
   /** Latitude GPS livreur (null = fin de liste). */
   lastLatitude?: number | null;
   lastLongitude?: number | null;
+  /**
+   * Distance live Redis GEO (m) — prioritaire sur haversine Mongo
+   * `lastLatitude`/`lastLongitude` quand présente.
+   */
+  geoDistanceMeters?: number | null;
+  /** Secondes restantes estimées sur courses actives (polyline / duration). */
+  routeRemainingSeconds?: number | null;
+  /** Délai prédit (ETA engine) en minutes. */
+  predictedDelayMinutes?: number | null;
 };
 
 export type RankedDeliveryOfferCandidate = {
   agentUserId: string;
   distanceMeters: number | null;
   hasGps: boolean;
+  /** Coût composite dispatch (plus bas = mieux). */
+  dispatchCost: number;
 };
 
 /**
@@ -49,34 +66,68 @@ export function isAgentAvailableForOffer(
   return active < capacity;
 }
 
+function resolveDistanceMeters(
+  c: DeliveryOfferCandidateInput,
+  storeLngLat: [number, number] | null,
+): { distanceMeters: number | null; hasGps: boolean } {
+  const geoMeters =
+    c.geoDistanceMeters != null && Number.isFinite(c.geoDistanceMeters)
+      ? Math.max(0, Math.round(Number(c.geoDistanceMeters)))
+      : null;
+  if (geoMeters != null) {
+    return { distanceMeters: geoMeters, hasGps: true };
+  }
+  const lat = c.lastLatitude;
+  const lng = c.lastLongitude;
+  const hasGps =
+    lat != null &&
+    lng != null &&
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    storeLngLat != null;
+  const distanceMeters = hasGps
+    ? haversineMeters(storeLngLat!, [Number(lng), Number(lat)])
+    : null;
+  return { distanceMeters, hasGps: !!hasGps };
+}
+
 /**
- * Classe les candidats : GPS → distance croissante boutique ; sans GPS en fin.
+ * Classe les candidats selon le pipeline dispatch :
+ * Find → Available → Nearest + Workload + Current route + Predicted delay.
+ * Soft score composite ; VROOM peut réordonner ensuite (fallback intact).
  */
 export function rankDeliveryOfferCandidates(
   candidates: DeliveryOfferCandidateInput[],
   storeLngLat: [number, number] | null,
+  opts?: { weights?: DispatchCostWeights },
 ): RankedDeliveryOfferCandidate[] {
+  const weights = opts?.weights ?? resolveDispatchCostWeights();
   const eligible = candidates.filter(isAgentAvailableForOffer);
   const withDist = eligible.map((c) => {
-    const lat = c.lastLatitude;
-    const lng = c.lastLongitude;
-    const hasGps =
-      lat != null &&
-      lng != null &&
-      Number.isFinite(lat) &&
-      Number.isFinite(lng) &&
-      storeLngLat != null;
-    const distanceMeters = hasGps
-      ? haversineMeters(storeLngLat!, [Number(lng), Number(lat)])
-      : null;
+    const { distanceMeters, hasGps } = resolveDistanceMeters(c, storeLngLat);
+    const dispatchCost = computeDispatchCost(
+      {
+        distanceMeters,
+        hasGps,
+        activeOrderCount: c.activeOrderCount,
+        maxConcurrentOrders: c.maxConcurrentOrders,
+        routeRemainingSeconds: c.routeRemainingSeconds,
+        predictedDelayMinutes: c.predictedDelayMinutes,
+      },
+      weights,
+    );
     return {
       agentUserId: c.agentUserId,
       distanceMeters,
-      hasGps: !!hasGps,
+      hasGps,
+      dispatchCost,
     };
   });
 
   withDist.sort((a, b) => {
+    if (a.dispatchCost !== b.dispatchCost) {
+      return a.dispatchCost - b.dispatchCost;
+    }
     if (a.hasGps !== b.hasGps) return a.hasGps ? -1 : 1;
     if (a.hasGps && b.hasGps) {
       return (a.distanceMeters ?? 0) - (b.distanceMeters ?? 0);

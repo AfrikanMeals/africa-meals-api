@@ -288,6 +288,37 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'courier_route_updated_at', type: Date })
   courierRouteUpdatedAt?: Date;
 
+  /**
+   * Séquence tournée multi-commandes (VROOM) — partagée sur les courses actives
+   * du livreur : Pickup A → Pickup B → Deliver A → Deliver B.
+   */
+  @Prop({
+    required: false,
+    name: 'courier_tour_stops',
+    type: [
+      {
+        orderId: { type: String },
+        kind: { type: String, enum: ['pickup', 'delivery'] },
+        longitude: { type: Number },
+        latitude: { type: Number },
+        sequence: { type: Number },
+      },
+    ],
+  })
+  courierTourStops?: Array<{
+    orderId: string;
+    kind: 'pickup' | 'delivery';
+    longitude: number;
+    latitude: number;
+    sequence: number;
+  }>;
+
+  @Prop({ required: false, name: 'courier_tour_updated_at', type: Date })
+  courierTourUpdatedAt?: Date;
+
+  @Prop({ required: false, name: 'courier_tour_duration_s' })
+  courierTourDurationS?: number;
+
   /** Offre course flotte boutique en cours (cascade AUTO) — exclusivité claim. */
   @Prop({
     type: MongooseSchema.Types.ObjectId,

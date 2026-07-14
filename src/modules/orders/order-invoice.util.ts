@@ -9,6 +9,7 @@ import {
 import type { OrdeLineItem } from '@schemas/order.schema';
 import { haversineDistance } from '@utils/helpers';
 import { fromStripeMinorUnits } from '@utils/stripe-currency-amount.util';
+import { predictDeliveryEta } from '@common/eta-engine.util';
 
 export type OrderTaxLineInvoice = {
   name: string;
@@ -521,12 +522,29 @@ export function coordsFromAddressLike(addr: unknown): [number, number] | undefin
   return undefined;
 }
 
-/** ETA livraison (minutes) — aligné sur delivery-agent `etaLabelFromKm`. */
-export function estimateParcelDeliveryEtaMinutes(distanceKm?: number): number {
-  if (distanceKm != null && Number.isFinite(distanceKm)) {
-    return Math.max(15, Math.round(distanceKm * 4 + 10));
-  }
-  return 45;
+/** ETA livraison (minutes) — moteur ETA (route / distance + facteurs). */
+export function estimateParcelDeliveryEtaMinutes(
+  distanceKm?: number,
+  opts?: {
+    roadDurationSeconds?: number | null;
+    restaurantPrepMinutes?: number | null;
+    alreadyPickedUp?: boolean;
+    trafficFactor?: number | null;
+    weatherFactor?: number | null;
+  },
+): number {
+  const pred = predictDeliveryEta({
+    distanceKm:
+      distanceKm != null && Number.isFinite(distanceKm) ? distanceKm : null,
+    roadDurationSeconds: opts?.roadDurationSeconds,
+    restaurantPrepMinutes: opts?.restaurantPrepMinutes,
+    alreadyPickedUp: opts?.alreadyPickedUp,
+    trafficFactor:
+      opts?.trafficFactor ?? (Number(process.env.ETA_TRAFFIC_FACTOR) || 1),
+    weatherFactor:
+      opts?.weatherFactor ?? (Number(process.env.ETA_WEATHER_FACTOR) || 1),
+  });
+  return pred.etaMinutes;
 }
 
 export function estimateParcelDeliveryEtaUntilIso(

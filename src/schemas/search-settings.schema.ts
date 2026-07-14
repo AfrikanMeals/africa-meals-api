@@ -30,6 +30,13 @@ export class SearchSettingsModel {
   @Prop({ type: Boolean, default: false })
   vectorSearchEnabled: boolean;
 
+  /**
+   * Recherche full-text Elasticsearch / OpenSearch (index catalogue).
+   * Si activé : ES → IDs → hydratation Mongo (région, Stripe, etc.).
+   */
+  @Prop({ type: Boolean, default: false })
+  elasticsearchSearchEnabled: boolean;
+
   @Prop({ type: String, default: 'search_vector_index' })
   vectorIndexName: string;
 

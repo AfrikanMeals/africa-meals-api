@@ -70,6 +70,60 @@ describe('delivery-order-offer.ranking', () => {
     expect(ranked[0].distanceMeters!).toBeLessThan(ranked[1].distanceMeters!);
   });
 
+  it('priorise geoDistanceMeters (Redis GEO) sur lastLat/Lng Mongo', () => {
+    const ranked = rankDeliveryOfferCandidates(
+      [
+        base({
+          agentUserId: 'mongo-near',
+          lastLatitude: 3.851,
+          lastLongitude: 11.501,
+          geoDistanceMeters: 5000,
+        }),
+        base({
+          agentUserId: 'geo-near',
+          lastLatitude: 3.9,
+          lastLongitude: 11.6,
+          geoDistanceMeters: 200,
+        }),
+      ],
+      store,
+    );
+    expect(ranked.map((r) => r.agentUserId)).toEqual([
+      'geo-near',
+      'mongo-near',
+    ]);
+    expect(ranked[0].distanceMeters).toBe(200);
+    expect(ranked[1].distanceMeters).toBe(5000);
+  });
+
+  it('priorise charge + route faible même si légèrement plus loin', () => {
+    const ranked = rankDeliveryOfferCandidates(
+      [
+        base({
+          agentUserId: 'busy-near',
+          lastLatitude: 3.851,
+          lastLongitude: 11.501,
+          activeOrderCount: 1,
+          maxConcurrentOrders: 2,
+          routeRemainingSeconds: 2400,
+          predictedDelayMinutes: 20,
+        }),
+        base({
+          agentUserId: 'free-farther',
+          lastLatitude: 3.86,
+          lastLongitude: 11.51,
+          activeOrderCount: 0,
+          maxConcurrentOrders: 2,
+          routeRemainingSeconds: 0,
+          predictedDelayMinutes: 2,
+        }),
+      ],
+      store,
+    );
+    expect(ranked[0]!.agentUserId).toBe('free-farther');
+    expect(ranked[0]!.dispatchCost).toBeLessThan(ranked[1]!.dispatchCost);
+  });
+
   it('parse timeout avec défaut 45', () => {
     expect(parseOfferTimeoutSec(undefined)).toBe(45);
     expect(parseOfferTimeoutSec('0')).toBe(45);
