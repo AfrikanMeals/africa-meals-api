@@ -191,41 +191,50 @@ export class VroomDispatchService {
     }>;
     preferredMatrixEngine?: RoutingEngineId | null;
     regionCode?: string | null;
+    allowNaiveFallback?: boolean;
   }): Promise<CourierTourResult | null> {
-    if (!this.isEnabled()) return null;
-    const shipments = params.shipments.filter(
-      (s) =>
-        Number.isFinite(s.pickupLngLat[0]) &&
-        Number.isFinite(s.pickupLngLat[1]) &&
-        Number.isFinite(s.deliveryLngLat[0]) &&
-        Number.isFinite(s.deliveryLngLat[1]),
-    );
-    if (shipments.length === 0) return null;
+    const meta = params.shipments
+      .filter(
+        (s) =>
+          Number.isFinite(s.pickupLngLat[0]) &&
+          Number.isFinite(s.pickupLngLat[1]) &&
+          Number.isFinite(s.deliveryLngLat[0]) &&
+          Number.isFinite(s.deliveryLngLat[1]),
+      )
+      .map((s) => ({
+        orderId: s.orderId,
+        pickup: s.pickupLngLat,
+        delivery: s.deliveryLngLat,
+        priority: s.priority,
+      }));
 
-    const meta = shipments.map((s) => ({
-      orderId: s.orderId,
-      pickupLngLat: s.pickupLngLat,
-      deliveryLngLat: s.deliveryLngLat,
-    }));
+    const naive = (): CourierTourResult | null => {
+      if (!params.allowNaiveFallback || meta.length === 0) return null;
+      return {
+        stops: naiveBatchTourStops(meta),
+        durationSeconds: null,
+        distanceMeters: null,
+      };
+    };
 
-    if (shipments.length === 1) {
-      return naiveBatchTourStops(meta);
-    }
+    if (!this.isEnabled()) return naive();
+    if (meta.length === 0) return null;
+    if (meta.length === 1) return naive();
 
     const vehicles: VroomVehicleInput[] = [
       {
         id: 1,
         description: params.agentUserId,
         start: params.startLngLat,
-        capacitySlots: Math.max(shipments.length, 1),
+        capacitySlots: Math.max(meta.length, 1),
       },
     ];
 
-    const vroomShipments = shipments.map((s, idx) => ({
+    const vroomShipments = meta.map((s, idx) => ({
       shipmentId: idx + 1,
       description: s.orderId,
-      pickup: s.pickupLngLat,
-      delivery: s.deliveryLngLat,
+      pickup: s.pickup,
+      delivery: s.delivery,
       amount: 1,
       priority: s.priority ?? 50,
     }));
@@ -257,7 +266,7 @@ export class VroomDispatchService {
       const parsed = parseCourierTourStopsFromVroomSolution(solution, meta);
       if (parsed && parsed.stops.length >= 2) {
         this.logger.debug(
-          `VROOM courier tour agent=${params.agentUserId} stops=${parsed.stops.length}`,
+          `VROOM courier tour agent=${params.agentUserId} stops=${parsed.stops.length} matrix=${matrix?.engine ?? 'native'}`,
         );
         return parsed;
       }
@@ -268,52 +277,7 @@ export class VroomDispatchService {
         }`,
       );
     }
-    return naiveBatchTourStops(meta);
-  }
-
-  async optimizeBatchAssignments(params: {
-    vehicles: VroomVehicleInput[];
-    shipments: Array<{
-      shipmentId: number;
-      description?: string;
-      pickup: VroomLngLat;
-      delivery: VroomLngLat;
-      amount?: number;
-      priority?: number;
-    }>;
-    preferredMatrixEngine?: RoutingEngineId | null;
-    regionCode?: string | null;
-  }): Promise<Awaited<ReturnType<VroomClient['solve']>> | null> {
-    if (!this.isEnabled()) return null;
-    const coords: VroomLngLat[] = [
-      ...params.vehicles.map((v) => v.start),
-      ...params.shipments.flatMap((s) => [s.pickup, s.delivery]),
-    ];
-    const plan = await this.resolveMatrixRoutingPlan(
-      params.preferredMatrixEngine,
-      params.regionCode,
-    );
-    const matrix = await this._matrix.fetchDurationMatrixWithFallback({
-      coordinates: coords,
-      preferred: plan.preferred,
-      tryOrder: plan.tryOrder,
-    });
-
-    const problem = buildFoodDeliveryVroomProblem({
-      vehicles: params.vehicles,
-      shipments: params.shipments,
-      matrices: matrix
-        ? { durations: matrix.durations, distances: matrix.distances }
-        : null,
-    });
-    try {
-      return await this._vroom.solve(problem);
-    } catch (e) {
-      this.logger.warn(
-        `VROOM batch failed: ${e instanceof Error ? e.message : String(e)}`,
-      );
-      return null;
-    }
+    return naive();
   }
 
   /**
@@ -349,7 +313,6 @@ export class VroomDispatchService {
             : tryOrder[0]!;
           return { preferred, tryOrder };
         }
-        // Pool Admin présent mais aucune clé/provider → continue vers env.
         if (plan.pool.length) {
           this.logger.debug(
             `Map Settings routing pool=${plan.pool
@@ -372,7 +335,9 @@ export class VroomDispatchService {
       preferred,
     ).filter((e) => this._matrix.isMatrixProviderConfigured(e));
     return {
-      preferred: tryOrder.includes(preferred) ? preferred : tryOrder[0] ?? 'osrm',
+      preferred: tryOrder.includes(preferred)
+        ? preferred
+        : (tryOrder[0] ?? 'osrm'),
       tryOrder: tryOrder.length ? tryOrder : (['osrm'] as RoutingEngineId[]),
     };
   }

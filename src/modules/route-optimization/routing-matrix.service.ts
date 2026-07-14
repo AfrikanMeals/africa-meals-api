@@ -6,6 +6,9 @@ import {
   routingEngineTryOrder,
   type RoutingEngineId,
 } from '@common/routing-engine-pool.util';
+import { resolveDeliveryMatrixRoutingPlan } from '@modules/map-settings/map-settings-region.util';
+import { MapSettingsService } from '@modules/map-settings/map-settings.service';
+import type { MapSettingsModel } from '@schemas/map-settings.schema';
 import { MapEngineCacheService } from '@modules/map-engine-cache/map-engine-cache.service';
 import { MapEngineHistoryService } from '@modules/map-engine-cache/map-engine-history.service';
 import { mapMatrixCacheKey } from '@modules/map-engine-cache/map-engine-cache.keys';
@@ -32,6 +35,7 @@ export class RoutingMatrixService {
     private readonly _config: ConfigService,
     @Optional() private readonly _mapCache?: MapEngineCacheService,
     @Optional() private readonly _mapHistory?: MapEngineHistoryService,
+    @Optional() private readonly _mapSettings?: MapSettingsService,
   ) {}
 
   /**
@@ -42,19 +46,23 @@ export class RoutingMatrixService {
     coordinates: LngLat[];
     preferred?: RoutingEngineId | null;
     tryOrder?: RoutingEngineId[];
+    regionCode?: string | null;
   }): Promise<RoutingDurationMatrix | null> {
     const coords = params.coordinates;
     if (coords.length < 2) return null;
-    const preferred =
-      params.preferred ??
-      normalizeRoutingEngineId(
-        this._config.get<string>('VROOM_MATRIX_ENGINE') ??
-          process.env.VROOM_MATRIX_ENGINE,
-      ) ??
-      'osrm';
-    const order = params.tryOrder?.length
-      ? params.tryOrder
-      : routingEngineTryOrder(preferred);
+
+    let preferred = params.preferred ?? null;
+    let tryOrder = params.tryOrder;
+
+    if (!preferred || !tryOrder?.length) {
+      const plan = await this.resolveDefaultRoutingPlan(params.regionCode);
+      preferred = preferred ?? plan.preferred;
+      tryOrder = tryOrder?.length ? tryOrder : plan.tryOrder;
+    }
+
+    const order = tryOrder?.length
+      ? tryOrder
+      : routingEngineTryOrder(preferred ?? 'osrm');
 
     for (const engine of order) {
       try {
@@ -69,6 +77,48 @@ export class RoutingMatrixService {
       }
     }
     return null;
+  }
+
+  /**
+   * Admin → Map Settings (mobileDelivery) prioritaire ;
+   * sinon env `VROOM_MATRIX_ENGINE` ; sinon OSRM.
+   */
+  private async resolveDefaultRoutingPlan(
+    regionCode?: string | null,
+  ): Promise<{ preferred: RoutingEngineId; tryOrder: RoutingEngineId[] }> {
+    try {
+      if (this._mapSettings) {
+        const doc = await this._mapSettings.getSettingsDocument();
+        const plan = resolveDeliveryMatrixRoutingPlan(
+          doc as MapSettingsModel,
+          regionCode,
+        );
+        const tryOrder = plan.tryOrder.filter((e) =>
+          this.isMatrixProviderConfigured(e),
+        );
+        if (tryOrder.length) {
+          return {
+            preferred: tryOrder.includes(plan.preferred)
+              ? plan.preferred
+              : tryOrder[0]!,
+            tryOrder,
+          };
+        }
+      }
+    } catch {
+      // ignore
+    }
+    const fromEnv = normalizeRoutingEngineId(
+      this._config.get<string>('VROOM_MATRIX_ENGINE') ??
+        process.env.VROOM_MATRIX_ENGINE,
+    );
+    const preferred = fromEnv ?? 'osrm';
+    return {
+      preferred,
+      tryOrder: routingEngineTryOrder(preferred).filter((e) =>
+        this.isMatrixProviderConfigured(e),
+      ),
+    };
   }
 
   async fetchDurationMatrix(

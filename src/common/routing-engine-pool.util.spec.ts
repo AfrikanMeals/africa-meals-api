@@ -7,6 +7,7 @@ import {
   primaryRoutingEngineFromPool,
   resolveRoutingPool,
   routingEngineTryOrder,
+  routingEngineTryOrderFromPool,
   routingPoolFromScalar,
   type RoutingEngineId,
   type RoutingEnginePoolEntry,
@@ -75,5 +76,21 @@ describe('routing-engine-pool.util', () => {
     expect(order[0]).toBe('mapbox');
     expect(order[1]).toBe('osrm');
     expect(order[2]).toBe('valhalla');
+  });
+
+  it('tryOrderFromPool respecte les poids Admin (Mapbox > OSRM)', () => {
+    const order = routingEngineTryOrderFromPool(
+      [
+        { engine: 'osrm', weight: 20 },
+        { engine: 'mapbox', weight: 80 },
+        { engine: 'google_routes', weight: 10 },
+      ],
+      'mapbox',
+    );
+    expect(order.slice(0, 3)).toEqual([
+      'mapbox',
+      'osrm',
+      'google_routes',
+    ]);
   });
 });

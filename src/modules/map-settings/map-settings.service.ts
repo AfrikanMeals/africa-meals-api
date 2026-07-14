@@ -52,6 +52,7 @@ import {
   geocodingEnginePoolForGroup,
   normalizeStoredGeocodingEnginePool,
   normalizeStoredRoutingEnginePool,
+  resolveDeliveryMatrixRoutingPlan,
   resolveMapSettingsForRegion,
   routingEnginePoolForGroup,
 } from './map-settings-region.util';
@@ -605,5 +606,14 @@ export class MapSettingsService {
       )
       .exec();
     return this._toResponse(updated);
+  }
+
+  /**
+   * Plan matrices / ETA mode livreur depuis Admin → Map Settings.
+   * OSRM = défaut si pool vide, sinon moteur au plus gros poids.
+   */
+  async resolveDeliveryRoutingPlan(regionCode?: string | null) {
+    const doc = await this.getSettingsDocument();
+    return resolveDeliveryMatrixRoutingPlan(doc, regionCode);
   }
 }
