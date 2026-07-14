@@ -2,6 +2,7 @@ import {
   CreateStoreCouponDto,
   PatchStoreCouponDto,
 } from '@modules/coupons/dto/store-coupon.dto';
+import { isStoreCouponCodeWithAmPrefix } from '@modules/coupons/coupon-code.util';
 import {
   BadRequestException,
   ConflictException,
@@ -267,7 +268,11 @@ export class CouponsService {
       user,
     );
 
+    // Invariant : codes boutique préfixés AM- (anti-saisie libre / inventée).
     const code = dto.code.trim().toUpperCase();
+    if (!isStoreCouponCodeWithAmPrefix(code)) {
+      throw new BadRequestException('code_must_start_with_AM_');
+    }
     try {
       const created = await this._couponModel.create({
         code,
@@ -339,7 +344,11 @@ export class CouponsService {
     }
 
     if (dto.code != null) {
-      existing.code = dto.code.trim().toUpperCase();
+      const nextCode = dto.code.trim().toUpperCase();
+      if (!isStoreCouponCodeWithAmPrefix(nextCode)) {
+        throw new BadRequestException('code_must_start_with_AM_');
+      }
+      existing.code = nextCode;
     }
     if (dto.discountType != null) {
       existing.discountType = dto.discountType;

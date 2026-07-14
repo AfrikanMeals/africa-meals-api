@@ -17,12 +17,13 @@ import {
 } from 'class-validator';
 
 export class CreateStoreCouponDto {
-  @ApiProperty({ example: 'SUMMER10' })
+  /** Codes promo boutique : préfixe imposé `AM-` (génération admin, pas saisie libre). */
+  @ApiProperty({ example: 'AM-X7K2M9PQ' })
   @IsString()
-  @MinLength(3)
+  @MinLength(9)
   @MaxLength(40)
-  @Matches(/^[A-Za-z0-9_-]+$/, {
-    message: 'code_invalid_chars',
+  @Matches(/^AM-[A-Za-z0-9]{6,36}$/i, {
+    message: 'code_must_start_with_AM_',
   })
   code: string;
 
@@ -75,12 +76,14 @@ export class CreateStoreCouponDto {
 }
 
 export class PatchStoreCouponDto {
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'AM-X7K2M9PQ' })
   @IsOptional()
   @IsString()
-  @MinLength(3)
+  @MinLength(9)
   @MaxLength(40)
-  @Matches(/^[A-Za-z0-9_-]+$/)
+  @Matches(/^AM-[A-Za-z0-9]{6,36}$/i, {
+    message: 'code_must_start_with_AM_',
+  })
   code?: string;
 
   @ApiPropertyOptional({ enum: StoreCouponDiscountTypeEnum })
