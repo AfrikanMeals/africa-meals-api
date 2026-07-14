@@ -1,3 +1,5 @@
+import { StoreAccessService } from '@modules/teams/store-access.service';
+import { VendorNotificationPreferencesService } from '@modules/vendor-notifications/vendor-notification-preferences.service';
 import {
   Inject,
   Injectable,
@@ -5,6 +7,7 @@ import {
   NotFoundException,
   OnModuleInit,
   Optional,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { App } from 'firebase-admin/app';
@@ -16,6 +19,7 @@ import {
 import { NotificationReadReceiptModel } from '@schemas/notification-read-receipt.schema';
 import { UserModel } from '@schemas/user.schema';
 import { FilterQuery, Model, Types } from 'mongoose';
+import { partitionChatPushRecipients } from './chat-push-recipients.util';
 
 const MAX_TOKENS_PER_USER = 20;
 
@@ -42,6 +46,10 @@ export class NotificationsService implements OnModuleInit {
     private readonly appNotificationModel: Model<AppNotificationModel>,
     @InjectModel(NotificationReadReceiptModel.name)
     private readonly readReceiptModel: Model<NotificationReadReceiptModel>,
+    @Optional() private readonly storeAccess?: StoreAccessService,
+    @Optional()
+    @Inject(forwardRef(() => VendorNotificationPreferencesService))
+    private readonly vendorPrefs?: VendorNotificationPreferencesService,
   ) {}
 
   onModuleInit(): void {
@@ -1287,6 +1295,10 @@ export class NotificationsService implements OnModuleInit {
     );
   }
 
+  /**
+   * Push FCM chat : client + livreur + équipe boutique selon le fil.
+   * Vendeur : uniquement si `categories.chat.push` est activé pour la boutique.
+   */
   async sendChatMessagePush(args: {
     recipientUserIds: string[];
     title: string;
@@ -1296,47 +1308,189 @@ export class NotificationsService implements OnModuleInit {
     storeName?: string;
     orderId?: string;
     contextType?: string;
+    senderUserId?: string;
+    courierUserId?: string;
   }): Promise<{ sent: number; failures: number }> {
+    const storeId = args.storeId?.trim() ?? '';
+    const ctx = (args.contextType ?? '').trim().toUpperCase();
+
+    // Enrichit DIRECT avec owner + membres actifs (filet si WS incomplet).
+    let recipientUserIds = [...args.recipientUserIds];
+    let vendorTeamUserIds: string[] = [];
+    if (storeId && Types.ObjectId.isValid(storeId) && this.storeAccess) {
+      try {
+        vendorTeamUserIds =
+          await this.storeAccess.listStoreTeamRecipientUserIds(storeId);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        this.logger.warn(`sendChatMessagePush team lookup: ${msg}`);
+      }
+      // DIRECT + message client → enrichir owner/staff. Si l’expéditeur est
+      // déjà vendeur, ne pas re-fan-out l’équipe (seul le client est ciblé).
+      if (ctx === 'DIRECT') {
+        const senderNorm = (args.senderUserId ?? '').trim().toLowerCase();
+        const senderIsVendor =
+          !!senderNorm &&
+          vendorTeamUserIds.some((id) => id.trim().toLowerCase() === senderNorm);
+        if (!senderIsVendor) {
+          const seen = new Set(recipientUserIds.map((id) => id.trim()));
+          for (const id of vendorTeamUserIds) {
+            if (!seen.has(id)) {
+              seen.add(id);
+              recipientUserIds.push(id);
+            }
+          }
+        }
+      }
+    }
+
+    // Livreur : param WS ou résolution commande ORDER.
+    let courierUserId = args.courierUserId?.trim() || undefined;
+    if (
+      !courierUserId &&
+      ctx === 'ORDER' &&
+      args.orderId?.trim() &&
+      Types.ObjectId.isValid(args.orderId.trim())
+    ) {
+      courierUserId =
+        (await this.resolveOrderCourierUserId(args.orderId.trim())) ??
+        undefined;
+    }
+
+    const parts = partitionChatPushRecipients({
+      recipientUserIds,
+      senderUserId: args.senderUserId,
+      vendorTeamUserIds,
+      courierUserId,
+    });
+
+    // Inbox in-app pour tous (hors expéditeur) — indépendant du canal push vendeur.
+    const inboxRecipients = [
+      ...parts.customerUserIds,
+      ...parts.courierUserIds,
+      ...parts.vendorUserIds,
+    ];
     try {
-      await this.persistChatInboxNotifications(args);
+      await this.persistChatInboxNotifications({
+        ...args,
+        recipientUserIds: inboxRecipients,
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(`persistChatInboxNotifications failed: ${msg}`);
     }
 
-    const data: Record<string, string> = {
+    const baseData: Record<string, string> = {
       type: 'chat',
     };
     if (args.conversationId) {
-      data.conversationId = args.conversationId;
+      baseData.conversationId = args.conversationId;
     }
-    if (args.storeId?.trim()) {
-      data.storeId = args.storeId.trim();
+    if (storeId) {
+      baseData.storeId = storeId;
     }
     if (args.storeName?.trim()) {
-      data.storeName = args.storeName.trim();
+      baseData.storeName = args.storeName.trim();
     }
     if (args.orderId?.trim()) {
-      data.orderId = args.orderId.trim();
+      baseData.orderId = args.orderId.trim();
     }
     if (args.contextType?.trim()) {
-      data.contextType = args.contextType.trim();
+      baseData.contextType = args.contextType.trim();
     }
     const displayTitle =
       args.storeName?.trim() || args.title?.trim() || 'Wise Eat';
-    const r = await this.sendMulticastNotification({
-      recipientUserIds: args.recipientUserIds,
-      title: displayTitle,
-      body: args.body,
-      data,
-      androidChannelId: 'african_meals_chat',
-    });
-    if (r.deviceCount === 0) {
+
+    let vendorPushIds = parts.vendorUserIds;
+    if (storeId && vendorPushIds.length > 0 && this.vendorPrefs) {
+      const chatPushOn = await this.vendorPrefs.isChannelEnabled(
+        storeId,
+        'chat',
+        'push',
+      );
+      if (!chatPushOn) {
+        this.logger.log(
+          `sendChatMessagePush: vendor chat.push OFF store=${storeId} — skip ${vendorPushIds.length} vendor(s)`,
+        );
+        vendorPushIds = [];
+      }
+    }
+
+    const batches: Array<{
+      ids: string[];
+      audience: 'customer' | 'courier' | 'vendor';
+      channel: string;
+    }> = [
+      {
+        ids: parts.customerUserIds,
+        audience: 'customer',
+        channel: 'african_meals_chat',
+      },
+      {
+        ids: parts.courierUserIds,
+        audience: 'courier',
+        channel: 'african_meals_chat',
+      },
+      {
+        ids: vendorPushIds,
+        audience: 'vendor',
+        channel: 'african_meals_vendor_chat',
+      },
+    ];
+
+    let sent = 0;
+    let failures = 0;
+    let anyDevices = false;
+    for (const batch of batches) {
+      if (batch.ids.length === 0) continue;
+      const r = await this.sendMulticastNotification({
+        recipientUserIds: batch.ids,
+        title: displayTitle,
+        body: args.body,
+        data: { ...baseData, audience: batch.audience },
+        androidChannelId: batch.channel,
+      });
+      sent += r.sent;
+      failures += r.failures;
+      if (r.deviceCount > 0) anyDevices = true;
+    }
+
+    if (!anyDevices && inboxRecipients.length > 0) {
       this.logger.warn(
-        `sendChatMessagePush: no FCM tokens recipients=${args.recipientUserIds.join(',')} conversation=${args.conversationId ?? ''}`,
+        `sendChatMessagePush: no FCM tokens recipients=${inboxRecipients.join(',')} conversation=${args.conversationId ?? ''}`,
       );
     }
-    return { sent: r.sent, failures: r.failures };
+    return { sent, failures };
+  }
+
+  /** Id user livreur assigné sur une commande (snake ou camel Mongo). */
+  private async resolveOrderCourierUserId(
+    orderId: string,
+  ): Promise<string | null> {
+    try {
+      const doc = await this.userModel.db.collection('orders').findOne(
+        { _id: new Types.ObjectId(orderId) },
+        {
+          projection: {
+            assigned_delivery_user: 1,
+            assignedDeliveryUser: 1,
+          },
+        },
+      );
+      if (!doc) return null;
+      const raw =
+        doc['assigned_delivery_user'] ?? doc['assignedDeliveryUser'];
+      if (raw == null) return null;
+      const id =
+        typeof raw === 'object' && raw != null && 'toString' in raw
+          ? String((raw as { toString(): string }).toString())
+          : String(raw);
+      return Types.ObjectId.isValid(id) ? id : null;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`resolveOrderCourierUserId: ${msg}`);
+      return null;
+    }
   }
 
   /**

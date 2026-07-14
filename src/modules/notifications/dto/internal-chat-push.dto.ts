@@ -46,4 +46,18 @@ export class InternalChatPushDto {
   @IsOptional()
   @IsString()
   contextType?: string;
+
+  @ApiPropertyOptional({
+    description: 'Expéditeur du message — exclu des push FCM',
+  })
+  @IsOptional()
+  @IsMongoId()
+  senderUserId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Livreur assigné (chat ORDER) — audience courier',
+  })
+  @IsOptional()
+  @IsMongoId()
+  courierUserId?: string;
 }

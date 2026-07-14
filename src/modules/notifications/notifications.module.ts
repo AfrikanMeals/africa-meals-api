@@ -1,5 +1,7 @@
 import { SharedModule } from '@modules/shared/shared.module';
-import { Module } from '@nestjs/common';
+import { StoreAccessModule } from '@modules/teams/store-access.module';
+import { VendorNotificationModule } from '@modules/vendor-notifications/vendor-notification.module';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
   AppNotificationModel,
@@ -18,6 +20,9 @@ import { NotificationsService } from './notifications.service';
 @Module({
   imports: [
     SharedModule,
+    StoreAccessModule,
+    // Prefs vendeur (`categories.chat.push`) — forwardRef car VendorNotification → Notifications.
+    forwardRef(() => VendorNotificationModule),
     MongooseModule.forFeature([
       { name: UserModel.name, schema: UserSchema },
       { name: AppNotificationModel.name, schema: AppNotificationSchema },

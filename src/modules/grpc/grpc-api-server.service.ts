@@ -211,6 +211,8 @@ export class GrpcApiServerService implements OnModuleInit, OnModuleDestroy {
             storeName?: string;
             orderId?: string;
             contextType?: string;
+            senderUserId?: string;
+            courierUserId?: string;
           };
           await this.notifications.sendChatMessagePush({
             recipientUserIds: payload.recipientUserIds ?? [],
@@ -221,6 +223,8 @@ export class GrpcApiServerService implements OnModuleInit, OnModuleDestroy {
             storeName: payload.storeName,
             orderId: payload.orderId,
             contextType: payload.contextType,
+            senderUserId: payload.senderUserId,
+            courierUserId: payload.courierUserId,
           });
           callback(null, { ok: true, error: '' });
         } catch (error) {
