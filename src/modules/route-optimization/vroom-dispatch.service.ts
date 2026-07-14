@@ -3,9 +3,10 @@ import { ConfigService } from '@nestjs/config';
 import {
   normalizeRoutingEngineId,
   routingEngineTryOrder,
+  routingEngineTryOrderFromPool,
   type RoutingEngineId,
 } from '@common/routing-engine-pool.util';
-import { resolveRoutingEngineForRegion } from '@modules/map-settings/map-settings-region.util';
+import { resolveDeliveryMatrixRoutingPlan } from '@modules/map-settings/map-settings-region.util';
 import { MapSettingsService } from '@modules/map-settings/map-settings.service';
 import type { MapSettingsModel } from '@schemas/map-settings.schema';
 import { RoutingMatrixService } from './routing-matrix.service';
@@ -38,7 +39,7 @@ export type { CourierTourResult, CourierTourStop };
 
 /**
  * Optimisation multi-stop / multi-véhicule via VROOM.
- * Matrices : OSRM · Valhalla · Mapbox · Google · HERE · TomTom (pool delivery).
+ * Matrices : pool Admin → Map Settings (mobileDelivery), pas seulement OSRM.
  * Routeur natif VROOM : OSRM / Valhalla si matrice indisponible.
  */
 @Injectable()
@@ -72,6 +73,7 @@ export class VroomDispatchService {
     fallbackOrder: string[];
     orderLabel?: string;
     preferredMatrixEngine?: RoutingEngineId | null;
+    regionCode?: string | null;
   }): Promise<VroomRankedCourier[] | null> {
     if (!this.isEnabled()) return null;
 
@@ -102,15 +104,14 @@ export class VroomDispatchService {
       params.deliveryLngLat,
     ];
 
-    const preferred = await this.resolvePreferredMatrixEngine(
+    const plan = await this.resolveMatrixRoutingPlan(
       params.preferredMatrixEngine,
+      params.regionCode,
     );
     const matrix = await this._matrix.fetchDurationMatrixWithFallback({
       coordinates: coords,
-      preferred,
-      tryOrder: routingEngineTryOrder(preferred).filter((e) =>
-        this._matrix.isMatrixProviderConfigured(e),
-      ),
+      preferred: plan.preferred,
+      tryOrder: plan.tryOrder,
     });
 
     const problem = buildFoodDeliveryVroomProblem({
@@ -134,15 +135,15 @@ export class VroomDispatchService {
       return null;
     }
 
-    if (!matrix && !this._matrix.canUseVroomNativeWithoutMatrix(preferred)) {
-      const nativeOk = routingEngineTryOrder(preferred).some(
+    if (!matrix && !this._matrix.canUseVroomNativeWithoutMatrix(plan.preferred)) {
+      const nativeOk = plan.tryOrder.some(
         (e) =>
           this._matrix.canUseVroomNativeWithoutMatrix(e) &&
           this._matrix.isMatrixProviderConfigured(e),
       );
       if (!nativeOk) {
         this.logger.debug(
-          'VROOM skip: aucune matrice (Mapbox/Google/…) ni routeur natif',
+          'VROOM skip: aucune matrice (Map Settings pool) ni routeur natif',
         );
         return null;
       }
@@ -151,7 +152,7 @@ export class VroomDispatchService {
     try {
       if (matrix) {
         this.logger.debug(
-          `VROOM matrix engine=${matrix.engine} size=${matrix.durations.length}`,
+          `VROOM matrix engine=${matrix.engine} size=${matrix.durations.length} preferred=${plan.preferred}`,
         );
       }
       const solution = await this._vroom.solve(problem);
@@ -189,32 +190,26 @@ export class VroomDispatchService {
       priority?: number;
     }>;
     preferredMatrixEngine?: RoutingEngineId | null;
-    allowNaiveFallback?: boolean;
+    regionCode?: string | null;
   }): Promise<CourierTourResult | null> {
+    if (!this.isEnabled()) return null;
     const shipments = params.shipments.filter(
       (s) =>
-        s.orderId &&
         Number.isFinite(s.pickupLngLat[0]) &&
         Number.isFinite(s.pickupLngLat[1]) &&
         Number.isFinite(s.deliveryLngLat[0]) &&
         Number.isFinite(s.deliveryLngLat[1]),
     );
-    if (shipments.length < 2) return null;
+    if (shipments.length === 0) return null;
 
     const meta = shipments.map((s) => ({
       orderId: s.orderId,
-      pickup: s.pickupLngLat,
-      delivery: s.deliveryLngLat,
+      pickupLngLat: s.pickupLngLat,
+      deliveryLngLat: s.deliveryLngLat,
     }));
 
-    const naive = (): CourierTourResult => ({
-      stops: naiveBatchTourStops(meta),
-      durationSeconds: null,
-      distanceMeters: null,
-    });
-
-    if (!this.isEnabled()) {
-      return params.allowNaiveFallback === false ? null : naive();
+    if (shipments.length === 1) {
+      return naiveBatchTourStops(meta);
     }
 
     const vehicles: VroomVehicleInput[] = [
@@ -239,15 +234,14 @@ export class VroomDispatchService {
       params.startLngLat,
       ...vroomShipments.flatMap((s) => [s.pickup, s.delivery]),
     ];
-    const preferred = await this.resolvePreferredMatrixEngine(
+    const plan = await this.resolveMatrixRoutingPlan(
       params.preferredMatrixEngine,
+      params.regionCode,
     );
     const matrix = await this._matrix.fetchDurationMatrixWithFallback({
       coordinates: coords,
-      preferred,
-      tryOrder: routingEngineTryOrder(preferred).filter((e) =>
-        this._matrix.isMatrixProviderConfigured(e),
-      ),
+      preferred: plan.preferred,
+      tryOrder: plan.tryOrder,
     });
 
     const problem = buildFoodDeliveryVroomProblem({
@@ -274,73 +268,40 @@ export class VroomDispatchService {
         }`,
       );
     }
-
-    return params.allowNaiveFallback === false ? null : naive();
+    return naiveBatchTourStops(meta);
   }
 
-  /**
-   * Optimisation batch multi-commandes / multi-livreurs.
-   */
-  async optimizeFleetShipments(params: {
-    storeLngLat: VroomLngLat;
+  async optimizeBatchAssignments(params: {
+    vehicles: VroomVehicleInput[];
     shipments: Array<{
-      orderId: string;
-      deliveryLngLat: VroomLngLat;
-      pickupLngLat?: VroomLngLat;
+      shipmentId: number;
+      description?: string;
+      pickup: VroomLngLat;
+      delivery: VroomLngLat;
+      amount?: number;
       priority?: number;
     }>;
-    couriers: VroomCourierCandidate[];
     preferredMatrixEngine?: RoutingEngineId | null;
-  }) {
+    regionCode?: string | null;
+  }): Promise<Awaited<ReturnType<VroomClient['solve']>> | null> {
     if (!this.isEnabled()) return null;
-    const withGps = params.couriers.filter((c) => {
-      const lat = c.lastLatitude;
-      const lng = c.lastLongitude;
-      return (
-        lat != null &&
-        lng != null &&
-        Number.isFinite(lat) &&
-        Number.isFinite(lng) &&
-        c.remainingCapacity > 0
-      );
-    });
-    if (withGps.length === 0 || params.shipments.length === 0) return null;
-
-    const idMap = allocateVroomVehicleIds(withGps.map((c) => c.agentUserId));
-    const vehicles: VroomVehicleInput[] = withGps.map((c) => ({
-      id: idMap.get(c.agentUserId)!,
-      description: c.agentUserId,
-      start: [Number(c.lastLongitude), Number(c.lastLatitude)],
-      capacitySlots: c.remainingCapacity,
-    }));
-
-    const shipments = params.shipments.map((s, idx) => ({
-      shipmentId: idx + 1,
-      description: s.orderId,
-      pickup: s.pickupLngLat ?? params.storeLngLat,
-      delivery: s.deliveryLngLat,
-      amount: 1,
-      priority: s.priority ?? 50,
-    }));
-
     const coords: VroomLngLat[] = [
-      ...vehicles.map((v) => v.start),
-      ...shipments.flatMap((s) => [s.pickup, s.delivery]),
+      ...params.vehicles.map((v) => v.start),
+      ...params.shipments.flatMap((s) => [s.pickup, s.delivery]),
     ];
-    const preferred = await this.resolvePreferredMatrixEngine(
+    const plan = await this.resolveMatrixRoutingPlan(
       params.preferredMatrixEngine,
+      params.regionCode,
     );
     const matrix = await this._matrix.fetchDurationMatrixWithFallback({
       coordinates: coords,
-      preferred,
-      tryOrder: routingEngineTryOrder(preferred).filter((e) =>
-        this._matrix.isMatrixProviderConfigured(e),
-      ),
+      preferred: plan.preferred,
+      tryOrder: plan.tryOrder,
     });
 
     const problem = buildFoodDeliveryVroomProblem({
-      vehicles,
-      shipments,
+      vehicles: params.vehicles,
+      shipments: params.shipments,
       matrices: matrix
         ? { durations: matrix.durations, distances: matrix.distances }
         : null,
@@ -355,28 +316,64 @@ export class VroomDispatchService {
     }
   }
 
-  private async resolvePreferredMatrixEngine(
+  /**
+   * Priorité : override appelant → **Admin Map Settings** (pool multi-moteurs)
+   * → env `VROOM_MATRIX_ENGINE` → OSRM.
+   */
+  private async resolveMatrixRoutingPlan(
     override?: RoutingEngineId | null,
-  ): Promise<RoutingEngineId> {
-    if (override) return override;
-    const fromEnv = normalizeRoutingEngineId(
-      this._config.get<string>('VROOM_MATRIX_ENGINE') ??
-        process.env.VROOM_MATRIX_ENGINE,
-    );
-    if (fromEnv) return fromEnv;
+    regionCode?: string | null,
+  ): Promise<{ preferred: RoutingEngineId; tryOrder: RoutingEngineId[] }> {
+    if (override) {
+      return {
+        preferred: override,
+        tryOrder: routingEngineTryOrder(override).filter((e) =>
+          this._matrix.isMatrixProviderConfigured(e),
+        ),
+      };
+    }
+
     try {
       if (this._mapSettings) {
         const doc = await this._mapSettings.getSettingsDocument();
-        const engine = resolveRoutingEngineForRegion(
+        const plan = resolveDeliveryMatrixRoutingPlan(
           doc as MapSettingsModel,
-          'mobileDelivery',
+          regionCode,
         );
-        const id = normalizeRoutingEngineId(engine);
-        if (id) return id;
+        const tryOrder = plan.tryOrder.filter((e) =>
+          this._matrix.isMatrixProviderConfigured(e),
+        );
+        if (tryOrder.length) {
+          const preferred = tryOrder.includes(plan.preferred)
+            ? plan.preferred
+            : tryOrder[0]!;
+          return { preferred, tryOrder };
+        }
+        // Pool Admin présent mais aucune clé/provider → continue vers env.
+        if (plan.pool.length) {
+          this.logger.debug(
+            `Map Settings routing pool=${plan.pool
+              .map((e) => `${e.engine}:${e.weight}`)
+              .join(',')} but no provider configured — env/osrm fallback`,
+          );
+        }
       }
     } catch {
       // map-settings indisponible
     }
-    return 'osrm';
+
+    const fromEnv = normalizeRoutingEngineId(
+      this._config.get<string>('VROOM_MATRIX_ENGINE') ??
+        process.env.VROOM_MATRIX_ENGINE,
+    );
+    const preferred = fromEnv ?? 'osrm';
+    const tryOrder = routingEngineTryOrderFromPool(
+      fromEnv ? [{ engine: fromEnv, weight: 100 }] : [],
+      preferred,
+    ).filter((e) => this._matrix.isMatrixProviderConfigured(e));
+    return {
+      preferred: tryOrder.includes(preferred) ? preferred : tryOrder[0] ?? 'osrm',
+      tryOrder: tryOrder.length ? tryOrder : (['osrm'] as RoutingEngineId[]),
+    };
   }
 }

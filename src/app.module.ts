@@ -91,6 +91,7 @@ import { GeocodeModule } from './modules/geocode/geocode.module';
 import { MapGeocodeUsageModule } from './common/map-geocode/map-geocode-usage.module';
 import { MapSettingsModule } from './modules/map-settings/map-settings.module';
 import { TrafficModule } from './modules/traffic/traffic.module';
+import { MapEngineCacheModule } from './modules/map-engine-cache/map-engine-cache.module';
 import { SearchSettingsModule } from './modules/search-settings/search-settings.module';
 import { SecretManagerModule } from './modules/secret-manager/secret-manager.module';
 import { PlatformChannelsModule } from './modules/platform-channels/platform-channels.module';
@@ -365,6 +366,7 @@ async function readRedisManagerEnabledAtBootstrap(
     GeocodeModule,
     MapSettingsModule,
     TrafficModule,
+    MapEngineCacheModule,
     SearchSettingsModule,
     RecommendationAutomationSettingsModule,
     NewsletterAutomationSettingsModule,

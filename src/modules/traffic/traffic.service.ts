@@ -13,6 +13,9 @@ import { GraphSyncQueueService } from '@modules/graph/graph-sync-queue.service';
 import {
   trafficCellId,
 } from '@modules/graph/graph-map-cell.util';
+import { MapEngineCacheService } from '@modules/map-engine-cache/map-engine-cache.service';
+import { MapEngineHistoryService } from '@modules/map-engine-cache/map-engine-history.service';
+import { mapEtaCacheKey } from '@modules/map-engine-cache/map-engine-cache.keys';
 import { TrafficFleetService } from './traffic-fleet.service';
 import { TrafficExternalProviders } from './traffic-external.providers';
 
@@ -43,6 +46,8 @@ export class TrafficService {
     private readonly config: ConfigService,
     @Optional() private readonly graphMap?: GraphMapIntelligenceService,
     @Optional() private readonly graphSync?: GraphSyncQueueService,
+    @Optional() private readonly mapCache?: MapEngineCacheService,
+    @Optional() private readonly mapHistory?: MapEngineHistoryService,
   ) {}
 
   envFallbackFactor(): number {
@@ -85,10 +90,31 @@ export class TrafficService {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return { factor: this.envFallbackFactor(), engine: 'none' };
     }
-    const cacheKey = `${lat.toFixed(3)},${lng.toFixed(3)}`;
-    const hit = this._factorCache.get(cacheKey);
-    if (hit && Date.now() - hit.at < TrafficService.CACHE_TTL_MS) {
-      return { factor: hit.factor, engine: hit.engine };
+    const memKey = `${lat.toFixed(3)},${lng.toFixed(3)}`;
+    const memHit = this._factorCache.get(memKey);
+    if (memHit && Date.now() - memHit.at < TrafficService.CACHE_TTL_MS) {
+      return { factor: memHit.factor, engine: memHit.engine };
+    }
+
+    const redisKey = mapEtaCacheKey(lat, lng, 'tfactor');
+    const redisTtl = this.mapCache?.ttlSec('eta') ?? 60;
+    if (this.mapCache) {
+      const redisHit = await this.mapCache.getJson<{
+        factor: number;
+        engine: TrafficEnginePrimary;
+      }>(redisKey);
+      if (
+        redisHit &&
+        Number.isFinite(redisHit.factor) &&
+        redisHit.factor > 0
+      ) {
+        this._factorCache.set(memKey, {
+          at: Date.now(),
+          factor: redisHit.factor,
+          engine: redisHit.engine,
+        });
+        return redisHit;
+      }
     }
 
     try {
@@ -97,7 +123,7 @@ export class TrafficService {
       );
       if (primary === 'none' && !pool.length) {
         const factor = this.envFallbackFactor();
-        this._factorCache.set(cacheKey, {
+        this._factorCache.set(memKey, {
           at: Date.now(),
           factor,
           engine: 'none',
@@ -131,7 +157,6 @@ export class TrafficService {
         );
       }
 
-      // Cascade si le primaire échoue.
       if (factor == null && picked !== 'fleet') {
         factor = await this.fleet.resolveFactor(lat, lng);
       }
@@ -146,7 +171,6 @@ export class TrafficService {
         );
       }
 
-      // Hint Neo4j TrafficCell (prédiction) — jamais remplace OSRM.
       if (factor == null) {
         factor = await this.graphMap?.averageTrafficFactorNear(lat, lng);
       }
@@ -154,12 +178,10 @@ export class TrafficService {
       const resolved = factor ?? this.envFallbackFactor();
       const engine: TrafficEnginePrimary =
         factor != null ? (picked === 'none' ? 'fleet' : picked) : 'none';
-      this._factorCache.set(cacheKey, {
-        at: Date.now(),
-        factor: resolved,
-        engine,
-      });
-      return { factor: resolved, engine };
+      const out = { factor: resolved, engine };
+      this._factorCache.set(memKey, { at: Date.now(), ...out });
+      void this.mapCache?.setJson(redisKey, out, redisTtl);
+      return out;
     } catch (e) {
       this.logger.debug(
         `resolveTrafficFactor: ${e instanceof Error ? e.message : String(e)}`,
@@ -216,6 +238,13 @@ export class TrafficService {
           speedKmh,
           headingDegrees: args.headingDegrees,
           at: new Date().toISOString(),
+        });
+        void this.mapHistory?.maybeRecordTrafficSample({
+          latitude: lat,
+          longitude: lng,
+          speedKmh,
+          headingDegrees: args.headingDegrees,
+          source: 'fleet',
         });
       }
     } catch {

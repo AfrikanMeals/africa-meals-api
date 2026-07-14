@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   isVroomNativeRouter,
@@ -6,6 +6,9 @@ import {
   routingEngineTryOrder,
   type RoutingEngineId,
 } from '@common/routing-engine-pool.util';
+import { MapEngineCacheService } from '@modules/map-engine-cache/map-engine-cache.service';
+import { MapEngineHistoryService } from '@modules/map-engine-cache/map-engine-history.service';
+import { mapMatrixCacheKey } from '@modules/map-engine-cache/map-engine-cache.keys';
 
 export type LngLat = [number, number];
 
@@ -25,7 +28,11 @@ export type RoutingDurationMatrix = {
 export class RoutingMatrixService {
   private readonly logger = new Logger(RoutingMatrixService.name);
 
-  constructor(private readonly _config: ConfigService) {}
+  constructor(
+    private readonly _config: ConfigService,
+    @Optional() private readonly _mapCache?: MapEngineCacheService,
+    @Optional() private readonly _mapHistory?: MapEngineHistoryService,
+  ) {}
 
   /**
    * Tente les moteurs dans l’ordre (préféré + cascade).
@@ -68,23 +75,60 @@ export class RoutingMatrixService {
     coordinates: LngLat[],
     engine: RoutingEngineId,
   ): Promise<RoutingDurationMatrix | null> {
-    switch (engine) {
-      case 'osrm':
-        return this.fetchOsrmTable(coordinates);
-      case 'valhalla':
-        return this.fetchValhallaMatrix(coordinates);
-      case 'mapbox':
-        return this.fetchMapboxMatrix(coordinates);
-      case 'google_routes':
-      case 'google_directions':
-        return this.fetchGoogleDistanceMatrix(coordinates);
-      case 'here':
-        return this.fetchHereMatrix(coordinates);
-      case 'tomtom':
-        return this.fetchTomtomMatrix(coordinates);
-      default:
-        return null;
+    const cacheKey = mapMatrixCacheKey(engine, coordinates);
+    const ttl = this._mapCache?.ttlSec('matrix') ?? 120;
+
+    const load = async (): Promise<RoutingDurationMatrix | null> => {
+      let matrix: RoutingDurationMatrix | null = null;
+      switch (engine) {
+        case 'osrm':
+          matrix = await this.fetchOsrmTable(coordinates);
+          break;
+        case 'valhalla':
+          matrix = await this.fetchValhallaMatrix(coordinates);
+          break;
+        case 'mapbox':
+          matrix = await this.fetchMapboxMatrix(coordinates);
+          break;
+        case 'google_routes':
+        case 'google_directions':
+          matrix = await this.fetchGoogleDistanceMatrix(coordinates);
+          break;
+        case 'here':
+          matrix = await this.fetchHereMatrix(coordinates);
+          break;
+        case 'tomtom':
+          matrix = await this.fetchTomtomMatrix(coordinates);
+          break;
+        default:
+          matrix = null;
+      }
+      if (matrix) {
+        const first =
+          matrix.durations?.[0]?.[1] ?? matrix.durations?.[1]?.[0] ?? null;
+        void this._mapHistory?.recordHistoricalRoute({
+          engine,
+          kind: 'matrix',
+          fingerprintParts: [cacheKey],
+          pointCount: coordinates.length,
+          durationSeconds:
+            typeof first === 'number' && Number.isFinite(first) ? first : null,
+          distanceMeters: matrix.distances?.[0]?.[1] ?? null,
+        });
+      }
+      return matrix;
+    };
+
+    if (!this._mapCache) {
+      return load();
     }
+
+    return this._mapCache.getOrSetJson<RoutingDurationMatrix>(
+      cacheKey,
+      ttl,
+      load,
+      { engine, kind: 'matrix' },
+    );
   }
 
   /** True si l’API peut tenter une matrice pour ce moteur (clés / URL présentes). */

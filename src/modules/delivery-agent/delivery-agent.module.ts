@@ -15,6 +15,7 @@ import { PendingDeliveryModule } from '@modules/pending-delivery/pending-deliver
 import { TrafficModule } from '@modules/traffic/traffic.module';
 import { RouteOptimizationModule } from '@modules/route-optimization/route-optimization.module';
 import { GraphModule } from '@modules/graph/graph.module';
+import { MapEngineCacheModule } from '@modules/map-engine-cache/map-engine-cache.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -54,6 +55,7 @@ import { DeliveryAgentService } from './delivery-agent.service';
     TrafficModule,
     RouteOptimizationModule,
     GraphModule,
+    MapEngineCacheModule,
     MongooseModule.forFeature([
       {
         name: DeliveryAgentApplicationModel.name,

@@ -97,6 +97,7 @@ import { isDomainEventsEnabled } from '@modules/domain-event-handlers/domain-eve
 import { CourierGeoService } from '@modules/fleet/courier-geo.service';
 import { TrafficService } from '@modules/traffic/traffic.service';
 import { GraphSyncQueueService } from '@modules/graph/graph-sync-queue.service';
+import { MapEngineHistoryService } from '@modules/map-engine-cache/map-engine-history.service';
 import { FleetAudienceService } from '@modules/fleet/fleet-audience.service';
 import { FleetSnapshotService } from '@modules/fleet/fleet-snapshot.service';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
@@ -208,6 +209,8 @@ export class DeliveryAgentService {
     private readonly _vroomDispatch?: VroomDispatchService,
     @Optional()
     private readonly _graphSync?: GraphSyncQueueService,
+    @Optional()
+    private readonly _mapHistory?: MapEngineHistoryService,
   ) {}
 
   private async publishAgentDomainEvent<T extends DomainEventType>(
@@ -1882,6 +1885,15 @@ export class DeliveryAgentService {
       latitude: lat,
       longitude: lng,
       at: new Date().toISOString(),
+    });
+
+    void this._mapHistory?.maybeRecordGpsSample({
+      agentUserId,
+      latitude: lat,
+      longitude: lng,
+      speedMps: telemetry.speedMps,
+      headingDegrees: telemetry.headingDegrees,
+      region: (appLean as { region?: string } | null)?.region,
     });
 
     const activeOrderIds =

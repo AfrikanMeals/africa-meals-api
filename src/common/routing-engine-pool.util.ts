@@ -194,6 +194,39 @@ export function routingEngineTryOrder(
   return out;
 }
 
+/**
+ * Ordre d’essai depuis le pool Admin (Map Settings).
+ * 1) preferred (ou plus gros poids)
+ * 2) reste du pool par poids décroissant
+ * 3) cascade soft (OSRM…) pour résilience si tous les moteurs du pool échouent
+ */
+export function routingEngineTryOrderFromPool(
+  pool: RoutingEnginePoolEntry[],
+  preferred?: RoutingEngineId | null,
+): RoutingEngineId[] {
+  const byWeight = [...pool]
+    .filter((e) => e.weight > 0)
+    .sort((a, b) => b.weight - a.weight)
+    .map((e) => e.engine);
+  const out: RoutingEngineId[] = [];
+  const pref =
+    preferred ??
+    (byWeight.length
+      ? primaryRoutingEngineFromPool(
+          pool.filter((e) => e.weight > 0),
+          byWeight[0]!,
+        )
+      : null);
+  if (pref) out.push(pref);
+  for (const engine of byWeight) {
+    if (!out.includes(engine)) out.push(engine);
+  }
+  for (const engine of ROUTING_ENGINE_FALLBACK_ORDER) {
+    if (!out.includes(engine)) out.push(engine);
+  }
+  return out.length ? out : (['osrm'] as RoutingEngineId[]);
+}
+
 export function routingEngineLabel(engine: RoutingEngineId): string {
   switch (engine) {
     case 'osrm':

@@ -13,6 +13,7 @@ import {
   pickPrimaryRoutingEngine,
   pickWeightedRoutingEngine,
   resolveRoutingPool,
+  routingEngineTryOrderFromPool,
 } from '@common/routing-engine-pool.util';
 import { normalizeRegionCode } from '@modules/platform-shipping-settings/platform-shipping-region.util';
 import { MapSettingsModel } from '@schemas/map-settings.schema';
@@ -234,11 +235,40 @@ export function resolveRoutingEngineForRegion(
   const pool = routingEnginePoolForGroup(merged, group);
   const isEligible = (engine: RoutingEngineId) =>
     isRoutingEngineEnabledForGroup(merged, group, engine);
-  // Livraison repas : OSRM-first déterministe (ETA stables, coût bas).
+  // Livraison : primaire = plus gros poids Admin (OSRM si pool vide / défaut).
   if (group === 'mobileDelivery') {
     return pickPrimaryRoutingEngine(pool, isEligible, fallback);
   }
   return pickWeightedRoutingEngine(pool, isEligible, fallback, random);
+}
+
+/**
+ * Plan matrices / ETA API pour le mode livreur — source = Admin → Map Settings.
+ * OSRM = défaut (pool vide) mais pas exclusif : respecte les poids multi-moteurs.
+ */
+export function resolveDeliveryMatrixRoutingPlan(
+  doc: MapSettingsModel,
+  regionCode?: string | null,
+): {
+  preferred: RoutingEngineId;
+  pool: RoutingEnginePoolEntry[];
+  tryOrder: RoutingEngineId[];
+} {
+  const merged = resolveMapSettingsForRegion(doc, regionCode);
+  const group: MapSettingsGroupKey = 'mobileDelivery';
+  const pool = routingEnginePoolForGroup(merged, group).filter((e) =>
+    isRoutingEngineEnabledForGroup(merged, group, e.engine),
+  );
+  const preferred = pickPrimaryRoutingEngine(
+    pool,
+    (engine) => isRoutingEngineEnabledForGroup(merged, group, engine),
+    routingEngineForGroup(merged, group),
+  );
+  return {
+    preferred,
+    pool,
+    tryOrder: routingEngineTryOrderFromPool(pool, preferred),
+  };
 }
 
 export function normalizeStoredGeocodingEnginePool(
