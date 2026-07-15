@@ -40,6 +40,8 @@ import { DeliveryAgentService } from './delivery-agent.service';
 import { DeliveryOrderOfferService } from '@modules/delivery-order-offer/delivery-order-offer.service';
 import { SetPartnerBadgeDto } from '@common/partner-badges/dto/set-partner-badge.dto';
 import { AssignStripeConnectDto } from '@modules/store/dto/assign-stripe-connect.dto';
+import { CheckoutCourierAvailabilityDto } from './dto/checkout-courier-availability.dto';
+import { CourierCheckoutAvailabilityService } from './courier-checkout-availability.service';
 
 @ApiTags('delivery-agent')
 @ApiBearerAuth('bearer')
@@ -53,6 +55,21 @@ export class DeliveryAgentController {
 
   @Inject(DeliveryOrderOfferService)
   private readonly _deliveryOffers: DeliveryOrderOfferService;
+
+  @Inject(CourierCheckoutAvailabilityService)
+  private readonly _checkoutAvailability: CourierCheckoutAvailabilityService;
+
+  @Post('checkout/availability')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }))
+  @ApiOperation({
+    summary:
+      'Disponibilité batch d’au moins un livreur assignable par boutique du checkout.',
+  })
+  checkoutAvailability(@Body() body: CheckoutCourierAvailabilityDto) {
+    // Le service renvoie `unknown` sur incident afin de préserver le checkout historique.
+    return this._checkoutAvailability.checkStores(body.storeIds);
+  }
 
   @Get('application')
   @UseGuards(JwtGuard)
@@ -174,7 +191,10 @@ export class DeliveryAgentController {
     summary:
       'Basculer disponible / hors ligne (occupé est automatique si course assignée).',
   })
-  setPresence(@Req() req: Request, @Body() body: PatchDeliveryAgentPresenceDto) {
+  setPresence(
+    @Req() req: Request,
+    @Body() body: PatchDeliveryAgentPresenceDto,
+  ) {
     return this._deliveryAgent.setPresence(req.user as UserModel, body);
   }
 
@@ -235,7 +255,8 @@ export class DeliveryAgentController {
   @Post('orders/:orderId/offers/:offerId/accept')
   @UseGuards(JwtGuard)
   @ApiOperation({
-    summary: 'Accepte une offre course exclusive (auto-dispatch flotte boutique).',
+    summary:
+      'Accepte une offre course exclusive (auto-dispatch flotte boutique).',
   })
   acceptDeliveryOffer(
     @Req() req: Request,
@@ -320,8 +341,7 @@ export class DeliveryAgentController {
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({
-    summary:
-      'Aperçu distance livreur ↔ adresse pour livraison client absent.',
+    summary: 'Aperçu distance livreur ↔ adresse pour livraison client absent.',
   })
   previewCustomerAbsent(
     @Req() req: Request,
@@ -626,7 +646,8 @@ export class DeliveryAgentController {
   @Post('admin/applications/:applicationId/sync-stripe-connect')
   @UseGuards(JwtGuard)
   @ApiOperation({
-    summary: 'Admin — resynchronise le statut Stripe Connect d’un livreur approuvé.',
+    summary:
+      'Admin — resynchronise le statut Stripe Connect d’un livreur approuvé.',
   })
   async syncDeliveryAgentStripeConnectAdmin(
     @Req() req: Request,

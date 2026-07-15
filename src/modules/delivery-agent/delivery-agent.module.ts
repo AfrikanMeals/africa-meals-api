@@ -36,6 +36,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
 import { DeliveryAgentController } from './delivery-agent.controller';
 import { DeliveryAgentService } from './delivery-agent.service';
 import { CourierMarketplaceDispatchService } from './courier-marketplace-dispatch.service';
+import { CourierCheckoutAvailabilityService } from './courier-checkout-availability.service';
 import { CourierPerformanceModule } from './courier-performance.module';
 
 @Module({
@@ -79,7 +80,12 @@ import { CourierPerformanceModule } from './courier-performance.module';
     ]),
   ],
   controllers: [DeliveryAgentController],
-  providers: [DeliveryAgentService, CourierMarketplaceDispatchService],
+  providers: [
+    DeliveryAgentService,
+    CourierMarketplaceDispatchService,
+    // Lecture checkout isolée : aucun effet sur le dispatcher de commandes existant.
+    CourierCheckoutAvailabilityService,
+  ],
   exports: [
     DeliveryAgentService,
     CourierPerformanceModule,
