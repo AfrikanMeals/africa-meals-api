@@ -11,6 +11,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -73,12 +74,15 @@ export class CreateAdManagementDto {
 
   @ApiPropertyOptional({
     description:
-      'Région ISO2 (obligatoire pour bannière globale sans boutique).',
-    example: 'CM',
+      'Région ISO2, ou ALL pour toutes les régions (obligatoire pour bannière globale).',
+    example: 'ALL',
   })
   @IsOptional()
   @IsString()
-  @MaxLength(2)
+  @MaxLength(8)
+  @Matches(/^(ALL|[A-Za-z]{2})$/i, {
+    message: 'region must be an ISO2 country code or ALL',
+  })
   region?: string;
 
   @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
@@ -175,10 +179,16 @@ export class PatchAdManagementDto {
   @IsBoolean()
   isActive?: boolean;
 
-  @ApiPropertyOptional({ description: 'Région ISO2 (bannière globale).' })
+  @ApiPropertyOptional({
+    description:
+      'Région ISO2, ou ALL pour toutes les régions (bannière globale).',
+  })
   @IsOptional()
   @IsString()
-  @MaxLength(2)
+  @MaxLength(8)
+  @Matches(/^(ALL|[A-Za-z]{2})$/i, {
+    message: 'region must be an ISO2 country code or ALL',
+  })
   region?: string;
 
   @ApiPropertyOptional()

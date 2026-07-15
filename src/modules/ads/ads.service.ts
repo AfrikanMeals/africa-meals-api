@@ -39,6 +39,12 @@ import { SupportedCountriesService } from '@modules/supported-countries/supporte
 import { RegionPricingService } from '@modules/supported-countries/region-pricing.service';
 import { normalizeCountryCode } from '@modules/supported-countries/client-market-region.util';
 import {
+  AD_REGION_ALL,
+  adRegionMatchesClient,
+  isAdRegionAll,
+  normalizeAdRegionScope,
+} from '@modules/ads/ad-region-scope.util';
+import {
   AdMarketingEntityStatus,
   VendorStatusEmailService,
 } from '@modules/vendor-emails/vendor-status-email.service';
@@ -4660,10 +4666,9 @@ export class AdsService implements OnModuleInit {
       id,
       storeId,
       storeName,
-      region:
-        doc.region != null && String(doc.region).trim() !== ''
-          ? normalizeCountryCode(String(doc.region))
-          : null,
+      region: normalizeAdRegionScope(
+        doc.region != null ? String(doc.region) : null,
+      ),
       title: String(doc.title ?? ''),
       subtitle: String(doc.subtitle ?? ''),
       actionText: String(doc.actionText ?? ''),
@@ -4960,11 +4965,7 @@ export class AdsService implements OnModuleInit {
     clientRegion: string | undefined,
     entityRegion?: string | null,
   ): boolean {
-    const target = normalizeCountryCode(clientRegion ?? '');
-    if (!target) return true;
-    const source = normalizeCountryCode(entityRegion ?? '');
-    if (!source) return false;
-    return source === target;
+    return adRegionMatchesClient(clientRegion, entityRegion);
   }
 
   private async _resolveStoreRegionCode(storeId: string): Promise<string> {
@@ -4984,15 +4985,18 @@ export class AdsService implements OnModuleInit {
       }
       return fromStore;
     }
+    if (user.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('global_ad_vendor_forbidden');
+    }
+    if (isAdRegionAll(dtoRegion)) {
+      return AD_REGION_ALL;
+    }
     const code = normalizeCountryCode(dtoRegion ?? '');
     if (!code) {
       throw new BadRequestException('region_required_for_global_ad');
     }
     if (!(await this._supportedCountries.isActiveCode(code))) {
       throw new BadRequestException('region_not_active');
-    }
-    if (user.type !== UserTypeEnum.ADMIN) {
-      throw new ForbiddenException('global_ad_vendor_forbidden');
     }
     return code;
   }

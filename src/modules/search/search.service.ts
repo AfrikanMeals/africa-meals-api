@@ -14,6 +14,10 @@ import {
 } from '@modules/supported-countries/client-market-region.util';
 import { isGeoPlausibleForCatalogRegion } from '@modules/supported-countries/catalog-geo-region.util';
 import {
+  CATALOG_GEO_DISCOVERY_CANDIDATE_LIMIT,
+  shouldUseCatalogGeoDiscoveryFallback,
+} from './catalog-geo-fallback.util';
+import {
   AppCacheKeys,
   apiPublicCacheTtlMs,
   cacheUserScope,
@@ -23,6 +27,7 @@ import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.servic
 import { shouldApplyCatalogRegionFilter, isPlatformAdminUser } from '@common/catalog-public-id.util';
 import { Inject, Injectable } from '@nestjs/common';
 import { OfferModel, OfferStatusEnum } from '@schemas/offer.schema';
+import { OrderStatusEnum } from '@schemas/order.schema';
 import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
@@ -130,6 +135,191 @@ export class SearchService {
       args.longitude as number,
       region,
     );
+  }
+
+  /** Args sans lat/lng — 2ᵉ passe découverte (région) quand proximité vide. */
+  private _searchArgsWithoutGeo(args: SearchDto): SearchDto {
+    return {
+      ...args,
+      latitude: undefined,
+      longitude: undefined,
+      maxDistanceKm: undefined,
+    };
+  }
+
+  private static readonly _DISCOVERY_PAID_LIKE_STATUSES: OrderStatusEnum[] = [
+    OrderStatusEnum.PAIED,
+    OrderStatusEnum.APPROVED,
+    OrderStatusEnum.SHIPPED,
+    OrderStatusEnum.COMPLETED,
+  ];
+
+  /**
+   * Ranking découverte : best sales (commandes payées) + best rated + most liked/visited.
+   * Appliqué uniquement sur le pool candidat (plafond) après filtre région/Stripe/texte.
+   */
+  private _catalogDiscoveryStoreRankingStages(): PipelineStage[] {
+    return [
+      { $sort: { updatedAt: -1 } },
+      { $limit: CATALOG_GEO_DISCOVERY_CANDIDATE_LIMIT },
+      {
+        $lookup: {
+          from: 'orders',
+          let: { sid: '$_id' },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ['$store', '$$sid'] },
+                status: {
+                  $in: SearchService._DISCOVERY_PAID_LIKE_STATUSES,
+                },
+              },
+            },
+            { $count: 'n' },
+          ],
+          as: '_discoveryOrd',
+        },
+      },
+      {
+        $lookup: {
+          from: 'store_ratings',
+          let: { sid: '$_id' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$store', '$$sid'] } } },
+            { $project: { _id: 0, rate: 1 } },
+          ],
+          as: '_discoveryRates',
+        },
+      },
+      {
+        $addFields: {
+          __discoverySales: {
+            $ifNull: [{ $arrayElemAt: ['$_discoveryOrd.n', 0] }, 0],
+          },
+          __discoveryLikes: { $size: { $ifNull: ['$likedBy', []] } },
+          __discoveryRating: {
+            $let: {
+              vars: {
+                sz: { $size: { $ifNull: ['$_discoveryRates', []] } },
+                sumRates: {
+                  $sum: {
+                    $map: {
+                      input: { $ifNull: ['$_discoveryRates', []] },
+                      as: 'r',
+                      in: '$$r.rate',
+                    },
+                  },
+                },
+              },
+              in: {
+                $cond: [
+                  { $gt: ['$$sz', 0] },
+                  { $divide: ['$$sumRates', '$$sz'] },
+                  { $ifNull: ['$averageRating', 0] },
+                ],
+              },
+            },
+          },
+        },
+      },
+      {
+        $addFields: {
+          __discoveryScore: {
+            $add: [
+              { $multiply: ['$__discoverySales', 2.2] },
+              '$__discoveryLikes',
+              { $multiply: ['$__discoveryRating', 3] },
+            ],
+          },
+        },
+      },
+    ];
+  }
+
+  private _catalogDiscoveryProductRankingStages(): PipelineStage[] {
+    return [
+      { $sort: { updatedAt: -1 } },
+      { $limit: CATALOG_GEO_DISCOVERY_CANDIDATE_LIMIT },
+      {
+        $lookup: {
+          from: 'product_ratings',
+          let: { pid: '$_id' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$product', '$$pid'] } } },
+            { $project: { _id: 0, rate: 1 } },
+          ],
+          as: '_discoveryRates',
+        },
+      },
+      {
+        $lookup: {
+          from: 'orders',
+          let: { sid: '$store._id' },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ['$store', '$$sid'] },
+                status: {
+                  $in: SearchService._DISCOVERY_PAID_LIKE_STATUSES,
+                },
+              },
+            },
+            { $count: 'n' },
+          ],
+          as: '_discoveryStoreOrd',
+        },
+      },
+      {
+        $addFields: {
+          __discoverySales: {
+            $ifNull: [{ $arrayElemAt: ['$_discoveryStoreOrd.n', 0] }, 0],
+          },
+          __discoveryLikes: { $size: { $ifNull: ['$likedBy', []] } },
+          __discoveryRating: {
+            $let: {
+              vars: {
+                sz: { $size: { $ifNull: ['$_discoveryRates', []] } },
+                sumRates: {
+                  $sum: {
+                    $map: {
+                      input: { $ifNull: ['$_discoveryRates', []] },
+                      as: 'r',
+                      in: '$$r.rate',
+                    },
+                  },
+                },
+              },
+              in: {
+                $cond: [
+                  { $gt: ['$$sz', 0] },
+                  { $divide: ['$$sumRates', '$$sz'] },
+                  0,
+                ],
+              },
+            },
+          },
+          __discoveryMenuBoost: {
+            $cond: [{ $eq: ['$__onDailyMenu', true] }, 8, 0],
+          },
+        },
+      },
+      {
+        $addFields: {
+          __discoveryScore: {
+            $add: [
+              { $multiply: ['$__discoverySales', 2.2] },
+              '$__discoveryLikes',
+              { $multiply: ['$__discoveryRating', 3] },
+              '$__discoveryMenuBoost',
+            ],
+          },
+        },
+      },
+    ];
+  }
+
+  private _discoverySortKeys(): Record<string, 1 | -1> {
+    return { __discoveryScore: -1, updatedAt: -1 };
   }
 
   /** Si lat/lng valides : maxDistance par défaut 30 km, tri distance asc si sortBy absent. */
@@ -1175,6 +1365,7 @@ export class SearchService {
     args: SearchDto,
     user?: UserModel,
     clientRegion?: string,
+    opts?: { discoveryFallbackPass?: boolean },
   ): Promise<SearchResultDto<ProductModel>> {
     const region =
       clientRegion ??
@@ -1183,6 +1374,10 @@ export class SearchService {
         args.countryCode,
       )) ??
       '';
+    const geoActive = this._hasSearchGeoForRegion(args, region);
+    const discoveryPass = Boolean(opts?.discoveryFallbackPass);
+    const pipelineArgs =
+      discoveryPass || !geoActive ? this._searchArgsWithoutGeo(args) : args;
     const queryEsc = escapeMongoRegex(args.query ?? '');
     const dailyMenuStages = await this._productDailyMenuListingStagesAsync();
     const textRes = args.query?.trim()
@@ -1246,9 +1441,12 @@ export class SearchService {
       },
       ...this._clientMarketplaceProductStoreStages(),
       ...dailyMenuStages,
-      ...this._productGeoDistanceStages(args),
+      ...this._productGeoDistanceStages(pipelineArgs),
+      ...(discoveryPass ? this._catalogDiscoveryProductRankingStages() : []),
     ];
-    const sortKeys = this._productSortKeys(args);
+    const sortKeys = discoveryPass
+      ? this._discoverySortKeys()
+      : this._productSortKeys(pipelineArgs);
     const facetPipeline: PipelineStage[] = [
       ...pipeline,
       {
@@ -1278,6 +1476,18 @@ export class SearchService {
       | undefined;
     const leanRows = (facet?.rows ?? []) as Record<string, unknown>[];
     const total = facet?.total?.[0]?.n ?? 0;
+
+    if (
+      !discoveryPass &&
+      shouldUseCatalogGeoDiscoveryFallback({
+        geoActive,
+        nearbyTotal: total,
+      })
+    ) {
+      return this._filterProducts(args, user, region, {
+        discoveryFallbackPass: true,
+      });
+    }
 
     if (!leanRows.length) {
       return {
@@ -2308,6 +2518,7 @@ export class SearchService {
     args: SearchDto,
     user?: UserModel,
     clientRegion?: string,
+    opts?: { discoveryFallbackPass?: boolean },
   ): Promise<SearchResultDto<StoreModel>> {
     const region =
       clientRegion ??
@@ -2315,6 +2526,10 @@ export class SearchService {
         user,
       )) ??
       '';
+    const geoActive = this._hasSearchGeoForRegion(args, region);
+    const discoveryPass = Boolean(opts?.discoveryFallbackPass);
+    const pipelineArgs =
+      discoveryPass || !geoActive ? this._searchArgsWithoutGeo(args) : args;
     const q = args.query?.trim();
     /** Catalogue client : ACTIVE + commandes + Stripe Connect + au moins un article commandable. */
     const andParts: Record<string, unknown>[] = [
@@ -2323,7 +2538,7 @@ export class SearchService {
       storeDirectRegionMatch(region),
     ];
     const storeDistanceStages = await this._storeDistanceAndMenuStages(
-      args,
+      pipelineArgs,
       region,
     );
     const textRes = q
@@ -2346,9 +2561,12 @@ export class SearchService {
       ...storeOwnerStripeOnboardedPipelineStages(),
       ...storeDistanceStages,
       ...textStages,
+      ...(discoveryPass ? this._catalogDiscoveryStoreRankingStages() : []),
     ];
 
-    const sortKeys = this._storeSortKeys(args);
+    const sortKeys = discoveryPass
+      ? this._discoverySortKeys()
+      : this._storeSortKeys(pipelineArgs);
     const facetPipeline: PipelineStage[] = [
       ...pipeline,
       {
@@ -2484,6 +2702,18 @@ export class SearchService {
       | undefined;
     const rows = bucket?.rows ?? [];
     const total = bucket?.total?.[0]?.n ?? 0;
+
+    if (
+      !discoveryPass &&
+      shouldUseCatalogGeoDiscoveryFallback({
+        geoActive,
+        nearbyTotal: total,
+      })
+    ) {
+      return this._filterStores(args, user, region, {
+        discoveryFallbackPass: true,
+      });
+    }
 
     return {
       items: rows as unknown as StoreModel[],

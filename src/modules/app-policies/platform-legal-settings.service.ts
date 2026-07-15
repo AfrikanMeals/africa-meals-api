@@ -113,6 +113,17 @@ export class PlatformLegalSettingsService {
     const paymentPolicyUrl = joinUrl(websiteUrl, '/policy/payment');
     const cookiesPolicyUrl = joinUrl(websiteUrl, '/policy/cookies');
     const legalNoticeUrl = joinUrl(websiteUrl, '/policy/legal-notice');
+    // Politiques additionnelles (CMS) — URLs stables pour les modèles Markdown.
+    const newsletterPolicyUrl = joinUrl(websiteUrl, '/policy/newsletter');
+    const communityPolicyUrl = joinUrl(websiteUrl, '/policy/community');
+    const accountDeletionPolicyUrl = joinUrl(
+      websiteUrl,
+      '/policy/account-deletion',
+    );
+    const accessibilityPolicyUrl = joinUrl(
+      websiteUrl,
+      '/policy/accessibility',
+    );
 
     const paymentProviders =
       locale === 'en'
@@ -165,6 +176,10 @@ export class PlatformLegalSettingsService {
       paymentPolicyUrl,
       cookiesPolicyUrl,
       legalNoticeUrl,
+      newsletterPolicyUrl,
+      communityPolicyUrl,
+      accountDeletionPolicyUrl,
+      accessibilityPolicyUrl,
     };
   }
 

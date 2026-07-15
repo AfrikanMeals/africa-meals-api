@@ -64,7 +64,10 @@ export class AdModel extends BaseSchema {
   })
   store?: MongooseSchema.Types.ObjectId;
 
-  /** Région ISO2 cible (bannières globales admin). Pour les pubs boutique, dérivé de la boutique. */
+  /**
+   * Région ISO2 cible, ou `ALL` (toutes les régions) pour les bannières globales admin.
+   * Pour les pubs boutique, dérivé de la boutique.
+   */
   @Prop({ required: false, trim: true, uppercase: true })
   region?: string;
 
