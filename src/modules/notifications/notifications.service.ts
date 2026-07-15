@@ -1,5 +1,5 @@
 import { StoreAccessService } from '@modules/teams/store-access.service';
-import { VendorNotificationPreferencesService } from '@modules/vendor-notifications/vendor-notification-preferences.service';
+import { defaultVendorNotificationPreferences } from '@modules/vendor-notifications/vendor-notification.constants';
 import {
   Inject,
   Injectable,
@@ -7,7 +7,6 @@ import {
   NotFoundException,
   OnModuleInit,
   Optional,
-  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { App } from 'firebase-admin/app';
@@ -18,6 +17,7 @@ import {
 } from '@schemas/app-notification.schema';
 import { NotificationReadReceiptModel } from '@schemas/notification-read-receipt.schema';
 import { UserModel } from '@schemas/user.schema';
+import { VendorNotificationPreferencesModel } from '@schemas/vendor-notification-preferences.schema';
 import { FilterQuery, Model, Types } from 'mongoose';
 import { partitionChatPushRecipients } from './chat-push-recipients.util';
 
@@ -46,10 +46,9 @@ export class NotificationsService implements OnModuleInit {
     private readonly appNotificationModel: Model<AppNotificationModel>,
     @InjectModel(NotificationReadReceiptModel.name)
     private readonly readReceiptModel: Model<NotificationReadReceiptModel>,
+    @InjectModel(VendorNotificationPreferencesModel.name)
+    private readonly vendorNotifPrefsModel: Model<VendorNotificationPreferencesModel>,
     @Optional() private readonly storeAccess?: StoreAccessService,
-    @Optional()
-    @Inject(forwardRef(() => VendorNotificationPreferencesService))
-    private readonly vendorPrefs?: VendorNotificationPreferencesService,
   ) {}
 
   onModuleInit(): void {
@@ -1402,12 +1401,9 @@ export class NotificationsService implements OnModuleInit {
       args.storeName?.trim() || args.title?.trim() || 'Wise Eat';
 
     let vendorPushIds = parts.vendorUserIds;
-    if (storeId && vendorPushIds.length > 0 && this.vendorPrefs) {
-      const chatPushOn = await this.vendorPrefs.isChannelEnabled(
-        storeId,
-        'chat',
-        'push',
-      );
+    if (storeId && vendorPushIds.length > 0) {
+      // Lecture directe Mongo (évite import VendorNotificationModule → cycle Nest).
+      const chatPushOn = await this.isVendorChatPushEnabled(storeId);
       if (!chatPushOn) {
         this.logger.log(
           `sendChatMessagePush: vendor chat.push OFF store=${storeId} — skip ${vendorPushIds.length} vendor(s)`,
@@ -1461,6 +1457,32 @@ export class NotificationsService implements OnModuleInit {
       );
     }
     return { sent, failures };
+  }
+
+  /**
+   * Prefs boutique `categories.chat.push` (défaut true si doc absent).
+   * Même règle que VendorNotificationPreferencesService.isChannelEnabled, sans cycle de modules.
+   */
+  private async isVendorChatPushEnabled(storeId: string): Promise<boolean> {
+    if (!Types.ObjectId.isValid(storeId)) return true;
+    try {
+      const doc = await this.vendorNotifPrefsModel
+        .findOne({ store: new Types.ObjectId(storeId) })
+        .select('categories')
+        .lean()
+        .exec();
+      const defaults = defaultVendorNotificationPreferences();
+      const chat = {
+        ...defaults.chat,
+        ...((doc?.categories as { chat?: { push?: boolean } } | null)?.chat ??
+          {}),
+      };
+      return chat.push === true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`isVendorChatPushEnabled: ${msg}`);
+      return true;
+    }
   }
 
   /** Id user livreur assigné sur une commande (snake ou camel Mongo). */

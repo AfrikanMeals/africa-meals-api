@@ -36,7 +36,8 @@ import { VendorNotificationStripeBillingService } from './vendor-notification-st
   imports: [
     MailerModule,
     SmsModule,
-    NotificationsModule,
+    // forwardRef défensif si un autre chemin réintroduit un cycle.
+    forwardRef(() => NotificationsModule),
     SupportedCountriesModule,
     forwardRef(() => TeamsModule),
     MongooseModule.forFeature([

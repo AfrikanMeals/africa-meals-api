@@ -1,7 +1,6 @@
 import { SharedModule } from '@modules/shared/shared.module';
 import { StoreAccessModule } from '@modules/teams/store-access.module';
-import { VendorNotificationModule } from '@modules/vendor-notifications/vendor-notification.module';
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
   AppNotificationModel,
@@ -12,23 +11,34 @@ import {
   NotificationReadReceiptSchema,
 } from '@schemas/notification-read-receipt.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
+import {
+  VendorNotificationPreferencesModel,
+  VendorNotificationPreferencesSchema,
+} from '@schemas/vendor-notification-preferences.schema';
 import { AppInboxNotificationsController } from './app-inbox-notifications.controller';
 import { InternalNotificationsController } from './internal-notifications.controller';
 import { InternalSecretGuard } from './guards/internal-secret.guard';
 import { NotificationsService } from './notifications.service';
 
+/**
+ * Pas d’import de VendorNotificationModule ici : il importe déjà NotificationsModule
+ * → cycle Nest (`VendorNotificationModule imports[2] undefined`).
+ * Prefs chat.push lues via le modèle Mongo enregistré ci-dessous.
+ */
 @Module({
   imports: [
     SharedModule,
     StoreAccessModule,
-    // Prefs vendeur (`categories.chat.push`) — forwardRef car VendorNotification → Notifications.
-    forwardRef(() => VendorNotificationModule),
     MongooseModule.forFeature([
       { name: UserModel.name, schema: UserSchema },
       { name: AppNotificationModel.name, schema: AppNotificationSchema },
       {
         name: NotificationReadReceiptModel.name,
         schema: NotificationReadReceiptSchema,
+      },
+      {
+        name: VendorNotificationPreferencesModel.name,
+        schema: VendorNotificationPreferencesSchema,
       },
     ]),
   ],
