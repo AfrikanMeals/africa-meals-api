@@ -1,8 +1,6 @@
 import {
   Injectable,
-  Logger,
   NotFoundException,
-  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import {
@@ -14,7 +12,6 @@ import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { serializePartnerBadge } from '@common/partner-badges/partner-badge.constants';
-import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
 import {
   countActiveShippedOrdersForAgent,
   maxConcurrentOrdersFromApplication,
@@ -32,8 +29,6 @@ import {
  */
 @Injectable()
 export class CourierStatusPerformanceService {
-  private readonly logger = new Logger(CourierStatusPerformanceService.name);
-
   constructor(
     @InjectModel(UserModel.name)
     private readonly _users: Model<UserModel>,
@@ -43,9 +38,7 @@ export class CourierStatusPerformanceService {
     private readonly _orders: Model<OrderModel>,
     @InjectModel(DeliveryAgentOrderRatingModel.name)
     private readonly _courierRatings: Model<DeliveryAgentOrderRatingModel>,
-    private readonly _stripeConnect: StripeConnectService,
-    @Optional()
-    private readonly _courierPerf?: CourierPerformanceStatsService,
+    private readonly _courierPerf: CourierPerformanceStatsService,
   ) {}
 
   /**
@@ -76,12 +69,12 @@ export class CourierStatusPerformanceService {
     const applicationStatus = String(app?.status ?? 'UNKNOWN');
     const applicationId = app?._id ? String(app._id) : null;
 
-    const [activeCount, perfPayload, ratingAgg, stripeStatus, financials] =
+    const [activeCount, perfPayload, ratingAgg, financials] =
       await Promise.all([
         app?.status === DeliveryAgentApplicationStatus.APPROVED
           ? countActiveShippedOrdersForAgent(this._orders, agentOid)
           : Promise.resolve(0),
-        this._courierPerf?.getOrCreate(uid) ?? Promise.resolve(null),
+        this._courierPerf.getOrCreate(uid),
         this._courierRatings
           .aggregate<{ avg?: number; count?: number }>([
             { $match: { deliveryAgent: agentOid } },
@@ -94,14 +87,6 @@ export class CourierStatusPerformanceService {
             },
           ])
           .exec(),
-        this._stripeConnect.getConnectStatus(agentUser).catch((e) => {
-          this.logger.warn(
-            `Stripe status for overview failed agent=${uid}: ${
-              e instanceof Error ? e.message : String(e)
-            }`,
-          );
-          return null;
-        }),
         opts.includeFinancials
           ? this.loadFinancialTotals(agentOid)
           : Promise.resolve(null),
@@ -147,6 +132,25 @@ export class CourierStatusPerformanceService {
       totalDistanceKm: Number(perfPayload?.totalDistanceKm ?? 0),
     };
 
+    // Le webhook Stripe maintient ces flags en Mongo ; une lecture d’overview ne doit
+    // ni appeler Stripe ni créer un cycle DI avec BillingModule → StoreModule.
+    const stripeAccountId =
+      String(agentUser.stripeConnectAccountId ?? '').trim() || null;
+    const stripeRequirementsDue = agentUser.stripeConnectRequirementsDue ?? [];
+    const stripeRequirementsPastDue =
+      agentUser.stripeConnectRequirementsPastDue ?? [];
+    const stripeDisabledReason = String(
+      agentUser.stripeConnectDisabledReason ?? '',
+    ).trim();
+    const stripeOnboardingComplete =
+      stripeAccountId !== null &&
+      agentUser.stripeConnectDetailsSubmitted === true &&
+      agentUser.stripeConnectChargesEnabled === true &&
+      agentUser.stripeConnectPayoutsEnabled === true &&
+      stripeRequirementsDue.length === 0 &&
+      stripeRequirementsPastDue.length === 0 &&
+      stripeDisabledReason.length === 0;
+
     return buildCourierStatusPerformanceOverview({
       userId: uid,
       applicationId,
@@ -157,19 +161,12 @@ export class CourierStatusPerformanceService {
       applicationStatus,
       partnerBadge: serializePartnerBadge(agentUser.partnerBadgeCode),
       presence,
-      stripe: stripeStatus
-        ? {
-            onboardingComplete: stripeStatus.onboardingComplete,
-            chargesEnabled: stripeStatus.chargesEnabled,
-            payoutsEnabled: stripeStatus.payoutsEnabled,
-            accountId: stripeStatus.accountId,
-          }
-        : {
-            onboardingComplete: false,
-            chargesEnabled: false,
-            payoutsEnabled: false,
-            accountId: agentUser.stripeConnectAccountId ?? null,
-          },
+      stripe: {
+        onboardingComplete: stripeOnboardingComplete,
+        chargesEnabled: agentUser.stripeConnectChargesEnabled === true,
+        payoutsEnabled: agentUser.stripeConnectPayoutsEnabled === true,
+        accountId: stripeAccountId,
+      },
       counters,
       averageRating,
       ratingCount,
@@ -208,15 +205,45 @@ export class CourierStatusPerformanceService {
           $group: {
             _id: null,
             total: { $sum: 1 },
-            revenueTotal: { $sum: { $ifNull: ['$shippingPrice', 0] } },
+            // Tolère les documents historiques camelCase et le mapping snake_case actuel.
+            revenueTotal: {
+              $sum: {
+                $ifNull: ['$shippingPrice', { $ifNull: ['$shipping_price', 0] }],
+              },
+            },
             transferCents: {
-              $sum: { $ifNull: ['$stripeDeliveryTransferAmountCents', 0] },
+              $sum: {
+                $ifNull: [
+                  '$stripeDeliveryTransferAmountCents',
+                  { $ifNull: ['$stripe_delivery_transfer_amount_cents', 0] },
+                ],
+              },
             },
             tipCents: {
               $sum: {
                 $cond: [
-                  { $eq: ['$deliveryTipStatus', 'transferred'] },
-                  { $ifNull: ['$stripeDeliveryTipTransferAmountCents', 0] },
+                  {
+                    $eq: [
+                      {
+                        $ifNull: [
+                          '$deliveryTipStatus',
+                          '$delivery_tip_status',
+                        ],
+                      },
+                      'transferred',
+                    ],
+                  },
+                  {
+                    $ifNull: [
+                      '$stripeDeliveryTipTransferAmountCents',
+                      {
+                        $ifNull: [
+                          '$stripe_delivery_tip_transfer_amount_cents',
+                          0,
+                        ],
+                      },
+                    ],
+                  },
                   0,
                 ],
               },

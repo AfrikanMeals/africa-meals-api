@@ -30,18 +30,13 @@ import {
   DeliveryAgentDailyPerformanceModel,
   DeliveryAgentDailyPerformanceSchema,
 } from '@schemas/delivery-agent-daily-performance.schema';
-import {
-  DeliveryAgentPerformanceStatsModel,
-  DeliveryAgentPerformanceStatsSchema,
-} from '@schemas/delivery-agent-performance-stats.schema';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import { DeliveryAgentController } from './delivery-agent.controller';
 import { DeliveryAgentService } from './delivery-agent.service';
 import { CourierMarketplaceDispatchService } from './courier-marketplace-dispatch.service';
-import { CourierPerformanceStatsService } from './courier-performance-stats.service';
-import { CourierStatusPerformanceService } from './courier-status-performance.service';
+import { CourierPerformanceModule } from './courier-performance.module';
 
 @Module({
   imports: [
@@ -63,6 +58,8 @@ import { CourierStatusPerformanceService } from './courier-status-performance.se
     RouteOptimizationModule,
     GraphModule,
     MapEngineCacheModule,
+    // Module sans dépendance boutique : évite le cycle DI avec StoreDeliveryDriversModule.
+    CourierPerformanceModule,
     MongooseModule.forFeature([
       {
         name: DeliveryAgentApplicationModel.name,
@@ -79,23 +76,16 @@ import { CourierStatusPerformanceService } from './courier-status-performance.se
         name: DeliveryAgentDailyPerformanceModel.name,
         schema: DeliveryAgentDailyPerformanceSchema,
       },
-      {
-        name: DeliveryAgentPerformanceStatsModel.name,
-        schema: DeliveryAgentPerformanceStatsSchema,
-      },
     ]),
   ],
   controllers: [DeliveryAgentController],
   providers: [
     DeliveryAgentService,
-    CourierPerformanceStatsService,
-    CourierStatusPerformanceService,
     CourierMarketplaceDispatchService,
   ],
   exports: [
     DeliveryAgentService,
-    CourierPerformanceStatsService,
-    CourierStatusPerformanceService,
+    CourierPerformanceModule,
     CourierMarketplaceDispatchService,
   ],
 })

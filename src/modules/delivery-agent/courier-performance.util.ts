@@ -87,13 +87,10 @@ export function computeCourierPerformanceScore(
   const acceptance = computeCourierAcceptanceRate(c);
   const unassignCourier = n(c.unassignByCourier);
   const completed = n(c.completedDeliveries);
-  const presented =
-    n(c.offersPresented) +
-    n(c.marketplaceNotified) +
-    n(c.offersAccepted) +
-    n(c.offersRejected);
 
-  if (acceptance == null && completed === 0 && presented === 0) {
+  // Une offre seulement présentée/notifiée n’est pas encore une décision :
+  // elle ne doit pas dégrader le score neutre d’un nouveau livreur.
+  if (acceptance == null && completed === 0) {
     return 70;
   }
 

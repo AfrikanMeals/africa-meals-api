@@ -57,6 +57,12 @@ export type CourierStatusPerformanceOverview = {
   financials?: CourierStatusPerformanceFinancials;
 };
 
+/** Projection vendeur : le contrat interdit la présence même optionnelle de `financials`. */
+export type VendorCourierStatusPerformanceOverview = Omit<
+  CourierStatusPerformanceOverview,
+  'financials'
+>;
+
 export type BuildCourierStatusPerformanceInput = {
   userId: string;
   applicationId: string | null;
@@ -85,6 +91,12 @@ export function maskStripeAccountId(accountId: string | null | undefined): strin
   if (!raw) return null;
   if (raw.length <= 8) return '****';
   return `${raw.slice(0, 5)}****${raw.slice(-4)}`;
+}
+
+/** Normalise un compteur public pour ne jamais exposer NaN, Infinity ou une valeur négative. */
+function nonNegativeNumber(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 /**
@@ -120,8 +132,11 @@ export function buildCourierStatusPerformanceOverview(
     },
     performance: {
       ...derived,
-      totalDistanceKm: Number(input.counters.totalDistanceKm ?? 0) || 0,
-      completedDeliveries: Number(input.counters.completedDeliveries ?? 0) || 0,
+      // Les compteurs Mongo peuvent provenir de documents historiques incomplets.
+      totalDistanceKm: nonNegativeNumber(input.counters.totalDistanceKm),
+      completedDeliveries: Math.trunc(
+        nonNegativeNumber(input.counters.completedDeliveries),
+      ),
       rejectionRate,
       performanceLevel: computeCourierPerformanceLevel(derived.performanceScore),
       averageRating: input.averageRating,
@@ -135,4 +150,21 @@ export function buildCourierStatusPerformanceOverview(
   }
 
   return overview;
+}
+
+/**
+ * Reconstruit le payload vendeur par allowlist.
+ * Même si l’overview source évolue, aucun champ financier racine ne traverse la route vendeur.
+ */
+export function projectCourierStatusPerformanceForVendor(
+  overview: CourierStatusPerformanceOverview,
+): VendorCourierStatusPerformanceOverview {
+  return {
+    userId: overview.userId,
+    applicationId: overview.applicationId,
+    displayName: overview.displayName,
+    badge: overview.badge,
+    status: overview.status,
+    performance: overview.performance,
+  };
 }
