@@ -85,6 +85,10 @@ import {
   normalizeStoreWorkingHours,
   serializeStoreWorkingHoursForApi,
 } from './store-working-hours.util';
+import {
+  docDefaultPickupPayOnPickup,
+  normalizeDefaultPickupPayOnPickupFlag,
+} from './store-pickup-pay-flags.util';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { AdminPatchVendorStoreDto } from './dto/admin-vendor-store.dto';
 import {
@@ -456,16 +460,14 @@ export class StoreService {
     value: boolean | undefined,
     acceptsPickupPayOnDelivery: boolean,
   ): boolean {
-    if (!acceptsPickupPayOnDelivery) return false;
-    return value === true;
+    return normalizeDefaultPickupPayOnPickupFlag(
+      value,
+      acceptsPickupPayOnDelivery,
+    );
   }
 
   private _docDefaultPickupPayOnPickup(doc: Record<string, unknown>): boolean {
-    if (!this._docAcceptsPickupPayOnDelivery(doc)) return false;
-    return (
-      doc.defaultPickupPayOnPickup === true ||
-      doc.default_pickup_pay_on_pickup === true
-    );
+    return docDefaultPickupPayOnPickup(doc);
   }
 
   private async _pickupPayOnDeliveryEnabledForStore(
@@ -834,7 +836,7 @@ export class StoreService {
     const doc = await this._storeModel
       .findById(storeOid)
       .select(
-        'bio profileImage name status email phoneNumber currency region supportsShipping acceptsOrders acceptsMealPreOrders acceptsPickupPayOnDelivery mealPreOrderCatalogScope timezone workingHours',
+        'bio profileImage name status email phoneNumber currency region supportsShipping acceptsOrders acceptsMealPreOrders acceptsPickupPayOnDelivery defaultPickupPayOnPickup mealPreOrderCatalogScope timezone workingHours',
       )
       .populate({
         path: 'address',
@@ -1078,7 +1080,7 @@ export class StoreService {
         select: 'address city country zipCode countryCode location',
       })
       .select(
-        'name bio businessType email phoneNumber currency region status acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders acceptsPickupPayOnDelivery mealPreOrderCatalogScope partnerBadgeCode timezone workingHours commissionRetrieveStrategy',
+        'name bio businessType email phoneNumber currency region status acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders acceptsPickupPayOnDelivery defaultPickupPayOnPickup mealPreOrderCatalogScope partnerBadgeCode timezone workingHours commissionRetrieveStrategy',
       )
       .lean()
       .exec();
@@ -3988,6 +3990,9 @@ export class StoreService {
         doc as Record<string, unknown>,
       ),
       acceptsPickupPayOnDelivery: this._docAcceptsPickupPayOnDelivery(
+        doc as Record<string, unknown>,
+      ),
+      defaultPickupPayOnPickup: this._docDefaultPickupPayOnPickup(
         doc as Record<string, unknown>,
       ),
       mealPreOrderCatalogScope: this._docMealPreOrderCatalogScope(

@@ -1661,6 +1661,11 @@ export class SearchService {
               acceptsPickupPayOnDelivery:
                 st['acceptsPickupPayOnDelivery'] === true ||
                 st['accepts_pickup_pay_on_delivery'] === true,
+              defaultPickupPayOnPickup:
+                (st['acceptsPickupPayOnDelivery'] === true ||
+                  st['accepts_pickup_pay_on_delivery'] === true) &&
+                (st['defaultPickupPayOnPickup'] === true ||
+                  st['default_pickup_pay_on_pickup'] === true),
               currency: String(st['currency'] ?? 'CAD'),
               email: String(st['email'] ?? ''),
               phoneNumber: String(st['phoneNumber'] ?? ''),

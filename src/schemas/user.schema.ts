@@ -74,13 +74,14 @@ export class UserModel extends BaseSchema {
   })
   emailVerifiedAt?: Date;
 
-  @Prop({ required: false, name: 'facebook_id' })
+  /** Sparse : plusieurs docs sans facebook_id restent possibles. */
+  @Prop({ required: false, name: 'facebook_id', index: true, sparse: true })
   facebookId?: string;
 
-  @Prop({ required: false, name: 'google_id' })
+  @Prop({ required: false, name: 'google_id', index: true, sparse: true })
   googleId?: string;
 
-  @Prop({ required: false, name: 'apple_id' })
+  @Prop({ required: false, name: 'apple_id', index: true, sparse: true })
   appleId?: string;
 
   @Prop({

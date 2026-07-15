@@ -17,6 +17,9 @@ import { UpdateAuthSettingsDto } from './dto/update-auth-settings.dto';
 
 const SETTINGS_KEY = 'default';
 
+/** TTL cache mémoire — évite un upsert Mongo à chaque login OAuth. */
+const PUBLIC_SETTINGS_CACHE_TTL_MS = 30_000;
+
 function assertAdmin(user: UserModel) {
   if (user.type !== UserTypeEnum.ADMIN) {
     throw new ForbiddenException('admin_only');
@@ -27,6 +30,10 @@ export type AuthSettingsScope = AuthOAuthPlatform | 'full';
 
 @Injectable()
 export class AuthSettingsService {
+  private _publicCache:
+    | { at: number; doc: AuthSettingsModel }
+    | null = null;
+
   constructor(
     @InjectModel(AuthSettingsModel.name)
     private readonly _settings: Model<AuthSettingsDocument>,
@@ -82,31 +89,69 @@ export class AuthSettingsService {
     };
   }
 
-  async getPublicSettings(scope: AuthSettingsScope = 'full') {
-    const doc = await this._settings
-      .findOneAndUpdate(
-        { key: SETTINGS_KEY },
-        {
-          $setOnInsert: {
-            key: SETTINGS_KEY,
-            googleEnabled: true,
-            appleEnabled: true,
-            facebookEnabled: true,
-            googleEnabledAdmin: true,
-            googleEnabledMobile: true,
-            appleEnabledAdmin: true,
-            appleEnabledMobile: true,
-            facebookEnabledAdmin: true,
-            facebookEnabledMobile: true,
-            loginEmailNotifyAdminEnabled: true,
-            loginEmailNotifyMobileEnabled: true,
-          },
-        },
-        { upsert: true, new: true, lean: true, setDefaultsOnInsert: true },
-      )
-      .exec();
+  private _fromCacheOrNull(): AuthSettingsModel | null {
+    if (!this._publicCache) return null;
+    if (Date.now() - this._publicCache.at >= PUBLIC_SETTINGS_CACHE_TTL_MS) {
+      this._publicCache = null;
+      return null;
+    }
+    return this._publicCache.doc;
+  }
 
-    const model = doc as AuthSettingsModel;
+  private _storeCache(doc: AuthSettingsModel) {
+    this._publicCache = { at: Date.now(), doc };
+  }
+
+  /** Invalide le cache (tests / update admin). */
+  clearPublicSettingsCache() {
+    this._publicCache = null;
+  }
+
+  /**
+   * Settings OAuth publics.
+   * Lecture `findOne` + cache TTL ; upsert uniquement si doc absent (1er boot).
+   */
+  async getPublicSettings(scope: AuthSettingsScope = 'full') {
+    let model = this._fromCacheOrNull();
+    if (!model) {
+      let doc = await this._settings
+        .findOne({ key: SETTINGS_KEY })
+        .lean()
+        .exec();
+      if (!doc) {
+        // 1er déploiement uniquement — ne pas upsert à chaque login.
+        doc = await this._settings
+          .findOneAndUpdate(
+            { key: SETTINGS_KEY },
+            {
+              $setOnInsert: {
+                key: SETTINGS_KEY,
+                googleEnabled: true,
+                appleEnabled: true,
+                facebookEnabled: true,
+                googleEnabledAdmin: true,
+                googleEnabledMobile: true,
+                appleEnabledAdmin: true,
+                appleEnabledMobile: true,
+                facebookEnabledAdmin: true,
+                facebookEnabledMobile: true,
+                loginEmailNotifyAdminEnabled: true,
+                loginEmailNotifyMobileEnabled: true,
+              },
+            },
+            {
+              upsert: true,
+              new: true,
+              lean: true,
+              setDefaultsOnInsert: true,
+            },
+          )
+          .exec();
+      }
+      model = doc as AuthSettingsModel;
+      this._storeCache(model);
+    }
+
     if (scope === 'full') {
       return this._toFullResponse(model);
     }
@@ -151,6 +196,14 @@ export class AuthSettingsService {
         { upsert: true, new: true, setDefaultsOnInsert: true },
       )
       .exec();
-    return this._toFullResponse(updated);
+    // Document Mongoose → forme lean pour le cache.
+    const lean = (
+      typeof (updated as { toObject?: () => AuthSettingsModel }).toObject ===
+      'function'
+        ? (updated as { toObject: () => AuthSettingsModel }).toObject()
+        : updated
+    ) as AuthSettingsModel;
+    this._storeCache(lean);
+    return this._toFullResponse(lean);
   }
 }

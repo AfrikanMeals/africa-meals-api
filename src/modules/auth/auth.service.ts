@@ -75,6 +75,13 @@ import { resolveRefreshTokenSecret } from './jwt-secrets.util';
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly defaultRefreshExpiration = '30d';
+  /**
+   * Hash bcrypt pré-calculé pour comptes OAuth-only.
+   * Évite ~50–150 ms de bcrypt(cost 12) à chaque première inscription sociale
+   * (le hook `pre('save')` saute si le mot de passe est déjà `$2b$…`).
+   */
+  private static readonly OAUTH_PASSWORD_PLACEHOLDER =
+    '$2b$12$0yexbjY8w3SS5We.TVLq2undU227eydb6Ql9Pc.5ODCZmi51VtPR.';
   private static readonly ACCOUNT_DELETION_DELAY_DAYS = 30;
   private static readonly OTP_TTL_MINUTES = {
     signup: 30,
@@ -585,36 +592,58 @@ export class AuthService {
   }
 
   /**
+   * Settings OAuth ∥ Firebase verifyIdToken — latences additives → max(…).
+   * Précondition : `expectedSignInProvider` (ex. `google.com`).
+   */
+  private async assertProviderAndVerifyIdToken(
+    provider: 'google' | 'apple' | 'facebook',
+    platform: 'mobile' | 'admin',
+    idToken: string,
+    invalidCode: string,
+    expectedSignInProvider: string,
+  ): Promise<DecodedIdToken> {
+    const verifyP = getAuth(this.firebaseAuthApp())
+      .verifyIdToken(idToken)
+      .catch((err) => {
+        this.logger.warn(`verifyIdToken ${provider}: ${String(err)}`);
+        throw new UnauthorizedException(invalidCode);
+      });
+    const [, decoded] = await Promise.all([
+      this._authSettings.assertProviderEnabled(provider, platform),
+      verifyP,
+    ]);
+    if (decoded.firebase?.sign_in_provider !== expectedSignInProvider) {
+      throw new UnauthorizedException(invalidCode);
+    }
+    return decoded;
+  }
+
+  /**
    * Connexion / inscription Google : vérifie le jeton Firebase (provider Google),
    * puis trouve ou crée l’utilisateur Mongo (googleId = identifiant Google dans le jeton).
    */
   async authWithGoogle(args: GoogleAuthDto, ctx?: LoginRequestContext) {
-    await this._authSettings.assertProviderEnabled('google', 'mobile');
-    return this._authWithGoogle(args, UserTypeEnum.USER, ctx);
+    return this._authWithGoogle(args, UserTypeEnum.USER, ctx, 'mobile');
   }
 
   /** Variante dashboard/admin : création sociale par défaut en VENDOR. */
   async authWithGoogleAsVendor(args: GoogleAuthDto, ctx?: LoginRequestContext) {
-    await this._authSettings.assertProviderEnabled('google', 'admin');
-    return this._authWithGoogle(args, UserTypeEnum.VENDOR, ctx);
+    return this._authWithGoogle(args, UserTypeEnum.VENDOR, ctx, 'admin');
   }
 
   private async _authWithGoogle(
     args: GoogleAuthDto,
     defaultTypeForNewUser: UserTypeEnum,
-    ctx?: LoginRequestContext,
+    ctx: LoginRequestContext | undefined,
+    platform: 'mobile' | 'admin',
   ) {
-    let decoded: DecodedIdToken;
-    try {
-      decoded = await getAuth(this.firebaseAuthApp()).verifyIdToken(args.idToken);
-    } catch (err) {
-      this.logger.warn(`verifyIdToken Google: ${String(err)}`);
-      throw new UnauthorizedException('invalid_google_token');
-    }
-
-    if (decoded.firebase?.sign_in_provider !== 'google.com') {
-      throw new UnauthorizedException('invalid_google_token');
-    }
+    const decoded = await this.assertProviderAndVerifyIdToken(
+      'google',
+      platform,
+      args.idToken,
+      'invalid_google_token',
+      'google.com',
+    );
 
     const googleId =
       decoded.firebase?.identities?.['google.com']?.[0] ?? decoded.sub;
@@ -637,19 +666,16 @@ export class AuthService {
 
     let user = await this._usersModel.findOne({ googleId }).exec();
     if (user) {
+      // Photo absente : MAJ hors chemin critique (ne bloque pas les tokens).
       if (pictureFromGoogle && !user.profileImage) {
-        await this._usersModel
+        void this._usersModel
           .updateOne(
             { _id: user._id },
             { $set: { profileImage: pictureFromGoogle } },
           )
           .exec();
       }
-      return await this.finishAuthenticatedLogin(
-        String(user._id),
-        ctx,
-        'google',
-      );
+      return await this.finishAuthenticatedLogin(user, ctx, 'google');
     }
     user = await this._usersModel.findOne({ email: emailRaw }).exec();
     if (user) {
@@ -663,18 +689,15 @@ export class AuthService {
       await this._usersModel
         .updateOne({ _id: user._id }, { $set: setDoc })
         .exec();
-      return await this.finishAuthenticatedLogin(
-        String(user._id),
-        ctx,
-        'google',
-      );
+      Object.assign(user, setDoc);
+      return await this.finishAuthenticatedLogin(user, ctx, 'google');
     }
     const newUser = await this._usersModel.create({
       email: emailRaw,
       fullName,
       googleId,
       type: defaultTypeForNewUser,
-      password: `google_${googleId}_${Date.now()}`,
+      password: AuthService.OAUTH_PASSWORD_PLACEHOLDER,
       emailVerifiedAt: new Date(),
       ...(pictureFromGoogle ? { profileImage: pictureFromGoogle } : {}),
     });
@@ -689,32 +712,27 @@ export class AuthService {
    * puis trouve ou crée l’utilisateur Mongo (appleId = identifiant Apple/Firebase).
    */
   async authWithApple(args: AppleAuthDto, ctx?: LoginRequestContext) {
-    await this._authSettings.assertProviderEnabled('apple', 'mobile');
-    return this._authWithApple(args, UserTypeEnum.USER, ctx);
+    return this._authWithApple(args, UserTypeEnum.USER, ctx, 'mobile');
   }
 
   /** Variante dashboard/admin : création sociale par défaut en VENDOR. */
   async authWithAppleAsVendor(args: AppleAuthDto, ctx?: LoginRequestContext) {
-    await this._authSettings.assertProviderEnabled('apple', 'admin');
-    return this._authWithApple(args, UserTypeEnum.VENDOR, ctx);
+    return this._authWithApple(args, UserTypeEnum.VENDOR, ctx, 'admin');
   }
 
   private async _authWithApple(
     args: AppleAuthDto,
     defaultTypeForNewUser: UserTypeEnum,
-    ctx?: LoginRequestContext,
+    ctx: LoginRequestContext | undefined,
+    platform: 'mobile' | 'admin',
   ) {
-    let decoded: DecodedIdToken;
-    try {
-      decoded = await getAuth(this.firebaseAuthApp()).verifyIdToken(args.idToken);
-    } catch (err) {
-      this.logger.warn(`verifyIdToken Apple: ${String(err)}`);
-      throw new UnauthorizedException('invalid_apple_token');
-    }
-
-    if (decoded.firebase?.sign_in_provider !== 'apple.com') {
-      throw new UnauthorizedException('invalid_apple_token');
-    }
+    const decoded = await this.assertProviderAndVerifyIdToken(
+      'apple',
+      platform,
+      args.idToken,
+      'invalid_apple_token',
+      'apple.com',
+    );
 
     const appleId =
       decoded.firebase?.identities?.['apple.com']?.[0] ?? decoded.sub;
@@ -734,18 +752,14 @@ export class AuthService {
     let user = await this._usersModel.findOne({ appleId }).exec();
     if (user) {
       if (pictureFromApple && !user.profileImage) {
-        await this._usersModel
+        void this._usersModel
           .updateOne(
             { _id: user._id },
             { $set: { profileImage: pictureFromApple } },
           )
           .exec();
       }
-      return await this.finishAuthenticatedLogin(
-        String(user._id),
-        ctx,
-        'apple',
-      );
+      return await this.finishAuthenticatedLogin(user, ctx, 'apple');
     }
 
     if (emailRaw) {
@@ -761,11 +775,8 @@ export class AuthService {
         await this._usersModel
           .updateOne({ _id: user._id }, { $set: setDoc })
           .exec();
-        return await this.finishAuthenticatedLogin(
-          String(user._id),
-          ctx,
-          'apple',
-        );
+        Object.assign(user, setDoc);
+        return await this.finishAuthenticatedLogin(user, ctx, 'apple');
       }
     }
 
@@ -778,7 +789,7 @@ export class AuthService {
       fullName,
       appleId,
       type: defaultTypeForNewUser,
-      password: `apple_${appleId}_${Date.now()}`,
+      password: AuthService.OAUTH_PASSWORD_PLACEHOLDER,
       emailVerifiedAt: new Date(),
       ...(pictureFromApple ? { profileImage: pictureFromApple } : {}),
     });
@@ -793,32 +804,27 @@ export class AuthService {
    * puis trouve ou crée l’utilisateur Mongo (facebookId = identifiant Facebook/Firebase).
    */
   async authWithFacebook(args: FacebookAuthDto, ctx?: LoginRequestContext) {
-    await this._authSettings.assertProviderEnabled('facebook', 'mobile');
-    return this._authWithFacebook(args, UserTypeEnum.USER, ctx);
+    return this._authWithFacebook(args, UserTypeEnum.USER, ctx, 'mobile');
   }
 
   /** Variante dashboard/admin : création sociale par défaut en VENDOR. */
   async authWithFacebookAsVendor(args: FacebookAuthDto, ctx?: LoginRequestContext) {
-    await this._authSettings.assertProviderEnabled('facebook', 'admin');
-    return this._authWithFacebook(args, UserTypeEnum.VENDOR, ctx);
+    return this._authWithFacebook(args, UserTypeEnum.VENDOR, ctx, 'admin');
   }
 
   private async _authWithFacebook(
     args: FacebookAuthDto,
     defaultTypeForNewUser: UserTypeEnum,
-    ctx?: LoginRequestContext,
+    ctx: LoginRequestContext | undefined,
+    platform: 'mobile' | 'admin',
   ) {
-    let decoded: DecodedIdToken;
-    try {
-      decoded = await getAuth(this.firebaseAuthApp()).verifyIdToken(args.idToken);
-    } catch (err) {
-      this.logger.warn(`verifyIdToken Facebook: ${String(err)}`);
-      throw new UnauthorizedException('invalid_facebook_token');
-    }
-
-    if (decoded.firebase?.sign_in_provider !== 'facebook.com') {
-      throw new UnauthorizedException('invalid_facebook_token');
-    }
+    const decoded = await this.assertProviderAndVerifyIdToken(
+      'facebook',
+      platform,
+      args.idToken,
+      'invalid_facebook_token',
+      'facebook.com',
+    );
 
     const facebookId =
       decoded.firebase?.identities?.['facebook.com']?.[0] ?? decoded.sub;
@@ -842,18 +848,14 @@ export class AuthService {
     let user = await this._usersModel.findOne({ facebookId }).exec();
     if (user) {
       if (pictureFromFacebook && !user.profileImage) {
-        await this._usersModel
+        void this._usersModel
           .updateOne(
             { _id: user._id },
             { $set: { profileImage: pictureFromFacebook } },
           )
           .exec();
       }
-      return await this.finishAuthenticatedLogin(
-        String(user._id),
-        ctx,
-        'facebook',
-      );
+      return await this.finishAuthenticatedLogin(user, ctx, 'facebook');
     }
 
     user = await this._usersModel.findOne({ email: emailRaw }).exec();
@@ -868,11 +870,8 @@ export class AuthService {
       await this._usersModel
         .updateOne({ _id: user._id }, { $set: setDoc })
         .exec();
-      return await this.finishAuthenticatedLogin(
-        String(user._id),
-        ctx,
-        'facebook',
-      );
+      Object.assign(user, setDoc);
+      return await this.finishAuthenticatedLogin(user, ctx, 'facebook');
     }
 
     const newUser = await this._usersModel.create({
@@ -880,7 +879,7 @@ export class AuthService {
       fullName,
       facebookId,
       type: defaultTypeForNewUser,
-      password: `facebook_${facebookId}_${Date.now()}`,
+      password: AuthService.OAUTH_PASSWORD_PLACEHOLDER,
       emailVerifiedAt: new Date(),
       ...(pictureFromFacebook ? { profileImage: pictureFromFacebook } : {}),
     });
@@ -914,11 +913,7 @@ export class AuthService {
     }
 
     // TODO add user role(admin, user, etc) claims
-    return await this.finishAuthenticatedLogin(
-      String(user._id),
-      ctx,
-      'email_password',
-    );
+    return await this.finishAuthenticatedLogin(user, ctx, 'email_password');
   }
 
   async verify2faLogin(args: Verify2faLoginDto, ctx?: LoginRequestContext) {
@@ -1899,8 +1894,12 @@ export class AuthService {
     return buildCaseInsensitiveExactRegex(email);
   }
 
+  /**
+   * Finalise login (tokens ou challenge 2FA).
+   * Accepte le document déjà chargé pour éviter un `findById` redondant (OAuth / email).
+   */
   private async finishAuthenticatedLogin(
-    userId: string,
+    userOrId: string | UserModel,
     ctx: LoginRequestContext | undefined,
     method: LoginAuthMethod,
   ): Promise<
@@ -1912,7 +1911,10 @@ export class AuthService {
         message: string;
       }
   > {
-    const user = await this._usersModel.findById(userId).exec();
+    const user =
+      typeof userOrId === 'string'
+        ? await this._usersModel.findById(userOrId).exec()
+        : userOrId;
     if (!user) {
       throw new NotFoundException('user_not_found');
     }
