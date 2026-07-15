@@ -86,7 +86,9 @@ export type BuildCourierStatusPerformanceInput = {
 };
 
 /** Masque un accountId Stripe (acct_****abcd). */
-export function maskStripeAccountId(accountId: string | null | undefined): string | null {
+export function maskStripeAccountId(
+  accountId: string | null | undefined,
+): string | null {
   const raw = String(accountId ?? '').trim();
   if (!raw) return null;
   if (raw.length <= 8) return '****';
@@ -112,8 +114,8 @@ export function buildCourierStatusPerformanceOverview(
   const accountId = input.maskStripeAccountId
     ? maskStripeAccountId(accountRaw)
     : accountRaw
-      ? String(accountRaw).trim() || null
-      : null;
+    ? String(accountRaw).trim() || null
+    : null;
 
   const overview: CourierStatusPerformanceOverview = {
     userId: input.userId,
@@ -121,7 +123,8 @@ export function buildCourierStatusPerformanceOverview(
     displayName: input.displayName,
     badge: input.partnerBadge,
     status: {
-      applicationStatus: String(input.applicationStatus ?? '').trim() || 'UNKNOWN',
+      applicationStatus:
+        String(input.applicationStatus ?? '').trim() || 'UNKNOWN',
       presence: input.presence,
       stripe: {
         onboardingComplete: input.stripe?.onboardingComplete === true,
@@ -138,7 +141,9 @@ export function buildCourierStatusPerformanceOverview(
         nonNegativeNumber(input.counters.completedDeliveries),
       ),
       rejectionRate,
-      performanceLevel: computeCourierPerformanceLevel(derived.performanceScore),
+      performanceLevel: computeCourierPerformanceLevel(
+        derived.performanceScore,
+      ),
       averageRating: input.averageRating,
       ratingCount: Math.max(0, Math.round(Number(input.ratingCount ?? 0))),
     },

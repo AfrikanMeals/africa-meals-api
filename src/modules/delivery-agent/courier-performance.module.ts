@@ -40,13 +40,7 @@ import { CourierStatusPerformanceService } from './courier-status-performance.se
       { name: UserModel.name, schema: UserSchema },
     ]),
   ],
-  providers: [
-    CourierPerformanceStatsService,
-    CourierStatusPerformanceService,
-  ],
-  exports: [
-    CourierPerformanceStatsService,
-    CourierStatusPerformanceService,
-  ],
+  providers: [CourierPerformanceStatsService, CourierStatusPerformanceService],
+  exports: [CourierPerformanceStatsService, CourierStatusPerformanceService],
 })
 export class CourierPerformanceModule {}

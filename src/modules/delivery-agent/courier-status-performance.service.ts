@@ -1,7 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import {
   DeliveryAgentApplicationModel,
@@ -69,8 +66,8 @@ export class CourierStatusPerformanceService {
     const applicationStatus = String(app?.status ?? 'UNKNOWN');
     const applicationId = app?._id ? String(app._id) : null;
 
-    const [activeCount, perfPayload, ratingAgg, financials] =
-      await Promise.all([
+    const [activeCount, perfPayload, ratingAgg, financials] = await Promise.all(
+      [
         app?.status === DeliveryAgentApplicationStatus.APPROVED
           ? countActiveShippedOrdersForAgent(this._orders, agentOid)
           : Promise.resolve(0),
@@ -90,7 +87,8 @@ export class CourierStatusPerformanceService {
         opts.includeFinancials
           ? this.loadFinancialTotals(agentOid)
           : Promise.resolve(null),
-      ]);
+      ],
+    );
 
     // Présence seulement si candidature approuvée (sinon hors ligne métier).
     let presence = null as ReturnType<
@@ -98,7 +96,9 @@ export class CourierStatusPerformanceService {
     >['status']['presence'];
     if (app?.status === DeliveryAgentApplicationStatus.APPROVED) {
       const availability =
-        app.dashboardAvailability === 'hors_ligne' ? 'hors_ligne' : 'disponible';
+        app.dashboardAvailability === 'hors_ligne'
+          ? 'hors_ligne'
+          : 'disponible';
       presence = {
         availability,
         presence: resolveDeliveryAgentPresence(availability, activeCount),
@@ -155,9 +155,7 @@ export class CourierStatusPerformanceService {
       userId: uid,
       applicationId,
       displayName:
-        agentUser.fullName?.trim() ||
-        agentUser.email?.trim() ||
-        'Livreur',
+        agentUser.fullName?.trim() || agentUser.email?.trim() || 'Livreur',
       applicationStatus,
       partnerBadge: serializePartnerBadge(agentUser.partnerBadgeCode),
       presence,
@@ -208,7 +206,10 @@ export class CourierStatusPerformanceService {
             // Tolère les documents historiques camelCase et le mapping snake_case actuel.
             revenueTotal: {
               $sum: {
-                $ifNull: ['$shippingPrice', { $ifNull: ['$shipping_price', 0] }],
+                $ifNull: [
+                  '$shippingPrice',
+                  { $ifNull: ['$shipping_price', 0] },
+                ],
               },
             },
             transferCents: {
@@ -225,10 +226,7 @@ export class CourierStatusPerformanceService {
                   {
                     $eq: [
                       {
-                        $ifNull: [
-                          '$deliveryTipStatus',
-                          '$delivery_tip_status',
-                        ],
+                        $ifNull: ['$deliveryTipStatus', '$delivery_tip_status'],
                       },
                       'transferred',
                     ],
@@ -259,10 +257,8 @@ export class CourierStatusPerformanceService {
       ordersDeliveredTotal: Number(d?.total ?? 0),
       shippingRevenueTotal:
         Math.round(Number(d?.revenueTotal ?? 0) * 100) / 100,
-      driverEarningTotal:
-        Math.round(Number(d?.transferCents ?? 0)) / 100,
-      driverTipEarningTotal:
-        Math.round(Number(d?.tipCents ?? 0)) / 100,
+      driverEarningTotal: Math.round(Number(d?.transferCents ?? 0)) / 100,
+      driverTipEarningTotal: Math.round(Number(d?.tipCents ?? 0)) / 100,
       currency: d?.currency ? String(d.currency) : null,
     };
   }

@@ -131,7 +131,11 @@ describe('courier-status-performance.util', () => {
         payoutsEnabled: true,
         accountId: 'acct_1234567890abcd',
       },
-      counters: { offersAccepted: 1, completedDeliveries: 1, totalDistanceKm: 3 },
+      counters: {
+        offersAccepted: 1,
+        completedDeliveries: 1,
+        totalDistanceKm: 3,
+      },
       averageRating: 4.5,
       ratingCount: 2,
       includeFinancials: false,

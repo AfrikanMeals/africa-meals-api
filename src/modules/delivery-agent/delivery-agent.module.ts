@@ -79,10 +79,7 @@ import { CourierPerformanceModule } from './courier-performance.module';
     ]),
   ],
   controllers: [DeliveryAgentController],
-  providers: [
-    DeliveryAgentService,
-    CourierMarketplaceDispatchService,
-  ],
+  providers: [DeliveryAgentService, CourierMarketplaceDispatchService],
   exports: [
     DeliveryAgentService,
     CourierPerformanceModule,

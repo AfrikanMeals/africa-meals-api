@@ -56,9 +56,7 @@ import {
 } from '@common/partner-badges/partner-badge.constants';
 import { PlatformShippingSettingsService } from '@modules/platform-shipping-settings/platform-shipping-settings.service';
 import { resolvePlatformShippingRegionCode } from '@modules/platform-shipping-settings/platform-shipping-region.util';
-import {
-  resolveOrderOperatingRegionCode,
-} from '@modules/supported-countries/region-tax.util';
+import { resolveOrderOperatingRegionCode } from '@modules/supported-countries/region-tax.util';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { PatchDeliveryAgentApplicationDto } from './dto/delivery-agent-application.dto';
 import {
@@ -208,11 +206,11 @@ export class DeliveryAgentService {
     private readonly _fleetAudience: FleetAudienceService,
     private readonly _courierGeo: CourierGeoService,
     private readonly _subscriptions: SubscriptionsService,
+    private readonly _courierPerf: CourierPerformanceStatsService,
+    private readonly _statusPerformance: CourierStatusPerformanceService,
     @Inject(forwardRef(() => DeliveryOrderOfferService))
     @Optional()
     private readonly _deliveryOrderOffers?: DeliveryOrderOfferService,
-    private readonly _courierPerf: CourierPerformanceStatsService,
-    private readonly _statusPerformance: CourierStatusPerformanceService,
     @Optional()
     private readonly _marketplaceDispatch?: CourierMarketplaceDispatchService,
     @Optional()
@@ -234,7 +232,9 @@ export class DeliveryAgentService {
     const result = await this._domainPublisher.publish(draft);
     if (!result.ok && result.mode !== 'duplicate') {
       this._logger.warn(
-        `Agent domain event publish skipped type=${draft.type} reason=${result.reason ?? result.mode}`,
+        `Agent domain event publish skipped type=${draft.type} reason=${
+          result.reason ?? result.mode
+        }`,
       );
     }
   }
@@ -866,7 +866,9 @@ export class DeliveryAgentService {
     agentUser.partnerBadgeCode = normalizedBadge;
     await agentUser.save();
 
-    const connectAccountId = String(agentUser.stripeConnectAccountId ?? '').trim();
+    const connectAccountId = String(
+      agentUser.stripeConnectAccountId ?? '',
+    ).trim();
     if (connectAccountId) {
       await this._stripeConnect.applyPartnerBadgePayoutSchedule(
         connectAccountId,
@@ -1010,8 +1012,7 @@ export class DeliveryAgentService {
     const email = String(u?.email ?? '').trim();
     if (!email) return;
 
-    const appName =
-      this._config.get<string>('APP_NAME')?.trim() || 'Wise Eat';
+    const appName = this._config.get<string>('APP_NAME')?.trim() || 'Wise Eat';
     const name = String(u?.fullName ?? '').trim() || 'Bonjour';
     const title = approved
       ? 'Candidature livreur acceptée'
@@ -1211,11 +1212,12 @@ export class DeliveryAgentService {
       mergeDailyPerformanceShippedCount(live.ordersShippedToday, clientShipped),
     );
     const distanceKmToday =
-      dto.distanceKmToday != null && Number.isFinite(Number(dto.distanceKmToday))
+      dto.distanceKmToday != null &&
+      Number.isFinite(Number(dto.distanceKmToday))
         ? Math.max(0, Math.round(Number(dto.distanceKmToday) * 100) / 100)
         : existing?.distanceKmToday != null
-          ? Number(existing.distanceKmToday)
-          : null;
+        ? Number(existing.distanceKmToday)
+        : null;
 
     await this._upsertDailyPerformanceSnapshot({
       agentId,
@@ -1387,7 +1389,9 @@ export class DeliveryAgentService {
         ? []
         : await this._stores
             .find({
-              _id: { $in: candidateStoreIds.map((id) => new Types.ObjectId(id)) },
+              _id: {
+                $in: candidateStoreIds.map((id) => new Types.ObjectId(id)),
+              },
               vendorManagesDeliveryDrivers: true,
             })
             .select('_id deliveryAssignmentMode')
@@ -1442,11 +1446,12 @@ export class DeliveryAgentService {
       ) {
         continue;
       }
-      const maxDeliveryRadiusKm = await this.resolveMaxDeliveryRadiusKmForOrderRow(
-        row,
-        user,
-        resolveSettings,
-      );
+      const maxDeliveryRadiusKm =
+        await this.resolveMaxDeliveryRadiusKmForOrderRow(
+          row,
+          user,
+          resolveSettings,
+        );
       if (
         !pendingOrderWithinMaxDeliveryRadius(
           item.distanceKm,
@@ -1510,15 +1515,14 @@ export class DeliveryAgentService {
       })
       .lean()
       .exec();
-    const activeRows = await filterCourierActiveShippedRows(
-      this._orders,
-      rows,
-    );
+    const activeRows = await filterCourierActiveShippedRows(this._orders, rows);
     if (rows.length > 0 && activeRows.length === 0) {
       this._logger.warn(
         `[DeliveryTrace] getActiveOrder agent=${agentId.toString()} ` +
           `${rows.length} shipped assignée(s) exclue(s) (preuve client absent / dépôt) — ` +
-          `ids=[${rows.map((r) => String((r as { _id?: unknown })._id)).join(',')}]`,
+          `ids=[${rows
+            .map((r) => String((r as { _id?: unknown })._id))
+            .join(',')}]`,
       );
     }
     const capped = activeRows.slice(0, Math.max(capacity, 1));
@@ -1579,7 +1583,9 @@ export class DeliveryAgentService {
       for (const o of anomalous) {
         this._logger.warn(
           `[DeliveryTrace] ALERTE order=${String(o._id)} assigné à ` +
-            `agent=${agentId.toString()} mais status=${o.status} (≠ shipped) — ` +
+            `agent=${agentId.toString()} mais status=${
+              o.status
+            } (≠ shipped) — ` +
             `incohérent : livreur assigné sans course active`,
         );
       }
@@ -1808,7 +1814,9 @@ export class DeliveryAgentService {
         ? { batteryPercent: params.batteryPercent }
         : {}),
       ...(params.recordedAt ? { recordedAt: params.recordedAt } : {}),
-      notifyStoreIds: await this._fleetAudience.resolveNotifyStoreIds(agentUserId),
+      notifyStoreIds: await this._fleetAudience.resolveNotifyStoreIds(
+        agentUserId,
+      ),
     });
 
     if (!isDomainEventsEnabled(this._config)) {
@@ -2018,7 +2026,8 @@ export class DeliveryAgentService {
     const format = dto.format === 'google' ? 'google' : 'google';
     const leg = dto.leg;
     const distanceMeters =
-      typeof dto.distanceMeters === 'number' && Number.isFinite(dto.distanceMeters)
+      typeof dto.distanceMeters === 'number' &&
+      Number.isFinite(dto.distanceMeters)
         ? Math.max(0, Math.round(dto.distanceMeters))
         : undefined;
     const durationSeconds =
@@ -2066,7 +2075,11 @@ export class DeliveryAgentService {
       },
     );
 
-    return { ok: true, orderId: String(oid), updatedAt: updatedAt.toISOString() };
+    return {
+      ok: true,
+      orderId: String(oid),
+      updatedAt: updatedAt.toISOString(),
+    };
   }
 
   async previewHandoffByCode(
@@ -2089,7 +2102,10 @@ export class DeliveryAgentService {
     const isDelivery = order.shouldShip === true;
     return {
       ...mapped,
-      pickupCode: String(order.pickupCode ?? '').trim().toUpperCase() || null,
+      pickupCode:
+        String(order.pickupCode ?? '')
+          .trim()
+          .toUpperCase() || null,
       shouldShip: isDelivery,
       handoffType: isDelivery ? 'delivery' : 'pickup',
     };
@@ -2139,10 +2155,7 @@ export class DeliveryAgentService {
       }
 
       const st = row.status as OrderStatusEnum;
-      if (
-        st !== OrderStatusEnum.SHIPPED &&
-        st !== OrderStatusEnum.APPROVED
-      ) {
+      if (st !== OrderStatusEnum.SHIPPED && st !== OrderStatusEnum.APPROVED) {
         return null;
       }
 
@@ -2262,7 +2275,8 @@ export class DeliveryAgentService {
       );
       if (policy.selfDeliveryRequired) {
         const mode = String(
-          storePop.deliveryAssignmentMode ?? StoreDeliveryAssignmentModeEnum.AUTO,
+          storePop.deliveryAssignmentMode ??
+            StoreDeliveryAssignmentModeEnum.AUTO,
         ).toUpperCase();
         if (mode === StoreDeliveryAssignmentModeEnum.MANUAL) {
           throw new BadRequestException('order_manual_assignment_only');
@@ -2291,10 +2305,7 @@ export class DeliveryAgentService {
       user.appCountryCode,
     );
     if (
-      !pendingOrderMatchesAgentOperatingRegion(
-        storeRegionCode,
-        agentRegionCode,
-      )
+      !pendingOrderMatchesAgentOperatingRegion(storeRegionCode, agentRegionCode)
     ) {
       this._logger.warn(
         `[DeliveryTrace] assignSelfToOrder region reject order=${oid.toString()} ` +
@@ -2350,7 +2361,9 @@ export class DeliveryAgentService {
       $unset: courierClaimStaleStateUnset(),
     };
 
-    const claimResult = await this._orders.updateOne(claimFilter, claimUpdate).exec();
+    const claimResult = await this._orders
+      .updateOne(claimFilter, claimUpdate)
+      .exec();
 
     if (claimResult.matchedCount === 0) {
       const fresh = await this._orders
@@ -2877,12 +2890,8 @@ export class DeliveryAgentService {
       limit: 50,
     });
     const earningsItems = items.map(
-      ({
-        customerName: _c,
-        shippingAddress: _a,
-        distanceKm: _d,
-        ...earning
-      }) => earning,
+      ({ customerName: _c, shippingAddress: _a, distanceKm: _d, ...earning }) =>
+        earning,
     );
     return { items: earningsItems, totals };
   }
@@ -3098,7 +3107,11 @@ export class DeliveryAgentService {
               abandonsTotal: { $sum: 1 },
               abandonsToday: {
                 $sum: {
-                  $cond: [{ $gte: ['$deliveryUnassignedAt', startOfDay] }, 1, 0],
+                  $cond: [
+                    { $gte: ['$deliveryUnassignedAt', startOfDay] },
+                    1,
+                    0,
+                  ],
                 },
               },
             },
@@ -3118,9 +3131,7 @@ export class DeliveryAgentService {
         ])
         .exec(),
       this.loadAgentDeliveryHistory(agentUser, { limit: earningsWindow }),
-      this._stripeConnect
-        .getConnectStatus(agentUser)
-        .catch(() => null),
+      this._stripeConnect.getConnectStatus(agentUser).catch(() => null),
       agentUser.stripeConnectAccountId?.trim()
         ? this._stripeConnect.getConnectBalance(agentUser).catch(() => null)
         : Promise.resolve(null),
@@ -3142,12 +3153,8 @@ export class DeliveryAgentService {
         : null;
 
     const earningsItems = earnings.items.map(
-      ({
-        customerName: _c,
-        shippingAddress: _a,
-        distanceKm: _d,
-        ...earning
-      }) => earning,
+      ({ customerName: _c, shippingAddress: _a, distanceKm: _d, ...earning }) =>
+        earning,
     );
 
     return {
@@ -3270,9 +3277,7 @@ export class DeliveryAgentService {
           transferCents: shipTr.transferCents,
           tipTransferred: tipTr.transferred,
           tipTransferId: tipTr.transferId,
-          skippedReason: shipTr.transferred
-            ? undefined
-            : shipTr.skippedReason,
+          skippedReason: shipTr.transferred ? undefined : shipTr.skippedReason,
         });
       }
     }
@@ -3291,19 +3296,11 @@ export class DeliveryAgentService {
           e && typeof e === 'object' && 'getResponse' in e
             ? (() => {
                 try {
-                  const r = (
-                    e as { getResponse: () => unknown }
-                  ).getResponse();
+                  const r = (e as { getResponse: () => unknown }).getResponse();
                   if (typeof r === 'string') return r;
-                  if (
-                    r &&
-                    typeof r === 'object' &&
-                    'message' in r
-                  ) {
+                  if (r && typeof r === 'object' && 'message' in r) {
                     const m = (r as { message?: unknown }).message;
-                    return Array.isArray(m)
-                      ? m.join(', ')
-                      : String(m ?? '');
+                    return Array.isArray(m) ? m.join(', ') : String(m ?? '');
                   }
                   return JSON.stringify(r);
                 } catch {
@@ -3311,8 +3308,8 @@ export class DeliveryAgentService {
                 }
               })()
             : e instanceof Error
-              ? e.message
-              : String(e);
+            ? e.message
+            : String(e);
         payoutError = msg || 'stripe_payout_request_failed';
         this._logger.warn(
           `Admin force payout failed application=${applicationId}: ${payoutError}`,
@@ -3343,13 +3340,10 @@ export class DeliveryAgentService {
       throw new NotFoundException('user_not_found');
     }
     const accountId = String(agentUser.stripeConnectAccountId ?? '').trim();
-    const details =
-      await this._stripeConnect.retrievePlatformTransfer(transferId);
-    if (
-      accountId &&
-      details.destination &&
-      details.destination !== accountId
-    ) {
+    const details = await this._stripeConnect.retrievePlatformTransfer(
+      transferId,
+    );
+    if (accountId && details.destination && details.destination !== accountId) {
       throw new BadRequestException('stripe_transfer_not_for_agent');
     }
     // Vérifie aussi qu’une commande de ce livreur référence ce transfer.
@@ -3476,8 +3470,10 @@ export class DeliveryAgentService {
           user.appCountryCode,
         ]);
         const settings = await resolveSettings(regionCode);
-        const { driverEarning: driverEarningCad, platformWithheld: platformWithheldCad } =
-          this.computeDriverEarningBreakdown(shippingCad, settings);
+        const {
+          driverEarning: driverEarningCad,
+          platformWithheld: platformWithheldCad,
+        } = this.computeDriverEarningBreakdown(shippingCad, settings);
         const tipCents = Math.max(
           0,
           Math.round(Number(row.deliveryTipCents) || 0),
@@ -3667,7 +3663,8 @@ export class DeliveryAgentService {
       Awaited<ReturnType<PlatformShippingSettingsService['getPublicSettings']>>
     >,
   ): Promise<number> {
-    const regionCode = this.resolveStoreRegionCodeFromOrderRow(row) ??
+    const regionCode =
+      this.resolveStoreRegionCodeFromOrderRow(row) ??
       resolvePlatformShippingRegionCode([user.appCountryCode]);
     const settings = await resolveSettings(regionCode);
     return settings.maxDeliveryRadiusKm;
@@ -3732,14 +3729,17 @@ export class DeliveryAgentService {
         return name || null;
       })(),
       eta: distanceKm != null ? this.etaLabelFromKm(distanceKm) : null,
-      pickupCode: String(row.pickupCode ?? row.pickup_code ?? '')
-        .trim()
-        .toUpperCase() || null,
+      pickupCode:
+        String(row.pickupCode ?? row.pickup_code ?? '')
+          .trim()
+          .toUpperCase() || null,
       shouldShip: row.shouldShip === true,
-      status: String(row.status ?? '').trim().toLowerCase() || null,
+      status:
+        String(row.status ?? '')
+          .trim()
+          .toLowerCase() || null,
       courierTourStops: (() => {
-        const raw =
-          row.courierTourStops ?? row.courier_tour_stops;
+        const raw = row.courierTourStops ?? row.courier_tour_stops;
         if (!Array.isArray(raw) || raw.length === 0) return null;
         const stops = raw
           .map((s, i) => {

@@ -39,10 +39,7 @@ import { buildStoreDeliveryDriverInviteAcceptUrl } from './store-delivery-driver
 import { randomUUID } from 'crypto';
 import { Model, Types } from 'mongoose';
 
-const DELIVERED_STATUSES = [
-  OrderStatusEnum.SHIPPED,
-  OrderStatusEnum.COMPLETED,
-];
+const DELIVERED_STATUSES = [OrderStatusEnum.SHIPPED, OrderStatusEnum.COMPLETED];
 
 @Injectable()
 export class StoreDeliveryDriversService {
@@ -82,7 +79,10 @@ export class StoreDeliveryDriversService {
   @Inject(CourierStatusPerformanceService)
   private readonly _statusPerformance: CourierStatusPerformanceService;
 
-  async assertStoreOwner(user: UserModel, storeId: string): Promise<StoreModel> {
+  async assertStoreOwner(
+    user: UserModel,
+    storeId: string,
+  ): Promise<StoreModel> {
     if (!Types.ObjectId.isValid(storeId)) {
       throw new BadRequestException('invalid_store_id');
     }
@@ -120,7 +120,9 @@ export class StoreDeliveryDriversService {
       : StoreDeliveryAssignmentModeEnum.AUTO;
   }
 
-  private async _assertDeliveryAgentSlotAvailable(storeId: string): Promise<void> {
+  private async _assertDeliveryAgentSlotAvailable(
+    storeId: string,
+  ): Promise<void> {
     const limit = await this._subscriptions.resolveMaxDeliveryAgentsForStore(
       storeId,
     );
@@ -145,7 +147,10 @@ export class StoreDeliveryDriversService {
     storeId: string,
     deliveryUserId: string,
   ): Promise<boolean> {
-    if (!Types.ObjectId.isValid(storeId) || !Types.ObjectId.isValid(deliveryUserId)) {
+    if (
+      !Types.ObjectId.isValid(storeId) ||
+      !Types.ObjectId.isValid(deliveryUserId)
+    ) {
       return false;
     }
     const row = await this._membershipModel
@@ -245,17 +250,22 @@ export class StoreDeliveryDriversService {
     >();
     await Promise.all(
       storeIds.map(async (sid) => {
-        const stats = await this._aggregateDriverPerformanceStats(sid, [userOid]);
-        statsByStore.set(sid, stats.get(userId) ?? {
-          total: 0,
-          today: 0,
-          revenueTotal: 0,
-          revenueToday: 0,
-          abandonsTotal: 0,
-          abandonsToday: 0,
-          vendorUnassignsTotal: 0,
-          vendorUnassignsToday: 0,
-        });
+        const stats = await this._aggregateDriverPerformanceStats(sid, [
+          userOid,
+        ]);
+        statsByStore.set(
+          sid,
+          stats.get(userId) ?? {
+            total: 0,
+            today: 0,
+            revenueTotal: 0,
+            revenueToday: 0,
+            abandonsTotal: 0,
+            abandonsToday: 0,
+            vendorUnassignsTotal: 0,
+            vendorUnassignsToday: 0,
+          },
+        );
       }),
     );
 
@@ -284,13 +294,12 @@ export class StoreDeliveryDriversService {
           : undefined,
         storeCurrency: store.currency ? String(store.currency) : undefined,
         deliveryAssignmentMode:
-          store.deliveryAssignmentMode ??
-          StoreDeliveryAssignmentModeEnum.AUTO,
+          store.deliveryAssignmentMode ?? StoreDeliveryAssignmentModeEnum.AUTO,
         joinedAt: doc.respondedAt
           ? new Date(String(doc.respondedAt)).toISOString()
           : doc.invitedAt
-            ? new Date(String(doc.invitedAt)).toISOString()
-            : undefined,
+          ? new Date(String(doc.invitedAt)).toISOString()
+          : undefined,
         ordersDelivered: stats.total,
         ordersDeliveredToday: stats.today,
         deliveryRevenueTotal: stats.revenueTotal,
@@ -334,7 +343,10 @@ export class StoreDeliveryDriversService {
         : [];
     const userMap = new Map(users.map((u) => [String(u._id), u]));
 
-    const statsByUser = await this._aggregateDriverPerformanceStats(sid, userIds);
+    const statsByUser = await this._aggregateDriverPerformanceStats(
+      sid,
+      userIds,
+    );
 
     const items: StoreDeliveryDriverRowDto[] = memberships.map((m) => {
       const doc = m as Record<string, unknown>;
@@ -462,7 +474,11 @@ export class StoreDeliveryDriversService {
               abandonsTotal: { $sum: 1 },
               abandonsToday: {
                 $sum: {
-                  $cond: [{ $gte: ['$deliveryUnassignedAt', startOfDay] }, 1, 0],
+                  $cond: [
+                    { $gte: ['$deliveryUnassignedAt', startOfDay] },
+                    1,
+                    0,
+                  ],
                 },
               },
             },
@@ -476,7 +492,9 @@ export class StoreDeliveryDriversService {
               store: storeOid,
               shouldShip: true,
               deliveryUnassignedFromUser: { $in: userIds },
-              deliveryUnassignReason: { $in: ['vendor_unassign', 'admin_unassign'] },
+              deliveryUnassignReason: {
+                $in: ['vendor_unassign', 'admin_unassign'],
+              },
             },
           },
           {
@@ -485,7 +503,11 @@ export class StoreDeliveryDriversService {
               vendorUnassignsTotal: { $sum: 1 },
               vendorUnassignsToday: {
                 $sum: {
-                  $cond: [{ $gte: ['$deliveryUnassignedAt', startOfDay] }, 1, 0],
+                  $cond: [
+                    { $gte: ['$deliveryUnassignedAt', startOfDay] },
+                    1,
+                    0,
+                  ],
                 },
               },
             },
@@ -576,13 +598,23 @@ export class StoreDeliveryDriversService {
   ): Promise<
     Map<
       string,
-      { total: number; today: number; revenueTotal: number; revenueToday: number }
+      {
+        total: number;
+        today: number;
+        revenueTotal: number;
+        revenueToday: number;
+      }
     >
   > {
     const perf = await this._aggregateDriverPerformanceStats(storeId, userIds);
     const out = new Map<
       string,
-      { total: number; today: number; revenueTotal: number; revenueToday: number }
+      {
+        total: number;
+        today: number;
+        revenueTotal: number;
+        revenueToday: number;
+      }
     >();
     for (const [id, stats] of perf) {
       out.set(id, {
@@ -614,8 +646,9 @@ export class StoreDeliveryDriversService {
     const email = emailRaw.trim().toLowerCase();
     if (!email) throw new BadRequestException('invalid_email');
 
-    const approvedAgent =
-      await this._resolveApprovedDeliveryAgentByEmail(email);
+    const approvedAgent = await this._resolveApprovedDeliveryAgentByEmail(
+      email,
+    );
 
     const existing = await this._membershipModel
       .findOne({ store: store._id, email })
@@ -636,10 +669,12 @@ export class StoreDeliveryDriversService {
     if (existing) {
       existing.status = StoreDeliveryDriverMembershipStatus.PENDING;
       existing.inviteToken = token;
-      existing.invitedBy = invitedBy as unknown as StoreDeliveryDriverMembershipModel['invitedBy'];
+      existing.invitedBy =
+        invitedBy as unknown as StoreDeliveryDriverMembershipModel['invitedBy'];
       existing.invitedAt = new Date();
       existing.respondedAt = undefined;
-      existing.user = approvedAgent._id as unknown as StoreDeliveryDriverMembershipModel['user'];
+      existing.user =
+        approvedAgent._id as unknown as StoreDeliveryDriverMembershipModel['user'];
       await existing.save();
       membership = existing;
     } else {
@@ -688,7 +723,9 @@ export class StoreDeliveryDriversService {
     if (!Types.ObjectId.isValid(membershipId)) {
       throw new BadRequestException('invalid_id');
     }
-    const membership = await this._membershipModel.findById(membershipId).exec();
+    const membership = await this._membershipModel
+      .findById(membershipId)
+      .exec();
     if (!membership) throw new NotFoundException('membership_not_found');
     await this.assertStoreOwner(user, String(membership.store));
     membership.status = StoreDeliveryDriverMembershipStatus.REVOKED;
@@ -702,10 +739,7 @@ export class StoreDeliveryDriversService {
    * Vendeur — overview Performance & Statut d’un livreur ACTIVE de sa flotte.
    * Jamais de bloc financials (gains / balances).
    */
-  async getStatusPerformanceForVendor(
-    user: UserModel,
-    membershipId: string,
-  ) {
+  async getStatusPerformanceForVendor(user: UserModel, membershipId: string) {
     // La route vendeur n’est pas un alias admin : seul un compte VENDOR propriétaire passe.
     if (user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('vendor_only');
@@ -713,7 +747,9 @@ export class StoreDeliveryDriversService {
     if (!Types.ObjectId.isValid(membershipId)) {
       throw new BadRequestException('invalid_id');
     }
-    const membership = await this._membershipModel.findById(membershipId).exec();
+    const membership = await this._membershipModel
+      .findById(membershipId)
+      .exec();
     if (!membership) throw new NotFoundException('membership_not_found');
     await this.assertStoreOwner(user, String(membership.store));
     if (membership.status !== StoreDeliveryDriverMembershipStatus.ACTIVE) {
@@ -723,10 +759,13 @@ export class StoreDeliveryDriversService {
     if (!Types.ObjectId.isValid(agentUserId)) {
       throw new NotFoundException('driver_user_not_linked');
     }
-    const overview = await this._statusPerformance.buildForAgentUserId(agentUserId, {
-      includeFinancials: false,
-      maskStripeAccountId: true,
-    });
+    const overview = await this._statusPerformance.buildForAgentUserId(
+      agentUserId,
+      {
+        includeFinancials: false,
+        maskStripeAccountId: true,
+      },
+    );
     // Défense en profondeur : allowlist racine après le builder partagé.
     return projectCourierStatusPerformanceForVendor(overview);
   }
@@ -741,16 +780,16 @@ export class StoreDeliveryDriversService {
       throw new BadRequestException('invalid_id');
     }
 
-    const membership = await this._membershipModel.findById(membershipId).exec();
+    const membership = await this._membershipModel
+      .findById(membershipId)
+      .exec();
     if (!membership) throw new NotFoundException('membership_not_found');
 
     const userId = String(user._id ?? user.id ?? '');
     const userEmail = String(user.email ?? '')
       .trim()
       .toLowerCase();
-    const membershipUserId = membership.user
-      ? String(membership.user)
-      : '';
+    const membershipUserId = membership.user ? String(membership.user) : '';
     const ownsMembership =
       (membershipUserId && membershipUserId === userId) ||
       membership.email === userEmail;
@@ -798,7 +837,9 @@ export class StoreDeliveryDriversService {
     if (!Types.ObjectId.isValid(membershipId)) {
       throw new BadRequestException('invalid_id');
     }
-    const membership = await this._membershipModel.findById(membershipId).exec();
+    const membership = await this._membershipModel
+      .findById(membershipId)
+      .exec();
     if (!membership) throw new NotFoundException('membership_not_found');
     const store = await this.assertStoreOwner(user, String(membership.store));
     if (membership.status !== StoreDeliveryDriverMembershipStatus.PENDING) {
@@ -893,7 +934,10 @@ export class StoreDeliveryDriversService {
     return this._finalizeInviteAcceptance(membership, normalized, userOid);
   }
 
-  async acceptInvite(user: UserModel, token: string): Promise<{ ok: true; storeId: string; storeName: string }> {
+  async acceptInvite(
+    user: UserModel,
+    token: string,
+  ): Promise<{ ok: true; storeId: string; storeName: string }> {
     const normalized = token.trim();
     if (!normalized) throw new BadRequestException('invalid_token');
 
@@ -941,9 +985,7 @@ export class StoreDeliveryDriversService {
     return { ok: true };
   }
 
-  async listPendingInvitesForUser(
-    user: UserModel,
-  ): Promise<
+  async listPendingInvitesForUser(user: UserModel): Promise<
     Array<{
       membershipId: string;
       storeId: string;
@@ -973,7 +1015,9 @@ export class StoreDeliveryDriversService {
     const stores =
       storeIds.length > 0
         ? await this._storeModel
-            .find({ _id: { $in: storeIds.map((id) => new Types.ObjectId(id)) } })
+            .find({
+              _id: { $in: storeIds.map((id) => new Types.ObjectId(id)) },
+            })
             .select('name')
             .lean()
             .exec()
@@ -1009,7 +1053,9 @@ export class StoreDeliveryDriversService {
       return new Types.ObjectId(String(linked._id ?? linked.id));
     }
 
-    const agent = await this._resolveApprovedDeliveryAgentByEmail(membership.email);
+    const agent = await this._resolveApprovedDeliveryAgentByEmail(
+      membership.email,
+    );
     return agent._id;
   }
 
@@ -1086,7 +1132,9 @@ export class StoreDeliveryDriversService {
     };
   }
 
-  private async _assertApprovedDeliveryAgentUser(user: UserModel): Promise<void> {
+  private async _assertApprovedDeliveryAgentUser(
+    user: UserModel,
+  ): Promise<void> {
     if (user.type !== UserTypeEnum.DELIVERY) {
       throw new ForbiddenException('store_driver_not_approved_agent');
     }
@@ -1145,7 +1193,9 @@ export class StoreDeliveryDriversService {
       ),
       this._emailTpl.button('Accepter l’invitation', acceptUrl),
       this._emailTpl.muted(
-        `Lien direct : <span style="word-break:break-all;">${this._escapeHtml(acceptUrl)}</span>`,
+        `Lien direct : <span style="word-break:break-all;">${this._escapeHtml(
+          acceptUrl,
+        )}</span>`,
       ),
     ].join('\n');
 
