@@ -1221,6 +1221,19 @@ export class StoreController {
     );
   }
 
+  /** Performance & Statut d’un livreur ACTIVE (sans gains / infos financières). */
+  @Get('vendor/delivery-drivers/:membershipId/status-performance')
+  @UseGuards(JwtGuard)
+  async getVendorDeliveryDriverStatusPerformance(
+    @Req() req: Request,
+    @Param('membershipId') membershipId: string,
+  ) {
+    return this._storeDeliveryDrivers.getStatusPerformanceForVendor(
+      req.user as UserModel,
+      membershipId,
+    );
+  }
+
   @Post('vendor/delivery-drivers/invite')
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))

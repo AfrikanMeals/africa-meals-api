@@ -41,6 +41,7 @@ import { DeliveryAgentController } from './delivery-agent.controller';
 import { DeliveryAgentService } from './delivery-agent.service';
 import { CourierMarketplaceDispatchService } from './courier-marketplace-dispatch.service';
 import { CourierPerformanceStatsService } from './courier-performance-stats.service';
+import { CourierStatusPerformanceService } from './courier-status-performance.service';
 
 @Module({
   imports: [
@@ -52,7 +53,7 @@ import { CourierPerformanceStatsService } from './courier-performance-stats.serv
     forwardRef(() => OrdersModule),
     PlatformShippingSettingsModule,
     SupportedCountriesModule,
-    StoreDeliveryDriversModule,
+    forwardRef(() => StoreDeliveryDriversModule),
     forwardRef(() => DeliveryOrderOfferModule),
     SubscriptionsModule,
     FleetModule,
@@ -88,11 +89,13 @@ import { CourierPerformanceStatsService } from './courier-performance-stats.serv
   providers: [
     DeliveryAgentService,
     CourierPerformanceStatsService,
+    CourierStatusPerformanceService,
     CourierMarketplaceDispatchService,
   ],
   exports: [
     DeliveryAgentService,
     CourierPerformanceStatsService,
+    CourierStatusPerformanceService,
     CourierMarketplaceDispatchService,
   ],
 })

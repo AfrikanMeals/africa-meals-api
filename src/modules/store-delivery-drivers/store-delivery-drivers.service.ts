@@ -10,7 +10,10 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
+  forwardRef,
 } from '@nestjs/common';
+import { CourierStatusPerformanceService } from '@modules/delivery-agent/courier-status-performance.service';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import {
@@ -76,6 +79,10 @@ export class StoreDeliveryDriversService {
 
   @Inject(WsInboxNotifyService)
   private readonly _wsInboxNotify: WsInboxNotifyService;
+
+  @Optional()
+  @Inject(forwardRef(() => CourierStatusPerformanceService))
+  private readonly _statusPerformance?: CourierStatusPerformanceService;
 
   async assertStoreOwner(user: UserModel, storeId: string): Promise<StoreModel> {
     if (!Types.ObjectId.isValid(storeId)) {
@@ -691,6 +698,36 @@ export class StoreDeliveryDriversService {
     membership.respondedAt = new Date();
     await membership.save();
     return { ok: true };
+  }
+
+  /**
+   * Vendeur — overview Performance & Statut d’un livreur ACTIVE de sa flotte.
+   * Jamais de bloc financials (gains / balances).
+   */
+  async getStatusPerformanceForVendor(
+    user: UserModel,
+    membershipId: string,
+  ) {
+    if (!Types.ObjectId.isValid(membershipId)) {
+      throw new BadRequestException('invalid_id');
+    }
+    if (!this._statusPerformance) {
+      throw new NotFoundException('status_performance_unavailable');
+    }
+    const membership = await this._membershipModel.findById(membershipId).exec();
+    if (!membership) throw new NotFoundException('membership_not_found');
+    await this.assertStoreOwner(user, String(membership.store));
+    if (membership.status !== StoreDeliveryDriverMembershipStatus.ACTIVE) {
+      throw new BadRequestException('membership_not_active');
+    }
+    const agentUserId = membership.user ? String(membership.user) : '';
+    if (!Types.ObjectId.isValid(agentUserId)) {
+      throw new NotFoundException('driver_user_not_linked');
+    }
+    return this._statusPerformance.buildForAgentUserId(agentUserId, {
+      includeFinancials: false,
+      maskStripeAccountId: true,
+    });
   }
 
   /** Livreur quitte volontairement un restaurant partenaire (flotte active). */

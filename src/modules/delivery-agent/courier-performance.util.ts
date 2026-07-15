@@ -27,6 +27,12 @@ export type CourierPerformanceDerived = {
   performanceScore: number;
 };
 
+/** Niveau qualitatif dérivé du score (pas un classement mondial). */
+export type CourierPerformanceLevel =
+  | 'excellent'
+  | 'good'
+  | 'needs_improvement';
+
 function n(v: unknown): number {
   const x = Number(v ?? 0);
   return Number.isFinite(x) && x > 0 ? Math.trunc(x) : 0;
@@ -113,6 +119,35 @@ export function deriveCourierPerformance(
     avgDistanceKm: computeCourierAvgDistanceKm(c),
     performanceScore: computeCourierPerformanceScore(c),
   };
+}
+
+/**
+ * Niveau UI à partir du score 0–100.
+ * excellent ≥ 85 · good ≥ 70 · sinon needs_improvement.
+ */
+export function computeCourierPerformanceLevel(
+  performanceScore: number,
+): CourierPerformanceLevel {
+  const score = Math.max(0, Math.min(100, Number(performanceScore) || 0));
+  if (score >= 85) return 'excellent';
+  if (score >= 70) return 'good';
+  return 'needs_improvement';
+}
+
+/**
+ * Taux de refus explicites sur le même dénominateur que l’acceptance.
+ * null si aucun échantillon.
+ */
+export function computeCourierRejectionRate(
+  c: CourierPerformanceCounters,
+): number | null {
+  const accepted = n(c.offersAccepted) + n(c.marketplaceClaims);
+  const rejected = n(c.offersRejected);
+  const expired = n(c.offersExpired);
+  const missed = n(c.marketplaceMissed);
+  const denom = accepted + rejected + expired + missed;
+  if (denom <= 0) return null;
+  return Math.round((rejected / denom) * 1000) / 1000;
 }
 
 /**

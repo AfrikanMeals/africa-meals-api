@@ -1,6 +1,7 @@
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
+import { DeliveryAgentModule } from '@modules/delivery-agent/delivery-agent.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -23,6 +24,8 @@ import { StoreDeliveryDriversService } from './store-delivery-drivers.service';
     forwardRef(() => MailerModule),
     NotificationsModule,
     WsNotifyModule,
+    // Overview Performance & Statut (évite de dupliquer Stripe/perf ici).
+    forwardRef(() => DeliveryAgentModule),
     MongooseModule.forFeature([
       {
         name: StoreDeliveryDriverMembershipModel.name,

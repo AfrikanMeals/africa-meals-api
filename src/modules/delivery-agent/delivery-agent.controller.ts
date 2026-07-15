@@ -654,6 +654,22 @@ export class DeliveryAgentController {
     );
   }
 
+  @Get('admin/applications/:applicationId/status-performance')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Admin — badge, statut (KYC/présence/Stripe) et performances d’un livreur approuvé (avec gains résumé).',
+  })
+  async getApplicationStatusPerformanceAdmin(
+    @Req() req: Request,
+    @Param('applicationId') applicationId: string,
+  ) {
+    return this._deliveryAgent.getStatusPerformanceOverviewForAdmin(
+      req.user as UserModel,
+      applicationId,
+    );
+  }
+
   @Get('admin/applications/:applicationId/finance-overview')
   @UseGuards(JwtGuard)
   @ApiOperation({

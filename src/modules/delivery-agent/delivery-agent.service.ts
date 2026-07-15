@@ -28,6 +28,11 @@ import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/sto
 import { DeliveryOrderOfferService } from '@modules/delivery-order-offer/delivery-order-offer.service';
 import { CourierMarketplaceDispatchService } from './courier-marketplace-dispatch.service';
 import { CourierPerformanceStatsService } from './courier-performance-stats.service';
+import { CourierStatusPerformanceService } from './courier-status-performance.service';
+import {
+  computeCourierPerformanceLevel,
+  computeCourierRejectionRate,
+} from './courier-performance.util';
 import {
   StoreDeliveryAssignmentModeEnum,
   StoreModel,
@@ -208,6 +213,8 @@ export class DeliveryAgentService {
     private readonly _deliveryOrderOffers?: DeliveryOrderOfferService,
     @Optional()
     private readonly _courierPerf?: CourierPerformanceStatsService,
+    @Optional()
+    private readonly _statusPerformance?: CourierStatusPerformanceService,
     @Optional()
     private readonly _marketplaceDispatch?: CourierMarketplaceDispatchService,
     @Optional()
@@ -1136,10 +1143,12 @@ export class DeliveryAgentService {
         deliveryAgentId: agentId,
         acceptanceRate: null,
         rejectionCount: 0,
+        rejectionRate: null,
         unassignCount: 0,
         avgDeliveryDurationSec: null,
         avgDistanceKm: null,
         performanceScore: 70,
+        performanceLevel: computeCourierPerformanceLevel(70),
         offersPresented: 0,
         offersAccepted: 0,
         offersRejected: 0,
@@ -1155,17 +1164,27 @@ export class DeliveryAgentService {
       };
     }
     const payload = await this._courierPerf.getOrCreate(agentId);
-    return (
-      payload ?? {
+    if (!payload) {
+      return {
         deliveryAgentId: agentId,
         acceptanceRate: null,
         rejectionCount: 0,
+        rejectionRate: null,
         unassignCount: 0,
         avgDeliveryDurationSec: null,
         avgDistanceKm: null,
         performanceScore: 70,
-      }
-    );
+        performanceLevel: computeCourierPerformanceLevel(70),
+      };
+    }
+    // Enrichir pour l’écran Profil « Performance & Statut ».
+    return {
+      ...payload,
+      rejectionRate: computeCourierRejectionRate(payload),
+      performanceLevel: computeCourierPerformanceLevel(
+        payload.performanceScore,
+      ),
+    };
   }
 
   /**
@@ -2984,6 +3003,25 @@ export class DeliveryAgentService {
   }
 
   /** Admin — synthèse performance + gains + Stripe pour un livreur approuvé. */
+  /**
+   * Admin — overview Performance & Statut (badge, KYC, présence, Stripe, perf + gains résumé).
+   */
+  async getStatusPerformanceOverviewForAdmin(
+    admin: UserModel,
+    applicationId: string,
+  ) {
+    this.assertAdmin(admin);
+    const app = await this._requireApprovedApplication(applicationId);
+    const agentUserId = String(app.user ?? '');
+    if (!this._statusPerformance) {
+      throw new NotFoundException('status_performance_unavailable');
+    }
+    return this._statusPerformance.buildForAgentUserId(agentUserId, {
+      includeFinancials: true,
+      maskStripeAccountId: false,
+    });
+  }
+
   async getApplicationFinanceOverviewForAdmin(
     admin: UserModel,
     applicationId: string,

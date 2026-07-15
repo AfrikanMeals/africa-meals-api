@@ -1,10 +1,16 @@
 import {
   acceptanceDispatchPenalty,
   computeCourierAcceptanceRate,
+  computeCourierPerformanceLevel,
   computeCourierPerformanceScore,
+  computeCourierRejectionRate,
   deriveCourierPerformance,
   performanceDispatchPenalty,
 } from './courier-performance.util';
+import {
+  buildCourierStatusPerformanceOverview,
+  maskStripeAccountId,
+} from './courier-status-performance.util';
 
 describe('courier-performance.util', () => {
   it('acceptanceRate null without samples', () => {
@@ -72,5 +78,88 @@ describe('courier-performance.util', () => {
     expect(acceptanceDispatchPenalty(1)).toBe(0);
     expect(acceptanceDispatchPenalty(0)).toBe(20);
     expect(acceptanceDispatchPenalty(null)).toBe(0);
+  });
+
+  it('performanceLevel thresholds', () => {
+    expect(computeCourierPerformanceLevel(90)).toBe('excellent');
+    expect(computeCourierPerformanceLevel(70)).toBe('good');
+    expect(computeCourierPerformanceLevel(69)).toBe('needs_improvement');
+  });
+
+  it('rejectionRate shares acceptance denominator', () => {
+    expect(
+      computeCourierRejectionRate({
+        offersAccepted: 2,
+        offersRejected: 2,
+        offersExpired: 0,
+        marketplaceClaims: 0,
+        marketplaceMissed: 0,
+      }),
+    ).toBe(0.5);
+    expect(computeCourierRejectionRate({})).toBeNull();
+  });
+});
+
+describe('courier-status-performance.util', () => {
+  it('masks stripe account and omits financials for vendor', () => {
+    expect(maskStripeAccountId('acct_1234567890abcd')).toBe('acct_****abcd');
+    const overview = buildCourierStatusPerformanceOverview({
+      userId: 'u1',
+      applicationId: 'a1',
+      displayName: 'Test',
+      applicationStatus: 'APPROVED',
+      partnerBadge: null,
+      presence: {
+        availability: 'disponible',
+        presence: 'disponible',
+        activeOrderCount: 0,
+        maxConcurrentOrders: 2,
+      },
+      stripe: {
+        onboardingComplete: true,
+        chargesEnabled: true,
+        payoutsEnabled: true,
+        accountId: 'acct_1234567890abcd',
+      },
+      counters: { offersAccepted: 1, completedDeliveries: 1, totalDistanceKm: 3 },
+      averageRating: 4.5,
+      ratingCount: 2,
+      includeFinancials: false,
+      financials: {
+        ordersDeliveredTotal: 10,
+        shippingRevenueTotal: 100,
+        driverEarningTotal: 50,
+        driverTipEarningTotal: 5,
+        currency: 'CAD',
+      },
+      maskStripeAccountId: true,
+    });
+    expect(overview.financials).toBeUndefined();
+    expect(overview.status.stripe.accountId).toBe('acct_****abcd');
+    expect(overview.performance.performanceLevel).toBeTruthy();
+  });
+
+  it('includes financials for admin', () => {
+    const overview = buildCourierStatusPerformanceOverview({
+      userId: 'u1',
+      applicationId: 'a1',
+      displayName: 'Test',
+      applicationStatus: 'APPROVED',
+      partnerBadge: null,
+      presence: null,
+      stripe: null,
+      counters: {},
+      averageRating: null,
+      ratingCount: 0,
+      includeFinancials: true,
+      financials: {
+        ordersDeliveredTotal: 1,
+        shippingRevenueTotal: 10,
+        driverEarningTotal: 5,
+        driverTipEarningTotal: 0,
+        currency: 'XAF',
+      },
+    });
+    expect(overview.financials?.driverEarningTotal).toBe(5);
   });
 });
