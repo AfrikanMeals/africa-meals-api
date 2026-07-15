@@ -10,6 +10,7 @@ import {
 import {
   buildCourierStatusPerformanceOverview,
   maskStripeAccountId,
+  projectCourierStatusPerformanceForVendor,
 } from './courier-status-performance.util';
 
 describe('courier-performance.util', () => {
@@ -31,6 +32,15 @@ describe('courier-performance.util', () => {
 
   it('performanceScore defaults to 70 for new courier', () => {
     expect(computeCourierPerformanceScore({})).toBe(70);
+  });
+
+  it('keeps a notified offer neutral until the courier decides', () => {
+    expect(
+      computeCourierPerformanceScore({
+        offersPresented: 1,
+        marketplaceNotified: 1,
+      }),
+    ).toBe(70);
   });
 
   it('performanceScore rises with acceptance and completions', () => {
@@ -161,5 +171,37 @@ describe('courier-status-performance.util', () => {
       },
     });
     expect(overview.financials?.driverEarningTotal).toBe(5);
+  });
+
+  it('clamps invalid public counters and allowlists the vendor payload', () => {
+    const overview = buildCourierStatusPerformanceOverview({
+      userId: 'u1',
+      applicationId: 'a1',
+      displayName: 'Test',
+      applicationStatus: 'APPROVED',
+      partnerBadge: null,
+      presence: null,
+      stripe: null,
+      counters: {
+        completedDeliveries: -2,
+        totalDistanceKm: Number.POSITIVE_INFINITY,
+      },
+      averageRating: null,
+      ratingCount: 0,
+      includeFinancials: true,
+      financials: {
+        ordersDeliveredTotal: 1,
+        shippingRevenueTotal: 10,
+        driverEarningTotal: 5,
+        driverTipEarningTotal: 0,
+        currency: 'XAF',
+      },
+    });
+
+    const vendor = projectCourierStatusPerformanceForVendor(overview);
+
+    expect(vendor.performance.completedDeliveries).toBe(0);
+    expect(vendor.performance.totalDistanceKm).toBe(0);
+    expect('financials' in vendor).toBe(false);
   });
 });

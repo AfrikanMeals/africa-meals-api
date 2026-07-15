@@ -211,10 +211,8 @@ export class DeliveryAgentService {
     @Inject(forwardRef(() => DeliveryOrderOfferService))
     @Optional()
     private readonly _deliveryOrderOffers?: DeliveryOrderOfferService,
-    @Optional()
-    private readonly _courierPerf?: CourierPerformanceStatsService,
-    @Optional()
-    private readonly _statusPerformance?: CourierStatusPerformanceService,
+    private readonly _courierPerf: CourierPerformanceStatsService,
+    private readonly _statusPerformance: CourierStatusPerformanceService,
     @Optional()
     private readonly _marketplaceDispatch?: CourierMarketplaceDispatchService,
     @Optional()
@@ -3002,7 +3000,6 @@ export class DeliveryAgentService {
     };
   }
 
-  /** Admin — synthèse performance + gains + Stripe pour un livreur approuvé. */
   /**
    * Admin — overview Performance & Statut (badge, KYC, présence, Stripe, perf + gains résumé).
    */
@@ -3013,9 +3010,6 @@ export class DeliveryAgentService {
     this.assertAdmin(admin);
     const app = await this._requireApprovedApplication(applicationId);
     const agentUserId = String(app.user ?? '');
-    if (!this._statusPerformance) {
-      throw new NotFoundException('status_performance_unavailable');
-    }
     return this._statusPerformance.buildForAgentUserId(agentUserId, {
       includeFinancials: true,
       maskStripeAccountId: false,
