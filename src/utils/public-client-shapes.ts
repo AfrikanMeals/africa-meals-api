@@ -179,6 +179,24 @@ export function slimAdForPublicClient(
       if (fromRef !== '') marketingOfferListingId = fromRef;
     }
   }
+  // Bundle bannière : id plat pour deep-link mobile (AdEntity.productBundleId).
+  const bundleRaw = raw['productBundle'] ?? raw['product_bundle'];
+  let productBundleId = mongoIdToString(
+    raw['productBundleId'] ?? raw['product_bundle_id'] ?? '',
+  );
+  if (productBundleId === '') productBundleId = undefined;
+  if (bundleRaw != null) {
+    if (typeof bundleRaw === 'object' && !(bundleRaw instanceof Date)) {
+      const fromRef = mongoIdToString(
+        (bundleRaw as Record<string, unknown>)['_id'] ??
+          (bundleRaw as Record<string, unknown>)['id'],
+      );
+      if (fromRef !== '') productBundleId = fromRef;
+    } else {
+      const fromRef = mongoIdToString(bundleRaw);
+      if (fromRef !== '') productBundleId = fromRef;
+    }
+  }
   return {
     _id: id,
     id,
@@ -200,6 +218,7 @@ export function slimAdForPublicClient(
     ...(marketingOfferListingId != null
       ? { marketingOfferListingId }
       : {}),
+    ...(productBundleId != null ? { productBundleId } : {}),
     actionType: raw['actionType'] ?? raw['action_type'],
     actionTarget: raw['actionTarget'] ?? raw['action_target'],
   };
