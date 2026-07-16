@@ -101,6 +101,10 @@ export class CartItemModel extends BaseSchema {
   })
   bundleId?: Types.ObjectId;
 
+  /** Titre combo figé à l’ajout (affichage panier / commande sans recharger le bundle). */
+  @Prop({ required: false, name: 'bundle_title', trim: true })
+  bundleTitle?: string;
+
   @Prop({
     required: true,
     name: 'user',

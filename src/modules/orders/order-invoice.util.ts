@@ -162,16 +162,19 @@ export function buildOrderReceiptTextLines(
   const discount = Math.max(0, linesSubtotal + shipping + tax - orderSubtotal);
 
   const out: string[] = [];
-  for (const it of items) {
-    const name = String(it.label ?? '').trim() || 'Article';
-    const qty = Math.max(1, Math.floor(Number(it.quantity) || 1));
-    const unit = Math.max(0, Number(it.price) || 0);
-    const lineTotal = qty * unit;
+  // Affichage groupé combo : 1 ligne « Combo » + sous-composants.
+  for (const it of groupOrderLinesForDisplay(items)) {
+    const name = it.label;
+    const qty = it.quantity;
+    const lineTotal = qty * it.unitPrice;
     out.push(
       qty > 1
         ? `${name} × ${qty} : ${formatInvoiceMoney(lineTotal, currency)}`
         : `${name} : ${formatInvoiceMoney(lineTotal, currency)}`,
     );
+    for (const sub of it.subLabels) {
+      out.push(`  · ${sub}`);
+    }
   }
   out.push(`Sous-total articles : ${formatInvoiceMoney(linesSubtotal, currency)}`);
   if (shipping > 0.009) {
@@ -935,4 +938,102 @@ export function lineCustomizationText(item: OrdeLineItem): string {
     normalizeSelectedSupplements(row.selectedSupplements),
     row.selectedVariantLabel,
   );
+}
+
+/** Ligne facture affichable : article simple ou combo regroupé. */
+export type OrderDisplayLine = {
+  kind: 'single' | 'bundle';
+  label: string;
+  quantity: number;
+  /** Prix unitaire affiché (somme des composantes pour un combo). */
+  unitPrice: number;
+  pictureUrl?: string;
+  /** Sous-libellés (composants + personnalisations). */
+  subLabels: string[];
+  /** Lignes techniques d’origine (audit / JSON-LD). */
+  sourceLines: OrdeLineItem[];
+};
+
+/**
+ * Regroupe les lignes commande par `bundleGroupId` pour facture / e-mail / PDF.
+ * Sans groupe → ligne inchangée. Prix combo = somme des prix × qty des composantes / qty groupe.
+ */
+export function groupOrderLinesForDisplay(
+  lines: OrdeLineItem[] | undefined | null,
+): OrderDisplayLine[] {
+  const items = Array.isArray(lines) ? lines : [];
+  const out: OrderDisplayLine[] = [];
+  const seenGroups = new Set<string>();
+
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i]!;
+    const groupId = String(
+      (it as { bundleGroupId?: string }).bundleGroupId ?? '',
+    ).trim();
+
+    if (!groupId) {
+      const label = String(it.label ?? '').trim() || 'Article';
+      const qty = Math.max(1, Math.floor(Number(it.quantity) || 1));
+      const unit = Math.max(0, Number(it.price) || 0);
+      const extras = lineCustomizationText(it);
+      out.push({
+        kind: 'single',
+        label,
+        quantity: qty,
+        unitPrice: unit,
+        pictureUrl: String(it.pictureUrl ?? '').trim() || undefined,
+        subLabels: extras ? [extras] : [],
+        sourceLines: [it],
+      });
+      continue;
+    }
+
+    if (seenGroups.has(groupId)) continue;
+    seenGroups.add(groupId);
+
+    // Toutes les lignes du même combo (ordre d’apparition conservé).
+    const group = items.filter(
+      (row) =>
+        String((row as { bundleGroupId?: string }).bundleGroupId ?? '').trim() ===
+        groupId,
+    );
+    const title =
+      String((group[0] as { bundleTitle?: string }).bundleTitle ?? '').trim() ||
+      'Combo';
+    // Qty groupe = min des quantités (1 combo = mêmes qty sur chaque composante).
+    const qty = Math.max(
+      1,
+      Math.min(
+        ...group.map((g) => Math.max(1, Math.floor(Number(g.quantity) || 1))),
+      ),
+    );
+    const groupTotal = group.reduce((acc, g) => {
+      const q = Math.max(0, Number(g.quantity) || 0);
+      const p = Math.max(0, Number(g.price) || 0);
+      return acc + q * p;
+    }, 0);
+    const unitPrice = Math.round((groupTotal / qty) * 100) / 100;
+    const pictureUrl =
+      group
+        .map((g) => String(g.pictureUrl ?? '').trim())
+        .find((u) => Boolean(u)) || undefined;
+
+    const subLabels = group.map((g) => {
+      const name = String(g.label ?? '').trim() || 'Article';
+      const extras = lineCustomizationText(g);
+      return extras ? `${name} (${extras})` : name;
+    });
+
+    out.push({
+      kind: 'bundle',
+      label: title,
+      quantity: qty,
+      unitPrice,
+      pictureUrl,
+      subLabels,
+      sourceLines: group,
+    });
+  }
+
+  return out;
 }

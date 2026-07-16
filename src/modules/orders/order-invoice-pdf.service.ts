@@ -8,8 +8,8 @@ import {
 import {
   formatInvoiceDate,
   formatInvoiceMoney,
+  groupOrderLinesForDisplay,
   inferInvoicePaymentMethodLabel,
-  lineCustomizationText,
   orderInvoicePaymentFeeAmount,
   orderInvoicePaymentFeeLabel,
   orderInvoiceTipAmount,
@@ -178,11 +178,12 @@ export class OrderInvoicePdfService {
       let y = tableTop + 26;
       doc.font('Helvetica').fontSize(9).fillColor(colors.text);
 
-      for (const line of snapshot.items ?? []) {
-        const label = String(line.label ?? 'Article').trim() || 'Article';
-        const qty = Math.max(0, Number(line.quantity) || 0);
-        const unit = Math.max(0, Number(line.price) || 0);
-        const extras = lineCustomizationText(line);
+      // Combo : une ligne facture + sous-composants (pas N lignes catalogue).
+      const displayLines = groupOrderLinesForDisplay(snapshot.items);
+      for (const line of displayLines) {
+        const label = line.label;
+        const qty = line.quantity;
+        const unit = line.unitPrice;
         const lineTotal = qty * unit;
 
         if (y > 700) {
@@ -196,7 +197,8 @@ export class OrderInvoicePdfService {
         });
         const labelH = doc.heightOfString(label, { width: 260 });
         let extraY = y + labelH + 2;
-        if (extras) {
+        if (line.subLabels.length) {
+          const extras = line.subLabels.join(' · ');
           doc.font('Helvetica').fontSize(8).fillColor(colors.textMuted);
           doc.text(extras, col1, extraY, { width: 260 });
           extraY += doc.heightOfString(extras, { width: 260 }) + 4;
@@ -220,7 +222,7 @@ export class OrderInvoicePdfService {
         y = rowBottom + 10;
       }
 
-      if (!(snapshot.items ?? []).length) {
+      if (!displayLines.length) {
         doc.text('Aucune ligne', col1, y);
         y += 18;
       }

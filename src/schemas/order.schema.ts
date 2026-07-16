@@ -168,6 +168,22 @@ export class OrdeLineItem {
   /** Variante de prix choisie (figée à la commande). */
   @Prop({ required: false, name: 'selected_variant_label', trim: true })
   selectedVariantLabel?: string;
+
+  /** Bundle source (lignes combo) — pour regroupement facture / admin. */
+  @Prop({
+    required: false,
+    name: 'bundle_id',
+    type: MongooseSchema.Types.ObjectId,
+  })
+  bundleId?: MongooseSchema.Types.ObjectId;
+
+  /** UUID du groupe combo (1 groupe = 1 unité bundle). */
+  @Prop({ required: false, name: 'bundle_group_id', trim: true })
+  bundleGroupId?: string;
+
+  /** Titre combo figé à la commande (affichage groupé). */
+  @Prop({ required: false, name: 'bundle_title', trim: true })
+  bundleTitle?: string;
 }
 
 @Schema({

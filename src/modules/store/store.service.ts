@@ -3608,9 +3608,13 @@ export class StoreService {
       (dto.itemCustomizations ?? []).map((c) => [c.itemIndex, c]),
     );
     const bundleGroupId = randomUUID();
-    const created: Array<Record<string, unknown>> = [];
+    // Titre figé pour affichage groupé panier / commande (FR prioritaire).
+    const bundleTitle =
+      String((bundle as { nameFr?: string }).nameFr ?? '').trim() ||
+      String((bundle as { nameEn?: string }).nameEn ?? '').trim() ||
+      'Combo';
 
-    // 4. Une ligne panier par item (prix recalculé côté CartService).
+    // 4. Une ligne panier par item (prix catalogue temporaire).
     for (const plan of plans) {
       const cust = customByIndex.get(plan.itemIndex);
       const args = {
@@ -3626,15 +3630,32 @@ export class StoreService {
         selectedVariantLabel: cust?.selectedVariantLabel,
         bundleId: bid,
         bundleGroupId,
+        bundleTitle,
       } as AddItemToCartDto;
-      const line = await this.addItemToStoreCart(storeId, args, user);
-      created.push(line as Record<string, unknown>);
+      await this.addItemToStoreCart(storeId, args, user);
     }
 
-    // 5. Engagement best-effort (accueil / ads).
+    // 5. Répartir le prix combo (remise bundle) sur les bases ; extras inchangés.
+    const discountTypeRaw = String(
+      (bundle as { discountType?: string }).discountType ?? 'percent',
+    ).trim();
+    const discountType =
+      discountTypeRaw === 'fixed' ? 'fixed' : 'percent';
+    const priced = await this._cartService.applyBundleGroupComboPricing({
+      storeId,
+      user,
+      bundleGroupId,
+      discountType,
+      discountValue: Number(
+        (bundle as { discountValue?: number }).discountValue ?? 0,
+      ),
+      bundleTitle,
+    });
+
+    // 6. Engagement best-effort (accueil / ads).
     void this._productBundlesService.trackEngagement(bid, 'checkout_start');
 
-    return { bundleId: bid, bundleGroupId, items: created };
+    return { bundleId: bid, bundleGroupId, items: priced };
   }
 
   private async assertPreOrderCheckoutAllowed(

@@ -1145,6 +1145,9 @@ export class OrdersService {
           selectedSupplements?: unknown;
           selectedVariantLabel?: string;
           commissionRetrieveStrategy?: string;
+          bundleId?: unknown;
+          bundleGroupId?: string;
+          bundleTitle?: string;
         };
         const variantLabel = String(row.selectedVariantLabel ?? '').trim();
         const strategyRaw = String(row.commissionRetrieveStrategy ?? '').trim();
@@ -1152,6 +1155,12 @@ export class OrdersService {
           strategyRaw === 'add_to_price' || strategyRaw === 'on_payout'
             ? strategyRaw
             : undefined;
+        // Combo : propager le groupe pour regroupement facture / détail.
+        const bundleGroupId = String(row.bundleGroupId ?? '').trim();
+        const bundleTitle = String(row.bundleTitle ?? '').trim();
+        const bundleIdRaw = row.bundleId;
+        const bundleIdStr =
+          bundleIdRaw != null ? String(bundleIdRaw).trim() : '';
         return {
           label,
           itemType: item.type!,
@@ -1169,6 +1178,11 @@ export class OrdersService {
           ...(variantLabel ? { selectedVariantLabel: variantLabel } : {}),
           ...(commissionRetrieveStrategy
             ? { commissionRetrieveStrategy }
+            : {}),
+          ...(bundleGroupId ? { bundleGroupId } : {}),
+          ...(bundleTitle ? { bundleTitle } : {}),
+          ...(bundleIdStr && Types.ObjectId.isValid(bundleIdStr)
+            ? { bundleId: new Types.ObjectId(bundleIdStr) }
             : {}),
         };
       },

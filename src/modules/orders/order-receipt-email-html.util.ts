@@ -1,6 +1,7 @@
 import { escapeEmailHtml } from '@modules/mailer/email-brand.util';
 import {
   formatInvoiceMoney,
+  groupOrderLinesForDisplay,
   inferInvoicePaymentMethodLabel,
   orderInvoiceOrderSubtotal,
   orderInvoicePaymentFeeAmount,
@@ -29,12 +30,12 @@ function firstProductImage(snapshot: OrderInvoiceSnapshot): string | undefined {
 }
 
 function summarizeOrderItems(snapshot: OrderInvoiceSnapshot): string {
-  const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+  const items = groupOrderLinesForDisplay(snapshot.items);
   if (!items.length) return 'Commande';
   return items
     .map((it) => {
-      const name = String(it.label ?? '').trim() || 'Article';
-      const qty = Math.max(1, Math.floor(Number(it.quantity) || 1));
+      const name = it.label;
+      const qty = it.quantity;
       return qty > 1 ? `${name} × ${qty}` : name;
     })
     .join(', ');
@@ -164,20 +165,28 @@ export function buildOrderReceiptEmailBodyHtml(
     ? `Commande #${esc(ref)} (${esc(orderDateLabel)})`
     : `Commande #${esc(ref)}`;
 
-  const productRows = items.length
-    ? items
+  // Affichage groupé : 1 ligne Combo + sous-composants.
+  const displayItems = groupOrderLinesForDisplay(items);
+  const productRows = displayItems.length
+    ? displayItems
         .map((it) => {
-          const name = esc(String(it.label ?? '').trim() || 'Article');
-          const qty = Math.max(1, Math.floor(Number(it.quantity) || 1));
-          const unit = Math.max(0, Number(it.price) || 0);
-          const lineTotal = lineSubtotal(it);
+          const name = esc(it.label);
+          const qty = it.quantity;
+          const unit = it.unitPrice;
+          const lineTotal = qty * unit;
           const qtyLabel = qty > 1 ? `${name} × ${qty}` : name;
+          const subHtml = it.subLabels.length
+            ? `<div style="margin-top:4px;font-size:12px;color:#6b7280;">${it.subLabels
+                .map((s) => esc(s))
+                .join('<br/>')}</div>`
+            : '';
           return `
       <tr>
         <td style="padding:10px 0;border-bottom:1px solid #ece5d8;font-size:15px;color:#374151;" itemprop="acceptedOffer" itemscope itemtype="http://schema.org/Offer">
           <span itemprop="itemOffered" itemscope itemtype="http://schema.org/Product">
             <span itemprop="name">${qtyLabel}</span>
           </span>
+          ${subHtml}
           <meta itemprop="price" content="${unit.toFixed(2)}" />
           <meta itemprop="priceCurrency" content="${esc(currency)}" />
           <span itemprop="eligibleQuantity" itemscope itemtype="http://schema.org/QuantitativeValue">

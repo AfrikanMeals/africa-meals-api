@@ -146,6 +146,12 @@ export class AddItemToCartDto {
   @IsString()
   bundleId?: string;
 
+  /** Titre combo figé (nameFr/nameEn) pour l’UI panier groupée. */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  bundleTitle?: string;
+
   /** UUID partagé entre les lignes d’un même ajout de bundle. */
   @ApiPropertyOptional({
     example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',

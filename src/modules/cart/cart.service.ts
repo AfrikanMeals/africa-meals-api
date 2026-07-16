@@ -47,6 +47,9 @@ import {
   resolveDailyMenuProductCap,
 } from '@utils/daily-menu-stock.util';
 import { mapInChunks } from '@utils/map-in-chunks';
+import { allocateBundleCartLinePrices } from '@modules/product-bundles/product-bundle-cart-pricing.util';
+
+const roundMoneyCart = (n: number) => Math.round(n * 100) / 100;
 
 /** Boutique + adresse géolocalisée (distance client ↔ restaurant sur le mobile). */
 const cartStorePopulate = {
@@ -483,6 +486,7 @@ export class CartService {
     // Lignes bundle : jamais fusionnées (chaque groupe UUID = 1 combo).
     const bundleGroupId = String(args.bundleGroupId ?? '').trim() || undefined;
     const bundleId = String(args.bundleId ?? '').trim() || undefined;
+    const bundleTitle = String(args.bundleTitle ?? '').trim() || undefined;
 
     let item = bundleGroupId
       ? null
@@ -659,6 +663,7 @@ export class CartService {
           ? { bundleId: new Types.ObjectId(bundleId) }
           : {}),
         ...(bundleGroupId ? { bundleGroupId } : {}),
+        ...(bundleTitle ? { bundleTitle } : {}),
       });
     }
 
@@ -670,6 +675,176 @@ export class CartService {
       type: args.type,
       quantity: item.quantity ?? qtyReq,
       price: priceForLine,
+      ...(bundleGroupId ? { bundleGroupId } : {}),
+      ...(bundleId ? { bundleId } : {}),
+      ...(bundleTitle ? { bundleTitle } : {}),
+    };
+  }
+
+  /**
+   * Applique le prix combo (remise bundle) sur les lignes d’un `bundleGroupId`.
+   * Bases catalogue remisées ; extras perso conservés sur leur ligne.
+   */
+  async applyBundleGroupComboPricing(args: {
+    storeId: string;
+    user: UserModel;
+    bundleGroupId: string;
+    discountType: 'percent' | 'fixed';
+    discountValue: number;
+    bundleTitle?: string;
+  }): Promise<Array<Record<string, unknown>>> {
+    const groupId = String(args.bundleGroupId ?? '').trim();
+    if (!groupId) return [];
+
+    const rows = await this._cartItemModel
+      .find({
+        store: new Types.ObjectId(args.storeId),
+        user: new Types.ObjectId(args.user.id),
+        bundleGroupId: groupId,
+      })
+      .exec();
+    if (!rows.length) return [];
+
+    const lineInputs = await mapInChunks(rows, 4, async (row) => {
+      const split = await this.splitCartLineBaseAndExtrasCustomer(
+        args.storeId,
+        row,
+      );
+      return {
+        lineId: String(row.id),
+        baseCustomerPrice: split.baseCustomerPrice,
+        extrasCustomerPrice: split.extrasCustomerPrice,
+      };
+    });
+
+    const allocated = allocateBundleCartLinePrices(
+      lineInputs,
+      args.discountType,
+      args.discountValue,
+    );
+    const title = String(args.bundleTitle ?? '').trim();
+
+    // Persister prix combo (+ titre figé pour UI / commande).
+    await mapInChunks(allocated, 4, async (a) => {
+      await this._cartItemModel
+        .updateOne(
+          { _id: new Types.ObjectId(a.lineId) },
+          {
+            $set: {
+              price: a.unitPrice,
+              ...(title ? { bundleTitle: title } : {}),
+            },
+          },
+        )
+        .exec();
+    });
+
+    void this.bustCartPricingCache(args.user);
+
+    const refreshed = await this._cartItemModel
+      .find({
+        store: new Types.ObjectId(args.storeId),
+        user: new Types.ObjectId(args.user.id),
+        bundleGroupId: groupId,
+      })
+      .lean()
+      .exec();
+
+    return (refreshed ?? []).map((r) => {
+      const id = String((r as { _id?: unknown })._id ?? '');
+      return {
+        ...r,
+        id,
+        _id: id,
+      } as Record<string, unknown>;
+    });
+  }
+
+  /**
+   * Sépare prix client catalogue vs extras perso (pour ne pas remettre les extras).
+   * Reprend la logique d’ajout panier (variante + commission).
+   */
+  private async splitCartLineBaseAndExtrasCustomer(
+    storeId: string,
+    row: CartItemModel,
+  ): Promise<{ baseCustomerPrice: number; extrasCustomerPrice: number }> {
+    const fullPrice = Math.max(0, Number(row.price) || 0);
+    const strategyRaw = String(row.commissionRetrieveStrategy ?? '').trim();
+    const strategy =
+      strategyRaw === 'add_to_price' || strategyRaw === 'on_payout'
+        ? strategyRaw
+        : undefined;
+
+    if (row.type === CartItemTypeEnum.DRINK) {
+      // Boissons : pas d’extras perso panier → tout est base.
+      return { baseCustomerPrice: fullPrice, extrasCustomerPrice: 0 };
+    }
+
+    if (row.type !== CartItemTypeEnum.PRODUCT) {
+      return { baseCustomerPrice: fullPrice, extrasCustomerPrice: 0 };
+    }
+
+    const product = await this._productsService.findOneById(row.entityId);
+    if (!product) {
+      return { baseCustomerPrice: fullPrice, extrasCustomerPrice: 0 };
+    }
+    const productObj = (
+      typeof (product as { toObject?: () => unknown }).toObject === 'function'
+        ? (product as { toObject: () => Record<string, unknown> }).toObject()
+        : (product as unknown as Record<string, unknown>)
+    ) as Record<string, unknown>;
+
+    let vendorBase = Number(productObj.price ?? 0);
+    const variantLabel = String(row.selectedVariantLabel ?? '').trim();
+    const variants = Array.isArray(productObj.variants)
+      ? productObj.variants
+      : [];
+    if (variantLabel && variants.length) {
+      const match = variants.find((v) => {
+        const vrow = (v ?? {}) as Record<string, unknown>;
+        return String(vrow.label ?? vrow.name ?? '').trim() === variantLabel;
+      }) as Record<string, unknown> | undefined;
+      if (match) {
+        const vp = Number(match.price ?? 0);
+        const vd = Number(match.discountPrice ?? match.discount_price ?? 0);
+        vendorBase = vd > 0 && vd < vp ? vd : vp;
+      }
+    } else {
+      const disc = Number(
+        productObj.discountPrice ?? productObj.discount_price ?? 0,
+      );
+      if (disc > 0 && disc < vendorBase) vendorBase = disc;
+    }
+
+    const complements = normalizeSelectedComplements(
+      row.selectedComplements ?? [],
+    );
+    const supplements = normalizeSelectedSupplements(
+      row.selectedSupplements ?? [],
+    );
+    const extrasVendor = sumSelectedCustomizationVendorExtras(
+      complements,
+      supplements,
+    );
+
+    if (extrasVendor <= 0) {
+      return { baseCustomerPrice: fullPrice, extrasCustomerPrice: 0 };
+    }
+
+    // Prix client catalogue seul (sans extras) pour isoler la part remisable.
+    const baseCustomerPrice =
+      await this._planOrderCommission.resolveCustomerUnitPriceForStore(
+        storeId,
+        Math.max(0, vendorBase),
+        strategy,
+      );
+    const extrasCustomerPrice = Math.max(
+      0,
+      roundMoneyCart(fullPrice - baseCustomerPrice),
+    );
+    return {
+      baseCustomerPrice: Math.max(0, baseCustomerPrice),
+      extrasCustomerPrice,
     };
   }
 
