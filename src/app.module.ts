@@ -47,6 +47,7 @@ import {
 } from './config/mongoose-uri-diagnostics';
 import { nestEnvFilePaths } from './config/nest-env-files';
 import { AppPoliciesModule } from './modules/app-policies/app-policies.module';
+import { SitePagesModule } from './modules/site-pages/site-pages.module';
 import { DocumentationModule } from './modules/documentation/documentation.module';
 import { VendorGuidesModule } from './modules/vendor-guides/vendor-guides.module';
 import { BlogModule } from './modules/blog/blog.module';
@@ -346,6 +347,7 @@ async function readRedisManagerEnabledAtBootstrap(
     RefundsModule,
     PenaltiesModule,
     AppPoliciesModule,
+    SitePagesModule,
     DocumentationModule,
     VendorGuidesModule,
     BlogModule,
