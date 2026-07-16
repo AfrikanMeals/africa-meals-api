@@ -6,6 +6,7 @@ import { OrdersModule } from '@modules/orders/orders.module';
 import { ProductsModule } from '@modules/products/products.module';
 import { RatingsModule } from '@modules/ratings/ratings.module';
 import { DrinksModule } from '@modules/drinks/drinks.module';
+import { ProductBundlesModule } from '@modules/product-bundles/product-bundles.module';
 import { StockItemsModule } from '@modules/stock-items/stock-items.module';
 import { CatalogLibraryModule } from '@modules/catalog-library/catalog-library.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
@@ -95,6 +96,8 @@ import { StoreSubscribersModule } from '@modules/store-subscribers/store-subscri
     StockItemsModule,
     CatalogLibraryModule,
     DrinksModule,
+    // Stock catalogue bundles (quantite/seuil) consommé au checkout.
+    ProductBundlesModule,
     forwardRef(() => BillingModule),
     VendorStatusEmailModule,
     StoreDeliveryDriversModule,

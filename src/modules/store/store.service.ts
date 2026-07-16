@@ -96,6 +96,10 @@ import {
   DrinksService,
   maxDrinkOrderQuantity,
 } from '@modules/drinks/drinks.service';
+import {
+  ProductBundlesService,
+  maxBundleOrderQuantity,
+} from '@modules/product-bundles/product-bundles.service';
 import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
 import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-email.service';
 import {
@@ -342,6 +346,10 @@ export class StoreService {
 
   @Inject(DrinksService)
   private readonly _drinksService: DrinksService;
+
+  // Stock catalogue bundles (quantite/seuil) — consommé au checkout.
+  @Inject(ProductBundlesService)
+  private readonly _productBundlesService: ProductBundlesService;
 
   @Inject(StoreAccessService)
   private readonly _storeAccess: StoreAccessService;
@@ -1747,6 +1755,150 @@ export class StoreService {
     return ok ? 'ok' : 'fail';
   }
 
+  /** Vérifie si un bundle du menu du jour a un stock limité à décrémenter. */
+  private async dailyMenuBundleNeedsLimitedDecrement(
+    storeId: string,
+    dayOfWeek: number,
+    bundleId: string,
+  ): Promise<boolean> {
+    const doc = await this._storeModel
+      .findById(storeId)
+      .select('dailyMenuByWeekday')
+      .lean()
+      .exec();
+    const rows = this.normalizeDailyMenuForApi(
+      (doc?.dailyMenuByWeekday as Record<string, unknown>[]) ?? [],
+    );
+    const entry = rows
+      .find((r) => r.dayOfWeek === dayOfWeek)
+      ?.bundleItems.find((i) => i.bundleId === bundleId);
+    return !!entry && !entry.stockUnlimited;
+  }
+
+  private async doAtomicDecrementDailyMenuBundleStock(
+    storeId: string,
+    dayOfWeek: number,
+    bundleId: string,
+    qty: number,
+  ): Promise<boolean> {
+    const dow = Math.min(6, Math.max(0, dayOfWeek));
+    const bid = new Types.ObjectId(bundleId);
+    const res = await this._storeModel.updateOne(
+      {
+        _id: storeId,
+        dailyMenuByWeekday: {
+          $elemMatch: {
+            dayOfWeek: dow,
+            bundleItems: {
+              $elemMatch: {
+                bundleId: bid,
+                stockUnlimited: false,
+                stockRemaining: { $gte: qty },
+              },
+            },
+          },
+        },
+      },
+      {
+        $inc: {
+          'dailyMenuByWeekday.$[slot].bundleItems.$[it].stockRemaining': -qty,
+        },
+      },
+      {
+        arrayFilters: [
+          { 'slot.dayOfWeek': dow },
+          { 'it.bundleId': bid, 'it.stockUnlimited': false },
+        ],
+      },
+    );
+    return res.modifiedCount === 1;
+  }
+
+  private async atomicIncrementDailyMenuBundleStock(
+    storeId: string,
+    dayOfWeek: number,
+    bundleId: string,
+    qty: number,
+  ): Promise<void> {
+    const dow = Math.min(6, Math.max(0, dayOfWeek));
+    const bid = new Types.ObjectId(bundleId);
+    await this._storeModel.updateOne(
+      { _id: storeId },
+      {
+        $inc: {
+          'dailyMenuByWeekday.$[slot].bundleItems.$[it].stockRemaining': qty,
+        },
+      },
+      {
+        arrayFilters: [
+          { 'slot.dayOfWeek': dow },
+          { 'it.bundleId': bid, 'it.stockUnlimited': false },
+        ],
+      },
+    );
+  }
+
+  private async tryConsumeDailyMenuBundleStock(
+    storeId: string,
+    dayOfWeek: number,
+    bundleId: string,
+    qty: number,
+  ): Promise<'skip' | 'ok' | 'fail'> {
+    if (
+      !(await this.dailyMenuBundleNeedsLimitedDecrement(
+        storeId,
+        dayOfWeek,
+        bundleId,
+      ))
+    ) {
+      return 'skip';
+    }
+    const ok = await this.doAtomicDecrementDailyMenuBundleStock(
+      storeId,
+      dayOfWeek,
+      bundleId,
+      qty,
+    );
+    return ok ? 'ok' : 'fail';
+  }
+
+  /**
+   * Agrège les quantités de bundles achetés depuis le panier.
+   * 1 groupe (`bundleGroupId`) = 1 unité de bundle (qty = max des lignes du groupe).
+   */
+  private aggregateBundleQtyFromCart(cart: {
+    items: Array<{
+      bundleId?: unknown;
+      bundleGroupId?: string;
+      quantity?: number;
+      id?: unknown;
+      _id?: unknown;
+    }>;
+  }): Map<string, number> {
+    const groups = new Map<string, { bundleId: string; qty: number }>();
+    let soloSeq = 0;
+    for (const line of cart.items) {
+      const bid = this.stringifyIdLike(line.bundleId);
+      if (!bid) continue;
+      const lineKey =
+        this.stringifyIdLike(line.id ?? line._id) || `i${soloSeq++}`;
+      const gid =
+        String(line.bundleGroupId ?? '').trim() || `solo-${bid}-${lineKey}`;
+      const q = Math.max(1, Math.floor(Number(line.quantity ?? 1)));
+      const existing = groups.get(gid);
+      if (!existing) {
+        groups.set(gid, { bundleId: bid, qty: q });
+      } else {
+        existing.qty = Math.max(existing.qty, q);
+      }
+    }
+    const bundleQty = new Map<string, number>();
+    for (const g of groups.values()) {
+      bundleQty.set(g.bundleId, (bundleQty.get(g.bundleId) ?? 0) + g.qty);
+    }
+    return bundleQty;
+  }
+
   /** Menu du jour actif pour aujourd’hui (au moins un plat listé). */
   private todayDailyMenuSlot(
     rows: Array<{
@@ -1815,7 +1967,15 @@ export class StoreService {
   private async assertDailyMenuStockForCart(
     store: StoreModel,
     cart: {
-      items: Array<{ type?: string; entityId?: string; quantity?: number }>;
+      items: Array<{
+        type?: string;
+        entityId?: string;
+        quantity?: number;
+        bundleId?: unknown;
+        bundleGroupId?: string;
+        id?: unknown;
+        _id?: unknown;
+      }>;
     },
   ): Promise<void> {
     const raw = (store as { dailyMenuByWeekday?: unknown }).dailyMenuByWeekday;
@@ -1830,28 +1990,60 @@ export class StoreService {
       dailyMenuLimit,
     );
     const tz = await this.resolveEffectiveTimezoneForStore(store);
-    const slot = this.todayDailyMenuSlot(
-      rows,
-      jsDayOfWeekInTimezone(tz),
-    );
-    if (!slot) {
-      return;
+    const dow = jsDayOfWeekInTimezone(tz);
+    const slot = this.todayDailyMenuSlot(rows, dow);
+    if (slot) {
+      for (const line of cart.items) {
+        if (line.type !== CartItemTypeEnum.PRODUCT) continue;
+        const pid = String(line.entityId ?? '');
+        if (!pid) continue;
+        const entry = slot.items.find((i) => i.productId === pid);
+        if (!entry) {
+          throw new BadRequestException('daily_menu_product_not_available');
+        }
+        if (!entry.stockUnlimited && entry.stockRemaining <= 0) {
+          throw new BadRequestException('daily_menu_product_not_available');
+        }
+        if (entry.stockUnlimited) continue;
+        const qty = Math.max(0, Number(line.quantity ?? 0));
+        if (qty > entry.stockRemaining) {
+          throw new BadRequestException('daily_menu_insufficient_stock');
+        }
+      }
     }
-    for (const line of cart.items) {
-      if (line.type !== CartItemTypeEnum.PRODUCT) continue;
-      const pid = String(line.entityId ?? '');
-      if (!pid) continue;
-      const entry = slot.items.find((i) => i.productId === pid);
-      if (!entry) {
-        throw new BadRequestException('daily_menu_product_not_available');
+
+    // Bundles : si des bundleItems sont configurés ce jour, n'autoriser que ceux-là.
+    const dayRow = rows.find((r) => r.dayOfWeek === dow);
+    const dayBundles = dayRow?.bundleItems ?? [];
+    const bundleQty = this.aggregateBundleQtyFromCart(cart);
+    if (dayBundles.length > 0 && bundleQty.size > 0) {
+      for (const [bid, qty] of bundleQty) {
+        const entry = dayBundles.find((i) => i.bundleId === bid);
+        if (!entry) {
+          throw new BadRequestException('daily_menu_bundle_not_available');
+        }
+        if (!entry.stockUnlimited && entry.stockRemaining <= 0) {
+          throw new BadRequestException('daily_menu_bundle_not_available');
+        }
+        if (!entry.stockUnlimited && qty > entry.stockRemaining) {
+          throw new BadRequestException('daily_menu_bundle_insufficient_stock');
+        }
       }
-      if (!entry.stockUnlimited && entry.stockRemaining <= 0) {
-        throw new BadRequestException('daily_menu_product_not_available');
-      }
-      if (entry.stockUnlimited) continue;
-      const qty = Math.max(0, Number(line.quantity ?? 0));
-      if (qty > entry.stockRemaining) {
-        throw new BadRequestException('daily_menu_insufficient_stock');
+    }
+
+    // Stock catalogue bundle (quantite) — comme les boissons.
+    if (Types.ObjectId.isValid(storeId) && bundleQty.size > 0) {
+      for (const [bid, qty] of bundleQty) {
+        const stock = await this._productBundlesService.findStockInStore(
+          storeId,
+          bid,
+        );
+        const maxOrder = stock
+          ? maxBundleOrderQuantity(stock.quantite)
+          : 0;
+        if (!stock || qty > maxOrder) {
+          throw new BadRequestException('bundle_insufficient_stock');
+        }
       }
     }
   }
@@ -3355,7 +3547,15 @@ export class StoreService {
   private async assertDailyMenuStockForCartOnSchedule(
     store: StoreModel,
     cart: {
-      items: Array<{ type?: string; entityId?: string; quantity?: number }>;
+      items: Array<{
+        type?: string;
+        entityId?: string;
+        quantity?: number;
+        bundleId?: unknown;
+        bundleGroupId?: string;
+        id?: unknown;
+        _id?: unknown;
+      }>;
     },
     scheduledAt: Date,
     tz: string,
@@ -3377,10 +3577,8 @@ export class StoreService {
       Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [],
       dailyMenuLimit,
     );
-    const slot = this.todayDailyMenuSlot(
-      rows,
-      jsDayOfWeekInTimezone(tz, scheduledAt),
-    );
+    const dow = jsDayOfWeekInTimezone(tz, scheduledAt);
+    const slot = this.todayDailyMenuSlot(rows, dow);
     if (!slot) {
       throw new BadRequestException('daily_menu_not_available_for_date');
     }
@@ -3399,6 +3597,25 @@ export class StoreService {
       const qty = Math.max(0, Number(line.quantity ?? 0));
       if (qty > entry.stockRemaining) {
         throw new BadRequestException('daily_menu_insufficient_stock');
+      }
+    }
+
+    // Bundles pré-commandés : même règles que le jour courant.
+    const dayRow = rows.find((r) => r.dayOfWeek === dow);
+    const dayBundles = dayRow?.bundleItems ?? [];
+    const bundleQty = this.aggregateBundleQtyFromCart(cart);
+    if (dayBundles.length > 0 && bundleQty.size > 0) {
+      for (const [bid, qty] of bundleQty) {
+        const entry = dayBundles.find((i) => i.bundleId === bid);
+        if (!entry) {
+          throw new BadRequestException('daily_menu_bundle_not_available');
+        }
+        if (!entry.stockUnlimited && entry.stockRemaining <= 0) {
+          throw new BadRequestException('daily_menu_bundle_not_available');
+        }
+        if (!entry.stockUnlimited && qty > entry.stockRemaining) {
+          throw new BadRequestException('daily_menu_bundle_insufficient_stock');
+        }
       }
     }
   }
@@ -3521,6 +3738,8 @@ export class StoreService {
         : jsDayOfWeekInTimezone(tz);
     const consumed: { productId: string; qty: number }[] = [];
     const consumedDrinks: { drinkId: string; qty: number }[] = [];
+    const consumedBundles: { bundleId: string; qty: number }[] = [];
+    const consumedDailyBundles: { bundleId: string; qty: number }[] = [];
 
     const drinkQty = new Map<string, number>();
     for (const line of cart.items) {
@@ -3532,12 +3751,33 @@ export class StoreService {
       drinkQty.set(did, (drinkQty.get(did) ?? 0) + q);
     }
 
+    // Bundles : 1 groupe panier = 1 unité de stock catalogue + menu du jour.
+    const bundleQty = this.aggregateBundleQtyFromCart(cart);
+
     const rollbackDrinks = async () => {
       for (let i = consumedDrinks.length - 1; i >= 0; i--) {
         const c = consumedDrinks[i]!;
         await this._drinksService
           .restoreStock(storeId, c.drinkId, c.qty)
           .catch(() => undefined);
+      }
+    };
+
+    const rollbackBundles = async () => {
+      for (let i = consumedBundles.length - 1; i >= 0; i--) {
+        const c = consumedBundles[i]!;
+        await this._productBundlesService
+          .restoreStock(storeId, c.bundleId, c.qty)
+          .catch(() => undefined);
+      }
+      for (let i = consumedDailyBundles.length - 1; i >= 0; i--) {
+        const c = consumedDailyBundles[i]!;
+        await this.atomicIncrementDailyMenuBundleStock(
+          storeId,
+          dow,
+          c.bundleId,
+          c.qty,
+        ).catch(() => undefined);
       }
     };
 
@@ -3560,6 +3800,33 @@ export class StoreService {
         consumedDrinks.push({ drinkId: did, qty });
       }
 
+      // Stock catalogue bundle (quantite/seuil) — comme les boissons.
+      for (const [bid, qty] of bundleQty) {
+        const stock = await this._productBundlesService.findStockInStore(
+          storeId,
+          bid,
+        );
+        const maxOrder = stock
+          ? maxBundleOrderQuantity(stock.quantite)
+          : 0;
+        if (!stock || qty > maxOrder) {
+          await rollbackDrinks();
+          await rollbackBundles();
+          throw new BadRequestException('bundle_quantity_limit_exceeded');
+        }
+        const ok = await this._productBundlesService.tryConsumeStock(
+          storeId,
+          bid,
+          qty,
+        );
+        if (!ok) {
+          await rollbackDrinks();
+          await rollbackBundles();
+          throw new BadRequestException('bundle_insufficient_stock');
+        }
+        consumedBundles.push({ bundleId: bid, qty });
+      }
+
       for (const line of cart.items) {
         if (line.type !== CartItemTypeEnum.PRODUCT) continue;
         const pid = String(line.entityId ?? '');
@@ -3574,6 +3841,22 @@ export class StoreService {
         }
       }
 
+      // Stock menu du jour des bundles (si limité pour ce jour).
+      for (const [bid, qty] of bundleQty) {
+        const r = await this.tryConsumeDailyMenuBundleStock(
+          storeId,
+          dow,
+          bid,
+          qty,
+        );
+        if (r === 'fail') {
+          throw new BadRequestException('daily_menu_bundle_insufficient_stock');
+        }
+        if (r === 'ok') {
+          consumedDailyBundles.push({ bundleId: bid, qty });
+        }
+      }
+
       const order = await this._ordersService.createFromCart(storeId, user, options);
 
       if (order) {
@@ -3583,6 +3866,7 @@ export class StoreService {
       return order;
     } catch (e) {
       await rollbackDrinks();
+      await rollbackBundles();
       for (const c of consumed.reverse()) {
         await this.atomicIncrementDailyMenuProductStock(
           storeId,

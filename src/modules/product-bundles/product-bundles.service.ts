@@ -8,6 +8,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import {
   ProductBundleModel,
   ProductBundleStatusEnum,
+  ProductBundleStockStatutEnum,
   BundleItemTypeEnum,
 } from '@schemas/product-bundle.schema';
 import { ProductModel, ProductStatusEnum } from '@schemas/product.schema';
@@ -71,6 +72,10 @@ export type ProductBundleRow = {
   discountType: string;
   discountValue: number;
   status: string;
+  /** Stock catalogue (comme boissons). null = illimité (docs legacy). */
+  quantite: number | null;
+  seuil: number;
+  stockStatut: string;
   engagementScore: number;
   sortOrder: number;
   validFrom?: string;
@@ -78,6 +83,22 @@ export type ProductBundleRow = {
   createdAt?: string;
   updatedAt?: string;
 };
+
+/** Plafond commande = stock restant (même règle que les boissons). */
+export function maxBundleOrderQuantity(quantite: number | null | undefined): number {
+  // null/undefined = stock illimité (legacy) → plafond technique élevé
+  if (quantite === null || quantite === undefined) return 9999;
+  return Math.max(0, Math.floor(Number(quantite)));
+}
+
+function computeBundleStockStatut(
+  quantite: number,
+  seuil: number,
+): ProductBundleStockStatutEnum {
+  return quantite <= seuil
+    ? ProductBundleStockStatutEnum.ALERTE
+    : ProductBundleStockStatutEnum.OK;
+}
 
 /** Shape enrichie pour le feed public mobile (pricing + boutique). */
 export type BundleFeedRow = ProductBundleRow & {
@@ -248,6 +269,13 @@ export class ProductBundlesService {
       })),
       discountType: dto.discountType,
       discountValue: dto.discountValue,
+      // Stock catalogue — défaut 0 (vendeur doit renseigner, comme boissons).
+      quantite: Math.max(0, Math.floor(Number(dto.quantite ?? 0))),
+      seuil: Math.max(0, Math.floor(Number(dto.seuil ?? 0))),
+      stockStatut: computeBundleStockStatut(
+        Math.max(0, Math.floor(Number(dto.quantite ?? 0))),
+        Math.max(0, Math.floor(Number(dto.seuil ?? 0))),
+      ),
       validFrom: dto.validFrom,
       validUntil: dto.validUntil,
       sortOrder: dto.sortOrder ?? 0,
@@ -300,6 +328,19 @@ export class ProductBundlesService {
     if (dto.validFrom !== undefined) bundle.validFrom = dto.validFrom;
     if (dto.validUntil !== undefined) bundle.validUntil = dto.validUntil;
     if (dto.sortOrder !== undefined) bundle.sortOrder = dto.sortOrder;
+    // Mise à jour stock catalogue + recalcul statut alerte.
+    if (dto.quantite !== undefined) {
+      bundle.quantite = Math.max(0, Math.floor(Number(dto.quantite)));
+    }
+    if (dto.seuil !== undefined) {
+      bundle.seuil = Math.max(0, Math.floor(Number(dto.seuil)));
+    }
+    if (dto.quantite !== undefined || dto.seuil !== undefined) {
+      bundle.stockStatut = computeBundleStockStatut(
+        Number(bundle.quantite ?? 0),
+        Number(bundle.seuil ?? 0),
+      );
+    }
 
     await bundle.save();
     return this.toBundleRow(bundle.toObject());
@@ -354,10 +395,16 @@ export class ProductBundlesService {
       .limit(take * 3)
       .lean();
 
-    // Filtrer les bundles dont la validUntil est passée
+    // Filtrer les bundles dont la validUntil est passée.
     bundles = bundles.filter((b) => {
       if (!b.validUntil) return true;
       return new Date(b.validUntil) >= now;
+    });
+    // Exclure les bundles à stock épuisé (quantite === 0). Legacy sans champ = illimité.
+    bundles = bundles.filter((b) => {
+      const raw = (b as { quantite?: number }).quantite;
+      if (raw === undefined || raw === null) return true;
+      return Math.floor(Number(raw)) > 0;
     });
 
     if (bundles.length === 0) return [];
@@ -426,6 +473,13 @@ export class ProductBundlesService {
   /** Convertit un document bundle en shape admin/vendeur (sans données boutique). */
   private async toBundleRow(doc: any): Promise<ProductBundleRow> {
     const items = await this.resolveBundleItemRows(doc.items ?? []);
+    // null = stock illimité (document legacy sans champ quantite).
+    const rawQty = doc.quantite;
+    const quantite =
+      rawQty === undefined || rawQty === null
+        ? null
+        : Math.max(0, Math.floor(Number(rawQty)));
+    const seuil = Math.max(0, Math.floor(Number(doc.seuil ?? 0)));
     return {
       id: String(doc._id),
       storeId: String(doc.storeId),
@@ -438,12 +492,153 @@ export class ProductBundlesService {
       discountType: doc.discountType ?? doc.discount_type ?? 'percent',
       discountValue: Number(doc.discountValue ?? doc.discount_value ?? 0),
       status: doc.status ?? 'active',
+      quantite,
+      seuil,
+      stockStatut:
+        doc.stockStatut ??
+        doc.stock_statut ??
+        (quantite === null
+          ? ProductBundleStockStatutEnum.OK
+          : computeBundleStockStatut(quantite, seuil)),
       engagementScore: Number(doc.engagementScore ?? doc.engagement_score ?? 0),
       sortOrder: Number(doc.sortOrder ?? doc.sort_order ?? 0),
       validFrom: this.toIso(doc.validFrom ?? doc.valid_from),
       validUntil: this.toIso(doc.validUntil ?? doc.valid_until),
       createdAt: this.toIso(doc.createdAt),
       updatedAt: this.toIso(doc.updatedAt),
+    };
+  }
+
+  /**
+   * Décrémente le stock catalogue du bundle de façon atomique (checkout).
+   * Docs legacy sans `quantite` → skip (illimité).
+   */
+  async tryConsumeStock(
+    storeId: string,
+    bundleId: string,
+    qty: number,
+  ): Promise<boolean> {
+    const q = Math.floor(Number(qty));
+    if (
+      !Types.ObjectId.isValid(storeId) ||
+      !Types.ObjectId.isValid(bundleId) ||
+      q <= 0
+    ) {
+      return false;
+    }
+    const existing = await this.bundleModel
+      .findOne({
+        _id: new Types.ObjectId(bundleId),
+        storeId: new Types.ObjectId(storeId),
+      })
+      .select('quantite')
+      .lean()
+      .exec();
+    if (!existing) return false;
+    // Legacy sans champ → stock illimité, pas de décrément.
+    if (
+      (existing as { quantite?: number }).quantite === undefined ||
+      (existing as { quantite?: number }).quantite === null
+    ) {
+      return true;
+    }
+    const res = await this.bundleModel
+      .updateOne(
+        {
+          _id: new Types.ObjectId(bundleId),
+          storeId: new Types.ObjectId(storeId),
+          quantite: { $gte: q },
+        },
+        { $inc: { quantite: -q } },
+      )
+      .exec();
+    if (res.modifiedCount !== 1) return false;
+    await this.syncStockStatut(new Types.ObjectId(bundleId));
+    return true;
+  }
+
+  /** Annule une consommation (rollback checkout). */
+  async restoreStock(
+    storeId: string,
+    bundleId: string,
+    qty: number,
+  ): Promise<void> {
+    const q = Math.floor(Number(qty));
+    if (
+      !Types.ObjectId.isValid(storeId) ||
+      !Types.ObjectId.isValid(bundleId) ||
+      q <= 0
+    ) {
+      return;
+    }
+    const existing = await this.bundleModel
+      .findOne({
+        _id: new Types.ObjectId(bundleId),
+        storeId: new Types.ObjectId(storeId),
+      })
+      .select('quantite')
+      .lean()
+      .exec();
+    // Ne pas créer de stock sur un doc legacy illimité.
+    if (
+      !existing ||
+      (existing as { quantite?: number }).quantite === undefined ||
+      (existing as { quantite?: number }).quantite === null
+    ) {
+      return;
+    }
+    await this.bundleModel
+      .updateOne(
+        {
+          _id: new Types.ObjectId(bundleId),
+          storeId: new Types.ObjectId(storeId),
+        },
+        { $inc: { quantite: q } },
+      )
+      .exec();
+    await this.syncStockStatut(new Types.ObjectId(bundleId));
+  }
+
+  /** Recalcule stockStatut après variation de quantite. */
+  private async syncStockStatut(bundleOid: Types.ObjectId) {
+    await this.bundleModel
+      .updateOne({ _id: bundleOid }, [
+        {
+          $set: {
+            stock_statut: {
+              $cond: [
+                { $lte: ['$quantite', '$seuil'] },
+                ProductBundleStockStatutEnum.ALERTE,
+                ProductBundleStockStatutEnum.OK,
+              ],
+            },
+          },
+        },
+      ])
+      .exec();
+  }
+
+  /** Lecture brute stock pour validation panier / checkout. */
+  async findStockInStore(
+    storeId: string,
+    bundleId: string,
+  ): Promise<{ quantite: number | null; seuil: number } | null> {
+    const doc = await this.bundleModel
+      .findOne({
+        _id: new Types.ObjectId(bundleId),
+        storeId: new Types.ObjectId(storeId),
+      })
+      .select('quantite seuil')
+      .lean()
+      .exec();
+    if (!doc) return null;
+    const raw = (doc as { quantite?: number }).quantite;
+    return {
+      quantite:
+        raw === undefined || raw === null
+          ? null
+          : Math.max(0, Math.floor(Number(raw))),
+      seuil: Math.max(0, Math.floor(Number((doc as { seuil?: number }).seuil ?? 0))),
     };
   }
 

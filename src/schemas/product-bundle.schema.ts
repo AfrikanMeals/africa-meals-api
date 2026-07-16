@@ -19,6 +19,12 @@ export enum ProductBundleStatusEnum {
   INACTIVE = 'inactive',
 }
 
+/** Alerte stock catalogue — même sémantique que les boissons (`ok` / `alerte`). */
+export enum ProductBundleStockStatutEnum {
+  OK = 'ok',
+  ALERTE = 'alerte',
+}
+
 /** Sous-document : un item composant le bundle (produit ou boisson). */
 @Schema({ _id: false })
 export class BundleItemModel {
@@ -135,6 +141,27 @@ export class ProductBundleModel {
     index: true,
   })
   status: ProductBundleStatusEnum;
+
+  /**
+   * Quantité en stock catalogue (comme `drinks.quantite`).
+   * Décrémentée à chaque achat de bundle ; 0 = indisponible.
+   * Défaut 0 à la création — le vendeur doit renseigner le stock.
+   * Docs legacy sans champ : traités comme stock illimité en lecture (rétrocompat).
+   */
+  @Prop({ required: true, default: 0, name: 'quantite', min: 0 })
+  quantite: number;
+
+  /** Seuil d'alerte stock (comme `drinks.seuil`) — statut `alerte` si quantite ≤ seuil. */
+  @Prop({ required: true, default: 0, name: 'seuil', min: 0 })
+  seuil: number;
+
+  @Prop({
+    required: true,
+    enum: ProductBundleStockStatutEnum,
+    default: ProductBundleStockStatutEnum.OK,
+    name: 'stock_statut',
+  })
+  stockStatut: ProductBundleStockStatutEnum;
 
   @Prop({ type: Date, required: false, name: 'valid_from' })
   validFrom?: Date;

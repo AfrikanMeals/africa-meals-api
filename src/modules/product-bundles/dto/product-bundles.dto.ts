@@ -122,6 +122,20 @@ export class CreateProductBundleDto {
   @IsInt()
   @Min(0)
   sortOrder?: number;
+
+  /** Quantité en stock catalogue (comme boissons). Défaut 0. */
+  @ApiPropertyOptional({ minimum: 0, default: 0 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  quantite?: number;
+
+  /** Seuil d'alerte stock (comme boissons). Défaut 0. */
+  @ApiPropertyOptional({ minimum: 0, default: 0 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  seuil?: number;
 }
 
 export class PatchProductBundleDto {
@@ -191,6 +205,20 @@ export class PatchProductBundleDto {
   @IsInt()
   @Min(0)
   sortOrder?: number;
+
+  /** Quantité en stock catalogue. */
+  @ApiPropertyOptional({ minimum: 0 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  quantite?: number;
+
+  /** Seuil d'alerte stock. */
+  @ApiPropertyOptional({ minimum: 0 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  seuil?: number;
 }
 
 export class ProductBundleFeedQueryDto {
