@@ -668,6 +668,7 @@ export class CartService {
     }
 
     void this.bustCartPricingCache(user);
+    // Réponse typée Partial<CartItemModel> : bundleId = ObjectId (pas string DTO).
     return {
       _id: item.id,
       id: item.id,
@@ -676,7 +677,9 @@ export class CartService {
       quantity: item.quantity ?? qtyReq,
       price: priceForLine,
       ...(bundleGroupId ? { bundleGroupId } : {}),
-      ...(bundleId ? { bundleId } : {}),
+      ...(bundleId && Types.ObjectId.isValid(bundleId)
+        ? { bundleId: new Types.ObjectId(bundleId) }
+        : {}),
       ...(bundleTitle ? { bundleTitle } : {}),
     };
   }

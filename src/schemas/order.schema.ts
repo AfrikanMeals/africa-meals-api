@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Schema as MongooseSchema } from 'mongoose';
+import { Schema as MongooseSchema, Types } from 'mongoose';
 import { BaseSchema } from './base.schema';
 import { CartItemTypeEnum } from './cart_item.schema';
 import {
@@ -175,7 +175,8 @@ export class OrdeLineItem {
     name: 'bundle_id',
     type: MongooseSchema.Types.ObjectId,
   })
-  bundleId?: MongooseSchema.Types.ObjectId;
+  // Types.ObjectId (instance) — pas MongooseSchema.Types.ObjectId (classe schéma TS).
+  bundleId?: Types.ObjectId;
 
   /** UUID du groupe combo (1 groupe = 1 unité bundle). */
   @Prop({ required: false, name: 'bundle_group_id', trim: true })
