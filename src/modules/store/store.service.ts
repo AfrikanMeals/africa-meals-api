@@ -72,6 +72,7 @@ import {
   PatchVendorWorkingHoursDto,
 } from './dto/store.dto';
 import { DrinkModel } from '@schemas/drink.schema';
+import { ProductBundleModel } from '@schemas/product-bundle.schema';
 import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
 import {
   adjustStoredCatalogComponentPrices,
@@ -260,6 +261,10 @@ export class StoreService {
 
   @InjectModel(DrinkModel.name)
   private readonly _drinkModel: Model<DrinkModel>;
+
+  // Injection pour valider les bundles dans le menu du jour.
+  @InjectModel(ProductBundleModel.name)
+  private readonly _productBundleModel: Model<ProductBundleModel>;
 
   @InjectModel(ProductRatingModel.name)
   private readonly _productRatingModel: Model<ProductRatingModel>;
@@ -1320,6 +1325,58 @@ export class StoreService {
       }
     }
 
+    // ── Boissons du jour — même logique de dédoublonnage (pas d'addons). ──
+    const mergedDrinks = new Map<number, Array<{ drinkId: string; stockUnlimited: boolean; stockRemaining: number }>>();
+    for (let d = 0; d <= 6; d++) mergedDrinks.set(d, []);
+    for (const s of slots) {
+      const d = Math.min(6, Math.max(0, Math.floor(Number(s.dayOfWeek))));
+      if (!Array.isArray(s.drinkItems) || !s.drinkItems.length) continue;
+      const byDid = new Map<string, { drinkId: string; stockUnlimited: boolean; stockRemaining: number }>();
+      for (const di of s.drinkItems) {
+        byDid.set(di.drinkId, {
+          drinkId: di.drinkId,
+          stockUnlimited: di.stockUnlimited,
+          stockRemaining: di.stockUnlimited ? 0 : Math.max(0, di.stockRemaining ?? 0),
+        });
+      }
+      mergedDrinks.set(d, [...byDid.values()]);
+    }
+
+    // Valider que les boissons appartiennent bien à la boutique.
+    const allDrinkIds = [...new Set([...mergedDrinks.values()].flat().map((e) => e.drinkId))];
+    if (allDrinkIds.length) {
+      const nDrinks = await this._drinkModel.countDocuments({ store: storeId, _id: { $in: allDrinkIds } }).exec();
+      if (nDrinks !== allDrinkIds.length) {
+        throw new BadRequestException('daily_menu_drink_not_in_store');
+      }
+    }
+
+    // ── Bundles du jour — même logique de dédoublonnage. ──
+    const mergedBundles = new Map<number, Array<{ bundleId: string; stockUnlimited: boolean; stockRemaining: number }>>();
+    for (let d = 0; d <= 6; d++) mergedBundles.set(d, []);
+    for (const s of slots) {
+      const d = Math.min(6, Math.max(0, Math.floor(Number(s.dayOfWeek))));
+      if (!Array.isArray(s.bundleItems) || !s.bundleItems.length) continue;
+      const byBid = new Map<string, { bundleId: string; stockUnlimited: boolean; stockRemaining: number }>();
+      for (const bi of s.bundleItems) {
+        byBid.set(bi.bundleId, {
+          bundleId: bi.bundleId,
+          stockUnlimited: bi.stockUnlimited,
+          stockRemaining: bi.stockUnlimited ? 0 : Math.max(0, bi.stockRemaining ?? 0),
+        });
+      }
+      mergedBundles.set(d, [...byBid.values()]);
+    }
+
+    // Valider que les bundles appartiennent bien à la boutique.
+    const allBundleIds = [...new Set([...mergedBundles.values()].flat().map((e) => e.bundleId))];
+    if (allBundleIds.length) {
+      const nBundles = await this._productBundleModel.countDocuments({ storeId, _id: { $in: allBundleIds } }).exec();
+      if (nBundles !== allBundleIds.length) {
+        throw new BadRequestException('daily_menu_bundle_not_in_store');
+      }
+    }
+
     const dailyMenuByWeekday = [...merged.entries()].map(
       ([dayOfWeek, itemList]) => ({
         dayOfWeek,
@@ -1335,6 +1392,18 @@ export class StoreService {
           if (addons) doc.addonsAvailability = addons;
           return doc;
         }),
+        // Boissons du jour pour ce dayOfWeek.
+        drinkItems: (mergedDrinks.get(dayOfWeek) ?? []).map((di) => ({
+          drinkId: new Types.ObjectId(di.drinkId),
+          stockUnlimited: di.stockUnlimited,
+          stockRemaining: di.stockUnlimited ? 0 : Math.max(0, di.stockRemaining),
+        })),
+        // Bundles du jour pour ce dayOfWeek.
+        bundleItems: (mergedBundles.get(dayOfWeek) ?? []).map((bi) => ({
+          bundleId: new Types.ObjectId(bi.bundleId),
+          stockUnlimited: bi.stockUnlimited,
+          stockRemaining: bi.stockUnlimited ? 0 : Math.max(0, bi.stockRemaining),
+        })),
       }),
     );
 
@@ -1380,17 +1449,14 @@ export class StoreService {
   private normalizeDailyMenuForApi(
     rows: Array<Record<string, unknown>> | undefined | null,
     maxItemsPerDay?: number | null,
-  ): Array<{
-    dayOfWeek: number;
-    items: Array<{
-      productId: string;
-      stockUnlimited: boolean;
-      stockRemaining: number;
-      soldOut: boolean;
-      addonsAvailability?: DailyMenuItemDto['addonsAvailability'];
-    }>;
-  }> {
-    if (!rows?.length) return [];
+  ) {
+    type NormalizedRow = {
+      dayOfWeek: number;
+      items: Array<{ productId: string; stockUnlimited: boolean; stockRemaining: number; soldOut: boolean; addonsAvailability?: DailyMenuItemDto['addonsAvailability'] }>;
+      drinkItems: Array<{ drinkId: string; stockUnlimited: boolean; stockRemaining: number; soldOut: boolean }>;
+      bundleItems: Array<{ bundleId: string; stockUnlimited: boolean; stockRemaining: number; soldOut: boolean }>;
+    };
+    if (!rows?.length) return [] as NormalizedRow[];
     return rows.map((row) => {
       const dayOfWeek = Math.min(
         6,
@@ -1441,7 +1507,36 @@ export class StoreService {
         maxItemsPerDay != null && maxItemsPerDay > 0
           ? items.slice(0, maxItemsPerDay)
           : items;
-      return { dayOfWeek, items: cappedItems };
+
+      // Boissons du jour — simple stock sans addons.
+      const drinkItems: Array<{ drinkId: string; stockUnlimited: boolean; stockRemaining: number; soldOut: boolean }> = [];
+      const rawDrinkItems = (row as { drinkItems?: unknown[] }).drinkItems;
+      if (Array.isArray(rawDrinkItems)) {
+        for (const di of rawDrinkItems) {
+          const o = di as Record<string, unknown>;
+          const did = this.stringifyIdLike(o.drinkId);
+          if (!did) continue;
+          const su = Boolean(o.stockUnlimited ?? true);
+          const sr = su ? 0 : Math.max(0, Math.floor(Number(o.stockRemaining ?? 0)));
+          drinkItems.push({ drinkId: did, stockUnlimited: su, stockRemaining: sr, soldOut: !su && sr <= 0 });
+        }
+      }
+
+      // Bundles du jour — simple stock sans addons.
+      const bundleItems: Array<{ bundleId: string; stockUnlimited: boolean; stockRemaining: number; soldOut: boolean }> = [];
+      const rawBundleItems = (row as { bundleItems?: unknown[] }).bundleItems;
+      if (Array.isArray(rawBundleItems)) {
+        for (const bi of rawBundleItems) {
+          const o = bi as Record<string, unknown>;
+          const bid = this.stringifyIdLike(o.bundleId);
+          if (!bid) continue;
+          const su = Boolean(o.stockUnlimited ?? true);
+          const sr = su ? 0 : Math.max(0, Math.floor(Number(o.stockRemaining ?? 0)));
+          bundleItems.push({ bundleId: bid, stockUnlimited: su, stockRemaining: sr, soldOut: !su && sr <= 0 });
+        }
+      }
+
+      return { dayOfWeek, items: cappedItems, drinkItems, bundleItems };
     });
   }
 

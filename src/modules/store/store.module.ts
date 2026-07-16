@@ -35,6 +35,10 @@ import {
 import { AddressModel, AddressSchema } from '@schemas/address.schema';
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
 import { DrinkModel, DrinkSchema } from '@schemas/drink.schema';
+import {
+  ProductBundleModel,
+  ProductBundleSchema,
+} from '@schemas/product-bundle.schema';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import {
@@ -101,6 +105,7 @@ import { StoreSubscribersModule } from '@modules/store-subscribers/store-subscri
       { name: UserModel.name, schema: UserSchema },
       { name: ProductModel.name, schema: ProductSchema },
       { name: DrinkModel.name, schema: DrinkSchema },
+      { name: ProductBundleModel.name, schema: ProductBundleSchema },
       { name: ProductRatingModel.name, schema: ProductRatingSchema },
       { name: OrderModel.name, schema: OrderSchema },
       {

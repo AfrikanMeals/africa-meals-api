@@ -275,6 +275,48 @@ export class StoreModel extends BaseSchema {
             },
           },
         ],
+        // Boissons proposées ce jour (même logique stock que les plats, sans addons).
+        drinkItems: [
+          {
+            drinkId: {
+              type: MongooseSchema.Types.ObjectId,
+              ref: 'DrinkModel',
+              required: true,
+            },
+            stockUnlimited: {
+              type: Boolean,
+              required: true,
+              default: true,
+            },
+            stockRemaining: {
+              type: Number,
+              required: false,
+              min: 0,
+              default: 0,
+            },
+          },
+        ],
+        // Bundles proposés ce jour (même logique stock, sans addons — le bundle a ses propres items).
+        bundleItems: [
+          {
+            bundleId: {
+              type: MongooseSchema.Types.ObjectId,
+              ref: 'ProductBundleModel',
+              required: true,
+            },
+            stockUnlimited: {
+              type: Boolean,
+              required: true,
+              default: true,
+            },
+            stockRemaining: {
+              type: Number,
+              required: false,
+              min: 0,
+              default: 0,
+            },
+          },
+        ],
       },
     ],
     default: [],
@@ -295,6 +337,16 @@ export class StoreModel extends BaseSchema {
         }>;
         supplementIndexes?: number[];
       };
+    }>;
+    drinkItems?: Array<{
+      drinkId: unknown;
+      stockUnlimited: boolean;
+      stockRemaining: number;
+    }>;
+    bundleItems?: Array<{
+      bundleId: unknown;
+      stockUnlimited: boolean;
+      stockRemaining: number;
     }>;
   }>;
 

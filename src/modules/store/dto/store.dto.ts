@@ -436,6 +436,56 @@ export class DailyMenuItemDto {
   addonsAvailability?: DailyMenuAddonsAvailabilityDto;
 }
 
+/** Boisson du menu du jour — stock par jour, sans addons (les boissons n'ont pas de variantes). */
+export class DailyMenuDrinkItemDto {
+  @ApiProperty({ description: 'ID de la boisson dans le catalogue' })
+  @IsNotEmpty()
+  @IsString()
+  drinkId: string;
+
+  @ApiProperty({
+    description:
+      'Si true, la boisson reste disponible sans limite de portions pour ce jour.',
+  })
+  @IsBoolean()
+  stockUnlimited: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Portions restantes (obligatoire si stockUnlimited = false). À 0 la boisson est indisponible.',
+    minimum: 0,
+  })
+  @ValidateIf((o) => !o.stockUnlimited)
+  @IsInt()
+  @Min(0)
+  stockRemaining?: number;
+}
+
+/** Bundle du menu du jour — stock par jour, sans addons (le bundle définit déjà ses items). */
+export class DailyMenuBundleItemDto {
+  @ApiProperty({ description: 'ID du bundle produit' })
+  @IsNotEmpty()
+  @IsString()
+  bundleId: string;
+
+  @ApiProperty({
+    description:
+      'Si true, le bundle reste disponible sans limite pour ce jour.',
+  })
+  @IsBoolean()
+  stockUnlimited: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Portions restantes (obligatoire si stockUnlimited = false). À 0 le bundle est indisponible.',
+    minimum: 0,
+  })
+  @ValidateIf((o) => !o.stockUnlimited)
+  @IsInt()
+  @Min(0)
+  stockRemaining?: number;
+}
+
 export class DailyMenuSlotDto {
   @ApiProperty({
     description: '0 = dimanche … 6 = samedi (comme Date.getDay())',
@@ -467,6 +517,26 @@ export class DailyMenuSlotDto {
   @ValidateNested({ each: true })
   @Type(() => DailyMenuItemDto)
   items?: DailyMenuItemDto[];
+
+  @ApiPropertyOptional({
+    type: () => [DailyMenuDrinkItemDto],
+    description: 'Boissons du jour avec gestion de stock.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DailyMenuDrinkItemDto)
+  drinkItems?: DailyMenuDrinkItemDto[];
+
+  @ApiPropertyOptional({
+    type: () => [DailyMenuBundleItemDto],
+    description: 'Bundles du jour avec gestion de stock.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DailyMenuBundleItemDto)
+  bundleItems?: DailyMenuBundleItemDto[];
 }
 
 export class PatchDailyMenuDto {
