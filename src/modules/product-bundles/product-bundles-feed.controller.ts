@@ -36,6 +36,7 @@ export class ProductBundlesFeedController {
     return this.bundles.getBundleFeed({
       take: query.take,
       regionCode: query.regionCode,
+      storeId: query.storeId,
     });
   }
 

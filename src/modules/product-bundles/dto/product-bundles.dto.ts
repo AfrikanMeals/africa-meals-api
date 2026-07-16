@@ -207,6 +207,12 @@ export class ProductBundleFeedQueryDto {
   @IsString()
   @IsNotEmpty()
   regionCode?: string;
+
+  /** Filtre par boutique — retourne uniquement les bundles de cette boutique. */
+  @ApiPropertyOptional({ description: 'ID boutique (filtre page boutique mobile)' })
+  @IsOptional()
+  @IsMongoId()
+  storeId?: string;
 }
 
 export class TrackProductBundleDto {

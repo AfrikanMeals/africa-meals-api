@@ -323,10 +323,12 @@ export class ProductBundlesService {
 
   // ─── Feed public ──────────────────────────────────────────────────────────
 
-  /** Feed multi-boutiques pour l'accueil mobile (bundles actifs, triés par engagement). */
+  /** Feed multi-boutiques pour l'accueil mobile (bundles actifs, triés par engagement).
+   *  Si `storeId` fourni, filtre uniquement les bundles de cette boutique (onglet page boutique). */
   async getBundleFeed(opts: {
     take?: number;
     regionCode?: string;
+    storeId?: string;
   }): Promise<BundleFeedRow[]> {
     const take = Math.min(10, Math.max(1, opts.take ?? 5));
     const now = new Date();
@@ -340,6 +342,11 @@ export class ProductBundlesService {
         { valid_from: { $lte: now } },
       ],
     };
+
+    // Filtre par boutique si demandé (onglet bundles page boutique mobile)
+    if (opts.storeId) {
+      filter.storeId = new Types.ObjectId(opts.storeId);
+    }
 
     let bundles = await this.bundleModel
       .find(filter)
