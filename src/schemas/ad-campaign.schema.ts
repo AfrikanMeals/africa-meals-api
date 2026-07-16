@@ -7,6 +7,7 @@ import {
 } from './ad-notification-addon.schema';
 import { DrinkModel } from './drink.schema';
 import { MarketingOfferListingModel } from './marketing-offer-listing.schema';
+import { ProductBundleModel } from './product-bundle.schema';
 import { ProductModel } from './product.schema';
 import { StoreModel } from './store.schema';
 import { AdModerationStatusEnum, StoreAdActionTypeEnum } from './ad.schema';
@@ -15,6 +16,8 @@ export enum AdCampaignItemTypeEnum {
   PRODUCT = 'PRODUCT',
   DRINK = 'DRINK',
   EXCLUSIVE_OFFER = 'EXCLUSIVE_OFFER',
+  /** Bundle multi-produit (combo avec remise). */
+  BUNDLE = 'BUNDLE',
 }
 
 export enum AdCampaignArchiveReasonEnum {
@@ -48,6 +51,15 @@ export class AdCampaignItemModel {
     name: 'marketing_offer_listing',
   })
   marketingOfferListing?: MarketingOfferListingModel;
+
+  /** Référence bundle (itemType = BUNDLE). */
+  @Prop({
+    required: false,
+    type: MongooseSchema.Types.ObjectId,
+    ref: ProductBundleModel.name,
+    name: 'product_bundle',
+  })
+  productBundle?: ProductBundleModel;
 }
 
 export const AdCampaignItemSchema =

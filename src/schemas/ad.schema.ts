@@ -7,6 +7,7 @@ import {
 } from './ad-notification-addon.schema';
 import { AdModerationStatusEnum } from './ad-moderation-status.enum';
 import { MarketingOfferListingModel } from './marketing-offer-listing.schema';
+import { ProductBundleModel } from './product-bundle.schema';
 import { ProductModel } from './product.schema';
 import { StoreModel } from './store.schema';
 
@@ -16,6 +17,8 @@ export enum StoreAdActionTypeEnum {
   PRODUCT = 'PRODUCT',
   /** Offre exclusive (listing marketing_offer_listings) → checkout direct mobile. */
   EXCLUSIVE_OFFER = 'EXCLUSIVE_OFFER',
+  /** Bundle multi-produit → détail bundle mobile. */
+  BUNDLE = 'BUNDLE',
   WHATSAPP = 'WHATSAPP',
   CALL = 'CALL',
   EMAIL = 'EMAIL',
@@ -105,6 +108,15 @@ export class AdModel extends BaseSchema {
     name: 'marketing_offer_listing',
   })
   marketingOfferListing?: MongooseSchema.Types.ObjectId;
+
+  /** Bundle multi-produit (actionType = BUNDLE). */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: ProductBundleModel.name,
+    required: false,
+    name: 'product_bundle',
+  })
+  productBundle?: MongooseSchema.Types.ObjectId;
 
   /** Date d’archivage (Terminer/Expirée). Null/absent = bannière active dans le cycle de vie. */
   @Prop({ required: false, default: null })

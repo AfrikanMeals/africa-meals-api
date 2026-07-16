@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Schema as MongooseSchema } from 'mongoose';
+import { Schema as MongooseSchema, Types } from 'mongoose';
 import { BaseSchema } from './base.schema';
 import { OfferModel } from './offer.schema';
 import {
@@ -8,6 +8,7 @@ import {
   LineSupplementSnapshot,
   LineSupplementSnapshotSchema,
 } from './order-line-customization.schema';
+import { ProductBundleModel } from './product-bundle.schema';
 import { ProductExtraModel, ProductModel } from './product.schema';
 import { StoreModel } from './store.schema';
 
@@ -86,6 +87,19 @@ export class CartItemModel extends BaseSchema {
   /** Variante de prix choisie (ex. Medium, Large). */
   @Prop({ required: false, name: 'selected_variant_label', trim: true })
   selectedVariantLabel?: string;
+
+  /** UUID partagé entre les items d'un même bundle — permet de les grouper au checkout. */
+  @Prop({ required: false, name: 'bundle_group_id', trim: true })
+  bundleGroupId?: string;
+
+  /** Référence au bundle source — pour retrouver la remise à appliquer. */
+  @Prop({
+    required: false,
+    name: 'bundle_id',
+    type: MongooseSchema.Types.ObjectId,
+    ref: ProductBundleModel.name,
+  })
+  bundleId?: Types.ObjectId;
 
   @Prop({
     required: true,
