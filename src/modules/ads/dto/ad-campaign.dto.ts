@@ -47,6 +47,14 @@ export class CampaignItemDto {
   @IsNotEmpty()
   @IsMongoId()
   marketingOfferListingId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Obligatoire si itemType = BUNDLE',
+  })
+  @ValidateIf((o) => o.itemType === AdCampaignItemTypeEnum.BUNDLE)
+  @IsNotEmpty()
+  @IsMongoId()
+  productBundleId?: string;
 }
 
 export class CreateAdCampaignDto {

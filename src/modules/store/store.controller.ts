@@ -1,6 +1,7 @@
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import { OptionalAuthGuard } from '@modules/auth/guards/optional.auth.guard';
 import { AddItemToCartDto } from '@modules/cart/dto/cart.dto';
+import { AddBundleToCartDto } from '@modules/product-bundles/dto/product-bundles.dto';
 import { CreateOfferDto } from '@modules/offers/dto/offers.dto';
 import {
   CreateProductDto,
@@ -1587,6 +1588,21 @@ export class StoreController {
     @Req() req: Request,
   ) {
     return await this._storeService.addItemToStoreCart(
+      id,
+      args,
+      req.user as UserModel,
+    );
+  }
+
+  /** Ajoute un combo (toutes les lignes) au panier boutique. */
+  @Post(':id/cart/bundle')
+  @UseGuards(JwtGuard)
+  async addBundleToStoreCart(
+    @Param('id') id: string,
+    @Body(ValidationPipe) args: AddBundleToCartDto,
+    @Req() req: Request,
+  ) {
+    return await this._storeService.addBundleToStoreCart(
       id,
       args,
       req.user as UserModel,

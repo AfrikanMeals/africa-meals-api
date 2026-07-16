@@ -72,7 +72,10 @@ import {
   PatchVendorWorkingHoursDto,
 } from './dto/store.dto';
 import { DrinkModel } from '@schemas/drink.schema';
-import { ProductBundleModel } from '@schemas/product-bundle.schema';
+import {
+  ProductBundleModel,
+  ProductBundleStatusEnum,
+} from '@schemas/product-bundle.schema';
 import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
 import {
   adjustStoredCatalogComponentPrices,
@@ -100,6 +103,7 @@ import {
   ProductBundlesService,
   maxBundleOrderQuantity,
 } from '@modules/product-bundles/product-bundles.service';
+import { planBundleCartLines } from '@modules/product-bundles/product-bundle-cart.util';
 import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
 import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-email.service';
 import {
@@ -1923,6 +1927,8 @@ export class StoreService {
     user: UserModel,
     args: AddItemToCartDto,
   ): Promise<void> {
+    // Lignes d’un combo : le menu du jour s’applique au bundle (checkout), pas item par item.
+    if (String(args.bundleId ?? '').trim()) return;
     if (args.type !== CartItemTypeEnum.PRODUCT) return;
     const storeId = store.id?.toString?.() ?? String((store as { _id?: unknown })._id ?? '');
     const dailyMenuLimit =
@@ -3519,6 +3525,116 @@ export class StoreService {
     await this.assertDailyMenuProductAddAllowed(store, user, args);
 
     return await this._cartService.addItemToCart(args, user, store);
+  }
+
+  /**
+   * Ajoute un combo (bundle) au panier : N lignes produit/boisson
+   * partageant le même `bundleGroupId` + `bundleId`.
+   */
+  async addBundleToStoreCart(
+    storeId: string,
+    dto: {
+      bundleId: string;
+      itemCustomizations?: Array<{
+        itemIndex: number;
+        selectedVariantLabel?: string;
+        selectedComplements?: AddItemToCartDto['selectedComplements'];
+        selectedSupplements?: AddItemToCartDto['selectedSupplements'];
+      }>;
+    },
+    user: UserModel,
+  ): Promise<{
+    bundleId: string;
+    bundleGroupId: string;
+    items: Array<Record<string, unknown>>;
+  }> {
+    const store = await this._storeModel
+      .findOne({ _id: storeId })
+      .populate('owner')
+      .exec();
+    if (!store) {
+      throw new NotFoundException('store_not_found');
+    }
+
+    const bid = String(dto.bundleId ?? '').trim();
+    if (!Types.ObjectId.isValid(bid)) {
+      throw new BadRequestException('invalid_bundle_id');
+    }
+
+    // 1. Bundle actif de cette boutique.
+    const bundle = await this._productBundleModel
+      .findOne({
+        _id: new Types.ObjectId(bid),
+        storeId: new Types.ObjectId(storeId),
+        status: ProductBundleStatusEnum.ACTIVE,
+      })
+      .lean()
+      .exec();
+    if (!bundle) {
+      throw new NotFoundException('bundle_not_found');
+    }
+
+    // 2. Stock catalogue (si limité) — panier vide = 0 (findOneByStoreId throw sinon).
+    const stock = await this._productBundlesService.findStockInStore(
+      storeId,
+      bid,
+    );
+    const maxQty = maxBundleOrderQuantity(stock?.quantite);
+    let already = 0;
+    try {
+      const cart = await this._cartService.findOneByStoreId(storeId, user);
+      already = this.aggregateBundleQtyFromCart(cart).get(bid) ?? 0;
+    } catch (err) {
+      if (!(err instanceof NotFoundException)) throw err;
+    }
+    if (already + 1 > maxQty) {
+      throw new BadRequestException('bundle_insufficient_stock');
+    }
+
+    // 3. Plan des lignes + personnalisations par index source.
+    const plans = planBundleCartLines(
+      ((bundle as { items?: unknown[] }).items ?? []) as Array<{
+        itemType: string;
+        productId?: unknown;
+        drinkId?: unknown;
+        sortOrder?: number;
+      }>,
+    );
+    if (plans.length < 2) {
+      throw new BadRequestException('bundle_incomplete');
+    }
+
+    const customByIndex = new Map(
+      (dto.itemCustomizations ?? []).map((c) => [c.itemIndex, c]),
+    );
+    const bundleGroupId = randomUUID();
+    const created: Array<Record<string, unknown>> = [];
+
+    // 4. Une ligne panier par item (prix recalculé côté CartService).
+    for (const plan of plans) {
+      const cust = customByIndex.get(plan.itemIndex);
+      const args = {
+        type:
+          plan.type === 'drink'
+            ? CartItemTypeEnum.DRINK
+            : CartItemTypeEnum.PRODUCT,
+        itemId: plan.itemId,
+        quantity: 1,
+        price: 0,
+        selectedComplements: cust?.selectedComplements,
+        selectedSupplements: cust?.selectedSupplements,
+        selectedVariantLabel: cust?.selectedVariantLabel,
+        bundleId: bid,
+        bundleGroupId,
+      } as AddItemToCartDto;
+      const line = await this.addItemToStoreCart(storeId, args, user);
+      created.push(line as Record<string, unknown>);
+    }
+
+    // 5. Engagement best-effort (accueil / ads).
+    void this._productBundlesService.trackEngagement(bid, 'checkout_start');
+
+    return { bundleId: bid, bundleGroupId, items: created };
   }
 
   private async assertPreOrderCheckoutAllowed(

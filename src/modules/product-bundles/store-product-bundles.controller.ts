@@ -20,6 +20,7 @@ import { Request } from 'express';
 import {
   CreateProductBundleDto,
   PatchProductBundleDto,
+  ProductBundleImageJsonDto,
 } from './dto/product-bundles.dto';
 import { ProductBundlesService } from './product-bundles.service';
 
@@ -36,6 +37,25 @@ export class StoreProductBundlesController {
   @ApiOperation({ summary: 'Vendeur — lister les bundles de la boutique.' })
   list(@Req() req: Request, @Param('storeId') storeId: string) {
     return this.bundles.listForStore(storeId, req.user as UserModel);
+  }
+
+  /** Upload image avant create/patch — route dédiée (pas confondre avec :bundleId). */
+  @Post(':storeId/product-bundles/image-json')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary: 'Vendeur — uploader l’image de couverture d’un bundle (JSON+base64).',
+  })
+  uploadImage(
+    @Req() req: Request,
+    @Param('storeId') storeId: string,
+    @Body() body: ProductBundleImageJsonDto,
+  ) {
+    return this.bundles.uploadBundleImage(
+      storeId,
+      body,
+      req.user as UserModel,
+    );
   }
 
   @Post(':storeId/product-bundles')

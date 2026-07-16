@@ -115,6 +115,16 @@ export class CreateAdManagementDto {
   marketingOfferListingId?: string;
 
   @ApiPropertyOptional({
+    description: 'Obligatoire si actionType = BUNDLE',
+  })
+  @ValidateIf(
+    (o) => String(o.actionType ?? '') === StoreAdActionTypeEnum.BUNDLE,
+  )
+  @IsNotEmpty()
+  @IsMongoId()
+  productBundleId?: string;
+
+  @ApiPropertyOptional({
     description:
       'Obligatoire si actionType = WHATSAPP, CALL, EMAIL ou WEBSITE (numéro, e-mail ou URL).',
   })
@@ -222,6 +232,16 @@ export class PatchAdManagementDto {
   @IsOptional()
   @IsMongoId()
   marketingOfferListingId?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Bundle multi-produit (actionType = BUNDLE).',
+  })
+  @ValidateIf(
+    (o) => String(o.actionType ?? '') === StoreAdActionTypeEnum.BUNDLE,
+  )
+  @IsOptional()
+  @IsMongoId()
+  productBundleId?: string | null;
 
   @ApiPropertyOptional({
     description:

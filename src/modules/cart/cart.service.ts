@@ -425,6 +425,7 @@ export class CartService {
     user: UserModel,
     customizationKey = '',
   ): Promise<CartItemModel> {
+    // Exclure les lignes combo : un ajout classique ne doit pas fusionner dedans.
     return await this._cartItemModel
       .findOne({
         entityId: args.itemId,
@@ -432,6 +433,11 @@ export class CartService {
         user: new Types.ObjectId(user.id),
         store: new Types.ObjectId(store.id),
         customizationKey: customizationKey ?? '',
+        $or: [
+          { bundleGroupId: { $exists: false } },
+          { bundleGroupId: null },
+          { bundleGroupId: '' },
+        ],
       })
       .exec();
   }
@@ -474,12 +480,18 @@ export class CartService {
     let priceForLine = args.price;
     const customization = this.resolveProductCustomization(args);
 
-    let item = await this.itemExistsInCart(
-      store,
-      args,
-      user,
-      customization.customizationKey,
-    );
+    // Lignes bundle : jamais fusionnées (chaque groupe UUID = 1 combo).
+    const bundleGroupId = String(args.bundleGroupId ?? '').trim() || undefined;
+    const bundleId = String(args.bundleId ?? '').trim() || undefined;
+
+    let item = bundleGroupId
+      ? null
+      : await this.itemExistsInCart(
+          store,
+          args,
+          user,
+          customization.customizationKey,
+        );
 
     const storeId = String(store.id ?? (store as { _id?: unknown })._id ?? '');
     let lineStrategy: 'on_payout' | 'add_to_price' = 'on_payout';
@@ -642,6 +654,11 @@ export class CartService {
         selectedComplements: customization.selectedComplements,
         selectedSupplements: customization.selectedSupplements,
         selectedVariantLabel: customization.selectedVariantLabel,
+        // Combo : rattacher la ligne au groupe pour checkout / stock bundle.
+        ...(bundleId && Types.ObjectId.isValid(bundleId)
+          ? { bundleId: new Types.ObjectId(bundleId) }
+          : {}),
+        ...(bundleGroupId ? { bundleGroupId } : {}),
       });
     }
 

@@ -40,6 +40,10 @@ import {
 } from '@schemas/store-ad-cash.schema';
 import { AdModel, AdSchema } from '@schemas/ad.schema';
 import { DrinkModel, DrinkSchema } from '@schemas/drink.schema';
+import {
+  ProductBundleModel,
+  ProductBundleSchema,
+} from '@schemas/product-bundle.schema';
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
 import {
   MarketingOfferListingModel,
@@ -115,6 +119,7 @@ import { AdsService } from './ads.service';
       { name: MarketingOfferSectionModel.name, schema: MarketingOfferSectionSchema },
       { name: MarketingOfferModel.name, schema: MarketingOfferSchema },
       { name: DrinkModel.name, schema: DrinkSchema },
+      { name: ProductBundleModel.name, schema: ProductBundleSchema },
       { name: UserModel.name, schema: UserSchema },
       {
         name: AdsTargetingProfileModel.name,

@@ -136,6 +136,24 @@ export class AddItemToCartDto {
   @IsOptional()
   @IsString()
   selectedVariantLabel?: string;
+
+  /** Référence bundle source — lignes d’un même combo. */
+  @ApiPropertyOptional({
+    example: '507f1f77bcf86cd799439011',
+    description: 'ID du product_bundle (lignes combo).',
+  })
+  @IsOptional()
+  @IsString()
+  bundleId?: string;
+
+  /** UUID partagé entre les lignes d’un même ajout de bundle. */
+  @ApiPropertyOptional({
+    example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+    description: 'Groupe panier pour un combo (1 UUID = 1 unité de bundle).',
+  })
+  @IsOptional()
+  @IsString()
+  bundleGroupId?: string;
 }
 
 export class CartItemApiResponse {

@@ -117,6 +117,11 @@ import {
   MarketingOfferModerationStatusEnum,
 } from '@schemas/marketing-offer.schema';
 import { isDirectCheckoutStrategyType } from '@modules/marketing-offer-listings/marketing-offer-strategy-pricing.util';
+import {
+  campaignBundleItemKey,
+  isCampaignBundleItem,
+} from '@modules/ads/ad-campaign-bundle-item.util';
+import { ProductBundleModel } from '@schemas/product-bundle.schema';
 import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
@@ -134,6 +139,14 @@ function exclusiveOfferListingRefId(
 ): NonNullable<AdModel['marketingOfferListing']> {
   return new Types.ObjectId(id) as unknown as NonNullable<
     AdModel['marketingOfferListing']
+  >;
+}
+
+function productBundleRefId(
+  id: string,
+): NonNullable<AdModel['productBundle']> {
+  return new Types.ObjectId(id) as unknown as NonNullable<
+    AdModel['productBundle']
   >;
 }
 
@@ -159,6 +172,9 @@ export type AdManagementRow = {
   productTitle: string | null;
   marketingOfferListingId: string | null;
   marketingOfferListingLabel: string | null;
+  /** Présent si actionType = BUNDLE. */
+  productBundleId: string | null;
+  productBundleLabel: string | null;
   archivedAt: string | null;
   archiveReason: AdArchiveReasonEnum | null;
   billingFinalizedAt: string | null;
@@ -283,6 +299,8 @@ export type AdCampaignItemRow = {
   productId: string | null;
   drinkId: string | null;
   marketingOfferListingId: string | null;
+  /** Présent si itemType = BUNDLE. */
+  productBundleId: string | null;
   title: string;
   imageUrl: string | null;
   priceCad: number;
@@ -583,6 +601,9 @@ export class AdsService implements OnModuleInit {
 
   @InjectModel(DrinkModel.name)
   private readonly _drinkModel: Model<DrinkModel>;
+
+  @InjectModel(ProductBundleModel.name)
+  private readonly _productBundleModel: Model<ProductBundleModel>;
 
   @InjectModel(MarketingOfferListingModel.name)
   private readonly _marketingOfferListingModel: Model<MarketingOfferListingModel>;
@@ -1818,6 +1839,15 @@ export class AdsService implements OnModuleInit {
           itemType: it.itemType,
           marketingOfferListingId: it.marketingOfferListingId,
         });
+      } else if (isCampaignBundleItem(it)) {
+        // Combo multi-produit — productBundleId (pas bundleId panier).
+        const key = campaignBundleItemKey(it.productBundleId);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          itemType: AdCampaignItemTypeEnum.BUNDLE,
+          productBundleId: it.productBundleId.trim(),
+        });
       }
     }
     return out;
@@ -1935,6 +1965,23 @@ export class AdsService implements OnModuleInit {
     if (listingIds.length > 0) {
       await this.assertExclusiveOfferListingsBelongToStore(storeId, listingIds);
     }
+    // Bundles : doivent appartenir à la boutique de la campagne.
+    const bundleIds = normalized
+      .filter((i) => i.itemType === AdCampaignItemTypeEnum.BUNDLE)
+      .map((i) => i.productBundleId!)
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    if (bundleIds.length > 0) {
+      const count = await this._productBundleModel
+        .countDocuments({
+          _id: { $in: bundleIds },
+          storeId: new Types.ObjectId(storeId),
+        })
+        .exec();
+      if (count !== bundleIds.length) {
+        throw new BadRequestException('campaign_bundle_not_in_store');
+      }
+    }
   }
 
   private _catalogCommissionStrategy(
@@ -2009,6 +2056,7 @@ export class AdsService implements OnModuleInit {
             productId,
             drinkId: null,
             marketingOfferListingId: null,
+            productBundleId: null,
             title: String(p?.title ?? '(produit supprimé)'),
             imageUrl: p?.profileImage ? String(p.profileImage) : null,
             priceCad: Number(p?.price ?? 0),
@@ -2040,6 +2088,7 @@ export class AdsService implements OnModuleInit {
             productId: null,
             drinkId: null,
             marketingOfferListingId: listingId,
+            productBundleId: null,
             title:
               strategyName && productTitle
                 ? `${strategyName} — ${productTitle}`
@@ -2055,6 +2104,28 @@ export class AdsService implements OnModuleInit {
         });
         continue;
       }
+      if (itemType === AdCampaignItemTypeEnum.BUNDLE) {
+        const b = it.productBundle as Record<string, unknown> | undefined | null;
+        const productBundleId = b?._id ? String(b._id) : null;
+        if (!productBundleId) continue;
+        const nameFr = String(b?.nameFr ?? '').trim();
+        const nameEn = String(b?.nameEn ?? '').trim();
+        built.push({
+          strategy: null,
+          item: {
+            itemType,
+            productId: null,
+            drinkId: null,
+            marketingOfferListingId: null,
+            productBundleId,
+            title: nameFr || nameEn || '(bundle supprimé)',
+            imageUrl: b?.image ? String(b.image) : null,
+            // Prix affiché côté admin/feed ; calcul précis via pricing catalogue local.
+            priceCad: 0,
+          },
+        });
+        continue;
+      }
       const drinkId = d?._id ? String(d._id) : null;
       if (!drinkId) continue;
       built.push({
@@ -2064,6 +2135,7 @@ export class AdsService implements OnModuleInit {
           productId: null,
           drinkId,
           marketingOfferListingId: null,
+          productBundleId: null,
           title: String(d?.name ?? '(boisson supprimée)'),
           imageUrl: d?.imageUrl ? String(d.imageUrl) : null,
           priceCad: Number(d?.priceCad ?? 0),
@@ -2154,6 +2226,7 @@ export class AdsService implements OnModuleInit {
             AdCampaignItemTypeEnum.PRODUCT,
             AdCampaignItemTypeEnum.DRINK,
             AdCampaignItemTypeEnum.EXCLUSIVE_OFFER,
+            AdCampaignItemTypeEnum.BUNDLE,
           ],
         },
       }),
@@ -2518,6 +2591,7 @@ export class AdsService implements OnModuleInit {
       .populate('store', 'name profileImage')
       .populate('items.product', 'title profileImage price store commissionRetrieveStrategy')
       .populate('items.drink', 'name imageUrl priceCad store commissionRetrieveStrategy')
+      .populate('items.productBundle', 'nameFr nameEn image')
       .populate({
         path: 'items.marketingOfferListing',
         populate: [
@@ -2555,6 +2629,7 @@ export class AdsService implements OnModuleInit {
       .populate('store', 'name profileImage')
       .populate('items.product', 'title profileImage price store commissionRetrieveStrategy')
       .populate('items.drink', 'name imageUrl priceCad store commissionRetrieveStrategy')
+      .populate('items.productBundle', 'nameFr nameEn image')
       .populate({
         path: 'items.marketingOfferListing',
         populate: [
@@ -2651,6 +2726,7 @@ export class AdsService implements OnModuleInit {
       .populate('store', 'name profileImage')
       .populate('items.product', 'title profileImage price store commissionRetrieveStrategy')
       .populate('items.drink', 'name imageUrl priceCad store commissionRetrieveStrategy')
+      .populate('items.productBundle', 'nameFr nameEn image')
       .populate({
         path: 'items.marketingOfferListing',
         populate: [
@@ -2814,6 +2890,7 @@ export class AdsService implements OnModuleInit {
       .populate('store', 'name profileImage')
       .populate('items.product', 'title profileImage price store commissionRetrieveStrategy')
       .populate('items.drink', 'name imageUrl priceCad store commissionRetrieveStrategy')
+      .populate('items.productBundle', 'nameFr nameEn image')
       .populate({
         path: 'items.marketingOfferListing',
         populate: [
@@ -2918,6 +2995,7 @@ export class AdsService implements OnModuleInit {
       .populate('store', 'name status profileImage')
       .populate('items.product', 'title profileImage price status commissionRetrieveStrategy')
       .populate('items.drink', 'name imageUrl priceCad commissionRetrieveStrategy')
+      .populate('items.productBundle', 'nameFr nameEn image')
       .populate({
         path: 'items.marketingOfferListing',
         populate: [
@@ -3004,6 +3082,7 @@ export class AdsService implements OnModuleInit {
       itemType !== AdCampaignItemTypeEnum.PRODUCT &&
       itemType !== AdCampaignItemTypeEnum.DRINK &&
       itemType !== AdCampaignItemTypeEnum.EXCLUSIVE_OFFER &&
+      itemType !== AdCampaignItemTypeEnum.BUNDLE &&
       itemType !== 'STORE_ACTION'
     ) {
       throw new BadRequestException('invalid_campaign_item_type');
@@ -3020,20 +3099,24 @@ export class AdsService implements OnModuleInit {
         throw new BadRequestException('campaign_item_not_found');
       }
     } else {
+      const elemMatch =
+        itemType === AdCampaignItemTypeEnum.PRODUCT
+          ? { itemType, product: new Types.ObjectId(itemId) }
+          : itemType === AdCampaignItemTypeEnum.DRINK
+            ? { itemType, drink: new Types.ObjectId(itemId) }
+            : itemType === AdCampaignItemTypeEnum.BUNDLE
+              ? {
+                  itemType: AdCampaignItemTypeEnum.BUNDLE,
+                  productBundle: new Types.ObjectId(itemId),
+                }
+              : {
+                  itemType: AdCampaignItemTypeEnum.EXCLUSIVE_OFFER,
+                  marketingOfferListing: new Types.ObjectId(itemId),
+                };
       const existsInCampaign = await this._adCampaignModel
         .exists({
           _id: new Types.ObjectId(campaignId),
-          items: {
-            $elemMatch:
-              itemType === AdCampaignItemTypeEnum.PRODUCT
-                ? { itemType, product: new Types.ObjectId(itemId) }
-                : itemType === AdCampaignItemTypeEnum.DRINK
-                  ? { itemType, drink: new Types.ObjectId(itemId) }
-                  : {
-                      itemType: AdCampaignItemTypeEnum.EXCLUSIVE_OFFER,
-                      marketingOfferListing: new Types.ObjectId(itemId),
-                    },
-          },
+          items: { $elemMatch: elemMatch },
         })
         .exec();
       if (!existsInCampaign) {
@@ -3141,6 +3224,8 @@ export class AdsService implements OnModuleInit {
             AdCampaignItemTypeEnum.PRODUCT,
             AdCampaignItemTypeEnum.DRINK,
             AdCampaignItemTypeEnum.EXCLUSIVE_OFFER,
+            // Clics bundle : attribution si la commande expose BUNDLE:id (sinon match plats/boissons).
+            AdCampaignItemTypeEnum.BUNDLE,
           ],
         },
         createdAt: { $gte: since },
@@ -4649,6 +4734,25 @@ export class AdsService implements OnModuleInit {
     } else if (typeof listingRaw === 'string' && listingRaw) {
       marketingOfferListingId = listingRaw;
     }
+    // Bundle bannière : ref peuplée `{ _id, nameFr, nameEn }` ou ObjectId plat.
+    const bundleRaw = doc.productBundle ?? doc.product_bundle;
+    let productBundleId: string | null = null;
+    let productBundleLabel: string | null = null;
+    if (
+      bundleRaw != null &&
+      typeof bundleRaw === 'object' &&
+      '_id' in (bundleRaw as object)
+    ) {
+      const b = bundleRaw as Record<string, unknown>;
+      productBundleId = String(b._id ?? '');
+      const nameFr = String(b.nameFr ?? '').trim();
+      const nameEn = String(b.nameEn ?? '').trim();
+      productBundleLabel = nameFr || nameEn || null;
+    } else if (bundleRaw instanceof Types.ObjectId) {
+      productBundleId = bundleRaw.toString();
+    } else if (typeof bundleRaw === 'string' && bundleRaw) {
+      productBundleId = bundleRaw;
+    }
     const vf = doc.validFrom as Date | string | undefined | null;
     const vu = doc.validUntil as Date | string | undefined | null;
     const at =
@@ -4684,6 +4788,8 @@ export class AdsService implements OnModuleInit {
       productTitle,
       marketingOfferListingId,
       marketingOfferListingLabel,
+      productBundleId,
+      productBundleLabel,
       archivedAt:
         doc.archivedAt instanceof Date
           ? doc.archivedAt.toISOString()
@@ -5010,6 +5116,9 @@ export class AdsService implements OnModuleInit {
       })
       .populate('store', 'name profileImage status')
       .populate('product', 'title')
+      // Expose les refs pour deep-link mobile (offre exclusive / bundle).
+      .populate('marketingOfferListing', '_id')
+      .populate('productBundle', '_id nameFr nameEn')
       .sort({ sortOrder: 1 })
       .lean()
       .exec();
@@ -5078,6 +5187,7 @@ export class AdsService implements OnModuleInit {
         .find()
         .populate('store', 'name')
         .populate('product', 'title')
+        .populate('productBundle', 'nameFr nameEn')
         .populate({
           path: 'marketingOfferListing',
           populate: [
@@ -5102,6 +5212,7 @@ export class AdsService implements OnModuleInit {
       .find({ store: { $in: ids } })
       .populate('store', 'name')
       .populate('product', 'title')
+      .populate('productBundle', 'nameFr nameEn')
       .populate({
         path: 'marketingOfferListing',
         populate: [
@@ -5131,6 +5242,22 @@ export class AdsService implements OnModuleInit {
       .exec();
     if (!n) {
       throw new BadRequestException('product_not_in_store');
+    }
+  }
+
+  /** Vérifie qu’un bundle actif appartient à la boutique de la bannière. */
+  private async assertProductBundleBelongsToStore(
+    productBundleId: string,
+    storeId: string,
+  ): Promise<void> {
+    const n = await this._productBundleModel
+      .countDocuments({
+        _id: new Types.ObjectId(productBundleId),
+        storeId: new Types.ObjectId(storeId),
+      })
+      .exec();
+    if (!n) {
+      throw new BadRequestException('product_bundle_not_in_store');
     }
   }
 
@@ -5202,6 +5329,12 @@ export class AdsService implements OnModuleInit {
           ? (new Types.ObjectId(
               it.marketingOfferListingId,
             ) as unknown as import('@schemas/marketing-offer-listing.schema').MarketingOfferListingModel)
+          : undefined,
+      productBundle:
+        it.itemType === AdCampaignItemTypeEnum.BUNDLE && it.productBundleId
+          ? (new Types.ObjectId(
+              it.productBundleId,
+            ) as unknown as ProductBundleModel)
           : undefined,
     }));
   }
@@ -5278,6 +5411,15 @@ export class AdsService implements OnModuleInit {
         [dto.marketingOfferListingId],
       );
     }
+    if (dto.actionType === StoreAdActionTypeEnum.BUNDLE) {
+      if (!dto.productBundleId || !storeOid) {
+        throw new BadRequestException('product_bundle_required_for_action');
+      }
+      await this.assertProductBundleBelongsToStore(
+        dto.productBundleId,
+        storeOid.toString(),
+      );
+    }
 
     const linkTarget = isAdLinkActionType(dto.actionType)
       ? this.assertActionTargetValue(dto.actionType, dto.actionTarget)
@@ -5313,6 +5455,10 @@ export class AdsService implements OnModuleInit {
         dto.marketingOfferListingId
           ? exclusiveOfferListingRefId(dto.marketingOfferListingId)
           : undefined,
+      productBundle:
+        dto.actionType === StoreAdActionTypeEnum.BUNDLE && dto.productBundleId
+          ? productBundleRefId(dto.productBundleId)
+          : undefined,
       audienceTotal: normalizeAudienceTotal(dto.audienceTotal) ?? null,
       notificationAddon: normalizeNotificationAddonInput(
         dto.notificationAddon,
@@ -5333,6 +5479,7 @@ export class AdsService implements OnModuleInit {
       .findById(created._id)
       .populate('store', 'name')
       .populate('product', 'title')
+      .populate('productBundle', 'nameFr nameEn')
       .populate({
         path: 'marketingOfferListing',
         populate: [
@@ -5486,10 +5633,12 @@ export class AdsService implements OnModuleInit {
     if (dto.actionType === StoreAdActionTypeEnum.SHOP) {
       existing.product = undefined;
       existing.marketingOfferListing = undefined;
+      existing.productBundle = undefined;
       existing.actionTarget = undefined;
     } else if (dto.actionType === StoreAdActionTypeEnum.PRODUCT) {
       existing.actionTarget = undefined;
       existing.marketingOfferListing = undefined;
+      existing.productBundle = undefined;
       const pid = dto.productId;
       if (!pid || !effectiveStoreId) {
         throw new BadRequestException('product_required_for_action');
@@ -5499,6 +5648,7 @@ export class AdsService implements OnModuleInit {
     } else if (dto.actionType === StoreAdActionTypeEnum.EXCLUSIVE_OFFER) {
       existing.actionTarget = undefined;
       existing.product = undefined;
+      existing.productBundle = undefined;
       const listingId = dto.marketingOfferListingId;
       if (!listingId || !effectiveStoreId) {
         throw new BadRequestException('exclusive_offer_listing_required');
@@ -5507,9 +5657,21 @@ export class AdsService implements OnModuleInit {
         listingId,
       ]);
       existing.marketingOfferListing = exclusiveOfferListingRefId(listingId);
+    } else if (dto.actionType === StoreAdActionTypeEnum.BUNDLE) {
+      // Combo : productBundleId obligatoire + boutique (pas de bannière globale).
+      existing.actionTarget = undefined;
+      existing.product = undefined;
+      existing.marketingOfferListing = undefined;
+      const bundleId = dto.productBundleId;
+      if (!bundleId || !effectiveStoreId) {
+        throw new BadRequestException('product_bundle_required_for_action');
+      }
+      await this.assertProductBundleBelongsToStore(bundleId, effectiveStoreId);
+      existing.productBundle = productBundleRefId(bundleId);
     } else if (dto.actionType != null && isAdLinkActionType(dto.actionType)) {
       existing.product = undefined;
       existing.marketingOfferListing = undefined;
+      existing.productBundle = undefined;
       if (dto.actionTarget !== undefined) {
         existing.actionTarget =
           dto.actionTarget === null || dto.actionTarget === ''
@@ -5520,10 +5682,10 @@ export class AdsService implements OnModuleInit {
 
     if (dto.productId === null) {
       existing.product = undefined;
-    } else if (
-      dto.marketingOfferListingId === null
-    ) {
+    } else if (dto.marketingOfferListingId === null) {
       existing.marketingOfferListing = undefined;
+    } else if (dto.productBundleId === null) {
+      existing.productBundle = undefined;
     } else if (
       dto.marketingOfferListingId &&
       !dto.actionType &&
@@ -5536,6 +5698,17 @@ export class AdsService implements OnModuleInit {
       existing.marketingOfferListing = exclusiveOfferListingRefId(
         dto.marketingOfferListingId,
       );
+    } else if (
+      dto.productBundleId &&
+      !dto.actionType &&
+      existing.actionType === StoreAdActionTypeEnum.BUNDLE &&
+      effectiveStoreId
+    ) {
+      await this.assertProductBundleBelongsToStore(
+        dto.productBundleId,
+        effectiveStoreId,
+      );
+      existing.productBundle = productBundleRefId(dto.productBundleId);
     } else if (
       dto.productId &&
       !dto.actionType &&
@@ -5578,6 +5751,14 @@ export class AdsService implements OnModuleInit {
       await this.assertExclusiveOfferListingsBelongToStore(effectiveStoreId, [
         listingId,
       ]);
+      existing.actionTarget = undefined;
+    } else if (finalType === StoreAdActionTypeEnum.BUNDLE) {
+      const bundleRef = existing.productBundle;
+      const bundleId = bundleRef != null ? String(bundleRef) : '';
+      if (!bundleId || !Types.ObjectId.isValid(bundleId) || !effectiveStoreId) {
+        throw new BadRequestException('product_bundle_required_for_action');
+      }
+      await this.assertProductBundleBelongsToStore(bundleId, effectiveStoreId);
       existing.actionTarget = undefined;
     } else {
       existing.actionTarget = undefined;
@@ -5625,6 +5806,14 @@ export class AdsService implements OnModuleInit {
       .findById(oid)
       .populate('store', 'name')
       .populate('product', 'title')
+      .populate('productBundle', 'nameFr nameEn')
+      .populate({
+        path: 'marketingOfferListing',
+        populate: [
+          { path: 'productId', select: 'title' },
+          { path: 'marketingOfferId', select: 'name' },
+        ],
+      })
       .lean()
       .exec();
     return this.toManagementRowResolved(populated as Record<string, unknown>);
@@ -5990,6 +6179,7 @@ export class AdsService implements OnModuleInit {
       .populate('store', 'name')
       .populate('items.product', 'title')
       .populate('items.drink', 'name')
+      .populate('items.productBundle', 'nameFr nameEn image')
       .select('store items notificationAddon')
       .lean()
       .exec();
@@ -6244,6 +6434,16 @@ export class AdsService implements OnModuleInit {
             ? `${strategyName} — ${productTitle}`
             : strategyName;
         itemTitles.set(`EXCLUSIVE_OFFER:${itemId}`, title);
+      } else if (itemType === AdCampaignItemTypeEnum.BUNDLE) {
+        const b = item.productBundle as Record<string, unknown> | undefined | null;
+        const itemId = b?._id ? String(b._id) : '';
+        if (!itemId) continue;
+        const nameFr = String(b?.nameFr ?? '').trim();
+        const nameEn = String(b?.nameEn ?? '').trim();
+        itemTitles.set(
+          `BUNDLE:${itemId}`,
+          nameFr || nameEn || '(bundle supprimé)',
+        );
       }
     }
 
@@ -6446,6 +6646,7 @@ export class AdsService implements OnModuleInit {
         .populate('store', 'name profileImage')
         .populate('items.product', 'title profileImage price commissionRetrieveStrategy')
         .populate('items.drink', 'name imageUrl priceCad commissionRetrieveStrategy')
+      .populate('items.productBundle', 'nameFr nameEn image')
         .sort({ createdAt: -1 })
         .lean()
         .exec(),
@@ -6625,6 +6826,7 @@ export class AdsService implements OnModuleInit {
       .populate('store', 'name profileImage')
       .populate('items.product', 'title profileImage price store commissionRetrieveStrategy')
       .populate('items.drink', 'name imageUrl priceCad store commissionRetrieveStrategy')
+      .populate('items.productBundle', 'nameFr nameEn image')
       .lean()
       .exec();
     return this._toCampaignRow(row as unknown as Record<string, unknown>);
@@ -6674,6 +6876,7 @@ export class AdsService implements OnModuleInit {
       .populate('store', 'name profileImage')
       .populate('items.product', 'title profileImage price store commissionRetrieveStrategy')
       .populate('items.drink', 'name imageUrl priceCad store commissionRetrieveStrategy')
+      .populate('items.productBundle', 'nameFr nameEn image')
       .lean()
       .exec();
     return this._toCampaignRow(row as unknown as Record<string, unknown>);
@@ -6779,6 +6982,7 @@ export class AdsService implements OnModuleInit {
       .populate('store', 'name profileImage')
       .populate('items.product', 'title profileImage price store commissionRetrieveStrategy')
       .populate('items.drink', 'name imageUrl priceCad store commissionRetrieveStrategy')
+      .populate('items.productBundle', 'nameFr nameEn image')
       .lean()
       .exec();
     return this._toCampaignRow(row as unknown as Record<string, unknown>);

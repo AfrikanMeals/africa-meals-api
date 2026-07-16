@@ -1,6 +1,7 @@
+import { MediasService } from '@modules/medias/medias.service';
 import {
   BadRequestException,
-  ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -20,11 +21,16 @@ import {
   CreateProductBundleDto,
   PatchProductBundleDto,
   BundleCartItemCustomizationDto,
+  ProductBundleImageJsonDto,
 } from './dto/product-bundles.dto';
 import {
   computeBundlePricing,
   BundlePricingResult,
 } from './product-bundle-pricing.util';
+import {
+  isAllowedBundleImageFilename,
+  normalizeBundleCoverImage,
+} from './product-bundle-image.util';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Types de réponse publique (shape API → admin + mobile)
@@ -121,6 +127,8 @@ export class ProductBundlesService {
     private readonly drinkModel: Model<DrinkModel>,
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
+    @Inject(MediasService)
+    private readonly mediasService: MediasService,
   ) {}
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -255,7 +263,8 @@ export class ProductBundlesService {
       nameEn: dto.nameEn.trim(),
       descriptionFr: dto.descriptionFr?.trim(),
       descriptionEn: dto.descriptionEn?.trim(),
-      image: dto.image,
+      // Couverture optionnelle — '' → omis (pas de string vide en base).
+      image: normalizeBundleCoverImage(dto.image),
       items: dto.items.map((it) => ({
         itemType: it.itemType,
         productId: it.productId
@@ -321,7 +330,11 @@ export class ProductBundlesService {
       bundle.descriptionFr = dto.descriptionFr?.trim();
     if (dto.descriptionEn !== undefined)
       bundle.descriptionEn = dto.descriptionEn?.trim();
-    if (dto.image !== undefined) bundle.image = dto.image;
+    // '' = retirer la couverture ; undefined DTO = ne pas toucher.
+    // `set(…, null)` car mongoose ignore souvent `undefined` au save.
+    if (dto.image !== undefined) {
+      bundle.set('image', normalizeBundleCoverImage(dto.image) ?? null);
+    }
     if (dto.discountType !== undefined) bundle.discountType = dto.discountType;
     if (dto.discountValue !== undefined) bundle.discountValue = dto.discountValue;
     if (dto.status !== undefined) bundle.status = dto.status;
@@ -360,6 +373,67 @@ export class ProductBundlesService {
     if (result.deletedCount === 0) {
       throw new NotFoundException('Bundle introuvable.');
     }
+  }
+
+  /**
+   * Upload image de couverture → Storage `marketing/product-bundles`.
+   * Prérequis : accès boutique (même garde que le CRUD).
+   */
+  async uploadBundleImage(
+    storeId: string,
+    dto: ProductBundleImageJsonDto,
+    user: UserModel,
+  ): Promise<{ url: string }> {
+    await this.assertStoreAccess(storeId, user);
+
+    // 1. Décoder base64 (data-URL ou brut).
+    const raw = dto.imageBase64
+      .replace(/\s/g, '')
+      .replace(/^data:image\/[^;]+;base64,/i, '');
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(raw, 'base64');
+    } catch {
+      throw new BadRequestException('invalid_base64');
+    }
+    if (!buffer.length) {
+      throw new BadRequestException('empty_image');
+    }
+
+    // 2. Plafond taille (Paramètres → Stockage).
+    const max = await this.mediasService.getMaxFileSizeBytes();
+    if (buffer.length > max) {
+      throw new BadRequestException('file_too_large');
+    }
+
+    // 3. Extension / MIME (jpeg|png|webp uniquement).
+    const name =
+      (dto.filename || 'bundle-cover.jpg').trim() || 'bundle-cover.jpg';
+    if (!isAllowedBundleImageFilename(name)) {
+      throw new BadRequestException('invalid_file_type');
+    }
+    const lower = name.toLowerCase();
+    const mime = lower.endsWith('.png')
+      ? 'image/png'
+      : lower.endsWith('.webp')
+        ? 'image/webp'
+        : 'image/jpeg';
+    const file = {
+      buffer,
+      originalname: name,
+      mimetype: mime,
+      size: buffer.length,
+    } as Express.Multer.File;
+
+    // 4. Persister + URL publique résolue (CDN / proxy médias).
+    const url = await this.mediasService.upload(
+      file,
+      user,
+      'marketing/product-bundles',
+    );
+    const resolved =
+      (await this.mediasService.resolvePublicMediaUrl(url)) ?? url;
+    return { url: resolved };
   }
 
   // ─── Feed public ──────────────────────────────────────────────────────────
@@ -487,7 +561,8 @@ export class ProductBundlesService {
       nameEn: doc.nameEn ?? doc.name_en ?? '',
       descriptionFr: doc.descriptionFr ?? doc.description_fr,
       descriptionEn: doc.descriptionEn ?? doc.description_en,
-      image: doc.image,
+      // null/'' legacy → omis côté API (clients mobile/web testent isNotEmpty).
+      image: normalizeBundleCoverImage(doc.image),
       items,
       discountType: doc.discountType ?? doc.discount_type ?? 'percent',
       discountValue: Number(doc.discountValue ?? doc.discount_value ?? 0),

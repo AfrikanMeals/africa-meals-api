@@ -1,4 +1,5 @@
 import { AuthModule } from '@modules/auth/auth.module';
+import { MediasModule } from '@modules/medias/medias.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -15,6 +16,7 @@ import { StoreProductBundlesController } from './store-product-bundles.controlle
 @Module({
   imports: [
     AuthModule,
+    MediasModule,
     MongooseModule.forFeature([
       { name: ProductBundleModel.name, schema: ProductBundleSchema },
       { name: ProductModel.name, schema: ProductSchema },
