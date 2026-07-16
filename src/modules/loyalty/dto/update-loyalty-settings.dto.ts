@@ -60,6 +60,12 @@ export class LoyaltyRewardSettingDto {
 }
 
 export class UpdateLoyaltySettingsDto {
+  // Devise ISO 4217 (ex. CAD, XAF, EUR) ; si absent, garde la valeur courante.
+  @IsOptional()
+  @IsString()
+  @MaxLength(5)
+  currency?: string;
+
   @IsOptional()
   @IsInt()
   @Min(1)

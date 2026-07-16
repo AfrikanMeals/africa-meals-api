@@ -35,6 +35,7 @@ import { SubscriptionsModule } from './modules/subscriptions/subscriptions.modul
 import { PartnerBadgesModule } from './modules/partner-badges/partner-badges.module';
 import { MarketingOffersModule } from './modules/marketing-offers/marketing-offers.module';
 import { MarketingOfferListingsModule } from './modules/marketing-offer-listings/marketing-offer-listings.module';
+import { ProductBundlesModule } from './modules/product-bundles/product-bundles.module';
 import { TeamsModule } from './modules/teams/teams.module';
 import { RefundsModule } from './modules/refunds/refunds.module';
 import { PenaltiesModule } from './modules/penalties/penalties.module';
@@ -340,6 +341,7 @@ async function readRedisManagerEnabledAtBootstrap(
     PartnerBadgesModule,
     MarketingOffersModule,
     MarketingOfferListingsModule,
+    ProductBundlesModule,
     TeamsModule,
     RefundsModule,
     PenaltiesModule,

@@ -278,6 +278,13 @@ export class LoyaltyService {
   async updateSettings(caller: UserModel, dto: UpdateLoyaltySettingsDto) {
     this._assertAdmin(caller);
     const current = await this.resolveConfig();
+
+    // Devise : accepter celle du DTO si ISO 4217 valide (≥3 chars), sinon garder la devise courante.
+    const currency =
+      dto.currency && dto.currency.trim().length >= 3
+        ? dto.currency.trim().toUpperCase()
+        : current.currency;
+
     const cadPerPoint =
       dto.cadPerPoint != null
         ? Math.floor(dto.cadPerPoint)
@@ -317,7 +324,7 @@ export class LoyaltyService {
         { key: SETTINGS_KEY },
         {
           $set: {
-            currency: LOYALTY_CURRENCY,
+            currency,
             inactiveDays,
             cadPerPoint,
             welcomeBonusPoints,
