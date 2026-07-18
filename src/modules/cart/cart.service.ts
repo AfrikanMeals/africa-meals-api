@@ -32,6 +32,7 @@ import {
   customizationKeyFromSelections,
   normalizeSelectedComplements,
   normalizeSelectedSupplements,
+  normalizeSelectedVariantLabel,
   repriceCustomizationFromProductCatalog,
   sumSelectedCustomizationVendorExtras,
 } from './cart-customization.util';
@@ -247,6 +248,38 @@ export class CartService {
     return cart;
   }
 
+  /**
+   * Garantit variante / compléments / suppléments en camelCase sur la réponse panier
+   * (toJSON peut omettre ou exposer snake selon lean/getters).
+   */
+  private cartItemCustomizationFields(item: CartItemModel): {
+    selectedComplements: ReturnType<typeof normalizeSelectedComplements>;
+    selectedSupplements: ReturnType<typeof normalizeSelectedSupplements>;
+    selectedVariantLabel?: string;
+  } {
+    const json = item.toJSON() as Record<string, unknown>;
+    const complements = normalizeSelectedComplements(
+      item.selectedComplements ??
+        json.selectedComplements ??
+        json.selected_complements,
+    );
+    const supplements = normalizeSelectedSupplements(
+      item.selectedSupplements ??
+        json.selectedSupplements ??
+        json.selected_supplements,
+    );
+    const variant = normalizeSelectedVariantLabel(
+      item.selectedVariantLabel ??
+        json.selectedVariantLabel ??
+        json.selected_variant_label,
+    );
+    return {
+      selectedComplements: complements,
+      selectedSupplements: supplements,
+      ...(variant ? { selectedVariantLabel: variant } : {}),
+    };
+  }
+
   async findOneByItemId(
     id: string,
     user: UserModel,
@@ -259,6 +292,8 @@ export class CartService {
       throw new NotFoundException('cart_item_not_found');
     }
 
+    const customization = this.cartItemCustomizationFields(item);
+
     if (item.type === CartItemTypeEnum.OFFER) {
       const offer = await this._offersService.findOne(item.entityId, user);
       if (!offer) {
@@ -266,6 +301,7 @@ export class CartService {
       }
       return {
         ...item.toJSON(),
+        ...customization,
         entity: offer,
       };
     } else if (item.type === CartItemTypeEnum.PRODUCT) {
@@ -286,6 +322,7 @@ export class CartService {
       );
       return {
         ...item.toJSON(),
+        ...customization,
         entity: product,
         dailyMenuStockRemaining,
       } as unknown as Partial<CartItemModel>;
@@ -301,6 +338,7 @@ export class CartService {
       const maxOrder = maxDrinkOrderQuantity(drink.quantite);
       return {
         ...item.toJSON(),
+        ...customization,
         entity: drinkEntityForCartApi({
           ...drink,
           currency: String(
@@ -323,6 +361,7 @@ export class CartService {
       }
       return {
         ...item.toJSON(),
+        ...customization,
         entity: extra,
       };
     } else {

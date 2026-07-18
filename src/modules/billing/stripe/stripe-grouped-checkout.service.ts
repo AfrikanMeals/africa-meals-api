@@ -24,6 +24,7 @@ import { StripeConnectTransferService } from './stripe-connect-transfer.service'
 import { StripeDeferredCaptureService } from './stripe-deferred-capture.service';
 import { scaleStorePayoutMinorToPaymentShare } from './stripe-processing-fee.util';
 import { OrdersService } from '@modules/orders/orders.service';
+import { giftOrderStripeMetadataChunk } from '@modules/orders/gift-order.util';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import type { RegionTaxBreakdown } from '@modules/supported-countries/region-tax.constants';
 import {
@@ -116,6 +117,8 @@ type GroupedStripeBuilt = {
   giftCode?: string;
   giftDiscountByStore: Record<string, number>;
   couponDiscountByStore: Record<string, number>;
+  /** Destinataire commande offerte (distinct de `giftCode` promo). */
+  giftRecipientUserId?: string;
   /** Adresse livraison choisie au checkout (si au moins une boutique en livraison). */
   checkoutAddressId?: string;
   deliveryTipTotalCents: number;
@@ -253,9 +256,15 @@ function stripeLabelForCartLine(line: Record<string, unknown>): string {
   const ent = line['entity'] as Record<string, unknown> | undefined;
   const raw = ent != null ? ent['title'] ?? ent['name'] ?? ent['label'] : null;
   let t = raw != null ? String(raw).trim() : '';
+  // Variante + compléments + suppléments (sinon Stripe affiche le plat nu).
   const suffix = customizationSummaryLabel(
-    normalizeSelectedComplements(line['selectedComplements']),
-    normalizeSelectedSupplements(line['selectedSupplements']),
+    normalizeSelectedComplements(
+      line['selectedComplements'] ?? line['selected_complements'],
+    ),
+    normalizeSelectedSupplements(
+      line['selectedSupplements'] ?? line['selected_supplements'],
+    ),
+    String(line['selectedVariantLabel'] ?? line['selected_variant_label'] ?? ''),
   );
   if (suffix) {
     t = t ? `${t} — ${suffix}` : suffix;
@@ -1241,6 +1250,9 @@ export class StripeGroupedCheckoutService {
         const q = await this.quoteService.quoteForUser(user, {
           storeId,
           addressId: dto.addressId,
+          ...(dto.giftRecipientUserId?.trim()
+            ? { giftRecipientUserId: dto.giftRecipientUserId.trim() }
+            : {}),
         });
         deliveryMetaByStore[storeId] = {
           deliverable: Boolean(q.deliverable && q.fee != null),
@@ -1661,6 +1673,9 @@ export class StripeGroupedCheckoutService {
         : undefined;
     const totalCents = subtotalBeforePaymentFeeCents + orderPaymentFeeCents;
 
+    // Destinataire cadeau (trim) — propagé metadata Stripe + createOrderFromCart.
+    const giftRecipientUserId = dto.giftRecipientUserId?.trim() || undefined;
+
     return {
       currency,
       lineItems,
@@ -1671,6 +1686,7 @@ export class StripeGroupedCheckoutService {
       giftCode: giftPreview?.code,
       giftDiscountByStore,
       couponDiscountByStore,
+      giftRecipientUserId,
       checkoutAddressId: needsAddress ? dto.addressId?.trim() : undefined,
       deliveryTipTotalCents,
       tipCentsByStore,
@@ -1796,6 +1812,11 @@ export class StripeGroupedCheckoutService {
       ...this.payoutMetadataChunks(built.payoutByStore),
       ...this.couponsMetadataChunk(built.coupons),
       ...this.giftCodeMetadataChunk(built),
+      // Cadeau panier (pas gift code promo) — reprise webhook.
+      ...giftOrderStripeMetadataChunk({
+        giftRecipientUserId: built.giftRecipientUserId,
+        paidByUserId: built.giftRecipientUserId ? base.uid : undefined,
+      }),
       ...this.preOrderMetadataChunk(built.preOrderByStoreId),
       ...this.preOrderOidMetadataChunk(built.preOrderOidByStoreId),
     };
@@ -2320,11 +2341,20 @@ export class StripeGroupedCheckoutService {
               customerNote: scheduleMeta.customerNote,
             }
           : undefined;
+        // Cadeau panier : metadata Stripe → createOrderFromCart.
+        const giftRecipientFromMeta = String(
+          meta.gift_recipient_user_id ?? '',
+        ).trim();
         try {
           const order = await this.storeService.createOrderFromCart(
             storeId,
             user,
-            preOrderOpts,
+            {
+              ...preOrderOpts,
+              ...(giftRecipientFromMeta
+                ? { giftRecipientUserId: giftRecipientFromMeta }
+                : {}),
+            },
           );
           oid =
             (order as { _id?: Types.ObjectId })?._id?.toString() ??
@@ -3493,7 +3523,7 @@ export class StripeGroupedCheckoutService {
       const order = await this.storeService.createOrderFromCart(
         storeId,
         user,
-        this.resolvePreOrderCreateOptions(dto, storeId),
+        this.resolveOrderCreateOptions(dto, storeId),
       );
       const oid =
         (order as { _id?: Types.ObjectId })?._id?.toString() ??
@@ -3746,6 +3776,9 @@ export class StripeGroupedCheckoutService {
         isPreOrder: true,
         scheduledAt,
         customerNote: meta.customerNote,
+        ...(dto.giftRecipientUserId?.trim()
+          ? { giftRecipientUserId: dto.giftRecipientUserId.trim() }
+          : {}),
       });
       const oid =
         (order as { _id?: Types.ObjectId })?._id?.toString() ??
@@ -3762,6 +3795,29 @@ export class StripeGroupedCheckoutService {
     }
 
     return { orderIds };
+  }
+
+  /**
+   * Options createOrderFromCart : pré-commande + destinataire cadeau.
+   */
+  private resolveOrderCreateOptions(
+    dto: GroupedStripeCheckoutDto | undefined,
+    storeId: string,
+  ):
+    | {
+        isPreOrder?: true;
+        scheduledAt?: Date;
+        customerNote?: string;
+        giftRecipientUserId?: string;
+      }
+    | undefined {
+    const pre = this.resolvePreOrderCreateOptions(dto, storeId);
+    const giftRecipientUserId = dto?.giftRecipientUserId?.trim() || undefined;
+    if (!pre && !giftRecipientUserId) return undefined;
+    return {
+      ...pre,
+      ...(giftRecipientUserId ? { giftRecipientUserId } : {}),
+    };
   }
 
   private resolvePreOrderCreateOptions(

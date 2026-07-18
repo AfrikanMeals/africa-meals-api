@@ -1584,7 +1584,9 @@ export class StoreController {
   @UseGuards(JwtGuard)
   async addItemToStoreCart(
     @Param('id') id: string,
-    @Body(ValidationPipe) args: AddItemToCartDto,
+    // transform: nested selectedComplements / selectedSupplements → DTO (sinon ValidateNested no-op).
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    args: AddItemToCartDto,
     @Req() req: Request,
   ) {
     return await this._storeService.addItemToStoreCart(

@@ -190,7 +190,12 @@ export class OrdeLineItem {
 @Schema({
   timestamps: true,
   collection: 'orders',
+  // getters : Prop `name` snake → camel aussi via toObject (findOneById / field selection).
   toJSON: {
+    getters: true,
+    virtuals: true,
+  },
+  toObject: {
     getters: true,
     virtuals: true,
   },
@@ -455,6 +460,19 @@ export class OrderModel extends BaseSchema {
     ref: 'UserModel',
   })
   user: string;
+
+  /**
+   * Offreur qui a payé une commande cadeau (`user` = destinataire).
+   * Absent sur les commandes classiques (payeur = `user`).
+   */
+  @Prop({
+    required: false,
+    name: 'paid_by',
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserModel',
+    index: true,
+  })
+  paidBy?: string;
 
   @Prop({
     required: true,
@@ -742,6 +760,12 @@ OrderSchema.index({
   isPreOrder: 1,
   scheduledAt: 1,
   user: 1,
+});
+
+/** Filtre « Cadeaux » (commandes offertes par moi). */
+OrderSchema.index({
+  paidBy: 1,
+  createdAt: -1,
 });
 
 export type OrderModelDocument = OrderModel & Document;

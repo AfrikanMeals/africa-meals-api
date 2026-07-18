@@ -650,12 +650,16 @@ export class NotificationsService implements OnModuleInit {
     orderId: string;
     storeName?: string;
     storeId?: string;
+    /** Commande offerte par un tiers — libellé inbox / push dédié. */
+    isGiftOrder?: boolean;
   }): Promise<void> {
     if (!Types.ObjectId.isValid(args.userId)) {
       return;
     }
     const store = (args.storeName ?? '').trim() || 'Restaurant';
-    const statusLabel = NotificationsService.orderStatusLabelFr('created');
+    const statusLabel = args.isGiftOrder
+      ? 'Commande offerte'
+      : NotificationsService.orderStatusLabelFr('created');
     // Inbox d’abord : évite qu’un flux « créer puis payer tout de suite »
     // (ex. webhook Stripe) enregistre « Payée » avant « En attente de paiement »
     // quand le FCM « créé » est encore en cours.
@@ -665,14 +669,17 @@ export class NotificationsService implements OnModuleInit {
       storeName: args.storeName,
       storeId: args.storeId,
       body: statusLabel,
+      // Inbox : reason métier stable `created` (libellé body distinct si cadeau).
       reason: 'created',
       status: 'created',
     });
 
     void this.sendMulticastNotification({
       recipientUserIds: [args.userId],
-      title: 'Commande enregistrée',
-      body: `${store} : votre commande est en attente. Payez quand vous voulez.`,
+      title: args.isGiftOrder ? 'Commande offerte' : 'Commande enregistrée',
+      body: args.isGiftOrder
+        ? `${store} : quelqu’un vous a offert une commande.`
+        : `${store} : votre commande est en attente. Payez quand vous voulez.`,
       data: {
         type: 'order_update',
         audience: 'customer',
@@ -680,6 +687,7 @@ export class NotificationsService implements OnModuleInit {
         orderId: args.orderId,
         storeName: store,
         status: 'created',
+        ...(args.isGiftOrder ? { isGiftOrder: '1' } : {}),
       },
     })
       .then((res) => {

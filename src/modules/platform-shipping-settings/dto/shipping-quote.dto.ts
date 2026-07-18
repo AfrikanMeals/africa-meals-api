@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsMongoId } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsMongoId, IsOptional } from 'class-validator';
 
 export class ShippingQuoteDto {
   @ApiProperty({ description: 'ID Mongo de la boutique' })
@@ -11,4 +11,12 @@ export class ShippingQuoteDto {
   })
   @IsMongoId()
   addressId: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Destinataire commande offerte : l’adresse doit appartenir à ce user (pas au JWT payeur).',
+  })
+  @IsOptional()
+  @IsMongoId()
+  giftRecipientUserId?: string;
 }

@@ -80,6 +80,15 @@ export class GroupedStripeCheckoutDto {
 
   @ApiPropertyOptional({
     description:
+      'Destinataire d’une commande offerte (ObjectId). Le JWT paie ; `order.user` = destinataire, `order.paidBy` = offreur. Distinct de `giftCode`.',
+    example: '507f1f77bcf86cd799439011',
+  })
+  @IsOptional()
+  @IsString()
+  giftRecipientUserId?: string;
+
+  @ApiPropertyOptional({
+    description:
       'Métadonnées pré-commande par boutique (date/heure planifiée, note client).',
     example: {
       storeMongoId24Hex: {

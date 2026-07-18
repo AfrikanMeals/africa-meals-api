@@ -3831,6 +3831,7 @@ export class StoreService {
       isPreOrder?: boolean;
       scheduledAt?: Date;
       customerNote?: string;
+      giftRecipientUserId?: string;
     },
   ) {
     const store = await this.findOneById(storeId);

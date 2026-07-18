@@ -1,6 +1,10 @@
 import { AddressesService } from '@modules/addresses/addresses.service';
 import { CreateAddressDto } from '@modules/addresses/dto/addresses.dto';
 import {
+  isValidUsernameFormat,
+  normalizeUsername,
+} from '@modules/auth/username.util';
+import {
   BadRequestException,
   ForbiddenException,
   Inject,
@@ -19,6 +23,14 @@ import {
   EndUserClientsPageResponse,
   paginateClientRows,
 } from './dto/clients-page.dto';
+
+/** Profil public minimal pour offrir un panier (lookup username). */
+export type GiftUsernameLookupResult = {
+  id: string;
+  fullName: string;
+  username: string;
+  profileImage?: string;
+};
 
 /** Commandes comptées dans le total d’achats client (aligné dashboard CA). */
 const CLIENT_ORDER_STATUSES_FOR_SPENT: OrderStatusEnum[] = [
@@ -62,6 +74,67 @@ export class UsersService {
       throw new NotFoundException('user_not_found');
     }
     return user;
+  }
+
+  /**
+   * Lookup public (JWT) pour offrir un panier : username → profil minimal.
+   * Interdit de s’offrir à soi-même (`cannot_gift_self`).
+   */
+  async lookupByUsernameForGift(
+    caller: UserModel,
+    rawUsername: string,
+  ): Promise<GiftUsernameLookupResult> {
+    const normalized = normalizeUsername(rawUsername);
+    if (!normalized || !isValidUsernameFormat(normalized)) {
+      // Code stable pour le mobile (mapping l10n) — détail format dans le message util.
+      throw new BadRequestException('username_invalid_format');
+    }
+    const doc = await this._userModel
+      .findOne({ username: normalized })
+      .select('_id fullName username profileImage')
+      .lean()
+      .exec();
+    if (!doc) {
+      throw new NotFoundException('user_not_found');
+    }
+    const id = String(doc._id);
+    // Self-gift bloqué dès le lookup (évite un checkout inutile).
+    if (id === String(caller.id)) {
+      throw new BadRequestException('cannot_gift_self');
+    }
+    return {
+      id,
+      fullName: String(doc.fullName ?? '').trim() || normalized,
+      username: String(doc.username ?? normalized),
+      ...(doc.profileImage
+        ? { profileImage: String(doc.profileImage) }
+        : {}),
+    };
+  }
+
+  /**
+   * Adresses livraison du destinataire pour le checkout « Offrir panier ».
+   * Lecture seule — l’offreur ne peut pas créer d’adresse pour le destinataire.
+   */
+  async listAddressesForGiftCheckout(
+    caller: UserModel,
+    recipientUserId: string,
+  ): Promise<{ addresses: Record<string, unknown>[] }> {
+    const rid = String(recipientUserId ?? '').trim();
+    if (!Types.ObjectId.isValid(rid)) {
+      throw new BadRequestException('gift_recipient_invalid');
+    }
+    if (rid === String(caller.id)) {
+      throw new BadRequestException('cannot_gift_self');
+    }
+    const exists = await this._userModel
+      .exists({ _id: new Types.ObjectId(rid) })
+      .exec();
+    if (!exists) {
+      throw new NotFoundException('user_not_found');
+    }
+    const addresses = await this._addressesService.listUserAddresses(rid);
+    return { addresses };
   }
 
   /**

@@ -8,6 +8,7 @@ import {
   IsPhoneNumber,
   IsString,
   Matches,
+  MaxLength,
   MinLength,
   ValidateIf,
 } from 'class-validator';
@@ -187,6 +188,21 @@ export class UpdateProfileDto {
   @IsOptional()
   @Trim()
   fullName?: string;
+
+  /**
+   * Username unique (optionnel). Vide = effacer.
+   * Format strict validé aussi côté service après normalisation.
+   */
+  @ApiPropertyOptional({
+    example: 'jean_dupont',
+    description:
+      'Identifiant unique (3–30, lettre puis a-z0-9_). Chaîne vide pour effacer.',
+  })
+  @IsOptional()
+  @IsString()
+  @Trim()
+  @MaxLength(30)
+  username?: string;
 
   @ApiPropertyOptional({ example: '+237651796157' })
   @IsOptional()

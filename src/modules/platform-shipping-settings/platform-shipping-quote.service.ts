@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -7,7 +8,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { AddressModel } from '@schemas/address.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { ShippingQuoteDto } from './dto/shipping-quote.dto';
 import { PlatformShippingSettingsService } from './platform-shipping-settings.service';
 import {
@@ -31,8 +32,19 @@ export class PlatformShippingQuoteService {
   ) {}
 
   async quoteForUser(user: UserModel, dto: ShippingQuoteDto) {
+    // Cadeau : l’adresse appartient au destinataire, pas au JWT payeur.
+    const giftRecipientId = String(dto.giftRecipientUserId ?? '').trim();
+    const addressOwnerId = giftRecipientId || user._id.toString();
+    if (giftRecipientId) {
+      if (giftRecipientId === user._id.toString()) {
+        throw new BadRequestException('cannot_gift_self');
+      }
+      if (!Types.ObjectId.isValid(giftRecipientId)) {
+        throw new BadRequestException('gift_recipient_invalid');
+      }
+    }
     const userDoc = await this._userModel
-      .findById(user._id)
+      .findById(addressOwnerId)
       .select('addresses')
       .lean()
       .exec();

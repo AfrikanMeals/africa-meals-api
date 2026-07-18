@@ -40,6 +40,45 @@ export class UsersController {
   }
 
   /**
+   * Lookup username pour offrir un panier (profil minimal).
+   * Erreurs : `username_invalid_format`, `user_not_found`, `cannot_gift_self`.
+   */
+  @Get('by-username/:username')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Profil public minimal par username (offrir panier — pas les gift codes promo)',
+  })
+  async lookupByUsername(
+    @Req() req: Request,
+    @Param('username') username: string,
+  ) {
+    return this._usersService.lookupByUsernameForGift(
+      req.user as UserModel,
+      username,
+    );
+  }
+
+  /**
+   * Adresses du destinataire pour le checkout cadeau (lecture seule).
+   */
+  @Get(':userId/gift-checkout-addresses')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Adresses livraison d’un destinataire (offrir panier) — pas de mutation',
+  })
+  async listGiftCheckoutAddresses(
+    @Req() req: Request,
+    @Param('userId') userId: string,
+  ) {
+    return this._usersService.listAddressesForGiftCheckout(
+      req.user as UserModel,
+      userId,
+    );
+  }
+
+  /**
    * Clients finaux.
    * - Administrateur : comptes `USER` + tout compte ayant commandé sur l’app.
    * - Restaurant (`VENDOR`) : comptes ayant commandé sur une de ses boutiques (tous rôles).

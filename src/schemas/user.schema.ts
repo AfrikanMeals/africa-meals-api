@@ -56,6 +56,21 @@ export class UserModel extends BaseSchema {
   @Prop({ required: true, name: 'email', unique: true })
   email: string;
 
+  /**
+   * Identifiant public manquant optionnel (PATCH /auth/me).
+   * Sparse unique : plusieurs users sans username OK ; doublons interdits.
+   * Toujours stocké en minuscules (voir normalizeUsername).
+   */
+  @Prop({
+    required: false,
+    name: 'username',
+    unique: true,
+    sparse: true,
+    lowercase: true,
+    trim: true,
+  })
+  username?: string;
+
   @Prop({ required: false, name: 'phone_number' })
   phoneNumber?: string;
 

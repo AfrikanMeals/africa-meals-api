@@ -70,6 +70,11 @@ import {
 } from './auth-otp.util';
 import { parseJwtDurationToSeconds } from './jwt-token.util';
 import { resolveRefreshTokenSecret } from './jwt-secrets.util';
+import {
+  isValidUsernameFormat,
+  normalizeUsername,
+  usernameFormatErrorMessage,
+} from './username.util';
 
 @Injectable()
 export class AuthService {
@@ -1299,6 +1304,8 @@ export class AuthService {
 
   async updateProfile(userId: string, args: UpdateProfileDto) {
     const update: Partial<UserModel> = {};
+    // Effacement username : $unset (évite "" qui casserait l’index sparse unique).
+    let unsetUsername = false;
     if (args.fullName != null) update.fullName = args.fullName;
     if (args.phoneNumber != null) update.phoneNumber = args.phoneNumber;
     if (args.appCountryCode != null) {
@@ -1308,15 +1315,55 @@ export class AuthService {
       }
       update.appCountryCode = c;
     }
-    if (Object.keys(update).length === 0) {
+    // Username : normaliser → format → unicité avant d’accepter le PATCH.
+    if (args.username !== undefined) {
+      const normalized = normalizeUsername(args.username);
+      if (normalized == null) {
+        unsetUsername = true;
+      } else {
+        if (!isValidUsernameFormat(normalized)) {
+          throw new BadRequestException(usernameFormatErrorMessage());
+        }
+        // Exclure le user courant : renvoi du même username reste OK.
+        const taken = await this._usersModel
+          .exists({ username: normalized, _id: { $ne: userId } })
+          .exec();
+        if (taken) {
+          throw new ConflictException('user_username_conflict');
+        }
+        update.username = normalized;
+      }
+    }
+    if (Object.keys(update).length === 0 && !unsetUsername) {
       return this.findUserById(userId);
     }
-    const user = await this._usersModel
-      .findOneAndUpdate({ _id: userId }, update, { new: true })
-      .populate('addresses')
-      .populate('stores')
-      .populate('paymentMethods')
-      .exec();
+    // Opérateurs Mongo uniquement — ne pas mélanger champs racine + $unset.
+    const mongoUpdate: Record<string, unknown> = {};
+    if (Object.keys(update).length > 0) {
+      mongoUpdate.$set = update;
+    }
+    if (unsetUsername) {
+      mongoUpdate.$unset = { username: '' };
+    }
+    let user: UserModel | null;
+    try {
+      user = await this._usersModel
+        .findOneAndUpdate({ _id: userId }, mongoUpdate, { new: true })
+        .populate('addresses')
+        .populate('stores')
+        .populate('paymentMethods')
+        .exec();
+    } catch (err: unknown) {
+      // Course concurrente : index unique Mongo (code 11000).
+      const code =
+        err && typeof err === 'object' && 'code' in err
+          ? (err as { code?: number }).code
+          : undefined;
+      if (code === 11000) {
+        throw new ConflictException('user_username_conflict');
+      }
+      throw err;
+    }
     if (!user) throw new NotFoundException('user_not_found');
     return user;
   }

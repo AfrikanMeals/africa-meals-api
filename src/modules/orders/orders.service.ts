@@ -4,6 +4,16 @@ import { StripeDeferredCaptureService } from '@modules/billing/stripe/stripe-def
 import { BusinessReportsService } from '@modules/business-reports/business-reports.service';
 import { AdsService } from '@modules/ads/ads.service';
 import { CartService } from '@modules/cart/cart.service';
+import {
+  normalizeSelectedComplements,
+  normalizeSelectedSupplements,
+  normalizeSelectedVariantLabel,
+} from '@modules/cart/cart-customization.util';
+import {
+  normalizeOrderItemsOnOrderRow,
+  normalizeOrderItemsOnOrderRows,
+} from './order-line-items-normalize.util';
+import { resolveGiftOrderParties } from './gift-order.util';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { ProductsService } from '@modules/products/products.service';
 import { RatingsService } from '@modules/ratings/ratings.service';
@@ -332,8 +342,14 @@ export class OrdersService {
   /** Client + adresses de livraison (refs `addresses` peuplées). */
   private static readonly orderUserWithAddressesPopulate = {
     path: 'user',
-    select: 'fullName email phoneNumber profileImage addresses',
+    select: 'fullName email phoneNumber profileImage username addresses',
     populate: { path: 'addresses' },
+  } as const;
+
+  /** Offreur (commande cadeau) — lecture seule liste/détail. */
+  private static readonly orderPaidByPopulate = {
+    path: 'paidBy',
+    select: 'fullName username profileImage',
   } as const;
 
   /** Projection minimale GPS livreur (OPT-002) — store + adresses sans populate lourd. */
@@ -450,9 +466,19 @@ export class OrdersService {
   ): Promise<{ data: OrderModel[] }> {
     const filter: Record<string, unknown> = {};
     const asCustomerScope = Boolean(args.asCustomer);
+    const meOid = new Types.ObjectId(String(user.id));
+    // Filtre « Cadeaux » : commandes que j’ai payées pour un autre.
+    const giftedByMe = Boolean(args.giftedByMe) && asCustomerScope;
 
-    if (asCustomerScope) {
-      filter['user'] = new Types.ObjectId(String(user.id));
+    if (giftedByMe) {
+      filter['paidBy'] = meOid;
+      // Exclut edge cases où paidBy == user (ne devrait pas arriver).
+      filter['user'] = { $ne: meOid };
+      if (args.storeId) {
+        filter['store'] = { _id: args.storeId };
+      }
+    } else if (asCustomerScope) {
+      filter['user'] = meOid;
       if (args.storeId) {
         filter['store'] = { _id: args.storeId };
       }
@@ -480,7 +506,7 @@ export class OrdersService {
         filter['store'] = { $in: storeIds };
       }
     } else {
-      filter['user'] = new Types.ObjectId(String(user.id));
+      filter['user'] = meOid;
       if (args.storeId) {
         filter['store'] = { _id: args.storeId };
       }
@@ -554,6 +580,7 @@ export class OrdersService {
         },
       })
       .populate(OrdersService.orderUserWithAddressesPopulate)
+      .populate(OrdersService.orderPaidByPopulate)
       .lean()
       .exec();
 
@@ -586,6 +613,9 @@ export class OrdersService {
     if (asCustomerScope || user.type === UserTypeEnum.USER) {
       enriched = enrichOrdersDisplayStatus(enriched);
     }
+
+    // Lean Mongo : forcer camelCase perso avant field-selection.
+    enriched = normalizeOrderItemsOnOrderRows(enriched);
 
     return { data: enriched as unknown as OrderModel[] };
   }
@@ -776,9 +806,11 @@ export class OrdersService {
   ) {
     const filter: Record<string, unknown> = { _id: id };
     const asCustomerScope = Boolean(opts?.asCustomer);
+    const meOid = new Types.ObjectId(String(user.id));
 
     if (asCustomerScope) {
-      filter['user'] = new Types.ObjectId(String(user.id));
+      // Destinataire ou offreur (commande cadeau) peuvent ouvrir le détail.
+      filter['$or'] = [{ user: meOid }, { paidBy: meOid }];
     } else if (user.type === UserTypeEnum.ADMIN) {
       // accès à toute commande
     } else if (user.type === UserTypeEnum.VENDOR) {
@@ -789,18 +821,22 @@ export class OrdersService {
         }
         return String(s);
       });
-      const vendorUserId = new Types.ObjectId(String(user.id));
+      const vendorUserId = meOid;
       if (storeIds.length) {
-        filter['$or'] = [{ store: { $in: storeIds } }, { user: vendorUserId }];
+        filter['$or'] = [
+          { store: { $in: storeIds } },
+          { user: vendorUserId },
+          { paidBy: vendorUserId },
+        ];
       } else {
         // Un vendeur peut aussi consulter ses achats personnels (mode client).
-        filter['user'] = vendorUserId;
+        filter['$or'] = [{ user: vendorUserId }, { paidBy: vendorUserId }];
       }
     } else if (user.type === UserTypeEnum.DELIVERY) {
-      filter['assignedDeliveryUser'] = new Types.ObjectId(String(user.id));
+      filter['assignedDeliveryUser'] = meOid;
       filter['shouldShip'] = true;
     } else {
-      filter['user'] = new Types.ObjectId(String(user.id));
+      filter['$or'] = [{ user: meOid }, { paidBy: meOid }];
     }
 
     const order = await this._orderModel
@@ -815,6 +851,7 @@ export class OrdersService {
         ],
       })
       .populate(OrdersService.orderUserWithAddressesPopulate)
+      .populate(OrdersService.orderPaidByPopulate)
       .exec();
 
     if (!order) {
@@ -823,7 +860,10 @@ export class OrdersService {
 
     await this.ensurePickupCodeForOrderDoc(order);
 
-    const plain = order.toObject() as Record<string, unknown>;
+    // getters + normalize perso (camel) avant field-selection interceptor.
+    const plain = normalizeOrderItemsOnOrderRow(
+      order.toObject() as Record<string, unknown>,
+    );
     let row: Record<string, unknown> =
       OrdersService.enrichOrderWithDeliveryAddress(plain);
     if (user.type === UserTypeEnum.USER || asCustomerScope) {
@@ -1119,6 +1159,8 @@ export class OrdersService {
       isPreOrder?: boolean;
       scheduledAt?: Date;
       customerNote?: string;
+      /** Destinataire cadeau — panier reste celui du payeur JWT. */
+      giftRecipientUserId?: string;
     },
   ) {
     const cart = await this._cartService.findOneByStoreId(storeId, user);
@@ -1126,6 +1168,14 @@ export class OrdersService {
     if (!cart?.items?.length) {
       throw new NotFoundException('cart_is_empty');
     }
+
+    // 1. Résoudre destinataire cadeau (sinon client = payeur).
+    const giftParties = await this.resolveGiftPartiesForCheckout(
+      user,
+      options?.giftRecipientUserId,
+    );
+    const orderCustomerId = giftParties.orderUserId;
+    const paidByUserId = giftParties.paidByUserId;
     // const store = cart.store;
 
     // if (!store?.acceptsOrders) {
@@ -1142,14 +1192,26 @@ export class OrdersService {
         const label = (e?.title || e?.name || 'Article').trim() || 'Article';
         const row = item as CartItemModel & {
           selectedComplements?: unknown;
+          selected_complements?: unknown;
           selectedSupplements?: unknown;
+          selected_supplements?: unknown;
           selectedVariantLabel?: string;
+          selected_variant_label?: string;
           commissionRetrieveStrategy?: string;
           bundleId?: unknown;
           bundleGroupId?: string;
           bundleTitle?: string;
         };
-        const variantLabel = String(row.selectedVariantLabel ?? '').trim();
+        // Fix: toJSON / lean peuvent exposer snake_case — ne plus perdre les options panier.
+        const complements = normalizeSelectedComplements(
+          row.selectedComplements ?? row.selected_complements,
+        );
+        const supplements = normalizeSelectedSupplements(
+          row.selectedSupplements ?? row.selected_supplements,
+        );
+        const variantLabel = normalizeSelectedVariantLabel(
+          row.selectedVariantLabel ?? row.selected_variant_label,
+        );
         const strategyRaw = String(row.commissionRetrieveStrategy ?? '').trim();
         const commissionRetrieveStrategy =
           strategyRaw === 'add_to_price' || strategyRaw === 'on_payout'
@@ -1169,12 +1231,8 @@ export class OrdersService {
           quantity: item.quantity!,
           price: item.price!,
           categoryTitle: await this.categoryTitleForCartLine(item),
-          selectedComplements: Array.isArray(row.selectedComplements)
-            ? row.selectedComplements
-            : [],
-          selectedSupplements: Array.isArray(row.selectedSupplements)
-            ? row.selectedSupplements
-            : [],
+          selectedComplements: complements,
+          selectedSupplements: supplements,
           ...(variantLabel ? { selectedVariantLabel: variantLabel } : {}),
           ...(commissionRetrieveStrategy
             ? { commissionRetrieveStrategy }
@@ -1205,7 +1263,11 @@ export class OrdersService {
     const order = await this._orderModel.create({
       status: OrderStatusEnum.CREATED,
       store: new Types.ObjectId(String(storeId)),
-      user: new Types.ObjectId(String(user.id)),
+      // Cadeau : destinataire = client ; sinon payeur JWT.
+      user: new Types.ObjectId(orderCustomerId),
+      ...(paidByUserId
+        ? { paidBy: new Types.ObjectId(paidByUserId) }
+        : {}),
       items,
       totalPrice: calculatedPrice, // TODO should we add shipping price here?
       shippingPrice: 0,
@@ -1219,9 +1281,10 @@ export class OrdersService {
     await this.recordOrderStatusChangeIfLegacy({
       orderId: orderIdStr,
       storeId: String(storeId),
-      customerUserId: String(user.id),
+      customerUserId: orderCustomerId,
       toStatus: OrderStatusEnum.CREATED,
       source: OrderStatusChangeSourceEnum.CHECKOUT,
+      // Acteur = payeur (offreur ou client classique).
       actorUserId: String(user.id),
     });
 
@@ -1234,18 +1297,29 @@ export class OrdersService {
         populate: [{ path: 'address' }],
       })
       .populate(OrdersService.orderUserWithAddressesPopulate)
+      .populate(OrdersService.orderPaidByPopulate)
       .exec();
     if (!created) {
       throw new NotFoundException('order_not_found');
     }
     this.emitOrderCreatedFromDoc(created);
-    this.notifyOrderPartiesRealtime(created, OrderStatusEnum.CREATED);
+    // WS : destinataire + offreur (si cadeau).
+    this.notifyOrderPartiesRealtime(
+      created,
+      OrderStatusEnum.CREATED,
+      undefined,
+      paidByUserId && paidByUserId !== orderCustomerId
+        ? { additionalPartyUserIds: [paidByUserId] }
+        : undefined,
+    );
     const storePop = created.store as { name?: string } | null | undefined;
+    // Push / inbox destinataire (commande offerte ou classique).
     await this._notificationsService.pushCustomerOrderCreated({
-      userId: String(user.id),
+      userId: orderCustomerId,
       orderId: orderIdStr,
       storeName: storePop?.name?.trim() || undefined,
       storeId: String(storeId),
+      ...(giftParties.isGift ? { isGiftOrder: true as const } : {}),
     });
 
     const sname = storePop?.name?.trim() || 'Boutique';
@@ -1261,7 +1335,8 @@ export class OrdersService {
     );
     void this.notifyStoreVendorsForOrder({
       storeId: String(storeId),
-      customerUserId: String(user.id),
+      // Client de la commande = destinataire si cadeau.
+      customerUserId: orderCustomerId,
       inboxMessage: buildVendorOrderCreatedInboxMessage(msgArgs),
       push: {
         title: 'Nouvelle commande',
@@ -1282,6 +1357,43 @@ export class OrdersService {
       logTag: 'new_order',
     });
     return created;
+  }
+
+  /**
+   * Valide `giftRecipientUserId` (existence Mongo) et résout user / paidBy.
+   * Panier toujours chargé via le payeur JWT.
+   */
+  private async resolveGiftPartiesForCheckout(
+    payer: UserModel,
+    giftRecipientUserId?: string | null,
+  ): Promise<ReturnType<typeof resolveGiftOrderParties>> {
+    const raw = String(giftRecipientUserId ?? '').trim();
+    if (!raw) {
+      return resolveGiftOrderParties({ payerUserId: String(payer.id) });
+    }
+    if (!Types.ObjectId.isValid(raw)) {
+      throw new BadRequestException('gift_recipient_invalid');
+    }
+    let parties: ReturnType<typeof resolveGiftOrderParties>;
+    try {
+      parties = resolveGiftOrderParties({
+        payerUserId: String(payer.id),
+        giftRecipientUserId: raw,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg === 'cannot_gift_self') {
+        throw new BadRequestException('cannot_gift_self');
+      }
+      throw e;
+    }
+    const exists = await this._userModel
+      .exists({ _id: new Types.ObjectId(parties.orderUserId) })
+      .exec();
+    if (!exists) {
+      throw new NotFoundException('user_not_found');
+    }
+    return parties;
   }
 
   /** Commande bien passée en `paied` pour ce paiement Stripe groupé. */
@@ -1462,15 +1574,25 @@ export class OrdersService {
             name: String(it.label ?? 'Article'),
             profileImage: it.pictureUrl,
           },
-          selectedComplements: Array.isArray(it.selectedComplements)
-            ? it.selectedComplements
-            : [],
-          selectedSupplements: Array.isArray(it.selectedSupplements)
-            ? it.selectedSupplements
-            : [],
-          ...(it.selectedVariantLabel
-            ? { selectedVariantLabel: it.selectedVariantLabel }
-            : {}),
+          // Pré-commande → panier : mêmes options que createFromCart (camel + snake).
+          selectedComplements: normalizeSelectedComplements(
+            (it as { selectedComplements?: unknown; selected_complements?: unknown })
+              .selectedComplements ??
+              (it as { selected_complements?: unknown }).selected_complements,
+          ),
+          selectedSupplements: normalizeSelectedSupplements(
+            (it as { selectedSupplements?: unknown; selected_supplements?: unknown })
+              .selectedSupplements ??
+              (it as { selected_supplements?: unknown }).selected_supplements,
+          ),
+          ...(() => {
+            const v = normalizeSelectedVariantLabel(
+              (it as { selectedVariantLabel?: string; selected_variant_label?: string })
+                .selectedVariantLabel ??
+                (it as { selected_variant_label?: string }).selected_variant_label,
+            );
+            return v ? { selectedVariantLabel: v } : {};
+          })(),
         };
       });
     if (!items.length) {
@@ -2300,6 +2422,11 @@ export class OrdersService {
           }
         }
         const storeIdForCustomer = storeIdForEvent;
+        // Cadeau : `o.user` = destinataire ; `paidBy` = offreur.
+        const paidById = objectIdStringFromRef(
+          (o as { paidBy?: unknown }).paidBy,
+        );
+        const isGiftOrder = Boolean(paidById);
         if (uid && Types.ObjectId.isValid(uid)) {
           void this._notificationsService
             .pushCustomerOrderStatusChanged({
@@ -2309,9 +2436,18 @@ export class OrdersService {
               storeId: storeIdForCustomer,
               previousStatus: prevStatus,
               newStatus: paidStatus,
-              bodyOverride: isPayOnPickup
-                ? 'Commande enregistrée — paiement à effectuer lors du retrait en boutique'
-                : undefined,
+              ...(isGiftOrder
+                ? {
+                    titleOverride: 'Commande offerte',
+                    bodyOverride: isPayOnPickup
+                      ? 'Quelqu’un vous a offert une commande — paiement au retrait en boutique'
+                      : 'Quelqu’un vous a offert une commande — elle est payée.',
+                  }
+                : {
+                    bodyOverride: isPayOnPickup
+                      ? 'Commande enregistrée — paiement à effectuer lors du retrait en boutique'
+                      : undefined,
+                  }),
             })
             .catch((err) =>
               this.logger.warn(
@@ -2324,6 +2460,10 @@ export class OrdersService {
         void this._wsOrderNotifyHandler?.notifyPartiesByOrderId(
           orderId,
           paidStatus,
+          undefined,
+          paidById && paidById !== uid
+            ? { additionalPartyUserIds: [paidById] }
+            : undefined,
         );
         if (!isPayOnPickup) {
           const storeIdForAds = storeIdForEvent;

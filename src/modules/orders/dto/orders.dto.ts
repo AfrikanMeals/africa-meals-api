@@ -127,6 +127,21 @@ export class FilterOrdersDto extends FieldSelectionQueryDto {
   @IsOptional()
   @IsIn(['createdAt', 'scheduledAt'])
   sortBy?: 'createdAt' | 'scheduledAt';
+
+  @ApiPropertyOptional({
+    description:
+      'Commandes que j’ai offertes (`paidBy` = moi, destinataire ≠ moi). Scope client.',
+    example: true,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    const s = String(value ?? '')
+      .trim()
+      .toLowerCase();
+    return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+  })
+  giftedByMe?: boolean;
 }
 
 export class ConfirmPickupDto {
