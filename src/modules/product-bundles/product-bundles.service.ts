@@ -1,4 +1,5 @@
 import { MediasService } from '@modules/medias/medias.service';
+import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
 import {
   BadRequestException,
   Inject,
@@ -31,6 +32,7 @@ import {
   isAllowedBundleImageFilename,
   normalizeBundleCoverImage,
 } from './product-bundle-image.util';
+import { resolveBundleProductVendorUnitPrice } from './product-bundle-vendor-unit-price.util';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Types de réponse publique (shape API → admin + mobile)
@@ -129,6 +131,9 @@ export class ProductBundlesService {
     private readonly storeModel: Model<StoreModel>,
     @Inject(MediasService)
     private readonly mediasService: MediasService,
+    // Feed public : majore les prix comme le panier (add_to_price).
+    @Inject(SubscriptionPlanOrderCommissionService)
+    private readonly _planOrderCommission: SubscriptionPlanOrderCommissionService,
   ) {}
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -137,15 +142,6 @@ export class ProductBundlesService {
     if (!d) return undefined;
     const dt = d instanceof Date ? d : new Date(String(d));
     return Number.isNaN(dt.getTime()) ? undefined : dt.toISOString();
-  }
-
-  /** Résout le prix unitaire client d'un produit (discountPrice > 0 prioritaire). */
-  private resolveProductUnitPrice(p: {
-    price?: number;
-    discountPrice?: number;
-  }): number {
-    const dp = Number(p.discountPrice) || 0;
-    return dp > 0 ? dp : Math.max(0, Number(p.price) || 0);
   }
 
   /** Vérifie que l'utilisateur a accès à la boutique (propriétaire ou admin). */
@@ -720,10 +716,90 @@ export class ProductBundlesService {
   /** Convertit un document bundle en shape feed mobile (avec pricing + boutique). */
   private async toBundleFeedRow(doc: any, store: any): Promise<BundleFeedRow> {
     const row = await this.toBundleRow(doc);
+    const storeId = String(
+      (store as { _id?: unknown })._id ??
+        (store as { id?: unknown }).id ??
+        row.storeId,
+    ).trim();
 
-    // Calcul du pricing bundle
+    // Fix: feed utilisait les prix vendeur bruts → détail 4000, panier ~4500
+    // (commission add_to_price). Aligner sur resolveCustomerUnitPriceForStore.
+    const customerItems: BundleItemRow[] = [];
+    for (const it of row.items) {
+      const vendorUnit = Math.max(0, Number(it.unitPrice) || 0);
+      const customerUnit =
+        await this._planOrderCommission.resolveCustomerUnitPriceForStore(
+          storeId,
+          vendorUnit,
+        );
+
+      let variants = it.variants;
+      let complementGroups = it.complementGroups;
+      let supplements = it.supplements;
+
+      // Majorer aussi les options UI (variantes / extras) affichées sur le détail.
+      if (
+        it.itemType === BundleItemTypeEnum.PRODUCT &&
+        (variants?.length ||
+          complementGroups?.length ||
+          supplements?.length)
+      ) {
+        if (variants?.length) {
+          variants = await Promise.all(
+            variants.map(async (v) => {
+              const vp = Math.max(0, Number(v.price) || 0);
+              const vd = Math.max(0, Number(v.discountPrice) || 0);
+              const vendor = vd > 0 && vd < vp ? vd : vp;
+              const customer =
+                await this._planOrderCommission.resolveCustomerUnitPriceForStore(
+                  storeId,
+                  vendor,
+                );
+              return {
+                ...v,
+                price: customer,
+                // Promo déjà résolue dans le prix client affiché.
+                discountPrice: 0,
+              };
+            }),
+          );
+        }
+        const priced =
+          await this._planOrderCommission.applyCustomerPricingToProductComponents(
+            storeId,
+            {
+              vendorBase: vendorUnit,
+              complements: (complementGroups ?? []) as Array<{
+                title?: string;
+                options?: Array<{
+                  label: string;
+                  priceDelta: number;
+                  isDefault?: boolean;
+                }>;
+                [key: string]: unknown;
+              }>,
+              supplements: (supplements ?? []) as Array<{
+                name: string;
+                price: number;
+                [key: string]: unknown;
+              }>,
+            },
+          );
+        complementGroups = priced.complements as BundleItemRow['complementGroups'];
+        supplements = priced.supplements as BundleItemRow['supplements'];
+      }
+
+      customerItems.push({
+        ...it,
+        unitPrice: customerUnit,
+        ...(variants ? { variants } : {}),
+        ...(complementGroups ? { complementGroups } : {}),
+        ...(supplements ? { supplements } : {}),
+      });
+    }
+
     const pricing = computeBundlePricing({
-      items: row.items.map((it) => ({ customerPrice: it.unitPrice })),
+      items: customerItems.map((it) => ({ customerPrice: it.unitPrice })),
       discountType: row.discountType as 'percent' | 'fixed',
       discountValue: row.discountValue,
     });
@@ -740,6 +816,7 @@ export class ProductBundlesService {
 
     return {
       ...row,
+      items: customerItems,
       storeName: store.name ?? '',
       storeImage: (store as any).profile_image ?? (store as any).profileImage,
       storeRating: Math.round(avgRating * 10) / 10,
@@ -807,11 +884,7 @@ export class ProductBundlesService {
       if (itemType === BundleItemTypeEnum.PRODUCT) {
         const pId = String(item.productId ?? item.product_id ?? '');
         const product = productMap.get(pId) as any;
-        const unitPrice = product
-          ? this.resolveProductUnitPrice(product)
-          : 0;
-
-        // Variantes filtrées par restriction vendeur
+        // Variantes filtrées par restriction vendeur (avant prix : défaut du filtre).
         const allVariants: any[] = product?.variants ?? [];
         const filteredVariants =
           allowedVariants.length > 0
@@ -819,6 +892,15 @@ export class ProductBundlesService {
                 allowedVariants.includes(v.label),
               )
             : allVariants;
+        // Fix: unitPrice = variante défaut (comme pré-sélection mobile / panier),
+        // pas seulement product.price (écart détail vs cart).
+        const unitPrice = product
+          ? resolveBundleProductVendorUnitPrice({
+              price: product.price,
+              discountPrice: product.discount_price ?? product.discountPrice,
+              variants: filteredVariants,
+            })
+          : 0;
 
         // Compléments filtrés
         const allComplements: any[] = product?.complements ?? [];

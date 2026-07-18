@@ -32,6 +32,7 @@ import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { StripeRefundService } from './stripe-refund.service';
+import { fromStripeMinorUnits } from '@utils/stripe-currency-amount.util';
 
 const SETTINGS_KEY = 'default';
 const AUTO_DELAY_MINUTES = Math.max(
@@ -216,8 +217,9 @@ export class RefundProcessingService {
   }
 
   private formatAmountCents(amountCents: number, currency: string): string {
-    const cents = Number.isFinite(amountCents) ? amountCents : 0;
-    return this.formatAmountMajor(cents / 100, currency);
+    // Fix: XAF zero-decimal — ne pas /100 (sinon 5000 XAF → 50).
+    const major = fromStripeMinorUnits(amountCents, currency);
+    return this.formatAmountMajor(major, currency);
   }
 
   private async resolveOrderCurrency(
@@ -942,7 +944,7 @@ export class RefundProcessingService {
       split.stripeProcessingFeeOnCustomerCents > 0
         ? ` · frais Stripe ${this.formatAmountCents(
             split.stripeProcessingFeeOnCustomerCents,
-            refundCurrency,
+            'CAD',
           )}`
         : '';
     const vendorPenaltyNote =
@@ -971,7 +973,11 @@ export class RefundProcessingService {
     const customer = this.customerFromOrder(order);
     const storeName = this.storeNameFromOrder(order);
     const storeId = this.storeIdFromOrder(order) ?? undefined;
-    const netAmount = split.customerRefundCents / 100;
+    // Fix: major units selon devise charge (XAF ×1, pas /100).
+    const netAmount = fromStripeMinorUnits(
+      split.customerRefundCents,
+      refundCurrency,
+    );
 
     await this.notifyRefundUpdate({
       customer,
@@ -1063,9 +1069,10 @@ export class RefundProcessingService {
           )} retenus).`
         : 'Remboursement effectué sur votre moyen de paiement.';
     if (split.stripeProcessingFeeOnCustomerCents > 0) {
+      // Frais BT Stripe = cents CAD settlement, pas devise charge.
       completedNote += ` Frais Stripe : ${this.formatAmountCents(
         split.stripeProcessingFeeOnCustomerCents,
-        refundCurrency,
+        'CAD',
       )}.`;
     }
     if (split.isVendorCancellationRefund) {

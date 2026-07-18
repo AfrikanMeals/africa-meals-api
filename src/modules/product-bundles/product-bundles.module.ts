@@ -1,5 +1,6 @@
 import { AuthModule } from '@modules/auth/auth.module';
 import { MediasModule } from '@modules/medias/medias.module';
+import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -17,6 +18,8 @@ import { StoreProductBundlesController } from './store-product-bundles.controlle
   imports: [
     AuthModule,
     MediasModule,
+    // Commission add_to_price pour le feed public (aligné panier).
+    SubscriptionsModule,
     MongooseModule.forFeature([
       { name: ProductBundleModel.name, schema: ProductBundleSchema },
       { name: ProductModel.name, schema: ProductSchema },
