@@ -1419,19 +1419,29 @@ export class StoreController {
     body: CreateProductJsonDto,
     @Req() req: Request,
   ) {
+    // Transmettre aussi cuisson / commission / variantes (comme admin product-json).
     const args: CreateProductDto = {
       title: body.title,
       bio: body.bio,
       about: body.about,
       fieldsets: body.fieldsets,
+      ingredientLibraryIds: body.ingredientLibraryIds,
       complements: body.complements,
       supplements: body.supplements,
+      variants: body.variants,
+      variantsLabel: body.variantsLabel,
       originCountry: body.originCountry,
+      estimatedCookingTime: body.estimatedCookingTime,
+      estimatedCookingTimeUnit: body.estimatedCookingTimeUnit,
       price: body.price,
       discountPrice: body.discountPrice,
       category: body.category,
       currency: body.currency,
       status: body.status,
+      commissionRetrieveStrategy: body.commissionRetrieveStrategy,
+      listPrice: body.listPrice,
+      listDiscountPrice: body.listDiscountPrice,
+      discountSchedules: body.discountSchedules,
     };
     const maxBytes = await this._mediasService.getMaxFileSizeBytes();
     const imageFile = multerFileFromVendorProductBase64(
