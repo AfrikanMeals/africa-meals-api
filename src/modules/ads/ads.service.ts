@@ -2791,10 +2791,37 @@ export class AdsService implements OnModuleInit {
     if (dto.subtitle != null) existing.subtitle = dto.subtitle.trim();
     if (dto.description != null) existing.description = dto.description.trim();
     if (dto.isActive != null) existing.isActive = dto.isActive;
-    if (dto.startsAt != null) existing.startsAt = new Date(dto.startsAt);
-    // Fin modifiable (vendeur / admin) — validation via _assertCampaignDateRange.
+    // Début/fin verrouillés une fois le couple posé (création seule).
+    const hadBothCampaignDates = Boolean(existing.startsAt && existing.endsAt);
+    if (dto.startsAt != null) {
+      if (hadBothCampaignDates) {
+        const existingStart = new Date(existing.startsAt as Date).getTime();
+        const proposedStart = new Date(dto.startsAt).getTime();
+        if (
+          !Number.isNaN(existingStart) &&
+          !Number.isNaN(proposedStart) &&
+          existingStart !== proposedStart
+        ) {
+          throw new BadRequestException('campaign_start_date_locked');
+        }
+      } else {
+        existing.startsAt = new Date(dto.startsAt);
+      }
+    }
     if (dto.endsAt != null) {
-      existing.endsAt = new Date(dto.endsAt);
+      if (hadBothCampaignDates) {
+        const existingEnd = new Date(existing.endsAt as Date).getTime();
+        const proposedEnd = new Date(dto.endsAt).getTime();
+        if (
+          !Number.isNaN(existingEnd) &&
+          !Number.isNaN(proposedEnd) &&
+          existingEnd !== proposedEnd
+        ) {
+          throw new BadRequestException('campaign_end_date_locked');
+        }
+      } else {
+        existing.endsAt = new Date(dto.endsAt);
+      }
     }
     if (dto.actionType != null) {
       if (dto.actionType === StoreAdActionTypeEnum.PRODUCT) {
@@ -5554,8 +5581,31 @@ export class AdsService implements OnModuleInit {
       archiveReason: existing.archiveReason,
     });
 
-    // Dates début/fin éditables — garde seulement le couple cohérent.
+    // Début/fin verrouillés si le couple était déjà complet.
     if (dto.validFrom != null || dto.validUntil != null) {
+      const hadBothDates = Boolean(existing.validFrom && existing.validUntil);
+      if (hadBothDates && dto.validFrom != null) {
+        const existingFrom = new Date(existing.validFrom as Date).getTime();
+        const proposedFrom = new Date(dto.validFrom).getTime();
+        if (
+          !Number.isNaN(existingFrom) &&
+          !Number.isNaN(proposedFrom) &&
+          existingFrom !== proposedFrom
+        ) {
+          throw new BadRequestException('ad_start_date_locked');
+        }
+      }
+      if (hadBothDates && dto.validUntil != null) {
+        const existingUntil = new Date(existing.validUntil as Date).getTime();
+        const proposedUntil = new Date(dto.validUntil).getTime();
+        if (
+          !Number.isNaN(existingUntil) &&
+          !Number.isNaN(proposedUntil) &&
+          existingUntil !== proposedUntil
+        ) {
+          throw new BadRequestException('ad_end_date_locked');
+        }
+      }
       const nf =
         dto.validFrom != null
           ? new Date(dto.validFrom)
@@ -5572,8 +5622,11 @@ export class AdsService implements OnModuleInit {
         throw new BadRequestException('ad_dates_incomplete');
       }
       this.assertDateRange(nf, nu);
-      if (dto.validFrom != null) existing.validFrom = nf;
-      if (dto.validUntil != null) existing.validUntil = nu;
+      // Ne pose les dates que si le couple n’était pas déjà verrouillé.
+      if (!hadBothDates) {
+        if (dto.validFrom != null) existing.validFrom = nf;
+        if (dto.validUntil != null) existing.validUntil = nu;
+      }
     }
 
     if (dto.title != null) existing.title = dto.title.trim();
