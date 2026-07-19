@@ -4,6 +4,11 @@ import {
   agentHasDeliveryCapacity,
   type AgentApplicationCapacitySource,
 } from '@modules/delivery-agent/delivery-agent-capacity.util';
+import {
+  decideCheckoutCourierAvailability,
+  type CheckoutCourierAvailabilityRow,
+  type CheckoutCourierAvailabilityState,
+} from '@modules/delivery-agent/checkout-courier-availability.decision';
 import { CourierGeoService } from '@modules/fleet/courier-geo.service';
 import {
   COURIER_GEO_DEFAULT_RADIUS_KM,
@@ -17,23 +22,13 @@ import {
   DeliveryAgentApplicationStatus,
 } from '@schemas/delivery-agent-application.schema';
 import { OrderModel } from '@schemas/order.schema';
-import {
-  StoreDeliveryAssignmentModeEnum,
-  StoreModel,
-} from '@schemas/store.schema';
+import { StoreModel } from '@schemas/store.schema';
 import { Model, Types } from 'mongoose';
 
-export type CheckoutCourierAvailabilityState =
-  | 'available'
-  | 'unavailable'
-  | 'unknown';
-
-export type CheckoutCourierAvailabilityRow = {
-  storeId: string;
-  state: CheckoutCourierAvailabilityState;
-  strategy: 'store_fleet' | 'platform';
-  reason?: string;
-};
+export type {
+  CheckoutCourierAvailabilityRow,
+  CheckoutCourierAvailabilityState,
+} from '@modules/delivery-agent/checkout-courier-availability.decision';
 
 type CandidateApplication = AgentApplicationCapacitySource & {
   user?: unknown;
@@ -99,8 +94,7 @@ export class CourierCheckoutAvailabilityService {
   }
 
   /**
-   * Respecte la stratégie flotte boutique ; sinon cherche le pool plateforme
-   * dans le rayon d’expédition configuré pour la région.
+   * Flotte → self-shipping / flotte gérée → pool plateforme (décision pure).
    */
   private async checkStore(
     storeId: string,
@@ -122,84 +116,56 @@ export class CourierCheckoutAvailabilityService {
       .lean()
       .exec();
     const managed = this.storeDrivers.isStoreManagedDelivery(store);
-    const strategy = managed ? 'store_fleet' : 'platform';
-    if (!store || store.supportsShipping !== true) {
-      return {
-        storeId,
-        state: 'unavailable',
-        strategy,
-        reason: 'store_shipping_disabled',
-      };
-    }
-
-    const region = String((store as { region?: string }).region ?? '')
+    const assignmentMode = this.storeDrivers.storeAssignmentMode(store);
+    const supportsShipping = !!store && store.supportsShipping === true;
+    const region = String((store as { region?: string } | null)?.region ?? '')
       .trim()
       .toUpperCase();
     const policy = await this.subscriptions.resolveStoreDeliveryPolicy(storeId);
-    const assignmentMode = this.storeDrivers.storeAssignmentMode(store);
 
-    // Flotte propre : MANUAL et plans self-delivery restent exclusifs.
-    if (managed) {
+    // Flotte : seulement si gérée (évite requêtes inutiles en mode plateforme).
+    let fleetHasAssignable = false;
+    if (managed && supportsShipping) {
       const fleetIds = await this.storeDrivers.listActiveDriverUserIdsForStore(
         storeId,
       );
-      if (await this.hasAssignableCandidate(fleetIds, region)) {
-        return { storeId, state: 'available', strategy: 'store_fleet' };
-      }
-      const fleetOnly =
-        policy.selfDeliveryRequired ||
-        assignmentMode === StoreDeliveryAssignmentModeEnum.MANUAL;
-      if (fleetOnly) {
-        return {
-          storeId,
-          state: 'unavailable',
-          strategy: 'store_fleet',
-          reason:
-            fleetIds.length === 0
-              ? 'no_online_courier'
-              : 'courier_capacity_full',
-        };
-      }
-    } else if (policy.selfDeliveryRequired) {
-      // Configuration incohérente : un plan self-delivery sans flotte ne doit
-      // pas solliciter silencieusement le pool plateforme.
-      return {
-        storeId,
-        state: 'unavailable',
-        strategy: 'store_fleet',
-        reason: 'store_fleet_required',
-      };
+      fleetHasAssignable = await this.hasAssignableCandidate(fleetIds, region);
     }
 
-    const platformIds = await this.platformCandidateIds(
-      store as Record<string, unknown>,
-      region,
-    );
-    if (platformIds == null) {
-      return {
-        storeId,
-        state: 'unknown',
-        strategy: 'platform',
-        reason: 'store_location_unavailable',
-      };
+    // Self-shipping / flotte gérée : pas besoin du pool plateforme (vendeur peut s’assigner).
+    const needsPlatform =
+      supportsShipping &&
+      !fleetHasAssignable &&
+      !policy.selfDeliveryRequired &&
+      !managed;
+
+    let platformHasAssignable: boolean | null = false;
+    if (needsPlatform) {
+      const platformIds = await this.platformCandidateIds(
+        (store ?? {}) as Record<string, unknown>,
+        region,
+      );
+      if (platformIds == null) {
+        platformHasAssignable = null;
+      } else if (platformIds.length === 0) {
+        platformHasAssignable = false;
+      } else {
+        platformHasAssignable = await this.hasAssignableCandidate(
+          platformIds,
+          region,
+        );
+      }
     }
-    if (platformIds.length === 0) {
-      return {
-        storeId,
-        state: 'unavailable',
-        strategy: 'platform',
-        reason: 'no_online_courier',
-      };
-    }
-    if (await this.hasAssignableCandidate(platformIds, region)) {
-      return { storeId, state: 'available', strategy: 'platform' };
-    }
-    return {
+
+    return decideCheckoutCourierAvailability({
       storeId,
-      state: 'unavailable',
-      strategy: 'platform',
-      reason: 'courier_capacity_full',
-    };
+      supportsShipping,
+      managed,
+      selfDeliveryRequired: policy.selfDeliveryRequired === true,
+      assignmentMode,
+      fleetHasAssignable,
+      platformHasAssignable,
+    });
   }
 
   /**
@@ -232,7 +198,7 @@ export class CourierCheckoutAvailabilityService {
     );
 
     // Court-circuit : dans le cas nominal, une seule agrégation capacité suffit.
-    for (const candidateId of candidateIds) {
+    for (final candidateId of candidateIds) {
       const app = byUser.get(candidateId);
       if (!app) continue;
       const agentRegion = String(app.region ?? '')
