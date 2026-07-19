@@ -260,11 +260,20 @@ export class PendingDeliveryService {
             duplicate &&
             duplicate.status !== PendingDeliveryProofStatusEnum.ADMIN_REJECTED
           ) {
-            const orderId = String(order._id);
+            // Fix: path duplicate — relier preuve + présence (sinon course reste active).
+            order.pendingDeliveryProofId = new Types.ObjectId(
+              String(duplicate._id),
+            ) as unknown as OrderModel['pendingDeliveryProofId'];
+            await order.save();
             this.emitPendingDeliveryRealtime(order, duplicate, storeId);
+            if (agentId) {
+              this.ordersService.notifyDeliveryAgentPresenceAfterDutyRelease(
+                agentId,
+              );
+            }
             return {
               proofId: String(duplicate._id),
-              orderId,
+              orderId: String(order._id),
               status: duplicate.status,
               orderStatus: order.status,
               orderCompleted: false,
