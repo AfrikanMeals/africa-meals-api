@@ -30,6 +30,12 @@ export class CreateIngredientLibraryDto {
   @IsNotEmpty()
   @Trim()
   name: string;
+
+  @ApiPropertyOptional({ example: true, default: true })
+  @IsOptional()
+  @Transform(({ value }) => toOptionalBoolean(value))
+  @IsBoolean()
+  active?: boolean;
 }
 
 export class PatchIngredientLibraryDto {
@@ -37,6 +43,12 @@ export class PatchIngredientLibraryDto {
   @IsOptional()
   @Trim()
   name?: string;
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @Transform(({ value }) => toOptionalBoolean(value))
+  @IsBoolean()
+  active?: boolean;
 }
 
 export class CreateSupplementLibraryDto {

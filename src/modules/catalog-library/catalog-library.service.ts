@@ -21,6 +21,7 @@ import {
   PatchIngredientLibraryDto,
   PatchSupplementLibraryDto,
 } from './dto/catalog-library.dto';
+import { readCatalogIngredientActive } from './catalog-ingredient-active.util';
 
 @Injectable()
 export class CatalogLibraryService {
@@ -68,6 +69,7 @@ export class CatalogLibraryService {
     return {
       id: String(doc._id),
       name: String(doc.name ?? '').trim(),
+      active: readCatalogIngredientActive(doc.active),
       createdAt: this.isoDate(doc.createdAt),
       updatedAt: this.isoDate(doc.updatedAt),
     };
@@ -151,9 +153,15 @@ export class CatalogLibraryService {
     await this.assertAccess(storeId, user, 'catalog.edit');
     const name = dto.name.trim();
     if (!name) throw new BadRequestException('name_required');
+    // Création : actif par défaut (désactivation via PATCH).
+    const active =
+      dto.active === undefined
+        ? true
+        : readCatalogIngredientActive(dto.active);
     const doc = await this._ingredientModel.create({
       store: this.storeOid(storeId),
       name,
+      active,
     });
     return this.mapIngredient(doc.toObject() as Record<string, unknown>);
   }
@@ -170,6 +178,9 @@ export class CatalogLibraryService {
       .exec();
     if (!doc) throw new NotFoundException('ingredient_library_not_found');
     if (dto.name != null) doc.name = dto.name.trim();
+    if (dto.active !== undefined) {
+      doc.active = readCatalogIngredientActive(dto.active);
+    }
     await doc.save();
     return this.mapIngredient(doc.toObject() as Record<string, unknown>);
   }

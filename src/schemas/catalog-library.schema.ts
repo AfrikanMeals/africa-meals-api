@@ -20,6 +20,10 @@ export class StoreIngredientLibraryModel extends BaseSchema {
 
   @Prop({ required: true, name: 'name', trim: true })
   name: string;
+
+  /** false = ingrédient désactivé (hors sélecteurs / import plat). Défaut true. */
+  @Prop({ required: false, name: 'active', type: Boolean, default: true })
+  active?: boolean;
 }
 
 export const StoreIngredientLibrarySchema = SchemaFactory.createForClass(
