@@ -33,6 +33,13 @@ import {
   normalizeBundleCoverImage,
 } from './product-bundle-image.util';
 import { resolveBundleProductVendorUnitPrice } from './product-bundle-vendor-unit-price.util';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
+import { resolveEffectiveTimezone } from '@modules/supported-countries/region-timezone.util';
+import {
+  buildDailyMenuTodayForCatalogItem,
+  isDailyMenuCatalogRestricted,
+} from '@utils/daily-menu-today-catalog.util';
+import type { DailyMenuTodayPayload } from '@utils/daily-menu-today-product.util';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Types de réponse publique (shape API → admin + mobile)
@@ -116,6 +123,8 @@ export type BundleFeedRow = ProductBundleRow & {
   currency: string;
   regionCode?: string;
   pricing: BundlePricingResult;
+  /** Présent si le Menu du Jour restreint les bundles ce jour-là. */
+  dailyMenuToday?: DailyMenuTodayPayload;
 };
 
 @Injectable()
@@ -134,6 +143,8 @@ export class ProductBundlesService {
     // Feed public : majore les prix comme le panier (add_to_price).
     @Inject(SubscriptionPlanOrderCommissionService)
     private readonly _planOrderCommission: SubscriptionPlanOrderCommissionService,
+    @Inject(SupportedCountriesService)
+    private readonly _supportedCountries: SupportedCountriesService,
   ) {}
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -486,10 +497,26 @@ export class ProductBundlesService {
         _id: { $in: storeIds.map((id) => new Types.ObjectId(id)) },
         status: StoreStatusEnum.ACTIVE,
       })
-      .select('_id name profile_image ratings region currency')
+      .select('_id name profile_image ratings region currency timezone dailyMenuByWeekday')
       .lean();
 
     const storeMap = new Map(stores.map((s) => [String(s._id), s]));
+
+    // Fuseaux région pour Menu du Jour (bundleItems du jour).
+    const regionCodes = [
+      ...new Set(
+        stores
+          .map((s) => String((s as { region?: string }).region ?? '').trim().toUpperCase())
+          .filter((c) => c.length === 2),
+      ),
+    ];
+    const regionTzEntries = await Promise.all(
+      regionCodes.map(async (code) => {
+        const tz = await this._supportedCountries.getTimezoneForCountry(code);
+        return [code, tz] as const;
+      }),
+    );
+    const regionTzMap = new Map(regionTzEntries);
 
     // 3. Filtrer par région si demandée
     let filteredBundles = bundles.filter((b) => {
@@ -499,6 +526,32 @@ export class ProductBundlesService {
       const storeRegion = String((store as any).region ?? '').toUpperCase();
       const clientRegion = opts.regionCode.toUpperCase();
       return !storeRegion || storeRegion === clientRegion;
+    });
+
+    // Fix: masquer bundles hors bundleItems du jour (Menu du Jour).
+    filteredBundles = filteredBundles.filter((b) => {
+      const store = storeMap.get(String(b.storeId));
+      if (!store) return false;
+      const regionCode = String((store as { region?: string }).region ?? '')
+        .trim()
+        .toUpperCase();
+      const tz = resolveEffectiveTimezone({
+        storeTimezone: (store as { timezone?: string }).timezone,
+        regionTimezone: regionTzMap.get(regionCode),
+        regionCode,
+      });
+      const storeRaw = store as Record<string, unknown>;
+      if (!isDailyMenuCatalogRestricted(storeRaw, 'bundle', now, tz)) {
+        return true;
+      }
+      const dm = buildDailyMenuTodayForCatalogItem(
+        storeRaw,
+        String(b._id),
+        'bundle',
+        now,
+        tz,
+      );
+      return dm.onMenu && !dm.soldOut;
     });
 
     filteredBundles = filteredBundles.slice(0, take);
@@ -519,7 +572,9 @@ export class ProductBundlesService {
 
     const store = await this.storeModel
       .findById(bundle.storeId)
-      .select('_id name profile_image ratings region currency')
+      .select(
+        '_id name profile_image ratings region currency timezone dailyMenuByWeekday',
+      )
       .lean();
     if (!store) throw new NotFoundException('Boutique du bundle introuvable.');
 
@@ -814,6 +869,32 @@ export class ProductBundlesService {
           ) / ratings.length
         : 0;
 
+    // Annoter dailyMenuToday si le jour restreint les bundles.
+    let dailyMenuToday: DailyMenuTodayPayload | undefined;
+    const storeRaw = store as Record<string, unknown>;
+    if (Array.isArray(storeRaw['dailyMenuByWeekday'])) {
+      const regionCode = String(storeRaw['region'] ?? '')
+        .trim()
+        .toUpperCase();
+      const regionTz = regionCode
+        ? await this._supportedCountries.getTimezoneForCountry(regionCode)
+        : undefined;
+      const tz = resolveEffectiveTimezone({
+        storeTimezone: storeRaw['timezone'] as string | undefined,
+        regionTimezone: regionTz,
+        regionCode,
+      });
+      if (isDailyMenuCatalogRestricted(storeRaw, 'bundle', new Date(), tz)) {
+        dailyMenuToday = buildDailyMenuTodayForCatalogItem(
+          storeRaw,
+          row.id,
+          'bundle',
+          new Date(),
+          tz,
+        );
+      }
+    }
+
     return {
       ...row,
       items: customerItems,
@@ -823,6 +904,7 @@ export class ProductBundlesService {
       currency: (store as any).currency ?? 'CAD',
       regionCode: (store as any).region,
       pricing,
+      ...(dailyMenuToday ? { dailyMenuToday } : {}),
     };
   }
 

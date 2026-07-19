@@ -2018,8 +2018,35 @@ export class StoreService {
       }
     }
 
-    // Bundles : si des bundleItems sont configurés ce jour, n'autoriser que ceux-là.
     const dayRow = rows.find((r) => r.dayOfWeek === dow);
+
+    // Boissons : si des drinkItems sont configurés ce jour, n'autoriser que ceux-là.
+    const dayDrinks = dayRow?.drinkItems ?? [];
+    const drinkQtyForMenu = new Map<string, number>();
+    for (const line of cart.items) {
+      if (line.type !== CartItemTypeEnum.DRINK) continue;
+      const did = String(line.entityId ?? '');
+      if (!did) continue;
+      const q = Math.max(0, Number(line.quantity ?? 0));
+      if (q <= 0) continue;
+      drinkQtyForMenu.set(did, (drinkQtyForMenu.get(did) ?? 0) + q);
+    }
+    if (dayDrinks.length > 0 && drinkQtyForMenu.size > 0) {
+      for (const [did, qty] of drinkQtyForMenu) {
+        const entry = dayDrinks.find((i) => i.drinkId === did);
+        if (!entry) {
+          throw new BadRequestException('daily_menu_drink_not_available');
+        }
+        if (!entry.stockUnlimited && entry.stockRemaining <= 0) {
+          throw new BadRequestException('daily_menu_drink_not_available');
+        }
+        if (!entry.stockUnlimited && qty > entry.stockRemaining) {
+          throw new BadRequestException('daily_menu_drink_insufficient_stock');
+        }
+      }
+    }
+
+    // Bundles : si des bundleItems sont configurés ce jour, n'autoriser que ceux-là.
     const dayBundles = dayRow?.bundleItems ?? [];
     const bundleQty = this.aggregateBundleQtyFromCart(cart);
     if (dayBundles.length > 0 && bundleQty.size > 0) {

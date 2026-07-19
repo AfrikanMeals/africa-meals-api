@@ -41,6 +41,8 @@ import {
   normalizeCountryCode,
   storeDirectRegionMatch,
 } from '@modules/supported-countries/client-market-region.util';
+import { resolveEffectiveTimezone } from '@modules/supported-countries/region-timezone.util';
+import { applyDailyMenuAvailabilityToCatalogItems } from '@utils/daily-menu-today-catalog.util';
 
 function computeStatut(quantite: number, seuil: number): DrinkStatutEnum {
   return quantite <= seuil ? DrinkStatutEnum.ALERTE : DrinkStatutEnum.OK;
@@ -525,9 +527,10 @@ export class DrinksService {
           countryCode,
         )
       : undefined;
+    // Horaires menu du jour : timezone + drinkItems du jour courant.
     const storeLean = await this._storeModel
       .findById(storeId)
-      .select('status region')
+      .select('status region timezone dailyMenuByWeekday')
       .lean()
       .exec();
     if (
@@ -567,7 +570,26 @@ export class DrinksService {
       query = query.limit(80);
     }
     const rows = await query.exec();
-    const items = rows.map((r) => mapDrinkDoc(r as Record<string, unknown>));
+    const mapped = rows.map((r) => mapDrinkDoc(r as Record<string, unknown>));
+    // Fix: masquer boissons hors drinkItems du jour (Menu du Jour).
+    const regionCode = String(storeLean?.region ?? '')
+      .trim()
+      .toUpperCase();
+    const regionTz = regionCode
+      ? await this._supportedCountries.getTimezoneForCountry(regionCode)
+      : undefined;
+    const tz = resolveEffectiveTimezone({
+      storeTimezone: storeLean?.timezone,
+      regionTimezone: regionTz,
+      regionCode,
+    });
+    const items = applyDailyMenuAvailabilityToCatalogItems(
+      mapped,
+      storeLean as Record<string, unknown> | null,
+      'drink',
+      new Date(),
+      tz,
+    );
     await this._planOrderCommission.applyCustomerCatalogListPricing(
       items as unknown as Array<Record<string, unknown>>,
       {
@@ -592,7 +614,12 @@ export class DrinksService {
   async findOneInStoreCatalog(
     storeId: string,
     drinkId: string,
-  ): Promise<ReturnType<typeof mapDrinkDoc> | null> {
+  ): Promise<
+    | (ReturnType<typeof mapDrinkDoc> & {
+        dailyMenuToday?: import('@utils/daily-menu-today-product.util').DailyMenuTodayPayload;
+      })
+    | null
+  > {
     if (!Types.ObjectId.isValid(storeId) || !Types.ObjectId.isValid(drinkId)) {
       return null;
     }
@@ -611,8 +638,36 @@ export class DrinksService {
     const mapped = await this.enrichDrinkMedia(
       mapDrinkDoc(row as Record<string, unknown>),
     );
+    // Même règle listing : hors drinkItems du jour → introuvable.
+    const storeLean = await this._storeModel
+      .findById(storeId)
+      .select('region timezone dailyMenuByWeekday')
+      .lean()
+      .exec();
+    const regionCode = String(storeLean?.region ?? '')
+      .trim()
+      .toUpperCase();
+    const regionTz = regionCode
+      ? await this._supportedCountries.getTimezoneForCountry(regionCode)
+      : undefined;
+    const tz = resolveEffectiveTimezone({
+      storeTimezone: storeLean?.timezone,
+      regionTimezone: regionTz,
+      regionCode,
+    });
+    const filtered = applyDailyMenuAvailabilityToCatalogItems(
+      [mapped],
+      storeLean as Record<string, unknown> | null,
+      'drink',
+      new Date(),
+      tz,
+    );
+    if (filtered.length === 0) {
+      return null;
+    }
+    const withMenu = filtered[0]!;
     await this._planOrderCommission.applyCustomerCatalogListPricing(
-      [mapped as unknown as Record<string, unknown>],
+      [withMenu as unknown as Record<string, unknown>],
       {
         priceKey: 'priceCad',
         discountKey: null,
@@ -624,7 +679,7 @@ export class DrinksService {
             : null,
       },
     );
-    return mapped;
+    return withMenu;
   }
   async findOneInStoreCatalogForWeb(
     storeId: string,
