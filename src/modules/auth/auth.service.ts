@@ -75,6 +75,7 @@ import {
   normalizeUsername,
   usernameFormatErrorMessage,
 } from './username.util';
+import { deriveSecurityOauthProviders } from './security-oauth-providers.util';
 
 @Injectable()
 export class AuthService {
@@ -1742,13 +1743,15 @@ export class AuthService {
     if (!user) {
       throw new NotFoundException('user_not_found');
     }
-    const oauthLinked = Boolean(
-      user.googleId?.trim() || user.appleId?.trim() || user.facebookId?.trim(),
-    );
+    // Ordre stable pour l’UI mobile (icônes boutons OAuth).
+    const oauthProviders = deriveSecurityOauthProviders(user);
     return {
       email2faEnabled: user.email2faEnabled === true,
-      canChangePassword: !oauthLinked,
+      canChangePassword: oauthProviders.length === 0,
       email: user.email,
+      oauthProviders,
+      // Repli clients qui ne lisent qu’un seul provider.
+      oauthProvider: oauthProviders[0] ?? null,
     };
   }
 
