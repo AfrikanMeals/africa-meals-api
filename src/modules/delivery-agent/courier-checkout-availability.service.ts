@@ -198,7 +198,7 @@ export class CourierCheckoutAvailabilityService {
     );
 
     // Court-circuit : dans le cas nominal, une seule agrégation capacité suffit.
-    for (final candidateId of candidateIds) {
+    for (const candidateId of candidateIds) {
       const app = byUser.get(candidateId);
       if (!app) continue;
       const agentRegion = String(app.region ?? '')

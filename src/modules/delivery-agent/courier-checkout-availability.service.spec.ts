@@ -31,7 +31,9 @@ function buildService(args: {
   applications?: Record<string, unknown>[];
   activeOrders?: number;
   selfDeliveryRequired?: boolean;
+  managed?: boolean;
   nearbyCourierIds?: string[];
+  supportsShipping?: boolean;
 }) {
   const orders = {
     aggregate: jest.fn(() => ({
@@ -40,10 +42,11 @@ function buildService(args: {
       ),
     })),
   };
+  const managed = args.managed ?? true;
   const stores = storeModel({
     _id: STORE_ID,
-    supportsShipping: true,
-    vendorManagesDeliveryDrivers: true,
+    supportsShipping: args.supportsShipping ?? true,
+    vendorManagesDeliveryDrivers: managed,
     deliveryAssignmentMode: 'AUTO',
     region: 'CM',
     address: { location: { coordinates: [11.5, 3.85] } },
@@ -58,7 +61,7 @@ function buildService(args: {
     ),
   };
   const storeDrivers = {
-    isStoreManagedDelivery: jest.fn(() => true),
+    isStoreManagedDelivery: jest.fn(() => managed),
     storeAssignmentMode: jest.fn(() => 'AUTO'),
     listActiveDriverUserIdsForStore: jest.fn(async () => args.activeDriverIds),
   };
@@ -67,9 +70,9 @@ function buildService(args: {
   };
   const subscriptions = {
     resolveStoreDeliveryPolicy: jest.fn(async () => ({
-      selfDeliveryRequired: args.selfDeliveryRequired ?? true,
+      selfDeliveryRequired: args.selfDeliveryRequired ?? false,
       maxDeliveryAgents: 5,
-      platformPoolEnabled: !(args.selfDeliveryRequired ?? true),
+      platformPoolEnabled: !(args.selfDeliveryRequired ?? false),
     })),
   };
   const service = new CourierCheckoutAvailabilityService(
@@ -81,28 +84,33 @@ function buildService(args: {
     platformShipping as never,
     subscriptions as never,
   );
-  return { service, orders, applications };
+  return { service, orders, applications, courierGeo };
 }
 
 describe('CourierCheckoutAvailabilityService', () => {
-  it('masque Livraison quand la flotte boutique ne contient aucun livreur actif', async () => {
-    const { service, orders } = buildService({ activeDriverIds: [] });
+  it('ouvre Livraison via self-shipping quand la flotte est vide', async () => {
+    const { service, orders, courierGeo } = buildService({
+      activeDriverIds: [],
+      selfDeliveryRequired: true,
+      managed: true,
+    });
 
-    // La stratégie boutique répond sans requête capacité inutile.
+    // Fix: plus de faux « aucun livreur » — le vendeur peut s’assigner.
     await expect(service.checkStores([STORE_ID])).resolves.toEqual({
       items: [
         {
           storeId: STORE_ID,
-          state: 'unavailable',
+          state: 'available',
           strategy: 'store_fleet',
-          reason: 'no_online_courier',
+          reason: 'vendor_self_delivery',
         },
       ],
     });
     expect(orders.aggregate).not.toHaveBeenCalled();
+    expect(courierGeo.searchNearby).not.toHaveBeenCalled();
   });
 
-  it('autorise Livraison dès qu’un partenaire approuvé a de la capacité', async () => {
+  it('autorise Livraison dès qu’un partenaire flotte a de la capacité', async () => {
     const { service, orders } = buildService({
       activeDriverIds: [COURIER_ID],
       applications: [
@@ -114,9 +122,9 @@ describe('CourierCheckoutAvailabilityService', () => {
         },
       ],
       activeOrders: 0,
+      managed: true,
     });
 
-    // Le court-circuit confirme le premier livreur réellement assignable.
     await expect(service.checkStores([STORE_ID])).resolves.toEqual({
       items: [
         {
@@ -129,9 +137,10 @@ describe('CourierCheckoutAvailabilityService', () => {
     expect(orders.aggregate).toHaveBeenCalledTimes(1);
   });
 
-  it('utilise le pool plateforme après une flotte AUTO vide si le plan le permet', async () => {
+  it('utilise le pool plateforme pour une boutique non gérée', async () => {
     const { service, orders } = buildService({
       activeDriverIds: [],
+      managed: false,
       selfDeliveryRequired: false,
       nearbyCourierIds: [COURIER_ID],
       applications: [
@@ -144,7 +153,6 @@ describe('CourierCheckoutAvailabilityService', () => {
       ],
     });
 
-    // La stratégie hybride conserve la cascade plateforme autorisée par abonnement.
     await expect(service.checkStores([STORE_ID])).resolves.toEqual({
       items: [
         {
@@ -155,5 +163,25 @@ describe('CourierCheckoutAvailabilityService', () => {
       ],
     });
     expect(orders.aggregate).toHaveBeenCalledTimes(1);
+  });
+
+  it('masque Livraison sans flotte, sans self-shipping et sans pool', async () => {
+    const { service } = buildService({
+      activeDriverIds: [],
+      managed: false,
+      selfDeliveryRequired: false,
+      nearbyCourierIds: [],
+    });
+
+    await expect(service.checkStores([STORE_ID])).resolves.toEqual({
+      items: [
+        {
+          storeId: STORE_ID,
+          state: 'unavailable',
+          strategy: 'platform',
+          reason: 'no_online_courier',
+        },
+      ],
+    });
   });
 });
