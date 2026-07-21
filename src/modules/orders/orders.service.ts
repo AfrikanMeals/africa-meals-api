@@ -115,6 +115,12 @@ import {
   buildAdminOrderNotePush,
   normalizeAdminOrderNote,
 } from './admin-order-note.util';
+import {
+  buildCustomerOrderNoteInboxMessage,
+  buildCustomerOrderNotePush,
+  customerOrderNoteAllowedStatuses,
+  normalizeCustomerOrderNote,
+} from './customer-order-note.util';
 import { OrderPaidInvoiceEmailService } from './order-paid-invoice-email.service';
 import { orderInvoiceRef } from './order-invoice.util';
 import {
@@ -1673,7 +1679,7 @@ export class OrdersService {
     storeId: string,
     message: string,
     notifyUserIds: string[],
-    from: 'SYSTEM' | 'ADMIN' = 'SYSTEM',
+    from: 'SYSTEM' | 'ADMIN' | 'CLIENT' = 'SYSTEM',
   ): Promise<void> {
     const text = message.trim();
     if (!text || !Types.ObjectId.isValid(storeId)) return;
@@ -1703,7 +1709,7 @@ export class OrdersService {
     customerUserId?: string | null;
     inboxMessage: string;
     /** Origine inbox (ADMIN pour notes plateforme). */
-    inboxFrom?: 'SYSTEM' | 'ADMIN';
+    inboxFrom?: 'SYSTEM' | 'ADMIN' | 'CLIENT';
     push?: {
       title: string;
       body: string;
@@ -5429,7 +5435,8 @@ export class OrdersService {
       throw new BadRequestException('admin_note_empty');
     }
 
-    const authorUserId = String(user.id ?? '').trim();
+    // JWT user : id virtuel ou _id Mongo selon le contexte d’auth.
+    const authorUserId = String(user._id ?? user.id ?? '').trim();
     if (!authorUserId) {
       throw new ForbiddenException('admin_only');
     }
@@ -5528,6 +5535,100 @@ export class OrdersService {
     if (!order) {
       throw new NotFoundException('order_not_found');
     }
+    return {
+      orderId: String(order._id),
+      customerNote: String(order.customerNote ?? ''),
+    };
+  }
+
+  /**
+   * Client propriétaire : note sur commande (Mes commandes).
+   * Note non vide → inbox CLIENT + push vendeur. Vide → efface sans notif.
+   */
+  async patchCustomerOrderNoteAndNotifyVendor(
+    orderId: string,
+    user: UserModel,
+    rawNote: string,
+  ): Promise<{ orderId: string; customerNote: string }> {
+    if (user.type === UserTypeEnum.ADMIN || user.type === UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('customer_only');
+    }
+
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const note = normalizeCustomerOrderNote(rawNote);
+    const ownerOid = new Types.ObjectId(String(user._id ?? user.id));
+
+    const existing = await this._orderModel
+      .findOne({
+        _id: new Types.ObjectId(oid),
+        user: ownerOid,
+      })
+      .select('_id status')
+      .exec();
+    if (!existing) {
+      throw new NotFoundException('order_not_found');
+    }
+    if (!customerOrderNoteAllowedStatuses(String(existing.status ?? ''))) {
+      throw new BadRequestException('customer_note_order_closed');
+    }
+
+    const order = await this._orderModel
+      .findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(oid),
+          user: ownerOid,
+          status: {
+            $nin: [OrderStatusEnum.CANCELLED, OrderStatusEnum.COMPLETED],
+          },
+        },
+        note
+          ? { $set: { customerNote: note } }
+          : { $unset: { customerNote: 1 } },
+        { new: true },
+      )
+      .populate('store', 'name')
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    // Notifier seulement si une note utile est présente.
+    if (note) {
+      const storeId = this.storeIdFromOrderDoc(order);
+      if (storeId) {
+        const storeName = this.storeNameFromPopulated(order.store);
+        const orderIdStr = order._id.toString();
+        const inboxMessage = buildCustomerOrderNoteInboxMessage({
+          orderId: orderIdStr,
+          note,
+        });
+        const push = buildCustomerOrderNotePush({
+          orderId: orderIdStr,
+          note,
+          storeName,
+        });
+        void this.notifyStoreVendorsForOrder({
+          storeId,
+          customerUserId: this.userIdFromOrderDoc(order),
+          inboxMessage,
+          inboxFrom: 'CLIENT',
+          push: {
+            title: push.title,
+            body: push.body,
+            orderId: orderIdStr,
+            storeName,
+            reason: push.reason,
+            status: String(order.status ?? ''),
+          },
+          logTag: 'customer_order_note',
+        });
+      }
+    }
+
     return {
       orderId: String(order._id),
       customerNote: String(order.customerNote ?? ''),

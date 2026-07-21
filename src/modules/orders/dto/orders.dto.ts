@@ -189,6 +189,19 @@ export class AddAdminOrderNoteDto {
   note!: string;
 }
 
+/** Note client → vendeur (Mes commandes). Vide = effacer sans notif. */
+export class PatchCustomerOrderNoteDto {
+  @ApiProperty({
+    description:
+      'Note pour le vendeur (max 2000). Chaîne vide pour effacer.',
+    maxLength: 2000,
+    example: 'Sans oignon s’il vous plaît.',
+  })
+  @IsString()
+  @MaxLength(2000)
+  customerNote!: string;
+}
+
 export class CreateRefundRequestDto {
   @ApiProperty({
     description: 'Code motif prédéfini (liste client).',

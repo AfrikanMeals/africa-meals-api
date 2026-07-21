@@ -24,6 +24,7 @@ import {
   ConfirmPickupDto,
   CreateRefundRequestDto,
   FilterOrdersDto,
+  PatchCustomerOrderNoteDto,
   PatchPreOrderCustomerNoteDto,
   RejectOrderDto,
   VendorCourierLocationDto,
@@ -302,6 +303,25 @@ export class OrdersController {
     body: PatchPreOrderCustomerNoteDto,
   ) {
     return this._ordersService.patchPreOrderCustomerNote(
+      id,
+      req.user as UserModel,
+      body.customerNote,
+    );
+  }
+
+  /** Client : note sur une commande (Mes commandes) + notif vendeur si non vide. */
+  @Patch(':id/customer-note')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Mettre à jour la note client et notifier le vendeur (CLIENT)',
+  })
+  async patchCustomerOrderNote(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: PatchCustomerOrderNoteDto,
+  ) {
+    return this._ordersService.patchCustomerOrderNoteAndNotifyVendor(
       id,
       req.user as UserModel,
       body.customerNote,
