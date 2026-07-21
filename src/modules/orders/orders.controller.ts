@@ -20,6 +20,7 @@ import { BusinessReportsService } from '@modules/business-reports/business-repor
 import { resolveMongoIdFromPublicParam } from '@common/catalog-public-id.util';
 import { CreateBusinessReportDto } from '@modules/business-reports/dto/create-business-report.dto';
 import {
+  AddAdminOrderNoteDto,
   ConfirmPickupDto,
   CreateRefundRequestDto,
   FilterOrdersDto,
@@ -224,6 +225,25 @@ export class OrdersController {
     return this._ordersService.sendClientReceiptEmail(
       id,
       req.user as UserModel,
+    );
+  }
+
+  /** Admin plateforme : note sur la commande + notification vendeur. */
+  @Post(':id/admin-note')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Ajouter une note admin et notifier le vendeur (ADMIN)',
+  })
+  async addAdminOrderNote(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: AddAdminOrderNoteDto,
+  ) {
+    return this._ordersService.addAdminOrderNoteAndNotifyVendor(
+      id,
+      req.user as UserModel,
+      body.note,
     );
   }
 

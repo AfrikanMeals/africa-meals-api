@@ -736,6 +736,24 @@ export class OrderModel extends BaseSchema {
     maxlength: 2000,
   })
   customerNote?: string;
+
+  /** Notes admin plateforme → vendeur (historique + notif). */
+  @Prop({
+    type: [
+      {
+        note: { type: String, required: true, maxlength: 2000 },
+        authorUserId: { type: String, required: true },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
+    default: [],
+    name: 'admin_notes',
+  })
+  adminNotes?: Array<{
+    note: string;
+    authorUserId: string;
+    createdAt: Date;
+  }>;
 }
 
 export const OrderSchema = SchemaFactory.createForClass(OrderModel);

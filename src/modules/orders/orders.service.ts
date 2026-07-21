@@ -110,6 +110,11 @@ import {
   vendorOrderStatusLabelFr,
   type VendorOrderNotifyReason,
 } from './vendor-order-paid-message.util';
+import {
+  buildAdminOrderNoteInboxMessage,
+  buildAdminOrderNotePush,
+  normalizeAdminOrderNote,
+} from './admin-order-note.util';
 import { OrderPaidInvoiceEmailService } from './order-paid-invoice-email.service';
 import { orderInvoiceRef } from './order-invoice.util';
 import {
@@ -1668,6 +1673,7 @@ export class OrdersService {
     storeId: string,
     message: string,
     notifyUserIds: string[],
+    from: 'SYSTEM' | 'ADMIN' = 'SYSTEM',
   ): Promise<void> {
     const text = message.trim();
     if (!text || !Types.ObjectId.isValid(storeId)) return;
@@ -1677,7 +1683,7 @@ export class OrdersService {
         $push: {
           vendorMessages: {
             message: text,
-            from: 'SYSTEM',
+            from,
             createdAt: new Date(),
           },
         },
@@ -1696,6 +1702,8 @@ export class OrdersService {
     storeId: string;
     customerUserId?: string | null;
     inboxMessage: string;
+    /** Origine inbox (ADMIN pour notes plateforme). */
+    inboxFrom?: 'SYSTEM' | 'ADMIN';
     push?: {
       title: string;
       body: string;
@@ -1761,6 +1769,7 @@ export class OrdersService {
           sid,
           args.inboxMessage,
           notifyUserIds,
+          args.inboxFrom ?? 'SYSTEM',
         );
       },
     });
@@ -5390,6 +5399,98 @@ export class OrdersService {
     return {
       orderId: oid,
       status: OrderStatusEnum.CANCELLED,
+    };
+  }
+
+  /**
+   * Admin plateforme : ajoute une note sur la commande et notifie le vendeur
+   * (inbox ADMIN + push FCM, catégorie Commandes).
+   */
+  async addAdminOrderNoteAndNotifyVendor(
+    orderId: string,
+    user: UserModel,
+    rawNote: string,
+  ): Promise<{
+    orderId: string;
+    note: string;
+    adminNotesCount: number;
+  }> {
+    if (user.type !== UserTypeEnum.ADMIN) {
+      throw new ForbiddenException('admin_only');
+    }
+
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const note = normalizeAdminOrderNote(rawNote);
+    if (!note) {
+      throw new BadRequestException('admin_note_empty');
+    }
+
+    const authorUserId = String(user.id ?? '').trim();
+    if (!authorUserId) {
+      throw new ForbiddenException('admin_only');
+    }
+
+    const entry = {
+      note,
+      authorUserId,
+      createdAt: new Date(),
+    };
+
+    const order = await this._orderModel
+      .findByIdAndUpdate(
+        new Types.ObjectId(oid),
+        { $push: { adminNotes: entry } },
+        { new: true },
+      )
+      .populate('store', 'name')
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const storeId = this.storeIdFromOrderDoc(order);
+    if (!storeId) {
+      throw new BadRequestException('order_store_missing');
+    }
+
+    const storeName = this.storeNameFromPopulated(order.store);
+    const orderIdStr = order._id.toString();
+    const inboxMessage = buildAdminOrderNoteInboxMessage({
+      orderId: orderIdStr,
+      note,
+    });
+    const push = buildAdminOrderNotePush({
+      orderId: orderIdStr,
+      note,
+      storeName,
+    });
+
+    // Push + inbox uniquement (pas d’e-mail statut — message libre admin).
+    void this.notifyStoreVendorsForOrder({
+      storeId,
+      customerUserId: this.userIdFromOrderDoc(order),
+      inboxMessage,
+      inboxFrom: 'ADMIN',
+      push: {
+        title: push.title,
+        body: push.body,
+        orderId: orderIdStr,
+        storeName,
+        reason: push.reason,
+        status: String(order.status ?? ''),
+      },
+      logTag: 'admin_order_note',
+    });
+
+    const count = Array.isArray(order.adminNotes) ? order.adminNotes.length : 1;
+    return {
+      orderId: orderIdStr,
+      note,
+      adminNotesCount: count,
     };
   }
 

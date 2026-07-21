@@ -175,6 +175,20 @@ export class PatchPreOrderCustomerNoteDto {
   customerNote!: string;
 }
 
+/** Note admin plateforme → vendeur (liste commandes). */
+export class AddAdminOrderNoteDto {
+  @ApiProperty({
+    description: 'Texte de la note (notifié au vendeur).',
+    maxLength: 2000,
+    minLength: 1,
+    example: 'Merci de vérifier les allergènes avant préparation.',
+  })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(2000)
+  note!: string;
+}
+
 export class CreateRefundRequestDto {
   @ApiProperty({
     description: 'Code motif prédéfini (liste client).',
