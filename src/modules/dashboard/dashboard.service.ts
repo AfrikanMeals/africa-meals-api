@@ -72,6 +72,7 @@ import { AssignDashboardOrderDto } from './dto/assign-dashboard-order.dto';
 import { UpdateDashboardOrderDeliveryAddressDto } from './dto/update-dashboard-order-delivery-address.dto';
 import { EstimateDashboardOrderDeliveryAddressDto } from './dto/estimate-dashboard-order-delivery-address.dto';
 import { CreateVendorFeedbackDto } from './dto/create-vendor-feedback.dto';
+import { resolveTopPlatDisplayImageUrl } from './dashboard-top-plat-image.util';
 import { CreateVendorFeatureRequestDto } from './dto/create-vendor-feature-request.dto';
 import { UpdateVendorFeatureRequestAdminDto } from './dto/update-vendor-feature-request-admin.dto';
 import {
@@ -1182,7 +1183,11 @@ export class DashboardService {
     }
 
     type OrderLean = {
-      items?: Array<{ label?: string; quantity?: number }>;
+      items?: Array<{
+        label?: string;
+        quantity?: number;
+        pictureUrl?: string;
+      }>;
       createdAt?: Date;
     };
     const orders = (await this.orderModel
@@ -1191,7 +1196,8 @@ export class DashboardService {
       .lean()
       .exec()) as OrderLean[];
 
-    type Agg = { title: string; n: number };
+    // imageUrl : photo figée sur la ligne commande (prioritaire vs lookup catalogue).
+    type Agg = { title: string; n: number; imageUrl?: string };
     const periodMap = new Map<string, Agg>();
     const todayMap = new Map<string, Agg>();
     const yestMap = new Map<string, Agg>();
@@ -1206,12 +1212,20 @@ export class DashboardService {
       lc: string,
       raw: string,
       q: number,
+      pictureUrl?: string,
     ) => {
+      const pic = (pictureUrl ?? '').trim();
       const prev = map.get(lc);
       if (!prev) {
-        map.set(lc, { title: raw || lc, n: q });
+        map.set(lc, {
+          title: raw || lc,
+          n: q,
+          ...(pic ? { imageUrl: pic } : {}),
+        });
       } else {
         prev.n += q;
+        // Garder la 1ʳᵉ photo vue (souvent la plus récente car orders récents).
+        if (!prev.imageUrl && pic) prev.imageUrl = pic;
         map.set(lc, prev);
       }
     };
@@ -1229,23 +1243,31 @@ export class DashboardService {
 
         const q =
           typeof it.quantity === 'number' && it.quantity > 0 ? it.quantity : 1;
+        const pic = String(it.pictureUrl ?? '').trim();
 
-        bump(periodMap, lc, raw, q);
-        if (inToday) bump(todayMap, lc, raw, q);
-        if (inYesterday) bump(yestMap, lc, raw, q);
+        bump(periodMap, lc, raw, q, pic);
+        if (inToday) bump(todayMap, lc, raw, q, pic);
+        if (inYesterday) bump(yestMap, lc, raw, q, pic);
       }
     }
 
     const ranked = [...periodMap.entries()]
-      .map(([lc, v]) => ({ lc, title: v.title, n: v.n }))
+      .map(([lc, v]) => ({
+        lc,
+        title: v.title,
+        n: v.n,
+        imageUrl: v.imageUrl,
+      }))
       .filter((x) => x.n > 0)
       .sort((a, b) => b.n - a.n)
       .slice(0, 5);
 
-    const imageByLc = await this.resolveTopPlatImages(storeFilter, ranked);
+    // Compléter les plats sans pictureUrl commande via catalogue produit.
+    const needCatalog = ranked.filter((r) => !r.imageUrl);
+    const imageByLc = await this.resolveTopPlatImages(storeFilter, needCatalog);
 
     const rows: DashboardTopPlatDailyRow[] = [];
-    for (const { lc, title, n } of ranked) {
+    for (const { lc, title, n, imageUrl: fromOrder } of ranked) {
       const t = todayMap.get(lc)?.n ?? 0;
       const y = yestMap.get(lc)?.n ?? 0;
       rows.push({
@@ -1255,7 +1277,10 @@ export class DashboardService {
         commandesToday: t,
         commandesYesterday: y,
         trend: t - y,
-        imageUrl: imageByLc.get(lc),
+        imageUrl: resolveTopPlatDisplayImageUrl({
+          orderPictureUrl: fromOrder,
+          catalogImageUrl: imageByLc.get(lc),
+        }),
       });
     }
 
@@ -1326,7 +1351,8 @@ export class DashboardService {
     const products = await this.productModel
       .find(filter)
       .select(
-        'title profile_image image_base64 image_mime_type gallery_images galleryImages',
+        // camelCase + snake (lean) pour profileImage / base64 / galerie.
+        'title profileImage profile_image imageBase64 image_base64 imageMimeType image_mime_type gallery_images galleryImages',
       )
       .lean()
       .exec();
