@@ -2,6 +2,10 @@ import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { UserModel } from '@schemas/user.schema';
 import { SupportedCountryModel } from '@schemas/supported-country.schema';
+import {
+  PlatformRegionSettingsDocument,
+  PlatformRegionSettingsModel,
+} from '@schemas/platform-region-settings.schema';
 import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { Model } from 'mongoose';
 import { CreateStoreDto } from '@modules/store/dto/store.dto';
@@ -25,6 +29,7 @@ import {
   resolveStripeZeroDecimal,
   stripeAmountFactor,
 } from '../../utils/stripe-currency-amount.util';
+import { isMobileRegionCheckEnabled } from './mobile-region-check.util';
 
 export const CATALOG_SEARCH_RADIUS_KM_DEFAULT = 30;
 export const CATALOG_SEARCH_RADIUS_KM_MIN = 1;
@@ -117,7 +122,24 @@ export class SupportedCountriesService implements OnModuleInit {
   @InjectModel(SupportedCountryModel.name)
   private readonly _model: Model<SupportedCountryModel>;
 
+  @InjectModel(PlatformRegionSettingsModel.name)
+  private readonly _regionSettings: Model<PlatformRegionSettingsDocument>;
+
+  private _mobileRegionCheckCache: {
+    at: number;
+    enabled: boolean;
+  } | null = null;
+
   async onModuleInit() {
+    // Assure le singleton politique Region Check (défaut: activé).
+    await this._regionSettings
+      .findOneAndUpdate(
+        { key: 'default' },
+        { $setOnInsert: { key: 'default', mobileRegionCheckEnabled: true } },
+        { upsert: true, setDefaultsOnInsert: true },
+      )
+      .exec();
+
     const existingCount = await this._model.countDocuments({}).exec();
     if (existingCount > 0) {
       await this._backfillDefaultTimezones();
@@ -185,6 +207,43 @@ export class SupportedCountriesService implements OnModuleInit {
     const data = docs.map((d) => mapSupportedCountryPublicRow(d));
     this._listActiveCache = { at: now, data };
     return data;
+  }
+
+  /** Flag public / admin : gate Region Check sur l’app mobile. */
+  async getMobileRegionCheckEnabled(): Promise<boolean> {
+    const now = Date.now();
+    if (
+      this._mobileRegionCheckCache &&
+      now - this._mobileRegionCheckCache.at <
+        SupportedCountriesService._LIST_ACTIVE_TTL_MS
+    ) {
+      return this._mobileRegionCheckCache.enabled;
+    }
+    const doc = await this._regionSettings
+      .findOneAndUpdate(
+        { key: 'default' },
+        { $setOnInsert: { key: 'default', mobileRegionCheckEnabled: true } },
+        { upsert: true, new: true, lean: true, setDefaultsOnInsert: true },
+      )
+      .exec();
+    const enabled = isMobileRegionCheckEnabled(
+      (doc as PlatformRegionSettingsModel | null)?.mobileRegionCheckEnabled,
+    );
+    this._mobileRegionCheckCache = { at: now, enabled };
+    return enabled;
+  }
+
+  async setMobileRegionCheckEnabled(enabled: boolean): Promise<boolean> {
+    const next = enabled !== false;
+    await this._regionSettings
+      .findOneAndUpdate(
+        { key: 'default' },
+        { $set: { mobileRegionCheckEnabled: next } },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      )
+      .exec();
+    this._mobileRegionCheckCache = { at: Date.now(), enabled: next };
+    return next;
   }
 
   async isActiveCode(code: string): Promise<boolean> {

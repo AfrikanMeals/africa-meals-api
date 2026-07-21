@@ -102,4 +102,14 @@ export class AdminSupportedCountriesUpdateDto {
   @ValidateNested({ each: true })
   @Type(() => AdminSupportedCountryItemDto)
   countries: AdminSupportedCountryItemDto[];
+
+  @ApiProperty({
+    required: false,
+    example: true,
+    description:
+      'Gate Region Check mobile : si false, l’app n’bloque plus les pays hors liste active.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  mobileRegionCheckEnabled?: boolean;
 }

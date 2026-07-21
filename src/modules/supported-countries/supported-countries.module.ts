@@ -14,6 +14,10 @@ import {
   SupportedCountrySchema,
 } from '@schemas/supported-country.schema';
 import {
+  PlatformRegionSettingsModel,
+  PlatformRegionSettingsSchema,
+} from '@schemas/platform-region-settings.schema';
+import {
   VendorNotificationPricingSettingsModel,
   VendorNotificationPricingSettingsSchema,
 } from '@schemas/vendor-notification-pricing-settings.schema';
@@ -27,6 +31,10 @@ import { RegionPricingService } from './region-pricing.service';
     StoreAccessModule,
     MongooseModule.forFeature([
       { name: SupportedCountryModel.name, schema: SupportedCountrySchema },
+      {
+        name: PlatformRegionSettingsModel.name,
+        schema: PlatformRegionSettingsSchema,
+      },
       { name: AdPricingSettingsModel.name, schema: AdPricingSettingsSchema },
       {
         name: AdNotificationPricingSettingsModel.name,

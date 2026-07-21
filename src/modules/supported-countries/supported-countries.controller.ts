@@ -40,8 +40,11 @@ export class SupportedCountriesController {
 
   @Get()
   async list() {
-    const countries = await this._supportedCountries.listActive();
-    return { countries };
+    const [countries, mobileRegionCheckEnabled] = await Promise.all([
+      this._supportedCountries.listActive(),
+      this._supportedCountries.getMobileRegionCheckEnabled(),
+    ]);
+    return { countries, mobileRegionCheckEnabled };
   }
 
   @Get('region-settings')
@@ -71,8 +74,11 @@ export class SupportedCountriesController {
       req.user as UserModel,
       'admin.settings',
     );
-    const countries = await this._supportedCountries.listAllForAdmin();
-    return { countries };
+    const [countries, mobileRegionCheckEnabled] = await Promise.all([
+      this._supportedCountries.listAllForAdmin(),
+      this._supportedCountries.getMobileRegionCheckEnabled(),
+    ]);
+    return { countries, mobileRegionCheckEnabled };
   }
 
   @Put('admin/all')
@@ -88,6 +94,12 @@ export class SupportedCountriesController {
       'admin.settings',
     );
     await this._supportedCountries.saveAllForAdmin(body.countries ?? []);
+    // Flag optionnel : omis → inchangé (autres callers PUT sans le champ).
+    if (typeof body.mobileRegionCheckEnabled === 'boolean') {
+      await this._supportedCountries.setMobileRegionCheckEnabled(
+        body.mobileRegionCheckEnabled,
+      );
+    }
     return { ok: true };
   }
 
