@@ -47,30 +47,29 @@ export class RecommendationsController {
     );
   }
 
-  /** Phase 2 — FBT + similar (IDs Neo4j ; enrichir côté client ou Mongo). */
+  /**
+   * Phase 2 — FBT + similar Neo4j + hydratation Mongo (`products`).
+   * Fail-open : source empty si graphe OFF / down.
+   */
   @Get('products/:id/related')
   @UseGuards(OptionalAuthGuard)
   async relatedProducts(
+    @Req() req: Request,
     @Param('id') id: string,
     @Query('limit') limitRaw?: string,
+    @Query('countryCode') countryCode?: string,
   ): Promise<{
     frequentlyBoughtWith: Array<{ productId: string; score: number }>;
     similar: Array<{ productId: string; score: number }>;
+    products: Record<string, unknown>[];
     source: 'neo4j' | 'empty';
   }> {
     const limit = Math.min(24, Math.max(1, parseInt(limitRaw ?? '8', 10) || 8));
-    const related = await this._facade.relatedProductsOrNull({
-      productId: id,
+    return this._svc.getRelatedProducts(id, {
       limit,
+      countryCode,
+      user: req.user as UserModel | undefined,
     });
-    if (!related) {
-      return {
-        frequentlyBoughtWith: [],
-        similar: [],
-        source: 'empty',
-      };
-    }
-    return { ...related, source: 'neo4j' };
   }
 
   /**

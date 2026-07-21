@@ -1,4 +1,5 @@
 import { AdsModule } from '@modules/ads/ads.module';
+import { GraphModule } from '@modules/graph/graph.module';
 import { SearchSettingsModule } from '@modules/search-settings/search-settings.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
@@ -26,6 +27,7 @@ import { AdsTargetingService } from './ads-targeting.service';
     SubscriptionsModule,
     SearchSettingsModule,
     WsNotifyModule,
+    GraphModule,
     MongooseModule.forFeature([
       { name: AdsTargetingEventModel.name, schema: AdsTargetingEventSchema },
       {

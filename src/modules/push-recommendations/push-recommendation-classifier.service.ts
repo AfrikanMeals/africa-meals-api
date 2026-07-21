@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { RecommendationsService } from '@modules/recommendations/recommendations.service';
 import { RecommendationAutomationSettingsService } from '@modules/recommendation-automation-settings/recommendation-automation-settings.service';
+import { RecommendationFacade } from '@modules/graph/recommendation-facade.service';
 import {
   PushRecommendationCandidateModel,
   PushRecommendationCandidateType,
@@ -9,6 +10,7 @@ import {
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { createHash } from 'crypto';
 import { Model, Types } from 'mongoose';
+import { pickPushCandidateFromGraph } from './push-reco-graph-pick.util';
 
 const BATCH_SIZE = 50;
 
@@ -23,6 +25,7 @@ export class PushRecommendationClassifierService {
     private readonly userModel: Model<UserModel>,
     private readonly recommendations: RecommendationsService,
     private readonly automationSettings: RecommendationAutomationSettingsService,
+    @Optional() private readonly recoFacade?: RecommendationFacade,
   ) {}
 
   private isInRollout(userId: string, pct: number): boolean {
@@ -106,25 +109,55 @@ export class PushRecommendationClassifierService {
             user as unknown as UserModel,
             '12',
           );
-          const product = feed.products[0];
-          if (!product || !product._id) continue;
+          if (!feed.products.length) continue;
 
+          // Neo4j (si ON) : priorise produit/boutique graphe dans le feed
+          let graphPick: ReturnType<typeof pickPushCandidateFromGraph> = null;
+          if (this.recoFacade) {
+            const [graphProductIds, graphStoreIds] = await Promise.all([
+              this.recoFacade.personalizedProductIdsOrNull({
+                userId,
+                limit: 16,
+              }),
+              this.recoFacade.personalizedStoreIdsOrNull({
+                userId,
+                region: String(
+                  (user as { countryCode?: string }).countryCode ?? '',
+                ),
+                limit: 12,
+              }),
+            ]);
+            graphPick = pickPushCandidateFromGraph({
+              enabledTypes: types,
+              feedProducts: feed.products,
+              graphProductIds,
+              graphStoreIds,
+            });
+          }
+
+          const product = graphPick?.product ?? feed.products[0];
+          if (!product || !(product._id || product.id)) continue;
+
+          const baseScore = Number(
+            product.recoScore ?? product.score ?? settings.minScore,
+          );
           const score = Math.min(
             100,
             Math.max(
               settings.minScore,
-              Number(product.recoScore ?? product.score ?? settings.minScore),
+              baseScore + (graphPick?.scoreBoost ?? 0),
             ),
           );
           if (score < settings.minScore) continue;
 
-          const candidateType = types.includes(
-            PushRecommendationCandidateType.REORDER_FAVORITE,
-          )
-            ? PushRecommendationCandidateType.REORDER_FAVORITE
-            : types[0];
+          const candidateType =
+            graphPick?.candidateType ??
+            (types.includes(PushRecommendationCandidateType.REORDER_FAVORITE)
+              ? PushRecommendationCandidateType.REORDER_FAVORITE
+              : types[0]!);
+          const reasonTags = graphPick?.reasonTags ?? ['feed_top'];
 
-          const productId = String(product._id);
+          const productId = String(product._id ?? product.id);
           const storeRaw = product.store as Record<string, unknown> | undefined;
           const storeName = String(product.storeName ?? storeRaw?.name ?? '');
           const productTitle = String(product.name ?? product.title ?? 'Plat');
@@ -146,7 +179,7 @@ export class PushRecommendationClassifierService {
                 cuisineTags: Array.isArray(product.cuisineTags)
                   ? product.cuisineTags.map(String)
                   : [],
-                reasonTags: ['feed_top'],
+                reasonTags,
                 contextSnapshot: {
                   productTitle,
                   storeName,

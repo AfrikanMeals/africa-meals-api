@@ -5,7 +5,10 @@ import {
   Logger,
   NotFoundException,
   ForbiddenException,
+  Optional,
 } from '@nestjs/common';
+import { RecommendationFacade } from '@modules/graph/recommendation-facade.service';
+import { adsGraphSoftBoost } from '@modules/graph/reco-score-blend.util';
 import { Cron } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -83,6 +86,8 @@ export class AdsTargetingService {
     private readonly wsAdsTargetingNotify: WsAdsTargetingNotifyService,
     private readonly config: ConfigService,
     private readonly cronMonitor: CronMonitorService,
+    // Soft-boost Neo4j optionnel (fail-open si module / flags off)
+    @Optional() private readonly recoFacade?: RecommendationFacade,
   ) {}
 
   private actorKey(user: UserModel | undefined | null): string {
@@ -739,13 +744,39 @@ export class AdsTargetingService {
       ),
     ];
     const regionByStoreId = await this.adsService.resolveStoreRegionMap(storeIds);
-    const [planScoreByStore, recoWeights] = await Promise.all([
-      storeIds.length
-        ? this.subscriptionsService.resolveActivePlanScoreByStoreIds(storeIds)
-        : Promise.resolve(new Map<string, number>()),
-      this.searchSettingsService.getRecommendationWeights(),
-    ]);
+    const [planScoreByStore, recoWeights, graphStoreIds, graphProductIds] =
+      await Promise.all([
+        storeIds.length
+          ? this.subscriptionsService.resolveActivePlanScoreByStoreIds(storeIds)
+          : Promise.resolve(new Map<string, number>()),
+        this.searchSettingsService.getRecommendationWeights(),
+        // 1. Sets graphe perso (null → pas de soft-boost)
+        this.recoFacade
+          ? this.recoFacade.personalizedStoreIdsOrNull({
+              userId: userKey,
+              region: clientRegion,
+              limit: 24,
+            })
+          : Promise.resolve(null),
+        this.recoFacade
+          ? this.recoFacade.personalizedProductIdsOrNull({
+              userId: userKey,
+              limit: 32,
+            })
+          : Promise.resolve(null),
+      ]);
     const planScoreWeight = recoWeights.vendorPlanScore;
+    // Typage explicite Set<string> — filter(Boolean) élargit sinon en Set<unknown>.
+    const graphStoreSet = new Set<string>(
+      (graphStoreIds ?? [])
+        .map((x) => String(x).trim())
+        .filter((x): x is string => x.length > 0),
+    );
+    const graphProductSet = new Set<string>(
+      (graphProductIds ?? [])
+        .map((x) => String(x).trim())
+        .filter((x): x is string => x.length > 0),
+    );
     const placementStats = await this.campaignPlacementStats(
       userKey,
       placement,
@@ -835,7 +866,7 @@ export class AdsTargetingService {
           ? (Math.max(0, planScore) / 100) * (planScoreWeight / 100)
           : 0;
 
-      const score = computeAdsTargetingScore({
+      const mongoScore = computeAdsTargetingScore({
         interestMatch: interest.value,
         recencyBoost,
         engagementScore,
@@ -856,11 +887,11 @@ export class AdsTargetingService {
         placementPerformance: computePlacementPerformanceBoost(stats),
         vendorPlanBoost,
       });
-      if (score <= 0) continue;
 
       const first = items[0];
       let creativeUrl = '';
       let adId = `camp:${campaignId}`;
+      let firstProductId = '';
       if (first) {
         const itemType = String(first.itemType ?? '')
           .trim()
@@ -868,6 +899,7 @@ export class AdsTargetingService {
         if (itemType === 'PRODUCT') {
           const p = first.product as Record<string, unknown> | undefined;
           const pid = p?._id ? String(p._id) : '';
+          firstProductId = pid;
           if (pid) adId = `product:${pid}`;
           creativeUrl = String(p?.profileImage ?? '');
         } else if (itemType === 'DRINK') {
@@ -877,6 +909,19 @@ export class AdsTargetingService {
           creativeUrl = String(d?.imageUrl ?? '');
         }
       }
+
+      // Soft-boost borné si store/product ∈ sets Neo4j (même flag RECO_GRAPH)
+      const score =
+        graphStoreSet.size || graphProductSet.size
+          ? adsGraphSoftBoost({
+              mongoScore,
+              storeId,
+              productId: firstProductId,
+              graphStoreIds: graphStoreSet,
+              graphProductIds: graphProductSet,
+            })
+          : mongoScore;
+      if (score <= 0) continue;
       out.push({
         ad_id: adId,
         campaign_id: campaignId,

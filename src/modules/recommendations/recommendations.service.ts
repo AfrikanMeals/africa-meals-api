@@ -39,6 +39,11 @@ import {
 import { TrackRecommendationDto } from './dto/track-recommendation.dto';
 import { RecommendationFacade } from '@modules/graph/recommendation-facade.service';
 import { GraphSyncQueueService } from '@modules/graph/graph-sync-queue.service';
+import {
+  blendRecoScores,
+  graphRankById,
+  prioritizeStoreIdsByZone,
+} from '@modules/graph/reco-score-blend.util';
 
 const PAID_LIKE_STATUSES: OrderStatusEnum[] = [
   OrderStatusEnum.PAIED,
@@ -388,6 +393,48 @@ export class RecommendationsService {
       }
     }
 
+    // Signaux Neo4j en parallèle (null = fail-open Mongo)
+    let graphProductRank = new Map<string, number>();
+    let graphBoostStores: string[] = [];
+    let zoneStoreIds: string[] = [];
+    if (userOid && this._recoFacade) {
+      const uid = userOid.toHexString();
+      const [graphProductIds, graphIds, zoneIds] = await Promise.all([
+        this._recoFacade.personalizedProductIdsOrNull({
+          userId: uid,
+          region: clientRegion,
+          limit: 36,
+        }),
+        this._recoFacade.personalizedStoreIdsOrNull({
+          userId: uid,
+          region: clientRegion,
+          limit: 12,
+        }),
+        // Zone graph : clé = region catalogue (DELIVERS_TO) si syncée ainsi
+        clientRegion
+          ? this._recoFacade.storeIdsDeliveringToZoneOrNull({
+              zoneId: clientRegion,
+              limit: 24,
+            })
+          : Promise.resolve(null),
+      ]);
+      graphProductRank = graphRankById(graphProductIds);
+      if (graphIds?.length) {
+        graphBoostStores = await this._filterActiveStoreIdsForRegion(
+          graphIds,
+          clientRegion,
+          12,
+        );
+      }
+      if (zoneIds?.length) {
+        zoneStoreIds = await this._filterActiveStoreIdsForRegion(
+          zoneIds,
+          clientRegion,
+          24,
+        );
+      }
+    }
+
     const scoreOne = (p: Record<string, unknown>): number => {
       const id = String(p.id ?? p._id ?? '');
       const storeId = this._storeIdFromProduct(p);
@@ -436,7 +483,8 @@ export class RecommendationsService {
       }
       score += sb;
 
-      return score;
+      // Blend Neo4j : boost borné selon rang graphe (absent → score Mongo)
+      return blendRecoScores(score, graphProductRank.get(id));
     };
 
     const scored = candidates.map((p) => ({ p, s: scoreOne(p) }));
@@ -456,30 +504,21 @@ export class RecommendationsService {
       clientRegion,
     );
 
-    let graphBoostStores: string[] = [];
-    if (userOid && this._recoFacade) {
-      const graphIds = await this._recoFacade.personalizedStoreIdsOrNull({
-        userId: userOid.toHexString(),
-        region: clientRegion,
-        limit: 12,
-      });
-      if (graphIds?.length) {
-        graphBoostStores = await this._filterActiveStoreIdsForRegion(
-          graphIds,
-          clientRegion,
-          12,
-        );
-      }
-    }
-
-    const stores = await this._trendingStores(
-      12,
+    // Zone DELIVERS_TO puis stores perso graphe, puis candidats Mongo
+    const storeBoostPool = prioritizeStoreIdsByZone(
       [
         ...graphBoostStores,
         ...storeIdsFromProducts,
         ...extraBoostStores,
         ...subscribedStoreIds,
       ],
+      zoneStoreIds,
+      48,
+    );
+
+    const stores = await this._trendingStores(
+      12,
+      storeBoostPool,
       {
         planSortByStore,
         planScoreByStore,
@@ -540,6 +579,62 @@ export class RecommendationsService {
     return { products, stores, drinks, frequentlyBoughtTogether };
   }
 
+  /**
+   * Related Neo4j (FBT + similar) hydratés Mongo — fail-open source empty.
+   * IDs bruts conservés pour clients qui ne consomment que le graphe.
+   */
+  async getRelatedProducts(
+    productId: string,
+    opts?: { limit?: number; countryCode?: string; user?: UserModel },
+  ): Promise<{
+    frequentlyBoughtWith: Array<{ productId: string; score: number }>;
+    similar: Array<{ productId: string; score: number }>;
+    products: Record<string, unknown>[];
+    source: 'neo4j' | 'empty';
+  }> {
+    const limit = Math.min(24, Math.max(1, opts?.limit ?? 8));
+    const empty = {
+      frequentlyBoughtWith: [] as Array<{ productId: string; score: number }>,
+      similar: [] as Array<{ productId: string; score: number }>,
+      products: [] as Record<string, unknown>[],
+      source: 'empty' as const,
+    };
+    if (!this._recoFacade || !String(productId ?? '').trim()) return empty;
+
+    const related = await this._recoFacade.relatedProductsOrNull({
+      productId: String(productId).trim(),
+      limit,
+    });
+    if (!related) return empty;
+
+    const clientRegion =
+      (await this._supportedCountries.resolveOptionalClientCatalogRegion(
+        opts?.user,
+        opts?.countryCode,
+      )) ?? '';
+
+    // Ordre : FBT puis similar (dédup) — Mongo filtre actifs / région
+    const orderedIds: string[] = [];
+    const seen = new Set<string>();
+    for (const row of [
+      ...related.frequentlyBoughtWith,
+      ...related.similar,
+    ]) {
+      const id = String(row.productId ?? '').trim();
+      if (!id || seen.has(id) || id === String(productId).trim()) continue;
+      seen.add(id);
+      orderedIds.push(id);
+      if (orderedIds.length >= limit) break;
+    }
+
+    const products = await this._activeProductsByIds(orderedIds, clientRegion);
+    return {
+      ...related,
+      products,
+      source: 'neo4j',
+    };
+  }
+
   private async _activeProductsByIds(
     ids: string[],
     clientRegion: string,
@@ -573,18 +668,25 @@ export class RecommendationsService {
           .toUpperCase();
         if (region && region !== clientRegion.toUpperCase()) continue;
       }
+      // Mobile `fromShopHomeJson` lit profileImage (pas pictures[])
+      const pictures = Array.isArray(row.pictures) ? row.pictures : [];
+      const profileImage = String(
+        row.profileImage ?? pictures[0] ?? '',
+      );
       out.push({
         id: String(row._id),
         _id: row._id,
         title: row.title,
         bio: row.bio,
         price: row.price,
-        pictures: row.pictures,
+        pictures,
+        profileImage,
         store: store
           ? {
               id: String(store._id ?? store.id ?? ''),
               name: store.name,
               currency: store.currency,
+              profileImage: store.profileImage,
             }
           : undefined,
         averageRating: row.averageRating,

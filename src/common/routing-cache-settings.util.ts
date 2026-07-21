@@ -22,7 +22,8 @@ export const DEFAULT_ROUTING_CACHE_SETTINGS: RoutingCacheSettings = {
   requestAlternatives: false,
   adminTtlMs: 120_000,
   gpsMarkerDistanceFilterMeters: 5,
-  routeRefreshDebounceMs: 1_200,
+  // Aligné mobile : recalcul hors-route plus réactif (fail-open thrash via sticky).
+  routeRefreshDebounceMs: 700,
 }
 
 function clampInt(

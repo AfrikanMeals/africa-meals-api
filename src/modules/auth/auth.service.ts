@@ -70,6 +70,7 @@ import {
 } from './auth-otp.util';
 import { parseJwtDurationToSeconds } from './jwt-token.util';
 import { resolveRefreshTokenSecret } from './jwt-secrets.util';
+import { parseOptionalDateOfBirth } from './date-of-birth.util';
 import {
   isValidUsernameFormat,
   normalizeUsername,
@@ -1307,6 +1308,7 @@ export class AuthService {
     const update: Partial<UserModel> = {};
     // Effacement username : $unset (évite "" qui casserait l’index sparse unique).
     let unsetUsername = false;
+    let unsetDateOfBirth = false;
     if (args.fullName != null) update.fullName = args.fullName;
     if (args.phoneNumber != null) update.phoneNumber = args.phoneNumber;
     if (args.appCountryCode != null) {
@@ -1315,6 +1317,19 @@ export class AuthService {
         throw new BadRequestException('Ce pays n’est pas disponible.');
       }
       update.appCountryCode = c;
+    }
+    // DOB optionnelle (contrôle parental) — vide = $unset.
+    if (args.dateOfBirth !== undefined) {
+      const parsed = parseOptionalDateOfBirth(args.dateOfBirth);
+      // Discriminant strict (`=== false`) pour le narrowing TS.
+      if (parsed.ok === false) {
+        throw new BadRequestException(parsed.code);
+      }
+      if (parsed.value == null) {
+        unsetDateOfBirth = true;
+      } else {
+        update.dateOfBirth = parsed.value;
+      }
     }
     // Username : normaliser → format → unicité avant d’accepter le PATCH.
     if (args.username !== undefined) {
@@ -1335,7 +1350,11 @@ export class AuthService {
         update.username = normalized;
       }
     }
-    if (Object.keys(update).length === 0 && !unsetUsername) {
+    if (
+      Object.keys(update).length === 0 &&
+      !unsetUsername &&
+      !unsetDateOfBirth
+    ) {
       return this.findUserById(userId);
     }
     // Opérateurs Mongo uniquement — ne pas mélanger champs racine + $unset.
@@ -1343,8 +1362,11 @@ export class AuthService {
     if (Object.keys(update).length > 0) {
       mongoUpdate.$set = update;
     }
-    if (unsetUsername) {
-      mongoUpdate.$unset = { username: '' };
+    const unset: Record<string, string> = {};
+    if (unsetUsername) unset.username = '';
+    if (unsetDateOfBirth) unset.dateOfBirth = '';
+    if (Object.keys(unset).length > 0) {
+      mongoUpdate.$unset = unset;
     }
     let user: UserModel | null;
     try {

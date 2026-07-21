@@ -4736,104 +4736,29 @@ export class OrdersService {
     const pickedUpAt = new Date();
     order.status = OrderStatusEnum.COMPLETED;
     order.pickedUpAt = pickedUpAt;
+    // 1. Persist statut (Seule écriture bloquante avant réponse HTTP).
     await order.save();
 
     const storeId = this.storeIdFromOrderDoc(order);
     const customerId = this.userIdFromOrderDoc(order);
-    await this.recordOrderStatusChangeIfLegacy({
-      orderId: oid,
-      storeId,
-      customerUserId: customerId,
-      fromStatus: prevStatus,
-      toStatus: OrderStatusEnum.COMPLETED,
-      source: OrderStatusChangeSourceEnum.DELIVERY_AGENT,
-      actorUserId: agentId,
-      note: isPickup
-        ? 'Retrait confirmé par le livreur (code validé)'
-        : 'Livraison confirmée par le livreur (code validé)',
-    });
 
-    if (customerId) {
-      void this._notificationsService
-        .pushCustomerOrderStatusChanged({
-          userId: customerId,
-          orderId: oid,
-          storeName: this.storeNameFromPopulated(order.store),
-          storeId: storeId ?? undefined,
-          previousStatus: prevStatus,
-          newStatus: OrderStatusEnum.COMPLETED,
-        })
-        .catch((err) =>
-          this.logger.warn(
-            `FCM order completed: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          ),
-        );
-    }
-
-    const populated = await this._orderModel
-      .findById(new Types.ObjectId(oid))
-      .populate({
-        path: 'store',
-        populate: [{ path: 'address' }],
-      })
-      .populate(OrdersService.orderUserWithAddressesPopulate)
-      .exec();
-    if (this._orderDomainBridge?.enabled()) {
-      void this._orderDomainBridge.emit({
-        type: 'order.delivered',
-        payload: { orderId: oid },
-        metadata: {
-          actorUserId: String(user.id),
-          orderContext: {
-            fromStatus: prevStatus,
-            source: OrderStatusChangeSourceEnum.DELIVERY_AGENT,
-            ...this.buildOrderDomainDispatchContext(
-              populated ?? order,
-              OrderStatusEnum.COMPLETED,
-            ),
-          },
-        },
-      });
-    }
-    this.notifyOrderPartiesRealtime(
-      populated ?? order,
-      OrderStatusEnum.COMPLETED,
+    // 2. WS immédiat (doc déjà en mémoire) — UI livreur/client sans attendre audit/populate.
+    this.notifyOrderPartiesRealtime(order, OrderStatusEnum.COMPLETED);
+    void this._deliveryAgentService.publishPresenceWs(
+      agentId,
+      'order_completed',
     );
-    this.notifyStoreVendorsForOrderStatusChange(order, {
-      reason: 'order_completed',
-      status: OrderStatusEnum.COMPLETED,
+
+    // 3. Side-effects DB / FCM / domaine en arrière-plan (fail-open).
+    void this._afterCourierHandoffCompletedSideEffects({
+      oid,
+      order,
+      user,
+      agentId,
+      prevStatus,
+      storeId,
+      customerId,
       isPickup,
-      note: isPickup ? 'Retrait confirmé' : 'Livraison confirmée',
-    });
-
-    if (!this.domainEventsEnabled()) {
-      void this._loyaltyService
-        .creditOrderCompletion(oid)
-        .catch((err) =>
-          this.logger.warn(
-            `Loyalty credit order=${oid}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          ),
-        );
-
-      void this._wsChatNotify.archiveOrderChats(
-        oid,
-        isPickup ? 'order_pickup_completed' : 'order_delivered',
-      );
-    }
-
-    void this._deliveryAgentService.publishPresenceWs(agentId, 'order_completed');
-
-    if (!isPickup && order.shouldShip === true) {
-      this.scheduleDeliveryAgentPayouts(oid);
-    }
-
-    this.enqueueGraphOrderCompleted(order, {
-      userId: customerId,
-      storeId: storeId ?? undefined,
     });
 
     return {
@@ -4841,6 +4766,131 @@ export class OrdersService {
       status: OrderStatusEnum.COMPLETED,
       pickedUpAt,
     };
+  }
+
+  /**
+   * Post-handoff livreur : audit, populate, bus domaine, FCM, loyalty, payouts.
+   * Ne bloque jamais la réponse HTTP (WS déjà émis).
+   */
+  private async _afterCourierHandoffCompletedSideEffects(args: {
+    oid: string;
+    order: OrderModel;
+    user: UserModel;
+    agentId: string;
+    prevStatus: OrderStatusEnum;
+    storeId?: string;
+    customerId?: string;
+    isPickup: boolean;
+  }): Promise<void> {
+    const {
+      oid,
+      order,
+      user,
+      agentId,
+      prevStatus,
+      storeId,
+      customerId,
+      isPickup,
+    } = args;
+    try {
+      await this.recordOrderStatusChangeIfLegacy({
+        orderId: oid,
+        storeId,
+        customerUserId: customerId,
+        fromStatus: prevStatus,
+        toStatus: OrderStatusEnum.COMPLETED,
+        source: OrderStatusChangeSourceEnum.DELIVERY_AGENT,
+        actorUserId: agentId,
+        note: isPickup
+          ? 'Retrait confirmé par le livreur (code validé)'
+          : 'Livraison confirmée par le livreur (code validé)',
+      });
+
+      if (customerId) {
+        void this._notificationsService
+          .pushCustomerOrderStatusChanged({
+            userId: customerId,
+            orderId: oid,
+            storeName: this.storeNameFromPopulated(order.store),
+            storeId: storeId ?? undefined,
+            previousStatus: prevStatus,
+            newStatus: OrderStatusEnum.COMPLETED,
+          })
+          .catch((err) =>
+            this.logger.warn(
+              `FCM order completed: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            ),
+          );
+      }
+
+      const populated = await this._orderModel
+        .findById(new Types.ObjectId(oid))
+        .populate({
+          path: 'store',
+          populate: [{ path: 'address' }],
+        })
+        .populate(OrdersService.orderUserWithAddressesPopulate)
+        .exec();
+
+      if (this._orderDomainBridge?.enabled()) {
+        void this._orderDomainBridge.emit({
+          type: 'order.delivered',
+          payload: { orderId: oid },
+          metadata: {
+            actorUserId: String(user.id),
+            orderContext: {
+              fromStatus: prevStatus,
+              source: OrderStatusChangeSourceEnum.DELIVERY_AGENT,
+              ...this.buildOrderDomainDispatchContext(
+                populated ?? order,
+                OrderStatusEnum.COMPLETED,
+              ),
+            },
+          },
+        });
+      }
+
+      this.notifyStoreVendorsForOrderStatusChange(order, {
+        reason: 'order_completed',
+        status: OrderStatusEnum.COMPLETED,
+        isPickup,
+        note: isPickup ? 'Retrait confirmé' : 'Livraison confirmée',
+      });
+
+      if (!this.domainEventsEnabled()) {
+        void this._loyaltyService
+          .creditOrderCompletion(oid)
+          .catch((err) =>
+            this.logger.warn(
+              `Loyalty credit order=${oid}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            ),
+          );
+
+        void this._wsChatNotify.archiveOrderChats(
+          oid,
+          isPickup ? 'order_pickup_completed' : 'order_delivered',
+        );
+      }
+
+      if (!isPickup && order.shouldShip === true) {
+        this.scheduleDeliveryAgentPayouts(oid);
+      }
+
+      this.enqueueGraphOrderCompleted(order, {
+        userId: customerId,
+        storeId: storeId ?? undefined,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `afterCourierHandoff side-effects order=${oid}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   /**

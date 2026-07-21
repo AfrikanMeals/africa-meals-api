@@ -12,12 +12,27 @@ describe('RecommendationFacade', () => {
   function makeFacade(opts: {
     ensureHealthy: jest.Mock;
     personalizedStoreIds?: jest.Mock;
+    personalizedProductIds?: jest.Mock;
+    storeIdsDeliveringToZone?: jest.Mock;
+    frequentlyBoughtWith?: jest.Mock;
+    similarProductIds?: jest.Mock;
   }) {
     return new RecommendationFacade(
       { ensureHealthy: opts.ensureHealthy } as unknown as Neo4jService,
       {
         personalizedStoreIds:
           opts.personalizedStoreIds ?? jest.fn().mockResolvedValue(['s1']),
+        personalizedProductIds:
+          opts.personalizedProductIds ??
+          jest.fn().mockResolvedValue(['p1', 'p2']),
+        storeIdsDeliveringToZone:
+          opts.storeIdsDeliveringToZone ?? jest.fn().mockResolvedValue(['z1']),
+        frequentlyBoughtWith:
+          opts.frequentlyBoughtWith ??
+          jest.fn().mockResolvedValue([{ productId: 'f1', score: 2 }]),
+        similarProductIds:
+          opts.similarProductIds ??
+          jest.fn().mockResolvedValue([{ productId: 's1', score: 1 }]),
       } as unknown as GraphRecommendationService,
     );
   }
@@ -86,5 +101,39 @@ describe('RecommendationFacade', () => {
       facade.personalizedStoreIdsOrNull({ userId: 'u1' }),
     ).resolves.toBeNull();
     delete process.env.RECO_GRAPH_TIMEOUT_MS;
+  });
+
+  it('personalizedProductIdsOrNull retourne les IDs graphe', async () => {
+    setGraphRuntimeFlagOverrides({
+      neo4jEnabled: true,
+      recoGraphEnabled: true,
+      graphSyncEnabled: true,
+    });
+    const personalizedProductIds = jest.fn().mockResolvedValue(['p9']);
+    const facade = makeFacade({
+      ensureHealthy: jest.fn().mockResolvedValue(true),
+      personalizedProductIds,
+    });
+    await expect(
+      facade.personalizedProductIdsOrNull({ userId: 'u1', limit: 10 }),
+    ).resolves.toEqual(['p9']);
+    expect(personalizedProductIds).toHaveBeenCalledWith('u1', 10);
+  });
+
+  it('storeIdsDeliveringToZoneOrNull et relatedProductIdsOrNull', async () => {
+    setGraphRuntimeFlagOverrides({
+      neo4jEnabled: true,
+      recoGraphEnabled: true,
+      graphSyncEnabled: true,
+    });
+    const facade = makeFacade({
+      ensureHealthy: jest.fn().mockResolvedValue(true),
+    });
+    await expect(
+      facade.storeIdsDeliveringToZoneOrNull({ zoneId: 'zone-a', limit: 5 }),
+    ).resolves.toEqual(['z1']);
+    await expect(
+      facade.relatedProductIdsOrNull({ productId: 'p0', limit: 8 }),
+    ).resolves.toEqual(['f1', 's1']);
   });
 });

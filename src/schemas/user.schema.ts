@@ -74,6 +74,13 @@ export class UserModel extends BaseSchema {
   @Prop({ required: false, name: 'phone_number' })
   phoneNumber?: string;
 
+  /**
+   * Date de naissance (optionnelle) — contrôle parental / âge.
+   * Jamais obligatoire à l’inscription ; PATCH /auth/me peut l’effacer.
+   */
+  @Prop({ required: false, type: Date, name: 'date_of_birth' })
+  dateOfBirth?: Date;
+
   /** Pays d’utilisation de l’app (ISO2), ex. CA, SN */
   @Prop({ required: false, default: 'CA', name: 'app_country_code' })
   appCountryCode?: string;

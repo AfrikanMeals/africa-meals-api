@@ -173,6 +173,98 @@ export class GraphRecommendationService {
   }
 
   /**
+   * Produits similaires aux plats commandés / vus (SIMILAR_TO).
+   */
+  async personalizedSimilarProductIds(
+    userId: string,
+    limit = 12,
+  ): Promise<string[]> {
+    const uid = String(userId ?? '').trim();
+    if (!uid) return [];
+    const take = Math.min(48, Math.max(1, Math.floor(limit) || 12));
+    const rows = await this.neo4j.runCypher<{ productId: string }>(
+      `
+      MATCH (u:User {userId: $userId})-[:ORDERED|VIEWED]->(p:Product)
+      MATCH (p)-[r:SIMILAR_TO]->(rec:Product)
+      WHERE coalesce(rec.status, 'ACTIVE') = 'ACTIVE'
+        AND NOT (u)-[:ORDERED]->(rec)
+      RETURN rec.productId AS productId, sum(r.score) AS score
+      ORDER BY score DESC
+      LIMIT $limit
+      `,
+      { userId: uid, limit: take },
+      { timeoutMs: parseRecoGraphTimeoutMs(), op: 'similar_home' },
+    );
+    return rows
+      .map((r) => String(r.productId ?? '').trim())
+      .filter(Boolean);
+  }
+
+  /**
+   * Collab « customers like you » sur produits commandés en commun.
+   */
+  async collaborativeProductIds(
+    userId: string,
+    limit = 12,
+  ): Promise<string[]> {
+    const uid = String(userId ?? '').trim();
+    if (!uid) return [];
+    const take = Math.min(48, Math.max(1, Math.floor(limit) || 12));
+    try {
+      const rows = await this.neo4j.runCypher<{ productId: string }>(
+        `
+        MATCH (u:User {userId: $userId})-[:ORDERED]->(p:Product)<-[:ORDERED]-(other:User)
+        WHERE other.userId <> $userId
+        WITH u, other, count(DISTINCT p) AS overlap
+        ORDER BY overlap DESC
+        LIMIT 40
+        MATCH (other)-[:ORDERED]->(rec:Product)
+        WHERE NOT (u)-[:ORDERED]->(rec)
+          AND coalesce(rec.status, 'ACTIVE') = 'ACTIVE'
+        RETURN rec.productId AS productId, count(*) AS score
+        ORDER BY score DESC
+        LIMIT $limit
+        `,
+        { userId: uid, limit: take },
+        { timeoutMs: parseRecoGraphTimeoutMs(), op: 'collab_products' },
+      );
+      return rows
+        .map((r) => String(r.productId ?? '').trim())
+        .filter(Boolean);
+    } catch (err) {
+      this.logger.debug(
+        `collab products: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Agrège FBT + similar + collab pour le blend feed (ordre = priorité).
+   */
+  async personalizedProductIds(
+    userId: string,
+    limit = 24,
+  ): Promise<string[]> {
+    const take = Math.min(48, Math.max(1, Math.floor(limit) || 24));
+    const per = Math.max(4, Math.ceil(take / 2));
+    const [fbt, similar, collab] = await Promise.all([
+      this.personalizedFbtProductIds(userId, per),
+      this.personalizedSimilarProductIds(userId, per),
+      this.collaborativeProductIds(userId, per),
+    ]);
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const id of [...fbt, ...similar, ...collab]) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+      if (out.length >= take) break;
+    }
+    return out;
+  }
+
+  /**
    * Phase 5 — lecture knowledge (tags). Toujours ré-enrichir Mongo côté appelant.
    */
   async productIdsByTag(

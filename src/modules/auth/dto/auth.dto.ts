@@ -209,6 +209,21 @@ export class UpdateProfileDto {
   @Trim()
   phoneNumber?: string;
 
+  /**
+   * Date de naissance optionnelle (`YYYY-MM-DD`) pour contrôle parental.
+   * Chaîne vide = effacer. Non requis.
+   */
+  @ApiPropertyOptional({
+    example: '2010-05-12',
+    description:
+      'Date de naissance (YYYY-MM-DD). Optionnel — contrôle parental. Vide pour effacer.',
+  })
+  @IsOptional()
+  @IsString()
+  @Trim()
+  @MaxLength(10)
+  dateOfBirth?: string;
+
   @ApiPropertyOptional({
     description: 'Pays d’utilisation de l’app (ISO2, ex. CA, SN)',
     example: 'CA',

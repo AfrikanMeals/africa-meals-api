@@ -900,6 +900,10 @@ export class SearchService {
             currency: { $ifNull: ['$store.currency', 'CAD'] },
             profileImage: { $ifNull: ['$store.profileImage', ''] },
             likedBy: { $ifNull: ['$store.likedBy', []] },
+            // Catalogue Restaurants : filtre onglets Business Type.
+            businessType: {
+              $ifNull: ['$store.business_type', '$store.businessType'],
+            },
             owner: {
               $convert: {
                 input: '$store.owner',
@@ -2143,6 +2147,10 @@ export class SearchService {
             currency: { $ifNull: ['$store.currency', 'CAD'] },
             profileImage: { $ifNull: ['$store.profileImage', ''] },
             likedBy: { $ifNull: ['$store.likedBy', []] },
+            // Catalogue Restaurants : filtre onglets Business Type.
+            businessType: {
+              $ifNull: ['$store.business_type', '$store.businessType'],
+            },
             owner: {
               $convert: {
                 input: '$store.owner',
@@ -2620,6 +2628,10 @@ export class SearchService {
                 _id: 1,
                 name: 1,
                 bio: 1,
+                // DB = business_type (schema name) → alias camelCase pour clients.
+                businessType: {
+                  $ifNull: ['$business_type', '$businessType'],
+                },
                 email: 1,
                 phoneNumber: 1,
                 currency: 1,

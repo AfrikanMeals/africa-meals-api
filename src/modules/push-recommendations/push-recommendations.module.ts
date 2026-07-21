@@ -4,6 +4,7 @@ import { NotificationsModule } from '@modules/notifications/notifications.module
 import { RecommendationsModule } from '@modules/recommendations/recommendations.module';
 import { RecommendationAutomationSettingsModule } from '@modules/recommendation-automation-settings/recommendation-automation-settings.module';
 import { EngagementPerformancesModule } from '@modules/engagement-performances/engagement-performances.module';
+import { GraphModule } from '@modules/graph/graph.module';
 import {
   PushRecommendationCandidateModel,
   PushRecommendationCandidateSchema,
@@ -28,6 +29,7 @@ import { PushRecommendationsTrackingService } from './push-recommendations-track
     RecommendationAutomationSettingsModule,
     EngagementPerformancesModule,
     NotificationsModule,
+    GraphModule,
     MongooseModule.forFeature([
       {
         name: PushRecommendationCandidateModel.name,
