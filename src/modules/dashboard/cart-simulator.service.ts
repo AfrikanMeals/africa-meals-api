@@ -7,6 +7,10 @@ import {
   haversineDistanceKm,
 } from '@modules/platform-shipping-settings/shipping-quote.util';
 import { PlatformFeesService } from '@modules/platform-fees/platform-fees.service';
+import {
+  parseOptionalCommissionStrategy,
+  resolveEffectiveCommissionStrategy,
+} from '@modules/platform-fees/platform-order-commission.util';
 import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import {
@@ -28,6 +32,17 @@ import {
   CartSimulatorFulfillmentMode,
   CartSimulatorPreviewDto,
 } from './dto/cart-simulator-preview.dto';
+import {
+  customizationSummaryLabel,
+  normalizeSelectedComplements,
+  normalizeSelectedSupplements,
+  repriceCustomizationFromProductCatalog,
+} from '@modules/cart/cart-customization.util';
+import {
+  normalizeCartSimulatorItems,
+  resolveCartSimulatorCurrency,
+  resolveCartSimulatorRegionCode,
+} from './cart-simulator-items.util';
 
 type ProductLean = {
   _id: unknown;
@@ -36,6 +51,10 @@ type ProductLean = {
   discountPrice?: number;
   listPrice?: number;
   listDiscountPrice?: number;
+  variants?: unknown;
+  complements?: unknown;
+  supplements?: unknown;
+  commissionRetrieveStrategy?: string | null;
 };
 
 function resolveProductUnitPrice(product: ProductLean): number {
@@ -46,6 +65,28 @@ function resolveProductUnitPrice(product: ProductLean): number {
   const list = Number(product.listPrice ?? 0);
   if (list > 0) return list;
   return Math.max(0, Number(product.price ?? 0));
+}
+
+/** Prix variante (discount si pertinent), sinon prix catalogue produit. */
+function resolveCatalogUnitPriceWithVariant(
+  product: ProductLean,
+  selectedVariantLabel?: string,
+): number {
+  const label = String(selectedVariantLabel ?? '').trim();
+  const variants = Array.isArray(product.variants) ? product.variants : [];
+  if (label && variants.length) {
+    const match = variants.find((v) => {
+      const row = (v ?? {}) as Record<string, unknown>;
+      return String(row.label ?? row.name ?? '').trim() === label;
+    }) as Record<string, unknown> | undefined;
+    if (match) {
+      const vp = Number(match.price ?? 0);
+      const vd = Number(match.discountPrice ?? match.discount_price ?? 0);
+      if (vd > 0 && (vp <= 0 || vd < vp)) return vd;
+      if (vp > 0) return vp;
+    }
+  }
+  return resolveProductUnitPrice(product);
 }
 
 function minorToDisplay(minor: number, amountFactor: number): number {
@@ -81,42 +122,60 @@ export class CartSimulatorService {
     const store = await this.storeModel
       .findById(storeId)
       .populate({ path: 'address', select: 'location countryCode' })
-      .select('name region currency supportsShipping address')
+      .select(
+        'name region currency supportsShipping address commissionRetrieveStrategy',
+      )
       .lean()
       .exec();
     if (!store) {
       throw new NotFoundException('store_not_found');
     }
 
-    const currency = String(store.currency ?? 'CAD')
-      .trim()
-      .toUpperCase();
+    // Devise = region || adresse (pas téléphone/CAD → CA via resolveStoreTaxCountryCode).
+    const regionCc =
+      resolveCartSimulatorRegionCode(store) ||
+      resolveStoreTaxCountryCode(store);
+    // getCountryCurrency : pas de filtre active:true (sinon CM inactive → CAD).
+    const regionCurrency = regionCc
+      ? await this.supportedCountries.getCountryCurrency(regionCc)
+      : null;
+    const currency = resolveCartSimulatorCurrency({
+      regionCurrency,
+      storeCurrency: store.currency,
+      regionCode: regionCc,
+    });
     const deliveryCc = String(dto.deliveryCountryCode ?? '').trim().toUpperCase();
-    const taxCountryFallback = resolveStoreTaxCountryCode(store);
+    const taxCountryFallback = regionCc;
     const amountFactor =
       await this.supportedCountries.resolveStripeAmountFactorForCheckout({
         currency,
         userCountryCode: deliveryCc || taxCountryFallback || user.appCountryCode,
       });
 
-    const productIds = [
-      ...new Set(
-        dto.items
-          .map((i) => String(i.productId ?? '').trim())
-          .filter((id) => Types.ObjectId.isValid(id)),
-      ),
-    ];
-    if (!productIds.length) {
-      throw new BadRequestException('cart_simulator_no_valid_products');
+    let normalized;
+    try {
+      normalized = normalizeCartSimulatorItems(dto.items);
+    } catch {
+      throw new BadRequestException('cart_simulator_no_valid_items');
     }
 
-    const products = (await this.productModel
-      .find({ _id: { $in: productIds }, store: storeId })
-      .select(
-        'title price discountPrice listPrice listDiscountPrice',
-      )
-      .lean()
-      .exec()) as unknown as ProductLean[];
+    const catalogIds = [
+      ...new Set(
+        normalized
+          .filter((i) => i.kind === 'catalog')
+          .map((i) => i.productId),
+      ),
+    ];
+
+    const products = catalogIds.length
+      ? ((await this.productModel
+          .find({ _id: { $in: catalogIds }, store: storeId })
+          .select(
+            'title price discountPrice listPrice listDiscountPrice variants complements supplements commissionRetrieveStrategy',
+          )
+          .lean()
+          .exec()) as unknown as ProductLean[])
+      : [];
 
     const productById = new Map(
       products.map((p) => [String(p._id), p] as const),
@@ -128,28 +187,96 @@ export class CartSimulatorService {
       quantity: number;
       unitPrice: number;
       lineTotal: number;
+      /** Stratégie effective figée pour le split commission. */
+      commissionStrategy?: 'on_payout' | 'add_to_price';
     }> = [];
     let goodsDisplay = 0;
+    // Stratégie boutique une seule fois (prix libres + repli lignes).
+    const storeCommissionStrategy =
+      await this.planOrderCommission.getCommissionRetrieveStrategyForStore(
+        storeId,
+      );
 
-    for (const item of dto.items) {
-      const pid = String(item.productId ?? '').trim();
-      const product = productById.get(pid);
+    for (const item of normalized) {
+      if (item.kind === 'custom') {
+        // Prix libre : traité comme prix vendeur, majoré si stratégie boutique add_to_price.
+        const customerUnit =
+          await this.planOrderCommission.resolveCustomerUnitPriceForStore(
+            storeId,
+            item.unitPrice,
+            storeCommissionStrategy,
+          );
+        const lineTotal = customerUnit * item.quantity;
+        goodsDisplay += lineTotal;
+        lines.push({
+          productId: item.lineKey,
+          title: item.title,
+          quantity: item.quantity,
+          unitPrice: customerUnit,
+          lineTotal,
+          commissionStrategy: storeCommissionStrategy,
+        });
+        continue;
+      }
+
+      const product = productById.get(item.productId);
       if (!product) {
         throw new BadRequestException({
           message: 'cart_simulator_product_not_found',
-          productId: pid,
+          productId: item.productId,
         });
       }
-      const qty = Math.max(1, Math.min(99, Math.round(item.quantity)));
-      const unitPrice = resolveProductUnitPrice(product);
-      const lineTotal = unitPrice * qty;
+
+      // 1. Prix vendeur (variante + extras) — base avant markup client.
+      const base = resolveCatalogUnitPriceWithVariant(
+        product,
+        item.selectedVariantLabel,
+      );
+      const rawComplements = normalizeSelectedComplements(
+        item.selectedComplements,
+      );
+      const rawSupplements = normalizeSelectedSupplements(
+        item.selectedSupplements,
+      );
+      const repriced = repriceCustomizationFromProductCatalog(
+        {
+          complements: product.complements,
+          supplements: product.supplements,
+        },
+        rawComplements,
+        rawSupplements,
+      );
+      // 2. Stratégie produit → boutique (même priorité que panier réel).
+      const lineStrategy = resolveEffectiveCommissionStrategy(
+        parseOptionalCommissionStrategy(product.commissionRetrieveStrategy),
+        storeCommissionStrategy,
+      );
+      // 3. Prix client : add_to_price majore ; on_payout = prix vendeur.
+      const unitPrice =
+        await this.planOrderCommission.resolveCustomerLineUnitPriceForStore(
+          storeId,
+          base,
+          {
+            complements: repriced.complements,
+            supplements: repriced.supplements,
+          },
+          lineStrategy,
+        );
+      const lineTotal = unitPrice * item.quantity;
       goodsDisplay += lineTotal;
+      const summary = customizationSummaryLabel(
+        repriced.complements,
+        repriced.supplements,
+        item.selectedVariantLabel,
+      );
+      const baseTitle = String(product.title ?? 'Article');
       lines.push({
-        productId: pid,
-        title: String(product.title ?? 'Article'),
-        quantity: qty,
+        productId: item.productId,
+        title: summary ? `${baseTitle} (${summary})` : baseTitle,
+        quantity: item.quantity,
         unitPrice,
         lineTotal,
+        commissionStrategy: lineStrategy,
       });
     }
 
@@ -224,7 +351,9 @@ export class CartSimulatorService {
       }
     }
 
+    // Taxes alignées sur la région devise (pas le téléphone CA legacy).
     const taxCountry =
+      regionCc ||
       resolveStoreTaxCountryCode(store) ||
       deliveryCc ||
       this.supportedCountries.resolveUserTaxCountryCode(user, deliveryCc);
@@ -268,6 +397,7 @@ export class CartSimulatorService {
     const goodsCents = displayToMinor(goodsDisplay, amountFactor);
     const shipCents = displayToMinor(shippingDisplay, amountFactor);
     const orderGrossCents = goodsCents + shipCents;
+    // Split commission avec stratégie par ligne (reverse markup si add_to_price).
     const commissionSplit =
       await this.planOrderCommission.computeVendorTransferSplitForStore(
         storeId,
@@ -278,6 +408,9 @@ export class CartSimulatorService {
             unitPrice: line.unitPrice,
             quantity: line.quantity,
             lineTotalMinor: displayToMinor(line.lineTotal, amountFactor),
+            ...(line.commissionStrategy
+              ? { strategy: line.commissionStrategy }
+              : {}),
           })),
         },
       );
@@ -324,6 +457,8 @@ export class CartSimulatorService {
         platformCommissionTiered:
           commissionSettings.config.tiers.length > 0,
         commissionSource: commissionSettings.source,
+        /** Stratégie boutique (les lignes peuvent surcharger produit). */
+        commissionRetrieveStrategy: storeCommissionStrategy,
         netTransfer: minorToDisplay(vendorNetCents, amountFactor),
         note:
           mode === CartSimulatorFulfillmentMode.DELIVERY

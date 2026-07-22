@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -18,16 +19,92 @@ export enum CartSimulatorFulfillmentMode {
   PICKUP = 'pickup',
 }
 
-export class CartSimulatorItemDto {
-  @ApiProperty({ description: 'Identifiant produit MongoDB' })
+export class CartSimulatorComplementOptionDto {
+  @ApiProperty()
   @IsString()
-  productId: string;
+  label: string;
+
+  @ApiPropertyOptional({ minimum: 0 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  priceDelta?: number;
+}
+
+export class CartSimulatorComplementGroupDto {
+  @ApiProperty()
+  @IsString()
+  groupTitle: string;
+
+  @ApiProperty({ type: [CartSimulatorComplementOptionDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CartSimulatorComplementOptionDto)
+  options: CartSimulatorComplementOptionDto[];
+}
+
+export class CartSimulatorSupplementDto {
+  @ApiProperty()
+  @IsString()
+  name: string;
+
+  @ApiPropertyOptional({ minimum: 0 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  price?: number;
+}
+
+export class CartSimulatorItemDto {
+  @ApiPropertyOptional({
+    description: 'Identifiant produit MongoDB (catalogue). Absent si prix libre.',
+  })
+  @IsOptional()
+  @IsString()
+  productId?: string;
 
   @ApiProperty({ minimum: 1, maximum: 99, default: 1 })
   @IsInt()
   @Min(1)
   @Max(99)
   quantity: number;
+
+  @ApiPropertyOptional({
+    description: 'Prix unitaire affiché (obligatoire pour une ligne prix libre)',
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  unitPrice?: number;
+
+  @ApiPropertyOptional({
+    description: 'Libellé ligne prix libre',
+    maxLength: 200,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  title?: string;
+
+  @ApiPropertyOptional({ description: 'Libellé variante sélectionnée' })
+  @IsOptional()
+  @IsString()
+  selectedVariantLabel?: string;
+
+  @ApiPropertyOptional({ type: [CartSimulatorComplementGroupDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CartSimulatorComplementGroupDto)
+  selectedComplements?: CartSimulatorComplementGroupDto[];
+
+  @ApiPropertyOptional({ type: [CartSimulatorSupplementDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CartSimulatorSupplementDto)
+  selectedSupplements?: CartSimulatorSupplementDto[];
 }
 
 export class CartSimulatorPreviewDto {

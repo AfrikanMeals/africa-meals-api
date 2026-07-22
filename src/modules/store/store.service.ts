@@ -224,7 +224,7 @@ export class StoreService {
       .exec()) as Record<string, unknown> | null;
   }
 
-  /** Devise imposée par le pays sélectionné (régions actives). */
+  /** Devise imposée par le pays sélectionné (actif d’abord, sinon fiche région). */
   private async _resolveCurrencyForCountryCode(
     countryCode: string,
   ): Promise<string> {
@@ -232,8 +232,11 @@ export class StoreService {
     if (!code) {
       throw new BadRequestException('address_country_required');
     }
-    const currency = await this._supportedCountries.getCurrency(code);
-    if (!currency) {
+    // Fix: getCurrency(active) null si région inactive → CAD legacy à tort (simulateur / fiche).
+    const currency =
+      (await this._supportedCountries.getCurrency(code)) ||
+      (await this._supportedCountries.getCountryCurrency(code));
+    if (!currency || !/^[A-Z]{3}$/.test(currency)) {
       throw new BadRequestException('country_currency_not_configured');
     }
     return currency;

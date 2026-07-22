@@ -319,8 +319,9 @@ export class SubscriptionPlanOrderCommissionService {
       (config.fallbackMode === 'fixed' && config.fallbackFixed > 0) ||
       (config.fallbackMode === 'percent' && config.fallbackPercent > 0);
     if (!hasTiers && !hasFallback) return null;
+    // Devise région même si inactive (getCurrency filtre active:true → CAD à tort).
     const currency =
-      (await this.supportedCountries.getCurrency(code)) ?? 'CAD';
+      (await this.supportedCountries.getCountryCurrency(code)) || 'CAD';
     return {
       config,
       currency,
@@ -352,11 +353,12 @@ export class SubscriptionPlanOrderCommissionService {
     }
 
     const global = await this.platformFees.getGlobalOrderCommissionSettings();
+    // Même règle que le simulateur / catalogue : devise pays sans filtre active.
     const currency =
       (regionCode
-        ? await this.supportedCountries.getCurrency(regionCode)
-        : null) ??
-      global.currency ??
+        ? await this.supportedCountries.getCountryCurrency(regionCode)
+        : null) ||
+      global.currency ||
       'CAD';
 
     return {
