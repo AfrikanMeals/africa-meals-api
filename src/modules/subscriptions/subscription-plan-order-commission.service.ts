@@ -881,8 +881,10 @@ export class SubscriptionPlanOrderCommissionService {
       if (entry) {
         const mapped = mapPayoutFeeRow(entry);
         if (mapped) {
+          // Devise région sans filtre active (fixe payout en unités mineures correctes).
           const currency =
-            (await this.supportedCountries.getCurrency(regionCode)) ?? 'CAD';
+            (await this.supportedCountries.getCountryCurrency(regionCode)) ||
+            'CAD';
           return {
             ...mapped,
             currency,
@@ -897,9 +899,9 @@ export class SubscriptionPlanOrderCommissionService {
     const global = await this.platformFees.getGlobalPayoutFeeSettings();
     const currency =
       (regionCode
-        ? await this.supportedCountries.getCurrency(regionCode)
-        : null) ??
-      global.currency ??
+        ? await this.supportedCountries.getCountryCurrency(regionCode)
+        : null) ||
+      global.currency ||
       'CAD';
 
     return {

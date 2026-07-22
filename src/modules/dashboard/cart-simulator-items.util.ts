@@ -126,6 +126,30 @@ export function resolveCartSimulatorRegionCode(store: {
 }
 
 /**
+ * Pays fiscal simulateur : région boutique → taxe boutique → livraison → user.
+ * Aligné checkout (`resolveOrderTaxCountryForStore` priorise la boutique).
+ */
+export function resolveCartSimulatorTaxCountryCode(args: {
+  storeRegionCode?: string | null;
+  storeTaxFallback?: string | null;
+  deliveryCountryCode?: string | null;
+  userTaxCountryCode?: string | null;
+}): string {
+  for (const raw of [
+    args.storeRegionCode,
+    args.storeTaxFallback,
+    args.deliveryCountryCode,
+    args.userTaxCountryCode,
+  ]) {
+    const code = String(raw ?? '')
+      .trim()
+      .toUpperCase();
+    if (/^[A-Z]{2}$/.test(code)) return code;
+  }
+  return '';
+}
+
+/**
  * Facteur de réduction coupon sur les lignes (0–1).
  * Remise appliquée au sous-total articles uniquement (comme le checkout).
  */

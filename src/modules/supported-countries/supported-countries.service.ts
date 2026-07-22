@@ -532,12 +532,15 @@ export class SupportedCountriesService implements OnModuleInit {
   }
 
   /**
-   * Taxes pour un module : 0 % si le pays n’est pas actif dans les régions.
+   * Taxes pour un module.
+   * Défaut checkout : 0 % si région inactive (`getTaxRulesForCountry`).
+   * `allowInactiveRegion` : simulateur admin — appliquer les règles même si inactive.
    */
   async computeTaxesForModule(args: {
     countryCode: string;
     baseAmount: number;
     module: RegionTaxModule;
+    allowInactiveRegion?: boolean;
   }): Promise<RegionTaxBreakdown> {
     const countryCode = resolveTaxCountryCode([args.countryCode]);
     const baseAmount = Math.max(0, Number(args.baseAmount) || 0);
@@ -550,7 +553,10 @@ export class SupportedCountriesService implements OnModuleInit {
         taxTotal: 0,
       };
     }
-    const rules = await this.getTaxRulesForCountry(countryCode);
+    // Simulateur : lire taxes configurées hors filtre active:true.
+    const rules = args.allowInactiveRegion
+      ? await this.getTaxRulesForCountryAdmin(countryCode)
+      : await this.getTaxRulesForCountry(countryCode);
     if (!rules.length) {
       return {
         countryCode,

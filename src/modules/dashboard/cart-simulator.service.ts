@@ -11,7 +11,10 @@ import {
   extractLatLonFromGeoPoint,
   haversineDistanceKm,
 } from '@modules/platform-shipping-settings/shipping-quote.util';
-import { PlatformFeesService } from '@modules/platform-fees/platform-fees.service';
+import {
+  computePayoutFeeSplit,
+  PlatformFeesService,
+} from '@modules/platform-fees/platform-fees.service';
 import {
   parseOptionalCommissionStrategy,
   resolveEffectiveCommissionStrategy,
@@ -49,6 +52,7 @@ import {
   normalizeCartSimulatorItems,
   resolveCartSimulatorCurrency,
   resolveCartSimulatorRegionCode,
+  resolveCartSimulatorTaxCountryCode,
   stackVendorNetAfterFeesCents,
 } from './cart-simulator-items.util';
 
@@ -405,17 +409,24 @@ export class CartSimulatorService {
       couponDiscountDisplay,
     );
 
-    // Taxes sur articles après coupon + livraison (ordre checkout réel).
-    const taxCountry =
-      regionCc ||
-      resolveStoreTaxCountryCode(store) ||
-      deliveryCc ||
-      this.supportedCountries.resolveUserTaxCountryCode(user, deliveryCc);
+    // Taxes région : boutique d’abord (comme checkout), puis adresse livraison.
+    const taxCountry = resolveCartSimulatorTaxCountryCode({
+      storeRegionCode: regionCc,
+      storeTaxFallback: resolveStoreTaxCountryCode(store),
+      deliveryCountryCode: deliveryCc,
+      userTaxCountryCode: this.supportedCountries.resolveUserTaxCountryCode(
+        user,
+        deliveryCc,
+      ),
+    });
+    // Base = articles après coupon + livraison (hors tip / frais transaction).
     const taxBaseDisplay = goodsAfterCouponDisplay + shippingDisplay;
     const taxBreakdown = await this.supportedCountries.computeTaxesForModule({
       countryCode: taxCountry,
       baseAmount: taxBaseDisplay,
       module: 'order',
+      // Fix: getTaxRulesForCountry filtre active:true → taxes CM/CA configurées ignorées.
+      allowInactiveRegion: true,
     });
 
     const tipDisplay =
@@ -487,13 +498,19 @@ export class CartSimulatorService {
       maxDeductibleCents: vendorNetCents,
     });
 
-    // 3. Frais payout Wise Eat (cash-out bancaire sur net après Stripe).
+    // 3. Frais payout Wise Eat (prélevés avant payout Stripe Connect).
     const afterStripeCents = Math.max(0, vendorNetCents - stripeFeeShareCents);
-    const payoutSplit =
-      await this.planOrderCommission.computePayoutFeeSplitForStore(
-        storeId,
-        afterStripeCents,
-      );
+    const payoutSettings =
+      await this.planOrderCommission.resolvePayoutFeeForStore(storeId);
+    const payoutSplit = computePayoutFeeSplit(
+      afterStripeCents,
+      {
+        payoutFeeMode: payoutSettings.payoutFeeMode,
+        payoutFeeFixed: payoutSettings.payoutFeeFixed,
+        payoutFeePercent: payoutSettings.payoutFeePercent,
+      },
+      payoutSettings.currency,
+    );
     const stacked = stackVendorNetAfterFeesCents({
       vendorNetAfterCommissionCents: vendorNetCents,
       stripeFeeShareCents,
@@ -522,6 +539,8 @@ export class CartSimulatorService {
         shippingMeta,
         taxes: taxBreakdown,
         taxTotal: taxBreakdown.taxTotal,
+        /** Pays ISO utilisé pour les taxes région (transparence UI). */
+        taxCountryCode: taxBreakdown.countryCode || taxCountry || null,
         deliveryTip: tipDisplay,
         orderPaymentFee: orderPaymentFeeDisplay,
         orderPaymentFeeLabel,
@@ -558,6 +577,7 @@ export class CartSimulatorService {
           stacked.netAfterStripeCents,
           amountFactor,
         ),
+        /** Frais payout Wise Eat prélevés avant payout Stripe Connect. */
         payoutFeeEstimate: minorToDisplay(
           payoutSplit.platformFeeCents,
           amountFactor,
@@ -565,18 +585,19 @@ export class CartSimulatorService {
         payoutFeeMode: payoutSplit.feeMode,
         payoutFeePercent: payoutSplit.feePercent,
         payoutFeeFixed: payoutSplit.feeFixedCad,
-        /** Net banque estimé après frais payout Wise Eat. */
+        payoutFeeSource: payoutSettings.source,
+        /** Net banque estimé après frais payout (Stripe Connect cash-out). */
         netAfterPayout: minorToDisplay(
           stacked.netAfterPayoutCents,
           amountFactor,
         ),
         note:
           mode === CartSimulatorFulfillmentMode.DELIVERY
-            ? 'La livraison et le pourboire sont payés par le client mais ne sont pas versés au vendeur. Les frais Stripe et payout sont des estimations.'
-            : 'Les frais Stripe et payout Wise Eat sont des estimations (hors code cadeau).',
+            ? 'La livraison et le pourboire sont payés par le client mais ne sont pas versés au vendeur. Frais Stripe processing + payout Wise Eat = estimations.'
+            : 'Frais Stripe processing + payout Wise Eat (Stripe Connect) = estimations ; hors code cadeau.',
       },
       disclaimer:
-        'Simulation indicative — coupon boutique, frais Stripe (estim. 2,9 %+0,30) et frais payout Wise Eat inclus ; hors code cadeau.',
+        'Simulation indicative — taxes région, coupon, frais Stripe processing et frais payout Wise Eat (Stripe Connect) inclus ; hors code cadeau.',
     };
   }
 }

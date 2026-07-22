@@ -4,6 +4,7 @@ import {
   normalizeCartSimulatorItems,
   resolveCartSimulatorCurrency,
   resolveCartSimulatorRegionCode,
+  resolveCartSimulatorTaxCountryCode,
   stackVendorNetAfterFeesCents,
 } from './cart-simulator-items.util';
 
@@ -48,6 +49,18 @@ describe('cart-simulator-items.util', () => {
       expect(() =>
         normalizeCartSimulatorItems([{ productId: 'x', quantity: 1 }]),
       ).toThrow('cart_simulator_no_valid_items');
+    });
+  });
+
+  describe('resolveCartSimulatorTaxCountryCode', () => {
+    it('priorise la région boutique sur la livraison', () => {
+      expect(
+        resolveCartSimulatorTaxCountryCode({
+          storeRegionCode: 'CM',
+          deliveryCountryCode: 'CA',
+          userTaxCountryCode: 'FR',
+        }),
+      ).toBe('CM');
     });
   });
 
