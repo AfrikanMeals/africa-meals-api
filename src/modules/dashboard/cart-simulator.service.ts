@@ -1,4 +1,9 @@
-import { allocatePlatformFeeToGoodsCents } from '@modules/billing/stripe/stripe-processing-fee.util';
+import {
+  allocatePlatformFeeToGoodsCents,
+  allocateStripeProcessingFeeShareCents,
+  estimateStripeProcessingFeeCents,
+} from '@modules/billing/stripe/stripe-processing-fee.util';
+import { CouponsService } from '@modules/coupons/coupons.service';
 import { resolvePlatformShippingRegionCode } from '@modules/platform-shipping-settings/platform-shipping-region.util';
 import { PlatformShippingSettingsService } from '@modules/platform-shipping-settings/platform-shipping-settings.service';
 import {
@@ -25,6 +30,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ProductModel } from '@schemas/product.schema';
+import { StoreCouponDiscountTypeEnum } from '@schemas/store_coupon.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
@@ -39,10 +45,25 @@ import {
   repriceCustomizationFromProductCatalog,
 } from '@modules/cart/cart-customization.util';
 import {
+  cartSimulatorCouponFactor,
   normalizeCartSimulatorItems,
   resolveCartSimulatorCurrency,
   resolveCartSimulatorRegionCode,
+  stackVendorNetAfterFeesCents,
 } from './cart-simulator-items.util';
+
+/** Message code coupon pour soft-fail simulateur (pas de 400 sur preview). */
+function couponSoftFailMessage(err: unknown): string {
+  if (err instanceof BadRequestException) {
+    const body = err.getResponse();
+    if (typeof body === 'string') return body;
+    if (body && typeof body === 'object' && 'message' in body) {
+      const m = (body as { message?: string | string[] }).message;
+      return Array.isArray(m) ? m.join(', ') : String(m ?? 'coupon_invalid');
+    }
+  }
+  return 'coupon_invalid';
+}
 
 type ProductLean = {
   _id: unknown;
@@ -110,6 +131,7 @@ export class CartSimulatorService {
     private readonly platformShippingSettings: PlatformShippingSettingsService,
     private readonly platformFees: PlatformFeesService,
     private readonly planOrderCommission: SubscriptionPlanOrderCommissionService,
+    private readonly coupons: CouponsService,
   ) {}
 
   async preview(user: UserModel, dto: CartSimulatorPreviewDto) {
@@ -351,13 +373,45 @@ export class CartSimulatorService {
       }
     }
 
-    // Taxes alignées sur la région devise (pas le téléphone CA legacy).
+    // 1. Coupon boutique sur sous-total articles (soft-fail si code invalide).
+    const couponCodeRaw = String(dto.couponCode ?? '').trim().toUpperCase();
+    let couponDiscountDisplay = 0;
+    let couponDiscountType: StoreCouponDiscountTypeEnum | null = null;
+    let couponValue: number | null = null;
+    let couponError: string | null = null;
+    if (couponCodeRaw) {
+      try {
+        const coupon = await this.coupons.getActiveCouponForStore(
+          storeId,
+          couponCodeRaw,
+        );
+        couponDiscountDisplay = this.coupons.computeDiscountForSubtotal(
+          goodsDisplay,
+          coupon.discountType,
+          coupon.value,
+        );
+        couponDiscountType = coupon.discountType;
+        couponValue = Number(coupon.value) || 0;
+      } catch (err) {
+        couponError = couponSoftFailMessage(err);
+      }
+    }
+    const goodsAfterCouponDisplay = Math.max(
+      0,
+      goodsDisplay - couponDiscountDisplay,
+    );
+    const couponFactor = cartSimulatorCouponFactor(
+      goodsDisplay,
+      couponDiscountDisplay,
+    );
+
+    // Taxes sur articles après coupon + livraison (ordre checkout réel).
     const taxCountry =
       regionCc ||
       resolveStoreTaxCountryCode(store) ||
       deliveryCc ||
       this.supportedCountries.resolveUserTaxCountryCode(user, deliveryCc);
-    const taxBaseDisplay = goodsDisplay + shippingDisplay;
+    const taxBaseDisplay = goodsAfterCouponDisplay + shippingDisplay;
     const taxBreakdown = await this.supportedCountries.computeTaxesForModule({
       countryCode: taxCountry,
       baseAmount: taxBaseDisplay,
@@ -394,10 +448,9 @@ export class CartSimulatorService {
     const customerTotalDisplay =
       subtotalBeforePaymentFeeDisplay + orderPaymentFeeDisplay;
 
-    const goodsCents = displayToMinor(goodsDisplay, amountFactor);
+    // Commission sur CA articles après coupon (vendeur finance le coupon).
+    const goodsCents = displayToMinor(goodsAfterCouponDisplay, amountFactor);
     const shipCents = displayToMinor(shippingDisplay, amountFactor);
-    const orderGrossCents = goodsCents + shipCents;
-    // Split commission avec stratégie par ligne (reverse markup si add_to_price).
     const commissionSplit =
       await this.planOrderCommission.computeVendorTransferSplitForStore(
         storeId,
@@ -405,9 +458,12 @@ export class CartSimulatorService {
           goodsCents,
           shipCents,
           lineItems: lines.map((line) => ({
-            unitPrice: line.unitPrice,
+            unitPrice: line.unitPrice * couponFactor,
             quantity: line.quantity,
-            lineTotalMinor: displayToMinor(line.lineTotal, amountFactor),
+            lineTotalMinor: displayToMinor(
+              line.lineTotal * couponFactor,
+              amountFactor,
+            ),
             ...(line.commissionStrategy
               ? { strategy: line.commissionStrategy }
               : {}),
@@ -421,6 +477,29 @@ export class CartSimulatorService {
     });
     const vendorNetCents = Math.max(0, goodsCents - platformFeeOnGoodsCents);
 
+    // 2. Frais Stripe processing estimés (part articles vendeur).
+    const chargeCents = displayToMinor(customerTotalDisplay, amountFactor);
+    const stripeFeeTotalCents = estimateStripeProcessingFeeCents(chargeCents);
+    const stripeFeeShareCents = allocateStripeProcessingFeeShareCents({
+      totalStripeFeeCents: stripeFeeTotalCents,
+      paymentAmountCents: chargeCents,
+      sliceAmountCents: goodsCents,
+      maxDeductibleCents: vendorNetCents,
+    });
+
+    // 3. Frais payout Wise Eat (cash-out bancaire sur net après Stripe).
+    const afterStripeCents = Math.max(0, vendorNetCents - stripeFeeShareCents);
+    const payoutSplit =
+      await this.planOrderCommission.computePayoutFeeSplitForStore(
+        storeId,
+        afterStripeCents,
+      );
+    const stacked = stackVendorNetAfterFeesCents({
+      vendorNetAfterCommissionCents: vendorNetCents,
+      stripeFeeShareCents,
+      payoutFeeCents: payoutSplit.platformFeeCents,
+    });
+
     const commissionSettings =
       await this.planOrderCommission.resolveOrderCommissionForStore(storeId);
 
@@ -433,6 +512,12 @@ export class CartSimulatorService {
       lines,
       customer: {
         goods: goodsDisplay,
+        couponCode: couponCodeRaw || null,
+        couponDiscount: couponDiscountDisplay,
+        couponDiscountType,
+        couponValue,
+        couponError,
+        goodsAfterCoupon: goodsAfterCouponDisplay,
         shipping: shippingDisplay,
         shippingMeta,
         taxes: taxBreakdown,
@@ -459,14 +544,39 @@ export class CartSimulatorService {
         commissionSource: commissionSettings.source,
         /** Stratégie boutique (les lignes peuvent surcharger produit). */
         commissionRetrieveStrategy: storeCommissionStrategy,
+        /** Net Connect après commission commande (avant Stripe / payout). */
         netTransfer: minorToDisplay(vendorNetCents, amountFactor),
+        stripeProcessingFeeEstimate: minorToDisplay(
+          stripeFeeShareCents,
+          amountFactor,
+        ),
+        stripeProcessingFeeTotalEstimate: minorToDisplay(
+          stripeFeeTotalCents,
+          amountFactor,
+        ),
+        netTransferAfterStripe: minorToDisplay(
+          stacked.netAfterStripeCents,
+          amountFactor,
+        ),
+        payoutFeeEstimate: minorToDisplay(
+          payoutSplit.platformFeeCents,
+          amountFactor,
+        ),
+        payoutFeeMode: payoutSplit.feeMode,
+        payoutFeePercent: payoutSplit.feePercent,
+        payoutFeeFixed: payoutSplit.feeFixedCad,
+        /** Net banque estimé après frais payout Wise Eat. */
+        netAfterPayout: minorToDisplay(
+          stacked.netAfterPayoutCents,
+          amountFactor,
+        ),
         note:
           mode === CartSimulatorFulfillmentMode.DELIVERY
-            ? 'La livraison et le pourboire sont payés par le client mais ne sont pas versés au vendeur.'
-            : undefined,
+            ? 'La livraison et le pourboire sont payés par le client mais ne sont pas versés au vendeur. Les frais Stripe et payout sont des estimations.'
+            : 'Les frais Stripe et payout Wise Eat sont des estimations (hors code cadeau).',
       },
       disclaimer:
-        'Simulation indicative — sans coupon, code cadeau ni frais Stripe Connect.',
+        'Simulation indicative — coupon boutique, frais Stripe (estim. 2,9 %+0,30) et frais payout Wise Eat inclus ; hors code cadeau.',
     };
   }
 }

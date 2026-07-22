@@ -74,6 +74,7 @@ import { FleetModule } from '@modules/fleet/fleet.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
 import { PlatformShippingSettingsModule } from '@modules/platform-shipping-settings/platform-shipping-settings.module';
 import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
+import { CouponsModule } from '@modules/coupons/coupons.module';
 import { CartSimulatorService } from './cart-simulator.service';
 
 @Module({
@@ -87,6 +88,7 @@ import { CartSimulatorService } from './cart-simulator.service';
     DomainEventHandlersModule,
     StoreDeliveryDriversModule,
     SubscriptionsModule,
+    CouponsModule,
     PlatformShippingSettingsModule,
     forwardRef(() => DeliveryAgentModule),
     PendingDeliveryModule,

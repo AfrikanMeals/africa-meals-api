@@ -1,8 +1,10 @@
 import {
+  cartSimulatorCouponFactor,
   isCartSimulatorCatalogProductId,
   normalizeCartSimulatorItems,
   resolveCartSimulatorCurrency,
   resolveCartSimulatorRegionCode,
+  stackVendorNetAfterFeesCents,
 } from './cart-simulator-items.util';
 
 describe('cart-simulator-items.util', () => {
@@ -46,6 +48,39 @@ describe('cart-simulator-items.util', () => {
       expect(() =>
         normalizeCartSimulatorItems([{ productId: 'x', quantity: 1 }]),
       ).toThrow('cart_simulator_no_valid_items');
+    });
+  });
+
+  describe('cartSimulatorCouponFactor', () => {
+    it('réduit proportionnellement les lignes', () => {
+      expect(cartSimulatorCouponFactor(100, 20)).toBeCloseTo(0.8);
+      expect(cartSimulatorCouponFactor(0, 10)).toBe(1);
+      expect(cartSimulatorCouponFactor(50, 100)).toBe(0);
+    });
+  });
+
+  describe('stackVendorNetAfterFeesCents', () => {
+    it('empile Stripe puis payout sans négatif', () => {
+      expect(
+        stackVendorNetAfterFeesCents({
+          vendorNetAfterCommissionCents: 1000,
+          stripeFeeShareCents: 59,
+          payoutFeeCents: 100,
+        }),
+      ).toEqual({
+        netAfterStripeCents: 941,
+        netAfterPayoutCents: 841,
+      });
+      expect(
+        stackVendorNetAfterFeesCents({
+          vendorNetAfterCommissionCents: 50,
+          stripeFeeShareCents: 100,
+          payoutFeeCents: 10,
+        }),
+      ).toEqual({
+        netAfterStripeCents: 0,
+        netAfterPayoutCents: 0,
+      });
     });
   });
 

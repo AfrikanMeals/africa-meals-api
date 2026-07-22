@@ -157,4 +157,13 @@ export class CartSimulatorPreviewDto {
   @IsOptional()
   @IsString()
   customerAddressLabel?: string;
+
+  @ApiPropertyOptional({
+    description: 'Code promo boutique (soft-fail si invalide)',
+    maxLength: 64,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  couponCode?: string;
 }

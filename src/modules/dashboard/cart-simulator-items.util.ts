@@ -126,6 +126,45 @@ export function resolveCartSimulatorRegionCode(store: {
 }
 
 /**
+ * Facteur de réduction coupon sur les lignes (0–1).
+ * Remise appliquée au sous-total articles uniquement (comme le checkout).
+ */
+export function cartSimulatorCouponFactor(
+  goodsDisplay: number,
+  couponDiscountDisplay: number,
+): number {
+  const goods = Math.max(0, Number(goodsDisplay) || 0);
+  if (goods <= 0) return 1;
+  const discount = Math.max(0, Math.min(goods, Number(couponDiscountDisplay) || 0));
+  return Math.max(0, (goods - discount) / goods);
+}
+
+/**
+ * Net vendeur après commission → Stripe → payout Wise Eat (unités mineures).
+ * Payout = cash-out bancaire estimé sur le net Connect.
+ */
+export function stackVendorNetAfterFeesCents(args: {
+  vendorNetAfterCommissionCents: number;
+  stripeFeeShareCents: number;
+  payoutFeeCents: number;
+}): {
+  netAfterStripeCents: number;
+  netAfterPayoutCents: number;
+} {
+  const afterCommission = Math.max(
+    0,
+    Math.round(args.vendorNetAfterCommissionCents),
+  );
+  const stripe = Math.max(0, Math.round(args.stripeFeeShareCents));
+  const afterStripe = Math.max(0, afterCommission - Math.min(stripe, afterCommission));
+  const payout = Math.max(0, Math.round(args.payoutFeeCents));
+  return {
+    netAfterStripeCents: afterStripe,
+    netAfterPayoutCents: Math.max(0, afterStripe - Math.min(payout, afterStripe)),
+  };
+}
+
+/**
  * Devise simulateur : région boutique (CM → XAF) prioritaire sur `store.currency` legacy.
  * Ignore CAD legacy si un pays hors CA est connu.
  */
