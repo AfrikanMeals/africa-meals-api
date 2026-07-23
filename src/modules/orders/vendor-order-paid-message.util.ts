@@ -4,6 +4,7 @@ import {
   normalizeSelectedSupplements,
 } from '@modules/cart/cart-customization.util';
 import type { OrdeLineItem } from '@schemas/order.schema';
+import { formatEmailMoney } from '@utils/email-order-currency.util';
 
 export type VendorOrderNotifyMessageArgs = {
   orderId: string;
@@ -18,10 +19,12 @@ export type VendorOrderNotifyMessageArgs = {
 export type VendorOrderPaidMessageArgs = VendorOrderNotifyMessageArgs;
 
 function formatMoney(amount: number, currency?: string): string {
-  const cur = (currency ?? '').trim().toUpperCase();
+  // Devise boutique / commande — jamais CAD silencieux si currency fournie.
+  if (currency && String(currency).trim()) {
+    return formatEmailMoney(amount, currency);
+  }
   const n = Math.round(amount * 100) / 100;
-  const formatted = Number.isInteger(n) ? String(n) : n.toFixed(2);
-  return cur ? `${formatted} ${cur}` : formatted;
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
 }
 
 function orderRef(orderId: string): string {

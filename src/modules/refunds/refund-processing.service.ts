@@ -21,6 +21,7 @@ import {
   PlatformFeesService,
   RefundAmountSplit,
 } from '@modules/platform-fees/platform-fees.service';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import {
   OrderModel,
   OrderRefundRequestEntryStatusEnum,
@@ -32,6 +33,11 @@ import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { StripeRefundService } from './stripe-refund.service';
+import {
+  formatEmailMoney,
+  resolveOrderDisplayCurrency,
+  resolveStoreRegionCodeForDisplayCurrency,
+} from '@utils/email-order-currency.util';
 import { fromStripeMinorUnits } from '@utils/stripe-currency-amount.util';
 
 const SETTINGS_KEY = 'default';
@@ -193,6 +199,7 @@ export class RefundProcessingService {
     private readonly stripeTransfers: StripeConnectTransferService,
     private readonly stripeDeferredCapture: StripeDeferredCaptureService,
     private readonly vendorStatusEmail: VendorStatusEmailService,
+    private readonly supportedCountries: SupportedCountriesService,
   ) {}
 
   private normalizeCurrency(raw: unknown): string | undefined {
@@ -202,18 +209,8 @@ export class RefundProcessingService {
   }
 
   private formatAmountMajor(amount: number, currency: string): string {
-    const value = Number.isFinite(amount) ? amount : 0;
-    const cur = this.normalizeCurrency(currency) ?? 'CAD';
-    try {
-      return new Intl.NumberFormat('fr-FR', {
-        style: 'currency',
-        currency: cur,
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }).format(value);
-    } catch {
-      return `${value.toFixed(2)} ${cur}`;
-    }
+    // Même format e-mails commande (zero-decimal XAF, pas CAD silencieux).
+    return formatEmailMoney(amount, currency);
   }
 
   private formatAmountCents(amountCents: number, currency: string): string {
@@ -226,23 +223,83 @@ export class RefundProcessingService {
     order: Record<string, unknown> | OrderModel,
   ): Promise<string> {
     const raw = order as Record<string, unknown>;
-    const orderCur = this.normalizeCurrency(raw['currency']);
-    if (orderCur) return orderCur;
+    let storeDoc = raw['store'] as
+      | {
+          currency?: string;
+          region?: string;
+          address?: { countryCode?: unknown } | null;
+        }
+      | string
+      | Types.ObjectId
+      | undefined;
 
-    const parentPaymentId = stripeParentIdFromOrder(raw);
-    if (parentPaymentId) {
-      const stripePayment = await this.stripeProcessedCheckoutModel
-        .findOne({ sessionId: parentPaymentId })
-        .select('currency')
-        .lean()
-        .exec();
-      const stripeCur = this.normalizeCurrency(stripePayment?.currency);
-      if (stripeCur) return stripeCur;
+    // Charger boutique si seul l’ObjectId est présent.
+    if (
+      storeDoc &&
+      (typeof storeDoc === 'string' || storeDoc instanceof Types.ObjectId)
+    ) {
+      const sid = String(storeDoc);
+      if (Types.ObjectId.isValid(sid)) {
+        storeDoc =
+          ((await this.storeModel
+            .findById(sid)
+            .populate('address', 'countryCode')
+            .select('currency region address')
+            .lean()
+            .exec()) as {
+            currency?: string;
+            region?: string;
+            address?: { countryCode?: unknown } | null;
+          } | null) ?? undefined;
+      } else {
+        storeDoc = undefined;
+      }
+    } else if (
+      storeDoc &&
+      typeof storeDoc === 'object' &&
+      !('region' in storeDoc) &&
+      (storeDoc as { _id?: unknown })._id
+    ) {
+      // Populate partiel (ex. name seul) → recharger region/currency.
+      const sid = String((storeDoc as { _id: unknown })._id);
+      if (Types.ObjectId.isValid(sid)) {
+        const full = await this.storeModel
+          .findById(sid)
+          .populate('address', 'countryCode')
+          .select('currency region address')
+          .lean()
+          .exec();
+        if (full) {
+          storeDoc = full as {
+            currency?: string;
+            region?: string;
+            address?: { countryCode?: unknown } | null;
+          };
+        }
+      }
     }
 
-    const storeDoc = raw['store'] as { currency?: string } | undefined;
-    const storeCur = this.normalizeCurrency(storeDoc?.currency);
-    return storeCur ?? 'CAD';
+    const storeObj =
+      storeDoc && typeof storeDoc === 'object'
+        ? (storeDoc as {
+            currency?: string;
+            region?: string;
+            address?: { countryCode?: unknown } | null;
+          })
+        : null;
+    const regionCode =
+      resolveStoreRegionCodeForDisplayCurrency(storeObj ?? {}) || undefined;
+    const regionCurrency = regionCode
+      ? await this.supportedCountries.getCountryCurrency(regionCode)
+      : null;
+
+    // Stripe settlement (CAD) ne doit pas écraser la devise boutique des e-mails.
+    return resolveOrderDisplayCurrency({
+      orderCurrency: this.normalizeCurrency(raw['currency']),
+      storeCurrency: this.normalizeCurrency(storeObj?.currency),
+      regionCode,
+      regionCurrency,
+    });
   }
 
   private async settingsDoc(): Promise<RefundProcessingSettingsModel> {

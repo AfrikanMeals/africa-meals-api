@@ -22,6 +22,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { AdModerationStatusEnum } from '@schemas/ad.schema';
+import { formatEmailMoney } from '@utils/email-order-currency.util';
 import { Model, Types } from 'mongoose';
 
 export type AdMarketingEntityStatus =
@@ -96,7 +97,7 @@ export class VendorStatusEmailService {
     if (args.totalPrice != null && Number.isFinite(args.totalPrice)) {
       rows.push({
         label: 'Montant',
-        value: this.formatAmount(args.totalPrice, args.currency ?? 'CAD'),
+        value: this.formatAmount(args.totalPrice, args.currency),
       });
     }
     if (args.note?.trim()) {
@@ -399,7 +400,7 @@ export class VendorStatusEmailService {
     if (args.totalPrice != null && Number.isFinite(args.totalPrice)) {
       rows.push({
         label: 'Montant',
-        value: this.formatAmount(args.totalPrice, args.currency ?? 'CAD'),
+        value: this.formatAmount(args.totalPrice, args.currency),
       });
     }
     if (args.note?.trim()) {
@@ -812,7 +813,7 @@ export class VendorStatusEmailService {
   }): { subject: string; heading: string; body: string; statusLabel: string } {
     const amountStr =
       args.totalPrice != null && Number.isFinite(args.totalPrice)
-        ? this.formatAmount(args.totalPrice, args.currency ?? 'CAD')
+        ? this.formatAmount(args.totalPrice, args.currency)
         : '';
     const amountPart = amountStr ? ` (${amountStr})` : '';
     const notePart = args.note?.trim() ? ` ${args.note.trim()}` : '';
@@ -1195,11 +1196,9 @@ export class VendorStatusEmailService {
     }
   }
 
-  private formatAmount(amount: number, currency: string): string {
-    const cur = (currency ?? 'CAD').trim().toUpperCase() || 'CAD';
-    const n = Number(amount);
-    const safe = Number.isFinite(n) ? n : 0;
-    return `${safe.toFixed(2)} ${cur}`;
+  private formatAmount(amount: number, currency?: string): string {
+    // Devise passée par OrdersService (région boutique déjà résolue).
+    return formatEmailMoney(amount, currency);
   }
 
   private formatDateFr(iso: string): string {

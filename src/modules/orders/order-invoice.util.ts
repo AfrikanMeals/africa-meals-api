@@ -8,6 +8,10 @@ import {
 } from '@modules/cart/cart-customization.util';
 import type { OrdeLineItem } from '@schemas/order.schema';
 import { haversineDistance } from '@utils/helpers';
+import {
+  formatEmailMoney,
+  resolveOrderDisplayCurrency,
+} from '@utils/email-order-currency.util';
 import { fromStripeMinorUnits } from '@utils/stripe-currency-amount.util';
 import { predictDeliveryEta } from '@common/eta-engine.util';
 
@@ -61,20 +65,28 @@ export type OrderInvoiceSnapshot = {
   items: OrdeLineItem[];
 };
 
+/** Affichage montant facture / reçu — même règles e-mails (région / zero-decimal). */
 export function formatInvoiceMoney(
   value: number,
   currency?: string,
 ): string {
-  const code = (currency ?? 'CAD').trim().toUpperCase() || 'CAD';
-  try {
-    return new Intl.NumberFormat('fr-CA', {
-      style: 'currency',
-      currency: code,
-      maximumFractionDigits: 2,
-    }).format(value);
-  } catch {
-    return `${Number(value).toLocaleString('fr-CA')} ${code}`;
-  }
+  return formatEmailMoney(value, currency);
+}
+
+/**
+ * Devise snapshot facture / JSON-LD.
+ * Ignore CAD legacy hors CA via countryCode adresse boutique.
+ */
+export function invoiceSnapshotCurrency(
+  snapshot: Pick<OrderInvoiceSnapshot, 'currency' | 'storeAddressSnapshot'>,
+): string {
+  const regionCode =
+    snapshot.storeAddressSnapshot?.countryCode ??
+    snapshot.storeAddressSnapshot?.country_code;
+  return resolveOrderDisplayCurrency({
+    orderCurrency: snapshot.currency,
+    regionCode,
+  });
 }
 
 export function formatInvoiceDate(iso?: Date | string): string {
@@ -97,7 +109,7 @@ export function orderInvoiceRef(orderId: string): string {
 
 /** Pourboire livreur (unités affichées). */
 export function orderInvoiceTipAmount(snapshot: OrderInvoiceSnapshot): number {
-  const currency = (snapshot.currency ?? 'CAD').trim().toUpperCase() || 'CAD';
+  const currency = invoiceSnapshotCurrency(snapshot);
   const tipCents = Math.max(
     0,
     Math.round(Number(snapshot.deliveryTipCents) || 0),
@@ -109,7 +121,7 @@ export function orderInvoiceTipAmount(snapshot: OrderInvoiceSnapshot): number {
 export function orderInvoicePaymentFeeAmount(
   snapshot: OrderInvoiceSnapshot,
 ): number {
-  const currency = (snapshot.currency ?? 'CAD').trim().toUpperCase() || 'CAD';
+  const currency = invoiceSnapshotCurrency(snapshot);
   const feeCents = Math.max(
     0,
     Math.round(Number(snapshot.orderPaymentFeeCents) || 0),
@@ -146,7 +158,7 @@ export function orderInvoiceTotalCharged(
 export function buildOrderReceiptTextLines(
   snapshot: OrderInvoiceSnapshot,
 ): string[] {
-  const currency = (snapshot.currency ?? 'CAD').trim().toUpperCase() || 'CAD';
+  const currency = invoiceSnapshotCurrency(snapshot);
   const items = Array.isArray(snapshot.items) ? snapshot.items : [];
   const linesSubtotal = items.reduce((acc, it) => {
     const qty = Math.max(0, Number(it.quantity) || 0);
@@ -306,7 +318,7 @@ function estimateOrderDiscount(
   const total = orderInvoiceOrderSubtotal(snapshot);
   const beforeDiscount = linesSubtotal + shipping + tax;
   const discount = beforeDiscount - total;
-  const currency = (snapshot.currency || 'CAD').trim().toUpperCase() || 'CAD';
+  const currency = invoiceSnapshotCurrency(snapshot);
   if (discount > 0.009) {
     return { amount: discount.toFixed(2), currency };
   }
@@ -677,7 +689,7 @@ export function buildOrderEmailJsonLd(
   snapshot: OrderInvoiceSnapshot,
   opts: OrderEmailJsonLdOptions,
 ): Record<string, unknown> {
-  const currency = (snapshot.currency || 'CAD').trim().toUpperCase() || 'CAD';
+  const currency = invoiceSnapshotCurrency(snapshot);
   const orderUrl = opts.orderUrl?.trim();
   const orderDate = formatOrderDateIso(snapshot.createdAt);
   const offers = buildGmailAcceptedOffers(
@@ -755,7 +767,7 @@ export function buildInvoiceEmailJsonLd(
   opts: OrderEmailJsonLdOptions,
   orderJsonLd: Record<string, unknown>,
 ): Record<string, unknown> {
-  const currency = (snapshot.currency || 'CAD').trim().toUpperCase() || 'CAD';
+  const currency = invoiceSnapshotCurrency(snapshot);
   const total = orderInvoiceTotalCharged(snapshot).toFixed(2);
   const orderDate = formatOrderDateIso(snapshot.createdAt);
   const dueDate = orderDate?.split('T')[0];

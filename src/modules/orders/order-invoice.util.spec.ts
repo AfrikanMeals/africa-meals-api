@@ -4,11 +4,32 @@ import {
   buildOrderReceiptEmailJsonLd,
   buildParcelDeliveryEmailJsonLd,
   estimateParcelDeliveryEtaMinutes,
+  invoiceSnapshotCurrency,
   orderReceiptEmailSubject,
   ParcelDeliverySchemaStatus,
   resolveOrderEmailPublicUrl,
   resolveProductPublicUrl,
 } from './order-invoice.util';
+
+describe('invoiceSnapshotCurrency', () => {
+  it('ignore CAD legacy si adresse boutique CM', () => {
+    expect(
+      invoiceSnapshotCurrency({
+        currency: 'CAD',
+        storeAddressSnapshot: { countryCode: 'CM' },
+      }),
+    ).toBe('XAF');
+  });
+
+  it('garde CAD pour boutique CA', () => {
+    expect(
+      invoiceSnapshotCurrency({
+        currency: 'CAD',
+        storeAddressSnapshot: { countryCode: 'CA' },
+      }),
+    ).toBe('CAD');
+  });
+});
 
 describe('order-invoice.util Gmail markup', () => {
   const snapshot = {

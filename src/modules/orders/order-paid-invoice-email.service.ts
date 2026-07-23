@@ -5,6 +5,7 @@ import {
   resolveEmailImageUrl,
   resolveEmailWebSiteBase,
 } from '@modules/mailer/email-web-asset-url.util';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import {
   BadRequestException,
   Injectable,
@@ -13,6 +14,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
+import {
+  resolveOrderDisplayCurrency,
+  resolveStoreRegionCodeForDisplayCurrency,
+} from '@utils/email-order-currency.util';
 import { Model, Types } from 'mongoose';
 import { OrderInvoicePdfService } from './order-invoice-pdf.service';
 import { buildOrderReceiptEmailBodyHtml } from './order-receipt-email-html.util';
@@ -24,6 +29,7 @@ import {
   coordsFromAddressLike,
   formatInvoiceMoney,
   formatOrderDeliveryLine,
+  invoiceSnapshotCurrency,
   OrderSchemaStatus,
   orderInvoiceRef,
   orderInvoiceTotalCharged,
@@ -78,6 +84,7 @@ export class OrderPaidInvoiceEmailService {
     private readonly invoicePdf: OrderInvoicePdfService,
     private readonly config: ConfigService,
     private readonly medias: MediasService,
+    private readonly supportedCountries: SupportedCountriesService,
   ) {}
 
   private isFlagDisabled(key: string): boolean {
@@ -243,7 +250,8 @@ export class OrderPaidInvoiceEmailService {
       .findById(oid)
       .populate({
         path: 'store',
-        select: 'name address',
+        // currency + region : devise reçu (éviter CAD legacy hors CA).
+        select: 'name address currency region',
         populate: { path: 'address' },
       })
       .populate({
@@ -281,6 +289,8 @@ export class OrderPaidInvoiceEmailService {
       | {
           _id?: Types.ObjectId;
           name?: string;
+          currency?: string;
+          region?: string;
           address?: {
             address?: string;
             city?: string;
@@ -297,6 +307,22 @@ export class OrderPaidInvoiceEmailService {
     const storeName = storeRaw?.name?.trim() || 'Restaurant';
     const storeId = storeRaw?._id ? String(storeRaw._id) : undefined;
     const addr = storeRaw?.address;
+    // Devise snapshot = région boutique (CM → XAF), pas CAD legacy.
+    const regionCode =
+      resolveStoreRegionCodeForDisplayCurrency({
+        region: storeRaw?.region,
+        address: addr,
+      }) || undefined;
+    const regionCurrency = regionCode
+      ? await this.supportedCountries.getCountryCurrency(regionCode)
+      : null;
+    const displayCurrency = resolveOrderDisplayCurrency({
+      orderCurrency:
+        typeof order.currency === 'string' ? order.currency : undefined,
+      storeCurrency: storeRaw?.currency,
+      regionCode,
+      regionCurrency,
+    });
     const storeAddressLine = addr
       ? [addr.address, addr.city, addr.zipCode ?? addr.zip_code]
           .filter(Boolean)
@@ -354,8 +380,7 @@ export class OrderPaidInvoiceEmailService {
         Math.round(Number(order.orderPaymentFeeCents) || 0),
       ),
       shouldShip: Boolean(order.shouldShip),
-      currency:
-        typeof order.currency === 'string' ? order.currency : undefined,
+      currency: displayCurrency,
       couponCode:
         typeof order.couponCode === 'string' ? order.couponCode : undefined,
       couponDiscountAmount:
@@ -532,12 +557,11 @@ export class OrderPaidInvoiceEmailService {
     const storeEsc = esc(snapshot.storeName);
     const orderUrl = this.resolveOrderUrl(snapshot.orderId);
     const publicWebUrl = this.resolvePublicWebUrl();
+    const currency = invoiceSnapshotCurrency(snapshot);
     const amountStr = formatInvoiceMoney(
       orderInvoiceTotalCharged(snapshot),
-      snapshot.currency,
+      currency,
     );
-    const currency =
-      (snapshot.currency || 'CAD').trim().toUpperCase() || 'CAD';
     const brand = await this.emailTemplate.getBrandAsync();
     const orderDateIso = snapshot.createdAt
       ? new Date(snapshot.createdAt).toISOString()

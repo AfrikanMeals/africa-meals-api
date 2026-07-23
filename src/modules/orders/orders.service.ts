@@ -57,6 +57,10 @@ import {
   stripeAmountFactor,
   toStripeMinorUnits,
 } from '@utils/stripe-currency-amount.util';
+import {
+  resolveOrderDisplayCurrency,
+  resolveStoreRegionCodeForDisplayCurrency,
+} from '@utils/email-order-currency.util';
 import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema';
 import {
   generatePickupCode,
@@ -1066,7 +1070,11 @@ export class OrdersService {
 
     const order = await this._orderModel
       .findById(new Types.ObjectId(oid))
-      .populate({ path: 'store', select: 'name profileImage' })
+      .populate({
+        path: 'store',
+        select: 'name profileImage currency region address',
+        populate: { path: 'address', select: 'countryCode' },
+      })
       .lean()
       .exec();
 
@@ -1080,11 +1088,31 @@ export class OrdersService {
     }
 
     const storeRaw = order.store as unknown as
-      | { _id?: Types.ObjectId; name?: string; profileImage?: string }
+      | {
+          _id?: Types.ObjectId;
+          name?: string;
+          profileImage?: string;
+          currency?: string;
+          region?: string;
+          address?: { countryCode?: unknown } | null;
+        }
       | null
       | undefined;
     const storeId = storeRaw?._id ? String(storeRaw._id) : undefined;
     const storeName = storeRaw?.name?.trim() || 'Restaurant';
+    // Devise landing reçu = région boutique (pas CAD legacy).
+    const publicRegionCode =
+      resolveStoreRegionCodeForDisplayCurrency(storeRaw ?? {}) || undefined;
+    const publicRegionCurrency = publicRegionCode
+      ? await this._supportedCountries.getCountryCurrency(publicRegionCode)
+      : null;
+    const publicCurrency = resolveOrderDisplayCurrency({
+      orderCurrency:
+        typeof order.currency === 'string' ? order.currency : undefined,
+      storeCurrency: storeRaw?.currency,
+      regionCode: publicRegionCode,
+      regionCurrency: publicRegionCurrency,
+    });
 
     const snap = order.deliveryAddressSnapshot as
       | Record<string, unknown>
@@ -1122,10 +1150,7 @@ export class OrdersService {
       status,
       statusLabel: this.publicOrderStatusLabel(status),
       createdAt: order.createdAt,
-      currency:
-        typeof order.currency === 'string'
-          ? order.currency.trim().toUpperCase()
-          : 'CAD',
+      currency: publicCurrency,
       totalPrice: Number(order.totalPrice) || 0,
       subtotalBeforeTax: Number(order.subtotalBeforeTax) || undefined,
       shippingPrice: Number(order.shippingPrice) || 0,
@@ -1268,8 +1293,25 @@ export class OrdersService {
       .select('region phoneNumber currency address')
       .lean()
       .exec();
+    // Devise = region || adresse (pas téléphone/CAD → CA).
     const storeRegionCode =
-      resolveStoreTaxCountryCode(storeLean) || undefined;
+      resolveStoreRegionCodeForDisplayCurrency(
+        (storeLean as {
+          region?: unknown;
+          address?: { countryCode?: unknown } | null;
+        }) ?? {},
+      ) ||
+      resolveStoreTaxCountryCode(storeLean) ||
+      undefined;
+    // Devise e-mail / snapshot : région boutique (CM → XAF), pas CAD legacy.
+    const regionCurrency = storeRegionCode
+      ? await this._supportedCountries.getCountryCurrency(storeRegionCode)
+      : null;
+    const orderCurrency = resolveOrderDisplayCurrency({
+      storeCurrency: (storeLean as { currency?: string } | null)?.currency,
+      regionCode: storeRegionCode,
+      regionCurrency,
+    });
 
     const order = await this._orderModel.create({
       status: OrderStatusEnum.CREATED,
@@ -1282,6 +1324,7 @@ export class OrdersService {
       items,
       totalPrice: calculatedPrice, // TODO should we add shipping price here?
       shippingPrice: 0,
+      currency: orderCurrency,
       isPreOrder: options?.isPreOrder === true,
       scheduledAt: options?.scheduledAt,
       customerNote: options?.customerNote?.trim() || undefined,
@@ -1338,6 +1381,7 @@ export class OrdersService {
       orderId: orderIdStr,
       items: items as OrdeLineItem[],
       totalPrice: calculatedPrice,
+      currency: orderCurrency,
       storeName: sname,
     };
     const itemCount = items.reduce(
@@ -1362,6 +1406,7 @@ export class OrdersService {
         orderId: orderIdStr,
         storeName: sname,
         totalPrice: calculatedPrice,
+        currency: orderCurrency,
         itemCount,
         statusLabel: vendorOrderStatusLabelFr(OrderStatusEnum.CREATED),
       },
@@ -1644,7 +1689,11 @@ export class OrdersService {
         isPreOrder: true,
         status: OrderStatusEnum.CREATED,
       })
-      .populate('store', 'name currency')
+      .populate({
+        path: 'store',
+        select: 'name currency region address',
+        populate: { path: 'address', select: 'countryCode' },
+      })
       .lean()
       .exec();
     if (!order) {
@@ -1653,7 +1702,14 @@ export class OrdersService {
     const storeRaw = order.store as unknown;
     const store =
       storeRaw && typeof storeRaw === 'object'
-        ? (storeRaw as Record<string, unknown>)
+        ? (storeRaw as {
+            _id?: unknown;
+            id?: unknown;
+            name?: unknown;
+            currency?: unknown;
+            region?: unknown;
+            address?: { countryCode?: unknown } | null;
+          })
         : null;
     const storeId = String(store?._id ?? store?.id ?? '').trim();
     if (!storeId) {
@@ -1663,14 +1719,26 @@ export class OrdersService {
     if (!Number.isFinite(totalPrice) || totalPrice <= 0) {
       throw new BadRequestException('pre_order_invalid_amount');
     }
+    // Devise pré-commande = région boutique (ignore CAD legacy).
+    const regionCode =
+      resolveStoreRegionCodeForDisplayCurrency(store ?? {}) || undefined;
+    const regionCurrency = regionCode
+      ? await this._supportedCountries.getCountryCurrency(regionCode)
+      : null;
+    const currency = resolveOrderDisplayCurrency({
+      orderCurrency:
+        typeof order.currency === 'string' ? order.currency : undefined,
+      storeCurrency:
+        typeof store?.currency === 'string' ? store.currency : undefined,
+      regionCode,
+      regionCurrency,
+    });
     return {
       orderId: oid,
       storeId,
       storeName: String(store?.name ?? 'Wise Eat').trim() || 'Wise Eat',
       totalPrice,
-      currency: String(order.currency ?? store?.currency ?? 'CAD')
-        .trim()
-        .toUpperCase(),
+      currency,
     };
   }
 
@@ -1704,6 +1772,38 @@ export class OrdersService {
    * Notifie la boutique selon les préférences canal (Commandes → push / e-mail / SMS).
    * Inbox admin + FCM push partagent le toggle « Push » ; le client commandeur est exclu du push.
    */
+  /**
+   * Devise e-mail vendeur : order/store + région boutique (CM → XAF).
+   * Ignore CAD legacy hors CA même si order.currency = CAD.
+   */
+  private async resolveVendorOrderEmailCurrency(
+    storeId: string,
+    orderCurrency?: string | null,
+  ): Promise<string> {
+    const store = await this._storeModel
+      .findById(storeId)
+      .populate('address', 'countryCode')
+      .select('region currency address')
+      .lean()
+      .exec();
+    const regionCode =
+      resolveStoreRegionCodeForDisplayCurrency(
+        (store as {
+          region?: unknown;
+          address?: { countryCode?: unknown } | null;
+        }) ?? {},
+      ) || undefined;
+    const regionCurrency = regionCode
+      ? await this._supportedCountries.getCountryCurrency(regionCode)
+      : null;
+    return resolveOrderDisplayCurrency({
+      orderCurrency,
+      storeCurrency: (store as { currency?: string } | null)?.currency,
+      regionCode,
+      regionCurrency,
+    });
+  }
+
   private async notifyStoreVendorsForOrder(args: {
     storeId: string;
     customerUserId?: string | null;
@@ -1735,6 +1835,10 @@ export class OrdersService {
 
     const reason = args.push?.reason ?? args.email?.event ?? 'order';
     const category = vendorOrderReasonToCategory(reason);
+    // 1. Résoudre devise région avant rendu e-mail (évite 1000.00 CAD sur boutique CM).
+    const emailCurrency = args.email
+      ? await this.resolveVendorOrderEmailCurrency(sid, args.email.currency)
+      : undefined;
     const emailPayload = args.email
       ? this._vendorStatusEmail.buildVendorOrderEmailPayload({
           storeId: sid,
@@ -1742,7 +1846,7 @@ export class OrdersService {
           event: args.email.event,
           storeName: args.email.storeName ?? args.push?.storeName,
           totalPrice: args.email.totalPrice,
-          currency: args.email.currency,
+          currency: emailCurrency,
           itemCount: args.email.itemCount,
           note: args.email.note,
           statusLabel: args.email.statusLabel,
@@ -1898,8 +2002,6 @@ export class OrdersService {
     const orderIdStr = order._id.toString();
     const items = (order.items ?? []) as OrdeLineItem[];
     const totalPrice = Number(order.totalPrice) || 0;
-    const currency =
-      typeof order.currency === 'string' ? order.currency : undefined;
     const itemCount = items.reduce(
       (s, i) => s + Math.max(1, Math.round(Number(i.quantity) || 1)),
       0,
@@ -1908,47 +2010,54 @@ export class OrdersService {
       ctx.reminderKey === 'd-day'
         ? 'Rappel pré-commande — aujourd\'hui'
         : `Rappel pré-commande — J-${ctx.daysUntil}`;
-    const inbox = buildVendorPreOrderReminderInboxMessage({
-      orderId: orderIdStr,
-      items,
-      totalPrice,
-      currency,
-      daysUntil: ctx.daysUntil,
-      scheduledAtLabel: ctx.scheduledAtLabel,
-    });
-    const pushBody = buildVendorPreOrderReminderPushBody({
-      storeName,
-      orderId: orderIdStr,
-      daysUntil: ctx.daysUntil,
-      scheduledAtLabel: ctx.scheduledAtLabel,
-    });
 
-    void this.notifyStoreVendorsForOrder({
+    // Devise async avant inbox (CAD legacy CM → XAF).
+    void this.resolveVendorOrderEmailCurrency(
       storeId,
-      customerUserId: this.userIdFromOrderDoc(order),
-      inboxMessage: inbox,
-      push: {
-        title,
-        body: pushBody,
+      typeof order.currency === 'string' ? order.currency : undefined,
+    ).then((currency) => {
+      const inbox = buildVendorPreOrderReminderInboxMessage({
         orderId: orderIdStr,
-        storeName,
-        reason: `pre_order_reminder_${ctx.reminderKey}`,
-        status: String(order.status ?? ''),
-      },
-      email: {
-        event: 'pre_order_reminder',
-        orderId: orderIdStr,
-        storeName,
+        items,
         totalPrice,
         currency,
-        itemCount,
-        note: ctx.scheduledAtLabel,
-        statusLabel:
-          ctx.daysUntil === 0
-            ? 'Pré-commande aujourd\'hui'
-            : `Pré-commande dans ${ctx.daysUntil} jour(s)`,
-      },
-      logTag: `pre_order_vendor_reminder_${ctx.reminderKey}`,
+        daysUntil: ctx.daysUntil,
+        scheduledAtLabel: ctx.scheduledAtLabel,
+      });
+      const pushBody = buildVendorPreOrderReminderPushBody({
+        storeName,
+        orderId: orderIdStr,
+        daysUntil: ctx.daysUntil,
+        scheduledAtLabel: ctx.scheduledAtLabel,
+      });
+
+      void this.notifyStoreVendorsForOrder({
+        storeId,
+        customerUserId: this.userIdFromOrderDoc(order),
+        inboxMessage: inbox,
+        push: {
+          title,
+          body: pushBody,
+          orderId: orderIdStr,
+          storeName,
+          reason: `pre_order_reminder_${ctx.reminderKey}`,
+          status: String(order.status ?? ''),
+        },
+        email: {
+          event: 'pre_order_reminder',
+          orderId: orderIdStr,
+          storeName,
+          totalPrice,
+          currency,
+          itemCount,
+          note: ctx.scheduledAtLabel,
+          statusLabel:
+            ctx.daysUntil === 0
+              ? 'Pré-commande aujourd\'hui'
+              : `Pré-commande dans ${ctx.daysUntil} jour(s)`,
+        },
+        logTag: `pre_order_vendor_reminder_${ctx.reminderKey}`,
+      });
     });
   }
 
@@ -2645,12 +2754,16 @@ export class OrdersService {
       }
     }
 
+    // Devise inbox/push/e-mail : région boutique (ignore CAD legacy).
+    const paidCurrency = await this.resolveVendorOrderEmailCurrency(
+      storeId,
+      typeof order.currency === 'string' ? order.currency : undefined,
+    );
     const paidMsgArgs = {
       orderId: oid,
       items: (order.items ?? []) as OrdeLineItem[],
       totalPrice: Number(order.totalPrice) || 0,
-      currency:
-        typeof order.currency === 'string' ? order.currency : undefined,
+      currency: paidCurrency,
       pickupCode:
         typeof order.pickupCode === 'string' ? order.pickupCode : undefined,
       storeName,
@@ -2677,8 +2790,7 @@ export class OrdersService {
         orderId: oid,
         storeName,
         totalPrice: Number(order.totalPrice) || 0,
-        currency:
-          typeof order.currency === 'string' ? order.currency : undefined,
+        currency: paidCurrency,
         itemCount: paidItemCount,
         statusLabel: vendorOrderStatusLabelFr(OrderStatusEnum.PAIED),
       },
@@ -2737,12 +2849,16 @@ export class OrdersService {
       }
     }
 
+    // Devise inbox/push/e-mail : région boutique (ignore CAD legacy).
+    const pickupCurrency = await this.resolveVendorOrderEmailCurrency(
+      storeId,
+      typeof order.currency === 'string' ? order.currency : undefined,
+    );
     const msgArgs = {
       orderId: oid,
       items: (order.items ?? []) as OrdeLineItem[],
       totalPrice: Number(order.totalPrice) || 0,
-      currency:
-        typeof order.currency === 'string' ? order.currency : undefined,
+      currency: pickupCurrency,
       pickupCode:
         typeof order.pickupCode === 'string' ? order.pickupCode : undefined,
       storeName,
@@ -2769,8 +2885,7 @@ export class OrdersService {
         orderId: oid,
         storeName,
         totalPrice: Number(order.totalPrice) || 0,
-        currency:
-          typeof order.currency === 'string' ? order.currency : undefined,
+        currency: pickupCurrency,
         itemCount,
         statusLabel: vendorOrderStatusLabelFr(
           OrderStatusEnum.PAIED,
