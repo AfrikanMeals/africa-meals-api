@@ -137,6 +137,27 @@ describe('CourierCheckoutAvailabilityService', () => {
     expect(orders.aggregate).toHaveBeenCalledTimes(1);
   });
 
+  it('masque Livraison si flotte gérée vide sans self-shipping', async () => {
+    // Fix: setting admin « masquer si aucun coursier » — ne plus forcer available.
+    const { service, courierGeo } = buildService({
+      activeDriverIds: [],
+      managed: true,
+      selfDeliveryRequired: false,
+    });
+
+    await expect(service.checkStores([STORE_ID])).resolves.toEqual({
+      items: [
+        {
+          storeId: STORE_ID,
+          state: 'unavailable',
+          strategy: 'store_fleet',
+          reason: 'no_store_fleet_courier',
+        },
+      ],
+    });
+    expect(courierGeo.searchNearby).not.toHaveBeenCalled();
+  });
+
   it('utilise le pool plateforme pour une boutique non gérée', async () => {
     const { service, orders } = buildService({
       activeDriverIds: [],
