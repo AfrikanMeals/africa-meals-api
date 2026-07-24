@@ -4390,14 +4390,9 @@ export class DashboardService {
     if (existingAssignee && String(existingAssignee) !== deliveryUserId) {
       throw new BadRequestException('order_assigned_to_other');
     }
-    if (
-      ![
-        OrderStatusEnum.CREATED,
-        OrderStatusEnum.PAIED,
-        OrderStatusEnum.APPROVED,
-      ].includes(orderDoc.status as OrderStatusEnum)
-    ) {
-      throw new BadRequestException('order_not_assignable');
+    // Assignation dashboard uniquement après mark-ready (approved).
+    if (orderDoc.status !== OrderStatusEnum.APPROVED) {
+      throw new BadRequestException('order_not_ready_for_delivery');
     }
 
     const prevOrderStatus = orderDoc.status as OrderStatusEnum;

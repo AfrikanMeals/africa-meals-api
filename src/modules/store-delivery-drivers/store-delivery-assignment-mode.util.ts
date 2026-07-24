@@ -53,3 +53,14 @@ export function usesHardAutoAssign(
     StoreDeliveryAssignmentModeEnum.AUTO
   );
 }
+
+/** Action système au mark-ready (pas avant : claim/cascade/hard uniquement post-approved). */
+export type MarkReadyAssignmentAction = 'hard_auto' | 'cascade' | 'none';
+
+export function resolveMarkReadyAssignmentAction(
+  mode: StoreDeliveryAssignmentModeEnum | string,
+): MarkReadyAssignmentAction {
+  if (usesHardAutoAssign(mode)) return 'hard_auto';
+  if (usesOfferCascade(mode)) return 'cascade';
+  return 'none';
+}

@@ -94,13 +94,8 @@ export class CourierMarketplaceDispatchService {
       if (fresh.assignedDeliveryUser) {
         return { notified: 0, skippedReason: 'already_assigned' };
       }
-      if (
-        ![
-          OrderStatusEnum.CREATED,
-          OrderStatusEnum.PAIED,
-          OrderStatusEnum.APPROVED,
-        ].includes(fresh.status as OrderStatusEnum)
-      ) {
+      // Fan-out marketplace seulement après mark-ready (approved).
+      if (fresh.status !== OrderStatusEnum.APPROVED) {
         return { notified: 0, skippedReason: 'status' };
       }
       if ((fresh as { activeDeliveryOfferId?: unknown }).activeDeliveryOfferId) {

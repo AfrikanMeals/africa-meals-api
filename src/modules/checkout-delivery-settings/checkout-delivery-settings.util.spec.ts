@@ -1,4 +1,6 @@
 import {
+  buildCheckoutDeliverySettingsUpsertUpdate,
+  CHECKOUT_DELIVERY_SETTINGS_KEY,
   normalizeHideDeliveryWhenNoCourierAvailable,
   toCheckoutDeliverySettingsResponse,
 } from './checkout-delivery-settings.util';
@@ -33,5 +35,21 @@ describe('checkout-delivery-settings.util', () => {
       hideDeliveryWhenNoCourierAvailable: false,
       updatedAt: null,
     });
+  });
+
+  // Anti-régression PUT 500 : paths $set / $setOnInsert disjoints.
+  it('build upsert sans path commun entre $set et $setOnInsert', () => {
+    const update = buildCheckoutDeliverySettingsUpsertUpdate({
+      hideDeliveryWhenNoCourierAvailable: true,
+    });
+    expect(update.$setOnInsert).toEqual({
+      key: CHECKOUT_DELIVERY_SETTINGS_KEY,
+    });
+    expect(update.$set).toEqual({
+      hideDeliveryWhenNoCourierAvailable: true,
+    });
+    const setPaths = Object.keys(update.$set);
+    const insertPaths = Object.keys(update.$setOnInsert);
+    expect(setPaths.some((p) => insertPaths.includes(p))).toBe(false);
   });
 });

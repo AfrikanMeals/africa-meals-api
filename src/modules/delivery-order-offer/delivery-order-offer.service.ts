@@ -24,6 +24,7 @@ import { deliveryLngLatFromOrder } from '@modules/route-optimization/order-deliv
 import { VroomDispatchService } from '@modules/route-optimization/vroom-dispatch.service';
 import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
 import {
+  resolveMarkReadyAssignmentAction,
   usesHardAutoAssign,
   usesOfferCascade,
 } from '@modules/store-delivery-drivers/store-delivery-assignment-mode.util';
@@ -95,6 +96,40 @@ export class DeliveryOrderOfferService {
     return parseOfferTimeoutSec(
       this._config.get<string>('DELIVERY_ORDER_OFFER_TIMEOUT_SEC'),
     );
+  }
+
+  /**
+   * Point d’entrée unique après mark-ready vendeur.
+   * AUTO → hard-assign (cascade fallback interne) ; SEMI_AUTO → cascade ; MANUAL → no-op.
+   * Ne pas rappeler cascade si hard-assign a déjà tenté le fallback.
+   */
+  async dispatchAssignmentAfterMarkReady(
+    order: OrderModel | Record<string, unknown>,
+  ): Promise<void> {
+    const storeId = this.storeIdFromOrder(order);
+    if (!storeId) return;
+
+    const store = await this._stores
+      .findById(new Types.ObjectId(storeId))
+      .select('vendorManagesDeliveryDrivers deliveryAssignmentMode')
+      .lean()
+      .exec();
+    if (!store) return;
+    if (!this._storeDrivers.isStoreManagedDelivery(store)) return;
+
+    const mode = this._storeDrivers.storeAssignmentMode(store);
+    const action = resolveMarkReadyAssignmentAction(mode);
+    // 1. AUTO : hard-assign (gère déjà cascade fallback en interne).
+    if (action === 'hard_auto') {
+      await this.tryHardAutoAssignAfterMarkReady(order);
+      return;
+    }
+    // 2. SEMI_AUTO : cascade d’offres exclusives.
+    if (action === 'cascade') {
+      await this.startCascadeAfterMarkReady(order);
+      return;
+    }
+    // 3. MANUAL : vendeur/admin assigne depuis Commandes — aucun système.
   }
 
   /**

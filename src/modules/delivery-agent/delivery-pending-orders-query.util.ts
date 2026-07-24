@@ -2,10 +2,11 @@ import { OrderStatusEnum } from '@schemas/order.schema';
 import { normalizeRegionCode } from '../platform-shipping-settings/platform-shipping-region.util';
 import { Types } from 'mongoose';
 
-/** Statuts éligibles à la file pending livreur. */
+/**
+ * Statuts éligibles à la file pending livreur.
+ * Uniquement `approved` (= après mark-ready vendeur) — pas created/paied.
+ */
 export const DELIVERY_PENDING_ORDER_STATUSES = [
-  OrderStatusEnum.CREATED,
-  OrderStatusEnum.PAIED,
   OrderStatusEnum.APPROVED,
 ] as const;
 

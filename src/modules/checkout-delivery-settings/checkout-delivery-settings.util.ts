@@ -1,3 +1,6 @@
+/** Clé singleton Mongo `checkout_delivery_settings`. */
+export const CHECKOUT_DELIVERY_SETTINGS_KEY = 'default';
+
 /**
  * Normalise le flag plateforme : seule la valeur booléenne `true` active le masquage.
  * Absents / null / chaînes → false (fail-open : ne pas cacher Livraison).
@@ -6,6 +9,22 @@ export function normalizeHideDeliveryWhenNoCourierAvailable(
   value: unknown,
 ): boolean {
   return value === true;
+}
+
+/**
+ * Payload upsert PUT — `$setOnInsert` ne doit jamais répéter un path de `$set`
+ * (sinon Mongo : « Updating the path … would create a conflict » sur 1er insert).
+ */
+export function buildCheckoutDeliverySettingsUpsertUpdate(
+  patch: Record<string, unknown>,
+): {
+  $set: Record<string, unknown>;
+  $setOnInsert: { key: string };
+} {
+  return {
+    $set: patch,
+    $setOnInsert: { key: CHECKOUT_DELIVERY_SETTINGS_KEY },
+  };
 }
 
 /** Réponse publique / admin du singleton checkout-delivery-settings. */

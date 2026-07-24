@@ -7,9 +7,11 @@ import {
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 import { UpdateCheckoutDeliverySettingsDto } from './dto/update-checkout-delivery-settings.dto';
-import { toCheckoutDeliverySettingsResponse } from './checkout-delivery-settings.util';
-
-const SETTINGS_KEY = 'default';
+import {
+  buildCheckoutDeliverySettingsUpsertUpdate,
+  CHECKOUT_DELIVERY_SETTINGS_KEY,
+  toCheckoutDeliverySettingsResponse,
+} from './checkout-delivery-settings.util';
 
 function assertAdmin(user: UserModel) {
   if (user.type !== UserTypeEnum.ADMIN) {
@@ -28,10 +30,10 @@ export class CheckoutDeliverySettingsService {
     // Upsert singleton : défaut false = ne pas masquer Livraison sans coursier.
     const doc = await this._settings
       .findOneAndUpdate(
-        { key: SETTINGS_KEY },
+        { key: CHECKOUT_DELIVERY_SETTINGS_KEY },
         {
           $setOnInsert: {
-            key: SETTINGS_KEY,
+            key: CHECKOUT_DELIVERY_SETTINGS_KEY,
             hideDeliveryWhenNoCourierAvailable: false,
           },
         },
@@ -55,20 +57,16 @@ export class CheckoutDeliverySettingsService {
   async updateSettings(user: UserModel, dto: UpdateCheckoutDeliverySettingsDto) {
     assertAdmin(user);
     const patch: Record<string, unknown> = {};
+    // Admin envoie toujours le booléen ; normaliser true strict (reste → false).
     if (dto.hideDeliveryWhenNoCourierAvailable !== undefined) {
       patch.hideDeliveryWhenNoCourierAvailable =
         dto.hideDeliveryWhenNoCourierAvailable === true;
     }
+    // Fix: $set + $setOnInsert sur le même path → 500 Mongo au 1er upsert (ex. après restart sans GET).
     const doc = await this._settings
       .findOneAndUpdate(
-        { key: SETTINGS_KEY },
-        {
-          $set: patch,
-          $setOnInsert: {
-            key: SETTINGS_KEY,
-            hideDeliveryWhenNoCourierAvailable: false,
-          },
-        },
+        { key: CHECKOUT_DELIVERY_SETTINGS_KEY },
+        buildCheckoutDeliverySettingsUpsertUpdate(patch),
         { upsert: true, new: true, lean: true, setDefaultsOnInsert: true },
       )
       .exec();

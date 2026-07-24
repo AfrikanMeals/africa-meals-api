@@ -2263,13 +2263,8 @@ export class DeliveryAgentService {
     if (existingAssignee && String(existingAssignee) !== String(agentId)) {
       throw new BadRequestException('order_assigned_to_other');
     }
-    if (
-      ![
-        OrderStatusEnum.CREATED,
-        OrderStatusEnum.PAIED,
-        OrderStatusEnum.APPROVED,
-      ].includes(orderDoc.status as OrderStatusEnum)
-    ) {
+    // Claim livreur uniquement après mark-ready (approved) — pas created/paied.
+    if (orderDoc.status !== OrderStatusEnum.APPROVED) {
       throw new BadRequestException('order_not_assignable');
     }
 
@@ -2358,13 +2353,8 @@ export class DeliveryAgentService {
         { assignedDeliveryUser: { $exists: false } },
         { assignedDeliveryUser: null },
       ],
-      status: {
-        $in: [
-          OrderStatusEnum.CREATED,
-          OrderStatusEnum.PAIED,
-          OrderStatusEnum.APPROVED,
-        ],
-      },
+      // Atomique : refuse le claim si pas encore mark-ready.
+      status: OrderStatusEnum.APPROVED,
     } as Record<string, unknown>;
 
     const claimUpdate = {

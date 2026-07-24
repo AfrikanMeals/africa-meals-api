@@ -2,6 +2,7 @@ import { StoreDeliveryAssignmentModeEnum } from '@schemas/store.schema';
 import {
   allowsCourierSelfClaim,
   normalizeStoreDeliveryAssignmentMode,
+  resolveMarkReadyAssignmentAction,
   usesHardAutoAssign,
   usesOfferCascade,
 } from './store-delivery-assignment-mode.util';
@@ -47,5 +48,11 @@ describe('store-delivery-assignment-mode.util', () => {
     expect(usesHardAutoAssign('AUTO')).toBe(true);
     expect(usesHardAutoAssign('SEMI_AUTO')).toBe(false);
     expect(usesHardAutoAssign('MANUAL')).toBe(false);
+  });
+
+  it('mark-ready : action système par mode', () => {
+    expect(resolveMarkReadyAssignmentAction('AUTO')).toBe('hard_auto');
+    expect(resolveMarkReadyAssignmentAction('SEMI_AUTO')).toBe('cascade');
+    expect(resolveMarkReadyAssignmentAction('MANUAL')).toBe('none');
   });
 });

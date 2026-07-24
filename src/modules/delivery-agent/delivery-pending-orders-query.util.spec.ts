@@ -8,8 +8,9 @@ describe('buildDeliveryPendingOrdersMongoFilter', () => {
   it('returns unassigned + statuses without region when agent region missing', () => {
     const f = buildDeliveryPendingOrdersMongoFilter({});
     expect(f.shouldShip).toBe(true);
+    // Claim / file uniquement après mark-ready (approved).
     expect(f.status).toEqual({
-      $in: ['created', 'paied', 'approved'],
+      $in: ['approved'],
     });
     expect(f.$or).toEqual([
       { assignedDeliveryUser: { $exists: false } },

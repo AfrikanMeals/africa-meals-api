@@ -3256,15 +3256,9 @@ export class OrdersService {
       );
 
     if (!isPickup && this._deliveryOrderOffers) {
-      // AUTO → hard-assign ; SEMI_AUTO → cascade ; MANUAL → no-op (vendeur).
-      // Hard-assign échoué → cascade fallback interne. Puis marketplace si file ouverte.
+      // Dispatcher mode-aware : AUTO / SEMI_AUTO / MANUAL — puis marketplace si file ouverte.
       void this._deliveryOrderOffers
-        .tryHardAutoAssignAfterMarkReady(order)
-        .then(async (hardAssigned) => {
-          if (!hardAssigned) {
-            await this._deliveryOrderOffers!.startCascadeAfterMarkReady(order);
-          }
-        })
+        .dispatchAssignmentAfterMarkReady(order)
         .catch((err) =>
           this.logger.warn(
             `auto-assign/cascade order=${oid}: ${
@@ -3273,7 +3267,7 @@ export class OrdersService {
           ),
         )
         .finally(() => {
-          // File ouverte : fan-out géo si pas d’offre exclusive active / pas déjà assigné.
+          // Fan-out géo si pas d’offre exclusive / pas déjà assigné / pas MANUAL.
           if (this._marketplaceDispatch) {
             void this._marketplaceDispatch
               .notifyClaimableOrder(order)
@@ -3362,16 +3356,13 @@ export class OrdersService {
       throw new BadRequestException('order_assigned_to_other');
     }
 
-    const allowedStatuses: OrderStatusEnum[] = [
-      OrderStatusEnum.CREATED,
-      OrderStatusEnum.PAIED,
-      OrderStatusEnum.APPROVED,
-    ];
+    // Self-delivery : démarrer uniquement après mark-ready (sauf reprise SHIPPED).
+    const allowedStatuses: OrderStatusEnum[] = [OrderStatusEnum.APPROVED];
     if (isTakeover || isOrphanShipped) {
       allowedStatuses.push(OrderStatusEnum.SHIPPED);
     }
     if (!allowedStatuses.includes(st)) {
-      throw new BadRequestException('order_not_assignable');
+      throw new BadRequestException('order_not_ready_for_delivery');
     }
 
     if (existingAssignee === vendorIdStr && st === OrderStatusEnum.SHIPPED) {
