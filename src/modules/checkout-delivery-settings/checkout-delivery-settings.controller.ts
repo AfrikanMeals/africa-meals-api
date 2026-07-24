@@ -21,12 +21,12 @@ import { CheckoutDeliverySettingsService } from './checkout-delivery-settings.se
 export class CheckoutDeliverySettingsController {
   constructor(private readonly _service: CheckoutDeliverySettingsService) {}
 
-  /** Lecture publique — checkout mobile + panel admin. */
+  /** Lecture publique — checkout mobile + panel admin (pas de cache CDN long). */
   @Get()
-  @Header('Cache-Control', 'public, max-age=60, stale-while-revalidate=300')
+  @Header('Cache-Control', 'private, max-age=10, must-revalidate')
   @ApiOperation({
     summary:
-      'Paramètres checkout livraison (masquage si aucun coursier) — lecture publique',
+      'Paramètres checkout livraison (masquage flotte + rayon alerte livreur proche) — lecture publique',
   })
   getPublic() {
     return this._service.getPublicSettings();
@@ -38,7 +38,8 @@ export class CheckoutDeliverySettingsController {
   @UseGuards(JwtGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({
-    summary: 'Met à jour les paramètres checkout livraison (admin uniquement)',
+    summary:
+      'Met à jour les paramètres checkout livraison (admin) : masquage flotte + rayon mètres',
   })
   update(
     @Req() req: Request,

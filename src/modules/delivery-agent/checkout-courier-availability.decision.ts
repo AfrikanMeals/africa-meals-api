@@ -31,10 +31,11 @@ export type CheckoutCourierAvailabilityDecisionInput = {
 
 /**
  * Décide la dispo Livraison checkout (pur) :
- * flotte → self-shipping / flotte gérée → pool plateforme.
+ * flotte assignable → self-shipping → pool plateforme.
  *
- * Fix: un plan self-shipping ou une flotte gérée ne doit plus masquer Livraison
- * quand aucun livreur plateforme n’est en ligne — le vendeur peut s’assigner.
+ * Fix: flotte gérée **sans** membre assignable et **sans** self-shipping →
+ * `unavailable` pour que le setting admin « masquer si aucun coursier » fonctionne.
+ * Self-shipping reste `available` (le vendeur peut s’assigner).
  */
 export function decideCheckoutCourierAvailability(
   input: CheckoutCourierAvailabilityDecisionInput,
@@ -57,19 +58,27 @@ export function decideCheckoutCourierAvailability(
     return { storeId, state: 'available', strategy: 'store_fleet' };
   }
 
-  // 2. Self-shipping vendeur ou flotte gérée : Livraison proposée sans courier live.
-  if (input.selfDeliveryRequired || input.managed) {
+  // 2. Self-shipping vendeur : Livraison OK même sans livreur live.
+  if (input.selfDeliveryRequired) {
     return {
       storeId,
       state: 'available',
       strategy: 'store_fleet',
-      reason: input.selfDeliveryRequired
-        ? 'vendor_self_delivery'
-        : 'vendor_managed_delivery',
+      reason: 'vendor_self_delivery',
     };
   }
 
-  // 3. Boutique non gérée : pool plateforme uniquement.
+  // 3. Flotte gérée sans livreur assignable → indisponible (setting masquage).
+  if (input.managed) {
+    return {
+      storeId,
+      state: 'unavailable',
+      strategy: 'store_fleet',
+      reason: 'no_store_fleet_courier',
+    };
+  }
+
+  // 4. Boutique non gérée : pool plateforme uniquement.
   if (input.platformHasAssignable == null) {
     return {
       storeId,

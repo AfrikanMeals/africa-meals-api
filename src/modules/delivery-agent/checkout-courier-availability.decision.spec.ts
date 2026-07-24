@@ -59,7 +59,8 @@ describe('decideCheckoutCourierAvailability', () => {
     });
   });
 
-  it('ouvre Livraison si flotte gérée sans self-shipping plan', () => {
+  it('masque Livraison si flotte gérée sans membre assignable ni self-shipping', () => {
+    // Fix: setting admin « masquer si aucun coursier » doit pouvoir cacher Livraison.
     expect(
       decideCheckoutCourierAvailability({
         storeId: STORE_ID,
@@ -72,9 +73,9 @@ describe('decideCheckoutCourierAvailability', () => {
       }),
     ).toEqual({
       storeId: STORE_ID,
-      state: 'available',
+      state: 'unavailable',
       strategy: 'store_fleet',
-      reason: 'vendor_managed_delivery',
+      reason: 'no_store_fleet_courier',
     });
   });
 

@@ -94,7 +94,7 @@ export class CourierCheckoutAvailabilityService {
   }
 
   /**
-   * Flotte → self-shipping / flotte gérée → pool plateforme (décision pure).
+   * Flotte assignable → self-shipping → flotte vide → pool plateforme (décision pure).
    */
   private async checkStore(
     storeId: string,
