@@ -1,10 +1,20 @@
 /**
  * Géofence « livreur proche de l’adresse client » — one-shot push/email.
- * Seuil produit : 500 m (distance haversine en km côté tracking).
+ * Seuil configurable Admin (défaut 500 m) ; distance haversine en km côté tracking.
  */
 
-/** Distance max livreur ↔ adresse livraison pour déclencher l’alerte client. */
-export const COURIER_NEAR_CUSTOMER_THRESHOLD_METERS = 500;
+import {
+  DEFAULT_COURIER_NEAR_CUSTOMER_RADIUS_METERS,
+  MAX_COURIER_NEAR_CUSTOMER_RADIUS_METERS,
+} from '@modules/checkout-delivery-settings/checkout-delivery-settings.util';
+
+/** Défaut produit si settings absents. */
+export const COURIER_NEAR_CUSTOMER_THRESHOLD_METERS =
+  DEFAULT_COURIER_NEAR_CUSTOMER_RADIUS_METERS;
+
+/** Max configurable — fast-reject GPS hors portée sans lire Mongo. */
+export const COURIER_NEAR_CUSTOMER_THRESHOLD_METERS_MAX =
+  MAX_COURIER_NEAR_CUSTOMER_RADIUS_METERS;
 
 /** Convertit un seuil en mètres vers km (aligné sur `haversineDistance` / `remainingDistanceKm`). */
 export function courierNearThresholdKm(

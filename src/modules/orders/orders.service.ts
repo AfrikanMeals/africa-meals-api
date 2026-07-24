@@ -18,7 +18,13 @@ import { NotificationsService } from '@modules/notifications/notifications.servi
 import { ProductsService } from '@modules/products/products.service';
 import { RatingsService } from '@modules/ratings/ratings.service';
 import type { CreateCourierOrderRatingDto } from '@modules/ratings/dto/courier-order-rating.dto';
-import { shouldAttemptCourierNearCustomerNotify } from './courier-near-customer.util';
+import { CheckoutDeliverySettingsService } from '@modules/checkout-delivery-settings/checkout-delivery-settings.service';
+import {
+  courierNearThresholdKm,
+  COURIER_NEAR_CUSTOMER_THRESHOLD_METERS,
+  COURIER_NEAR_CUSTOMER_THRESHOLD_METERS_MAX,
+  shouldAttemptCourierNearCustomerNotify,
+} from './courier-near-customer.util';
 import {
   BadRequestException,
   ForbiddenException,
@@ -263,6 +269,11 @@ export class OrdersService {
   @Inject(forwardRef(() => CourierPerformanceStatsService))
   @Optional()
   private readonly _courierPerfStats?: CourierPerformanceStatsService;
+
+  /** Rayon « livreur proche » (Admin → Paramètres de livraison). */
+  @Inject(CheckoutDeliverySettingsService)
+  @Optional()
+  private readonly _checkoutDeliverySettings?: CheckoutDeliverySettingsService;
 
   /** Expose l’adresse de livraison figée au paiement dans `user.addresses`. */
   static enrichOrdersWithDeliveryAddress(
@@ -6135,16 +6146,34 @@ export class OrdersService {
       | null
       | undefined;
     const hasProof = Boolean(plain.pendingDeliveryProofId);
+    if (already || hasProof) return;
+    if (!Types.ObjectId.isValid(orderId)) return;
+
+    // Hors rayon max admin (5 km) → pas de lecture settings / claim.
+    if (
+      remainingKm != null &&
+      Number.isFinite(remainingKm) &&
+      remainingKm >
+        courierNearThresholdKm(COURIER_NEAR_CUSTOMER_THRESHOLD_METERS_MAX)
+    ) {
+      return;
+    }
+
+    // Seuil Admin → Paramètres de livraison (cache 30 s ; défaut 500 m).
+    const radiusMeters =
+      (await this._checkoutDeliverySettings?.getCourierNearCustomerRadiusMeters()) ??
+      COURIER_NEAR_CUSTOMER_THRESHOLD_METERS;
+
     if (
       !shouldAttemptCourierNearCustomerNotify({
         remainingKm,
         alreadyNotifiedAt: already,
         hasPendingDeliveryProof: hasProof,
+        thresholdMeters: radiusMeters,
       })
     ) {
       return;
     }
-    if (!Types.ObjectId.isValid(orderId)) return;
 
     // Claim avant envoi — évite double push si plusieurs ticks GPS concurrent.
     const claimed = await this._orderModel
