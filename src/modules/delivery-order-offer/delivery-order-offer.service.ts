@@ -23,11 +23,12 @@ import { OrdersService } from '@modules/orders/orders.service';
 import { deliveryLngLatFromOrder } from '@modules/route-optimization/order-delivery-coords.util';
 import { VroomDispatchService } from '@modules/route-optimization/vroom-dispatch.service';
 import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
-import { TrafficService } from '@modules/traffic/traffic.service';
 import {
-  StoreDeliveryAssignmentModeEnum,
-  StoreModel,
-} from '@schemas/store.schema';
+  usesHardAutoAssign,
+  usesOfferCascade,
+} from '@modules/store-delivery-drivers/store-delivery-assignment-mode.util';
+import { TrafficService } from '@modules/traffic/traffic.service';
+import { StoreModel } from '@schemas/store.schema';
 import {
   DeliveryAgentApplicationModel,
   DeliveryAgentApplicationStatus,
@@ -70,6 +71,8 @@ export class DeliveryOrderOfferService {
     private readonly _applications: Model<DeliveryAgentApplicationModel>,
     @InjectModel(StoreModel.name)
     private readonly _stores: Model<StoreModel>,
+    @InjectModel(UserModel.name)
+    private readonly _users: Model<UserModel>,
     private readonly _storeDrivers: StoreDeliveryDriversService,
     private readonly _notifications: NotificationsService,
     private readonly _wsOffer: WsDeliveryOfferNotifyService,
@@ -95,9 +98,13 @@ export class DeliveryOrderOfferService {
   }
 
   /**
-   * Après mark-ready : démarre la cascade si boutique AUTO + flotte ACTIVE.
+   * Après mark-ready : démarre la cascade si boutique SEMI_AUTO + flotte ACTIVE.
+   * @param opts.forceFallback — true depuis hard-assign AUTO sans candidat (bypass gate SEMI_AUTO).
    */
-  async startCascadeAfterMarkReady(order: OrderModel | Record<string, unknown>): Promise<void> {
+  async startCascadeAfterMarkReady(
+    order: OrderModel | Record<string, unknown>,
+    opts?: { forceFallback?: boolean },
+  ): Promise<void> {
     try {
       const orderId =
         (order as { _id?: Types.ObjectId })._id?.toString() ??
@@ -123,7 +130,8 @@ export class DeliveryOrderOfferService {
       if (!store) return;
       if (!this._storeDrivers.isStoreManagedDelivery(store)) return;
       const mode = this._storeDrivers.storeAssignmentMode(store);
-      if (mode !== StoreDeliveryAssignmentModeEnum.AUTO) return;
+      // Cascade native : SEMI_AUTO. Fallback hard-assign : forcer même si AUTO.
+      if (!opts?.forceFallback && !usesOfferCascade(mode)) return;
 
       const driverIds = await this._storeDrivers.listActiveDriverUserIdsForStore(
         storeId,
@@ -161,6 +169,95 @@ export class DeliveryOrderOfferService {
           e instanceof Error ? e.message : String(e)
         }`,
       );
+    }
+  }
+
+  /**
+   * Hard-assign AUTO : top ranked → assign forcé ; 0 candidat → cascade fallback.
+   * @returns true si assigné, false si fallback cascade (ou no-op).
+   */
+  async tryHardAutoAssignAfterMarkReady(
+    order: OrderModel | Record<string, unknown>,
+  ): Promise<boolean> {
+    try {
+      const orderId =
+        (order as { _id?: Types.ObjectId })._id?.toString() ??
+        String((order as { id?: string }).id ?? '');
+      if (!orderId || !Types.ObjectId.isValid(orderId)) return false;
+
+      const shouldShip =
+        (order as { shouldShip?: boolean }).shouldShip === true ||
+        (order as { should_ship?: boolean }).should_ship === true;
+      if (!shouldShip) return false;
+
+      const storeId = this.storeIdFromOrder(order);
+      if (!storeId) return false;
+
+      const store = await this._stores
+        .findById(new Types.ObjectId(storeId))
+        .select(
+          'vendorManagesDeliveryDrivers deliveryAssignmentMode address name',
+        )
+        .populate('address', 'location')
+        .lean()
+        .exec();
+      if (!store) return false;
+      if (!this._storeDrivers.isStoreManagedDelivery(store)) return false;
+      const mode = this._storeDrivers.storeAssignmentMode(store);
+      if (!usesHardAutoAssign(mode)) return false;
+
+      const status = String((order as { status?: string }).status ?? '');
+      if (status !== OrderStatusEnum.APPROVED) return false;
+      const assigned = (order as { assignedDeliveryUser?: unknown })
+        .assignedDeliveryUser;
+      if (assigned) return true;
+
+      const ranked = await this.rankCandidates(storeId, store, {
+        order: order as Record<string, unknown>,
+      });
+      if (ranked.length === 0) {
+        this.logger.log(
+          `hard-auto-assign order=${orderId}: 0 candidat → cascade fallback`,
+        );
+        await this.startCascadeAfterMarkReady(order, { forceFallback: true });
+        return false;
+      }
+
+      const topAgentId = ranked[0].agentUserId;
+      const agentUser = await this._users.findById(topAgentId).exec();
+      if (!agentUser) {
+        this.logger.warn(
+          `hard-auto-assign order=${orderId}: user ${topAgentId} introuvable → cascade`,
+        );
+        await this.startCascadeAfterMarkReady(order, { forceFallback: true });
+        return false;
+      }
+
+      await this._deliveryAgent.assignSelfToOrder(agentUser, orderId, {
+        bypassAssignmentModeGate: true,
+      });
+      this.logger.log(
+        `hard-auto-assign order=${orderId}: assigned agent=${topAgentId}`,
+      );
+      return true;
+    } catch (e) {
+      this.logger.warn(
+        `tryHardAutoAssignAfterMarkReady failed: ${
+          e instanceof Error ? e.message : String(e)
+        } — cascade fallback`,
+      );
+      try {
+        await this.startCascadeAfterMarkReady(order, { forceFallback: true });
+      } catch (cascadeErr) {
+        this.logger.warn(
+          `hard-auto cascade fallback failed: ${
+            cascadeErr instanceof Error
+              ? cascadeErr.message
+              : String(cascadeErr)
+          }`,
+        );
+      }
+      return false;
     }
   }
 

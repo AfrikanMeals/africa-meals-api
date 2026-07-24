@@ -19,6 +19,7 @@ import {
 } from '@schemas/delivery-order-offer.schema';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
+import { UserModel, UserSchema } from '@schemas/user.schema';
 import { DeliveryOrderOfferCron } from './delivery-order-offer.cron';
 import { DeliveryOrderOfferService } from './delivery-order-offer.service';
 
@@ -40,6 +41,7 @@ import { DeliveryOrderOfferService } from './delivery-order-offer.service';
       },
       { name: OrderModel.name, schema: OrderSchema },
       { name: StoreModel.name, schema: StoreSchema },
+      { name: UserModel.name, schema: UserSchema },
       {
         name: DeliveryAgentApplicationModel.name,
         schema: DeliveryAgentApplicationSchema,

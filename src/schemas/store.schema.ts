@@ -14,9 +14,15 @@ export enum StoreStatusEnum {
   INACTIVE = 'INACTIVE',
 }
 
-/** Assignation livreurs propres au restaurant : auto (self-assign) ou manuelle. */
+/**
+ * Assignation livreurs flotte boutique :
+ * - AUTO : hard-assign système au meilleur candidat
+ * - SEMI_AUTO : livreurs claim + cascade d’offres
+ * - MANUAL : vendeur assigne depuis Commandes
+ */
 export enum StoreDeliveryAssignmentModeEnum {
   AUTO = 'AUTO',
+  SEMI_AUTO = 'SEMI_AUTO',
   MANUAL = 'MANUAL',
 }
 
@@ -142,10 +148,10 @@ export class StoreModel extends BaseSchema {
   @Prop({ default: false, name: 'vendor_manages_delivery_drivers' })
   vendorManagesDeliveryDrivers?: boolean;
 
-  /** Mode d’assignation lorsque `vendorManagesDeliveryDrivers` est actif (défaut : AUTO). */
+  /** Mode d’assignation lorsque `vendorManagesDeliveryDrivers` est actif (défaut : SEMI_AUTO). */
   @Prop({
     enum: StoreDeliveryAssignmentModeEnum,
-    default: StoreDeliveryAssignmentModeEnum.AUTO,
+    default: StoreDeliveryAssignmentModeEnum.SEMI_AUTO,
     name: 'delivery_assignment_mode',
   })
   deliveryAssignmentMode?: StoreDeliveryAssignmentModeEnum;

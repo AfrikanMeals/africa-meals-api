@@ -122,11 +122,19 @@ export class CourierMarketplaceDispatchService {
 
       if (this._storeDrivers.isStoreManagedDelivery(store)) {
         const mode = this._storeDrivers.storeAssignmentMode(store);
+        // MANUAL : pas de fan-out marketplace. AUTO hard-assign : skip si déjà assigné
+        // (appelé après cascade fallback ou sans assignee).
         if (mode === StoreDeliveryAssignmentModeEnum.MANUAL) {
           return { notified: 0, skippedReason: 'manual_assignment' };
         }
-        // AUTO + flotte : la cascade exclusive gère jusqu’à exhaustion.
-        // Si on arrive ici sans offre active, la cascade est absente / épuisée → OK.
+        if (mode === StoreDeliveryAssignmentModeEnum.AUTO) {
+          const assigned = (fresh as { assignedDeliveryUser?: unknown })
+            .assignedDeliveryUser;
+          if (assigned) {
+            return { notified: 0, skippedReason: 'already_assigned_auto' };
+          }
+        }
+        // SEMI_AUTO + flotte : cascade exclusive jusqu’à exhaustion ; ici = absente / épuisée.
       }
 
       const storeLngLat = this.storeLngLatFromDoc(

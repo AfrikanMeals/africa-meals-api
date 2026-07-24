@@ -55,6 +55,7 @@ import {
 } from '@schemas/vendor-stripe-reset-order-archive.schema';
 import {
   MealPreOrderCatalogScopeEnum,
+  StoreDeliveryAssignmentModeEnum,
   StoreModel,
   StoreStatusEnum,
 } from '@schemas/store.schema';
@@ -62,6 +63,7 @@ import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { VendorSubscriptionModel } from '@schemas/vendor-subscription.schema';
 import { Model, Types } from 'mongoose';
 import { randomUUID } from 'crypto';
+import { normalizeStoreDeliveryAssignmentMode } from '@modules/store-delivery-drivers/store-delivery-assignment-mode.util';
 import {
   CreateStoreDto,
   DailyMenuItemDto,
@@ -392,7 +394,7 @@ export class StoreService {
     },
   ): Promise<{
     vendorManagesDeliveryDrivers: boolean;
-    deliveryAssignmentMode: 'AUTO' | 'MANUAL';
+    deliveryAssignmentMode: StoreDeliveryAssignmentModeEnum;
   }> {
     const policy =
       storeId && Types.ObjectId.isValid(storeId)
@@ -418,11 +420,10 @@ export class StoreService {
       ? policy.selfDeliveryRequired ||
         args.vendorManagesDeliveryDrivers === true
       : false;
-    const deliveryAssignmentMode =
-      vendorManagesDeliveryDrivers &&
-      String(args.deliveryAssignmentMode ?? 'AUTO').toUpperCase() === 'MANUAL'
-        ? 'MANUAL'
-        : 'AUTO';
+    // Flotte OFF → SEMI_AUTO stocké sans effet ; flotte ON → normaliser 3 modes.
+    const deliveryAssignmentMode = vendorManagesDeliveryDrivers
+      ? normalizeStoreDeliveryAssignmentMode(args.deliveryAssignmentMode)
+      : StoreDeliveryAssignmentModeEnum.SEMI_AUTO;
     return { vendorManagesDeliveryDrivers, deliveryAssignmentMode };
   }
 
@@ -1169,7 +1170,7 @@ export class StoreService {
       ),
       vendorManagesDeliveryDrivers: !!doc.vendorManagesDeliveryDrivers,
       deliveryAssignmentMode: String(
-        doc.deliveryAssignmentMode ?? 'AUTO',
+        doc.deliveryAssignmentMode ?? 'SEMI_AUTO',
       ).toUpperCase(),
       shippingZones: zones.map((z) => ({
         minDistance: Number(z.minDistance ?? 0),
@@ -1258,7 +1259,7 @@ export class StoreService {
         ...deliveryPlanExtras,
         vendorManagesDeliveryDrivers: !!doc.vendorManagesDeliveryDrivers,
         deliveryAssignmentMode: String(
-          doc.deliveryAssignmentMode ?? 'AUTO',
+          doc.deliveryAssignmentMode ?? 'SEMI_AUTO',
         ).toUpperCase(),
         createdAt: doc.createdAt,
         updatedAt: doc.updatedAt,
@@ -4547,7 +4548,7 @@ export class StoreService {
       ),
       vendorManagesDeliveryDrivers: !!doc.vendorManagesDeliveryDrivers,
       deliveryAssignmentMode: String(
-        doc.deliveryAssignmentMode ?? 'AUTO',
+        doc.deliveryAssignmentMode ?? 'SEMI_AUTO',
       ).toUpperCase(),
       shippingZones: zones.map((z) => ({
         minDistance: Number(z.minDistance ?? 0),

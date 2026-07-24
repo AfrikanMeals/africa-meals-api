@@ -203,8 +203,9 @@ export class CreateStoreDto {
 
   @ApiPropertyOptional({
     enum: StoreDeliveryAssignmentModeEnum,
-    description: 'AUTO = self-assign livreurs ; MANUAL = assignation vendeur.',
-    default: StoreDeliveryAssignmentModeEnum.AUTO,
+    description:
+      'AUTO = hard-assign meilleur livreur ; SEMI_AUTO = claim livreur + cascade ; MANUAL = vendeur.',
+    default: StoreDeliveryAssignmentModeEnum.SEMI_AUTO,
   })
   @IsOptional()
   @IsEnum(StoreDeliveryAssignmentModeEnum)
@@ -562,7 +563,8 @@ export class PatchVendorShippingZonesDto {
 
   @ApiPropertyOptional({
     enum: StoreDeliveryAssignmentModeEnum,
-    description: 'Mode d’assignation si flotte propre active.',
+    description:
+      'AUTO = hard-assign ; SEMI_AUTO = claim + cascade ; MANUAL = vendeur.',
   })
   @IsOptional()
   @IsEnum(StoreDeliveryAssignmentModeEnum)

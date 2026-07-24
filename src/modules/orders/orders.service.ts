@@ -3255,17 +3255,24 @@ export class OrdersService {
       );
 
     if (!isPickup && this._deliveryOrderOffers) {
+      // AUTO → hard-assign ; SEMI_AUTO → cascade ; MANUAL → no-op (vendeur).
+      // Hard-assign échoué → cascade fallback interne. Puis marketplace si file ouverte.
       void this._deliveryOrderOffers
-        .startCascadeAfterMarkReady(order)
+        .tryHardAutoAssignAfterMarkReady(order)
+        .then(async (hardAssigned) => {
+          if (!hardAssigned) {
+            await this._deliveryOrderOffers!.startCascadeAfterMarkReady(order);
+          }
+        })
         .catch((err) =>
           this.logger.warn(
-            `auto-offer cascade order=${oid}: ${
+            `auto-assign/cascade order=${oid}: ${
               err instanceof Error ? err.message : String(err)
             }`,
           ),
         )
         .finally(() => {
-          // File ouverte : fan-out géo si pas d’offre exclusive active.
+          // File ouverte : fan-out géo si pas d’offre exclusive active / pas déjà assigné.
           if (this._marketplaceDispatch) {
             void this._marketplaceDispatch
               .notifyClaimableOrder(order)

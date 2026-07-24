@@ -36,6 +36,7 @@ import type {
   StoreDeliveryDriversListResponseDto,
 } from './dto/store-delivery-drivers.dto';
 import { buildStoreDeliveryDriverInviteAcceptUrl } from './store-delivery-driver-invite-url.util';
+import { normalizeStoreDeliveryAssignmentMode } from './store-delivery-assignment-mode.util';
 import { randomUUID } from 'crypto';
 import { Model, Types } from 'mongoose';
 
@@ -109,15 +110,13 @@ export class StoreDeliveryDriversService {
   }
 
   storeAssignmentMode(store: unknown): StoreDeliveryAssignmentModeEnum {
+    // Préserver AUTO / SEMI_AUTO / MANUAL (ne plus écraser ≠ MANUAL → AUTO).
     if (!store || typeof store !== 'object') {
-      return StoreDeliveryAssignmentModeEnum.AUTO;
+      return StoreDeliveryAssignmentModeEnum.SEMI_AUTO;
     }
-    const raw = String(
-      (store as Record<string, unknown>).deliveryAssignmentMode ?? 'AUTO',
-    ).toUpperCase();
-    return raw === StoreDeliveryAssignmentModeEnum.MANUAL
-      ? StoreDeliveryAssignmentModeEnum.MANUAL
-      : StoreDeliveryAssignmentModeEnum.AUTO;
+    return normalizeStoreDeliveryAssignmentMode(
+      (store as Record<string, unknown>).deliveryAssignmentMode,
+    );
   }
 
   private async _assertDeliveryAgentSlotAvailable(
@@ -294,7 +293,7 @@ export class StoreDeliveryDriversService {
           : undefined,
         storeCurrency: store.currency ? String(store.currency) : undefined,
         deliveryAssignmentMode:
-          store.deliveryAssignmentMode ?? StoreDeliveryAssignmentModeEnum.AUTO,
+          store.deliveryAssignmentMode ?? StoreDeliveryAssignmentModeEnum.SEMI_AUTO,
         joinedAt: doc.respondedAt
           ? new Date(String(doc.respondedAt)).toISOString()
           : doc.invitedAt
@@ -382,7 +381,7 @@ export class StoreDeliveryDriversService {
       storeName: String(store.name ?? ''),
       vendorManagesDeliveryDrivers: !!store.vendorManagesDeliveryDrivers,
       deliveryAssignmentMode:
-        store.deliveryAssignmentMode ?? StoreDeliveryAssignmentModeEnum.AUTO,
+        store.deliveryAssignmentMode ?? StoreDeliveryAssignmentModeEnum.SEMI_AUTO,
       items,
     };
   }

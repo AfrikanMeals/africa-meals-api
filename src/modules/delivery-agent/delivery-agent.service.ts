@@ -25,6 +25,7 @@ import { DeliveryAgentDailyPerformanceModel } from '@schemas/delivery-agent-dail
 import { OrderStatusChangeSourceEnum } from '@schemas/order-status-event.schema';
 import { OrderModel, OrderStatusEnum } from '@schemas/order.schema';
 import { StoreDeliveryDriversService } from '@modules/store-delivery-drivers/store-delivery-drivers.service';
+import { allowsCourierSelfClaim } from '@modules/store-delivery-drivers/store-delivery-assignment-mode.util';
 import { DeliveryOrderOfferService } from '@modules/delivery-order-offer/delivery-order-offer.service';
 import { CourierMarketplaceDispatchService } from './courier-marketplace-dispatch.service';
 import { CourierPerformanceStatsService } from './courier-performance-stats.service';
@@ -2191,7 +2192,15 @@ export class DeliveryAgentService {
     return null;
   }
 
-  async assignSelfToOrder(user: UserModel, orderId: string) {
+  /**
+   * Self-assign livreur (claim) ou hard-assign système.
+   * @param opts.bypassAssignmentModeGate — true uniquement pour hard-assign AUTO (pas de claim manuel livreur).
+   */
+  async assignSelfToOrder(
+    user: UserModel,
+    orderId: string,
+    opts?: { bypassAssignmentModeGate?: boolean },
+  ) {
     this.assertDeliveryAgent(user);
     if (!Types.ObjectId.isValid(orderId)) {
       throw new BadRequestException('invalid_order_id');
@@ -2276,9 +2285,14 @@ export class DeliveryAgentService {
       if (policy.selfDeliveryRequired) {
         const mode = String(
           storePop.deliveryAssignmentMode ??
-            StoreDeliveryAssignmentModeEnum.AUTO,
+            StoreDeliveryAssignmentModeEnum.SEMI_AUTO,
         ).toUpperCase();
-        if (mode === StoreDeliveryAssignmentModeEnum.MANUAL) {
+        // Claim ouvert seulement en SEMI_AUTO (AUTO = hard-assign ; MANUAL = vendeur).
+        // Hard-assign système peut bypasser (opts.bypassAssignmentModeGate).
+        if (
+          !opts?.bypassAssignmentModeGate &&
+          !allowsCourierSelfClaim(mode)
+        ) {
           throw new BadRequestException('order_manual_assignment_only');
         }
         if (!orderStoreId) {
@@ -3630,17 +3644,18 @@ export class DeliveryAgentService {
         if (!ctx.userStoreIds.has(sid)) return false;
         const mode = String(
           managed.deliveryAssignmentMode ??
-            StoreDeliveryAssignmentModeEnum.AUTO,
+            StoreDeliveryAssignmentModeEnum.SEMI_AUTO,
         ).toUpperCase();
-        if (mode === StoreDeliveryAssignmentModeEnum.MANUAL) return false;
+        // File claim : SEMI_AUTO seulement.
+        if (!allowsCourierSelfClaim(mode)) return false;
         return true;
       }
       if (ctx.userStoreIds.has(sid)) {
         const mode = String(
           managed.deliveryAssignmentMode ??
-            StoreDeliveryAssignmentModeEnum.AUTO,
+            StoreDeliveryAssignmentModeEnum.SEMI_AUTO,
         ).toUpperCase();
-        if (mode === StoreDeliveryAssignmentModeEnum.MANUAL) return false;
+        if (!allowsCourierSelfClaim(mode)) return false;
         return true;
       }
     }
