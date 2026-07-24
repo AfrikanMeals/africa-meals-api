@@ -26,6 +26,21 @@ export class UserNotificationPreferencesModel {
   @Prop({ type: Boolean, default: false })
   emailMarketing: boolean;
 
+  /**
+   * Canaux sync mobile (écran Notifications) — absents = legacy allow.
+   * `false` explicite bloque le canal pour alertes livraison.
+   */
+  @Prop({ type: Boolean, required: false })
+  pushEnabled?: boolean;
+
+  /** Alertes transactionnelles e-mail (`pref_notif_email`). */
+  @Prop({ type: Boolean, required: false })
+  emailAlertsEnabled?: boolean;
+
+  /** Catégorie Livraison / statut de livraison. */
+  @Prop({ type: Boolean, required: false })
+  shippingDeliveryEnabled?: boolean;
+
   @Prop({ type: Date, default: null })
   unsubscribedAt: Date | null;
 

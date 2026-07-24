@@ -18,6 +18,7 @@ import { NotificationsService } from '@modules/notifications/notifications.servi
 import { ProductsService } from '@modules/products/products.service';
 import { RatingsService } from '@modules/ratings/ratings.service';
 import type { CreateCourierOrderRatingDto } from '@modules/ratings/dto/courier-order-rating.dto';
+import { shouldAttemptCourierNearCustomerNotify } from './courier-near-customer.util';
 import {
   BadRequestException,
   ForbiddenException,
@@ -392,7 +393,7 @@ export class OrdersService {
   ];
 
   private static readonly orderTrackingCourierSelect =
-    '_id status shouldShip shippingPrice assignedDeliveryUser deliveryAddressSnapshot';
+    '_id status shouldShip shippingPrice assignedDeliveryUser deliveryAddressSnapshot pendingDeliveryProofId courierNearCustomerNotifiedAt';
 
   private storeOwnerUserIdFromLean(store: unknown): string | null {
     if (!store || typeof store !== 'object' || !('owner' in store)) {
@@ -6097,6 +6098,9 @@ export class OrdersService {
     );
     if (!extra) return;
 
+    // Alerte client « livreur proche » (≤ 500 m) — hors chemin WS critique (fire-and-forget).
+    void this.maybeNotifyCourierNearCustomer(plain, oid, extra.remainingDistanceKm);
+
     if (this._orderDomainBridge?.enabled()) {
       void this._orderDomainBridge.emit({
         id: domainEventIdFromCourierTracking(
@@ -6123,6 +6127,66 @@ export class OrdersService {
       });
     }
     this.notifyOrderPartiesRealtime(plain, status, extra);
+  }
+
+  /**
+   * One-shot : claim atomique puis push/email selon prefs (Livraison + canaux).
+   * Ne bloque pas le throttle GPS / WS tracking.
+   */
+  private async maybeNotifyCourierNearCustomer(
+    plain: Record<string, unknown>,
+    orderId: string,
+    remainingKm: number | undefined,
+  ): Promise<void> {
+    const already = plain.courierNearCustomerNotifiedAt as
+      | Date
+      | string
+      | null
+      | undefined;
+    const hasProof = Boolean(plain.pendingDeliveryProofId);
+    if (
+      !shouldAttemptCourierNearCustomerNotify({
+        remainingKm,
+        alreadyNotifiedAt: already,
+        hasPendingDeliveryProof: hasProof,
+      })
+    ) {
+      return;
+    }
+    if (!Types.ObjectId.isValid(orderId)) return;
+
+    // Claim avant envoi — évite double push si plusieurs ticks GPS concurrent.
+    const claimed = await this._orderModel
+      .findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(orderId),
+          courierNearCustomerNotifiedAt: null,
+          status: OrderStatusEnum.SHIPPED,
+        },
+        { $set: { courierNearCustomerNotifiedAt: new Date() } },
+        { new: false },
+      )
+      .select('_id')
+      .lean()
+      .exec();
+    if (!claimed) return;
+
+    // Store / user déjà peuplés sur le snapshot tracking GPS.
+    const customerId = this.userIdFromOrderDoc(plain);
+    if (!customerId) return;
+    const storeName = this.storeNameFromPopulated(plain.store);
+    const storeId = objectIdStringFromRef(plain.store);
+
+    await this._notificationsService.notifyCustomerDeliveryLifecycle({
+      userId: customerId,
+      orderId,
+      storeName,
+      storeId: storeId ?? undefined,
+      reason: 'courier_near',
+      title: 'Livreur bientôt là',
+      body: 'Votre livreur est à proximité de l’adresse de livraison.',
+      status: OrderStatusEnum.SHIPPED,
+    });
   }
 
   private buildShippedCourierTrackingExtra(

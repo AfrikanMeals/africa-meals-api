@@ -1,5 +1,12 @@
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { defaultVendorNotificationPreferences } from '@modules/vendor-notifications/vendor-notification.constants';
+import { UserNotificationPreferencesService } from '@modules/user-notification-preferences/user-notification-preferences.service';
+import { MailerService } from '@modules/mailer/mailer.service';
+import {
+  EmailTemplateService,
+  emailHeading,
+  emailParagraph,
+} from '@modules/mailer/email-template.service';
 import {
   Inject,
   Injectable,
@@ -22,6 +29,11 @@ import { FilterQuery, Model, Types } from 'mongoose';
 import { partitionChatPushRecipients } from './chat-push-recipients.util';
 
 const MAX_TOKENS_PER_USER = 20;
+
+/** Raisons alertes livraison client (type FCM `delivery_update` → catégorie Livraison). */
+export type CustomerDeliveryLifecycleReason =
+  | 'courier_near'
+  | 'customer_absent_drop';
 
 export interface InboxNotificationRow {
   id: string;
@@ -49,6 +61,10 @@ export class NotificationsService implements OnModuleInit {
     @InjectModel(VendorNotificationPreferencesModel.name)
     private readonly vendorNotifPrefsModel: Model<VendorNotificationPreferencesModel>,
     @Optional() private readonly storeAccess?: StoreAccessService,
+    @Optional()
+    private readonly userNotifPrefs?: UserNotificationPreferencesService,
+    @Optional() private readonly mailer?: MailerService,
+    @Optional() private readonly emailTpl?: EmailTemplateService,
   ) {}
 
   onModuleInit(): void {
@@ -773,6 +789,131 @@ export class NotificationsService implements OnModuleInit {
         const msg = e instanceof Error ? e.message : String(e);
         this.logger.warn(`pushCustomerOrderStatusChanged: ${msg}`);
       });
+  }
+
+  /**
+   * Alertes livraison client (livreur proche / dépôt client absent).
+   * Respecte prefs sync : Livraison + Push / E-mail (`!== false` = allow legacy).
+   * FCM `type=delivery_update` → catégorie mobile `shippingDelivery`.
+   */
+  async notifyCustomerDeliveryLifecycle(args: {
+    userId: string;
+    orderId: string;
+    storeName?: string;
+    storeId?: string;
+    reason: CustomerDeliveryLifecycleReason;
+    title: string;
+    body: string;
+    status?: string;
+    /** Skip e-mail (ex. déjà envoyé ailleurs). */
+    skipEmail?: boolean;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.userId)) {
+      return;
+    }
+    const store = (args.storeName ?? '').trim() || 'Restaurant';
+    const title = args.title.trim() || 'Livraison';
+    const body = args.body.trim();
+    if (!body) return;
+
+    const status = (args.status ?? 'shipped').trim().toLowerCase() || 'shipped';
+    const allowPush =
+      !this.userNotifPrefs ||
+      (await this.userNotifPrefs.isDeliveryChannelAllowed(args.userId, 'push'));
+    const allowEmail =
+      !args.skipEmail &&
+      (!this.userNotifPrefs ||
+        (await this.userNotifPrefs.isDeliveryChannelAllowed(
+          args.userId,
+          'email',
+        )));
+
+    if (allowPush) {
+      await this.persistCustomerOrderInbox({
+        userId: args.userId,
+        orderId: args.orderId,
+        storeName: args.storeName,
+        storeId: args.storeId,
+        body,
+        reason: 'status_changed',
+        status,
+      });
+      void this.sendMulticastNotification({
+        recipientUserIds: [args.userId],
+        title,
+        body: `${store} : ${body}`,
+        data: {
+          type: 'delivery_update',
+          audience: 'customer',
+          reason: args.reason,
+          orderId: args.orderId,
+          storeName: store,
+          status,
+        },
+        androidChannelId: 'african_meals_orders',
+      })
+        .then((res) => {
+          if (res.deviceCount === 0) {
+            this.logger.warn(
+              `notifyCustomerDeliveryLifecycle(${args.reason}): aucun jeton FCM user=${args.userId}`,
+            );
+          }
+        })
+        .catch((e) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          this.logger.warn(
+            `notifyCustomerDeliveryLifecycle(${args.reason}) push: ${msg}`,
+          );
+        });
+    }
+
+    if (allowEmail && this.mailer && this.emailTpl) {
+      void this.sendCustomerDeliveryLifecycleEmail({
+        userId: args.userId,
+        orderId: args.orderId,
+        title,
+        body,
+        reason: args.reason,
+      }).catch((e) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        this.logger.warn(
+          `notifyCustomerDeliveryLifecycle(${args.reason}) email: ${msg}`,
+        );
+      });
+    }
+  }
+
+  private async sendCustomerDeliveryLifecycleEmail(args: {
+    userId: string;
+    orderId: string;
+    title: string;
+    body: string;
+    reason: CustomerDeliveryLifecycleReason;
+  }): Promise<void> {
+    if (!this.mailer || !this.emailTpl) return;
+    const user = await this.userModel.findById(args.userId).exec();
+    const email = user?.email?.trim();
+    if (!email) return;
+    const name = user?.fullName?.trim() || '';
+    const html = await this.emailTpl.wrapBodyAsync(
+      [
+        emailHeading(args.title),
+        emailParagraph(
+          name ? `Bonjour ${name},` : 'Bonjour,',
+        ),
+        emailParagraph(args.body),
+        emailParagraph(
+          'Vous pouvez suivre la commande dans l’application.',
+        ),
+      ].join(''),
+    );
+    await this.mailer.sendSimple({
+      to: email,
+      toName: name || undefined,
+      subject: args.title,
+      html,
+      logContext: `delivery-lifecycle reason=${args.reason} order=${args.orderId}`,
+    });
   }
 
   /** Inbox + push FCM — mise à jour remboursement commande. */

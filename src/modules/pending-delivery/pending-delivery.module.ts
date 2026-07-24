@@ -3,6 +3,7 @@ import { MailerModule } from '@modules/mailer/mailer.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { OrdersModule } from '@modules/orders/orders.module';
 import { TeamsModule } from '@modules/teams/teams.module';
+import { UserNotificationPreferencesModule } from '@modules/user-notification-preferences/user-notification-preferences.module';
 import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -21,6 +22,7 @@ import { PendingDeliveryService } from './pending-delivery.service';
     MediasModule,
     MailerModule,
     NotificationsModule,
+    UserNotificationPreferencesModule,
     VendorStatusEmailModule,
     TeamsModule,
     forwardRef(() => OrdersModule),

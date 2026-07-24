@@ -280,6 +280,18 @@ export class OrderModel extends BaseSchema {
   pendingDeliveryProofId?: MongooseSchema.Types.ObjectId;
 
   /**
+   * One-shot alerte client « livreur proche » (≤ 500 m).
+   * Claim atomique avant push/email pour éviter le spam GPS.
+   */
+  @Prop({
+    required: false,
+    name: 'courier_near_customer_notified_at',
+    type: Date,
+    default: null,
+  })
+  courierNearCustomerNotifiedAt?: Date | null;
+
+  /**
    * Polyline itinéraire calculée par le livreur (source de vérité cartes admin/client).
    * Format Google Encoded Polyline (précision 5) sauf indication contraire.
    */

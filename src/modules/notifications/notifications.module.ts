@@ -1,5 +1,7 @@
 import { SharedModule } from '@modules/shared/shared.module';
 import { StoreAccessModule } from '@modules/teams/store-access.module';
+import { UserNotificationPreferencesModule } from '@modules/user-notification-preferences/user-notification-preferences.module';
+import { MailerModule } from '@modules/mailer/mailer.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -29,6 +31,8 @@ import { NotificationsService } from './notifications.service';
   imports: [
     SharedModule,
     StoreAccessModule,
+    UserNotificationPreferencesModule,
+    MailerModule,
     MongooseModule.forFeature([
       { name: UserModel.name, schema: UserSchema },
       { name: AppNotificationModel.name, schema: AppNotificationSchema },

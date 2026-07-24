@@ -4,6 +4,7 @@ import { MediasService } from '@modules/medias/medias.service';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { OrdersService } from '@modules/orders/orders.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
+import { UserNotificationPreferencesService } from '@modules/user-notification-preferences/user-notification-preferences.service';
 import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-email.service';
 import {
   BadRequestException,
@@ -78,6 +79,7 @@ export class PendingDeliveryService {
     private readonly notifications: NotificationsService,
     private readonly config: ConfigService,
     private readonly storeAccess: StoreAccessService,
+    private readonly userNotifPrefs: UserNotificationPreferencesService,
     @Inject(forwardRef(() => OrdersService))
     private readonly ordersService: OrdersService,
   ) {}
@@ -1072,6 +1074,13 @@ export class PendingDeliveryService {
     }
 
     if (args.party === 'customer') {
+      // Respecte toggle E-mail + Livraison (sync mobile) ; legacy allow si non sync.
+      const allowEmail = await this.userNotifPrefs.isDeliveryChannelAllowed(
+        args.customerUserId,
+        'email',
+      );
+      if (!allowEmail) return false;
+
       const customer = await this.userModel.findById(args.customerUserId).exec();
       const customerEmail = customer?.email?.trim();
       if (!customerEmail) return false;
@@ -1179,15 +1188,20 @@ export class PendingDeliveryService {
 
     const customer = await this.userModel.findById(args.customerUserId).exec();
     const store = await this.storeModel.findById(args.storeId).exec();
+    // Push dédié dépôt client absent (statut commande inchangé → force via notify lifecycle).
     if (customer && !args.reminder && !args.autoClosed) {
       void this.notifications
-        .pushCustomerOrderStatusChanged({
+        .notifyCustomerDeliveryLifecycle({
           userId: args.customerUserId,
           orderId: String(args.order._id),
           storeName: store?.name,
           storeId: args.storeId,
-          previousStatus: args.order.status,
-          newStatus: args.order.status,
+          reason: 'customer_absent_drop',
+          title: 'Commande déposée',
+          body: 'Votre livreur a déposé le colis (client absent). Confirmez la réception dans l’app.',
+          status: String(args.order.status ?? 'shipped'),
+          // E-mail client déjà géré dans sendDefaultPartyEmail (gated prefs).
+          skipEmail: true,
         })
         .catch(() => undefined);
     }

@@ -138,6 +138,15 @@ export const EMAIL_SEND_POINTS: readonly EmailSendPoint[] = [
     mitigation: 'Hero → resolveMaintenanceModeHeroUrl (web /images/email-heroes/)',
   },
   {
+    id: 'delivery-lifecycle',
+    service: 'notifications.service.ts',
+    description: 'Alertes client livraison (livreur proche / dépôt client absent)',
+    transport: 'sendSimple',
+    logContext: 'delivery-lifecycle',
+    imageRisk: 'header_logo',
+    mitigation: 'Texte seul + logo en-tête via wrapBodyAsync',
+  },
+  {
     id: 'maintenance-alert',
     service: 'maintenance-alert-notifier.service.ts',
     description: 'Alerte ops maintenance',

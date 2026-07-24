@@ -7,11 +7,20 @@ import {
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { UpdateUserNotificationPreferencesDto } from './dto/update-user-notification-preferences.dto';
+import {
+  isCustomerDeliveryChannelAllowed,
+  type CustomerDeliveryChannelPrefs,
+  type CustomerDeliveryNotifyChannel,
+} from './customer-delivery-notify-channels.util';
 
 export type UserNotificationPreferencesResponse = {
   emailRecommendations: boolean;
   emailStoreDigest: boolean;
   emailMarketing: boolean;
+  /** null = pas encore sync mobile (legacy allow côté serveur). */
+  pushEnabled: boolean | null;
+  emailAlertsEnabled: boolean | null;
+  shippingDeliveryEnabled: boolean | null;
   unsubscribedAt: string | null;
   pausedUntil: string | null;
 };
@@ -30,9 +39,47 @@ export class UserNotificationPreferencesService {
       emailRecommendations: doc.emailRecommendations === true,
       emailStoreDigest: doc.emailStoreDigest === true,
       emailMarketing: doc.emailMarketing === true,
+      // null si jamais sync — le gate canaux traite null comme allow legacy.
+      pushEnabled: typeof doc.pushEnabled === 'boolean' ? doc.pushEnabled : null,
+      emailAlertsEnabled:
+        typeof doc.emailAlertsEnabled === 'boolean'
+          ? doc.emailAlertsEnabled
+          : null,
+      shippingDeliveryEnabled:
+        typeof doc.shippingDeliveryEnabled === 'boolean'
+          ? doc.shippingDeliveryEnabled
+          : null,
       unsubscribedAt: doc.unsubscribedAt?.toISOString?.() ?? null,
       pausedUntil: doc.pausedUntil?.toISOString?.() ?? null,
     };
+  }
+
+  /** Prefs canaux pour alertes livraison (Livreur proche / client absent). */
+  async getDeliveryChannelPrefs(
+    userId: string,
+  ): Promise<CustomerDeliveryChannelPrefs> {
+    if (!Types.ObjectId.isValid(userId)) {
+      return {};
+    }
+    const doc = await this.prefsModel
+      .findOne({ userId: new Types.ObjectId(userId) })
+      .select('pushEnabled emailAlertsEnabled shippingDeliveryEnabled')
+      .lean()
+      .exec();
+    if (!doc) return {};
+    return {
+      pushEnabled: doc.pushEnabled,
+      emailAlertsEnabled: doc.emailAlertsEnabled,
+      shippingDeliveryEnabled: doc.shippingDeliveryEnabled,
+    };
+  }
+
+  async isDeliveryChannelAllowed(
+    userId: string,
+    channel: CustomerDeliveryNotifyChannel,
+  ): Promise<boolean> {
+    const prefs = await this.getDeliveryChannelPrefs(userId);
+    return isCustomerDeliveryChannelAllowed(prefs, channel);
   }
 
   async getOrCreate(userId: string): Promise<UserNotificationPreferencesResponse> {
