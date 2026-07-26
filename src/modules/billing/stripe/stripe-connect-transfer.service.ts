@@ -10,6 +10,10 @@ import {
   computeDeliveryNetCentsBeforeStripe,
   scaleStorePayoutMinorToPaymentShare,
 } from '@modules/billing/stripe/stripe-processing-fee.util';
+import {
+  computePlatformGiftCoverageSplit,
+  normalizeGiftFeeCoverage,
+} from '@modules/gift-codes/gift-code-fee-coverage.util';
 import { normalizeStripeCurrencyCode } from '@utils/stripe-currency-amount.util';
 import { PlatformFeesService } from '@modules/platform-fees/platform-fees.service';
 import { SubscriptionPlanOrderCommissionService, mapOrderLineItemsToCommissionLines } from '@modules/subscriptions/subscription-plan-order-commission.service';
@@ -197,6 +201,54 @@ export class StripeConnectTransferService {
    * Si Stripe renvoie un conflit d’idempotency (clé legacy empoisonnée) :
    * 1) réconcilie un transfer existant ; 2) sinon retente avec une clé unique.
    */
+  /**
+   * Top-up Fee Coverage PLATFORM — balance plateforme → Connect vendeur
+   * (pas de source_transaction ; échoue si balance insuffisante).
+   */
+  private async createPlatformBalanceTopUpTransfer(args: {
+    orderId: string;
+    amountCents: number;
+    currency: string;
+    destination: string;
+    transferGroup?: string;
+    metadata: Record<string, string>;
+  }): Promise<ConnectTransferRow> {
+    const params = {
+      amount: args.amountCents,
+      currency: args.currency,
+      destination: args.destination,
+      transfer_group: args.transferGroup || undefined,
+      metadata: args.metadata,
+    };
+    const baseKey = buildConnectTransferIdempotencyKey({
+      kind: 'gift-topup',
+      orderId: args.orderId,
+      amountCents: args.amountCents,
+      destination: args.destination,
+      chargeId: 'platform',
+    });
+    const stripe = this.stripe();
+    try {
+      return (await stripe.transfers.create(params, {
+        idempotencyKey: baseKey,
+      })) as ConnectTransferRow;
+    } catch (e) {
+      if (!isStripeIdempotencyMismatchError(e)) throw e;
+      const existing = await this.findExistingConnectTransfer({
+        orderId: args.orderId,
+        transferKind: 'gift_fee_coverage_topup',
+        transferGroup: args.transferGroup,
+        destination: args.destination,
+        chargeId: '',
+      });
+      if (existing) return existing;
+      const retryKey = `${baseKey}-r${Date.now()}`.slice(0, 255);
+      return (await stripe.transfers.create(params, {
+        idempotencyKey: retryKey,
+      })) as ConnectTransferRow;
+    }
+  }
+
   private async createConnectTransfer(args: {
     kind: ConnectTransferIdempotencyKind;
     orderId: string;
@@ -409,7 +461,9 @@ export class StripeConnectTransferService {
 
     const orderDoc = await this.orderModel
       .findById(args.orderId)
-      .select('items currency')
+      .select(
+        'items currency giftCodeFeeCoverage stripeVendorGoodsCents giftCodeDiscountAmount giftCodePlatformTopUpTransferId giftCodePlatformTopUpCents',
+      )
       .lean()
       .exec();
     const paymentCurrency = String(
@@ -427,18 +481,53 @@ export class StripeConnectTransferService {
       storeStrategy,
     );
 
+    // Fee Coverage PLATFORM : payout cible sur goods pré-gift.
+    const feeCoverage = normalizeGiftFeeCoverage(
+      (orderDoc as { giftCodeFeeCoverage?: string } | null)?.giftCodeFeeCoverage,
+    );
+    const vendorGoodsCentsRaw = Math.max(
+      0,
+      Math.round(
+        Number(
+          (orderDoc as { stripeVendorGoodsCents?: number } | null)
+            ?.stripeVendorGoodsCents ?? 0,
+        ),
+      ),
+    );
+    const usePlatformCoverage =
+      feeCoverage === 'PLATFORM' && vendorGoodsCentsRaw > goodsCents;
+    const splitGoodsCents = usePlatformCoverage
+      ? vendorGoodsCentsRaw
+      : goodsCents;
+
     const split =
       await this.planOrderCommission.computeVendorTransferSplitForStore(
         args.storeId,
-        { goodsCents, shipCents, lineItems },
+        { goodsCents: splitGoodsCents, shipCents, lineItems },
       );
 
-    const platformFeeOnGoods = allocatePlatformFeeToGoodsCents({
+    const platformFeeOnSplitGoods = allocatePlatformFeeToGoodsCents({
       platformFeeCents: split.platformFeeCents,
-      goodsCents,
+      goodsCents: splitGoodsCents,
       shipCents,
     });
-    const vendorBeforeStripe = Math.max(0, goodsCents - platformFeeOnGoods);
+
+    let platformFeeOnGoods = platformFeeOnSplitGoods;
+    let vendorBeforeStripe = Math.max(0, goodsCents - platformFeeOnGoods);
+    let giftTopUpBeforeStripe = 0;
+
+    if (usePlatformCoverage) {
+      const giftCents = Math.max(0, vendorGoodsCentsRaw - goodsCents);
+      const coverage = computePlatformGiftCoverageSplit({
+        chargedGoodsCents: goodsCents,
+        giftCents,
+        platformFeeOnVendorGoodsCents: platformFeeOnSplitGoods,
+      });
+      // Commission sur charge réduite ; top-up = écart vers payout pré-gift.
+      platformFeeOnGoods = coverage.platformFeeFromChargeCents;
+      vendorBeforeStripe = coverage.fromChargeVendorBeforeStripeCents;
+      giftTopUpBeforeStripe = coverage.topUpCents;
+    }
 
     if (!this.transfersEnabled()) {
       return {
@@ -671,6 +760,18 @@ export class StripeConnectTransferService {
       this.logger.log(
         `Connect vendor transfer reconciled ${existingVendor.id}: ${existingCents} → ${accountId} (order ${args.orderId})`,
       );
+      // Retry top-up PLATFORM si le transfer principal existait déjà.
+      if (giftTopUpBeforeStripe > 0) {
+        await this.tryGiftFeeCoverageTopUp({
+          orderId: args.orderId,
+          storeId: args.storeId,
+          accountId,
+          topUpCents: giftTopUpBeforeStripe,
+          transferCurrency,
+          transferGroup: parentId || undefined,
+          chargeSnap,
+        });
+      }
       return {
         transferred: true,
         transferId: existingVendor.id,
@@ -728,6 +829,19 @@ export class StripeConnectTransferService {
         })`,
       );
 
+      // Top-up PLATFORM si commission < gift (balance Wise Eat → vendeur).
+      if (giftTopUpBeforeStripe > 0) {
+        await this.tryGiftFeeCoverageTopUp({
+          orderId: args.orderId,
+          storeId: args.storeId,
+          accountId,
+          topUpCents: giftTopUpBeforeStripe,
+          transferCurrency,
+          transferGroup: parentId || undefined,
+          chargeSnap,
+        });
+      }
+
       return {
         transferred: true,
         transferId: transfer.id,
@@ -758,6 +872,90 @@ export class StripeConnectTransferService {
         grossCents: goodsCents,
         skippedReason: `stripe_error:${msg}`.slice(0, 200),
       };
+    }
+  }
+
+  /**
+   * Top-up Fee Coverage — best-effort : ne casse pas le transfer principal.
+   * Échec (balance) → log + champs order pour retry manuel / cron futur.
+   */
+  private async tryGiftFeeCoverageTopUp(args: {
+    orderId: string;
+    storeId: string;
+    accountId: string;
+    topUpCents: number;
+    transferCurrency: string;
+    transferGroup?: string;
+    chargeSnap: Awaited<
+      ReturnType<StripeChargeFeeService['chargeFeeSnapshot']>
+    >;
+  }): Promise<void> {
+    const existingId = await this.orderModel
+      .findById(args.orderId)
+      .select('giftCodePlatformTopUpTransferId')
+      .lean()
+      .exec();
+    if (
+      String(
+        (existingId as { giftCodePlatformTopUpTransferId?: string } | null)
+          ?.giftCodePlatformTopUpTransferId ?? '',
+      ).trim()
+    ) {
+      return;
+    }
+
+    const topUpSettlement = this.stripeFees.toTransferMinorUnits(
+      args.topUpCents,
+      args.chargeSnap,
+    );
+    if (topUpSettlement < 1) return;
+
+    try {
+      const topUp = await this.createPlatformBalanceTopUpTransfer({
+        orderId: args.orderId,
+        amountCents: topUpSettlement,
+        currency: args.transferCurrency,
+        destination: args.accountId,
+        transferGroup: args.transferGroup,
+        metadata: {
+          orderId: args.orderId,
+          storeId: args.storeId,
+          platform: 'wise-eat',
+          transferKind: 'gift_fee_coverage_topup',
+          kind: 'gift_fee_coverage_topup',
+          topUpChargeCents: String(args.topUpCents),
+        },
+      });
+      const saved = Math.max(
+        0,
+        Math.round(Number(topUp.amount ?? topUpSettlement)),
+      );
+      await this.orderModel.updateOne(
+        { _id: args.orderId },
+        {
+          $set: {
+            giftCodePlatformTopUpTransferId: topUp.id,
+            giftCodePlatformTopUpCents: saved,
+          },
+        },
+      );
+      this.logger.log(
+        `Gift fee coverage top-up ${topUp.id}: ${saved} ${args.transferCurrency} → ${args.accountId} (order ${args.orderId})`,
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // Ne pas rollback le transfer vendeur — documenté APP-TRACK.
+      this.logger.error(
+        `Gift fee coverage top-up failed order=${args.orderId} amount=${topUpSettlement}: ${msg}`,
+      );
+      await this.orderModel.updateOne(
+        { _id: args.orderId },
+        {
+          $set: {
+            giftCodePlatformTopUpCents: 0,
+          },
+        },
+      );
     }
   }
 

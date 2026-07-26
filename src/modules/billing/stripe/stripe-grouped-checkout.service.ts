@@ -116,6 +116,10 @@ type GroupedStripeBuilt = {
   coupons: Array<{ storeId: string; code: string }>;
   giftCode?: string;
   giftDiscountByStore: Record<string, number>;
+  /** STORE | PLATFORM — défaut STORE. */
+  giftFeeCoverage?: 'STORE' | 'PLATFORM';
+  /** Goods pré-gift (centimes) par boutique — transfer PLATFORM. */
+  giftVendorGoodsCentsByStore: Record<string, number>;
   couponDiscountByStore: Record<string, number>;
   /** Destinataire commande offerte (distinct de `giftCode` promo). */
   giftRecipientUserId?: string;
@@ -1218,12 +1222,21 @@ export class StripeGroupedCheckoutService {
       ReturnType<CartService['previewGiftCodeForCart']>
     > | null = null;
     const giftDiscountByStore: Record<string, number> = {};
+    const giftVendorGoodsCentsByStore: Record<string, number> = {};
     const couponDiscountByStore: Record<string, number> = {};
+    // Fee Coverage depuis preview (montant client inchangé).
+    let giftFeeCoverage: 'STORE' | 'PLATFORM' = 'STORE';
     if (dto.giftCode?.trim()) {
       giftPreview = await this.cartService.previewGiftCodeForCart(user, {
         code: dto.giftCode.trim(),
         coupons,
       });
+      if (
+        String((giftPreview as { feeCoverage?: string }).feeCoverage ?? '')
+          .toUpperCase() === 'PLATFORM'
+      ) {
+        giftFeeCoverage = 'PLATFORM';
+      }
       for (const row of giftPreview.storeBreakdown) {
         if (row.giftCodeDiscount > 0) {
           giftDiscountByStore[row.storeId] = row.giftCodeDiscount;
@@ -1676,6 +1689,15 @@ export class StripeGroupedCheckoutService {
     // Destinataire cadeau (trim) — propagé metadata Stripe + createOrderFromCart.
     const giftRecipientUserId = dto.giftRecipientUserId?.trim() || undefined;
 
+    // Vendor goods pré-gift (centimes) = charged + gift — pour Fee Coverage PLATFORM.
+    for (const [sid, row] of Object.entries(payoutByStore)) {
+      const giftMajor = giftDiscountByStore[sid] ?? 0;
+      if (giftMajor <= 0) continue;
+      const giftCents = Math.round(giftMajor * amountFactor + Number.EPSILON);
+      giftVendorGoodsCentsByStore[sid] =
+        Math.max(0, row.goodsCents) + Math.max(0, giftCents);
+    }
+
     return {
       currency,
       lineItems,
@@ -1685,6 +1707,8 @@ export class StripeGroupedCheckoutService {
       coupons,
       giftCode: giftPreview?.code,
       giftDiscountByStore,
+      giftFeeCoverage,
+      giftVendorGoodsCentsByStore,
       couponDiscountByStore,
       giftRecipientUserId,
       checkoutAddressId: needsAddress ? dto.addressId?.trim() : undefined,
@@ -1864,12 +1888,45 @@ export class StripeGroupedCheckoutService {
     if (!built.giftCode?.trim()) return {};
     const out: Record<string, string> = {
       gift_code_v1: built.giftCode.trim().toUpperCase(),
+      // Fee Coverage — STORE défaut si absent côté webhook.
+      gift_coverage_v1: built.giftFeeCoverage === 'PLATFORM' ? 'PLATFORM' : 'STORE',
     };
     const disc = built.giftDiscountByStore ?? {};
     if (Object.keys(disc).length) {
       out.gift_discount_v1 = JSON.stringify(disc);
     }
+    // Goods pré-gift (centimes) par boutique — transfer PLATFORM.
+    const vendorGoods = built.giftVendorGoodsCentsByStore ?? {};
+    if (Object.keys(vendorGoods).length) {
+      const json = JSON.stringify(vendorGoods);
+      if (json.length <= 490) {
+        out.gift_vendor_goods_v1 = json;
+      } else {
+        this.logger.warn(
+          `Stripe gift_vendor_goods_v1 metadata too long (${json.length}), omitted`,
+        );
+      }
+    }
     return out;
+  }
+
+  private parseGiftVendorGoodsFromStripeMetadata(
+    meta: Record<string, string | undefined | null>,
+  ): Record<string, number> {
+    const raw = meta['gift_vendor_goods_v1']?.trim();
+    if (!raw) return {};
+    try {
+      const obj = JSON.parse(raw) as unknown;
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+      const out: Record<string, number> = {};
+      for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+        const n = Math.round(Number(v));
+        if (k && Number.isFinite(n) && n > 0) out[k] = n;
+      }
+      return out;
+    } catch {
+      return {};
+    }
   }
 
   private async recheckBeforeStripe(
@@ -2163,6 +2220,8 @@ export class StripeGroupedCheckoutService {
     paymentCurrency?: string;
     giftCode?: string;
     giftDiscountByStore: Record<string, number>;
+    giftFeeCoverage?: 'STORE' | 'PLATFORM';
+    giftVendorGoodsCentsByStore?: Record<string, number>;
     deferCapture?: boolean;
     stripeMetadata?: Record<string, string | undefined | null>;
   }): Promise<{
@@ -2190,6 +2249,8 @@ export class StripeGroupedCheckoutService {
       paymentCurrency,
       giftCode,
       giftDiscountByStore,
+      giftFeeCoverage = 'STORE',
+      giftVendorGoodsCentsByStore = {},
       deferCapture,
       stripeMetadata,
     } = params;
@@ -2286,6 +2347,11 @@ export class StripeGroupedCheckoutService {
     const giftCodeDiscountAmount = giftCodeForOrder
       ? giftDiscountByStore[storeId] ?? 0
       : 0;
+    // Vendor goods pré-gift (metadata) — fallback charged + giftCents.
+    const giftDiscCents =
+      giftCodeDiscountAmount > 0
+        ? Math.round(giftCodeDiscountAmount * amountFactor + Number.EPSILON)
+        : 0;
     let couponDiscountAmount = 0;
     if (couponCode) {
       try {
@@ -2392,6 +2458,18 @@ export class StripeGroupedCheckoutService {
         giftCode: giftCodeForOrder || undefined,
         giftCodeDiscountAmount:
           giftCodeDiscountAmount > 0 ? giftCodeDiscountAmount : undefined,
+        giftCodeFeeCoverage: giftCodeForOrder
+          ? giftFeeCoverage
+          : undefined,
+        vendorGoodsCents: (() => {
+          if (!giftCodeForOrder || giftFeeCoverage !== 'PLATFORM') {
+            return undefined;
+          }
+          const fromMeta = giftVendorGoodsCentsByStore[storeId];
+          if (fromMeta != null && fromMeta > 0) return fromMeta;
+          if (goodsCents == null) return undefined;
+          return goodsCents + giftDiscCents;
+        })(),
         chargedGoodsCents: useStripeCents ? goodsCents : undefined,
         chargedShipCents: useStripeCents ? shipCents : undefined,
         subtotalBeforeTax:
@@ -2545,6 +2623,14 @@ export class StripeGroupedCheckoutService {
     const couponByStore = parseCouponsFromStripeMetadata(metadata);
     const giftCode = metadata?.gift_code_v1?.trim();
     const giftDiscountByStore = parseGiftDiscountFromStripeMetadata(metadata);
+    const giftFeeCoverage =
+      String(metadata?.gift_coverage_v1 ?? '')
+        .trim()
+        .toUpperCase() === 'PLATFORM'
+        ? ('PLATFORM' as const)
+        : ('STORE' as const);
+    const giftVendorGoodsCentsByStore =
+      this.parseGiftVendorGoodsFromStripeMetadata(metadata);
     const checkoutAddressId = String(
       metadata?.addressId ?? metadata?.address_id ?? '',
     ).trim();
@@ -2713,6 +2799,8 @@ export class StripeGroupedCheckoutService {
           paymentCurrency: paymentCurrency || undefined,
           giftCode: giftCode || undefined,
           giftDiscountByStore,
+          giftFeeCoverage,
+          giftVendorGoodsCentsByStore,
           deferCapture,
           stripeMetadata: metadata,
         }),
@@ -3485,11 +3573,18 @@ export class StripeGroupedCheckoutService {
       ReturnType<CartService['previewGiftCodeForCart']>
     > | null = null;
     const giftDiscountByStore: Record<string, number> = {};
+    let pickupGiftFeeCoverage: 'STORE' | 'PLATFORM' = 'STORE';
     if (dto.giftCode?.trim()) {
       giftPreview = await this.cartService.previewGiftCodeForCart(user, {
         code: dto.giftCode.trim(),
         coupons,
       });
+      if (
+        String((giftPreview as { feeCoverage?: string }).feeCoverage ?? '')
+          .toUpperCase() === 'PLATFORM'
+      ) {
+        pickupGiftFeeCoverage = 'PLATFORM';
+      }
       for (const row of giftPreview.storeBreakdown) {
         if (row.giftCodeDiscount > 0) {
           giftDiscountByStore[row.storeId] = row.giftCodeDiscount;
@@ -3594,6 +3689,10 @@ export class StripeGroupedCheckoutService {
         taxTotal * amountFactor + Number.EPSILON,
       );
 
+      const giftDiscCentsPickup =
+        giftDisc > 0
+          ? Math.round(giftDisc * amountFactor + Number.EPSILON)
+          : 0;
       await this.ordersService.markOrderPaidWithShipping(oid, 0, {
         payOnPickup: true,
         couponCode,
@@ -3601,6 +3700,15 @@ export class StripeGroupedCheckoutService {
           couponDiscountAmount > 0 ? couponDiscountAmount : undefined,
         giftCode: dto.giftCode?.trim() || undefined,
         giftCodeDiscountAmount: giftDisc > 0 ? giftDisc : undefined,
+        giftCodeFeeCoverage: dto.giftCode?.trim()
+          ? pickupGiftFeeCoverage
+          : undefined,
+        vendorGoodsCents:
+          dto.giftCode?.trim() &&
+          pickupGiftFeeCoverage === 'PLATFORM' &&
+          giftDiscCentsPickup > 0
+            ? goodsCents + giftDiscCentsPickup
+            : undefined,
         currency: currency || undefined,
         chargedGoodsCents: goodsCents,
         chargedShipCents: shipCents,

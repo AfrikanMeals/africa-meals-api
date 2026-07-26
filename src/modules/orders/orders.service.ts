@@ -2250,6 +2250,10 @@ export class OrdersService {
       couponDiscountAmount?: number;
       giftCode?: string;
       giftCodeDiscountAmount?: number;
+      /** STORE | PLATFORM — défaut STORE si omis. */
+      giftCodeFeeCoverage?: string;
+      /** Goods pré-gift (centimes) pour PLATFORM. */
+      vendorGoodsCents?: number;
       chargedGoodsCents?: number;
       chargedShipCents?: number;
       chargedTaxCents?: number;
@@ -2439,6 +2443,21 @@ export class OrdersService {
       $set['giftCodeDiscountAmount'] = Math.max(
         0,
         Number(opts.giftCodeDiscountAmount) || 0,
+      );
+    }
+    // Fee Coverage gift (PLATFORM → vendeur pré-gift + éventuel top-up).
+    if (opts?.giftCodeFeeCoverage?.trim()) {
+      $set['giftCodeFeeCoverage'] = opts.giftCodeFeeCoverage
+        .trim()
+        .toUpperCase();
+    }
+    if (
+      opts?.vendorGoodsCents != null &&
+      Number.isFinite(opts.vendorGoodsCents)
+    ) {
+      $set['stripeVendorGoodsCents'] = Math.max(
+        0,
+        Math.round(opts.vendorGoodsCents),
       );
     }
     if (opts?.currency?.trim()) {

@@ -18,10 +18,16 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import {
   GiftCodeDiscountTypeEnum,
+  GiftCodeFeeCoverageEnum,
   GiftCodeModel,
   GiftCodePromoTypeEnum,
   GiftCodeScopeTypeEnum,
 } from '@schemas/gift_code.schema';
+import { normalizeGiftFeeCoverage } from '@modules/gift-codes/gift-code-fee-coverage.util';
+import {
+  isGiftCodeMinCartMet,
+  normalizeGiftMinCartAmount,
+} from '@modules/gift-codes/gift-code-min-cart.util';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
@@ -36,10 +42,13 @@ export type GiftCodeApiRow = {
   regionNames: string[];
   discountType: GiftCodeDiscountTypeEnum;
   promoType: GiftCodePromoTypeEnum;
+  feeCoverage: GiftCodeFeeCoverageEnum;
   title: string;
   subtitle: string;
   imageUrl: string | null;
   value: number;
+  /** Sous-total éligible min (0 = aucun seuil). */
+  minCartAmount: number;
   validFrom: string;
   validUntil: string;
   enabled: boolean;
@@ -174,10 +183,21 @@ export class GiftCodesService {
       promoType:
         (doc.promoType as GiftCodePromoTypeEnum | undefined) ??
         GiftCodePromoTypeEnum.DISCOUNT,
+      // Legacy sans champ → STORE (comportement historique).
+      feeCoverage:
+        normalizeGiftFeeCoverage(
+          doc.feeCoverage as string | undefined,
+        ) === 'PLATFORM'
+          ? GiftCodeFeeCoverageEnum.PLATFORM
+          : GiftCodeFeeCoverageEnum.STORE,
       title: String(doc.title ?? doc.code ?? '').trim(),
       subtitle: String(doc.subtitle ?? '').trim(),
       imageUrl: await this.resolveImageUrl(doc.imageUrl),
       value: Number(doc.value ?? 0),
+      // Legacy sans champ → 0 (aucun seuil).
+      minCartAmount: normalizeGiftMinCartAmount(
+        doc.minCartAmount as number | undefined,
+      ),
       validFrom: vf instanceof Date ? vf.toISOString() : String(vf),
       validUntil: vu instanceof Date ? vu.toISOString() : String(vu),
       enabled: Boolean(doc.enabled),
@@ -374,10 +394,13 @@ export class GiftCodesService {
         regionCodes,
         discountType: dto.discountType,
         promoType: dto.promoType ?? GiftCodePromoTypeEnum.DISCOUNT,
+        feeCoverage: dto.feeCoverage ?? GiftCodeFeeCoverageEnum.STORE,
         title: (dto.title ?? code).trim(),
         subtitle: (dto.subtitle ?? '').trim(),
         imageUrl: dto.imageUrl?.trim() || undefined,
         value: dto.value,
+        // Défaut 0 = gift valide sans panier minimum.
+        minCartAmount: normalizeGiftMinCartAmount(dto.minCartAmount),
         validFrom,
         validUntil,
         enabled: dto.enabled !== false,
@@ -436,6 +459,7 @@ export class GiftCodesService {
     }
     if (dto.discountType != null) existing.discountType = dto.discountType;
     if (dto.promoType != null) existing.promoType = dto.promoType;
+    if (dto.feeCoverage != null) existing.feeCoverage = dto.feeCoverage;
     if (dto.title != null) existing.title = dto.title.trim();
     if (dto.subtitle != null) existing.subtitle = dto.subtitle.trim();
     if (dto.imageUrl !== undefined) {
@@ -445,6 +469,9 @@ export class GiftCodesService {
           : String(dto.imageUrl).trim();
     }
     if (dto.value != null) existing.value = dto.value;
+    if (dto.minCartAmount !== undefined) {
+      existing.minCartAmount = normalizeGiftMinCartAmount(dto.minCartAmount);
+    }
     if (dto.enabled != null) existing.enabled = dto.enabled;
     if (dto.maxUses !== undefined) {
       existing.maxUses = dto.maxUses === null ? undefined : dto.maxUses;
@@ -666,6 +693,14 @@ export class GiftCodesService {
         throw new BadRequestException('gift_code_no_eligible_items');
       }
 
+      // Seuil panier : sous-total éligible (après coupon boutique) ≥ minCartAmount.
+      const minCartAmount = normalizeGiftMinCartAmount(
+        (doc as { minCartAmount?: number }).minCartAmount,
+      );
+      if (!isGiftCodeMinCartMet(eligibleSubtotal, minCartAmount)) {
+        throw new BadRequestException('gift_code_min_cart_not_met');
+      }
+
       const discountAmount =
         Math.round(
           this.computeDiscountForSubtotal(
@@ -712,6 +747,11 @@ export class GiftCodesService {
         discountType: doc.discountType,
         value: doc.value,
         scopeType: doc.scopeType,
+        // Exposition Fee Coverage (montant client inchangé).
+        feeCoverage: normalizeGiftFeeCoverage(
+          (doc as { feeCoverage?: string }).feeCoverage,
+        ),
+        minCartAmount,
         cartSubtotal:
           Math.round(cartSubtotal * 100 + Number.EPSILON) / 100,
         eligibleSubtotal:

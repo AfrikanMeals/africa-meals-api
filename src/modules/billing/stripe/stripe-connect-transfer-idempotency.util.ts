@@ -10,7 +10,9 @@
 export type ConnectTransferIdempotencyKind =
   | 'vendor'
   | 'delivery'
-  | 'delivery-tip';
+  | 'delivery-tip'
+  /** Top-up Fee Coverage PLATFORM (sans source_transaction). */
+  | 'gift-topup';
 
 /** Construit une clé ≤ 255 car. incluant les paramètres critiques du transfer. */
 export function buildConnectTransferIdempotencyKey(args: {

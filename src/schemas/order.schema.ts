@@ -571,6 +571,28 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'gift_code_discount_amount' })
   giftCodeDiscountAmount?: number;
 
+  /**
+   * Prise en charge gift : STORE (boutique) | PLATFORM (Wise Eat).
+   * Absent / autre → STORE (legacy).
+   */
+  @Prop({ required: false, name: 'gift_code_fee_coverage' })
+  giftCodeFeeCoverage?: string;
+
+  /**
+   * Goods vendeur pré-gift (centimes Stripe) quand feeCoverage=PLATFORM.
+   * Transfer vise ce montant ; charge client reste sur stripeChargedGoodsCents.
+   */
+  @Prop({ required: false, name: 'stripe_vendor_goods_cents' })
+  stripeVendorGoodsCents?: number;
+
+  /** Top-up plateforme (centimes) pour combler gift PLATFORM si fee insuffisante. */
+  @Prop({ required: false, name: 'gift_code_platform_top_up_cents' })
+  giftCodePlatformTopUpCents?: number;
+
+  /** Transfer top-up gift PLATFORM (`tr_…`), distinct du transfer vendeur principal. */
+  @Prop({ required: false, name: 'gift_code_platform_top_up_transfer_id' })
+  giftCodePlatformTopUpTransferId?: string;
+
   /** Horodatage d’envoi du reçu/facture client (idempotence e-mail post-paiement). */
   @Prop({ required: false, name: 'paid_receipt_emailed_at' })
   paidReceiptEmailedAt?: Date;

@@ -1,5 +1,6 @@
 import {
   GiftCodeDiscountTypeEnum,
+  GiftCodeFeeCoverageEnum,
   GiftCodePromoTypeEnum,
   GiftCodeScopeTypeEnum,
 } from '@schemas/gift_code.schema';
@@ -65,6 +66,16 @@ export class CreateGiftCodeDto {
   @IsEnum(GiftCodePromoTypeEnum)
   promoType?: GiftCodePromoTypeEnum;
 
+  @ApiPropertyOptional({
+    enum: GiftCodeFeeCoverageEnum,
+    default: GiftCodeFeeCoverageEnum.STORE,
+    description:
+      'STORE = boutique absorbe la remise ; PLATFORM = Wise Eat (vendeur pré-gift).',
+  })
+  @IsOptional()
+  @IsEnum(GiftCodeFeeCoverageEnum)
+  feeCoverage?: GiftCodeFeeCoverageEnum;
+
   @ApiPropertyOptional({ example: 'Meilleure offre : 20 % de réduction' })
   @IsOptional()
   @IsString()
@@ -90,6 +101,18 @@ export class CreateGiftCodeDto {
   @IsNumber()
   @Min(0.0001)
   value: number;
+
+  @ApiPropertyOptional({
+    default: 0,
+    description:
+      'Sous-total éligible minimum (major units) pour valider le gift. 0 = aucun seuil.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(999_999)
+  minCartAmount?: number;
 
   @ApiProperty({ example: '2026-01-01T00:00:00.000Z' })
   @IsDateString()
@@ -158,6 +181,11 @@ export class PatchGiftCodeDto {
   @IsEnum(GiftCodePromoTypeEnum)
   promoType?: GiftCodePromoTypeEnum;
 
+  @ApiPropertyOptional({ enum: GiftCodeFeeCoverageEnum })
+  @IsOptional()
+  @IsEnum(GiftCodeFeeCoverageEnum)
+  feeCoverage?: GiftCodeFeeCoverageEnum;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
@@ -182,6 +210,17 @@ export class PatchGiftCodeDto {
   @IsNumber()
   @Min(0.0001)
   value?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Sous-total éligible minimum (major units). 0 = aucun seuil.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(999_999)
+  minCartAmount?: number;
 
   @ApiPropertyOptional()
   @IsOptional()

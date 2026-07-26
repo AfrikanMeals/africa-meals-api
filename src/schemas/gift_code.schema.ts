@@ -21,6 +21,16 @@ export enum GiftCodePromoTypeEnum {
   PARTNERSHIP = 'PARTNERSHIP',
 }
 
+/**
+ * Qui absorbe la remise gift code.
+ * STORE = boutique (défaut, comportement historique).
+ * PLATFORM = Wise Eat (vendeur payé pré-gift ; top-up si besoin).
+ */
+export enum GiftCodeFeeCoverageEnum {
+  STORE = 'STORE',
+  PLATFORM = 'PLATFORM',
+}
+
 @Schema({
   timestamps: true,
   collection: 'gift_codes',
@@ -58,6 +68,15 @@ export class GiftCodeModel extends BaseSchema {
   })
   promoType: GiftCodePromoTypeEnum;
 
+  /** Prise en charge de la remise : boutique (défaut) ou plateforme. */
+  @Prop({
+    required: true,
+    enum: GiftCodeFeeCoverageEnum,
+    default: GiftCodeFeeCoverageEnum.STORE,
+    name: 'fee_coverage',
+  })
+  feeCoverage: GiftCodeFeeCoverageEnum;
+
   /** Titre carte catalogue client. */
   @Prop({ required: false, trim: true, maxlength: 120 })
   title?: string;
@@ -73,6 +92,13 @@ export class GiftCodeModel extends BaseSchema {
   /** Montant devise (FIXED) ou pourcentage 1–100 (PERCENTAGE). */
   @Prop({ required: true })
   value: number;
+
+  /**
+   * Sous-total éligible minimum (devise boutique, major units) pour appliquer le code.
+   * 0 = aucun seuil (défaut / legacy).
+   */
+  @Prop({ required: false, default: 0, name: 'min_cart_amount' })
+  minCartAmount: number;
 
   @Prop({ required: true })
   validFrom: Date;
