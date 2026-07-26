@@ -73,13 +73,14 @@ export class NotificationsService implements OnModuleInit {
     private readonly readReceiptModel: Model<NotificationReadReceiptModel>,
     @InjectModel(VendorNotificationPreferencesModel.name)
     private readonly vendorNotifPrefsModel: Model<VendorNotificationPreferencesModel>,
+    // Requis avant les @Optional : sinon TS1016 (param requis après optionnel).
+    // Sans ce service les badges Partner / cloche restent figés jusqu’au pull.
+    private readonly wsInboxNotify: WsInboxNotifyService,
     @Optional() private readonly storeAccess?: StoreAccessService,
     @Optional()
     private readonly userNotifPrefs?: UserNotificationPreferencesService,
     @Optional() private readonly mailer?: MailerService,
     @Optional() private readonly emailTpl?: EmailTemplateService,
-    // Requis : sans ce service les badges Partner / cloche restent figés jusqu’au pull.
-    private readonly wsInboxNotify: WsInboxNotifyService,
   ) {}
 
   /** Fire-and-forget : rafraîchit le snapshot inbox client (STOMP / Socket.IO). */
