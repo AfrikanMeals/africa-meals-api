@@ -495,6 +495,14 @@ export class PartnerApplicationsService {
       }
       const previous = normalizePartnerReferralCode(app.referralCode);
       app.referralCode = desired;
+      // Partner actif : aligner candidature sur APPROVED pour lookup / attach.
+      if (
+        agentUser.type === UserTypeEnum.PARTNER &&
+        app.status !== PartnerApplicationStatus.APPROVED &&
+        app.status !== PartnerApplicationStatus.SUSPENDED
+      ) {
+        app.status = PartnerApplicationStatus.APPROVED;
+      }
       await app.save();
       this._logger.log(
         `partner_referral_set user=${userId} code=${desired} changed=${

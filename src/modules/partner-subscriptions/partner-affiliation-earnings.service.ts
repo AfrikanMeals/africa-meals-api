@@ -28,18 +28,10 @@ import {
   mapPartnerEarningToListItem,
   type PartnerEarningListLean,
 } from './partner-earning-list.util';
+import { isPartnerReferralCodeEligible } from './partner-referral-eligibility.util';
 import { PartnerSubscriptionsService } from './partner-subscriptions.service';
 
 type StripeClient = InstanceType<typeof Stripe>;
-
-function normalizeReferralCode(raw: string): string {
-  // Compat attach legacy (longueur souple) — signup utilise normalizePartnerReferralCode.
-  return String(raw ?? '')
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '')
-    .slice(0, 16);
-}
 
 /**
  * Attribution referral + ledger gains affiliation + payout fee Partner.
@@ -68,7 +60,38 @@ export class PartnerAffiliationEarningsService {
   }
 
   /**
-   * Lookup public d’un code referral APPROVED — pas d’identité Partner exposée.
+   * Résout un Partner actif par code referral (sans filtre status APPROVED seul).
+   * Titulaire doit être `UserTypeEnum.PARTNER` ; candidature SUSPENDED exclue.
+   */
+  private async resolveActivePartnerByReferralCode(
+    raw: string | null | undefined,
+  ): Promise<{ partnerUserId: string; code: string } | null> {
+    const code = normalizePartnerReferralCode(raw);
+    if (!code) return null;
+    const app = await this.applicationModel
+      .findOne({ referralCode: code })
+      .select('user referralCode status')
+      .lean()
+      .exec();
+    if (!app?.user) return null;
+    const partnerUser = await this.userModel
+      .findById(app.user)
+      .select('type')
+      .lean()
+      .exec();
+    if (
+      !isPartnerReferralCodeEligible({
+        partnerUserType: (partnerUser as { type?: string } | null)?.type,
+        applicationStatus: (app as { status?: string }).status,
+      })
+    ) {
+      return null;
+    }
+    return { partnerUserId: String(app.user), code };
+  }
+
+  /**
+   * Lookup public d’un code referral — pas d’identité Partner exposée.
    */
   async lookupPublicReferralCode(raw: string | null | undefined): Promise<{
     valid: boolean;
@@ -78,12 +101,8 @@ export class PartnerAffiliationEarningsService {
     if (!code) {
       return { valid: false, code: null };
     }
-    const app = await this.applicationModel
-      .findOne({ referralCode: code, status: 'APPROVED' })
-      .select('_id')
-      .lean()
-      .exec();
-    return { valid: !!app, code };
+    const hit = await this.resolveActivePartnerByReferralCode(code);
+    return { valid: !!hit, code };
   }
 
   /**
@@ -124,22 +143,14 @@ export class PartnerAffiliationEarningsService {
       ?.referredByPartnerUserId) {
       throw new BadRequestException('partner_referral_already_set');
     }
-    const code = normalizeReferralCode(dto.referralCode);
-    if (code.length < 3) {
-      throw new BadRequestException('partner_referral_code_invalid');
-    }
-    const app = await this.applicationModel
-      .findOne({
-        referralCode: code,
-        status: 'APPROVED',
-      })
-      .select('user referralCode')
-      .lean()
-      .exec();
-    if (!app?.user) {
+    // Même règle que le lookup landing (PARTNER actif, pas seulement APPROVED).
+    const resolved = await this.resolveActivePartnerByReferralCode(
+      dto.referralCode,
+    );
+    if (!resolved) {
       throw new NotFoundException('partner_referral_code_not_found');
     }
-    const partnerUserId = String(app.user);
+    const { code, partnerUserId } = resolved;
     if (partnerUserId === uid) {
       throw new BadRequestException('partner_referral_self');
     }
