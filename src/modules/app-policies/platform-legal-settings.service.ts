@@ -110,6 +110,11 @@ export class PlatformLegalSettingsService {
     const shippingPolicyUrl = joinUrl(websiteUrl, '/policy/shipping');
     const vendorPolicyUrl = joinUrl(websiteUrl, '/policy/vendor');
     const courierPolicyUrl = joinUrl(websiteUrl, '/policy/courier');
+    // Aligné URL produit : /policy?id=partner-policy (CMS slug partner-policy).
+    const partnerPolicyUrl = joinUrl(
+      websiteUrl,
+      '/policy?id=partner-policy',
+    );
     const paymentPolicyUrl = joinUrl(websiteUrl, '/policy/payment');
     const cookiesPolicyUrl = joinUrl(websiteUrl, '/policy/cookies');
     const legalNoticeUrl = joinUrl(websiteUrl, '/policy/legal-notice');
@@ -173,6 +178,7 @@ export class PlatformLegalSettingsService {
       shippingPolicyUrl,
       vendorPolicyUrl,
       courierPolicyUrl,
+      partnerPolicyUrl,
       paymentPolicyUrl,
       cookiesPolicyUrl,
       legalNoticeUrl,

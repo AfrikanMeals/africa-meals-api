@@ -46,6 +46,7 @@ import {
   Verify2faLoginDto,
 } from './dto/auth.dto';
 import { LoginNotificationService } from './login-notification/login-notification.service';
+import { mapSignupRoleToUserType } from './signup-role-to-user-type.util';
 import {
   type LoginAuthMethod,
   type LoginRequestContext,
@@ -59,7 +60,9 @@ import {
   resolveOtpWebBaseUrl,
   type AuthOtpEmailVariant,
 } from '@modules/mailer/auth-otp-email.util';
+import { PartnerAffiliationEarningsService } from '@modules/partner-subscriptions/partner-affiliation-earnings.service';
 import { PartnerOnboardingEmailService } from '@modules/vendor-emails/partner-onboarding-email.service';
+import { normalizePartnerReferralCode } from '@modules/partner-applications/partner-referral-code.util';
 import { randomUUID } from 'crypto';
 import { RefreshTokenStore } from './refresh-token.store';
 import { OtpLinkTokenStore } from './otp-link-token.store';
@@ -137,6 +140,11 @@ export class AuthService {
 
   @Inject(PartnerOnboardingEmailService)
   private readonly _partnerOnboardingEmail: PartnerOnboardingEmailService;
+
+  /** Attribution Affiliation — optionnel pour tests unitaires Auth isolés. */
+  @Optional()
+  @Inject(PartnerAffiliationEarningsService)
+  private readonly _partnerAffiliation?: PartnerAffiliationEarningsService;
 
   @Inject(RefreshTokenStore)
   private readonly _refreshTokenStore: RefreshTokenStore;
@@ -241,11 +249,14 @@ export class AuthService {
     const passwordHash = await hashPassword(args.password);
     const userType = this._mapSignupRoleToUserType(args.signupRole);
 
+    // Conserver le code pour attach après verify e-mail.
+    const pendingReferral = normalizePartnerReferralCode(args.referralCode);
     await this._pendingSignupModel.create({
       email,
       passwordHash,
       fullName: args.fullName.trim(),
       userType,
+      ...(pendingReferral ? { referralCode: pendingReferral } : {}),
       verificationCode: issued.hash,
       expiresAt: issued.expiresAt,
     });
@@ -308,9 +319,20 @@ export class AuthService {
     }
 
     await this._pendingSignupModel.deleteOne({ _id: pending._id }).exec();
+    // Attach referral stocké sur le pending (si présent).
+    await this._tryAttachSignupReferral(newUser, pending.referralCode);
     const user = await this.findUserById(newUser._id.toString());
     this.queueVendorOnboardingWelcome(user);
     return { ...(await this.deliverAuthTokens(newUser, ctx, 'register')), user };
+  }
+
+  /** Best-effort : ne doit jamais faire échouer l’inscription. */
+  private async _tryAttachSignupReferral(
+    user: UserModel,
+    rawCode: string | null | undefined,
+  ): Promise<void> {
+    if (!this._partnerAffiliation) return;
+    await this._partnerAffiliation.tryAttachReferralOnSignup(user, rawCode);
   }
 
   async resendPendingSignupCode(emailRaw: string) {
@@ -440,7 +462,8 @@ export class AuthService {
   }
 
   private async registerCreateUserDirectly(args: RegisterDto) {
-    const { source, signupRole, ...rest } = args;
+    // Extraire referralCode : ne doit pas atterrir dans le document user brut.
+    const { source, signupRole, referralCode, ...rest } = args;
     const userType = this._mapSignupRoleToUserType(signupRole);
     this.logger.log(
       `[register] demande source=${source} email=${
@@ -544,6 +567,9 @@ export class AuthService {
           : 'non'
       }`,
     );
+
+    // Lien Affiliation post-create (échec silencieux si code invalide).
+    await this._tryAttachSignupReferral(newUser, referralCode);
 
     if (!verifyImmediately && activationIssued) {
       try {
@@ -1951,15 +1977,8 @@ export class AuthService {
   private _mapSignupRoleToUserType(
     role?: RegisterDto['signupRole'],
   ): UserTypeEnum {
-    switch (role) {
-      case 'restaurant':
-        return UserTypeEnum.VENDOR;
-      case 'livreur':
-        return UserTypeEnum.DELIVERY;
-      case 'client':
-      default:
-        return UserTypeEnum.USER;
-    }
+    // Délégué à l’util pur (spec signup-role-to-user-type.util.spec).
+    return mapSignupRoleToUserType(role);
   }
 
   private _emailMatchExact(email: string) {

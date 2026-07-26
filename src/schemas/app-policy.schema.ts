@@ -9,6 +9,7 @@ export const BUILTIN_POLICY_SLUGS = [
   'shipping',
   'vendor',
   'courier',
+  'partner-policy',
   'payment',
   'legal-notice',
   'cookies',

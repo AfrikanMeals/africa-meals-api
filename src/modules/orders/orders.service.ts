@@ -1,6 +1,7 @@
 import { isStripeConnectOnboardingCompleteUser } from '@modules/billing/stripe/stripe-connect-visibility';
 import { StripeConnectTransferService } from '@modules/billing/stripe/stripe-connect-transfer.service';
 import { StripeDeferredCaptureService } from '@modules/billing/stripe/stripe-deferred-capture.service';
+import { PartnerAffiliationEarningsService } from '@modules/partner-subscriptions/partner-affiliation-earnings.service';
 import { BusinessReportsService } from '@modules/business-reports/business-reports.service';
 import { AdsService } from '@modules/ads/ads.service';
 import { CartService } from '@modules/cart/cart.service';
@@ -213,6 +214,10 @@ export class OrdersService {
 
   @Inject(StripeConnectTransferService)
   private readonly _stripeTransfers: StripeConnectTransferService;
+
+  @Inject(forwardRef(() => PartnerAffiliationEarningsService))
+  @Optional()
+  private readonly _partnerAffiliation?: PartnerAffiliationEarningsService;
 
   @Inject(StripeDeferredCaptureService)
   private readonly _stripeDeferredCapture: StripeDeferredCaptureService;
@@ -4691,6 +4696,14 @@ export class OrdersService {
     }
     await order.save();
 
+    void this.emitPartnerAffiliationOnOrderCompleted(order).catch((err) =>
+      this.logger.warn(
+        `Partner affiliation on complete: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
+    );
+
     if (order.payOnPickup === true) {
       void this.ensurePaidReceiptEmail(oid);
     }
@@ -4878,6 +4891,14 @@ export class OrdersService {
     order.pickedUpAt = pickedUpAt;
     // 1. Persist statut (Seule écriture bloquante avant réponse HTTP).
     await order.save();
+
+    void this.emitPartnerAffiliationOnOrderCompleted(order).catch((err) =>
+      this.logger.warn(
+        `Partner affiliation on complete: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
+    );
 
     const storeId = this.storeIdFromOrderDoc(order);
     const customerId = this.userIdFromOrderDoc(order);
@@ -5082,6 +5103,15 @@ export class OrdersService {
     order.pickedUpAt = pickedUpAt;
     await order.save();
 
+    // Affiliation Partner : créditer les 3 axes liés à la commande livrée.
+    void this.emitPartnerAffiliationOnOrderCompleted(order).catch((err) =>
+      this.logger.warn(
+        `Partner affiliation on complete: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
+    );
+
     const storeId = this.storeIdFromOrderDoc(order);
     const customerId = this.userIdFromOrderDoc(order);
     await this.recordOrderStatusChangeIfLegacy({
@@ -5230,6 +5260,94 @@ export class OrdersService {
       return id instanceof Types.ObjectId ? id.toHexString() : String(id);
     }
     return undefined;
+  }
+
+  /**
+   * Crédite l’affiliation Partner (customer_order + vendor_sales + courier_gains)
+   * quand une commande passe COMPLETED.
+   */
+  private async emitPartnerAffiliationOnOrderCompleted(
+    order: OrderModel,
+  ): Promise<void> {
+    if (!this._partnerAffiliation) return;
+    const orderId = String(order._id);
+    const customerId = this.userIdFromOrderDoc(order);
+    const agentId = this.assignedDeliveryUserIdFromOrderDoc(order);
+    const store = order.store as unknown as {
+      owner?: { _id?: unknown } | string;
+      regionCode?: string;
+      currency?: string;
+    } | null;
+    let storeOwnerId: string | null = null;
+    if (store?.owner) {
+      if (typeof store.owner === 'string') storeOwnerId = store.owner;
+      else if (store.owner && typeof store.owner === 'object' && store.owner._id) {
+        storeOwnerId = String(store.owner._id);
+      }
+    }
+    const regionCode =
+      String(
+        (order as { storeRegionCode?: string }).storeRegionCode ??
+          store?.regionCode ??
+          '',
+      )
+        .trim()
+        .toUpperCase() || null;
+    const currency =
+      String(
+        (order as { currency?: string }).currency ?? store?.currency ?? 'CAD',
+      )
+        .trim()
+        .toUpperCase() || 'CAD';
+    const total = Math.max(0, Number(order.totalPrice) || 0);
+    const goods = Math.max(
+      0,
+      Number((order as { itemsPrice?: number }).itemsPrice) ||
+        Number((order as { subtotal?: number }).subtotal) ||
+        total,
+    );
+    const shipping = Math.max(0, Number(order.shippingPrice) || 0);
+    // Estimation gain livreur ≈ shipping (détail barème appliqué côté delivery-agent).
+    const driverEarning = shipping > 0 ? Math.round(shipping * 0.7 * 100) / 100 : 0;
+
+    const partnerId =
+      (await this._partnerAffiliation.resolveAttributionPartnerUserId({
+        customerUserId: customerId,
+        storeOwnerUserId: storeOwnerId,
+        courierUserId: agentId,
+      })) ?? null;
+
+    if (partnerId && !(order as { partnerAttributionUserId?: string }).partnerAttributionUserId) {
+      try {
+        (order as { partnerAttributionUserId?: string }).partnerAttributionUserId =
+          partnerId;
+        await order.save();
+      } catch {
+        // fail-open snapshot
+      }
+    }
+
+    await this._partnerAffiliation.onOrderSettled({
+      orderId,
+      customerUserId: customerId,
+      storeOwnerUserId: storeOwnerId,
+      courierUserId: agentId,
+      regionCode,
+      customerOrderBase: total,
+      vendorSalesBase: goods,
+      currency,
+      partnerAttributionUserId: partnerId,
+    });
+
+    if (agentId && driverEarning > 0) {
+      await this._partnerAffiliation.onCourierEarningSettled({
+        orderId,
+        courierUserId: agentId,
+        driverEarning,
+        regionCode,
+        currency,
+      });
+    }
   }
 
   /** Indicateurs chat client ↔ livreur (commande livraison avec livreur assigné). */

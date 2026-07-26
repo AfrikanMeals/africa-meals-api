@@ -33,6 +33,9 @@ import { RecommendationsModule } from './modules/recommendations/recommendations
 import { PlatformFeesModule } from './modules/platform-fees/platform-fees.module';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
 import { PartnerBadgesModule } from './modules/partner-badges/partner-badges.module';
+import { PartnerApplicationsModule } from './modules/partner-applications/partner-applications.module';
+import { PartnerProfilesModule } from './modules/partner-profiles/partner-profiles.module';
+import { PartnerSubscriptionsModule } from './modules/partner-subscriptions/partner-subscriptions.module';
 import { MarketingOffersModule } from './modules/marketing-offers/marketing-offers.module';
 import { MarketingOfferListingsModule } from './modules/marketing-offer-listings/marketing-offer-listings.module';
 import { ProductBundlesModule } from './modules/product-bundles/product-bundles.module';
@@ -341,6 +344,9 @@ async function readRedisManagerEnabledAtBootstrap(
     PlatformFeesModule,
     SubscriptionsModule,
     PartnerBadgesModule,
+    PartnerApplicationsModule,
+    PartnerProfilesModule,
+    PartnerSubscriptionsModule,
     MarketingOffersModule,
     MarketingOfferListingsModule,
     ProductBundlesModule,

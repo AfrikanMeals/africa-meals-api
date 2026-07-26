@@ -461,6 +461,19 @@ export class OrderModel extends BaseSchema {
   })
   storeRegionCode?: string;
 
+  /**
+   * Snapshot affiliation : Partner crédité pour cette commande
+   * (client / owner boutique / livreur référé).
+   */
+  @Prop({
+    required: false,
+    name: 'partner_attribution_user_id',
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserModel',
+    index: true,
+  })
+  partnerAttributionUserId?: string;
+
   /** Points fidélité déjà crédités pour cette commande (évite double crédit). */
   @Prop({ default: false, name: 'loyalty_points_credited' })
   loyaltyPointsCredited?: boolean;

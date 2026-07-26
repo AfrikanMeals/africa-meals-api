@@ -87,8 +87,21 @@ export class RegisterDto extends LoginDto {
 
   /** Valeurs alignées sur le sélecteur du Dashboard (signup) */
   @IsOptional()
-  @IsIn(['restaurant', 'livreur', 'client'])
-  signupRole?: 'restaurant' | 'livreur' | 'client';
+  @IsIn(['restaurant', 'livreur', 'partenaire', 'client'])
+  signupRole?: 'restaurant' | 'livreur' | 'partenaire' | 'client';
+
+  /**
+   * Code Affiliation Partner (`[A-Z0-9]{6}`) — lié à l’utilisateur à la création.
+   * Invalide / inconnu → ignoré (n’échoue pas l’inscription).
+   */
+  @ApiPropertyOptional({ example: 'QQ4VJZ' })
+  @IsOptional()
+  @IsString()
+  @Trim()
+  @Matches(/^[A-Za-z0-9]{6}$/, {
+    message: 'referralCode must be 6 alphanumeric characters',
+  })
+  referralCode?: string;
 }
 
 export class EmailVerificationDto {

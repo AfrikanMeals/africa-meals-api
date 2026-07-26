@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsIn,
   IsNumber,
   IsOptional,
@@ -21,6 +22,16 @@ export class ForwardGeocodeQueryDto {
   @IsOptional()
   @IsString()
   countryCode?: string;
+
+  /**
+   * Recherche mondiale : ne pas forcer le pays du compte (ex. partenaire).
+   * Query string : worldwide=true|1
+   */
+  @ApiPropertyOptional({ description: 'Sans filtre pays user/CA' })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === '1')
+  @IsBoolean()
+  worldwide?: boolean;
 
   @ApiPropertyOptional({ default: 5 })
   @IsOptional()

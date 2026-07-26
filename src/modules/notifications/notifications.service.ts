@@ -1,3 +1,15 @@
+import {
+  buildPartnerProfileReviewNotificationCopy,
+  PARTNER_PROFILE_REVIEW_NOTIFICATION_TYPE,
+} from '@modules/partner-profiles/partner-profile-review-notification.util';
+import {
+  buildPartnerReferralCodeChangedNotificationCopy,
+  PARTNER_REFERRAL_CODE_CHANGED_NOTIFICATION_TYPE,
+} from '@modules/partner-applications/partner-referral-code-changed-notification.util';
+import {
+  buildPartnerSubscriptionLifecycleNotificationCopy,
+  type PartnerSubscriptionLifecycleKind,
+} from '@modules/partner-subscriptions/partner-subscription-lifecycle-notification.util';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { defaultVendorNotificationPreferences } from '@modules/vendor-notifications/vendor-notification.constants';
 import { UserNotificationPreferencesService } from '@modules/user-notification-preferences/user-notification-preferences.service';
@@ -7,6 +19,7 @@ import {
   emailHeading,
   emailParagraph,
 } from '@modules/mailer/email-template.service';
+import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 import {
   Inject,
   Injectable,
@@ -65,7 +78,21 @@ export class NotificationsService implements OnModuleInit {
     private readonly userNotifPrefs?: UserNotificationPreferencesService,
     @Optional() private readonly mailer?: MailerService,
     @Optional() private readonly emailTpl?: EmailTemplateService,
+    // Requis : sans ce service les badges Partner / cloche restent figés jusqu’au pull.
+    private readonly wsInboxNotify: WsInboxNotifyService,
   ) {}
+
+  /** Fire-and-forget : rafraîchit le snapshot inbox client (STOMP / Socket.IO). */
+  private queueUserInboxRefresh(userId: string): void {
+    const uid = String(userId ?? '').trim();
+    if (!uid) return;
+    try {
+      this.wsInboxNotify.notifyUserInboxRefresh(uid);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`queueUserInboxRefresh: ${msg}`);
+    }
+  }
 
   onModuleInit(): void {
     const projectId = this.firebaseApp?.options?.projectId;
@@ -265,7 +292,12 @@ export class NotificationsService implements OnModuleInit {
     }
 
     const res = await this.readReceiptModel.bulkWrite(ops, { ordered: false });
-    return { marked: res.upsertedCount ?? 0 };
+    const marked = res.upsertedCount ?? 0;
+    // Badge Partner / cloche : snapshot WS avec `read: true` sans pull HTTP.
+    if (marked > 0) {
+      this.queueUserInboxRefresh(userId);
+    }
+    return { marked };
   }
 
   async markAllNotificationsRead(userId: string): Promise<{ marked: number }> {
@@ -313,6 +345,10 @@ export class NotificationsService implements OnModuleInit {
       marked += res.upsertedCount ?? 0;
     }
 
+    // Même contrat que markNotificationsRead : badge / liste temps réel.
+    if (marked > 0) {
+      this.queueUserInboxRefresh(userId);
+    }
     return { marked };
   }
 
@@ -390,6 +426,9 @@ export class NotificationsService implements OnModuleInit {
         androidChannelId: args.androidChannelId,
       });
     }
+
+    // Badge / liste temps réel (Partner + client) — même canal que ads / gift-codes.
+    this.queueUserInboxRefresh(args.recipientUserId);
 
     return { id: doc._id.toString() };
   }
@@ -1003,6 +1042,173 @@ export class NotificationsService implements OnModuleInit {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(`notifyVendorSubscriptionTrialEnding: ${msg}`);
+    }
+  }
+
+  /**
+   * Inbox + push — cycle de vie abonnement Partner
+   * (changement de plan / expiration / rappel essai).
+   */
+  async notifyPartnerSubscriptionLifecycle(args: {
+    recipientUserId: string;
+    subscriptionId: string;
+    kind: PartnerSubscriptionLifecycleKind;
+    planName?: string;
+    daysRemaining?: number;
+    trialEndsAt?: string;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.recipientUserId)) {
+      return;
+    }
+    const copy = buildPartnerSubscriptionLifecycleNotificationCopy({
+      kind: args.kind,
+      planName: args.planName,
+      daysRemaining: args.daysRemaining,
+    });
+    const data: Record<string, unknown> = {
+      type: copy.type,
+      audience: 'partner',
+      subscriptionId: args.subscriptionId,
+      kind: args.kind,
+      planName: String(args.planName ?? '').trim() || 'votre formule Partner',
+    };
+    if (args.kind === 'TRIAL_REMINDER') {
+      const days = Math.max(1, Math.floor(Number(args.daysRemaining) || 1));
+      data.daysRemaining = String(days);
+      if (args.trialEndsAt?.trim()) data.trialEndsAt = args.trialEndsAt.trim();
+    }
+
+    try {
+      await this.createUserScopedNotification({
+        recipientUserId: args.recipientUserId,
+        title: copy.title,
+        body: copy.body,
+        type: copy.type,
+        data,
+        sendPush: true,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(
+        `notifyPartnerSubscriptionLifecycle kind=${args.kind}: ${msg}`,
+      );
+    }
+  }
+
+  /** @deprecated Prefer notifyPartnerSubscriptionLifecycle({ kind: 'TRIAL_REMINDER' }). */
+  async notifyPartnerSubscriptionTrialEnding(args: {
+    recipientUserId: string;
+    subscriptionId: string;
+    planName?: string;
+    daysRemaining: number;
+    trialEndsAt: string;
+  }): Promise<void> {
+    await this.notifyPartnerSubscriptionLifecycle({
+      recipientUserId: args.recipientUserId,
+      subscriptionId: args.subscriptionId,
+      kind: 'TRIAL_REMINDER',
+      planName: args.planName,
+      daysRemaining: args.daysRemaining,
+      trialEndsAt: args.trialEndsAt,
+    });
+  }
+
+  /**
+   * Inbox + push FCM — admin a défini / remplacé le code parrainage Partner.
+   * `referralCode` (+ éventuel `previousReferralCode`) dans data FCM.
+   */
+  async notifyPartnerReferralCodeChanged(args: {
+    recipientUserId: string;
+    referralCode: string;
+    previousReferralCode?: string | null;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.recipientUserId)) {
+      return;
+    }
+    const referralCode = String(args.referralCode ?? '')
+      .trim()
+      .toUpperCase();
+    if (!referralCode) return;
+    const previousReferralCode = String(args.previousReferralCode ?? '')
+      .trim()
+      .toUpperCase();
+    const copy = buildPartnerReferralCodeChangedNotificationCopy({
+      referralCode,
+      previousReferralCode: previousReferralCode || null,
+    });
+    const data: Record<string, unknown> = {
+      type: PARTNER_REFERRAL_CODE_CHANGED_NOTIFICATION_TYPE,
+      audience: 'partner',
+      referralCode,
+    };
+    if (previousReferralCode && previousReferralCode !== referralCode) {
+      data.previousReferralCode = previousReferralCode;
+    }
+
+    try {
+      await this.createUserScopedNotification({
+        recipientUserId: args.recipientUserId,
+        title: copy.title,
+        body: copy.body,
+        type: PARTNER_REFERRAL_CODE_CHANGED_NOTIFICATION_TYPE,
+        data,
+        sendPush: true,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`notifyPartnerReferralCodeChanged: ${msg}`);
+    }
+  }
+
+  /**
+   * Inbox + push FCM — revue fiche Partner (approve / reject / suspend / reactivate).
+   * APPROVED : `referralCode` dans le corps + data FCM (si fourni).
+   */
+  async notifyPartnerProfileReview(args: {
+    recipientUserId: string;
+    profileId: string;
+    status: 'APPROVED' | 'REJECTED' | 'SUSPENDED' | 'REACTIVATED';
+    rejectionReason?: string;
+    referralCode?: string;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.recipientUserId)) {
+      return;
+    }
+    const referralCode = String(args.referralCode ?? '')
+      .trim()
+      .toUpperCase();
+    const copy = buildPartnerProfileReviewNotificationCopy({
+      status: args.status,
+      rejectionReason: args.rejectionReason,
+      referralCode:
+        args.status === 'APPROVED' && referralCode ? referralCode : undefined,
+    });
+    const data: Record<string, unknown> = {
+      type: PARTNER_PROFILE_REVIEW_NOTIFICATION_TYPE,
+      audience: 'partner',
+      profileId: args.profileId,
+      status: args.status,
+    };
+    if (args.rejectionReason?.trim()) {
+      data.rejectionReason = args.rejectionReason.trim();
+    }
+    // Payload push : le client peut afficher / deep-link avec le code.
+    if (args.status === 'APPROVED' && referralCode) {
+      data.referralCode = referralCode;
+    }
+
+    try {
+      await this.createUserScopedNotification({
+        recipientUserId: args.recipientUserId,
+        title: copy.title,
+        body: copy.body,
+        type: PARTNER_PROFILE_REVIEW_NOTIFICATION_TYPE,
+        data,
+        sendPush: true,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`notifyPartnerProfileReview: ${msg}`);
     }
   }
 

@@ -71,10 +71,13 @@ import axios from 'axios';
 import { MapGeocodeUsageTracker } from '@common/map-geocode/map-geocode-usage.tracker';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { GeocodeCacheService, GeocodeEngine } from './geocode-cache.service';
+import { resolveGeocodeForwardCountryCode } from './geocode-forward-country.util';
 
 type ForwardArgs = {
   query: string;
   countryCode: string;
+  /** Sans filtre pays compte (fiche partenaire). */
+  worldwide?: boolean;
   limit?: number;
   proximityLng?: number;
   proximityLat?: number;
@@ -126,7 +129,12 @@ export class GeocodeService {
     args: ForwardArgs,
     user?: UserModel,
   ): Promise<{ features: GeocodeFeature[]; cached: boolean; engine: GeocodeEngine }> {
-    const countryCode = this.resolveCountryCode(args.countryCode, user);
+    // worldwide : ne pas forcer CA via user.appCountryCode (Douala etc.).
+    const countryCode = resolveGeocodeForwardCountryCode({
+      countryCode: args.countryCode,
+      userAppCountryCode: user?.appCountryCode,
+      worldwide: args.worldwide === true,
+    });
     const context = args.context ?? 'mobileUser';
     const limit = args.limit ?? 5;
     const query = args.query.trim();
@@ -135,11 +143,13 @@ export class GeocodeService {
       args.proximityLat,
       countryCode,
     );
+    // Cache : distinguer WW vs pays pour ne pas servir un cache CA à une requête mondiale.
+    const cacheCountry = countryCode || (args.worldwide ? 'WW' : 'CA');
     const bbox = countryMapboxBboxParam(countryCode) ?? '';
     const cacheArgs = {
       kind: 'forward' as const,
       query,
-      countryCode,
+      countryCode: cacheCountry,
       limit,
       proximity,
       bbox,
@@ -298,11 +308,10 @@ export class GeocodeService {
   }
 
   private resolveCountryCode(raw?: string, user?: UserModel): string {
-    return (
-      normalizeCountryCode(raw) ||
-      normalizeCountryCode(user?.appCountryCode) ||
-      'CA'
-    );
+    return resolveGeocodeForwardCountryCode({
+      countryCode: raw,
+      userAppCountryCode: user?.appCountryCode,
+    });
   }
 
   private formatProximity(
@@ -313,6 +322,8 @@ export class GeocodeService {
     if (Number.isFinite(lng) && Number.isFinite(lat)) {
       return `${Number(lng).toFixed(4)},${Number(lat).toFixed(4)}`;
     }
+    // Sans pays (worldwide) : pas de proximité forcée Montréal/CA.
+    if (!normalizeCountryCode(countryCode)) return '';
     const center = geocodeProximityForCountry(countryCode);
     return `${center.lng.toFixed(4)},${center.lat.toFixed(4)}`;
   }
@@ -572,9 +583,10 @@ export class GeocodeService {
       limit: String(args.limit ?? 5),
       language: 'fr',
       autocomplete: args.autocomplete ? 'true' : 'false',
-      country: cc,
       types: 'address,place,locality,neighborhood,district,postcode',
     });
+    // Worldwide / sans pays : ne pas envoyer country= (sinon Mapbox refuse ou filtre mal).
+    if (cc) params.set('country', cc);
     const bbox = countryMapboxBboxParam(args.countryCode);
     if (bbox) params.set('bbox', bbox);
     const prox = this.formatProximity(
@@ -582,7 +594,7 @@ export class GeocodeService {
       args.proximityLat,
       args.countryCode,
     );
-    params.set('proximity', prox);
+    if (prox) params.set('proximity', prox);
     const url = `${resolveMapboxGeocodeApiUrl(this.config)}?${params}`;
     const { data } = await axios.get(url, { timeout: 14_000 });
     const features = Array.isArray(data?.features)

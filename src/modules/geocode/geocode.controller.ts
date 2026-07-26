@@ -35,6 +35,8 @@ export class GeocodeController {
       {
         query: query.q,
         countryCode: query.countryCode ?? '',
+        // Partenaire / recherche globale : pas de repli appCountryCode → CA.
+        worldwide: query.worldwide === true,
         limit: query.limit,
         proximityLng: query.proximityLng,
         proximityLat: query.proximityLat,

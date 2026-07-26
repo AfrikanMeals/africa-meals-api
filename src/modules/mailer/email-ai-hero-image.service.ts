@@ -3,12 +3,13 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash, randomUUID } from 'crypto';
 
-export type OnboardingHeroKind = 'vendor' | 'delivery';
+export type OnboardingHeroKind = 'vendor' | 'delivery' | 'partner';
 export type AdCashHeroKind = 'ad-cash';
 export type OnboardingSectionImageKind =
   | 'help'
   | 'kyc-vendor'
   | 'kyc-delivery'
+  | 'kyc-partner'
   | 'stripe';
 export type CuratedEmailImageKind =
   | OnboardingHeroKind
@@ -34,6 +35,11 @@ const CURATED_POOLS: Record<CuratedEmailImageKind, CuratedPool> = {
     folder: 'email-heroes',
     files: ['delivery-onboarding-01.png', 'delivery-onboarding-02.png'],
   },
+  // Réutilise le pool vendeur tant qu’il n’y a pas d’assets dédiés partenaire.
+  partner: {
+    folder: 'email-heroes',
+    files: ['vendor-onboarding-01.png', 'vendor-onboarding-02.png'],
+  },
   help: {
     folder: 'help',
     files: ['help-section-01.png', 'help-section-02.png'],
@@ -45,6 +51,10 @@ const CURATED_POOLS: Record<CuratedEmailImageKind, CuratedPool> = {
   'kyc-delivery': {
     folder: 'onboarding-sections',
     files: ['kyc-delivery-01.png', 'kyc-delivery-02.png'],
+  },
+  'kyc-partner': {
+    folder: 'onboarding-sections',
+    files: ['kyc-vendor-01.png', 'kyc-vendor-02.png'],
   },
   stripe: {
     folder: 'onboarding-sections',

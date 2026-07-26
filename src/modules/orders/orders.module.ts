@@ -3,6 +3,7 @@ import { LoyaltyModule } from '@modules/loyalty/loyalty.module';
 import { ProductsModule } from '@modules/products/products.module';
 import { AdsModule } from '@modules/ads/ads.module';
 import { StripeConnectTransferModule } from '@modules/billing/stripe/stripe-connect-transfer.module';
+import { PartnerSubscriptionsModule } from '@modules/partner-subscriptions/partner-subscriptions.module';
 import { CheckoutDeliverySettingsModule } from '@modules/checkout-delivery-settings/checkout-delivery-settings.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -89,6 +90,7 @@ import { GraphModule } from '@modules/graph/graph.module';
     LoyaltyModule,
     ProductsModule,
     StripeConnectTransferModule,
+    forwardRef(() => PartnerSubscriptionsModule),
     forwardRef(() => DeliveryAgentModule),
     forwardRef(() => DeliveryOrderOfferModule),
     forwardRef(() => PendingDeliveryModule),

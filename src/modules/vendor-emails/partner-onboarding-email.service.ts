@@ -9,6 +9,21 @@ import { MobileAppSettingsService } from '@modules/mobile-app-settings/mobile-ap
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
+import { buildPartnerProfileSubmittedEmailCopy } from './partner-profile-submitted-email.util';
+import {
+  buildPartnerApplicationApprovedEmailCopy,
+  buildPartnerApplicationRejectedEmailCopy,
+} from './partner-application-decision-email.util';
+import {
+  buildPartnerProfileApprovedEmailCopy,
+  buildPartnerProfileRejectedEmailCopy,
+} from './partner-profile-decision-email.util';
+import {
+  buildPartnerSubscriptionChangedEmailCopy,
+  buildPartnerSubscriptionExpiredEmailCopy,
+  buildPartnerSubscriptionTrialReminderEmailCopy,
+} from './partner-subscription-lifecycle-email.util';
+import { buildPartnerReferralCodeChangedEmailCopy } from './partner-referral-code-changed-email.util';
 
 type OnboardingBlock = {
   title: string;
@@ -30,6 +45,19 @@ const ONBOARDING_SECTION_IMAGES: Record<
   'Votre dossier KYC': {
     kind: 'kyc-delivery',
     alt: 'Dossier KYC livreur',
+  },
+  'Votre dossier partenaire': {
+    kind: 'kyc-partner',
+    alt: 'Dossier fiche partenaire',
+  },
+  // Sections décision fiche (admin Approuver / Refuser).
+  'Prochaines étapes': {
+    kind: 'kyc-partner',
+    alt: 'Espace partenaire après approbation',
+  },
+  'Votre code de parrainage': {
+    kind: 'kyc-partner',
+    alt: 'Code de parrainage partenaire',
   },
   'Configurez Stripe pour encaisser vos paiements': {
     kind: 'stripe',
@@ -173,13 +201,412 @@ export class PartnerOnboardingEmailService {
     });
   }
 
+  /**
+   * Confirmation après soumission de la fiche partenaire (POST /partner/profile/submit).
+   * Fire-and-forget côté caller — ne doit pas bloquer le submit HTTP.
+   */
+  async notifyPartnerProfileSubmitted(args: {
+    email: string;
+    name: string;
+  }): Promise<void> {
+    const email = args.email.trim().toLowerCase();
+    if (!email) return;
+
+    const appName = this.appName();
+    const displayName = args.name.trim() || 'Partenaire';
+    // Copie HTML : noms / e-mails échappés avant interpolation.
+    const copy = buildPartnerProfileSubmittedEmailCopy({
+      appName: this.emailTpl.escapeHtml(appName),
+      safeDisplayName: this.emailTpl.escapeHtml(displayName),
+      supportEmail: this.emailTpl.escapeHtml(this.supportEmail()),
+    });
+    // Sujet MIME : texte brut (pas d’entités HTML).
+    const subject = `${appName} — Fiche partenaire reçue`;
+
+    const storeLinks = await this.resolveMobileAppStoreLinks();
+    const downloadCtas = this.buildMobileAppDownloadCtas(storeLinks);
+
+    const blocks: OnboardingBlock[] = [
+      {
+        title: 'Fiche partenaire reçue',
+        paragraphs: [copy.greetingLine, ...copy.introParagraphs],
+        ctas: downloadCtas.length ? downloadCtas : undefined,
+      },
+      {
+        title: 'Votre dossier partenaire',
+        paragraphs: copy.nextStepsParagraphs,
+      },
+      {
+        title: "Besoin d'aide ?",
+        paragraphs: copy.helpParagraphs,
+      },
+    ];
+
+    await this.sendBlocks({
+      to: email,
+      toName: displayName,
+      subject,
+      blocks,
+      logTag: `partner_profile_submitted email=${email}`,
+      heroKind: 'partner',
+    });
+  }
+
+  /**
+   * Candidature Collaborations approuvée — inclut le code referral 6 caractères.
+   */
+  async notifyPartnerApplicationApproved(args: {
+    email: string;
+    name: string;
+    referralCode: string;
+  }): Promise<void> {
+    const email = args.email.trim().toLowerCase();
+    if (!email) return;
+    const code = String(args.referralCode ?? '')
+      .trim()
+      .toUpperCase();
+    if (!code) return;
+
+    const appName = this.appName();
+    const displayName = args.name.trim() || 'Partenaire';
+    const copy = buildPartnerApplicationApprovedEmailCopy({
+      appName: this.emailTpl.escapeHtml(appName),
+      safeDisplayName: this.emailTpl.escapeHtml(displayName),
+      safeReferralCode: this.emailTpl.escapeHtml(code),
+      supportEmail: this.emailTpl.escapeHtml(this.supportEmail()),
+    });
+    const subject = `${appName} — Candidature partenaire acceptée`;
+
+    const storeLinks = await this.resolveMobileAppStoreLinks();
+    const downloadCtas = this.buildMobileAppDownloadCtas(storeLinks);
+
+    const blocks: OnboardingBlock[] = [
+      {
+        title: 'Candidature acceptée',
+        paragraphs: [copy.greetingLine, ...copy.bodyParagraphs],
+        ctas: downloadCtas.length ? downloadCtas : undefined,
+      },
+      {
+        title: 'Votre code de parrainage',
+        paragraphs: copy.referralParagraphs ?? [],
+      },
+      {
+        title: "Besoin d'aide ?",
+        paragraphs: copy.helpParagraphs,
+      },
+    ];
+
+    await this.sendBlocks({
+      to: email,
+      toName: displayName,
+      subject,
+      blocks,
+      logTag: `partner_application_approved email=${email}`,
+      heroKind: 'partner',
+    });
+  }
+
+  /** Candidature Collaborations refusée — motif admin dans le corps. */
+  async notifyPartnerApplicationRejected(args: {
+    email: string;
+    name: string;
+    rejectionReason: string;
+  }): Promise<void> {
+    const email = args.email.trim().toLowerCase();
+    if (!email) return;
+
+    const appName = this.appName();
+    const displayName = args.name.trim() || 'Candidat';
+    const reason = args.rejectionReason.trim() || 'Non précisé';
+    const copy = buildPartnerApplicationRejectedEmailCopy({
+      appName: this.emailTpl.escapeHtml(appName),
+      safeDisplayName: this.emailTpl.escapeHtml(displayName),
+      safeRejectionReason: this.emailTpl.escapeHtml(reason),
+      supportEmail: this.emailTpl.escapeHtml(this.supportEmail()),
+    });
+    const subject = `${appName} — Candidature partenaire refusée`;
+
+    const blocks: OnboardingBlock[] = [
+      {
+        title: 'Candidature refusée',
+        paragraphs: [copy.greetingLine, ...copy.bodyParagraphs],
+      },
+      {
+        title: "Besoin d'aide ?",
+        paragraphs: copy.helpParagraphs,
+      },
+    ];
+
+    await this.sendBlocks({
+      to: email,
+      toName: displayName,
+      subject,
+      blocks,
+      logTag: `partner_application_rejected email=${email}`,
+      heroKind: 'partner',
+    });
+  }
+
+  /**
+   * Fiche `partner_profiles` approuvée par l’admin — distinct de la candidature Collaborations.
+   * Inclut le code de parrainage (même contrat que l’approve candidature).
+   */
+  async notifyPartnerProfileApproved(args: {
+    email: string;
+    name: string;
+    referralCode: string;
+  }): Promise<void> {
+    const email = args.email.trim().toLowerCase();
+    if (!email) return;
+    const code = String(args.referralCode ?? '')
+      .trim()
+      .toUpperCase();
+    // Sans code : pas d’e-mail trompeur (l’appelant doit allouer avant).
+    if (!code) return;
+
+    const appName = this.appName();
+    const displayName = args.name.trim() || 'Partenaire';
+    const copy = buildPartnerProfileApprovedEmailCopy({
+      appName: this.emailTpl.escapeHtml(appName),
+      safeDisplayName: this.emailTpl.escapeHtml(displayName),
+      supportEmail: this.emailTpl.escapeHtml(this.supportEmail()),
+      safeReferralCode: this.emailTpl.escapeHtml(code),
+    });
+    const subject = `${appName} — Fiche partenaire approuvée`;
+
+    const storeLinks = await this.resolveMobileAppStoreLinks();
+    const downloadCtas = this.buildMobileAppDownloadCtas(storeLinks);
+
+    const blocks: OnboardingBlock[] = [
+      {
+        title: 'Fiche partenaire approuvée',
+        paragraphs: [copy.greetingLine, ...copy.bodyParagraphs],
+        ctas: downloadCtas.length ? downloadCtas : undefined,
+      },
+      {
+        title: 'Votre code de parrainage',
+        paragraphs: copy.referralParagraphs ?? [],
+      },
+      {
+        title: 'Prochaines étapes',
+        paragraphs: copy.nextStepsParagraphs ?? [],
+      },
+      {
+        title: "Besoin d'aide ?",
+        paragraphs: copy.helpParagraphs,
+      },
+    ];
+
+    await this.sendBlocks({
+      to: email,
+      toName: displayName,
+      subject,
+      blocks,
+      logTag: `partner_profile_approved email=${email} referral=${code}`,
+      heroKind: 'partner',
+    });
+  }
+
+  /** Admin a défini / remplacé le code parrainage Partner. */
+  async notifyPartnerReferralCodeChanged(args: {
+    email: string;
+    name: string;
+    referralCode: string;
+    previousReferralCode?: string | null;
+  }): Promise<void> {
+    const email = args.email.trim().toLowerCase();
+    if (!email) return;
+    const code = String(args.referralCode ?? '')
+      .trim()
+      .toUpperCase();
+    // Sans nouveau code : pas d’e-mail trompeur.
+    if (!code) return;
+    const previous = String(args.previousReferralCode ?? '')
+      .trim()
+      .toUpperCase();
+
+    const appName = this.appName();
+    const displayName = args.name.trim() || 'Partenaire';
+    const copy = buildPartnerReferralCodeChangedEmailCopy({
+      appName: this.emailTpl.escapeHtml(appName),
+      safeDisplayName: this.emailTpl.escapeHtml(displayName),
+      safeReferralCode: this.emailTpl.escapeHtml(code),
+      safePreviousReferralCode: previous
+        ? this.emailTpl.escapeHtml(previous)
+        : undefined,
+      supportEmail: this.emailTpl.escapeHtml(this.supportEmail()),
+    });
+
+    await this.sendBlocks({
+      to: email,
+      toName: displayName,
+      subject: copy.subject,
+      blocks: [
+        {
+          title: 'Code de parrainage',
+          paragraphs: [copy.greetingLine, ...copy.bodyParagraphs],
+        },
+        {
+          title: 'Votre code',
+          paragraphs: copy.referralParagraphs,
+        },
+        { title: "Besoin d'aide ?", paragraphs: copy.helpParagraphs },
+      ],
+      logTag: `partner_referral_code_changed email=${email} code=${code}`,
+      heroKind: 'partner',
+    });
+  }
+
+  /** Abonnement Partner — changement de formule (FREE / payant / essai démarré). */
+  async notifyPartnerSubscriptionChanged(args: {
+    email: string;
+    name: string;
+    planName: string;
+  }): Promise<void> {
+    const email = args.email.trim().toLowerCase();
+    if (!email) return;
+    const appName = this.appName();
+    const displayName = args.name.trim() || 'Partenaire';
+    const planName = args.planName.trim() || 'votre formule';
+    const copy = buildPartnerSubscriptionChangedEmailCopy({
+      appName: this.emailTpl.escapeHtml(appName),
+      safeDisplayName: this.emailTpl.escapeHtml(displayName),
+      safePlanName: this.emailTpl.escapeHtml(planName),
+      supportEmail: this.emailTpl.escapeHtml(this.supportEmail()),
+    });
+    await this.sendBlocks({
+      to: email,
+      toName: displayName,
+      subject: copy.subject,
+      blocks: [
+        {
+          title: 'Abonnement Partner mis à jour',
+          paragraphs: [copy.greetingLine, ...copy.bodyParagraphs],
+        },
+        { title: "Besoin d'aide ?", paragraphs: copy.helpParagraphs },
+      ],
+      logTag: `partner_subscription_changed email=${email}`,
+      heroKind: 'partner',
+    });
+  }
+
+  /** Abonnement Partner — expiration (essai ou période payante). */
+  async notifyPartnerSubscriptionExpired(args: {
+    email: string;
+    name: string;
+    planName: string;
+  }): Promise<void> {
+    const email = args.email.trim().toLowerCase();
+    if (!email) return;
+    const appName = this.appName();
+    const displayName = args.name.trim() || 'Partenaire';
+    const planName = args.planName.trim() || 'votre formule';
+    const copy = buildPartnerSubscriptionExpiredEmailCopy({
+      appName: this.emailTpl.escapeHtml(appName),
+      safeDisplayName: this.emailTpl.escapeHtml(displayName),
+      safePlanName: this.emailTpl.escapeHtml(planName),
+      supportEmail: this.emailTpl.escapeHtml(this.supportEmail()),
+    });
+    await this.sendBlocks({
+      to: email,
+      toName: displayName,
+      subject: copy.subject,
+      blocks: [
+        {
+          title: 'Abonnement Partner expiré',
+          paragraphs: [copy.greetingLine, ...copy.bodyParagraphs],
+        },
+        { title: "Besoin d'aide ?", paragraphs: copy.helpParagraphs },
+      ],
+      logTag: `partner_subscription_expired email=${email}`,
+      heroKind: 'partner',
+    });
+  }
+
+  /** Abonnement Partner — rappel fin d’essai (J-n). */
+  async notifyPartnerSubscriptionTrialReminder(args: {
+    email: string;
+    name: string;
+    planName: string;
+    daysRemaining: number;
+  }): Promise<void> {
+    const email = args.email.trim().toLowerCase();
+    if (!email) return;
+    const appName = this.appName();
+    const displayName = args.name.trim() || 'Partenaire';
+    const planName = args.planName.trim() || 'votre formule';
+    const days = Math.max(1, Math.floor(args.daysRemaining));
+    const copy = buildPartnerSubscriptionTrialReminderEmailCopy({
+      appName: this.emailTpl.escapeHtml(appName),
+      safeDisplayName: this.emailTpl.escapeHtml(displayName),
+      safePlanName: this.emailTpl.escapeHtml(planName),
+      daysRemaining: days,
+      supportEmail: this.emailTpl.escapeHtml(this.supportEmail()),
+    });
+    await this.sendBlocks({
+      to: email,
+      toName: displayName,
+      subject: copy.subject,
+      blocks: [
+        {
+          title: 'Rappel essai Partner',
+          paragraphs: [copy.greetingLine, ...copy.bodyParagraphs],
+        },
+        { title: "Besoin d'aide ?", paragraphs: copy.helpParagraphs },
+      ],
+      logTag: `partner_subscription_trial_reminder email=${email} days=${days}`,
+      heroKind: 'partner',
+    });
+  }
+
+  /** Fiche `partner_profiles` refusée — motif admin ; re-soumission possible. */
+  async notifyPartnerProfileRejected(args: {
+    email: string;
+    name: string;
+    rejectionReason: string;
+  }): Promise<void> {
+    const email = args.email.trim().toLowerCase();
+    if (!email) return;
+
+    const appName = this.appName();
+    const displayName = args.name.trim() || 'Partenaire';
+    const reason = args.rejectionReason.trim() || 'Non précisé';
+    const copy = buildPartnerProfileRejectedEmailCopy({
+      appName: this.emailTpl.escapeHtml(appName),
+      safeDisplayName: this.emailTpl.escapeHtml(displayName),
+      safeRejectionReason: this.emailTpl.escapeHtml(reason),
+      supportEmail: this.emailTpl.escapeHtml(this.supportEmail()),
+    });
+    const subject = `${appName} — Fiche partenaire refusée`;
+
+    const blocks: OnboardingBlock[] = [
+      {
+        title: 'Fiche partenaire refusée',
+        paragraphs: [copy.greetingLine, ...copy.bodyParagraphs],
+      },
+      {
+        title: "Besoin d'aide ?",
+        paragraphs: copy.helpParagraphs,
+      },
+    ];
+
+    await this.sendBlocks({
+      to: email,
+      toName: displayName,
+      subject,
+      blocks,
+      logTag: `partner_profile_rejected email=${email}`,
+      heroKind: 'partner',
+    });
+  }
+
   private async sendBlocks(args: {
     to: string;
     toName: string;
     subject: string;
     blocks: OnboardingBlock[];
     logTag: string;
-    heroKind: 'vendor' | 'delivery';
+    heroKind: 'vendor' | 'delivery' | 'partner';
   }): Promise<void> {
     const sessionId = `${args.heroKind}-${args.to}-${randomUUID()}`;
     const blocks = args.blocks.map((block) => {
@@ -200,7 +627,9 @@ export class PartnerOnboardingEmailService {
     const heroAlt =
       args.heroKind === 'vendor'
         ? `Bienvenue restaurant ${this.appName()}`
-        : `Bienvenue livreur ${this.appName()}`;
+        : args.heroKind === 'delivery'
+          ? `Bienvenue livreur ${this.appName()}`
+          : `Fiche partenaire ${this.appName()}`;
     try {
       await this.mailer.sendSimple({
         to: args.to,

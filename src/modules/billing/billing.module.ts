@@ -8,6 +8,7 @@ import { PlatformFeesModule } from '@modules/platform-fees/platform-fees.module'
 import { PlatformShippingSettingsModule } from '@modules/platform-shipping-settings/platform-shipping-settings.module';
 import { StoreModule } from '@modules/store/store.module';
 import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module';
+import { PartnerSubscriptionsModule } from '@modules/partner-subscriptions/partner-subscriptions.module';
 import { UsersModule } from '@modules/users/users.module';
 import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
 import { VendorNotificationModule } from '@modules/vendor-notifications/vendor-notification.module';
@@ -36,6 +37,10 @@ import { DeliveryTipService } from './delivery-tip.service';
 import { PaypalModule } from './paypal/paypal.module';
 import { AddressModel, AddressSchema } from '@schemas/address.schema';
 import { OrderModel, OrderSchema } from '@schemas/order.schema';
+import {
+  PartnerProfileModel,
+  PartnerProfileSchema,
+} from '@schemas/partner-profile.schema';
 import { StripeConnectService } from './stripe/stripe-connect.service';
 import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.service';
 import { StripeWebhookMetricsService } from './stripe/stripe-webhook-metrics.service';
@@ -66,6 +71,7 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
     MarketingOfferListingsModule,
     forwardRef(() => StoreModule),
     SubscriptionsModule,
+    forwardRef(() => PartnerSubscriptionsModule),
     forwardRef(() => OrdersModule),
     StripeConnectTransferModule,
     PlatformFeesModule,
@@ -90,6 +96,10 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
       { name: UserModel.name, schema: UserSchema },
       { name: OrderModel.name, schema: OrderSchema },
       { name: AddressModel.name, schema: AddressSchema },
+      {
+        name: PartnerProfileModel.name,
+        schema: PartnerProfileSchema,
+      },
     ]),
   ],
   exports: [

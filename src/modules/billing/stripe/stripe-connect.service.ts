@@ -8,9 +8,32 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
+import { computePayoutFeeSplit } from '@modules/platform-fees/platform-fees.service';
 import { PlatformFeesService } from '@modules/platform-fees/platform-fees.service';
+import { PartnerAffiliationEarningsService } from '@modules/partner-subscriptions/partner-affiliation-earnings.service';
+import { computePartnerPlanFeeAmount } from '@modules/partner-subscriptions/partner-plan-fee.util';
 import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
+
+/** Mappe une ligne plan Partner → settings payout fee plateforme. */
+function partnerPayoutFeeSettingsFromRow(row: {
+  mode?: string;
+  fixed?: number;
+  percent?: number;
+  fallbackMode?: string;
+  fallbackFixed?: number;
+  fallbackPercent?: number;
+}) {
+  const fee = computePartnerPlanFeeAmount(row as never, 100);
+  return {
+    payoutFeeMode: fee.feeMode as 'fixed' | 'percent',
+    payoutFeeFixed: fee.feeFixed,
+    payoutFeePercent: fee.feePercent,
+  };
+}
 import { AddressModel } from '@schemas/address.schema';
+import {
+  PartnerProfileModel,
+} from '@schemas/partner-profile.schema';
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
@@ -39,23 +62,39 @@ import {
 import {
   resolveStorePublicUrl,
 } from '@common/catalog-public-url.util';
+import {
+  isStripeConnectRecipientType,
+} from '@modules/billing/stripe/stripe-connect-recipient.util';
 import Stripe = require('stripe');
 
 type StripeClient = InstanceType<typeof Stripe>;
 
-/** Comptes vendeurs : entreprise (restaurant). */
+/** Comptes vendeurs / partenaires société : entreprise. */
 const VENDOR_CONNECT_BUSINESS_TYPE = 'company' as const;
-/** Comptes livreurs : particulier (indépendant). */
+/** Comptes livreurs / partenaires individu : particulier. */
 const DELIVERY_CONNECT_BUSINESS_TYPE = 'individual' as const;
 
 type ConnectBusinessType =
   | typeof VENDOR_CONNECT_BUSINESS_TYPE
   | typeof DELIVERY_CONNECT_BUSINESS_TYPE;
 
-function resolveConnectBusinessType(user: UserModel): ConnectBusinessType {
-  return user.type === UserTypeEnum.DELIVERY
-    ? DELIVERY_CONNECT_BUSINESS_TYPE
-    : VENDOR_CONNECT_BUSINESS_TYPE;
+/** Type Express Stripe selon rôle (+ fiche partenaire Individu/Société). */
+function resolveConnectBusinessType(
+  user: UserModel,
+  partnerAccountType?: string | null,
+): ConnectBusinessType {
+  if (user.type === UserTypeEnum.DELIVERY) {
+    return DELIVERY_CONNECT_BUSINESS_TYPE;
+  }
+  // Partner Individu → Express individual ; Société / défaut → company.
+  if (user.type === UserTypeEnum.PARTNER) {
+    const t = String(partnerAccountType ?? '')
+      .trim()
+      .toUpperCase();
+    if (t === 'INDIVIDUAL') return DELIVERY_CONNECT_BUSINESS_TYPE;
+    return VENDOR_CONNECT_BUSINESS_TYPE;
+  }
+  return VENDOR_CONNECT_BUSINESS_TYPE;
 }
 
 /** Pays Stripe Connect — plateforme opère au Canada (évite CM/SN + numéros hors CA). */
@@ -65,6 +104,17 @@ const STRIPE_CONNECT_ACCOUNT_COUNTRY = 'CA' as const;
 const DEFAULT_RESTAURANT_MCC = '5812';
 /** MCC « Courier Services » (livraison). */
 const DEFAULT_DELIVERY_MCC = '4215';
+/** MCC « Miscellaneous Business Services » (affiliation / partenaire). */
+const DEFAULT_PARTNER_MCC = '7399';
+
+/** Snapshot fiche partenaire pour prefill Connect. */
+type PartnerProfilePrefill = {
+  accountType?: string | null;
+  individualName?: string | null;
+  companyName?: string | null;
+  taxNumber?: string | null;
+  address?: string | null;
+};
 
 export type StripeConnectLifecycleStatus =
   | 'not_created'
@@ -420,19 +470,40 @@ function buildVendorPrefill(
   store: (StoreModel & { address?: AddressModel }) | null,
   businessWebsiteUrl?: string,
   userAddress?: AddressModel | null,
+  partnerProfile?: PartnerProfilePrefill | null,
 ): ConnectPrefill {
   const isDelivery = user.type === UserTypeEnum.DELIVERY;
-  const businessType = resolveConnectBusinessType(user);
+  const isPartner = user.type === UserTypeEnum.PARTNER;
+  const businessType = resolveConnectBusinessType(
+    user,
+    partnerProfile?.accountType,
+  );
+  const partnerDisplay =
+    String(partnerProfile?.companyName ?? '').trim() ||
+    String(partnerProfile?.individualName ?? '').trim();
   const businessName = isDelivery
     ? user.fullName?.trim() || 'Livreur Wise Eat'
-    : store?.name?.trim() || user.fullName?.trim() || 'Restaurant Wise Eat';
+    : isPartner
+      ? partnerDisplay || user.fullName?.trim() || 'Partenaire Wise Eat'
+      : store?.name?.trim() || user.fullName?.trim() || 'Restaurant Wise Eat';
   const accountEmail = user.email?.trim() || '';
   const phoneE164 =
     phoneToE164ForStripeConnect(user.phoneNumber) ||
     phoneToE164ForStripeConnect(store?.phoneNumber);
-  const { firstName, lastName } = splitFullName(user.fullName);
+  const { firstName, lastName } = splitFullName(
+    isPartner && partnerProfile?.individualName?.trim()
+      ? partnerProfile.individualName.trim()
+      : user.fullName,
+  );
+  // Adresse : boutique → fiche partenaire (texte) → adresse user.
+  const partnerAddressAsModel = partnerProfile?.address?.trim()
+    ? ({ address: partnerProfile.address.trim() } as AddressModel)
+    : null;
   const addressBlockRaw = buildAddressBlock(
-    (store?.address as AddressModel | undefined) ?? userAddress ?? undefined,
+    (store?.address as AddressModel | undefined) ??
+      partnerAddressAsModel ??
+      userAddress ??
+      undefined,
     undefined,
     STRIPE_CONNECT_ACCOUNT_COUNTRY,
     STRIPE_CONNECT_ACCOUNT_COUNTRY,
@@ -444,24 +515,33 @@ function buildVendorPrefill(
 
   const productDescription = isDelivery
     ? 'Livraison de repas pour la plateforme Wise Eat. Versements liés aux courses effectuées.'
-    : store?.bio?.trim()
-    ? `Restaurant et livraison de repas. ${store.bio.trim()} Les clients sont débités lors du passage de commande sur Wise Eat.`.slice(
-        0,
-        1000,
-      )
-    : 'Restaurant et livraison de repas sur Wise Eat. Les clients sont débités lors du passage de commande en ligne.';
+    : isPartner
+      ? 'Affiliation et partenariats Wise Eat. Versements liés aux collaborations partenaires.'
+      : store?.bio?.trim()
+        ? `Restaurant et livraison de repas. ${store.bio.trim()} Les clients sont débités lors du passage de commande sur Wise Eat.`.slice(
+            0,
+            1000,
+          )
+        : 'Restaurant et livraison de repas sur Wise Eat. Les clients sont débités lors du passage de commande en ligne.';
 
   const company: Record<string, unknown> = {
     name: businessName.slice(0, 100),
     ...(phoneE164 ? { phone: phoneE164 } : {}),
     ...(addressBlock ? { address: addressBlock } : {}),
+    ...(isPartner && partnerProfile?.taxNumber?.trim()
+      ? { tax_id: partnerProfile.taxNumber.trim().slice(0, 20) }
+      : {}),
   };
 
   const websiteUrl = normalizeStripeBusinessUrl(businessWebsiteUrl);
 
   const business_profile: Record<string, unknown> = {
     name: businessName.slice(0, 100),
-    mcc: isDelivery ? DEFAULT_DELIVERY_MCC : DEFAULT_RESTAURANT_MCC,
+    mcc: isDelivery
+      ? DEFAULT_DELIVERY_MCC
+      : isPartner
+        ? DEFAULT_PARTNER_MCC
+        : DEFAULT_RESTAURANT_MCC,
     product_description: productDescription,
     ...(websiteUrl ? { url: websiteUrl } : {}),
     ...(phoneE164 ? { support_phone: phoneE164 } : {}),
@@ -476,7 +556,9 @@ function buildVendorPrefill(
     ...(addressBlock ? { address: addressBlock } : {}),
   };
 
-  const individual: Record<string, unknown> | undefined = isDelivery
+  const useIndividual =
+    businessType === DELIVERY_CONNECT_BUSINESS_TYPE;
+  const individual: Record<string, unknown> | undefined = useIndividual
     ? {
         first_name: firstName,
         last_name: lastName,
@@ -613,10 +695,14 @@ export class StripeConnectService {
     private readonly userModel: Model<UserModel>,
     @InjectModel(StoreModel.name)
     private readonly storeModel: Model<StoreModel>,
+    @InjectModel(PartnerProfileModel.name)
+    private readonly partnerProfileModel: Model<PartnerProfileModel>,
     private readonly wsStripeConnectNotify: WsStripeConnectNotifyService,
     private readonly vendorStatusEmail: VendorStatusEmailService,
     @Inject(forwardRef(() => StoreLaunchNotifierService))
     private readonly storeLaunchNotifier: StoreLaunchNotifierService,
+    @Inject(forwardRef(() => PartnerAffiliationEarningsService))
+    private readonly partnerAffiliation: PartnerAffiliationEarningsService,
   ) {}
 
   private stripe(): StripeClient {
@@ -739,12 +825,9 @@ export class StripeConnectService {
     );
   }
 
-  /** Vendeur ou livreur approuvé (versements Stripe Connect sur le compte utilisateur). */
+  /** Vendeur, livreur ou partenaire (versements Stripe Connect user-scoped). */
   private assertConnectRecipient(user: UserModel) {
-    if (
-      user.type !== UserTypeEnum.VENDOR &&
-      user.type !== UserTypeEnum.DELIVERY
-    ) {
+    if (!isStripeConnectRecipientType(user.type)) {
       throw new ForbiddenException('connect_recipient_only');
     }
   }
@@ -889,6 +972,30 @@ export class StripeConnectService {
     grossCents: number,
     fallbackCurrency = 'cad',
   ) {
+    // Partner : barème payoutFeesByRegion du plan d’abonnement actif.
+    if (user.type === UserTypeEnum.PARTNER) {
+      const region =
+        (
+          await this.defaultAddressForUser(this.userId(user))
+        )?.countryCode?.trim()
+          .toUpperCase() || null;
+      const row = await this.partnerAffiliation.resolvePayoutFeeRowForPartner(
+        String(user._id),
+        region,
+      );
+      if (row) {
+        const fee = partnerPayoutFeeSettingsFromRow(row as never);
+        return computePayoutFeeSplit(
+          grossCents,
+          fee,
+          fallbackCurrency.toUpperCase(),
+        );
+      }
+      return this.platformFees.computePayoutFeeFromSettings(
+        grossCents,
+        fallbackCurrency.toUpperCase(),
+      );
+    }
     const store = await this.primaryStoreForVendor(this.userId(user));
     const storeId = store?._id ? String(store._id) : '';
     if (storeId) {
@@ -921,26 +1028,49 @@ export class StripeConnectService {
   private async resolveConnectPrefillContext(user: UserModel): Promise<{
     store: (StoreModel & { address?: AddressModel }) | null;
     userAddress: AddressModel | null;
+    partnerProfile: PartnerProfilePrefill | null;
   }> {
     const uid = this.userId(user);
     const store = await this.primaryStoreForVendor(uid);
     const userAddress =
-      user.type === UserTypeEnum.DELIVERY && !store
+      (user.type === UserTypeEnum.DELIVERY ||
+        user.type === UserTypeEnum.PARTNER) &&
+      !store
         ? await this.defaultAddressForUser(uid)
         : null;
-    return { store, userAddress };
+    let partnerProfile: PartnerProfilePrefill | null = null;
+    if (user.type === UserTypeEnum.PARTNER) {
+      const doc = await this.partnerProfileModel
+        .findOne({ user: uid })
+        .select('accountType individualName companyName taxNumber address')
+        .lean()
+        .exec();
+      if (doc) {
+        partnerProfile = {
+          accountType: (doc as { accountType?: string }).accountType ?? null,
+          individualName:
+            (doc as { individualName?: string }).individualName ?? null,
+          companyName: (doc as { companyName?: string }).companyName ?? null,
+          taxNumber: (doc as { taxNumber?: string }).taxNumber ?? null,
+          address: (doc as { address?: string }).address ?? null,
+        };
+      }
+    }
+    return { store, userAddress, partnerProfile };
   }
 
   private buildPrefillForUser(
     user: UserModel,
     store: (StoreModel & { address?: AddressModel }) | null,
     userAddress: AddressModel | null,
+    partnerProfile?: PartnerProfilePrefill | null,
   ): ConnectPrefill {
     return buildVendorPrefill(
       user,
       store,
       this.resolveConnectBusinessWebsiteUrl(user, store),
       userAddress,
+      partnerProfile,
     );
   }
 
@@ -1042,8 +1172,14 @@ export class StripeConnectService {
     user: UserModel,
     store: (StoreModel & { address?: AddressModel }) | null,
     userAddress: AddressModel | null,
+    partnerProfile?: PartnerProfilePrefill | null,
   ): Promise<void> {
-    const prefill = this.buildPrefillForUser(user, store, userAddress);
+    const prefill = this.buildPrefillForUser(
+      user,
+      store,
+      userAddress,
+      partnerProfile,
+    );
     const websiteUrl = prefill.business_profile.url as string | undefined;
     if (!websiteUrl) {
       this.logger.warn(
@@ -1069,6 +1205,7 @@ export class StripeConnectService {
     user: UserModel,
     store: (StoreModel & { address?: AddressModel }) | null,
     userAddress: AddressModel | null,
+    partnerProfile?: PartnerProfilePrefill | null,
   ): Promise<StripeConnectAccountRecord> {
     if (isConnectFullyActive(account)) {
       return account;
@@ -1080,6 +1217,7 @@ export class StripeConnectService {
         user,
         store,
         userAddress,
+        partnerProfile,
       );
       const refreshed = (await this.stripe().accounts.retrieve(
         accountId,
@@ -1394,12 +1532,16 @@ export class StripeConnectService {
   ): Promise<{ url: string; accountId: string }> {
     this.assertConnectRecipient(user);
     const uid = this.userId(user);
-    const { store, userAddress } = await this.resolveConnectPrefillContext(
-      user,
-    );
+    const { store, userAddress, partnerProfile } =
+      await this.resolveConnectPrefillContext(user);
     const stripe = this.stripe();
     const { returnUrl, refreshUrl } = this.connectReturnUrls();
-    const prefill = this.buildPrefillForUser(user, store, userAddress);
+    const prefill = this.buildPrefillForUser(
+      user,
+      store,
+      userAddress,
+      partnerProfile,
+    );
 
     let accountId = (
       await this.userModel
@@ -1483,6 +1625,7 @@ export class StripeConnectService {
         user,
         store,
         userAddress,
+        partnerProfile,
       );
     }
 
@@ -1508,6 +1651,7 @@ export class StripeConnectService {
         user,
         store,
         userAddress,
+        partnerProfile,
       );
       const link = await stripe.accountLinks.create({
         account: accountId,
@@ -1548,8 +1692,14 @@ export class StripeConnectService {
     user: UserModel,
     store: (StoreModel & { address?: AddressModel }) | null,
     userAddress: AddressModel | null,
+    partnerProfile?: PartnerProfilePrefill | null,
   ): Promise<void> {
-    const prefill = this.buildPrefillForUser(user, store, userAddress);
+    const prefill = this.buildPrefillForUser(
+      user,
+      store,
+      userAddress,
+      partnerProfile,
+    );
     try {
       await this.stripe().accounts.update(
         accountId,
@@ -1576,9 +1726,8 @@ export class StripeConnectService {
       throw new BadRequestException('stripe_connect_not_linked');
     }
 
-    const { store, userAddress } = await this.resolveConnectPrefillContext(
-      user,
-    );
+    const { store, userAddress, partnerProfile } =
+      await this.resolveConnectPrefillContext(user);
     const stripe = this.stripe();
     const { returnUrl, refreshUrl } = this.connectReturnUrls();
 
@@ -1596,7 +1745,13 @@ export class StripeConnectService {
     }
 
     try {
-      await this.syncBusinessProfileOnly(accountId, user, store, userAddress);
+      await this.syncBusinessProfileOnly(
+        accountId,
+        user,
+        store,
+        userAddress,
+        partnerProfile,
+      );
       account = (await stripe.accounts.retrieve(
         accountId,
       )) as StripeConnectAccountRecord;

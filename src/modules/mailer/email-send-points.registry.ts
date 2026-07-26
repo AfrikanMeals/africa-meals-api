@@ -107,7 +107,7 @@ export const EMAIL_SEND_POINTS: readonly EmailSendPoint[] = [
   {
     id: 'partner-onboarding',
     service: 'partner-onboarding-email.service.ts',
-    description: 'Onboarding vendeur / livreur (hero + sections)',
+    description: 'Onboarding vendeur / livreur / fiche partenaire / décision Collaborations (hero + sections)',
     transport: 'sendSimple',
     imageRisk: 'hero',
     mitigation: 'Hero + sections → pool statique africa-meals-web (EmailAiHeroImageService)',

@@ -2,6 +2,7 @@ import { SharedModule } from '@modules/shared/shared.module';
 import { StoreAccessModule } from '@modules/teams/store-access.module';
 import { UserNotificationPreferencesModule } from '@modules/user-notification-preferences/user-notification-preferences.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
+import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -26,6 +27,7 @@ import { NotificationsService } from './notifications.service';
  * Pas d’import de VendorNotificationModule ici : il importe déjà NotificationsModule
  * → cycle Nest (`VendorNotificationModule imports[2] undefined`).
  * Prefs chat.push lues via le modèle Mongo enregistré ci-dessous.
+ * WsNotifyModule : push `inbox:feed:refresh` après create / markRead (Partner badge).
  */
 @Module({
   imports: [
@@ -33,6 +35,7 @@ import { NotificationsService } from './notifications.service';
     StoreAccessModule,
     UserNotificationPreferencesModule,
     MailerModule,
+    WsNotifyModule,
     MongooseModule.forFeature([
       { name: UserModel.name, schema: UserSchema },
       { name: AppNotificationModel.name, schema: AppNotificationSchema },

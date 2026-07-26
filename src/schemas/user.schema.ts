@@ -16,6 +16,8 @@ export enum UserTypeEnum {
   VENDOR = 'VENDOR',
   /** Livreur (inscription « Livreur ») */
   DELIVERY = 'DELIVERY',
+  /** Partenaire plateforme (inscription « Partenaire » / partner.*) */
+  PARTNER = 'PARTNER',
   ADMIN = 'ADMIN',
 }
 
@@ -299,6 +301,27 @@ export class UserModel extends BaseSchema {
     default: [],
   })
   stripeConnectRequirementsPastDue?: string[];
+
+  /**
+   * Affiliation : Partner qui a référé ce compte (client / vendeur / livreur).
+   * Renseigné via code referral ou attach.
+   */
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'UserModel',
+    required: false,
+    name: 'referred_by_partner_user_id',
+    index: true,
+  })
+  referredByPartnerUserId?: Types.ObjectId;
+
+  @Prop({
+    required: false,
+    name: 'referred_by_partner_code',
+    trim: true,
+    uppercase: true,
+  })
+  referredByPartnerCode?: string;
 
   /** Badge partenaire livreur (Silver / Gold / Diamond) — délai de versement Stripe. */
   @Prop({

@@ -45,6 +45,13 @@ function isAppCheckExempt(method: string, path: string): boolean {
     return true;
   }
   if (method === 'GET' && path.startsWith('/medias/public/')) return true;
+  // Lookup code Affiliation depuis la landing web (pas de jeton App Check).
+  if (
+    method === 'GET' &&
+    path.startsWith('/partner/subscriptions/referral/lookup')
+  ) {
+    return true;
+  }
   if (path === '/auth/refresh') return true;
   return false;
 }

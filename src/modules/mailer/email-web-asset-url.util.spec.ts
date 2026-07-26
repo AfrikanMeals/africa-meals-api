@@ -1,11 +1,39 @@
 import {
+  canonicalizeEmailWebsiteUrl,
   mapEmailObjectPathToWebUrl,
   resolveEmailWebAssetUrl,
+  resolveEmailWebSiteBase,
 } from './email-web-asset-url.util';
 
 const BASE = 'https://wise-eat.com';
 
 describe('email-web-asset-url.util', () => {
+  it('canonicalizeEmailWebsiteUrl : web.wise-eat.com → wise-eat.com', () => {
+    expect(canonicalizeEmailWebsiteUrl('https://web.wise-eat.com')).toBe(
+      'https://wise-eat.com',
+    );
+    expect(
+      canonicalizeEmailWebsiteUrl('https://web.wise-eat.com/images/help/a.png'),
+    ).toBe('https://wise-eat.com/images/help/a.png');
+  });
+
+  it('resolveEmailWebSiteBase ignore l’alias web.wise-eat.com', () => {
+    const config = {
+      get: (key: string) =>
+        key === 'EMAIL_WEBSITE_URL' ? 'https://web.wise-eat.com/' : undefined,
+    };
+    expect(resolveEmailWebSiteBase(config)).toBe('https://wise-eat.com');
+  });
+
+  it('resolveEmailWebAssetUrl réécrit un src déjà en web.wise-eat.com', () => {
+    expect(
+      resolveEmailWebAssetUrl(
+        'https://web.wise-eat.com/images/email-heroes/vendor-onboarding-01.png',
+        'https://web.wise-eat.com',
+      ),
+    ).toBe('https://wise-eat.com/images/email-heroes/vendor-onboarding-01.png');
+  });
+
   it('maps platform-theme logo to /logo.png', () => {
     expect(
       mapEmailObjectPathToWebUrl('platform-theme/logo.png', BASE),

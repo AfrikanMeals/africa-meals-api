@@ -44,6 +44,7 @@ import { StoreRatingModel } from '@schemas/store_rating.schema';
 import { StripeProcessedCheckoutModel } from '@schemas/stripe-processed-checkout.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { VendorFeedbackModel } from '@schemas/vendor-feedback.schema';
+import { canSubmitVendorOrPartnerFeedback } from './vendor-or-partner-feedback-access.util';
 import {
   VendorFeatureRequestCategoryEnum,
   VendorFeatureRequestModel,
@@ -1801,7 +1802,8 @@ export class DashboardService {
     comment: string | null;
     createdAt: string;
   }> {
-    if (user.type !== UserTypeEnum.VENDOR) {
+    // Fix: PARTNER a App Reviews (web/mobile) — ne plus limiter au seul VENDOR.
+    if (!canSubmitVendorOrPartnerFeedback(user.type)) {
       throw new ForbiddenException('vendor_feedback_vendor_only');
     }
 

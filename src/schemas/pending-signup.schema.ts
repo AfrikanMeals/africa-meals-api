@@ -23,6 +23,10 @@ export class PendingSignupModel {
   @Prop({ required: true, enum: UserTypeEnum })
   userType: UserTypeEnum;
 
+  /** Code Affiliation à attacher après `register/complete` (optionnel). */
+  @Prop({ required: false, trim: true, uppercase: true })
+  referralCode?: string;
+
   @Prop({ required: true, trim: true })
   verificationCode: string;
 

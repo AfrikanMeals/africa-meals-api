@@ -651,6 +651,13 @@ export const DB_CLEARABLE_TABLES: readonly DbClearableTableDef[] = [
     category: 'marketing',
   },
   {
+    key: 'partner_applications',
+    collection: 'partner_applications',
+    labelFr: 'Candidatures partenaires',
+    labelEn: 'Partner applications',
+    category: 'platform',
+  },
+  {
     key: 'partner_badges',
     collection: 'partner_badges',
     labelFr: 'Badges partenaires',

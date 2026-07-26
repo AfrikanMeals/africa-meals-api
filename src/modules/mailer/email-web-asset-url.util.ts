@@ -43,8 +43,34 @@ function normalizeWebBase(raw: string): string {
   return raw.trim().replace(/\/+$/, '');
 }
 
+/**
+ * Hosts historiques du site vitrine (ex. web.wise-eat.com → 502) → canonique.
+ * Fix: e-mails onboarding affichaient des images cassées car EMAIL_WEBSITE_URL
+ * pointait vers un sous-domaine hors service alors que les assets sont sur wise-eat.com.
+ */
+const EMAIL_WEBSITE_HOST_ALIASES: Record<string, string> = {
+  'web.wise-eat.com': 'wise-eat.com',
+  'www.wise-eat.com': 'wise-eat.com',
+};
+
+/** Normalise la base vitrine (alias host + trailing slash). */
+export function canonicalizeEmailWebsiteUrl(raw: string): string {
+  const normalized = normalizeWebBase(raw);
+  try {
+    const u = new URL(normalized);
+    const mapped = EMAIL_WEBSITE_HOST_ALIASES[u.hostname.toLowerCase()];
+    if (mapped) {
+      u.hostname = mapped;
+      return normalizeWebBase(u.toString());
+    }
+  } catch {
+    // URL non parseable : on garde le trim tel quel.
+  }
+  return normalized;
+}
+
 export function emailWebFallbackUrl(websiteBase: string): string {
-  return `${normalizeWebBase(websiteBase)}${EMAIL_WEB_FALLBACK_PATH}`;
+  return `${canonicalizeEmailWebsiteUrl(websiteBase)}${EMAIL_WEB_FALLBACK_PATH}`;
 }
 
 /**
@@ -62,10 +88,11 @@ export function resolveEmailWebSiteBase(
   ];
   for (const key of keys) {
     const v = get(key)?.trim();
-    if (v) return normalizeWebBase(v);
+    // Canoniser tout de suite pour que hero / sections pointent vers wise-eat.com.
+    if (v) return canonicalizeEmailWebsiteUrl(v);
   }
   const brand = resolveEmailBrand(config);
-  if (brand.websiteUrl) return normalizeWebBase(brand.websiteUrl);
+  if (brand.websiteUrl) return canonicalizeEmailWebsiteUrl(brand.websiteUrl);
   return 'https://wise-eat.com';
 }
 
@@ -82,7 +109,8 @@ export function mapEmailObjectPathToWebUrl(
   websiteBase: string,
 ): string {
   const norm = objectPath.replace(/^\/+/, '').trim();
-  const base = normalizeWebBase(websiteBase);
+  // Même canonisation que resolveEmailWebSiteBase (assets toujours sur le host live).
+  const base = canonicalizeEmailWebsiteUrl(websiteBase);
 
   if (!norm) {
     return emailWebFallbackUrl(base);
@@ -224,14 +252,17 @@ export function resolveEmailWebAssetUrl(
   websiteBase: string,
 ): string | undefined {
   if (!url?.trim()) return undefined;
-  const raw = url.trim();
-  const base = normalizeWebBase(websiteBase);
+  // 1. Base canonique (évite web.wise-eat.com dans les src img).
+  const base = canonicalizeEmailWebsiteUrl(websiteBase);
+  // 2. Réécrire aussi l’URL source si elle pointe encore vers un alias mort.
+  const raw = canonicalizeEmailWebsiteUrl(url.trim());
 
   if (
     raw.startsWith(`${base}/images/`) ||
     raw === `${base}/logo.png` ||
     raw.includes('/images/email-heroes/') ||
     raw.includes('/images/help/') ||
+    raw.includes('/images/onboarding-sections/') ||
     raw.includes('/images/email/')
   ) {
     return raw;
