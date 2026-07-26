@@ -9,6 +9,7 @@ import { BillingModule } from '@modules/billing/billing.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { PartnerApplicationsModule } from '@modules/partner-applications/partner-applications.module';
 import { PartnerSubscriptionsModule } from '@modules/partner-subscriptions/partner-subscriptions.module';
+import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
 import { PartnerProfilesController } from './partner-profiles.controller';
 import { PartnerProfilesAdminController } from './partner-profiles-admin.controller';
@@ -36,6 +37,8 @@ import { PartnerDashboardService } from './partner-dashboard.service';
     BillingModule,
     // Ledger commissions affiliation (GET partner/payments/earnings).
     PartnerSubscriptionsModule,
+    // Devise région Partner (dashboard / earnings displayCurrency).
+    SupportedCountriesModule,
     // Allocation / lecture codes referral (partner_applications).
     PartnerApplicationsModule,
   ],

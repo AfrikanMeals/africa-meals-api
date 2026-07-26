@@ -1,6 +1,8 @@
 import {
   computePartnerEarningListTotals,
+  computePartnerEarningTotalsByCurrency,
   mapPartnerEarningToListItem,
+  normalizePartnerDisplayCurrency,
   normalizePartnerEarningAmount,
   partnerEarningDateIso,
 } from './partner-earning-list.util';
@@ -75,5 +77,46 @@ describe('partner-earning-list.util', () => {
   it('partnerEarningDateIso — invalide → null', () => {
     expect(partnerEarningDateIso('not-a-date')).toBeNull();
     expect(partnerEarningDateIso(null)).toBeNull();
+  });
+
+  it('computePartnerEarningTotalsByCurrency — buckets CAD / XAF', () => {
+    const rows = computePartnerEarningTotalsByCurrency([
+      {
+        id: '1',
+        axis: 'customer_order',
+        sourceType: 'order',
+        sourceId: 'a',
+        regionCode: 'CA',
+        baseAmount: 50,
+        commissionAmount: 5,
+        currency: 'CAD',
+        status: 'PENDING',
+        stripeTransferId: '',
+        failureReason: '',
+        createdAt: null,
+      },
+      {
+        id: '2',
+        axis: 'vendor_sales',
+        sourceType: 'order',
+        sourceId: 'b',
+        regionCode: 'CM',
+        baseAmount: 1000,
+        commissionAmount: 100,
+        currency: 'XAF',
+        status: 'TRANSFERRED',
+        stripeTransferId: 'tr_x',
+        failureReason: '',
+        createdAt: null,
+      },
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.currency === 'CAD')?.pendingAmount).toBe(5);
+    expect(rows.find((r) => r.currency === 'XAF')?.transferredAmount).toBe(100);
+  });
+
+  it('normalizePartnerDisplayCurrency', () => {
+    expect(normalizePartnerDisplayCurrency('xaf')).toBe('XAF');
+    expect(normalizePartnerDisplayCurrency('')).toBe('CAD');
   });
 });

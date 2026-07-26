@@ -6,6 +6,11 @@
 import type {
   PartnerEarningListItemDto,
   PartnerEarningListTotalsDto,
+  PartnerEarningTotalsByCurrencyDto,
+} from './partner-earning-list.util';
+import {
+  computePartnerEarningTotalsByCurrency,
+  normalizePartnerDisplayCurrency,
 } from './partner-earning-list.util';
 import type {
   PartnerReferrerRowDto,
@@ -51,10 +56,15 @@ export type PartnerDashboardReferrersCountsDto = {
 };
 
 export type PartnerDashboardEarningsSummaryDto = PartnerEarningListTotalsDto & {
+  /** Devise d’affichage Partner (région d’exercice), pas celle du 1er earning. */
   currency: string;
+  /** Totaux natifs par devise ledger — à convertir côté client vers `currency`. */
+  totalsByCurrency: PartnerEarningTotalsByCurrencyDto[];
 };
 
 export type PartnerDashboardSummaryDto = {
+  /** Région tarifaire résolue (appCountry → candidature). */
+  pricingRegion: string | null;
   subscription: PartnerDashboardSubscriptionDto | null;
   connect: PartnerDashboardConnectDto;
   referrers: PartnerDashboardReferrersCountsDto;
@@ -92,14 +102,27 @@ function parseAt(iso: string | null | undefined): number {
   return Number.isFinite(t) ? t : 0;
 }
 
-/** Devise dominante = premier gain ledger, sinon CAD. */
-export function partnerDashboardDominantCurrency(
-  items: PartnerEarningListItemDto[],
-): string {
-  const c = String(items[0]?.currency ?? '')
+/**
+ * Devise d’affichage KPI : région Partner d’abord, sinon 1er earning, sinon CAD.
+ * Fix: Partner CM ne doit plus voir CAD par défaut via le 1er ledger CA.
+ */
+export function partnerDashboardDisplayCurrency(args: {
+  displayCurrency?: string | null;
+  items: PartnerEarningListItemDto[];
+}): string {
+  const fromRegion = normalizePartnerDisplayCurrency(args.displayCurrency);
+  if (args.displayCurrency && fromRegion) return fromRegion;
+  const c = String(args.items[0]?.currency ?? '')
     .trim()
     .toUpperCase();
   return c || DEFAULT_CURRENCY;
+}
+
+/** @deprecated utiliser partnerDashboardDisplayCurrency */
+export function partnerDashboardDominantCurrency(
+  items: PartnerEarningListItemDto[],
+): string {
+  return partnerDashboardDisplayCurrency({ items });
 }
 
 /** Compteurs filleuls depuis le bundle referrers. */
@@ -282,20 +305,33 @@ export function buildPartnerDashboardSummary(args: {
     onboardingComplete?: boolean;
   };
   inbox: PartnerDashboardInboxLean[];
+  /** Devise région Partner (SupportedCountries). */
+  displayCurrency?: string | null;
+  pricingRegion?: string | null;
 }): PartnerDashboardSummaryDto {
   const recentEarnings = args.earningsItems.slice(0, RECENT_EARNINGS_LIMIT);
   const recentReferrers = partnerDashboardRecentReferrers(
     args.referrersBundle,
     RECENT_REFERRERS_LIMIT,
   );
-  const currency = partnerDashboardDominantCurrency(args.earningsItems);
+  const currency = partnerDashboardDisplayCurrency({
+    displayCurrency: args.displayCurrency,
+    items: args.earningsItems,
+  });
+  const pricingRegion = args.pricingRegion
+    ? String(args.pricingRegion).trim().toUpperCase() || null
+    : null;
   return {
+    pricingRegion,
     subscription: mapPartnerDashboardSubscription(args.subscriptionActive),
     connect: mapPartnerDashboardConnect(args.connectStatus),
     referrers: partnerDashboardReferrerCounts(args.referrersBundle),
     earnings: {
       ...args.earningsTotals,
       currency,
+      totalsByCurrency: computePartnerEarningTotalsByCurrency(
+        args.earningsItems,
+      ),
     },
     recentEarnings,
     recentReferrers,

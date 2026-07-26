@@ -25,6 +25,7 @@ import {
 } from './partner-plan-fee.util';
 import {
   computePartnerEarningListTotals,
+  computePartnerEarningTotalsByCurrency,
   mapPartnerEarningToListItem,
   type PartnerEarningListLean,
 } from './partner-earning-list.util';
@@ -466,6 +467,8 @@ export class PartnerAffiliationEarningsService {
     return {
       items,
       totals: computePartnerEarningListTotals(items),
+      // Breakdown multi-devise pour conversion affichage Partner (client Fawaz).
+      totalsByCurrency: computePartnerEarningTotalsByCurrency(items),
     };
   }
 

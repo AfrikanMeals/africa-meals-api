@@ -3,7 +3,7 @@ import {
   buildPartnerDashboardSummary,
   isPartnerDashboardInboxType,
   mapPartnerDashboardConnect,
-  partnerDashboardDominantCurrency,
+  partnerDashboardDisplayCurrency,
   partnerDashboardReferrerCounts,
   partnerDashboardRecentReferrers,
 } from './partner-dashboard-summary.util';
@@ -70,25 +70,28 @@ describe('partner-dashboard-summary.util', () => {
     expect(recent[0].id).toBe('v1');
   });
 
-  it('dominant currency from first earning', () => {
-    expect(partnerDashboardDominantCurrency([])).toBe('CAD');
+  it('display currency — région Partner prioritaire', () => {
+    expect(partnerDashboardDisplayCurrency({ items: [] })).toBe('CAD');
     expect(
-      partnerDashboardDominantCurrency([
-        {
-          id: 'e1',
-          axis: 'vendor_sales',
-          sourceType: 'order',
-          sourceId: 'o1',
-          regionCode: 'CM',
-          baseAmount: 1,
-          commissionAmount: 1,
-          currency: 'xaf',
-          status: 'PENDING',
-          stripeTransferId: '',
-          failureReason: '',
-          createdAt: '2026-07-01T00:00:00.000Z',
-        },
-      ]),
+      partnerDashboardDisplayCurrency({
+        displayCurrency: 'XAF',
+        items: [
+          {
+            id: 'e1',
+            axis: 'vendor_sales',
+            sourceType: 'order',
+            sourceId: 'o1',
+            regionCode: 'CA',
+            baseAmount: 1,
+            commissionAmount: 1,
+            currency: 'CAD',
+            status: 'PENDING',
+            stripeTransferId: '',
+            failureReason: '',
+            createdAt: '2026-07-01T00:00:00.000Z',
+          },
+        ],
+      }),
     ).toBe('XAF');
   });
 
@@ -204,9 +207,14 @@ describe('partner-dashboard-summary.util', () => {
         chargesEnabled: true,
       },
       inbox: [],
+      displayCurrency: 'XAF',
+      pricingRegion: 'CM',
     });
     expect(summary.referrers.total).toBe(2);
     expect(summary.earnings.pendingAmount).toBe(8);
+    expect(summary.earnings.currency).toBe('XAF');
+    expect(summary.pricingRegion).toBe('CM');
+    expect(summary.earnings.totalsByCurrency[0]?.currency).toBe('CAD');
     expect(summary.subscription?.planName).toBe('Pro');
     expect(summary.connect.ready).toBe(true);
     expect(summary.recentEarnings).toHaveLength(1);

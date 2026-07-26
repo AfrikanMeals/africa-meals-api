@@ -109,3 +109,50 @@ export function computePartnerEarningListTotals(
     count: items.length,
   };
 }
+
+export type PartnerEarningTotalsByCurrencyDto = PartnerEarningListTotalsDto & {
+  currency: string;
+};
+
+/**
+ * Breakdown totaux par devise native (ledger multi-région).
+ * Les clients convertissent vers `displayCurrency` Partner (Fawaz).
+ */
+export function computePartnerEarningTotalsByCurrency(
+  items: PartnerEarningListItemDto[],
+): PartnerEarningTotalsByCurrencyDto[] {
+  const map = new Map<string, PartnerEarningTotalsByCurrencyDto>();
+  for (const row of items) {
+    const currency =
+      String(row.currency ?? 'CAD')
+        .trim()
+        .toUpperCase() || 'CAD';
+    let bucket = map.get(currency);
+    if (!bucket) {
+      bucket = {
+        currency,
+        commissionAmount: 0,
+        transferredAmount: 0,
+        pendingAmount: 0,
+        count: 0,
+      };
+      map.set(currency, bucket);
+    }
+    const amt = normalizePartnerEarningAmount(row.commissionAmount);
+    bucket.commissionAmount += amt;
+    bucket.count += 1;
+    if (row.status === 'TRANSFERRED') bucket.transferredAmount += amt;
+    else if (row.status === 'PENDING') bucket.pendingAmount += amt;
+  }
+  return [...map.values()].sort((a, b) => a.currency.localeCompare(b.currency));
+}
+
+/** Normalise devise d’affichage Partner (ISO 4217 ou CAD). */
+export function normalizePartnerDisplayCurrency(
+  raw: string | null | undefined,
+): string {
+  const c = String(raw ?? '')
+    .trim()
+    .toUpperCase();
+  return /^[A-Z]{3}$/.test(c) ? c : 'CAD';
+}

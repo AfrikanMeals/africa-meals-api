@@ -10,7 +10,9 @@ import {
   isPartnerDashboardInboxType,
   type PartnerDashboardSummaryDto,
 } from '@modules/partner-subscriptions/partner-dashboard-summary.util';
+import { PartnerSubscriptionPlansService } from '@modules/partner-subscriptions/partner-subscription-plans.service';
 import { PartnerSubscriptionsService } from '@modules/partner-subscriptions/partner-subscriptions.service';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { PartnerPaymentsService } from './partner-payments.service';
 
@@ -26,6 +28,8 @@ export class PartnerDashboardService {
     private readonly subscriptions: PartnerSubscriptionsService,
     private readonly payments: PartnerPaymentsService,
     private readonly notifications: NotificationsService,
+    private readonly plans: PartnerSubscriptionPlansService,
+    private readonly supportedCountries: SupportedCountriesService,
   ) {}
 
   private assertPartner(user: UserModel) {
@@ -89,6 +93,12 @@ export class PartnerDashboardService {
       );
     }
 
+    // Devise d’affichage = région d’exercice Partner (pas 1er earning / CAD).
+    const pricingRegion = await this.plans.resolvePricingRegionForUser(user);
+    const displayCurrency = pricingRegion
+      ? await this.supportedCountries.getCountryCurrency(pricingRegion)
+      : 'CAD';
+
     return buildPartnerDashboardSummary({
       earningsItems: earnings.items,
       earningsTotals: earnings.totals,
@@ -96,6 +106,8 @@ export class PartnerDashboardService {
       subscriptionActive: mine.active,
       connectStatus: connect,
       inbox,
+      displayCurrency,
+      pricingRegion,
     });
   }
 }
