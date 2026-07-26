@@ -47,6 +47,7 @@ import {
 } from './dto/auth.dto';
 import { LoginNotificationService } from './login-notification/login-notification.service';
 import { mapSignupRoleToUserType } from './signup-role-to-user-type.util';
+import { resolveOauthNewUserType } from './oauth-signup-options.util';
 import {
   type LoginAuthMethod,
   type LoginRequestContext,
@@ -697,6 +698,12 @@ export class AuthService {
         ? pictureRaw.trim()
         : undefined;
 
+    // Type création : signupRole landing (client / restaurant / …) si fourni.
+    const createType = resolveOauthNewUserType(
+      defaultTypeForNewUser,
+      args.signupRole,
+    );
+
     let user = await this._usersModel.findOne({ googleId }).exec();
     if (user) {
       // Photo absente : MAJ hors chemin critique (ne bloque pas les tokens).
@@ -708,6 +715,7 @@ export class AuthService {
           )
           .exec();
       }
+      await this._tryAttachSignupReferral(user, args.referralCode);
       return await this.finishAuthenticatedLogin(user, ctx, 'google');
     }
     user = await this._usersModel.findOne({ email: emailRaw }).exec();
@@ -723,17 +731,19 @@ export class AuthService {
         .updateOne({ _id: user._id }, { $set: setDoc })
         .exec();
       Object.assign(user, setDoc);
+      await this._tryAttachSignupReferral(user, args.referralCode);
       return await this.finishAuthenticatedLogin(user, ctx, 'google');
     }
     const newUser = await this._usersModel.create({
       email: emailRaw,
       fullName,
       googleId,
-      type: defaultTypeForNewUser,
+      type: createType,
       password: AuthService.OAUTH_PASSWORD_PLACEHOLDER,
       emailVerifiedAt: new Date(),
       ...(pictureFromGoogle ? { profileImage: pictureFromGoogle } : {}),
     });
+    await this._tryAttachSignupReferral(newUser, args.referralCode);
     this.queueVendorOnboardingWelcome(newUser);
     return {
       ...(await this.deliverAuthTokens(newUser, ctx, 'google')),
@@ -782,6 +792,11 @@ export class AuthService {
         ? pictureRaw.trim()
         : undefined;
 
+    const createType = resolveOauthNewUserType(
+      defaultTypeForNewUser,
+      args.signupRole,
+    );
+
     let user = await this._usersModel.findOne({ appleId }).exec();
     if (user) {
       if (pictureFromApple && !user.profileImage) {
@@ -792,6 +807,7 @@ export class AuthService {
           )
           .exec();
       }
+      await this._tryAttachSignupReferral(user, args.referralCode);
       return await this.finishAuthenticatedLogin(user, ctx, 'apple');
     }
 
@@ -809,6 +825,7 @@ export class AuthService {
           .updateOne({ _id: user._id }, { $set: setDoc })
           .exec();
         Object.assign(user, setDoc);
+        await this._tryAttachSignupReferral(user, args.referralCode);
         return await this.finishAuthenticatedLogin(user, ctx, 'apple');
       }
     }
@@ -821,11 +838,12 @@ export class AuthService {
       email: emailRaw,
       fullName,
       appleId,
-      type: defaultTypeForNewUser,
+      type: createType,
       password: AuthService.OAUTH_PASSWORD_PLACEHOLDER,
       emailVerifiedAt: new Date(),
       ...(pictureFromApple ? { profileImage: pictureFromApple } : {}),
     });
+    await this._tryAttachSignupReferral(newUser, args.referralCode);
     this.queueVendorOnboardingWelcome(newUser);
     return {
       ...(await this.deliverAuthTokens(newUser, ctx, 'apple')),
@@ -878,6 +896,11 @@ export class AuthService {
         ? pictureRaw.trim()
         : undefined;
 
+    const createType = resolveOauthNewUserType(
+      defaultTypeForNewUser,
+      args.signupRole,
+    );
+
     let user = await this._usersModel.findOne({ facebookId }).exec();
     if (user) {
       if (pictureFromFacebook && !user.profileImage) {
@@ -888,6 +911,7 @@ export class AuthService {
           )
           .exec();
       }
+      await this._tryAttachSignupReferral(user, args.referralCode);
       return await this.finishAuthenticatedLogin(user, ctx, 'facebook');
     }
 
@@ -904,6 +928,7 @@ export class AuthService {
         .updateOne({ _id: user._id }, { $set: setDoc })
         .exec();
       Object.assign(user, setDoc);
+      await this._tryAttachSignupReferral(user, args.referralCode);
       return await this.finishAuthenticatedLogin(user, ctx, 'facebook');
     }
 
@@ -911,11 +936,12 @@ export class AuthService {
       email: emailRaw,
       fullName,
       facebookId,
-      type: defaultTypeForNewUser,
+      type: createType,
       password: AuthService.OAUTH_PASSWORD_PLACEHOLDER,
       emailVerifiedAt: new Date(),
       ...(pictureFromFacebook ? { profileImage: pictureFromFacebook } : {}),
     });
+    await this._tryAttachSignupReferral(newUser, args.referralCode);
     this.queueVendorOnboardingWelcome(newUser);
     return {
       ...(await this.deliverAuthTokens(newUser, ctx, 'facebook')),

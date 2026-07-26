@@ -309,8 +309,30 @@ export class ProfileImageJsonDto {
   filename?: string;
 }
 
+/**
+ * Champs optionnels inscription OAuth (landing `/partner`, mobile).
+ * Appliqués seulement à la **création** (type) + attach referral (création ou login).
+ */
+class OauthSignupOptionsDto {
+  @ApiPropertyOptional({
+    enum: ['restaurant', 'livreur', 'partenaire', 'client'],
+  })
+  @IsOptional()
+  @IsIn(['restaurant', 'livreur', 'partenaire', 'client'])
+  signupRole?: 'restaurant' | 'livreur' | 'partenaire' | 'client';
+
+  @ApiPropertyOptional({ example: 'QQ4VJZ' })
+  @IsOptional()
+  @IsString()
+  @Trim()
+  @Matches(/^[A-Za-z0-9]{6}$/, {
+    message: 'referralCode must be 6 alphanumeric characters',
+  })
+  referralCode?: string;
+}
+
 /** Jeton Firebase ID (utilisateur connecté via Google dans Firebase Auth), vérifié côté serveur. */
-export class GoogleAuthDto {
+export class GoogleAuthDto extends OauthSignupOptionsDto {
   @ApiProperty({
     description:
       'ID token JWT émis par Firebase après connexion Google (Firebase Auth).',
@@ -323,7 +345,7 @@ export class GoogleAuthDto {
 }
 
 /** Jeton Firebase ID (utilisateur connecté via Apple dans Firebase Auth), vérifié côté serveur. */
-export class AppleAuthDto {
+export class AppleAuthDto extends OauthSignupOptionsDto {
   @ApiProperty({
     description:
       'ID token JWT émis par Firebase après connexion Apple (Firebase Auth).',
@@ -336,7 +358,7 @@ export class AppleAuthDto {
 }
 
 /** Jeton Firebase ID (utilisateur connecté via Facebook dans Firebase Auth), vérifié côté serveur. */
-export class FacebookAuthDto {
+export class FacebookAuthDto extends OauthSignupOptionsDto {
   @ApiProperty({
     description:
       'ID token JWT émis par Firebase après connexion Facebook (Firebase Auth).',
