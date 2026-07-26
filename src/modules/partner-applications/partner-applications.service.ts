@@ -315,6 +315,72 @@ export class PartnerApplicationsService {
     return this.toPublic(lean);
   }
 
+  /**
+   * Sync Collaborations après soumission fiche partenaire (candidats).
+   * Remplace le formulaire Become Partner : notes dérivées de la fiche.
+   */
+  async enqueueCollaborationsReviewFromProfile(
+    user: UserModel,
+    args: {
+      organizationName: string;
+      collaborationNotes: string;
+      regionCode?: string | null;
+    },
+  ): Promise<void> {
+    // PARTNER déjà actif : pas de file Collaborations.
+    if (user.type === UserTypeEnum.PARTNER) return;
+    this.assertEligibleToApply(user);
+
+    const uid = user._id as Types.ObjectId;
+    let cur = await this._applications.findOne({ user: uid }).exec();
+    if (!cur) {
+      await this._applications.create({
+        user: uid,
+        status: PartnerApplicationStatus.DRAFT,
+        onboardingStep: 0,
+        termsAccepted: false,
+        region: this.defaultRegionForUser(user),
+      });
+      cur = await this._applications.findOne({ user: uid }).exec();
+    }
+    if (!cur) {
+      throw new BadRequestException('partner_application_missing');
+    }
+    // Dossier déjà approuvé / suspendu : ne pas écraser.
+    if (
+      cur.status === PartnerApplicationStatus.APPROVED ||
+      cur.status === PartnerApplicationStatus.SUSPENDED
+    ) {
+      return;
+    }
+
+    const regionRaw = String(args.regionCode ?? cur.region ?? '')
+      .trim()
+      .toUpperCase();
+    const region =
+      regionRaw.length === 2 ? regionRaw : this.defaultRegionForUser(user);
+    await this.assertOperatingRegionSupported(region);
+
+    const notes = String(args.collaborationNotes ?? '').trim();
+    if (notes.length < 10) {
+      throw new BadRequestException('partner_application_notes_required');
+    }
+    const org = String(args.organizationName ?? '').trim();
+
+    cur.region = region;
+    cur.organizationName = org.length > 0 ? org.slice(0, 120) : undefined;
+    cur.collaborationNotes = notes.slice(0, 1000);
+    cur.termsAccepted = true;
+    cur.status = PartnerApplicationStatus.AWAITING_REVIEW;
+    cur.submittedAt = new Date();
+    cur.onboardingStep = Math.max(cur.onboardingStep, 2);
+    cur.rejectionReason = undefined;
+    await cur.save();
+    this._logger.log(
+      `partner_application_from_profile user=${String(uid)} status=AWAITING_REVIEW`,
+    );
+  }
+
   private mapAdminRow(
     doc: LeanApp,
     user?: {

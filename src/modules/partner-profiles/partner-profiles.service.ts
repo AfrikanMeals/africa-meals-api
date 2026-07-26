@@ -24,6 +24,8 @@ import { SupportedCountriesService } from '@modules/supported-countries/supporte
 import { PartnerOnboardingEmailService } from '@modules/vendor-emails/partner-onboarding-email.service';
 import { resolvePartnerSuspendRestoreType } from '@modules/partner-applications/partner-application-eligibility.util';
 import { PatchPartnerProfileDto } from './dto/partner-profile.dto';
+import { buildPartnerApplicationNotesFromProfile } from './partner-application-from-profile.util';
+import { canAccessPartnerProfileSelf } from './partner-profile-self-access.util';
 import {
   canApprovePartnerProfile,
   canManagePartnerProfileStripe,
@@ -108,9 +110,12 @@ export class PartnerProfilesService {
     private readonly _supportedCountries: SupportedCountriesService,
   ) {}
 
-  /** Fiche métier réservée aux comptes PARTNER (pas candidature). */
-  private assertPartnerAccount(user: UserModel) {
-    if (user.type !== UserTypeEnum.PARTNER) {
+  /**
+   * Self-service fiche : PARTNER ou candidat éligible (USER/VENDOR/DELIVERY).
+   * Remplace le formulaire « Devenir partenaire ».
+   */
+  private assertPartnerProfileAccess(user: UserModel) {
+    if (!canAccessPartnerProfileSelf(user.type)) {
       throw new ForbiddenException('partner_profile_partner_only');
     }
   }
@@ -182,7 +187,7 @@ export class PartnerProfilesService {
   }
 
   async getOrCreateMine(user: UserModel) {
-    this.assertPartnerAccount(user);
+    this.assertPartnerProfileAccess(user);
     const uid = user._id as Types.ObjectId;
     let doc = await this._profiles
       .findOne({ user: uid })
@@ -206,7 +211,7 @@ export class PartnerProfilesService {
   }
 
   async patchMine(user: UserModel, dto: PatchPartnerProfileDto) {
-    this.assertPartnerAccount(user);
+    this.assertPartnerProfileAccess(user);
     this.assertOptionalUrls(dto);
     const uid = user._id as Types.ObjectId;
     await this.getOrCreateMine(user);
@@ -264,7 +269,7 @@ export class PartnerProfilesService {
   }
 
   async submitMine(user: UserModel) {
-    this.assertPartnerAccount(user);
+    this.assertPartnerProfileAccess(user);
     const current = await this.getOrCreateMine(user);
     if (
       !isPartnerProfileReadyToSubmit({
@@ -300,6 +305,39 @@ export class PartnerProfilesService {
       )
       .exec();
     this._logger.log(`Partner profile submitted user=${String(uid)}`);
+
+    // Candidat (pas encore PARTNER) : pousser Collaborations AWAITING_REVIEW
+    // à partir de la fiche (remplace l’ancien formulaire Become Partner).
+    if (user.type !== UserTypeEnum.PARTNER) {
+      const displayName =
+        resolvePartnerDisplayName({
+          accountType: current.accountType,
+          individualName: current.individualName,
+          companyName: current.companyName,
+        }) ||
+        String(user.fullName ?? '').trim() ||
+        String(user.email ?? '').trim();
+      const notes = buildPartnerApplicationNotesFromProfile({
+        displayName,
+        address: String(current.address ?? ''),
+      });
+      void this._partnerApplications
+        .enqueueCollaborationsReviewFromProfile(user, {
+          organizationName: displayName,
+          collaborationNotes: notes,
+          regionCode: String(
+            (user as { appCountryCode?: string }).appCountryCode ?? '',
+          ),
+        })
+        .catch((e) =>
+          this._logger.warn(
+            `partner application sync from profile: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          ),
+        );
+    }
+
     if (firstSubmit) {
       const displayName =
         resolvePartnerDisplayName({
