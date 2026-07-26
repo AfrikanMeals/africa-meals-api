@@ -15,6 +15,8 @@ import { PartnerProfilesAdminController } from './partner-profiles-admin.control
 import { PartnerProfilesService } from './partner-profiles.service';
 import { PartnerPaymentsController } from './partner-payments.controller';
 import { PartnerPaymentsService } from './partner-payments.service';
+import { PartnerDashboardController } from './partner-dashboard.controller';
+import { PartnerDashboardService } from './partner-dashboard.service';
 
 @Module({
   imports: [
@@ -41,8 +43,14 @@ import { PartnerPaymentsService } from './partner-payments.service';
     PartnerProfilesController,
     PartnerProfilesAdminController,
     PartnerPaymentsController,
+    // Agrégat KPI Accueil Partner (mobile + admin).
+    PartnerDashboardController,
   ],
-  providers: [PartnerProfilesService, PartnerPaymentsService],
+  providers: [
+    PartnerProfilesService,
+    PartnerPaymentsService,
+    PartnerDashboardService,
+  ],
   exports: [PartnerProfilesService, PartnerPaymentsService],
 })
 export class PartnerProfilesModule {}

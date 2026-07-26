@@ -145,4 +145,14 @@ export class PartnerSubscriptionsController {
   ) {
     return this.affiliation.attachReferral(req.user as UserModel, body);
   }
+
+  @Get('referrers')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Filleuls (client / vendeur / livreur) + gains affiliation par axe',
+  })
+  listReferrers(@Req() req: Request) {
+    return this.affiliation.listReferrersForPartner(req.user as UserModel);
+  }
 }

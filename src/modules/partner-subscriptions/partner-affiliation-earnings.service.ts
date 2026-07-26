@@ -29,6 +29,10 @@ import {
   type PartnerEarningListLean,
 } from './partner-earning-list.util';
 import { isPartnerReferralCodeEligible } from './partner-referral-eligibility.util';
+import {
+  buildPartnerReferrersBundle,
+  type PartnerReferrerUserLean,
+} from './partner-referrers-list.util';
 import { PartnerSubscriptionsService } from './partner-subscriptions.service';
 
 type StripeClient = InstanceType<typeof Stripe>;
@@ -463,5 +467,38 @@ export class PartnerAffiliationEarningsService {
       items,
       totals: computePartnerEarningListTotals(items),
     };
+  }
+
+  /**
+   * Réseau de filleuls + historique gains par axe (portail Partner Référents).
+   */
+  async listReferrersForPartner(user: UserModel) {
+    if (user.type !== UserTypeEnum.PARTNER) {
+      throw new ForbiddenException('partner_referrers_partner_only');
+    }
+    const uid = String(user._id ?? user.id ?? '');
+    if (!Types.ObjectId.isValid(uid)) {
+      throw new BadRequestException('partner_referrers_user_invalid');
+    }
+    const partnerOid = new Types.ObjectId(uid);
+    const [users, earnings] = await Promise.all([
+      this.userModel
+        .find({ referredByPartnerUserId: partnerOid })
+        .select('fullName email type referredByPartnerCode createdAt')
+        .sort({ createdAt: -1 })
+        .limit(500)
+        .lean()
+        .exec(),
+      this.earningModel
+        .find({ partnerUserId: partnerOid })
+        .sort({ createdAt: -1 })
+        .limit(500)
+        .lean()
+        .exec(),
+    ]);
+    return buildPartnerReferrersBundle({
+      users: users as PartnerReferrerUserLean[],
+      earnings: earnings as PartnerEarningListLean[],
+    });
   }
 }
