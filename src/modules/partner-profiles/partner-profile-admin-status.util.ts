@@ -38,3 +38,17 @@ export function canReactivatePartnerProfile(status: string): boolean {
 export function canRevertPartnerProfileToSubmitted(status: string): boolean {
   return String(status).toUpperCase() === PartnerProfileStatus.APPROVED;
 }
+
+/** Lier / sync / reset Stripe Connect — fiche approuvée (type PARTNER). */
+export function canManagePartnerProfileStripe(status: string): boolean {
+  return String(status).toUpperCase() === PartnerProfileStatus.APPROVED;
+}
+
+/** Voir Finances / Référents admin — approuvée ou suspendue (historique). */
+export function canViewPartnerProfileFinance(status: string): boolean {
+  const s = String(status).toUpperCase();
+  return (
+    s === PartnerProfileStatus.APPROVED ||
+    s === PartnerProfileStatus.SUSPENDED
+  );
+}

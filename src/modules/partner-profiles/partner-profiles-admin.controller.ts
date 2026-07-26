@@ -1,4 +1,5 @@
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
+import { AssignStripeConnectDto } from '@modules/store/dto/assign-stripe-connect.dto';
 import {
   Body,
   Controller,
@@ -146,6 +147,89 @@ export class PartnerProfilesAdminController {
       req.user as UserModel,
       profileId,
       body?.referralCode,
+    );
+  }
+
+  @Post('profiles/:profileId/assign-stripe-connect')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Admin — lie manuellement un compte Stripe Connect (acct_…) à un Partner approuvé.',
+  })
+  async assignStripeConnectAdmin(
+    @Req() req: Request,
+    @Param('profileId') profileId: string,
+    @Body() body: AssignStripeConnectDto,
+  ) {
+    return this._partnerProfiles.assignStripeConnectForAdmin(
+      req.user as UserModel,
+      profileId,
+      body.stripeAccountId,
+    );
+  }
+
+  @Post('profiles/:profileId/sync-stripe-connect')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Admin — resynchronise le statut Stripe Connect d’un Partner approuvé.',
+  })
+  async syncStripeConnectAdmin(
+    @Req() req: Request,
+    @Param('profileId') profileId: string,
+  ) {
+    return this._partnerProfiles.syncStripeConnectForAdmin(
+      req.user as UserModel,
+      profileId,
+    );
+  }
+
+  @Post('profiles/:profileId/reset-stripe-connect')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Admin — déconnecte Stripe Connect d’un Partner approuvé (nouvel onboarding).',
+  })
+  async resetStripeConnectAdmin(
+    @Req() req: Request,
+    @Param('profileId') profileId: string,
+  ) {
+    return this._partnerProfiles.resetStripeConnectForAdmin(
+      req.user as UserModel,
+      profileId,
+    );
+  }
+
+  @Get('profiles/:profileId/finance-overview')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Admin — Connect + commissions d’un Partner (Collaborations → Finances).',
+  })
+  async financeOverviewAdmin(
+    @Req() req: Request,
+    @Param('profileId') profileId: string,
+  ) {
+    return this._partnerProfiles.getFinanceOverviewForAdmin(
+      req.user as UserModel,
+      profileId,
+    );
+  }
+
+  @Get('profiles/:profileId/referrers')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Admin — réseau référents d’un Partner (Collaborations → Référents).',
+  })
+  async referrersAdmin(
+    @Req() req: Request,
+    @Param('profileId') profileId: string,
+  ) {
+    return this._partnerProfiles.getReferrersForAdmin(
+      req.user as UserModel,
+      profileId,
     );
   }
 }

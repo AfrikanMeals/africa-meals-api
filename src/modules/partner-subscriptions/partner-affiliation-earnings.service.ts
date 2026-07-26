@@ -452,6 +452,14 @@ export class PartnerAffiliationEarningsService {
       throw new ForbiddenException('partner_earnings_partner_only');
     }
     const uid = String(user._id ?? user.id ?? '');
+    return this.listEarningsByPartnerUserId(uid);
+  }
+
+  /**
+   * Ledger par `partnerUserId` — Partner self + admin Collaborations (sans check type).
+   */
+  async listEarningsByPartnerUserId(partnerUserId: string) {
+    const uid = String(partnerUserId ?? '').trim();
     if (!Types.ObjectId.isValid(uid)) {
       throw new BadRequestException('partner_earnings_user_invalid');
     }
@@ -480,6 +488,14 @@ export class PartnerAffiliationEarningsService {
       throw new ForbiddenException('partner_referrers_partner_only');
     }
     const uid = String(user._id ?? user.id ?? '');
+    return this.listReferrersByPartnerUserId(uid);
+  }
+
+  /**
+   * Référents par Partner userId — self + admin Collaborations (sans check type).
+   */
+  async listReferrersByPartnerUserId(partnerUserId: string) {
+    const uid = String(partnerUserId ?? '').trim();
     if (!Types.ObjectId.isValid(uid)) {
       throw new BadRequestException('partner_referrers_user_invalid');
     }

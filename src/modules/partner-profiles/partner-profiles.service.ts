@@ -13,17 +13,25 @@ import {
   PartnerProfileStatus,
 } from '@schemas/partner-profile.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
+import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
+import { resolveStripeOnboardingStatusLabel } from '@modules/billing/stripe/stripe-connect-visibility';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { PartnerApplicationsService } from '@modules/partner-applications/partner-applications.service';
+import { PartnerAffiliationEarningsService } from '@modules/partner-subscriptions/partner-affiliation-earnings.service';
+import { normalizePartnerDisplayCurrency } from '@modules/partner-subscriptions/partner-earning-list.util';
+import { PartnerSubscriptionPlansService } from '@modules/partner-subscriptions/partner-subscription-plans.service';
+import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { PartnerOnboardingEmailService } from '@modules/vendor-emails/partner-onboarding-email.service';
 import { resolvePartnerSuspendRestoreType } from '@modules/partner-applications/partner-application-eligibility.util';
 import { PatchPartnerProfileDto } from './dto/partner-profile.dto';
 import {
   canApprovePartnerProfile,
+  canManagePartnerProfileStripe,
   canReactivatePartnerProfile,
   canRejectPartnerProfile,
   canRevertPartnerProfileToSubmitted,
   canSuspendPartnerProfile,
+  canViewPartnerProfileFinance,
   normalizePartnerProfileAdminStatusFilter,
 } from './partner-profile-admin-status.util';
 import type { PartnerProfileReviewNotifyStatus } from './partner-profile-review-notification.util';
@@ -33,6 +41,25 @@ import {
   normalizePartnerAccountType,
   resolvePartnerDisplayName,
 } from './partner-profile-validation.util';
+
+/** Champs user joints pour Stripe + identité liste admin. */
+const ADMIN_USER_SELECT =
+  'fullName email phoneNumber type stripeConnectAccountId stripeConnectChargesEnabled stripeConnectPayoutsEnabled stripeConnectDetailsSubmitted stripeConnectDisabledReason stripeConnectRequirementsDue stripeConnectRequirementsPastDue appCountryCode';
+
+type AdminAccountLean = {
+  fullName?: string;
+  email?: string;
+  phoneNumber?: string;
+  type?: string;
+  stripeConnectAccountId?: string;
+  stripeConnectChargesEnabled?: boolean;
+  stripeConnectPayoutsEnabled?: boolean;
+  stripeConnectDetailsSubmitted?: boolean;
+  stripeConnectDisabledReason?: string;
+  stripeConnectRequirementsDue?: string[];
+  stripeConnectRequirementsPastDue?: string[];
+  appCountryCode?: string;
+};
 
 type LeanProfile = {
   _id?: Types.ObjectId;
@@ -74,6 +101,11 @@ export class PartnerProfilesService {
     private readonly _notifications: NotificationsService,
     // Codes referral stockés sur partner_applications (pas sur la fiche).
     private readonly _partnerApplications: PartnerApplicationsService,
+    // Admin Collaborations : lier / sync / reset Connect + aperçu finance.
+    private readonly _stripeConnect: StripeConnectService,
+    private readonly _affiliation: PartnerAffiliationEarningsService,
+    private readonly _plans: PartnerSubscriptionPlansService,
+    private readonly _supportedCountries: SupportedCountriesService,
   ) {}
 
   /** Fiche métier réservée aux comptes PARTNER (pas candidature). */
@@ -321,11 +353,11 @@ export class PartnerProfilesService {
     ];
     const users = await this._users
       .find({ _id: { $in: userIds } })
-      .select('fullName email phoneNumber type')
+      .select(ADMIN_USER_SELECT)
       .lean()
       .exec();
     const userById = new Map(
-      users.map((u) => [String(u._id), u as Record<string, unknown>]),
+      users.map((u) => [String(u._id), u as AdminAccountLean]),
     );
 
     // Jointure codes referral (collection candidatures) pour le bouton Collaborations.
@@ -335,15 +367,142 @@ export class PartnerProfilesService {
     return rows.map((r) =>
       this.mapAdminRow(
         r,
-        userById.get(String(r.user)) as {
-          fullName?: string;
-          email?: string;
-          phoneNumber?: string;
-          type?: string;
-        },
+        userById.get(String(r.user)),
         referralByUser.get(String(r.user)) ?? null,
       ),
     );
+  }
+
+  /** Admin — lie manuellement un compte Stripe Connect (acct_…) à un Partner approuvé. */
+  async assignStripeConnectForAdmin(
+    admin: UserModel,
+    profileId: string,
+    stripeAccountId: string,
+  ) {
+    this.assertAdmin(admin);
+    const profile = await this.requireApprovedProfile(profileId);
+    await this._stripeConnect.assignConnectAccountForUserAdmin({
+      userId: new Types.ObjectId(String(profile.user)),
+      stripeAccountId,
+    });
+    return this.reloadAdminProfileRow(profileId);
+  }
+
+  /** Admin — resynchronise le statut Stripe Connect depuis Stripe. */
+  async syncStripeConnectForAdmin(admin: UserModel, profileId: string) {
+    this.assertAdmin(admin);
+    const profile = await this.requireApprovedProfile(profileId);
+    await this._stripeConnect.syncConnectAccountForUserAdmin({
+      userId: new Types.ObjectId(String(profile.user)),
+    });
+    return this.reloadAdminProfileRow(profileId);
+  }
+
+  /** Admin — déconnecte Stripe Connect (nouvel onboarding Partner requis). */
+  async resetStripeConnectForAdmin(admin: UserModel, profileId: string) {
+    this.assertAdmin(admin);
+    const profile = await this.requireApprovedProfile(profileId);
+    await this._stripeConnect.resetConnectForReonboarding({
+      userId: new Types.ObjectId(String(profile.user)),
+    });
+    return this.reloadAdminProfileRow(profileId);
+  }
+
+  /**
+   * Admin — aperçu Finances (Connect + commissions) pour une fiche Collaborations.
+   * Connect live seulement si le compte est encore type PARTNER.
+   */
+  async getFinanceOverviewForAdmin(admin: UserModel, profileId: string) {
+    this.assertAdmin(admin);
+    const profile = await this.loadProfileOrThrow(profileId);
+    if (!canViewPartnerProfileFinance(profile.status)) {
+      throw new BadRequestException('partner_profile_finance_view_denied');
+    }
+    const uid = String(profile.user ?? '');
+    const account = await this._users.findById(uid).exec();
+    if (!account) {
+      throw new NotFoundException('partner_profile_user_not_found');
+    }
+
+    const earnings =
+      await this._affiliation.listEarningsByPartnerUserId(uid);
+    const pricingRegion =
+      await this._plans.resolvePricingRegionForUser(account);
+    const displayCurrency = pricingRegion
+      ? await this._supportedCountries.getCountryCurrency(pricingRegion)
+      : 'CAD';
+
+    // Connect Stripe : lecture live seulement pour type PARTNER (assert recipient).
+    let connect: Awaited<
+      ReturnType<StripeConnectService['getConnectStatus']>
+    > | null = null;
+    let balance: Awaited<
+      ReturnType<StripeConnectService['getConnectBalance']>
+    > | null = null;
+    let payouts: Awaited<
+      ReturnType<StripeConnectService['listPayouts']>
+    > | null = null;
+    if (account.type === UserTypeEnum.PARTNER) {
+      try {
+        connect = await this._stripeConnect.getConnectStatus(account);
+        balance = await this._stripeConnect.getConnectBalance(account);
+        payouts = await this._stripeConnect.listPayouts(account, 10);
+      } catch (e) {
+        this._logger.warn(
+          `partner finance overview connect: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+    }
+
+    return {
+      profileId: String(profile._id ?? profileId),
+      userId: uid,
+      displayName:
+        resolvePartnerDisplayName({
+          accountType: profile.accountType,
+          individualName: profile.individualName,
+          companyName: profile.companyName,
+        }) ||
+        String(account.fullName ?? '').trim() ||
+        String(account.email ?? '').trim() ||
+        '—',
+      status: profile.status,
+      displayCurrency: normalizePartnerDisplayCurrency(displayCurrency),
+      pricingRegion: pricingRegion
+        ? String(pricingRegion).trim().toUpperCase()
+        : null,
+      connect,
+      balance,
+      payouts: payouts?.payouts ?? [],
+      earnings,
+    };
+  }
+
+  /** Admin — réseau référents d’un Partner (fiche approuvée / suspendue). */
+  async getReferrersForAdmin(admin: UserModel, profileId: string) {
+    this.assertAdmin(admin);
+    const profile = await this.loadProfileOrThrow(profileId);
+    if (!canViewPartnerProfileFinance(profile.status)) {
+      throw new BadRequestException('partner_profile_referrers_view_denied');
+    }
+    const uid = String(profile.user ?? '');
+    const bundle =
+      await this._affiliation.listReferrersByPartnerUserId(uid);
+    return {
+      profileId: String(profile._id ?? profileId),
+      userId: uid,
+      ...bundle,
+    };
+  }
+
+  private async requireApprovedProfile(profileId: string) {
+    const profile = await this.loadProfileOrThrow(profileId);
+    if (!canManagePartnerProfileStripe(profile.status)) {
+      throw new BadRequestException('partner_profile_not_approved');
+    }
+    return profile;
   }
 
   /**
@@ -702,7 +861,7 @@ export class PartnerProfilesService {
     }
     const account = await this._users
       .findById(lean.user)
-      .select('fullName email phoneNumber type')
+      .select(ADMIN_USER_SELECT)
       .lean()
       .exec();
     const uid = String(lean.user ?? '');
@@ -712,24 +871,14 @@ export class PartnerProfilesService {
       );
     return this.mapAdminRow(
       lean,
-      account as {
-        fullName?: string;
-        email?: string;
-        phoneNumber?: string;
-        type?: string;
-      },
+      (account as AdminAccountLean | null) ?? undefined,
       referralMap.get(uid) ?? null,
     );
   }
 
   private mapAdminRow(
     doc: LeanProfile,
-    account?: {
-      fullName?: string;
-      email?: string;
-      phoneNumber?: string;
-      type?: string;
-    },
+    account?: AdminAccountLean,
     referralCode: string | null = null,
   ) {
     // Tolère docs camelCase legacy + snake_case schéma (même document lean).
@@ -752,6 +901,11 @@ export class PartnerProfilesService {
       String(account?.fullName ?? '').trim() ||
       String(account?.email ?? '').trim() ||
       '—';
+    // Stripe Connect (user) — miroir candidatures livreurs / vendeurs.
+    const stripeOnboardingStatus = resolveStripeOnboardingStatusLabel(account);
+    const stripeAccountId = String(
+      account?.stripeConnectAccountId ?? '',
+    ).trim();
     return {
       id: String(doc._id ?? ''),
       userId: String(doc.user ?? ''),
@@ -780,6 +934,11 @@ export class PartnerProfilesService {
         null,
       // Code 6 chars (partner_applications) — null si pas encore généré.
       referralCode,
+      stripeOnboardingStatus,
+      stripeConnectLinked: stripeAccountId.length > 0,
+      stripeConnectActive: stripeOnboardingStatus === 'COMPLETE',
+      stripeConnectAccountId:
+        stripeAccountId.length > 0 ? stripeAccountId : null,
       submittedAt: doc.submittedAt
         ? new Date(doc.submittedAt).toISOString()
         : null,
