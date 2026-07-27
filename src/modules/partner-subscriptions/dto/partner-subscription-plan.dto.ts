@@ -50,6 +50,13 @@ export class CreatePartnerSubscriptionPlanDto {
   @Max(365)
   trialDays?: number;
 
+  /** 0 = versement instantané ; 1–30 = délai calendrier Stripe (jours). */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(30)
+  payoutDelayDays?: number;
+
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(10)
@@ -126,6 +133,13 @@ export class UpdatePartnerSubscriptionPlanDto {
   @Min(0)
   @Max(365)
   trialDays?: number;
+
+  /** 0 = versement instantané ; 1–30 = délai calendrier Stripe (jours). */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(30)
+  payoutDelayDays?: number;
 
   @IsOptional()
   @IsArray()

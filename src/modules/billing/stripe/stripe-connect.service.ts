@@ -59,6 +59,7 @@ import {
   parseStripeMinDelayDaysFromError,
   resolveStripePayoutDelayDays,
 } from '@common/partner-badges/partner-badge-payout-schedule.util';
+import { partnerPlanPayoutTimingLabel } from '@modules/partner-subscriptions/partner-plan-fee.util';
 import {
   resolveStorePublicUrl,
 } from '@common/catalog-public-url.util';
@@ -2026,10 +2027,36 @@ export class StripeConnectService {
     const currency = (status.defaultCurrency ?? 'cad').toLowerCase();
     const partnerBadgeCode = await this.resolvePartnerBadgeCodeForUser(user);
     const partnerBadge = serializePartnerBadge(partnerBadgeCode);
-    const payoutPresentation = await this.resolvePayoutPresentationForUser(
-      partnerBadgeCode,
-      status.accountId,
-    );
+    // Partner abo : délai du plan (0=instant) ; livreur/vendeur : badge.
+    const planPayoutDelayDays =
+      user.type === UserTypeEnum.PARTNER
+        ? await this.partnerAffiliation.resolvePayoutDelayDaysForPartner(
+            String(user._id),
+          )
+        : null;
+    const effectiveDelayDays =
+      planPayoutDelayDays != null
+        ? planPayoutDelayDays
+        : partnerBadge.payoutDelayDays;
+    const payoutPresentation =
+      planPayoutDelayDays != null
+        ? {
+            payoutMethod:
+              planPayoutDelayDays === 0
+                ? ('instant' as const)
+                : ('standard' as const),
+            payoutTimingLabel: partnerPlanPayoutTimingLabel(planPayoutDelayDays),
+            instantPayoutAvailable:
+              planPayoutDelayDays === 0
+                ? await this.connectInstantPayoutAvailable(
+                    status.accountId ?? '',
+                  )
+                : undefined,
+          }
+        : await this.resolvePayoutPresentationForUser(
+            partnerBadgeCode,
+            status.accountId,
+          );
 
     const emptyEstimate = (): StripeConnectPayoutEstimate => ({
       available: 0,
@@ -2042,7 +2069,7 @@ export class StripeConnectService {
       feeFixed: 0,
       canRequestPayout: false,
       partnerBadge,
-      payoutDelayDays: partnerBadge.payoutDelayDays,
+      payoutDelayDays: effectiveDelayDays,
       payoutMethod: payoutPresentation.payoutMethod,
       payoutTimingLabel: payoutPresentation.payoutTimingLabel,
       instantPayoutAvailable: payoutPresentation.instantPayoutAvailable,
@@ -2092,7 +2119,7 @@ export class StripeConnectService {
       feeFixed: split.feeFixedCad,
       canRequestPayout: netPayoutCents >= 100,
       partnerBadge,
-      payoutDelayDays: partnerBadge.payoutDelayDays,
+      payoutDelayDays: effectiveDelayDays,
       payoutMethod: payoutPresentation.payoutMethod,
       payoutTimingLabel: payoutPresentation.payoutTimingLabel,
       instantPayoutAvailable: payoutPresentation.instantPayoutAvailable,
@@ -2120,12 +2147,19 @@ export class StripeConnectService {
 
     const partnerBadgeCode = await this.resolvePartnerBadgeCodeForUser(user);
     const forceInstant = opts?.forceInstant === true;
+    // Partner abo : délai plan ; sinon badge livreur/vendeur.
+    const planPayoutDelayDays =
+      user.type === UserTypeEnum.PARTNER
+        ? await this.partnerAffiliation.resolvePayoutDelayDaysForPartner(
+            String(uid),
+          )
+        : null;
     if (!forceInstant) {
       await this.ensurePartnerBadgePayoutScheduleForUser(user);
     } else {
       // Admin force : calendrier manuel pour autoriser un payout immédiat.
       const accountIdForSchedule = status.accountId;
-      await this.applyPartnerBadgePayoutSchedule(accountIdForSchedule, 'DIAMOND');
+      await this.applyPayoutScheduleByDelayDays(accountIdForSchedule, 0);
     }
 
     const accountId = status.accountId;
@@ -2165,17 +2199,24 @@ export class StripeConnectService {
     }
 
     const badge = getPartnerBadgeDefinition(partnerBadgeCode);
-    const useInstantPayout =
-      forceInstant || badge?.payoutDelayDays === 0;
+    const effectiveDelayDays =
+      planPayoutDelayDays != null
+        ? planPayoutDelayDays
+        : (badge?.payoutDelayDays ?? 7);
+    const useInstantPayout = forceInstant || effectiveDelayDays === 0;
 
     const payoutBase = {
       amount: payoutCents,
       currency: payoutCurrency,
       description: forceInstant
-        ? 'Versement admin (forcé, hors badge)'
+        ? 'Versement admin (forcé, hors délai)'
         : useInstantPayout
-          ? 'Versement instantané (badge Diamond)'
-          : `Versement demandé (badge ${badge?.name ?? 'SILVER'})`,
+          ? user.type === UserTypeEnum.PARTNER
+            ? 'Versement instantané (plan Partner)'
+            : 'Versement instantané (badge Diamond)'
+          : user.type === UserTypeEnum.PARTNER
+            ? `Versement demandé (plan · ${effectiveDelayDays}j)`
+            : `Versement demandé (badge ${badge?.name ?? 'SILVER'})`,
       metadata: {
         platformPayoutFeeCents: String(payoutFeeCents),
         platformPayoutFeeMode: payoutSplit.feeMode,
@@ -2183,6 +2224,7 @@ export class StripeConnectService {
         platformPayoutFeeFixed: String(payoutSplit.feeFixedCad),
         partnerBadgeCode: badge?.code ?? resolveEffectivePartnerBadgeCode(null),
         partnerBadgePayoutDelayDays: String(badge?.payoutDelayDays ?? 7),
+        partnerPlanPayoutDelayDays: String(effectiveDelayDays),
         adminForceInstant: forceInstant ? 'true' : 'false',
       },
     };
@@ -2286,12 +2328,21 @@ export class StripeConnectService {
     }
   }
 
-  /** Synchronise le calendrier Stripe avec le badge effectif du partenaire. */
+  /** Synchronise le calendrier Stripe (badge livreur/vendeur ou plan Partner). */
   async ensurePartnerBadgePayoutScheduleForUser(
     user: UserModel,
   ): Promise<void> {
     const accountId = String(user.stripeConnectAccountId ?? '').trim();
     if (!accountId) return;
+    // Compte PARTNER : délai du plan d’abonnement (pas le badge livreur).
+    if (user.type === UserTypeEnum.PARTNER) {
+      const days =
+        await this.partnerAffiliation.resolvePayoutDelayDaysForPartner(
+          String(user._id),
+        );
+      await this.applyPayoutScheduleByDelayDays(accountId, days);
+      return;
+    }
     const badgeCode = await this.resolvePartnerBadgeCodeForUser(user);
     await this.applyPartnerBadgePayoutSchedule(accountId, badgeCode);
   }
@@ -2424,22 +2475,19 @@ export class StripeConnectService {
   }
 
   /**
-   * Applique le calendrier de versement Stripe selon le badge partenaire.
-   * Diamond → versements manuels + instant à la demande ; Silver/Gold → délai en jours.
-   * Si Stripe refuse le délai badge (minimum pays), on clamp au minimum autorisé.
+   * Calendrier Stripe selon un délai en jours (0 = manual/instant).
+   * Partagé badge livreur + plan Partner.
    */
-  async applyPartnerBadgePayoutSchedule(
+  async applyPayoutScheduleByDelayDays(
     accountId: string,
-    badgeCode: string | null | undefined,
+    desiredDelayDays: number,
   ): Promise<void> {
     const trimmedAccount = String(accountId ?? '').trim();
     if (!trimmedAccount) return;
-
-    const effectiveCode = resolveEffectivePartnerBadgeCode(badgeCode);
-    const badge = getPartnerBadgeDefinition(effectiveCode)!;
+    const want = Math.max(0, Math.trunc(Number(desiredDelayDays) || 0));
 
     try {
-      if (badge.payoutDelayDays === 0) {
+      if (want <= 0) {
         await this.stripe().accounts.update(trimmedAccount, {
           settings: {
             payouts: {
@@ -2450,7 +2498,7 @@ export class StripeConnectService {
         return;
       }
 
-      const delayDays = resolveStripePayoutDelayDays(badge.payoutDelayDays, null);
+      const delayDays = resolveStripePayoutDelayDays(want, null);
       try {
         await this.stripe().accounts.update(trimmedAccount, {
           settings: {
@@ -2466,13 +2514,10 @@ export class StripeConnectService {
         const msg =
           firstErr instanceof Error ? firstErr.message : String(firstErr);
         const stripeMin = parseStripeMinDelayDaysFromError(msg) ?? 7;
-        const clamped = resolveStripePayoutDelayDays(
-          badge.payoutDelayDays,
-          stripeMin,
-        );
+        const clamped = resolveStripePayoutDelayDays(want, stripeMin);
         if (clamped === delayDays) throw firstErr;
         this.logger.warn(
-          `Stripe payout schedule delay_days=${delayDays} rejected for ${trimmedAccount}; retrying with ${clamped} (badge=${effectiveCode})`,
+          `Stripe payout schedule delay_days=${delayDays} rejected for ${trimmedAccount}; retrying with ${clamped}`,
         );
         await this.stripe().accounts.update(trimmedAccount, {
           settings: {
@@ -2487,11 +2532,27 @@ export class StripeConnectService {
       }
     } catch (e) {
       this.logger.warn(
-        `Stripe payout schedule update failed for ${trimmedAccount} badge=${effectiveCode}: ${
+        `Stripe payout schedule update failed for ${trimmedAccount} delay=${want}: ${
           e instanceof Error ? e.message : String(e)
         }`,
       );
     }
+  }
+
+  /**
+   * Applique le calendrier de versement Stripe selon le badge partenaire.
+   * Diamond → versements manuels + instant à la demande ; Silver/Gold → délai en jours.
+   */
+  async applyPartnerBadgePayoutSchedule(
+    accountId: string,
+    badgeCode: string | null | undefined,
+  ): Promise<void> {
+    const effectiveCode = resolveEffectivePartnerBadgeCode(badgeCode);
+    const badge = getPartnerBadgeDefinition(effectiveCode)!;
+    await this.applyPayoutScheduleByDelayDays(
+      accountId,
+      badge.payoutDelayDays,
+    );
   }
 
   /**

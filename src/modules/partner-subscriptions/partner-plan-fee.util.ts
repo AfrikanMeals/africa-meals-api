@@ -100,3 +100,23 @@ export function normalizePartnerTrialReminderDays(
   }
   return out.sort((a, b) => b - a);
 }
+
+/**
+ * Délai versement Partner (jours) — 0 = instantané ; plafonné 0–30.
+ * Utilisé pour request-payout et calendrier Stripe auto.
+ */
+export function normalizePartnerPlanPayoutDelayDays(
+  raw: unknown,
+): number {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(30, n);
+}
+
+/** Libellé FR pour estimate / UI Partner. */
+export function partnerPlanPayoutTimingLabel(days: number): string {
+  const d = normalizePartnerPlanPayoutDelayDays(days);
+  if (d <= 0) return 'Instantané';
+  if (d === 1) return '1 jour';
+  return `${d} jours`;
+}

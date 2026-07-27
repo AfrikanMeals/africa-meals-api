@@ -22,6 +22,7 @@ import { AttachPartnerReferralDto } from './dto/partner-subscription-plan.dto';
 import {
   computePartnerPlanFeeAmount,
   findPartnerPlanRegionRow,
+  normalizePartnerPlanPayoutDelayDays,
 } from './partner-plan-fee.util';
 import {
   computePartnerEarningListTotals,
@@ -361,6 +362,27 @@ export class PartnerAffiliationEarningsService {
           .payoutFeesByRegion,
         regionCode,
       ) ?? null
+    );
+  }
+
+  /**
+   * Délai versement (jours) du plan actif Partner — 0 = instantané.
+   * Sans abo actif → 0 (comportement safe / instant).
+   */
+  async resolvePayoutDelayDaysForPartner(
+    partnerUserId: string,
+  ): Promise<number> {
+    const uid = String(partnerUserId ?? '').trim();
+    if (!uid || !Types.ObjectId.isValid(uid)) return 0;
+    const sub = await this.partnerSubs.findActiveSubscriptionForOwner(uid);
+    if (!sub?.plan) return 0;
+    const plan = await this.planModel
+      .findById(sub.plan)
+      .select('payoutDelayDays')
+      .lean()
+      .exec();
+    return normalizePartnerPlanPayoutDelayDays(
+      (plan as { payoutDelayDays?: number } | null)?.payoutDelayDays,
     );
   }
 

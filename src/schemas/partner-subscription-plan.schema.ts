@@ -47,6 +47,13 @@ export class PartnerSubscriptionPlanModel {
   @Prop({ type: Number, default: 0, min: 0 })
   trialDays: number;
 
+  /**
+   * Délai versement Connect Partner (jours).
+   * 0 = instantané (manuel + payout à la demande) ; >0 = calendrier daily Stripe.
+   */
+  @Prop({ type: Number, default: 0, min: 0, max: 30, name: 'payout_delay_days' })
+  payoutDelayDays: number;
+
   /** Rappels push : jours restants avant fin d’essai (ex. [7, 3, 1]). */
   @Prop({ type: [Number], default: [] })
   trialReminderDays: number[];

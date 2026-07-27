@@ -18,6 +18,7 @@ import {
 } from './dto/partner-subscription-plan.dto';
 import {
   findPartnerPlanRegionRow,
+  normalizePartnerPlanPayoutDelayDays,
   normalizePartnerTrialReminderDays,
 } from './partner-plan-fee.util';
 import {
@@ -51,6 +52,8 @@ export function mapPartnerSubscriptionPlan(doc: Record<string, unknown>) {
     active: doc.active !== false,
     sortOrder: Number(doc.sortOrder ?? 0),
     trialDays: Math.max(0, Number(doc.trialDays ?? 0)),
+    // 0 = instantané (défaut plans existants sans champ).
+    payoutDelayDays: normalizePartnerPlanPayoutDelayDays(doc.payoutDelayDays),
     trialReminderDays: Array.isArray(doc.trialReminderDays)
       ? doc.trialReminderDays.map((d) => Number(d)).filter((d) => d > 0)
       : [],
@@ -217,6 +220,9 @@ export class PartnerSubscriptionPlansService {
       dto.trialReminderDays,
       trialDays,
     );
+    const payoutDelayDays = normalizePartnerPlanPayoutDelayDays(
+      dto.payoutDelayDays,
+    );
     const doc = await this.planModel.create({
       name: dto.name.trim(),
       description: (dto.description ?? '').trim(),
@@ -226,6 +232,7 @@ export class PartnerSubscriptionPlansService {
       active: dto.active !== false,
       sortOrder: Number(dto.sortOrder ?? 0),
       trialDays,
+      payoutDelayDays,
       trialReminderDays,
       pricingByRegion: normalizePlanRegionPricing(dto.pricingByRegion),
       customerOrderCommissionsByRegion: normalizePlanRegionOrderCommissions(
@@ -279,6 +286,11 @@ export class PartnerSubscriptionPlansService {
         dto.trialReminderDays ??
           (existing.trialReminderDays as number[] | undefined),
         trialDays,
+      );
+    }
+    if (dto.payoutDelayDays != null) {
+      patch.payoutDelayDays = normalizePartnerPlanPayoutDelayDays(
+        dto.payoutDelayDays,
       );
     }
     if (dto.pricingByRegion != null) {

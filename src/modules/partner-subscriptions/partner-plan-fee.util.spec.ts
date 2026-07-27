@@ -1,4 +1,9 @@
-import { computePartnerPlanFeeAmount, normalizePartnerTrialReminderDays } from './partner-plan-fee.util';
+import {
+  computePartnerPlanFeeAmount,
+  normalizePartnerPlanPayoutDelayDays,
+  normalizePartnerTrialReminderDays,
+  partnerPlanPayoutTimingLabel,
+} from './partner-plan-fee.util';
 
 describe('computePartnerPlanFeeAmount', () => {
   it('percent sur base', () => {
@@ -48,5 +53,21 @@ describe('normalizePartnerTrialReminderDays', () => {
 
   it('vide si pas d’essai', () => {
     expect(normalizePartnerTrialReminderDays([7, 3], 0)).toEqual([]);
+  });
+});
+
+describe('normalizePartnerPlanPayoutDelayDays', () => {
+  it('0 = instantané ; clamp 0–30', () => {
+    expect(normalizePartnerPlanPayoutDelayDays(0)).toBe(0);
+    expect(normalizePartnerPlanPayoutDelayDays(undefined)).toBe(0);
+    expect(normalizePartnerPlanPayoutDelayDays(-2)).toBe(0);
+    expect(normalizePartnerPlanPayoutDelayDays(7)).toBe(7);
+    expect(normalizePartnerPlanPayoutDelayDays(99)).toBe(30);
+  });
+
+  it('libellé timing', () => {
+    expect(partnerPlanPayoutTimingLabel(0)).toBe('Instantané');
+    expect(partnerPlanPayoutTimingLabel(1)).toBe('1 jour');
+    expect(partnerPlanPayoutTimingLabel(7)).toBe('7 jours');
   });
 });
