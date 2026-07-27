@@ -1,5 +1,6 @@
 import { MailerService } from '@modules/mailer/mailer.service';
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
+import { resolvePortalAppBaseUrl } from '@common/portal/portal-app-base-url.util';
 import {
   BadRequestException,
   Injectable,
@@ -53,16 +54,16 @@ export class VendorNotificationStripeBillingService {
   }
 
   private successUrl(): string {
-    const admin =
-      this.config.get<string>('ADMIN_APP_URL')?.trim() ||
-      this.config.get<string>('FRONTEND_URL')?.trim() ||
-      'http://localhost:3001';
-    const base = admin.replace(/\/+$/, '');
+    const portalBase = resolvePortalAppBaseUrl({
+      getEnv: (key) => this.config.get<string>(key),
+      audience: 'business',
+      localhostFallback: 'http://localhost:3001',
+    });
     const configured = this.config
       .get<string>('VENDOR_SMS_BILLING_SUCCESS_URL')
       ?.trim();
     if (configured) return configured;
-    return `${base}/settings/notifications?sms_billing=success&session_id={CHECKOUT_SESSION_ID}`;
+    return `${portalBase}/settings/notifications?sms_billing=success&session_id={CHECKOUT_SESSION_ID}`;
   }
 
   private cancelUrl(): string {
@@ -70,10 +71,12 @@ export class VendorNotificationStripeBillingService {
       .get<string>('VENDOR_SMS_BILLING_CANCEL_URL')
       ?.trim();
     if (configured) return configured;
-    const admin =
-      this.config.get<string>('ADMIN_APP_URL')?.trim() ||
-      'http://localhost:3001';
-    return `${admin.replace(/\/+$/, '')}/settings/notifications?sms_billing=cancel`;
+    const portalBase = resolvePortalAppBaseUrl({
+      getEnv: (key) => this.config.get<string>(key),
+      audience: 'business',
+      localhostFallback: 'http://localhost:3001',
+    });
+    return `${portalBase}/settings/notifications?sms_billing=cancel`;
   }
 
   async issueStripeInvoicesForMonth(

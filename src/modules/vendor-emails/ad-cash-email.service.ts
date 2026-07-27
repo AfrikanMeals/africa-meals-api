@@ -3,6 +3,7 @@ import {
 } from '@modules/mailer/email-ai-hero-image.service';
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { MailerService } from '@modules/mailer/mailer.service';
+import { resolvePortalAppBaseUrl } from '@common/portal/portal-app-base-url.util';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -145,11 +146,13 @@ export class AdCashEmailService {
   }
 
   private adCreditDashboardUrl(): string {
-    const adminBase =
-      this.config.get<string>('ADMIN_APP_URL')?.trim() ||
-      this.config.get<string>('FRONTEND_URL')?.trim() ||
-      'http://localhost:3001';
-    return `${adminBase.replace(/\/+$/, '')}/marketing/ad-campaigns`;
+    // Campagnes pub vendeur → portail business.
+    const portalBase = resolvePortalAppBaseUrl({
+      getEnv: (key) => this.config.get<string>(key),
+      audience: 'business',
+      localhostFallback: 'http://localhost:3001',
+    });
+    return `${portalBase}/marketing/ad-campaigns`;
   }
 
   private formatAdCashUnits(amount: number): string {

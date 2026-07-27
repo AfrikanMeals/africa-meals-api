@@ -447,6 +447,35 @@ export class PartnerProfilesService {
   }
 
   /**
+   * Admin — retente les commissions affiliation FAILED (Connect désormais prêt).
+   * Sync Stripe d’abord pour rafraîchir payoutsEnabled / accountId.
+   */
+  async reprocessFailedEarningsForAdmin(admin: UserModel, profileId: string) {
+    this.assertAdmin(admin);
+    const profile = await this.requireApprovedProfile(profileId);
+    const uid = String(profile.user ?? '');
+    // 1. Resync Connect pour éviter retry sur compte encore restricted.
+    try {
+      await this._stripeConnect.syncConnectAccountForUserAdmin({
+        userId: new Types.ObjectId(uid),
+      });
+    } catch (e) {
+      this._logger.warn(
+        `reprocess failed earnings sync: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+    const result =
+      await this._affiliation.reprocessFailedEarningsForPartner(uid);
+    return {
+      profileId: String(profile._id ?? profileId),
+      userId: uid,
+      ...result,
+    };
+  }
+
+  /**
    * Admin — aperçu Finances (Connect + commissions) pour une fiche Collaborations.
    * Connect live seulement si le compte est encore type PARTNER.
    */

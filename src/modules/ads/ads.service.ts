@@ -29,6 +29,7 @@ import {
   resolveStoreIdsVisibleOnMobileApp,
 } from '@modules/billing/stripe/stripe-connect-visibility';
 import { detectCatalogImageStorageKind } from '@common/media/detect-storage-engine.util';
+import { resolvePortalAppBaseUrl } from '@common/portal/portal-app-base-url.util';
 import { MediasService } from '@modules/medias/medias.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { storePermissionGranted } from '../../common/permissions/store-permissions';
@@ -1021,11 +1022,12 @@ export class AdsService implements OnModuleInit {
   }
 
   private adCreditAdminAppBase(): string {
-    return (
-      this._config.get<string>('ADMIN_APP_URL')?.trim() ||
-      this._config.get<string>('FRONTEND_URL')?.trim() ||
-      'http://localhost:3001'
-    ).replace(/\/+$/, '');
+    // Ad credit = vendeurs → portail business.
+    return resolvePortalAppBaseUrl({
+      getEnv: (key) => this._config.get<string>(key),
+      audience: 'business',
+      localhostFallback: 'http://localhost:3001',
+    });
   }
 
   private adCreditSuccessUrl(): string {

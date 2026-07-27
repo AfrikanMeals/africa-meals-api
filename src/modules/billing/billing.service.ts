@@ -1,4 +1,5 @@
 import { UsersService } from '@modules/users/users.service';
+import { resolvePortalAppBaseUrl } from '@common/portal/portal-app-base-url.util';
 import {
   BadRequestException,
   ForbiddenException,
@@ -261,9 +262,13 @@ export class BillingService {
     if (!this._stripeConnectService.isConfigured()) {
       throw new ServiceUnavailableException('stripe_not_configured');
     }
-    const dashboardBase = this._config
-      .get<string>('DASHBOARD_BASE_URL')
-      ?.trim();
+    const dashboardBase =
+      this._config.get<string>('DASHBOARD_BASE_URL')?.trim() ||
+      // Fallback business (évite dashboard_base_url_missing en prod multi-portail).
+      resolvePortalAppBaseUrl({
+        getEnv: (key) => this._config.get<string>(key),
+        audience: 'business',
+      });
     if (!dashboardBase) {
       throw new BadRequestException('dashboard_base_url_missing');
     }

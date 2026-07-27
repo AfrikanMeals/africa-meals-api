@@ -44,6 +44,11 @@ export function canManagePartnerProfileStripe(status: string): boolean {
   return String(status).toUpperCase() === PartnerProfileStatus.APPROVED;
 }
 
+/** Retenter commissions affiliation FAILED — fiche APPROVED (Connect). */
+export function canReprocessPartnerFailedEarnings(status: string): boolean {
+  return canManagePartnerProfileStripe(status);
+}
+
 /** Voir Finances / Référents admin — approuvée ou suspendue (historique). */
 export function canViewPartnerProfileFinance(status: string): boolean {
   const s = String(status).toUpperCase();

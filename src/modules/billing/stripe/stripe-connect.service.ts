@@ -30,6 +30,7 @@ function partnerPayoutFeeSettingsFromRow(row: {
     payoutFeePercent: fee.feePercent,
   };
 }
+import { resolvePortalAppBaseUrl, portalAudienceForUserType } from '@common/portal/portal-app-base-url.util';
 import { AddressModel } from '@schemas/address.schema';
 import {
   PartnerProfileModel,
@@ -37,8 +38,7 @@ import {
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
-import {
-  type CountryCode,
+import {  type CountryCode,
   parsePhoneNumberFromString,
 } from 'libphonenumber-js';
 import { WsStripeConnectNotifyService } from '@modules/ws-notify/ws-stripe-connect-notify.service';
@@ -881,19 +881,37 @@ export class StripeConnectService {
     return url.replace(/\/+$/, '');
   }
 
-  private connectReturnUrls(): { returnUrl: string; refreshUrl: string } {
-    const adminBase =
-      this.config.get<string>('STRIPE_CONNECT_ADMIN_BASE_URL')?.trim() ||
-      this.config.get<string>('ADMIN_APP_URL')?.trim() ||
-      'http://localhost:3000';
-    const base = adminBase.replace(/\/+$/, '');
+  /**
+   * Return / refresh Connect selon le rôle (ADMIN → admin host, sinon business).
+   * Overrides : audience-specific d’abord ; legacy STRIPE_CONNECT_*_URL uniquement pour admin
+   * (évite de forcer tous les vendeurs vers admin.wise-eat.com).
+   */
+  private connectReturnUrls(
+    userType?: string | null,
+  ): { returnUrl: string; refreshUrl: string } {
+    const getEnv = (key: string) => this.config.get<string>(key);
+    const base = resolvePortalAppBaseUrl({ getEnv, userType });
+    const audience = portalAudienceForUserType(userType);
+    const pathReturn = `${base}/finances/versements?connect=return`;
+    const pathRefresh = `${base}/finances/versements?connect=refresh`;
+    // 1. Overrides dédiés par portail.
+    if (audience === 'business') {
+      return {
+        returnUrl:
+          getEnv('STRIPE_CONNECT_BUSINESS_RETURN_URL')?.trim() || pathReturn,
+        refreshUrl:
+          getEnv('STRIPE_CONNECT_BUSINESS_REFRESH_URL')?.trim() || pathRefresh,
+      };
+    }
     return {
       returnUrl:
-        this.config.get<string>('STRIPE_CONNECT_RETURN_URL')?.trim() ||
-        `${base}/finances/versements?connect=return`,
+        getEnv('STRIPE_CONNECT_ADMIN_RETURN_URL')?.trim() ||
+        getEnv('STRIPE_CONNECT_RETURN_URL')?.trim() ||
+        pathReturn,
       refreshUrl:
-        this.config.get<string>('STRIPE_CONNECT_REFRESH_URL')?.trim() ||
-        `${base}/finances/versements?connect=refresh`,
+        getEnv('STRIPE_CONNECT_ADMIN_REFRESH_URL')?.trim() ||
+        getEnv('STRIPE_CONNECT_REFRESH_URL')?.trim() ||
+        pathRefresh,
     };
   }
 
@@ -1355,7 +1373,7 @@ export class StripeConnectService {
     status: StripeConnectStatus,
     account: StripeConnectAccountRecord,
   ): Promise<void> {
-    const action = await this.createConnectEmailActionLink(account);
+    const action = await this.createConnectEmailActionLink(account, user.type);
     await this.vendorStatusEmail.notifyStripeConnectStatusChange({
       userId: this.userId(user).toString(),
       recipientRole:
@@ -1370,13 +1388,14 @@ export class StripeConnectService {
 
   private async createConnectEmailActionLink(
     account: StripeConnectAccountRecord,
+    userType?: string | null,
   ): Promise<{ url: string; label: string } | null> {
     const accountId = account.id?.trim();
     if (!accountId) return null;
     if (resolveConnectLifecycleStatus(account) === 'rejected') return null;
 
     const stripe = this.stripe();
-    const { returnUrl, refreshUrl } = this.connectReturnUrls();
+    const { returnUrl, refreshUrl } = this.connectReturnUrls(userType);
 
     if (isConnectFullyActive(account)) {
       try {
@@ -1535,7 +1554,7 @@ export class StripeConnectService {
     const { store, userAddress, partnerProfile } =
       await this.resolveConnectPrefillContext(user);
     const stripe = this.stripe();
-    const { returnUrl, refreshUrl } = this.connectReturnUrls();
+    const { returnUrl, refreshUrl } = this.connectReturnUrls(user.type);
     const prefill = this.buildPrefillForUser(
       user,
       store,
@@ -1729,7 +1748,7 @@ export class StripeConnectService {
     const { store, userAddress, partnerProfile } =
       await this.resolveConnectPrefillContext(user);
     const stripe = this.stripe();
-    const { returnUrl, refreshUrl } = this.connectReturnUrls();
+    const { returnUrl, refreshUrl } = this.connectReturnUrls(user.type);
 
     let account: StripeConnectAccountRecord;
     try {

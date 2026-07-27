@@ -201,6 +201,22 @@ export class PartnerProfilesAdminController {
     );
   }
 
+  @Post('profiles/:profileId/reprocess-failed-earnings')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Admin — retente les commissions affiliation FAILED d’un Partner approuvé (Connect prêt).',
+  })
+  async reprocessFailedEarningsAdmin(
+    @Req() req: Request,
+    @Param('profileId') profileId: string,
+  ) {
+    return this._partnerProfiles.reprocessFailedEarningsForAdmin(
+      req.user as UserModel,
+      profileId,
+    );
+  }
+
   @Get('profiles/:profileId/finance-overview')
   @UseGuards(JwtGuard)
   @ApiOperation({

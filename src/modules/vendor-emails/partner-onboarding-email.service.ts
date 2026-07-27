@@ -5,6 +5,7 @@ import {
 } from '@modules/mailer/email-ai-hero-image.service';
 import { MailerService } from '@modules/mailer/mailer.service';
 import { resolveEmailBrand } from '@modules/mailer/email-brand.util';
+import { resolvePortalAppBaseUrl } from '@common/portal/portal-app-base-url.util';
 import { MobileAppSettingsService } from '@modules/mobile-app-settings/mobile-app-settings.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -718,12 +719,12 @@ export class PartnerOnboardingEmailService {
   }
 
   private resolveAdminAppUrl(): string {
-    const raw =
-      this.config.get<string>('ADMIN_APP_URL')?.trim() ||
-      this.config.get<string>('DASHBOARD_BASE_URL')?.trim() ||
-      this.config.get<string>('FRONTEND_URL')?.trim() ||
-      'http://localhost:3001';
-    return raw.replace(/\/+$/, '');
+    // CTA onboarding Partner → portail business (alias partner.wise-eat.com en gate, URL canonique business).
+    return resolvePortalAppBaseUrl({
+      getEnv: (key) => this.config.get<string>(key),
+      audience: 'business',
+      localhostFallback: 'http://localhost:3001',
+    });
   }
 
   private async resolveMobileAppStoreLinks(): Promise<{

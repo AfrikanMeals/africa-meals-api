@@ -15,6 +15,7 @@ import {
   normalizeOrderItemsOnOrderRows,
 } from './order-line-items-normalize.util';
 import { resolveGiftOrderParties } from './gift-order.util';
+import { readOrderPickupCodeForWs } from './order-ws-pickup-code.util';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { ProductsService } from '@modules/products/products.service';
 import { RatingsService } from '@modules/ratings/ratings.service';
@@ -3825,6 +3826,10 @@ export class OrdersService {
     if (status === OrderStatusEnum.PAIED && vendorAcceptedAt) {
       progress = 0.22;
     }
+    // Inclus dans le WS pour que la carte client affiche le code dès « prête ».
+    const pickupCode = readOrderPickupCodeForWs(
+      order as Record<string, unknown>,
+    );
     return {
       orderId: oid,
       status,
@@ -3838,6 +3843,7 @@ export class OrdersService {
         : {}),
       storeId: this.storeIdFromOrderDoc(order as OrderModel) ?? undefined,
       ...(vendorAcceptedAt ? { vendorAcceptedAt } : {}),
+      ...(pickupCode ? { pickupCode } : {}),
       ...this.courierRouteFieldsFromOrder(order as Record<string, unknown>),
     };
   }

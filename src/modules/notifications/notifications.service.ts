@@ -40,6 +40,7 @@ import { UserModel } from '@schemas/user.schema';
 import { VendorNotificationPreferencesModel } from '@schemas/vendor-notification-preferences.schema';
 import { FilterQuery, Model, Types } from 'mongoose';
 import { partitionChatPushRecipients } from './chat-push-recipients.util';
+import { buildCourierAssignmentNotifyCopy } from './courier-assignment-notify.util';
 
 const MAX_TOKENS_PER_USER = 20;
 
@@ -1271,7 +1272,8 @@ export class NotificationsService implements OnModuleInit {
   }
 
   /**
-   * Inbox + push FCM — course assignée ou retirée (livreur app).
+   * Inbox + canaux actifs (push et/ou e-mail selon prefs Livraison).
+   * Assign dashboard / hard-auto flotte ; pas le self-claim livreur.
    */
   async notifyDeliveryAgentOrderAssignment(args: {
     recipientUserId: string;
@@ -1287,23 +1289,20 @@ export class NotificationsService implements OnModuleInit {
     const orderId = args.orderId?.trim();
     if (!orderId) return;
 
-    const store = (args.storeName ?? '').trim() || 'Restaurant';
-    const ref =
-      (args.orderRef ?? '').trim() ||
-      `#AE-${orderId.slice(-6).toUpperCase()}`;
-    const assigned = args.action === 'assigned';
-    const title = assigned ? 'Nouvelle course' : 'Course retirée';
-    const body = assigned
-      ? `${store} : la course ${ref} vous a été assignée. Ouvrez la carte pour démarrer.`
-      : `${store} : la course ${ref} ne vous est plus assignée.`;
+    const copy = buildCourierAssignmentNotifyCopy({
+      action: args.action,
+      orderId,
+      orderRef: args.orderRef,
+      storeName: args.storeName,
+    });
 
     const data: Record<string, unknown> = {
       type: 'courier_order_update',
       audience: 'courier',
-      reason: assigned ? 'order_assigned' : 'order_unassigned',
+      reason: copy.assigned ? 'order_assigned' : 'order_unassigned',
       orderId,
-      orderRef: ref,
-      storeName: store,
+      orderRef: copy.orderRef,
+      storeName: copy.store,
       action: args.action,
     };
     const storeId = args.storeId?.trim();
@@ -1311,20 +1310,83 @@ export class NotificationsService implements OnModuleInit {
       data.storeId = storeId;
     }
 
+    // Prefs user : shippingDelivery + push / e-mail (legacy allow si undefined).
+    const allowPush =
+      !this.userNotifPrefs ||
+      (await this.userNotifPrefs.isDeliveryChannelAllowed(
+        args.recipientUserId,
+        'push',
+      ));
+    const allowEmail =
+      !this.userNotifPrefs ||
+      (await this.userNotifPrefs.isDeliveryChannelAllowed(
+        args.recipientUserId,
+        'email',
+      ));
+
     try {
       await this.createUserScopedNotification({
         recipientUserId: args.recipientUserId,
-        title,
-        body,
+        title: copy.title,
+        body: copy.body,
         type: 'courier_order_update',
         data,
-        sendPush: true,
+        sendPush: allowPush,
         androidChannelId: 'african_meals_courier_orders',
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(`notifyDeliveryAgentOrderAssignment: ${msg}`);
     }
+
+    if (allowEmail && this.mailer && this.emailTpl) {
+      void this.sendCourierAssignmentEmail({
+        userId: args.recipientUserId,
+        orderId,
+        title: copy.title,
+        body: copy.body,
+        action: args.action,
+      }).catch((e) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        this.logger.warn(
+          `notifyDeliveryAgentOrderAssignment email: ${msg}`,
+        );
+      });
+    }
+  }
+
+  /** E-mail transactionnel assign / unassign course livreur. */
+  private async sendCourierAssignmentEmail(args: {
+    userId: string;
+    orderId: string;
+    title: string;
+    body: string;
+    action: 'assigned' | 'unassigned';
+  }): Promise<void> {
+    if (!this.mailer || !this.emailTpl) return;
+    const user = await this.userModel.findById(args.userId).exec();
+    const email = user?.email?.trim();
+    if (!email) return;
+    const name = user?.fullName?.trim() || '';
+    const html = await this.emailTpl.wrapBodyAsync(
+      [
+        emailHeading(args.title),
+        emailParagraph(name ? `Bonjour ${name},` : 'Bonjour,'),
+        emailParagraph(args.body),
+        emailParagraph(
+          args.action === 'assigned'
+            ? 'Ouvrez l’app livreur pour voir la course sur la carte.'
+            : 'Cette course n’apparaît plus dans vos livraisons actives.',
+        ),
+      ].join(''),
+    );
+    await this.mailer.sendSimple({
+      to: email,
+      toName: name || undefined,
+      subject: args.title,
+      html,
+      logContext: `courier-assignment action=${args.action} order=${args.orderId}`,
+    });
   }
 
   /**

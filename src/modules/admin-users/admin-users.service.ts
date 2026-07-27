@@ -1,4 +1,5 @@
 import { AuthService } from '@modules/auth/auth.service';
+import { PartnerAffiliationEarningsService } from '@modules/partner-subscriptions/partner-affiliation-earnings.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import {
@@ -22,6 +23,7 @@ import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { buildCaseInsensitiveExactRegex } from '@common/mongo/escape-regex.util';
 import { FilterQuery, Model, Types } from 'mongoose';
 import type { AdminUserInterestsResponse } from './admin-user-interests.types';
+import { AdminAttachPartnerReferralDto } from './dto/admin-attach-partner-referral.dto';
 import { AdminListUsersQueryDto } from './dto/admin-list-users-query.dto';
 import { AdminSetUserDisabledDto } from './dto/admin-set-user-disabled.dto';
 import { AdminUpdateUserDto } from './dto/admin-update-user.dto';
@@ -56,12 +58,15 @@ export type AdminUserRow = {
   deletionPending: boolean;
   accountDeletionRequestedAt: string | null;
   accountDeletionScheduledFor: string | null;
+  /** Partner qui a référé ce compte (filleul Customer / Vendor / Courier). */
+  referredByPartnerUserId: string | null;
+  referredByPartnerCode: string | null;
   createdAt: string | null;
   updatedAt: string | null;
 };
 
 const ADMIN_USER_SELECT =
-  'fullName email phoneNumber type appCountryCode emailVerifiedAt googleId appleId facebookId debug canMessaging messagingBanReason accountDisabledAt accountDeletionRequestedAt accountDeletionScheduledFor createdAt updatedAt';
+  'fullName email phoneNumber type appCountryCode emailVerifiedAt googleId appleId facebookId debug canMessaging messagingBanReason accountDisabledAt accountDeletionRequestedAt accountDeletionScheduledFor referredByPartnerUserId referredByPartnerCode createdAt updatedAt';
 
 function deriveAuthMethods(doc: Record<string, unknown>): AdminUserAuthMethod[] {
   const methods: AdminUserAuthMethod[] = [];
@@ -89,6 +94,14 @@ function serializeUser(doc: Record<string, unknown>): AdminUserRow {
   const disabledAt = doc.accountDisabledAt;
   const deletionRequestedAt = doc.accountDeletionRequestedAt;
   const deletionScheduledFor = doc.accountDeletionScheduledFor;
+  const referredPartnerId = doc.referredByPartnerUserId;
+  const referredCodeRaw = doc.referredByPartnerCode;
+  // Code 6 chars normalisé pour le menu User Management (null si absent / invalide).
+  const referredCode =
+    typeof referredCodeRaw === 'string' &&
+    /^[A-Z0-9]{6}$/.test(referredCodeRaw.trim().toUpperCase())
+      ? referredCodeRaw.trim().toUpperCase()
+      : null;
   return {
     id: String(doc._id ?? ''),
     fullName: String(doc.fullName ?? ''),
@@ -114,6 +127,11 @@ function serializeUser(doc: Record<string, unknown>): AdminUserRow {
       deletionRequestedAt instanceof Date && deletionScheduledFor instanceof Date,
     accountDeletionRequestedAt: toIso(deletionRequestedAt),
     accountDeletionScheduledFor: toIso(deletionScheduledFor),
+    referredByPartnerUserId:
+      referredPartnerId != null && String(referredPartnerId).trim()
+        ? String(referredPartnerId)
+        : null,
+    referredByPartnerCode: referredCode,
     createdAt: toIso(doc.createdAt),
     updatedAt: toIso(doc.updatedAt),
   };
@@ -139,6 +157,8 @@ export class AdminUsersService {
     private readonly storeAccess: StoreAccessService,
     private readonly authService: AuthService,
     private readonly supportedCountries: SupportedCountriesService,
+    // Affiliation Partner — attach admin depuis User Management.
+    private readonly partnerAffiliation: PartnerAffiliationEarningsService,
   ) {}
 
   private async assertAdmin(user: UserModel): Promise<void> {
@@ -227,6 +247,24 @@ export class AdminUsersService {
       .exec();
     if (!row) throw new NotFoundException('user_not_found');
     return serializeUser(row as Record<string, unknown>);
+  }
+
+  /**
+   * Admin — pose / écrase le Partner référent d’un Client, Vendeur ou Livreur.
+   * Retourne la row user à jour (liste User Management).
+   */
+  async attachPartnerReferral(
+    actor: UserModel,
+    userId: string,
+    dto: AdminAttachPartnerReferralDto,
+  ): Promise<AdminUserRow> {
+    await this.assertAdmin(actor);
+    this.assertNotSelf(actor, userId);
+    await this.partnerAffiliation.attachReferralForUserAdmin(userId, {
+      referralCode: dto.referralCode,
+      force: dto.force === true,
+    });
+    return this.getUser(actor, userId);
   }
 
   async updateUser(

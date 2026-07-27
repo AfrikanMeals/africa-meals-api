@@ -2,6 +2,7 @@ import { CronMonitorModule } from '@modules/cron-monitor/cron-monitor.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { VendorStatusEmailModule } from '@modules/vendor-emails/vendor-status-email.module';
+import { StripeConnectTransferModule } from '@modules/billing/stripe/stripe-connect-transfer.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -21,6 +22,7 @@ import {
   PartnerSubscriptionModel,
   PartnerSubscriptionSchema,
 } from '@schemas/partner-subscription.schema';
+import { OrderModel, OrderSchema } from '@schemas/order.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import { PartnerAffiliationEarningsService } from './partner-affiliation-earnings.service';
 import { PartnerSubscriptionPlansAdminController } from './partner-subscription-plans-admin.controller';
@@ -40,6 +42,8 @@ import { PartnerSubscriptionsService } from './partner-subscriptions.service';
     VendorStatusEmailModule,
     // Facteur Stripe Régions (XAF montants entiers / CAD centimes).
     SupportedCountriesModule,
+    // Snapshot FX charge → settlement pour transfers commission Partner.
+    StripeConnectTransferModule,
     MongooseModule.forFeature([
       {
         name: PartnerSubscriptionPlanModel.name,
@@ -55,6 +59,8 @@ import { PartnerSubscriptionsService } from './partner-subscriptions.service';
         schema: PartnerApplicationSchema,
       },
       { name: UserModel.name, schema: UserSchema },
+      // orderId → stripeParentPaymentId pour FX settlement.
+      { name: OrderModel.name, schema: OrderSchema },
     ]),
   ],
   controllers: [

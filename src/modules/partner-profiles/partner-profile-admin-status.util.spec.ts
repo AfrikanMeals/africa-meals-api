@@ -4,6 +4,7 @@ import {
   canManagePartnerProfileStripe,
   canReactivatePartnerProfile,
   canRejectPartnerProfile,
+  canReprocessPartnerFailedEarnings,
   canRevertPartnerProfileToSubmitted,
   canSuspendPartnerProfile,
   canViewPartnerProfileFinance,
@@ -64,6 +65,8 @@ describe('transitions admin fiche partenaire', () => {
   it('Stripe manage = APPROVED ; finance/referrers = APPROVED|SUSPENDED', () => {
     expect(canManagePartnerProfileStripe('APPROVED')).toBe(true);
     expect(canManagePartnerProfileStripe('SUSPENDED')).toBe(false);
+    expect(canReprocessPartnerFailedEarnings('APPROVED')).toBe(true);
+    expect(canReprocessPartnerFailedEarnings('SUSPENDED')).toBe(false);
     expect(canViewPartnerProfileFinance('APPROVED')).toBe(true);
     expect(canViewPartnerProfileFinance('SUSPENDED')).toBe(true);
     expect(canViewPartnerProfileFinance('SUBMITTED')).toBe(false);

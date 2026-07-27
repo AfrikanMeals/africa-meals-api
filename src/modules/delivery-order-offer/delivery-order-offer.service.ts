@@ -274,6 +274,26 @@ export class DeliveryOrderOfferService {
       this.logger.log(
         `hard-auto-assign order=${orderId}: assigned agent=${topAgentId}`,
       );
+      // Hard-auto = silencieux pour le livreur sans push/e-mail → notifier canaux actifs.
+      const storeName = String(
+        (store as { name?: string }).name ?? '',
+      ).trim();
+      void this._notifications
+        .notifyDeliveryAgentOrderAssignment({
+          recipientUserId: topAgentId,
+          orderId,
+          orderRef: `#AE-${orderId.slice(-6).toUpperCase()}`,
+          storeName: storeName || undefined,
+          storeId,
+          action: 'assigned',
+        })
+        .catch((err) => {
+          this.logger.warn(
+            `hard-auto-assign notify agent=${topAgentId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
       return true;
     } catch (e) {
       this.logger.warn(

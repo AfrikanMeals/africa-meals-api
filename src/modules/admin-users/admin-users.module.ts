@@ -1,4 +1,5 @@
 import { AuthModule } from '@modules/auth/auth.module';
+import { PartnerSubscriptionsModule } from '@modules/partner-subscriptions/partner-subscriptions.module';
 import { SupportedCountriesModule } from '@modules/supported-countries/supported-countries.module';
 import { TeamsModule } from '@modules/teams/teams.module';
 import { UsageTimeModule } from '@modules/usage-time/usage-time.module';
@@ -44,6 +45,8 @@ import { AdminUsersService } from './admin-users.service';
     AuthModule,
     SupportedCountriesModule,
     UsageTimeModule,
+    // Attach Partner referral depuis User Management.
+    PartnerSubscriptionsModule,
   ],
   controllers: [AdminUsersController],
   providers: [AdminUsersService],

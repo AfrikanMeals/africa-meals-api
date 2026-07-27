@@ -1,6 +1,7 @@
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { PartnerOnboardingEmailService } from '@modules/vendor-emails/partner-onboarding-email.service';
+import { resolvePortalAppBaseUrl } from '@common/portal/portal-app-base-url.util';
 import {
   BadRequestException,
   ForbiddenException,
@@ -275,11 +276,12 @@ export class PartnerSubscriptionsService implements OnModuleInit {
   }
 
   private successUrl(): string {
-    const adminBase =
-      this.config.get<string>('FRONTEND_URL')?.trim() ||
-      this.config.get<string>('ADMIN_APP_URL')?.trim() ||
-      'http://localhost:3000';
-    const base = `${adminBase.replace(/\/$/, '')}/settings/partner-subscription`;
+    // Partner → toujours portail business (jamais admin.wise-eat.com).
+    const portalBase = resolvePortalAppBaseUrl({
+      getEnv: (key) => this.config.get<string>(key),
+      audience: 'business',
+    });
+    const base = `${portalBase}/settings/partner-subscription`;
     const configured =
       this.config.get<string>('STRIPE_PARTNER_SUBSCRIPTION_SUCCESS_URL')?.trim() ||
       '';
@@ -290,13 +292,13 @@ export class PartnerSubscriptionsService implements OnModuleInit {
   }
 
   private cancelUrl(): string {
-    const adminBase =
-      this.config.get<string>('FRONTEND_URL')?.trim() ||
-      this.config.get<string>('ADMIN_APP_URL')?.trim() ||
-      'http://localhost:3000';
+    const portalBase = resolvePortalAppBaseUrl({
+      getEnv: (key) => this.config.get<string>(key),
+      audience: 'business',
+    });
     return (
       this.config.get<string>('STRIPE_PARTNER_SUBSCRIPTION_CANCEL_URL')?.trim() ||
-      `${adminBase.replace(/\/$/, '')}/settings/partner-subscription`
+      `${portalBase}/settings/partner-subscription`
     );
   }
 

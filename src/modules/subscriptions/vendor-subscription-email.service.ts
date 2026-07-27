@@ -1,5 +1,6 @@
 import { MailerService } from '@modules/mailer/mailer.service';
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
+import { resolvePortalAppBaseUrl } from '@common/portal/portal-app-base-url.util';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -272,11 +273,13 @@ export class VendorSubscriptionEmailService {
   }
 
   private subscriptionSettingsUrl(): string {
-    const adminBase =
-      this.config.get<string>('ADMIN_APP_URL')?.trim() ||
-      this.config.get<string>('FRONTEND_URL')?.trim() ||
-      'http://localhost:3001';
-    return `${adminBase.replace(/\/+$/, '')}/settings/subscription`;
+    // Abonnement vendeur → portail business (pas admin.wise-eat.com).
+    const portalBase = resolvePortalAppBaseUrl({
+      getEnv: (key) => this.config.get<string>(key),
+      audience: 'business',
+      localhostFallback: 'http://localhost:3001',
+    });
+    return `${portalBase}/settings/subscription`;
   }
 
   private billingPeriodLabel(

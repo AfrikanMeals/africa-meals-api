@@ -18,6 +18,7 @@ import { ApiFieldSelection } from '@common/field-selection/api-field-selection.d
 import { UserModel } from '@schemas/user.schema';
 import { Request } from 'express';
 import { UsageTimeService } from '@modules/usage-time/usage-time.service';
+import { AdminAttachPartnerReferralDto } from './dto/admin-attach-partner-referral.dto';
 import { AdminUsersService } from './admin-users.service';
 import { AdminListUsersQueryDto } from './dto/admin-list-users-query.dto';
 import { AdminSearchUsersBodyDto } from './dto/admin-search-users-body.dto';
@@ -84,6 +85,30 @@ export class AdminUsersController {
   })
   getUsageTime(@Req() req: Request, @Param('userId') userId: string) {
     return this.usageTime.getUserUsageTime(req.user as UserModel, userId);
+  }
+
+  @Post(':userId/partner-referral')
+  @UsePipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  )
+  @ApiOperation({
+    summary:
+      'Lier un Client / Vendeur / Livreur à un Partner via code referral (admin.settings)',
+  })
+  attachPartnerReferral(
+    @Req() req: Request,
+    @Param('userId') userId: string,
+    @Body() dto: AdminAttachPartnerReferralDto,
+  ) {
+    return this.adminUsers.attachPartnerReferral(
+      req.user as UserModel,
+      userId,
+      dto,
+    );
   }
 
   @Get(':userId')

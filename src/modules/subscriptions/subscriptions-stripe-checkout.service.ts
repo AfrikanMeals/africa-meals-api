@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
+import { resolvePortalAppBaseUrl } from '@common/portal/portal-app-base-url.util';
 import { SubscriptionPlanModel } from '@schemas/subscription-plan.schema';
 import {
   VendorSubscriptionBillingPeriod,
@@ -85,15 +86,12 @@ export class SubscriptionsStripeCheckoutService {
     const server =
       this.config.get<string>('SERVER_URL')?.replace(/\/$/, '') ??
       'http://localhost:9000';
-    const adminBase =
-      this.config.get<string>('FRONTEND_URL')?.trim() ||
-      this.config.get<string>('ADMIN_APP_URL')?.trim() ||
-      this.config.get<string>('CLIENT_APP_URL')?.trim() ||
-      'http://localhost:3000';
-    const adminSubscriptionUrl = `${adminBase.replace(
-      /\/$/,
-      '',
-    )}/settings/subscription`;
+    // Vendeur → portail business (pas admin).
+    const portalBase = resolvePortalAppBaseUrl({
+      getEnv: (key) => this.config.get<string>(key),
+      audience: 'business',
+    });
+    const adminSubscriptionUrl = `${portalBase}/settings/subscription`;
     const configured =
       this.config.get<string>('STRIPE_SUBSCRIPTION_SUCCESS_URL')?.trim() || '';
     const raw = configured || adminSubscriptionUrl;
