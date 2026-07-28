@@ -8,8 +8,12 @@ import { AppModule } from '../app.module';
  * À lancer après avoir coché « Block all public access » sur le bucket S3 :
  * les URLs directes `bucket.s3.….amazonaws.com` deviennent `/medias/public/…`.
  *
- *   npm run medias:normalize-urls            # simulation (aucune écriture)
- *   npm run medias:normalize-urls -- --apply # applique les mises à jour
+ * Prod (VPS, sans ts-node — nécessite `npm run build` au préalable) :
+ *   npm run medias:normalize-urls            # dry-run
+ *   npm run medias:normalize-urls -- --apply
+ *
+ * Dev (sources TypeScript) :
+ *   npm run medias:normalize-urls:src -- --apply
  */
 async function run() {
   const apply = process.argv.includes('--apply');

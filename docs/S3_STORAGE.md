@@ -44,17 +44,23 @@ Checklist pour `AWS_S3_BUCKET` :
    ```
 4. Normaliser les URLs Mongo encore en `*.s3.amazonaws.com` :
    ```bash
-   cd africa-meals-api
+   cd /opt/wise-eat-api   # ou africa-meals-api en local
+   # Prod : utilise dist/ (pas de ts-node). Rebuild si le script manque :
+   npm run build
    npm run medias:normalize-urls            # dry-run
    npm run medias:normalize-urls -- --apply
+   # Équivalent direct :
+   # node -r tsconfig-paths/register dist/scripts/media-url-normalize.js --apply
    ```
-5. Harden bucket (dry-run puis apply) :
+5. Harden bucket (dry-run puis apply) — lit `AWS_*` depuis `/opt/wise-eat-api/.env.prod` :
    ```bash
-   cd africa-meals-infra
-   AWS_S3_BUCKET=wise-eat ./scripts/harden-s3-bucket.sh
-   APPLY=1 AWS_S3_BUCKET=wise-eat ./scripts/harden-s3-bucket.sh
+   cd /opt/wise-eat   # africa-meals-infra
+   ./scripts/harden-s3-bucket.sh
+   APPLY=1 ./scripts/harden-s3-bucket.sh
    ```
-   Ou console AWS → Permissions → **Block all public access** → Save ; retirer policy `Principal: "*"`.
+   Si `AccessDenied` sur `put-public-access-block` : la clé API n’a que Get/PutObject —
+   utiliser la console AWS → Permissions → **Block all public access** → Save
+   (ou une clé IAM avec `s3:PutBucketPublicAccessBlock`).
 
 **Ordre :** proxy + deploy → smoke `/medias/public/` → normalize-urls → Block Public Access.  
 **Rollback d’urgence :** réouvrir temporairement la lecture publique bucket **uniquement** si le proxy est down ; préférer garder le proxy ON.
