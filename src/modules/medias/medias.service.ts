@@ -258,6 +258,28 @@ export class MediasService {
     return !this.canServeDirectUrl(target);
   }
 
+  /**
+   * URL déjà servie par une base publique CDN (MINIO/S3/R2_PUBLIC_BASE_URL) —
+   * lisible sans passer par `/medias/public/`.
+   */
+  private isConfiguredPublicBaseUrl(url: string): boolean {
+    for (const key of [
+      'MINIO_PUBLIC_BASE_URL',
+      'AWS_S3_PUBLIC_BASE_URL',
+      'R2_PUBLIC_BASE_URL',
+    ] as const) {
+      const base = this.config.get<string>(key)?.trim();
+      if (!base) continue;
+      if (url.startsWith(base.replace(/\/+$/, ''))) return true;
+    }
+    // Domaine CDN objet Wise Eat (même sans env aligné sur le pod).
+    try {
+      return /^files\.wise-eat\.com$/i.test(new URL(url).hostname);
+    } catch {
+      return false;
+    }
+  }
+
   /** Normalise les URLs médias selon le réglage admin (proxy ou direct GCS/S3). */
   async resolvePublicMediaUrl(
     url: string | null | undefined,
@@ -267,9 +289,28 @@ export class MediasService {
     const useProxy = await this.isMediaProxyEnabled(detectEngineFromUrl(raw));
 
     if (useProxy) {
-      if (this.isProxyUrl(raw)) return raw;
+      if (this.isProxyUrl(raw)) {
+        const objectPath = extractObjectPath(raw);
+        // Fix: URL CDN entière encodée sous /medias/public/ → re-normaliser.
+        if (/^https?:\/\//i.test(objectPath) || objectPath.includes('://')) {
+          return this.resolvePublicMediaUrl(objectPath);
+        }
+        // Rebuild pour coller l’encodage canonique (segments).
+        const clean = objectPath.replace(/^\/+/, '');
+        if (!clean || clean.includes('..')) return raw;
+        return this.buildProxyPublicUrl(clean);
+      }
+      // Base CDN publique : ne pas re-proxifier (sinon double-proxy cassé).
+      if (this.isConfiguredPublicBaseUrl(raw)) {
+        return raw;
+      }
       if (this.isDirectObjectStoreUrl(raw)) {
-        return this.buildProxyPublicUrl(extractObjectPath(raw));
+        const objectPath = extractObjectPath(raw);
+        // Garde-fou : ne jamais préfixer une URL http restante.
+        if (/^https?:\/\//i.test(objectPath)) {
+          return raw;
+        }
+        return this.buildProxyPublicUrl(objectPath);
       }
       return raw;
     }
@@ -321,8 +362,21 @@ export class MediasService {
   }
 
   async streamPublicObject(objectPath: string): Promise<StorageObjectStream> {
-    const normalized = objectPath.replace(/^\/+/, '').trim();
-    if (!normalized || normalized.includes('..')) {
+    // Fix: clients peuvent encore frapper un double-proxy
+    // (`/medias/public/https%3A//files.wise-eat.com/…`) — réduire à la clé objet.
+    let normalized = objectPath.replace(/^\/+/, '').trim();
+    if (
+      /^https?:\/\//i.test(normalized) ||
+      /%3A/i.test(normalized) ||
+      normalized.includes('://')
+    ) {
+      normalized = extractObjectPath(
+        /^https?:\/\//i.test(normalized) || normalized.includes('://')
+          ? normalized
+          : decodeURIComponent(normalized),
+      ).replace(/^\/+/, '');
+    }
+    if (!normalized || normalized.includes('..') || /^https?:\/\//i.test(normalized)) {
       throw new BadRequestException('invalid_media_path');
     }
     const settings = await this.storageSettings.getPublicSettings();

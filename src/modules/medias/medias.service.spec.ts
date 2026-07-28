@@ -212,4 +212,57 @@ describe('MediasService', () => {
       'https://api.wise-eat.com/medias/public/catalog/meal.jpg',
     );
   });
+
+  it('keeps files.wise-eat.com CDN URLs when media proxy is enabled', async () => {
+    const storageSettings = service['storageSettings'] as StorageSettingsService;
+    jest.spyOn(storageSettings, 'getPublicSettings').mockResolvedValue({
+      compressionEnabled: false,
+      maxFileSizeMb: 5,
+      storageEngine: 'minio',
+      storageEnginePool: ['minio'],
+      fallbackStorageEngine: null,
+      mediaProxyEnabled: true,
+      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true },
+      moduleStorageEngines: {
+        catalog: 'default',
+        profile: 'default',
+        marketing: 'default',
+        chat: 'default',
+        system: 'default',
+      },
+      updatedAt: null,
+    });
+    env.MINIO_PUBLIC_BASE_URL = 'https://files.wise-eat.com';
+    const url =
+      'https://files.wise-eat.com/stores/abc/products/x.jpg';
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(url);
+  });
+
+  it('heals nested CDN URL wrongly encoded under medias/public', async () => {
+    const storageSettings = service['storageSettings'] as StorageSettingsService;
+    jest.spyOn(storageSettings, 'getPublicSettings').mockResolvedValue({
+      compressionEnabled: false,
+      maxFileSizeMb: 5,
+      storageEngine: 'minio',
+      storageEnginePool: ['minio'],
+      fallbackStorageEngine: null,
+      mediaProxyEnabled: true,
+      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true },
+      moduleStorageEngines: {
+        catalog: 'default',
+        profile: 'default',
+        marketing: 'default',
+        chat: 'default',
+        system: 'default',
+      },
+      updatedAt: null,
+    });
+    env.MINIO_PUBLIC_BASE_URL = 'https://files.wise-eat.com';
+    const broken =
+      'https://apis.wise-eat.com/medias/public/https%3A//files.wise-eat.com/stores/abc/products/x.jpg';
+    // Proxy activé → réécrit vers une clé objet propre sous /medias/public/ (servable).
+    await expect(service.resolvePublicMediaUrl(broken)).resolves.toBe(
+      'https://api.wise-eat.com/medias/public/stores/abc/products/x.jpg',
+    );
+  });
 });

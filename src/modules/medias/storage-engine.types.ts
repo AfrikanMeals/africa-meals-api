@@ -64,12 +64,47 @@ export function looksLikeMinioUrl(url: string): boolean {
   return false;
 }
 
+/**
+ * CDN / base publique objet où le pathname = clé S3/MinIO (sans préfixe bucket).
+ * Ex. `https://files.wise-eat.com/stores/…/x.jpg` → `stores/…/x.jpg`.
+ * Ne pas confondre avec `cdn.wise-eat.com` (console MinIO).
+ */
+export function looksLikeObjectCdnUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return /^files\.wise-eat\.com$/i.test(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Extrait la clé objet depuis un path relatif, une URL bucket, un CDN, ou un
+ * proxy `/medias/public/…`. Guérit aussi le double-proxy où la « clé » est
+ * encore une URL (`/medias/public/https%3A//files…`).
+ */
 export function extractObjectPath(pathOrUrl: string): string {
   const url = pathOrUrl.trim();
-  if (!url.startsWith('http')) return url;
+  if (!url) return url;
+  if (!url.startsWith('http') && !url.includes('://')) {
+    // Path relatif déjà OK — sauf résidu encodé d’un double-proxy.
+    if (/%3A/i.test(url) || url.toLowerCase().startsWith('https%3a')) {
+      try {
+        return extractObjectPath(decodeURIComponent(url));
+      } catch {
+        return url;
+      }
+    }
+    return url;
+  }
   const proxyMatch = url.match(/\/medias\/public\/([^?]+)/i);
   if (proxyMatch) {
-    return decodeURIComponent(proxyMatch[1].replace(/\+/g, ' '));
+    const nested = decodeURIComponent(proxyMatch[1].replace(/\+/g, ' '));
+    // Fix: normalize-urls / proxy a parfois encodé l’URL CDN entière comme « path ».
+    if (/^https?:\/\//i.test(nested) || nested.includes('://')) {
+      return extractObjectPath(nested);
+    }
+    return nested;
   }
   const firebaseMatch = url.match(/\/o\/([^?]+)/);
   if (firebaseMatch) {
@@ -97,6 +132,16 @@ export function extractObjectPath(pathOrUrl: string): string {
   );
   if (s3Match) {
     return decodeURIComponent(s3Match[1].replace(/\+/g, ' '));
+  }
+  if (looksLikeObjectCdnUrl(url)) {
+    try {
+      const u = new URL(url);
+      return decodeURIComponent(
+        u.pathname.replace(/^\/+/, '').replace(/\+/g, ' '),
+      );
+    } catch {
+      /* fall through */
+    }
   }
   if (looksLikeR2Url(url)) {
     try {

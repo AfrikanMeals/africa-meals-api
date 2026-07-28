@@ -33,4 +33,24 @@ describe('extractObjectPath', () => {
       ),
     ).toBe('catalog/meal.jpg');
   });
+
+  // CDN objet : pathname = clé (pas de préfixe bucket).
+  it('files.wise-eat.com object CDN', () => {
+    expect(
+      extractObjectPath(
+        'https://files.wise-eat.com/stores/6a501e8400ad78d30fcaac89/products/4f1cd02c-5e6d-49c4-b89d-f9682eb20544.jpg',
+      ),
+    ).toBe(
+      'stores/6a501e8400ad78d30fcaac89/products/4f1cd02c-5e6d-49c4-b89d-f9682eb20544.jpg',
+    );
+  });
+
+  // Double-proxy : URL CDN entière encodée sous /medias/public/.
+  it('unwraps nested CDN URL inside medias/public proxy', () => {
+    expect(
+      extractObjectPath(
+        'https://apis.wise-eat.com/medias/public/https%3A//files.wise-eat.com/stores/abc/products/x.jpg',
+      ),
+    ).toBe('stores/abc/products/x.jpg');
+  });
 });
