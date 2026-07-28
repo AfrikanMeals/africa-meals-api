@@ -21,6 +21,7 @@ import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import Stripe = require('stripe');
 import {
+  OfferPartnerSubscriptionDto,
   StartPartnerTrialDto,
   SubscribePartnerDto,
 } from './dto/partner-subscription-plan.dto';
@@ -33,6 +34,7 @@ import {
   isPartnerSubscriptionPaymentIntentKind,
   PARTNER_SUBSCRIPTION_STRIPE_KIND,
 } from './partner-payment-intent.util';
+import { partnerPlanVisibleToUser } from './partner-plan-scope.util';
 import { pickPartnerPricingRegionCode } from './partner-pricing-region.util';
 import {
   partnerPriceToStripeMinorUnits,
@@ -97,8 +99,15 @@ export class PartnerSubscriptionsService implements OnModuleInit {
   }
 
   private async findDefaultFreePlan(): Promise<Record<string, unknown> | null> {
+    // FREE défaut = catalogue public uniquement (jamais une formule privée).
     const rows = await this.planModel
-      .find({ active: true })
+      .find({
+        active: true,
+        $or: [
+          { partnerUserId: { $exists: false } },
+          { partnerUserId: null },
+        ],
+      })
       .sort({ sortOrder: 1, createdAt: 1 })
       .lean()
       .exec();
@@ -198,6 +207,8 @@ export class PartnerSubscriptionsService implements OnModuleInit {
       if (!plan || plan.active === false) {
         throw new NotFoundException('partner_plan_not_found');
       }
+      // Fix: plan custom d’un autre Partner ne doit pas être activable en FREE.
+      this.plans.assertPlanAccessibleToPartner(plan, user);
       const pricingCheck = this.plans.resolvePricingForRegion(
         plan,
         pricingRegion,
@@ -416,6 +427,10 @@ export class PartnerSubscriptionsService implements OnModuleInit {
     if (!plan || plan.active === false) {
       throw new NotFoundException('partner_plan_not_found');
     }
+    this.plans.assertPlanAccessibleToPartner(
+      plan as Record<string, unknown>,
+      user,
+    );
     const trialDays = Math.max(0, Number(plan.trialDays ?? 0));
     if (trialDays <= 0) {
       throw new BadRequestException('partner_plan_no_trial');
@@ -479,6 +494,10 @@ export class PartnerSubscriptionsService implements OnModuleInit {
     if (!plan || plan.active === false) {
       throw new NotFoundException('partner_plan_not_found');
     }
+    this.plans.assertPlanAccessibleToPartner(
+      plan as Record<string, unknown>,
+      user,
+    );
     const period: PartnerSubscriptionBillingPeriod =
       dto.billingPeriod === 'YEARLY' ? 'YEARLY' : 'MONTHLY';
     // Facturation = région d’exercice Partner (pas le défaut CAD du plan).
@@ -612,6 +631,133 @@ export class PartnerSubscriptionsService implements OnModuleInit {
   }
 
   /**
+   * Admin — offrir / assigner une formule Partner (miroir vendor offer).
+   * Notifie push/inbox CHANGED + e-mail offre dédié.
+   */
+  async offerPartnerSubscriptionAdmin(
+    user: UserModel,
+    dto: OfferPartnerSubscriptionDto,
+  ) {
+    this.assertAdmin(user);
+    if (!Types.ObjectId.isValid(dto.partnerUserId)) {
+      throw new NotFoundException('partner_user_not_found');
+    }
+    if (!Types.ObjectId.isValid(dto.planId)) {
+      throw new NotFoundException('partner_plan_not_found');
+    }
+
+    const startsAt = new Date(dto.startsAt);
+    const endsAt = new Date(dto.endsAt);
+    if (
+      Number.isNaN(startsAt.getTime()) ||
+      Number.isNaN(endsAt.getTime()) ||
+      startsAt >= endsAt
+    ) {
+      throw new BadRequestException('invalid_subscription_dates');
+    }
+
+    const partner = await this.userModel
+      .findById(dto.partnerUserId)
+      .select('type fullName email appCountryCode')
+      .lean()
+      .exec();
+    if (!partner || partner.type !== UserTypeEnum.PARTNER) {
+      throw new NotFoundException('partner_user_not_found');
+    }
+
+    const plan = await this.plans.getPlanLean(dto.planId);
+    if (!plan || plan.active === false) {
+      throw new NotFoundException('partner_plan_not_found');
+    }
+    // Plan custom : réservé au Partner cible uniquement.
+    const planScoped = (plan as { partnerUserId?: Types.ObjectId | null })
+      .partnerUserId;
+    if (
+      planScoped &&
+      !partnerPlanVisibleToUser({
+        partnerUserId: planScoped,
+        viewerUserId: dto.partnerUserId,
+      })
+    ) {
+      throw new BadRequestException('partner_plan_not_for_user');
+    }
+
+    const ownerId = new Types.ObjectId(dto.partnerUserId);
+    const operating = await this.plans.getPartnerOperatingRegionCode(ownerId);
+    const pricingRegion = pickPartnerPricingRegionCode({
+      appCountryCode: (partner as { appCountryCode?: string }).appCountryCode,
+      partnerOperatingRegion: operating,
+    });
+    const pricing = this.plans.resolvePricingForRegion(
+      plan as Record<string, unknown>,
+      pricingRegion,
+    );
+
+    const now = new Date();
+    const status: 'ACTIVE' | 'EXPIRED' =
+      endsAt <= now ? 'EXPIRED' : 'ACTIVE';
+    const period =
+      dto.billingPeriod === 'YEARLY' ? 'YEARLY' : 'MONTHLY';
+    const offerNote = String(dto.offerNote ?? '').trim();
+
+    const created = await this.subModel.create({
+      owner: ownerId,
+      plan: plan._id,
+      billingPeriod: period,
+      status,
+      startsAt,
+      endsAt,
+      pricePaid: 0,
+      currency: pricing.currency,
+      planName: String(plan.name ?? ''),
+      isTrial: false,
+      trialEndsAt: null,
+      trialRemindersSent: [],
+      isOffer: true,
+      offerNote: offerNote || undefined,
+    });
+
+    // Clôturer les autres ACTIVE si l’offre couvre aujourd’hui.
+    if (status === 'ACTIVE' && startsAt <= now && endsAt > now) {
+      await this.subModel
+        .updateMany(
+          {
+            owner: ownerId,
+            status: 'ACTIVE',
+            _id: { $ne: created._id },
+          },
+          { $set: { status: 'EXPIRED', endsAt: now } },
+        )
+        .exec();
+    }
+
+    const mapped = mapSub(created.toObject() as Record<string, unknown>);
+    const displayName =
+      String(partner.fullName ?? '').trim() ||
+      String(partner.email ?? '').trim();
+    // Push/inbox CHANGED + e-mail « offre » (pas le copy générique changed).
+    this.queueSubscriptionLifecycleNotify({
+      userId: dto.partnerUserId,
+      subscriptionId: mapped.id,
+      planName: mapped.planName,
+      kind: 'CHANGED',
+      email: String(partner.email ?? ''),
+      name: displayName,
+      emailKind: 'OFFER',
+      offerNote,
+      billingPeriod: period,
+      startsAt,
+      endsAt,
+    });
+
+    return {
+      ...mapped,
+      ownerName: displayName,
+      ownerEmail: String(partner.email ?? ''),
+    };
+  }
+
+  /**
    * Fire-and-forget inbox + push + e-mail (ne bloque pas l’HTTP / Stripe sync).
    */
   private queueSubscriptionLifecycleNotify(args: {
@@ -623,6 +769,12 @@ export class PartnerSubscriptionsService implements OnModuleInit {
     name: string;
     daysRemaining?: number;
     trialEndsAt?: string;
+    /** CHANGED par défaut ; OFFER = e-mail offre admin. */
+    emailKind?: 'CHANGED' | 'OFFER';
+    offerNote?: string;
+    billingPeriod?: 'MONTHLY' | 'YEARLY';
+    startsAt?: Date;
+    endsAt?: Date;
   }) {
     void this.notifications
       .notifyPartnerSubscriptionLifecycle({
@@ -646,6 +798,27 @@ export class PartnerSubscriptionsService implements OnModuleInit {
     const name = args.name.trim() || email;
     const planName = args.planName.trim() || 'votre formule';
     if (args.kind === 'CHANGED') {
+      // Offre admin : template dédié (pas le copy « mis à jour » générique).
+      if (args.emailKind === 'OFFER') {
+        void this.partnerEmails
+          .notifyPartnerSubscriptionOffer({
+            email,
+            name,
+            planName,
+            offerNote: args.offerNote,
+            billingPeriod: args.billingPeriod,
+            startsAt: args.startsAt,
+            endsAt: args.endsAt,
+          })
+          .catch((e) =>
+            this.logger.warn(
+              `partner sub offer email: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            ),
+          );
+        return;
+      }
       void this.partnerEmails
         .notifyPartnerSubscriptionChanged({ email, name, planName })
         .catch((e) =>

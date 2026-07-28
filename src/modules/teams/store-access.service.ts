@@ -18,6 +18,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { PlatformRoleModel } from '@schemas/platform-role.schema';
@@ -50,7 +51,8 @@ export type StoreAccessEntry = {
 
 @Injectable()
 export class StoreAccessService {
-  @Inject(SubscriptionsService)
+  // Cycle Nest : StoreAccess ↔ Subscriptions ↔ Notifications.
+  @Inject(forwardRef(() => SubscriptionsService))
   private readonly subscriptionsService: SubscriptionsService;
 
   @InjectModel(StoreModel.name)

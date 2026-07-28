@@ -27,6 +27,7 @@ import {
   NotFoundException,
   OnModuleInit,
   Optional,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { App } from 'firebase-admin/app';
@@ -77,7 +78,10 @@ export class NotificationsService implements OnModuleInit {
     // Requis avant les @Optional : sinon TS1016 (param requis après optionnel).
     // Sans ce service les badges Partner / cloche restent figés jusqu’au pull.
     private readonly wsInboxNotify: WsInboxNotifyService,
-    @Optional() private readonly storeAccess?: StoreAccessService,
+    // Cycle Nest : Notifications ↔ StoreAccess ↔ Subscriptions.
+    @Optional()
+    @Inject(forwardRef(() => StoreAccessService))
+    private readonly storeAccess?: StoreAccessService,
     @Optional()
     private readonly userNotifPrefs?: UserNotificationPreferencesService,
     @Optional() private readonly mailer?: MailerService,
@@ -1044,6 +1048,81 @@ export class NotificationsService implements OnModuleInit {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(`notifyVendorSubscriptionTrialEnding: ${msg}`);
+    }
+  }
+
+  /**
+   * Inbox + push — formule Partner privée créée (catalogue custom, avant offre).
+   * Réutilise le type `partner_subscription_changed` pour inbox / deep-link Abonnement.
+   */
+  async notifyPartnerCustomPlanAvailable(args: {
+    recipientUserId: string;
+    planId: string;
+    planName?: string;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.recipientUserId)) return;
+    const plan = (args.planName ?? '').trim() || 'votre formule Partner';
+    const title = 'Formule personnalisée disponible';
+    const body = `Une formule personnalisée « ${plan} » a été créée pour vous. Consultez Abonnement Partner.`;
+    try {
+      await this.createUserScopedNotification({
+        recipientUserId: args.recipientUserId,
+        title,
+        body,
+        type: 'partner_subscription_changed',
+        data: {
+          type: 'partner_subscription_changed',
+          audience: 'partner',
+          kind: 'CUSTOM_PLAN_CREATED',
+          planId: args.planId,
+          planName: plan,
+        },
+        sendPush: true,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`notifyPartnerCustomPlanAvailable: ${msg}`);
+    }
+  }
+
+  /**
+   * Inbox + push — formule boutique privée créée (storeId) ou offre activée.
+   */
+  async notifyVendorCustomPlanOrOffer(args: {
+    recipientUserId: string;
+    storeId: string;
+    planId: string;
+    planName?: string;
+    kind: 'CUSTOM_PLAN_CREATED' | 'OFFER';
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.recipientUserId)) return;
+    const plan = (args.planName ?? '').trim() || 'votre formule';
+    const isOffer = args.kind === 'OFFER';
+    const title = isOffer
+      ? 'Offre d’abonnement activée'
+      : 'Formule personnalisée disponible';
+    const body = isOffer
+      ? `Wise Eat vous a attribué l’abonnement « ${plan} ». Ouvrez Abonnement pour les détails.`
+      : `Une formule personnalisée « ${plan} » a été créée pour votre boutique. Consultez Abonnement.`;
+    try {
+      await this.createUserScopedNotification({
+        recipientUserId: args.recipientUserId,
+        title,
+        body,
+        type: 'subscription_custom_plan',
+        data: {
+          type: 'subscription_custom_plan',
+          audience: 'vendor',
+          kind: args.kind,
+          storeId: args.storeId,
+          planId: args.planId,
+          planName: plan,
+        },
+        sendPush: true,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`notifyVendorCustomPlanOrOffer kind=${args.kind}: ${msg}`);
     }
   }
 

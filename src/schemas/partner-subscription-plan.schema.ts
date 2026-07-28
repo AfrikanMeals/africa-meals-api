@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Types } from 'mongoose';
 import {
   PlanRegionOrderCommissionModel,
   PlanRegionOrderCommissionSchema,
@@ -12,11 +12,25 @@ import {
 /**
  * Formule d’abonnement Partner (catalogue admin) — isolée des plans vendeur.
  * Commission affiliation = 3 axes régionaux ; payout fees = retenue Connect.
+ * `partnerUserId` set = formule privée (miroir `storeId` vendeur).
  */
 @Schema({ timestamps: true, collection: 'partner_subscription_plans' })
 export class PartnerSubscriptionPlanModel {
   @Prop({ type: String, required: true, trim: true })
   name: string;
+
+  /**
+   * Formule privée réservée à un compte PARTNER.
+   * Absent / null = catalogue public.
+   */
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'UserModel',
+    required: false,
+    default: null,
+    index: true,
+  })
+  partnerUserId?: Types.ObjectId | null;
 
   @Prop({ type: String, trim: true, default: '' })
   description: string;
@@ -97,3 +111,5 @@ export type PartnerSubscriptionPlanDocument =
 export const PartnerSubscriptionPlanSchema = SchemaFactory.createForClass(
   PartnerSubscriptionPlanModel,
 );
+
+PartnerSubscriptionPlanSchema.index({ partnerUserId: 1, active: 1 });

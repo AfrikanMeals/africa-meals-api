@@ -2,6 +2,7 @@ import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -19,6 +20,12 @@ export class CreatePartnerSubscriptionPlanDto {
   @IsString()
   @MinLength(1)
   name: string;
+
+  /** Formule privée pour ce PARTNER (figé à la création, comme storeId vendeur). */
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  partnerUserId?: string;
 
   @IsOptional()
   @IsString()
@@ -208,6 +215,33 @@ export class AttachPartnerReferralDto {
   @IsString()
   @MinLength(3)
   referralCode: string;
+}
+
+/** Admin — offrir / assigner un plan Partner (miroir vendor offer). */
+export class OfferPartnerSubscriptionDto {
+  @IsString()
+  @MinLength(1)
+  partnerUserId: string;
+
+  @IsString()
+  @MinLength(1)
+  planId: string;
+
+  @IsString()
+  @MinLength(1)
+  startsAt: string;
+
+  @IsString()
+  @MinLength(1)
+  endsAt: string;
+
+  @IsOptional()
+  @IsIn(['MONTHLY', 'YEARLY'])
+  billingPeriod?: 'MONTHLY' | 'YEARLY';
+
+  @IsOptional()
+  @IsString()
+  offerNote?: string;
 }
 
 /** Sync après Payment Sheet mobile (PaymentIntent). */

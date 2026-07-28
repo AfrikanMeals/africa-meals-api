@@ -25,10 +25,12 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
   OnModuleInit,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { AdModel } from '@schemas/ad.schema';
@@ -46,6 +48,7 @@ import {
   UpdateSubscriptionPlanDto,
 } from './dto/subscription-plan.dto';
 import { normalizePlanRegionOrderCommissions } from './dto/plan-region-order-commission.dto';
+import { NotificationsService } from '@modules/notifications/notifications.service';
 import { orderCommissionConfigFromRow } from '@modules/platform-fees/platform-order-commission.util';
 import { normalizePlanRegionPricing } from './dto/plan-region-pricing.dto';
 import {
@@ -347,6 +350,9 @@ export class SubscriptionsService implements OnModuleInit {
     private readonly subscriptionEmails: VendorSubscriptionEmailService,
     private readonly planRegionalFees: SubscriptionPlanOrderCommissionService,
     private readonly subscriptionAdCash: SubscriptionAdCashService,
+    // Cycle Nest Notifications ↔ StoreAccess ↔ Subscriptions.
+    @Inject(forwardRef(() => NotificationsService))
+    private readonly notifications: NotificationsService,
   ) {}
 
   async onModuleInit() {
@@ -2109,17 +2115,25 @@ export class SubscriptionsService implements OnModuleInit {
     const vendorGeocoding = resolveVendorGeocodingFieldsFromDto(dto);
     const vendorRouting = resolveVendorRoutingFieldsFromDto(dto);
     let storeOid: Types.ObjectId | null = null;
+    let storeOwnerId = '';
+    let storeName = '';
     if (dto.storeId?.trim()) {
       if (!Types.ObjectId.isValid(dto.storeId)) {
         throw new BadRequestException('invalid_store');
       }
       const store = await this.storeModel
         .findById(dto.storeId.trim())
-        .select('_id')
+        .select('_id name owner')
         .lean()
         .exec();
       if (!store) throw new NotFoundException('store_not_found');
       storeOid = new Types.ObjectId(dto.storeId.trim());
+      storeName = String((store as { name?: string }).name ?? '').trim();
+      const ownerRaw = (store as { owner?: unknown }).owner;
+      storeOwnerId =
+        ownerRaw instanceof Types.ObjectId
+          ? ownerRaw.toHexString()
+          : String(ownerRaw ?? '').trim();
     }
     const doc = await this.planModel.create({
       name: dto.name.trim(),
@@ -2192,7 +2206,60 @@ export class SubscriptionsService implements OnModuleInit {
       ),
       pricingByRegion: normalizePlanRegionPricing(dto.pricingByRegion),
     });
-    return mapPlan(doc.toObject() as Record<string, unknown>);
+    const mapped = mapPlan(doc.toObject() as Record<string, unknown>);
+    // Formule boutique privée : e-mail + push au propriétaire (création catalogue).
+    if (storeOid && Types.ObjectId.isValid(storeOwnerId)) {
+      this.queueVendorCustomPlanCreatedNotify({
+        ownerUserId: storeOwnerId,
+        storeId: String(storeOid),
+        storeName: storeName || 'Votre boutique',
+        planId: mapped.id,
+        planName: mapped.name,
+      });
+    }
+    return mapped;
+  }
+
+  /**
+   * Fire-and-forget : vendeur informé qu’une formule privée existe pour sa boutique.
+   */
+  private queueVendorCustomPlanCreatedNotify(args: {
+    ownerUserId: string;
+    storeId: string;
+    storeName: string;
+    planId: string;
+    planName: string;
+  }) {
+    void this.notifications
+      .notifyVendorCustomPlanOrOffer({
+        recipientUserId: args.ownerUserId,
+        storeId: args.storeId,
+        planId: args.planId,
+        planName: args.planName,
+        kind: 'CUSTOM_PLAN_CREATED',
+      })
+      .catch((e) =>
+        this.logger.warn(
+          `vendor custom plan push: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        ),
+      );
+    void this.subscriptionEmails
+      .notifyCustomPlanCreated({
+        ownerUserId: args.ownerUserId,
+        storeId: args.storeId,
+        storeName: args.storeName,
+        planName: args.planName,
+        planId: args.planId,
+      })
+      .catch((e) =>
+        this.logger.warn(
+          `vendor custom plan email: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        ),
+      );
   }
 
   async updatePlan(
@@ -2778,6 +2845,22 @@ export class SubscriptionsService implements OnModuleInit {
         );
       });
     }
+    // Push + inbox (l’e-mail offre existait déjà ; push manquait).
+    void this.notifications
+      .notifyVendorCustomPlanOrOffer({
+        recipientUserId: ownerId.toHexString(),
+        storeId: dto.storeId,
+        planId: String(plan._id),
+        planName: String(plan.name ?? ''),
+        kind: 'OFFER',
+      })
+      .catch((e) =>
+        this.logger.warn(
+          `Offer push failed sub=${String(created._id)}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        ),
+      );
 
     if (status === 'ACTIVE' && startsAt <= now && endsAt > now) {
       void this.subscriptionAdCash

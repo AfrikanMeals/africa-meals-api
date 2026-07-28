@@ -61,6 +61,34 @@ export class VendorSubscriptionEmailService {
     });
   }
 
+  /** Formule boutique privée créée (catalogue) — avant assignation / offre. */
+  async notifyCustomPlanCreated(args: {
+    ownerUserId: string;
+    storeId: string;
+    storeName: string;
+    planName: string;
+    planId: string;
+  }): Promise<void> {
+    const planName = args.planName.trim() || 'Abonnement';
+    const storeName = args.storeName.trim() || 'Votre boutique';
+    const ctx: VendorSubscriptionEmailContext = {
+      // Pas encore d’abonnement : réutilise l’id plan pour le contexte e-mail.
+      subscriptionId: args.planId,
+      storeId: args.storeId,
+      storeName,
+      ownerUserId: args.ownerUserId,
+      planName,
+    };
+    await this.sendSubscriptionEmail({
+      ctx,
+      logTag: 'subscription_custom_plan_created',
+      subject: 'Formule personnalisée disponible',
+      heading: 'Formule personnalisée',
+      body: `Wise Eat a créé la formule personnalisée ${planName} pour ${storeName}. Elle apparaît dans votre catalogue d’abonnements boutique.`,
+      ctaLabel: 'Voir mon abonnement',
+    });
+  }
+
   async notifyPlanRenewal(ctx: VendorSubscriptionEmailContext): Promise<void> {
     const periodLabel = this.billingPeriodLabel(ctx.billingPeriod);
     const amount =

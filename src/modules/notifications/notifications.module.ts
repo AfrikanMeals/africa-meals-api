@@ -3,7 +3,7 @@ import { StoreAccessModule } from '@modules/teams/store-access.module';
 import { UserNotificationPreferencesModule } from '@modules/user-notification-preferences/user-notification-preferences.module';
 import { MailerModule } from '@modules/mailer/mailer.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
   AppNotificationModel,
@@ -32,7 +32,8 @@ import { NotificationsService } from './notifications.service';
 @Module({
   imports: [
     SharedModule,
-    StoreAccessModule,
+    // Cycle : Notifications → StoreAccess → Subscriptions → Notifications.
+    forwardRef(() => StoreAccessModule),
     UserNotificationPreferencesModule,
     MailerModule,
     WsNotifyModule,

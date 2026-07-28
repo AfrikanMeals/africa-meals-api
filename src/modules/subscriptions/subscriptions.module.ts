@@ -32,7 +32,8 @@ import { VendorSubscriptionEmailService } from './vendor-subscription-email.serv
 @Module({
   imports: [
     forwardRef(() => MailerModule),
-    NotificationsModule,
+    // Cycle : Notifications → StoreAccess → Subscriptions.
+    forwardRef(() => NotificationsModule),
     StoreAdCashModule,
     MongooseModule.forFeature([
       { name: UserModel.name, schema: UserSchema },

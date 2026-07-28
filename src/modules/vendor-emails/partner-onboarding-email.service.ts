@@ -20,8 +20,10 @@ import {
   buildPartnerProfileRejectedEmailCopy,
 } from './partner-profile-decision-email.util';
 import {
+  buildPartnerCustomPlanCreatedEmailCopy,
   buildPartnerSubscriptionChangedEmailCopy,
   buildPartnerSubscriptionExpiredEmailCopy,
+  buildPartnerSubscriptionOfferEmailCopy,
   buildPartnerSubscriptionTrialReminderEmailCopy,
 } from './partner-subscription-lifecycle-email.util';
 import { buildPartnerReferralCodeChangedEmailCopy } from './partner-referral-code-changed-email.util';
@@ -454,6 +456,96 @@ export class PartnerOnboardingEmailService {
         { title: "Besoin d'aide ?", paragraphs: copy.helpParagraphs },
       ],
       logTag: `partner_referral_code_changed email=${email} code=${code}`,
+      heroKind: 'partner',
+    });
+  }
+
+  /** Formule Partner privée créée pour ce compte (avant assignation). */
+  async notifyPartnerCustomPlanCreated(args: {
+    email: string;
+    name: string;
+    planName: string;
+  }): Promise<void> {
+    const email = args.email.trim().toLowerCase();
+    if (!email) return;
+    const appName = this.appName();
+    const displayName = args.name.trim() || 'Partenaire';
+    const planName = args.planName.trim() || 'votre formule';
+    const copy = buildPartnerCustomPlanCreatedEmailCopy({
+      appName: this.emailTpl.escapeHtml(appName),
+      safeDisplayName: this.emailTpl.escapeHtml(displayName),
+      safePlanName: this.emailTpl.escapeHtml(planName),
+      supportEmail: this.emailTpl.escapeHtml(this.supportEmail()),
+    });
+    await this.sendBlocks({
+      to: email,
+      toName: displayName,
+      subject: copy.subject,
+      blocks: [
+        {
+          title: 'Formule Partner personnalisée',
+          paragraphs: [copy.greetingLine, ...copy.bodyParagraphs],
+        },
+        { title: "Besoin d'aide ?", paragraphs: copy.helpParagraphs },
+      ],
+      logTag: `partner_custom_plan_created email=${email}`,
+      heroKind: 'partner',
+    });
+  }
+
+  /** Abonnement Partner — offre admin (assignation gratuite). */
+  async notifyPartnerSubscriptionOffer(args: {
+    email: string;
+    name: string;
+    planName: string;
+    offerNote?: string;
+    billingPeriod?: 'MONTHLY' | 'YEARLY';
+    startsAt?: Date;
+    endsAt?: Date;
+  }): Promise<void> {
+    const email = args.email.trim().toLowerCase();
+    if (!email) return;
+    const appName = this.appName();
+    const displayName = args.name.trim() || 'Partenaire';
+    const planName = args.planName.trim() || 'votre formule';
+    const periodLabel =
+      args.billingPeriod === 'YEARLY'
+        ? 'Annuel'
+        : args.billingPeriod === 'MONTHLY'
+          ? 'Mensuel'
+          : '';
+    const fmt = (d?: Date) =>
+      d && !Number.isNaN(d.getTime())
+        ? d.toLocaleDateString('fr-FR', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+          })
+        : '';
+    const copy = buildPartnerSubscriptionOfferEmailCopy({
+      appName: this.emailTpl.escapeHtml(appName),
+      safeDisplayName: this.emailTpl.escapeHtml(displayName),
+      safePlanName: this.emailTpl.escapeHtml(planName),
+      supportEmail: this.emailTpl.escapeHtml(this.supportEmail()),
+      safeOfferNote: args.offerNote?.trim()
+        ? this.emailTpl.escapeHtml(args.offerNote.trim())
+        : undefined,
+      periodLabel,
+      startsLabel: fmt(args.startsAt),
+      endsLabel: fmt(args.endsAt),
+    });
+    await this.sendBlocks({
+      to: email,
+      toName: displayName,
+      subject: copy.subject,
+      blocks: [
+        {
+          title: 'Offre d’abonnement Partner',
+          paragraphs: [copy.greetingLine, ...copy.bodyParagraphs],
+        },
+        { title: "Besoin d'aide ?", paragraphs: copy.helpParagraphs },
+      ],
+      logTag: `partner_subscription_offer email=${email}`,
       heroKind: 'partner',
     });
   }

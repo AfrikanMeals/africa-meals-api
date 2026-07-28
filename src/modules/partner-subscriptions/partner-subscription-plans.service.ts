@@ -1,9 +1,12 @@
+import { NotificationsService } from '@modules/notifications/notifications.service';
 import { normalizePlanRegionOrderCommissions } from '@modules/subscriptions/dto/plan-region-order-commission.dto';
 import { normalizePlanRegionPricing } from '@modules/subscriptions/dto/plan-region-pricing.dto';
+import { PartnerOnboardingEmailService } from '@modules/vendor-emails/partner-onboarding-email.service';
 import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -21,6 +24,11 @@ import {
   normalizePartnerPlanPayoutDelayDays,
   normalizePartnerTrialReminderDays,
 } from './partner-plan-fee.util';
+import {
+  isCustomPartnerPlan,
+  partnerActivePlansMongoFilter,
+  partnerPlanVisibleToUser,
+} from './partner-plan-scope.util';
 import {
   normalizePartnerOperatingRegionCode,
   pickPartnerPricingRegionCode,
@@ -40,6 +48,9 @@ function mapPricingRows(rows: unknown) {
 
 /** Sérialisation API d’un plan Partner. */
 export function mapPartnerSubscriptionPlan(doc: Record<string, unknown>) {
+  const partnerUserId = doc.partnerUserId
+    ? String(doc.partnerUserId)
+    : null;
   return {
     id: String(doc._id),
     name: String(doc.name ?? ''),
@@ -57,6 +68,9 @@ export function mapPartnerSubscriptionPlan(doc: Record<string, unknown>) {
     trialReminderDays: Array.isArray(doc.trialReminderDays)
       ? doc.trialReminderDays.map((d) => Number(d)).filter((d) => d > 0)
       : [],
+    // Miroir storeId vendeur — null = catalogue public.
+    partnerUserId,
+    isCustomPartnerPlan: isCustomPartnerPlan(partnerUserId),
     pricingByRegion: mapPricingRows(doc.pricingByRegion),
     customerOrderCommissionsByRegion: mapFeeRows(
       doc.customerOrderCommissionsByRegion,
@@ -75,6 +89,8 @@ export function mapPartnerSubscriptionPlan(doc: Record<string, unknown>) {
 
 @Injectable()
 export class PartnerSubscriptionPlansService {
+  private readonly logger = new Logger(PartnerSubscriptionPlansService.name);
+
   constructor(
     @InjectModel(PartnerSubscriptionPlanModel.name)
     private readonly planModel: Model<PartnerSubscriptionPlanModel>,
@@ -82,11 +98,33 @@ export class PartnerSubscriptionPlansService {
     private readonly subModel: Model<PartnerSubscriptionModel>,
     @InjectModel(PartnerApplicationModel.name)
     private readonly applicationModel: Model<PartnerApplicationModel>,
+    @InjectModel(UserModel.name)
+    private readonly userModel: Model<UserModel>,
+    private readonly notifications: NotificationsService,
+    private readonly partnerEmails: PartnerOnboardingEmailService,
   ) {}
 
   private assertAdmin(user: UserModel) {
     if (user.type !== UserTypeEnum.ADMIN) {
       throw new ForbiddenException('admin_only');
+    }
+  }
+
+  /**
+   * Self-service Partner : refuse un plan custom d’un autre compte.
+   * Admin : toujours autorisé (preview / offer).
+   */
+  assertPlanAccessibleToPartner(
+    plan: Record<string, unknown>,
+    user: UserModel,
+  ) {
+    if (user.type === UserTypeEnum.ADMIN) return;
+    const ok = partnerPlanVisibleToUser({
+      partnerUserId: (plan.partnerUserId as Types.ObjectId | string | null) ?? null,
+      viewerUserId: String(user._id),
+    });
+    if (!ok) {
+      throw new ForbiddenException('partner_plan_not_for_user');
     }
   }
 
@@ -195,8 +233,13 @@ export class PartnerSubscriptionPlansService {
       user,
       regionCode,
     );
+    // PARTNER : globaux + customs du compte ; ADMIN : tout le catalogue actif.
+    const filter =
+      user.type === UserTypeEnum.PARTNER
+        ? partnerActivePlansMongoFilter(String(user._id))
+        : { active: true };
     const rows = await this.planModel
-      .find({ active: true })
+      .find(filter)
       .sort({ sortOrder: 1, createdAt: 1 })
       .lean()
       .exec();
@@ -223,12 +266,30 @@ export class PartnerSubscriptionPlansService {
     const payoutDelayDays = normalizePartnerPlanPayoutDelayDays(
       dto.payoutDelayDays,
     );
+    // Formule privée : figée à la création (non patchable ensuite).
+    let partnerOid: Types.ObjectId | null = null;
+    const partnerUserIdRaw = dto.partnerUserId?.trim() ?? '';
+    if (partnerUserIdRaw) {
+      if (!Types.ObjectId.isValid(partnerUserIdRaw)) {
+        throw new BadRequestException('invalid_partner_user');
+      }
+      const partner = await this.userModel
+        .findById(partnerUserIdRaw)
+        .select('type fullName email')
+        .lean()
+        .exec();
+      if (!partner || partner.type !== UserTypeEnum.PARTNER) {
+        throw new NotFoundException('partner_user_not_found');
+      }
+      partnerOid = new Types.ObjectId(partnerUserIdRaw);
+    }
     const doc = await this.planModel.create({
       name: dto.name.trim(),
       description: (dto.description ?? '').trim(),
       priceMonthly: Math.max(0, Number(dto.priceMonthly)),
       priceYearly: Math.max(0, Number(dto.priceYearly)),
       currency: (dto.currency ?? 'CAD').trim().toUpperCase() || 'CAD',
+      partnerUserId: partnerOid,
       active: dto.active !== false,
       sortOrder: Number(dto.sortOrder ?? 0),
       trialDays,
@@ -248,7 +309,72 @@ export class PartnerSubscriptionPlansService {
         dto.payoutFeesByRegion,
       ),
     });
-    return mapPartnerSubscriptionPlan(doc.toObject() as Record<string, unknown>);
+    const mapped = mapPartnerSubscriptionPlan(
+      doc.toObject() as Record<string, unknown>,
+    );
+    // Formule privée : e-mail + push (création catalogue ≠ offre / assignation).
+    if (partnerOid) {
+      this.queueCustomPlanCreatedNotify({
+        partnerUserId: String(partnerOid),
+        planId: mapped.id,
+        planName: mapped.name,
+      });
+    }
+    return mapped;
+  }
+
+  /**
+   * Fire-and-forget : Partner informé qu’une formule privée existe dans son catalogue.
+   */
+  private queueCustomPlanCreatedNotify(args: {
+    partnerUserId: string;
+    planId: string;
+    planName: string;
+  }) {
+    void this.userModel
+      .findById(args.partnerUserId)
+      .select('fullName email')
+      .lean()
+      .exec()
+      .then((partner) => {
+        const email = String(partner?.email ?? '').trim();
+        const name =
+          String(partner?.fullName ?? '').trim() || email || 'Partenaire';
+        void this.notifications
+          .notifyPartnerCustomPlanAvailable({
+            recipientUserId: args.partnerUserId,
+            planId: args.planId,
+            planName: args.planName,
+          })
+          .catch((e) =>
+            this.logger.warn(
+              `partner custom plan push: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            ),
+          );
+        if (!email) return;
+        void this.partnerEmails
+          .notifyPartnerCustomPlanCreated({
+            email,
+            name,
+            planName: args.planName,
+          })
+          .catch((e) =>
+            this.logger.warn(
+              `partner custom plan email: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            ),
+          );
+      })
+      .catch((e) =>
+        this.logger.warn(
+          `partner custom plan notify load user: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        ),
+      );
   }
 
   async updatePlan(
