@@ -95,7 +95,7 @@
     "graphql": "^16.13.2",
     "graphql-scalars": "^1.25.0",
     "libphonenumber-js": "^1.12.40",
-    "mailersend": "^2.2.0",
+    "mailersend": "^3.1.0",
     "memcached": "^2.2.2",
     "mercurius": "^10.5.1",
     "mongodb": "^6.6.2",
