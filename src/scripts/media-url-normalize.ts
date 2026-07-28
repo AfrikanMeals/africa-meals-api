@@ -8,7 +8,12 @@ import { AppModule } from '../app.module';
  * À lancer après avoir coché « Block all public access » sur le bucket S3 :
  * les URLs directes `bucket.s3.….amazonaws.com` deviennent `/medias/public/…`.
  *
- * Prod (VPS, sans ts-node — nécessite `npm run build` au préalable) :
+ * Prod VPS : exécuter dans le pod API (image Docker déjà buildée), pas sur l’hôte
+ * `/opt/wise-eat-api` (pas de nest / tsconfig-paths en install --omit=dev) :
+ *   kubectl exec … -- node dist/scripts/media-url-normalize.js
+ *   kubectl exec … -- node dist/scripts/media-url-normalize.js --apply
+ *
+ * Local (après `npm run build`) :
  *   npm run medias:normalize-urls            # dry-run
  *   npm run medias:normalize-urls -- --apply
  *

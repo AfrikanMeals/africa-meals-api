@@ -43,14 +43,33 @@ Checklist pour `AWS_S3_BUCKET` :
    # Attendu : HTTP 200 + Content-Type image/*
    ```
 4. Normaliser les URLs Mongo encore en `*.s3.amazonaws.com` :
+
+   **Prod VPS (recommandé) — dans le pod API** (image Docker déjà buildée : `dist/` + deps runtime,
+   pas de `@nestjs/cli` / `tsconfig-paths` sur `/opt/wise-eat-api`) :
+
    ```bash
-   cd /opt/wise-eat-api   # ou africa-meals-api en local
-   # Prod : utilise dist/ (pas de ts-node). Rebuild si le script manque :
+   # Après deploy de l’image qui contient dist/scripts/media-url-normalize.js
+   POD=$(sudo k3s kubectl get pods -n wise-eat \
+     -l app.kubernetes.io/name=africa-meals-api \
+     -o jsonpath='{.items[0].metadata.name}')
+   sudo k3s kubectl exec -n wise-eat "$POD" -- \
+     node dist/scripts/media-url-normalize.js              # dry-run
+   sudo k3s kubectl exec -n wise-eat "$POD" -- \
+     node dist/scripts/media-url-normalize.js --apply
+   ```
+
+   Si le script manque dans le pod (`Cannot find module …/media-url-normalize.js`) :
+   rebuild + redeploy API (`build-api-image.sh` / `deploy-api-production.sh`), puis rejouer.
+
+   **Ne pas** lancer `npm run build` sur l’hôte `/opt/wise-eat-api` en prod (`nest: not found` =
+   install `--omit=dev`). Le `dist/` compilé n’a pas besoin de `-r tsconfig-paths/register`
+   (imports relatifs).
+
+   **Local / machine de dev** (avec devDependencies) :
+   ```bash
    npm run build
    npm run medias:normalize-urls            # dry-run
    npm run medias:normalize-urls -- --apply
-   # Équivalent direct :
-   # node -r tsconfig-paths/register dist/scripts/media-url-normalize.js --apply
    ```
 5. Harden bucket (dry-run puis apply) — lit `AWS_*` depuis `/opt/wise-eat-api/.env.prod` :
    ```bash
