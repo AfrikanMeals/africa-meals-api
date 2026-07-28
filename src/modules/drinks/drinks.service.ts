@@ -605,7 +605,9 @@ export class DrinksService {
             : null,
       },
     );
-    return items;
+    // Fix: le catalogue public omettait enrichDrinkMedia → URLs double-proxy /
+    // S3 brutes renvoyées telles quelles (images cassées sur la vitrine).
+    return Promise.all(items.map((row) => this.enrichDrinkMedia(row)));
   }
 
   /**

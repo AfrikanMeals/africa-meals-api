@@ -104,6 +104,24 @@ export class MediasService {
     );
   }
 
+  /**
+   * Host S3 « brut » (virtual-hosted / path-style AWS) — pas un CDN custom.
+   * Avec Block Public Access ces URLs renvoient toujours 403.
+   */
+  private isRawAwsS3HostnameUrl(url: string): boolean {
+    try {
+      const h = new URL(url).hostname.toLowerCase();
+      return (
+        h === 's3.amazonaws.com' ||
+        /\.s3\.amazonaws\.com$/i.test(h) ||
+        /\.s3\.[a-z0-9-]+\.amazonaws\.com$/i.test(h) ||
+        /^s3\.[a-z0-9-]+\.amazonaws\.com$/i.test(h)
+      );
+    } catch {
+      return false;
+    }
+  }
+
   /** Moteur effectif pour les URLs publiques directes (hors proxy). */
   private async resolveDirectStorageEngine(): Promise<StorageEngineId> {
     const settings = await this.storageSettings.getPublicSettings();
@@ -396,6 +414,37 @@ export class MediasService {
   ): Promise<string | undefined> {
     if (!url?.trim()) return undefined;
     const raw = url.trim();
+
+    // Fix: guérir le double-proxy avant toute décision proxy ON/OFF
+    // (`/medias/public/https%3A//files…` → CDN direct).
+    if (this.isProxyUrl(raw) && /files\.wise-eat\.com/i.test(raw)) {
+      const nestedPath = extractObjectPath(raw).replace(/^\/+/, '');
+      if (
+        nestedPath &&
+        !nestedPath.includes('..') &&
+        !/^https?:\/\//i.test(nestedPath)
+      ) {
+        const filesCdn = this.restoreFilesCdnUrlIfEmbedded(raw, nestedPath);
+        if (filesCdn) return filesCdn;
+      }
+    }
+
+    // Fix: host S3 AWS brut → toujours proxy (Block Public Access = 403),
+    // même si AWS_S3_PUBLIC_READ=true / CDN base mal configurée.
+    if (
+      this.isRawAwsS3HostnameUrl(raw) &&
+      !this.isConfiguredPublicBaseUrl(raw)
+    ) {
+      const objectPath = extractObjectPath(raw).replace(/^\/+/, '');
+      if (
+        objectPath &&
+        !objectPath.includes('..') &&
+        !/^https?:\/\//i.test(objectPath)
+      ) {
+        return this.buildProxyPublicUrl(objectPath);
+      }
+    }
+
     const useProxy = await this.isMediaProxyEnabled(detectEngineFromUrl(raw));
 
     if (useProxy) {
@@ -429,6 +478,10 @@ export class MediasService {
 
     if (this.isProxyUrl(raw)) {
       const objectPath = extractObjectPath(raw);
+      // Fix: double-proxy restant (sans files dans raw après unwrap) → clé propre.
+      if (/^https?:\/\//i.test(objectPath) || objectPath.includes('://')) {
+        return this.resolvePublicMediaUrl(objectPath);
+      }
       const engine = await this.resolveDirectStorageEngine();
       // Ne dé-proxifier que vers un moteur encore lisible publiquement : sinon on
       // transformerait une URL qui fonctionne en 403.
@@ -441,6 +494,11 @@ export class MediasService {
         this.canServeDirectUrl(engine)
       ) {
         return this.directUrlForObjectPath(objectPath, engine);
+      }
+      // Proxy cassé / bucket privé : garder le path proxifié normalisé.
+      const clean = objectPath.replace(/^\/+/, '');
+      if (clean && !clean.includes('..')) {
+        return this.buildProxyPublicUrl(clean);
       }
       return raw;
     }

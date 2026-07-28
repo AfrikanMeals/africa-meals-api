@@ -39,15 +39,25 @@ export function sendMiddlewareJson(
   res: MiddlewareResponse,
   statusCode: number,
   body: unknown,
+  /** Headers additionnels (ex. Cache-Control: no-store sur erreurs médias). */
+  extraHeaders?: Record<string, string>,
 ): void {
   if (middlewareHeadersSent(res)) return;
-  if (typeof res.status === 'function') {
+  if (extraHeaders) {
+    for (const [name, value] of Object.entries(extraHeaders)) {
+      res.setHeader?.(name, value);
+    }
+  }
+  if (typeof res.status === 'function' && typeof res.json === 'function') {
     res.status(statusCode).json(body);
     return;
   }
   const payload = JSON.stringify(body);
   if (typeof res.writeHead === 'function' && typeof res.end === 'function') {
-    res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+    res.writeHead(statusCode, {
+      'Content-Type': 'application/json',
+      ...(extraHeaders ?? {}),
+    });
     res.end(payload);
   }
 }

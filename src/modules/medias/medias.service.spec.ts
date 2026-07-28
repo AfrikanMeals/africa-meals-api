@@ -65,10 +65,14 @@ describe('MediasService', () => {
     expect(service).toBeDefined();
   });
 
-  it('keeps direct S3 URLs when the bucket stays public', async () => {
+  it('forces proxy on raw S3 hostnames even if AWS_S3_PUBLIC_READ=true', async () => {
+    // Fix: env PUBLIC_READ mal alignée + Block Public Access → 403 sur
+    // *.s3.amazonaws.com. Seul un CDN custom (AWS_S3_PUBLIC_BASE_URL) reste direct.
     env.AWS_S3_PUBLIC_READ = 'true';
     const url = 'https://wise-eat.s3.amazonaws.com/stores/abc/profile/x.png';
-    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(url);
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(
+      'https://api.wise-eat.com/medias/public/stores/abc/profile/x.png',
+    );
   });
 
   it('forces proxy on S3 URLs when public access is blocked', async () => {
