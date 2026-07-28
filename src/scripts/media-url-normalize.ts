@@ -10,8 +10,12 @@ import { AppModule } from '../app.module';
  *
  * Prod VPS : exécuter dans le pod API (image Docker déjà buildée), pas sur l’hôte
  * `/opt/wise-eat-api` (pas de nest / tsconfig-paths en install --omit=dev) :
+ *   # Image déjà patchée (désactive gRPC toute seule) :
  *   kubectl exec … -- node dist/scripts/media-url-normalize.js
  *   kubectl exec … -- node dist/scripts/media-url-normalize.js --apply
+ *   # Image sans patch — sinon EADDRINUSE :50052 (API déjà bound dans le même pod) :
+ *   kubectl exec … -- env GRPC_API_SERVER_ENABLED=false \
+ *     node dist/scripts/media-url-normalize.js
  *
  * Local (après `npm run build`) :
  *   npm run medias:normalize-urls            # dry-run
@@ -23,9 +27,17 @@ import { AppModule } from '../app.module';
 async function run() {
   const apply = process.argv.includes('--apply');
 
+  // Fix: createApplicationContext(AppModule) démarre aussi GrpcApiServerService
+  // (bind :50052). Dans un kubectl exec sur le pod API, le process principal
+  // occupe déjà le port → EADDRINUSE. Ce script n’a besoin que de Mongo + Medias.
+  if (process.env.GRPC_API_SERVER_ENABLED == null) {
+    process.env.GRPC_API_SERVER_ENABLED = 'false';
+  }
+
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['error', 'warn', 'log'],
   });
+
 
   try {
     const normalizer = app.get(MediaUrlNormalizeService);
