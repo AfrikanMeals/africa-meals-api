@@ -39,6 +39,7 @@ export class PartnerPaymentsService {
   createOnboardingLink(user: UserModel) {
     this.assertPartner(user);
     this._logger.log(`partner onboarding-link user=${String(user.id ?? '')}`);
+    // Même Connect que modes vendeur / livreur (`user.stripeConnectAccountId`).
     return this._stripeConnect.createOnboardingLink(user);
   }
 

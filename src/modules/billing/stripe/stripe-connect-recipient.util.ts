@@ -2,7 +2,10 @@ import { UserTypeEnum } from '@schemas/user.schema';
 
 /**
  * Types autorisés à détenir un compte Stripe Connect Express (user-scoped).
- * PARTNER : finance affiliation (miroir livreur / vendeur).
+ *
+ * Invariant plateforme : **un user = un** `stripeConnectAccountId` partagé entre
+ * modes Partner / Livreur / Vendeur (pas de compte Connect par rôle).
+ * PARTNER : finance affiliation ; mêmes flags Connect que vendeur/livreur.
  */
 export function isStripeConnectRecipientType(
   type: string | null | undefined,

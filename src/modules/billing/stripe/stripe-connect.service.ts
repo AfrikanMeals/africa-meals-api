@@ -66,6 +66,7 @@ import {
 import {
   isStripeConnectRecipientType,
 } from '@modules/billing/stripe/stripe-connect-recipient.util';
+import { canSettleDeliveryConnectPayout } from '@modules/billing/stripe/stripe-connect-dual-role.util';
 import Stripe = require('stripe');
 
 type StripeClient = InstanceType<typeof Stripe>;
@@ -1547,6 +1548,10 @@ export class StripeConnectService {
     }
   }
 
+  /**
+   * Onboarding / update Express — **réutilise** `user.stripeConnectAccountId`
+   * s’il existe (Partner · Livreur · Vendeur = même compte). Crée seulement si absent.
+   */
   async createOnboardingLink(
     user: UserModel,
   ): Promise<{ url: string; accountId: string }> {
@@ -1563,6 +1568,7 @@ export class StripeConnectService {
       partnerProfile,
     );
 
+    // 1. Compte déjà lié → retrieve (pas de second Express par mode).
     let accountId = (
       await this.userModel
         .findById(uid)
@@ -2403,9 +2409,16 @@ export class StripeConnectService {
       return { scanned: 0, settled: 0, skipped: 0 };
     }
     const limit = Math.max(1, Math.min(opts?.limit ?? 40, 100));
+    // Dual-role : PARTNER/VENDOR peuvent aussi détenir le Connect livreur.
     const users = await this.userModel
       .find({
-        type: UserTypeEnum.DELIVERY,
+        type: {
+          $in: [
+            UserTypeEnum.DELIVERY,
+            UserTypeEnum.PARTNER,
+            UserTypeEnum.VENDOR,
+          ],
+        },
         stripeConnectAccountId: { $exists: true, $nin: [null, ''] },
         stripeConnectPayoutsEnabled: true,
       })
@@ -2456,7 +2469,8 @@ export class StripeConnectService {
             .findById(uid)
             .exec()
             .then(async (user) => {
-              if (!user || user.type !== UserTypeEnum.DELIVERY) return;
+              // Dual-role : type peut être PARTNER — même Connect.
+              if (!user || !canSettleDeliveryConnectPayout(user.type)) return;
               await this.settlePartnerBadgePayoutAfterTransfer(user, {
                 scheduleRetry: false,
               });

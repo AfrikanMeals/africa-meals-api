@@ -45,6 +45,10 @@ import {
   predictDeliveryEta,
 } from '@common/eta-engine.util';
 import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
+import {
+  canAccessDeliveryConnectPayments,
+  canSettleDeliveryConnectPayout,
+} from '@modules/billing/stripe/stripe-connect-dual-role.util';
 import { StripeConnectTransferService } from '@modules/billing/stripe/stripe-connect-transfer.service';
 import { VendorStatusEmailService } from '@modules/vendor-emails/vendor-status-email.service';
 import { PartnerOnboardingEmailService } from '@modules/vendor-emails/partner-onboarding-email.service';
@@ -1064,6 +1068,29 @@ export class DeliveryAgentService {
     if (user.type !== UserTypeEnum.DELIVERY) {
       throw new ForbiddenException('delivery_agent_only');
     }
+  }
+
+  /**
+   * Connect payments livreur : même `user.stripeConnectAccountId` que Partner /
+   * Vendeur. Dual-role PARTNER (candidature APPROVED) autorisé — pas `type===DELIVERY` seul.
+   */
+  private async assertDeliveryConnectPayments(user: UserModel): Promise<void> {
+    if (user.type === UserTypeEnum.DELIVERY) return;
+    const uid = user._id ?? user.id;
+    const app = await this._applications
+      .findOne({ user: uid })
+      .select('status')
+      .lean()
+      .exec();
+    if (
+      canAccessDeliveryConnectPayments({
+        userType: user.type,
+        deliveryApplicationStatus: app?.status,
+      })
+    ) {
+      return;
+    }
+    throw new ForbiddenException('delivery_agent_only');
   }
 
   async listPendingInvites(user: UserModel) {
@@ -2844,33 +2871,34 @@ export class DeliveryAgentService {
     return String(u);
   }
 
-  getConnectStatus(user: UserModel) {
-    this.assertDeliveryAgent(user);
+  async getConnectStatus(user: UserModel) {
+    await this.assertDeliveryConnectPayments(user);
     return this._stripeConnect.getConnectStatus(user);
   }
 
-  createOnboardingLink(user: UserModel) {
-    this.assertDeliveryAgent(user);
+  async createOnboardingLink(user: UserModel) {
+    await this.assertDeliveryConnectPayments(user);
+    // Réutilise toujours user.stripeConnectAccountId (pas de compte par mode).
     return this._stripeConnect.createOnboardingLink(user);
   }
 
-  listPayouts(user: UserModel, limit?: number, startingAfter?: string) {
-    this.assertDeliveryAgent(user);
+  async listPayouts(user: UserModel, limit?: number, startingAfter?: string) {
+    await this.assertDeliveryConnectPayments(user);
     return this._stripeConnect.listPayouts(user, limit, startingAfter);
   }
 
-  getConnectBalance(user: UserModel) {
-    this.assertDeliveryAgent(user);
+  async getConnectBalance(user: UserModel) {
+    await this.assertDeliveryConnectPayments(user);
     return this._stripeConnect.getConnectBalance(user);
   }
 
-  getPayoutEstimate(user: UserModel) {
-    this.assertDeliveryAgent(user);
+  async getPayoutEstimate(user: UserModel) {
+    await this.assertDeliveryConnectPayments(user);
     return this._stripeConnect.getPayoutEstimate(user);
   }
 
-  requestPayout(user: UserModel) {
-    this.assertDeliveryAgent(user);
+  async requestPayout(user: UserModel) {
+    await this.assertDeliveryConnectPayments(user);
     return this._stripeConnect.requestPayout(user);
   }
 
@@ -2884,7 +2912,8 @@ export class DeliveryAgentService {
   ): Promise<void> {
     if (!agentUserId || !Types.ObjectId.isValid(agentUserId)) return;
     const agent = await this._users.findById(agentUserId).exec();
-    if (!agent || agent.type !== UserTypeEnum.DELIVERY) return;
+    // Dual-role : type peut être PARTNER — même Connect user-scoped.
+    if (!agent || !canSettleDeliveryConnectPayout(agent.type)) return;
     await this._stripeConnect.settlePartnerBadgePayoutAfterTransfer(agent);
   }
 

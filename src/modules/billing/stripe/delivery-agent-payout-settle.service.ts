@@ -1,5 +1,6 @@
 import { StripeConnectTransferService } from '@modules/billing/stripe/stripe-connect-transfer.service';
 import { StripeConnectService } from '@modules/billing/stripe/stripe-connect.service';
+import { canSettleDeliveryConnectPayout } from '@modules/billing/stripe/stripe-connect-dual-role.util';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import {
@@ -7,7 +8,7 @@ import {
   OrderModel,
   OrderStatusEnum,
 } from '@schemas/order.schema';
-import { UserModel, UserTypeEnum } from '@schemas/user.schema';
+import { UserModel } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 
 /**
@@ -106,7 +107,8 @@ export class DeliveryAgentPayoutSettleService {
           : '';
         if (!agentId) continue;
         const agent = await this.userModel.findById(agentId).exec();
-        if (!agent || agent.type !== UserTypeEnum.DELIVERY) continue;
+        // Dual-role PARTNER/VENDOR : même Connect — ne pas exiger type DELIVERY.
+        if (!agent || !canSettleDeliveryConnectPayout(agent.type)) continue;
         await this.stripeConnect.settlePartnerBadgePayoutAfterTransfer(agent);
       } catch (e) {
         this.logger.warn(
