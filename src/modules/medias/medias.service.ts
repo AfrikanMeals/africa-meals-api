@@ -369,10 +369,13 @@ export class MediasService {
           redirect: 'follow',
         });
         if (!res.ok || !res.body) continue;
-        const { Readable } = await import('stream');
+        // Même conversion que Vercel Blob : éviter Readable.fromWeb sous Nest/Fastify.
+        const { webReadableToNodePassThrough } = await import(
+          './web-stream-to-node.util'
+        );
         return {
-          body: Readable.fromWeb(
-            res.body as import('stream/web').ReadableStream,
+          body: webReadableToNodePassThrough(
+            res.body as ReadableStream<Uint8Array>,
           ),
           contentType: res.headers.get('content-type') ?? undefined,
         };
@@ -504,6 +507,9 @@ export class MediasService {
 
     let lastError: unknown;
     let sawOnlyNotFound = true;
+    // Au moins un moteur a confirmé l’absence (NoSuchKey) — utile si d’autres
+    // renvoient AccessDenied/ECONNREFUSED (sinon proxy → 500 pour tout chemin).
+    let sawAnyNotFound = false;
     for (const engine of engines) {
       try {
         return await engine.readObject(normalized);
@@ -511,7 +517,9 @@ export class MediasService {
         lastError = err;
         // Fix: ne pas court-circuiter le pool sur AccessDenied/ECONNREFUSED du
         // premier moteur — enchaîner + fallback CDN `files.wise-eat.com`.
-        if (!isStorageObjectNotFoundError(err)) {
+        if (isStorageObjectNotFoundError(err)) {
+          sawAnyNotFound = true;
+        } else {
           sawOnlyNotFound = false;
           this.logger.warn(
             `Proxy media ${engine.id} failed for ${normalized}: ${
@@ -525,7 +533,12 @@ export class MediasService {
     const fromCdn = await this.tryStreamFromPublicBases(normalized);
     if (fromCdn) return fromCdn;
 
-    if (!sawOnlyNotFound && lastError) {
+    // Fix: AccessDenied MinIO/GCS ne doit pas produire 500 si un moteur
+    // (ex. vercelBlob) a déjà répondu « objet absent ».
+    if (sawOnlyNotFound || sawAnyNotFound) {
+      throw new NotFoundException('media_not_found');
+    }
+    if (lastError) {
       throw lastError;
     }
     throw new NotFoundException('media_not_found');

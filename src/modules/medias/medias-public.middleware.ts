@@ -3,7 +3,13 @@ import {
   NestMiddleware,
   NotFoundException,
 } from '@nestjs/common';
-import type { NextFunction, Request, Response } from 'express';
+import type { NextFunction, Request } from 'express';
+import type { ServerResponse } from 'http';
+import {
+  middlewareHeadersSent,
+  sendMiddlewareJson,
+  type MiddlewareResponse,
+} from '@common/http/http-response.util';
 import { MediasService } from './medias.service';
 
 function extractMediaPublicObjectPath(
@@ -15,12 +21,26 @@ function extractMediaPublicObjectPath(
   return decodeURIComponent(match[1].trim());
 }
 
+/**
+ * Cible d’écriture Node pour `stream.pipe` — Fastify middie expose
+ * `ServerResponse` (pas Express `res.type` / `res.json`).
+ */
+function middlewareWritable(res: MiddlewareResponse): ServerResponse {
+  const raw = (res as { raw?: ServerResponse }).raw;
+  if (raw && typeof raw.write === 'function') return raw;
+  return res as ServerResponse;
+}
+
 /** Intercepte GET /medias/public/… avant le routeur (chemins multi-segments). */
 @Injectable()
 export class MediasPublicProxyMiddleware implements NestMiddleware {
   constructor(private readonly mediasService: MediasService) {}
 
-  async use(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async use(
+    req: Request,
+    res: MiddlewareResponse,
+    next: NextFunction,
+  ): Promise<void> {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       next();
       return;
@@ -37,29 +57,38 @@ export class MediasPublicProxyMiddleware implements NestMiddleware {
     try {
       const { body, contentType } =
         await this.mediasService.streamPublicObject(objectPath);
-      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-      if (contentType) {
-        res.type(contentType);
+      // Fastify : pas de res.type() Express — Content-Type via setHeader.
+      const writable = middlewareWritable(res);
+      if (!middlewareHeadersSent(res) && !writable.headersSent) {
+        writable.setHeader(
+          'Cache-Control',
+          'public, max-age=31536000, immutable',
+        );
+        if (contentType) {
+          writable.setHeader('Content-Type', contentType);
+        }
       }
       if (req.method === 'HEAD') {
-        res.end();
+        writable.end();
         return;
       }
       body.on('error', () => {
-        if (!res.headersSent) {
-          res.status(404).json({
+        if (!writable.headersSent) {
+          sendMiddlewareJson(res, 404, {
             statusCode: 404,
             message: 'media_not_found',
             error: 'Not Found',
           });
         } else {
-          res.destroy();
+          writable.destroy();
         }
       });
-      body.pipe(res);
+      body.pipe(writable);
     } catch (err) {
+      // Fix: sous Fastify, res.status().json() n’existe pas → TypeError 500
+      // masquait même les NotFoundException du proxy.
       if (err instanceof NotFoundException) {
-        res.status(404).json({
+        sendMiddlewareJson(res, 404, {
           statusCode: 404,
           message: err.message ?? 'media_not_found',
           error: 'Not Found',

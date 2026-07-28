@@ -315,4 +315,109 @@ describe('MediasService', () => {
       'https://files.wise-eat.com/stores/abc/products/x.jpg',
     );
   });
+
+  // Fix: AccessDenied sur un moteur + NoSuchKey sur un autre → 404 (pas 500).
+  it('streamPublicObject returns 404 when any engine confirms not found', async () => {
+    const { NotFoundException } = await import('@nestjs/common');
+    const { Readable } = await import('stream');
+    const storageSettings = service['storageSettings'] as StorageSettingsService;
+    jest.spyOn(storageSettings, 'getPublicSettings').mockResolvedValue({
+      compressionEnabled: false,
+      maxFileSizeMb: 5,
+      storageEngine: 'gcs',
+      storageEnginePool: ['gcs', 'vercelBlob'],
+      fallbackStorageEngine: null,
+      mediaProxyEnabled: true,
+      enginesEnabled: {
+        firebase: true,
+        gcs: true,
+        s3: true,
+        minio: true,
+        r2: true,
+        vercelBlob: true,
+      },
+      moduleStorageEngines: {
+        catalog: 'default',
+        profile: 'default',
+        marketing: 'default',
+        chat: 'default',
+        system: 'default',
+      },
+      updatedAt: null,
+    });
+    const factory = service['engineFactory'] as StorageEngineFactory & {
+      enginesToTryForRead: jest.Mock;
+    };
+    factory.enginesToTryForRead = jest.fn().mockReturnValue([
+      {
+        id: 'gcs',
+        isConfigured: () => true,
+        readObject: jest
+          .fn()
+          .mockRejectedValue(
+            Object.assign(new Error('Access Denied'), { name: 'AccessDenied' }),
+          ),
+        upload: jest.fn(),
+        delete: jest.fn(),
+        deleteFilesWithPrefix: jest.fn(),
+        deleteFilesWithPrefixExcept: jest.fn(),
+      },
+      {
+        id: 'vercelBlob',
+        isConfigured: () => true,
+        readObject: jest
+          .fn()
+          .mockRejectedValue(
+            new Error('No such object: vercel-blob/icons8-trophy.gif'),
+          ),
+        upload: jest.fn(),
+        delete: jest.fn(),
+        deleteFilesWithPrefix: jest.fn(),
+        deleteFilesWithPrefixExcept: jest.fn(),
+      },
+    ]);
+    jest
+      .spyOn(
+        service as unknown as {
+          tryStreamFromPublicBases: () => Promise<null>;
+        },
+        'tryStreamFromPublicBases',
+      )
+      .mockResolvedValue(null);
+
+    await expect(
+      service.streamPublicObject('icons8-trophy.gif'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    // Objet présent sur Vercel Blob malgré AccessDenied GCS → succès.
+    factory.enginesToTryForRead = jest.fn().mockReturnValue([
+      {
+        id: 'gcs',
+        isConfigured: () => true,
+        readObject: jest
+          .fn()
+          .mockRejectedValue(
+            Object.assign(new Error('Access Denied'), { name: 'AccessDenied' }),
+          ),
+        upload: jest.fn(),
+        delete: jest.fn(),
+        deleteFilesWithPrefix: jest.fn(),
+        deleteFilesWithPrefixExcept: jest.fn(),
+      },
+      {
+        id: 'vercelBlob',
+        isConfigured: () => true,
+        readObject: jest.fn().mockResolvedValue({
+          body: Readable.from(Buffer.from('GIF89a')),
+          contentType: 'image/gif',
+        }),
+        upload: jest.fn(),
+        delete: jest.fn(),
+        deleteFilesWithPrefix: jest.fn(),
+        deleteFilesWithPrefixExcept: jest.fn(),
+      },
+    ]);
+    const hit = await service.streamPublicObject('icons8-trophy.gif');
+    expect(hit.contentType).toBe('image/gif');
+  });
 });

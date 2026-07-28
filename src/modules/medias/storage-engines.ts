@@ -925,16 +925,24 @@ export class VercelBlobStorageEngine implements IStorageEngine {
       if (!result?.stream) {
         throw new Error(`No such object: vercel-blob/${objectPath}`);
       }
-      const { Readable } = await import('stream');
+      // Fix: Readable.fromWeb peut lever TypeError (realm undici) → util PassThrough.
+      const { webReadableToNodePassThrough } = await import(
+        './web-stream-to-node.util'
+      );
       return {
-        body: Readable.fromWeb(
-          result.stream as import('stream/web').ReadableStream,
+        body: webReadableToNodePassThrough(
+          result.stream as ReadableStream<Uint8Array>,
         ),
         contentType:
           result.statusCode === 200 ? result.blob.contentType : undefined,
       };
     } catch (err) {
       if (err instanceof BlobNotFoundError) {
+        throw new Error(`No such object: vercel-blob/${objectPath}`);
+      }
+      // SDK : Failed to fetch blob: 404 … → traiter comme objet absent (pool).
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/\b404\b/.test(msg) || /not found/i.test(msg)) {
         throw new Error(`No such object: vercel-blob/${objectPath}`);
       }
       throw err;
