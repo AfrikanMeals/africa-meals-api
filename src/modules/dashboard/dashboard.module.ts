@@ -61,10 +61,28 @@ import {
   SiteContactRequestModel,
   SiteContactRequestSchema,
 } from '@schemas/site-contact-request.schema';
+import {
+  VendorSubscriptionModel,
+  VendorSubscriptionSchema,
+} from '@schemas/vendor-subscription.schema';
+import {
+  PartnerSubscriptionModel,
+  PartnerSubscriptionSchema,
+} from '@schemas/partner-subscription.schema';
+import {
+  SubscriptionPlanModel,
+  SubscriptionPlanSchema,
+} from '@schemas/subscription-plan.schema';
+import {
+  PartnerSubscriptionPlanModel,
+  PartnerSubscriptionPlanSchema,
+} from '@schemas/partner-subscription-plan.schema';
 import { DeliveryDriversCityMigrationService } from './delivery-drivers-city-migration.service';
 import { DeliveryDriversSeedService } from './delivery-drivers-seed.service';
 import { DashboardController } from './dashboard.controller';
 import { DashboardService } from './dashboard.service';
+import { GainEstimateService } from './gain-estimate.service';
+import { GainEstimateLlmService } from './gain-estimate-llm.service';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { OrdersModule } from '@modules/orders/orders.module';
 import { TeamsModule } from '@modules/teams/teams.module';
@@ -132,15 +150,34 @@ import { CartSimulatorService } from './cart-simulator.service';
         name: VendorNotificationMonthlyChargeModel.name,
         schema: VendorNotificationMonthlyChargeSchema,
       },
+      // Gain Estimate — abonnements + catalogues plans
+      {
+        name: VendorSubscriptionModel.name,
+        schema: VendorSubscriptionSchema,
+      },
+      {
+        name: PartnerSubscriptionModel.name,
+        schema: PartnerSubscriptionSchema,
+      },
+      {
+        name: SubscriptionPlanModel.name,
+        schema: SubscriptionPlanSchema,
+      },
+      {
+        name: PartnerSubscriptionPlanModel.name,
+        schema: PartnerSubscriptionPlanSchema,
+      },
     ]),
   ],
   controllers: [DashboardController],
   providers: [
     DashboardService,
     CartSimulatorService,
+    GainEstimateService,
+    GainEstimateLlmService,
     DeliveryDriversSeedService,
     DeliveryDriversCityMigrationService,
   ],
-  exports: [DashboardService],
+  exports: [DashboardService, GainEstimateService],
 })
 export class DashboardModule {}

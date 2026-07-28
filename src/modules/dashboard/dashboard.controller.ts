@@ -31,6 +31,7 @@ import { ReplySiteContactRequestDto } from './dto/reply-site-contact-request.dto
 import { CreateDashboardLivreurDto } from './dto/create-dashboard-livreur.dto';
 import { UpdateDashboardLivreurStatutDto } from './dto/update-dashboard-livreur-statut.dto';
 import { FinancePeriodReportQueryDto } from './dto/finance-period-report-query.dto';
+import { GainEstimateQueryDto } from './dto/gain-estimate-query.dto';
 import {
   DashboardRevenueSeriesQueryDto,
   parseRevenueSeriesPeriod,
@@ -39,6 +40,7 @@ import { CartSimulatorPreviewDto } from './dto/cart-simulator-preview.dto';
 import { CartSimulatorService } from './cart-simulator.service';
 import { DashboardRegionQueryDto } from './dto/dashboard-region-query.dto';
 import { DashboardService } from './dashboard.service';
+import { GainEstimateService } from './gain-estimate.service';
 import { PendingDeliveryService } from '@modules/pending-delivery/pending-delivery.service';
 import {
   ClosePendingDeliveryDto,
@@ -56,6 +58,9 @@ export class DashboardController {
 
   @Inject(CartSimulatorService)
   private readonly _cartSimulatorService: CartSimulatorService;
+
+  @Inject(GainEstimateService)
+  private readonly _gainEstimateService: GainEstimateService;
 
   @Inject(PendingDeliveryService)
   private readonly _pendingDelivery: PendingDeliveryService;
@@ -313,6 +318,27 @@ export class DashboardController {
       req.user as UserModel,
       query.from,
       query.to,
+    );
+  }
+
+  /**
+   * P&L plateforme (Gain Estimate) — admin only.
+   * Agrège fees commandes, abonnements, Ad Credit, SMS, coûts Stripe + résumé IA.
+   */
+  @Get('finance/gain-estimate')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary: 'Gain Estimate — P&L plateforme (admin)',
+  })
+  financeGainEstimate(
+    @Req() req: Request,
+    @Query() query: GainEstimateQueryDto,
+  ) {
+    return this._gainEstimateService.getGainEstimate(
+      req.user as UserModel,
+      query.period,
+      query.locale,
     );
   }
 
