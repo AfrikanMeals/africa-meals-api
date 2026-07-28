@@ -128,7 +128,15 @@ describe('MediasService', () => {
     );
   });
 
-  it('rewrites legacy Firebase URLs to GCS when proxy disabled', async () => {
+  it('rewrites GCS URLs to proxy even when proxy disabled (PAP)', async () => {
+    const url =
+      'https://storage.googleapis.com/wise-eat-store/catalog/meal.jpg';
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(
+      'https://api.wise-eat.com/medias/public/catalog/meal.jpg',
+    );
+  });
+
+  it('rewrites legacy Firebase URLs to proxy when engine is gcs (never direct GCS)', async () => {
     const storageSettings = service['storageSettings'] as StorageSettingsService;
     jest.spyOn(storageSettings, 'getPublicSettings').mockResolvedValue({
       compressionEnabled: false,
@@ -150,7 +158,7 @@ describe('MediasService', () => {
     const url =
       'https://firebasestorage.googleapis.com/v0/b/wise-eat-com/o/platform-theme%2Flogo.png?alt=media&token=abc';
     await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(
-      'https://storage.googleapis.com/wise-eat-com/platform-theme/logo.png',
+      'https://api.wise-eat.com/medias/public/platform-theme/logo.png',
     );
   });
 

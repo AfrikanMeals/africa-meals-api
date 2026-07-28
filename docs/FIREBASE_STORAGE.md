@@ -68,7 +68,7 @@ Only your API (with the service account) can write. **Production** should not re
 1. **Media proxy** (Admin → Paramètres → Stockage → Proxy API) so clients load `https://{API}/medias/public/…` while the bucket stays private.
 2. Or Firebase download URLs when using the Firebase engine (`getDownloadURL` token).
 
-## 7. Production private bucket (PAP + no allUsers)
+## 5. Production private bucket (PAP + no allUsers)
 
 Hardening checklist for `GCS_BUCKET` (e.g. `wise-eat-store`):
 
@@ -100,7 +100,7 @@ APPLY=1 ENABLE_VERSIONING=1 ./scripts/harden-gcs-bucket.sh
 
 See also: `africa-meals-infra/docs/MONGODB_BACKUP.md` (GCS backups use authenticated SA — compatible with private buckets).
 
-## 8. How the API uses Storage
+## 6. How the API uses Storage
 
 - **Upload**: `MediasService.upload(file, user, basePath)` uploads to `{basePath}/{uuid}.{ext}` and returns the download URL (via `getDownloadURL` for Firebase, or proxy URL for private GCS).
 - **Delete**: `MediasService.delete(pathOrUrl)` deletes by path or by full Firebase Storage URL (path is extracted automatically).
@@ -108,6 +108,6 @@ See also: `africa-meals-infra/docs/MONGODB_BACKUP.md` (GCS backups use authentic
 
 The app initializes the Firebase Admin app in `SharedModule` and injects it (and the bucket name) into `MediasService`.
 
-## 9. Key rotation
+## 7. Key rotation
 
 If a service account JSON was ever committed to Git, follow [FIREBASE_KEY_ROTATION.md](./FIREBASE_KEY_ROTATION.md) immediately.

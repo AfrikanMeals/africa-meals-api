@@ -15,6 +15,7 @@ import { v4 as uuid } from 'uuid';
 import { ImageCompressionService } from './image-compression.service';
 import { StorageEngineFactory } from './storage-engine.factory';
 import {
+  detectEngineFromUrl,
   extractObjectPath,
   isStorageObjectNotFoundError,
   looksLikeMinioUrl,
@@ -81,9 +82,17 @@ export class MediasService {
     return url.includes('firebasestorage.googleapis.com');
   }
 
-  private isDirectObjectStoreUrl(url: string): boolean {
+  /** URL GCS directe (path-style ou virtual-hosted) — bucket privé → proxy. */
+  private isGcsDirectUrl(url: string): boolean {
     return (
       url.includes('storage.googleapis.com') ||
+      /\.storage\.googleapis\.com(\/|$)/i.test(url)
+    );
+  }
+
+  private isDirectObjectStoreUrl(url: string): boolean {
+    return (
+      this.isGcsDirectUrl(url) ||
       this.isLegacyFirebaseStorageUrl(url) ||
       url.includes('.s3.') ||
       url.includes('s3.amazonaws.com') ||
@@ -230,6 +239,10 @@ export class MediasService {
   ): Promise<string | undefined> {
     if (!url?.trim()) return undefined;
     const raw = url.trim();
+    // GCS privé (PAP) : toujours réécrire vers /medias/public/ même si proxy OFF.
+    if (this.isGcsDirectUrl(raw) && !this.isProxyUrl(raw)) {
+      return this.buildProxyPublicUrl(extractObjectPath(raw));
+    }
     const useProxy = await this.isMediaProxyEnabled();
 
     if (useProxy) {
@@ -244,12 +257,19 @@ export class MediasService {
       const objectPath = extractObjectPath(raw);
       const engine = await this.resolveDirectStorageEngine();
       if (engine === 'gcs' || engine === 's3' || engine === 'minio' || engine === 'r2') {
+        // Ne jamais repasser une URL GCS en direct (bucket privé).
+        if (engine === 'gcs') {
+          return this.buildProxyPublicUrl(objectPath);
+        }
         return this.directUrlForObjectPath(objectPath, engine);
       }
     }
 
     if (this.isLegacyFirebaseStorageUrl(raw)) {
       const engine = await this.resolveDirectStorageEngine();
+      if (engine === 'gcs') {
+        return this.buildProxyPublicUrl(extractObjectPath(raw));
+      }
       if (engine !== 'firebase') {
         return this.directUrlForObjectPath(extractObjectPath(raw), engine);
       }
@@ -261,11 +281,14 @@ export class MediasService {
   private async resolveUploadPublicUrl(
     result: StorageUploadResult,
   ): Promise<string> {
+    // Uploads GCS : toujours URL proxy (bucket privé / PAP).
+    if (result.engine === 'gcs') {
+      return this.buildProxyPublicUrl(result.path);
+    }
     const useProxy = await this.isMediaProxyEnabled();
     if (
       useProxy &&
-      (result.engine === 'gcs' ||
-        result.engine === 's3' ||
+      (result.engine === 's3' ||
         result.engine === 'minio' ||
         result.engine === 'r2')
     ) {

@@ -24,6 +24,7 @@ import {
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
 import { UpdateStorageSettingsDto } from './dto/update-storage-settings.dto';
+import { resolveMediaProxyEnabledForPool } from './storage-media-proxy-gate.util';
 
 const SETTINGS_KEY = 'default';
 const CACHE_TTL_MS = 5_000;
@@ -276,6 +277,11 @@ export class StorageSettingsService {
       moduleStorageEngines,
     });
     const storageEngine = deriveLegacyStorageEngine(storageEnginePool);
+    // GCS privé (PAP) : proxy médias obligatoire même si l’admin décoche.
+    const mediaProxyEnabled = resolveMediaProxyEnabledForPool({
+      requested: dto.mediaProxyEnabled === true,
+      storageEnginePool,
+    });
     const updated = await this._settings
       .findOneAndUpdate(
         { key: SETTINGS_KEY },
@@ -286,7 +292,7 @@ export class StorageSettingsService {
             storageEngine,
             storageEnginePool,
             fallbackStorageEngine,
-            mediaProxyEnabled: dto.mediaProxyEnabled,
+            mediaProxyEnabled,
             enginesEnabled,
             moduleStorageEngines,
           },

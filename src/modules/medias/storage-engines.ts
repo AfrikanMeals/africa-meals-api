@@ -178,8 +178,8 @@ export class GcsStorageEngine implements IStorageEngine {
       } catch (err) {
         if (isObjectAclUnsupportedError(err)) {
           this.objectAclUnsupported = true;
-          this.logger.debug(
-            `GCS makePublic indisponible (UBLA / IAM bucket) — uploads sans ACL objet`,
+          this.logger.warn(
+            `GCS makePublic indisponible (UBLA / PAP / IAM) — garder proxy médias + GCS_PUBLIC_READ=false`,
           );
         } else {
           this.logger.warn(
@@ -350,6 +350,11 @@ export class S3StorageEngine implements IStorageEngine {
             }`,
           );
           await client.send(new PutObjectCommand(putBase));
+          // Fix: « Block all public access » renvoie un AccessDenied générique, non
+          // reconnu comme erreur d'ACL. Le PutObject sans ACL qui vient de réussir
+          // prouve que seule l'ACL était refusée → on la coupe pour ce process,
+          // sinon chaque upload payait deux PutObject (un échec + un secours).
+          this.objectAclUnsupported = true;
         }
       }
     } else {

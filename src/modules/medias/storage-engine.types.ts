@@ -75,12 +75,25 @@ export function extractObjectPath(pathOrUrl: string): string {
   if (firebaseMatch) {
     return decodeURIComponent(firebaseMatch[1].replace(/\+/g, ' '));
   }
-  const gcsMatch = url.match(/storage\.googleapis\.com\/[^/]+\/(.+?)(?:\?|$)/);
+  // Virtual-hosted GCS AVANT path-style : sinon
+  // `{bucket}.storage.googleapis.com/catalog/…` matchait path-style comme bucket=`catalog`.
+  const gcsVirtual = url.match(
+    /https?:\/\/[^/]+\.storage\.googleapis\.com\/(.+?)(?:\?|$)/i,
+  );
+  if (gcsVirtual) {
+    return decodeURIComponent(gcsVirtual[1].replace(/\+/g, ' '));
+  }
+  // Path-style GCS : //storage.googleapis.com/{bucket}/{object} uniquement.
+  const gcsMatch = url.match(
+    /https?:\/\/storage\.googleapis\.com\/[^/]+\/(.+?)(?:\?|$)/i,
+  );
   if (gcsMatch) {
     return decodeURIComponent(gcsMatch[1].replace(/\+/g, ' '));
   }
+  // Virtual-hosted S3 (us-east-1) : {bucket}.s3.amazonaws.com/{key}
+  // + regional / path-style déjà couverts ci-dessous.
   const s3Match = url.match(
-    /(?:s3[.-][^/]+\.amazonaws\.com\/|\.s3\.[^/]+\.amazonaws\.com\/)(.+?)(?:\?|$)/,
+    /(?:s3[.-][^/]+\.amazonaws\.com\/|\.s3(?:\.[^/]+)?\.amazonaws\.com\/)(.+?)(?:\?|$)/,
   );
   if (s3Match) {
     return decodeURIComponent(s3Match[1].replace(/\+/g, ' '));

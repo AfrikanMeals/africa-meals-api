@@ -80,9 +80,24 @@ describe('storage-object-acl.util', () => {
       ).toBe(false);
     });
 
-    it('defaults to enabled when unset', () => {
+    it('defaults to enabled when unset for S3/MinIO', () => {
       expect(
         storageObjectAclEnabled(config({}), 'MINIO_PUBLIC_READ'),
+      ).toBe(true);
+    });
+
+    it('defaults to disabled for GCS (private / PAP)', () => {
+      expect(storageObjectAclEnabled(config({}), 'GCS_PUBLIC_READ')).toBe(
+        false,
+      );
+    });
+
+    it('enables GCS ACL only when explicitly true', () => {
+      expect(
+        storageObjectAclEnabled(
+          config({ GCS_PUBLIC_READ: 'true' }),
+          'GCS_PUBLIC_READ',
+        ),
       ).toBe(true);
     });
   });

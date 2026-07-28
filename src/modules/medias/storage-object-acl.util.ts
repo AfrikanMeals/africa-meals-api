@@ -1,15 +1,29 @@
 import { ConfigService } from '@nestjs/config';
+import type { StorageEngineId } from './storage-engine.types';
+import {
+  AclEngineEnvKey,
+  isObjectAclRequested,
+} from './storage-public-access.util';
 
-/** ACL objet activée pour ce moteur (false = bucket policy / UBLA / proxy médias). */
+const ENGINE_BY_ACL_ENV_KEY: Record<AclEngineEnvKey, StorageEngineId> = {
+  GCS_PUBLIC_READ: 'gcs',
+  AWS_S3_PUBLIC_READ: 's3',
+  MINIO_PUBLIC_READ: 'minio',
+};
+
+/**
+ * ACL objet activée pour ce moteur (false = bucket policy / UBLA / proxy médias).
+ *
+ * Délègue à `isObjectAclRequested`, source unique des défauts par moteur :
+ * GCS (PAP) et S3 (« Block all public access ») sont en opt-in explicite.
+ */
 export function storageObjectAclEnabled(
   config: ConfigService,
-  engineEnvKey: 'GCS_PUBLIC_READ' | 'AWS_S3_PUBLIC_READ' | 'MINIO_PUBLIC_READ',
+  engineEnvKey: AclEngineEnvKey,
 ): boolean {
-  const global = config.get<string>('STORAGE_OBJECT_ACL')?.trim().toLowerCase();
-  if (global === 'false' || global === '0' || global === 'no') {
-    return false;
-  }
-  return config.get<string>(engineEnvKey)?.trim() !== 'false';
+  return isObjectAclRequested(ENGINE_BY_ACL_ENV_KEY[engineEnvKey], (key) =>
+    config.get<string>(key),
+  );
 }
 
 /** Erreurs réseau / endpoint injoignable — ne pas confondre avec ACL refusée. */
@@ -44,6 +58,11 @@ export function isObjectAclUnsupportedError(err: unknown): boolean {
     msg.includes('uniform bucket-level access') ||
     msg.includes('cannot update access control') ||
     msg.includes('accesscontrolnotsupported') ||
+    // S3 Object Ownership « Bucket owner enforced » (Block all public access).
+    msg.includes('accesscontrollistnotsupported') ||
+    msg.includes('invalidbucketaclwithobjectownership') ||
+    msg.includes('public access prevention') ||
+    msg.includes('publicaccessprevention') ||
     (msg.includes('invalidrequest') && msg.includes('acl'))
   );
 }
