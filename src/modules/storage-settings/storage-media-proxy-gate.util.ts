@@ -8,7 +8,8 @@
  * obligatoire dès qu’ils sont dans le pool d’upload.
  * R2 endpoint S3-compatible n’est pas public sans `R2_PUBLIC_BASE_URL`.
  */
-const PRIVATE_POOL_ENGINES = new Set(['gcs', 's3', 'r2', 'vercelBlob']);
+// Ids en minuscules : le check fait `.toLowerCase()` (vercelBlob → vercelblob).
+const PRIVATE_POOL_ENGINES = new Set(['gcs', 's3', 'r2', 'vercelblob']);
 
 /** Vrai si le pool d’upload inclut GCS ou S3 (lecture anonyme interdite). */
 export function storagePoolRequiresMediaProxy(
