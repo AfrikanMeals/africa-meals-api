@@ -127,6 +127,11 @@ import { ProductModel } from '@schemas/product.schema';
 import { StoreModel, StoreStatusEnum } from '@schemas/store.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
+import {
+  majorAmountFromStripeCheckoutTotal,
+  resolveVendorBillingStripeCheckoutAmount,
+} from '@utils/vendor-billing-stripe-checkout.util';
+import { normalizeStripeCurrencyCode } from '@utils/stripe-currency-amount.util';
 import Stripe = require('stripe');
 
 type StripeClient = InstanceType<typeof Stripe>;
@@ -526,7 +531,6 @@ const ADS_PRICING_KEY = 'default';
 const AD_NOTIFICATION_PRICING_KEY = 'default';
 const AD_CONVERSION_ATTRIBUTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const AD_CREDIT_CHECKOUT_METADATA_KIND = 'ad_credit_payment';
-const AD_CREDIT_STRIPE_MIN_CAD = 0.5;
 const AD_CAMPAIGN_MAX_ITEMS = 8;
 const ADS_PRICING_DEFAULTS: Omit<AdPricingPayload, 'updatedAt'> = {
   currency: 'CAD',
@@ -1113,18 +1117,20 @@ export class AdsService implements OnModuleInit {
       const kind = String(session.metadata?.kind ?? '').trim();
       const uid = String(session.metadata?.uid ?? '').trim();
       if (kind !== AD_CREDIT_CHECKOUT_METADATA_KIND || uid !== owner) continue;
-      const amountPaidCad = Number(
-        ((session.amount_total ?? 0) / 100).toFixed(2),
+      // Fix: amount_total selon devise session (XAF ×1, CAD ×100) — pas /100 systématique.
+      const currency =
+        String(session.currency ?? 'cad')
+          .trim()
+          .toUpperCase() || 'CAD';
+      const amountPaidCad = majorAmountFromStripeCheckoutTotal(
+        session.amount_total,
+        currency,
       );
       if (!Number.isFinite(amountPaidCad) || amountPaidCad <= 0) continue;
       const paymentIntentId =
         typeof session.payment_intent === 'string'
           ? session.payment_intent
           : session.payment_intent?.id ?? null;
-      const currency =
-        String(session.currency ?? 'cad')
-          .trim()
-          .toUpperCase() || 'CAD';
       await this._adCreditPaymentModel
         .updateOne(
           { stripeCheckoutSessionId: session.id },
@@ -3868,8 +3874,13 @@ export class AdsService implements OnModuleInit {
       }),
       { totalBalanceCurrency: 0, payableCurrency: 0 },
     );
+    // Devise résumé = boutique (Checkout Stripe), pas seulement pricing global.
+    const billingCurrency = await this._resolveAdCreditCheckoutCurrency({
+      stores: enrichedStores,
+      fallbackCurrency: pricing.currency,
+    });
     return {
-      currency: pricing.currency,
+      currency: billingCurrency,
       grossDue,
       paidTotal: Number(paidTotal.toFixed(2)),
       creditBalance: applied.creditBalance,
@@ -4377,6 +4388,38 @@ export class AdsService implements OnModuleInit {
     return { bannersReconciled, campaignsReconciled, totalBillableCad };
   }
 
+  /**
+   * Devise Checkout Ads = devise boutique (store.currency / région), pas CAD forcé.
+   */
+  private async _resolveAdCreditCheckoutCurrency(args: {
+    stores: Array<{ storeId: string; totalDue?: number }>;
+    fallbackCurrency?: string | null;
+  }): Promise<string> {
+    const storeId =
+      args.stores.find((s) => Number(s.totalDue ?? 0) > 0)?.storeId ??
+      args.stores[0]?.storeId;
+    if (storeId && Types.ObjectId.isValid(storeId)) {
+      const store = await this._storeModel
+        .findById(storeId)
+        .select('currency region')
+        .lean()
+        .exec();
+      const storeCur = String(store?.currency ?? '')
+        .trim()
+        .toUpperCase();
+      if (storeCur) return normalizeStripeCurrencyCode(storeCur);
+      const region = String(store?.region ?? '')
+        .trim()
+        .toUpperCase();
+      if (region) {
+        const regionCur =
+          await this._supportedCountries.getCountryCurrency(region);
+        if (regionCur) return normalizeStripeCurrencyCode(regionCur);
+      }
+    }
+    return normalizeStripeCurrencyCode(args.fallbackCurrency);
+  }
+
   async createAdCreditCheckoutSession(
     user: UserModel,
   ): Promise<{ url: string; sessionId: string; amountCad: number }> {
@@ -4388,11 +4431,16 @@ export class AdsService implements OnModuleInit {
     if (outstanding <= 0) {
       throw new BadRequestException('ad_credit_already_settled');
     }
-    const amountCad = Number(
-      Math.max(outstanding, AD_CREDIT_STRIPE_MIN_CAD).toFixed(2),
-    );
-    const unitAmount = Math.round(amountCad * 100);
-    if (unitAmount < 50) {
+    // Fix: Stripe en devise boutique (XAF/CAD…) — plus de hardcode `cad` + ×100.
+    const currency = await this._resolveAdCreditCheckoutCurrency({
+      stores: credit.stores,
+      fallbackCurrency: credit.currency,
+    });
+    const charge = resolveVendorBillingStripeCheckoutAmount({
+      amountMajor: outstanding,
+      currency,
+    });
+    if (!charge.meetsMinimum) {
       throw new BadRequestException('amount_below_stripe_minimum');
     }
 
@@ -4401,24 +4449,23 @@ export class AdsService implements OnModuleInit {
     const meta: Record<string, string> = {
       kind: AD_CREDIT_CHECKOUT_METADATA_KIND,
       uid: ownerId,
-      outstandingDueCad: Number(outstanding).toFixed(2),
+      outstandingDueCad: String(charge.amountMajor),
+      billingCurrency: charge.currencyUpper,
     };
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
-      currency: 'cad',
+      currency: charge.currencyLower,
       client_reference_id: ownerId,
       customer_email: user.email || undefined,
       line_items: [
         {
           quantity: 1,
           price_data: {
-            currency: 'cad',
-            unit_amount: unitAmount,
+            currency: charge.currencyLower,
+            unit_amount: charge.unitAmount,
             product_data: {
               name: 'Wise Eat · Règlement crédit Ads',
-              description: `Règlement du crédit Ads vendeur (solde: ${outstanding.toFixed(
-                2,
-              )} CAD)`,
+              description: `Règlement du crédit Ads vendeur (solde: ${charge.amountMajor} ${charge.currencyUpper})`,
             },
           },
         },
@@ -4434,7 +4481,11 @@ export class AdsService implements OnModuleInit {
     if (!session.url) {
       throw new BadRequestException('stripe_missing_checkout_url');
     }
-    return { url: session.url, sessionId: session.id, amountCad };
+    return {
+      url: session.url,
+      sessionId: session.id,
+      amountCad: charge.amountMajor,
+    };
   }
 
   async getAdCreditCheckoutHealth(
@@ -4478,8 +4529,10 @@ export class AdsService implements OnModuleInit {
     if (session.payment_status !== 'paid' && session.status !== 'complete') {
       throw new BadRequestException('ad_credit_checkout_not_paid');
     }
-    const amountPaidCad = Number(
-      ((session.amount_total ?? 0) / 100).toFixed(2),
+    const currency = normalizeStripeCurrencyCode(session.currency);
+    const amountPaidCad = majorAmountFromStripeCheckoutTotal(
+      session.amount_total,
+      currency,
     );
     if (!Number.isFinite(amountPaidCad) || amountPaidCad <= 0) {
       throw new BadRequestException('ad_credit_checkout_invalid_amount');
@@ -4496,7 +4549,7 @@ export class AdsService implements OnModuleInit {
           $set: {
             owner: ownerOid,
             amountPaidCad,
-            currency: 'CAD',
+            currency,
             status: AdCreditPaymentStatusEnum.PAID,
             stripePaymentIntentId: paymentIntentId,
             paidAt: new Date(),

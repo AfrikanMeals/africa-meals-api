@@ -16,6 +16,8 @@ import {
 import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
+import { resolveVendorBillingStripeCheckoutAmount } from '@utils/vendor-billing-stripe-checkout.util';
+import { normalizeStripeCurrencyCode } from '@utils/stripe-currency-amount.util';
 import Stripe = require('stripe');
 import { VendorNotificationPreferencesService } from './vendor-notification-preferences.service';
 
@@ -132,7 +134,7 @@ export class VendorNotificationStripeBillingService {
     const storeId = String(charge.store);
     const store = await this.storeModel
       .findById(storeId)
-      .select('name owner email')
+      .select('name owner email currency region')
       .populate('owner', 'email fullName')
       .lean()
       .exec();
@@ -155,9 +157,15 @@ export class VendorNotificationStripeBillingService {
         ? String(owner.fullName ?? '').trim()
         : 'Bonjour';
 
-    const amountCad = Number(charge.smsTotalCad) || 0;
-    const unitAmount = Math.round(amountCad * 100);
-    if (unitAmount < 50) {
+    // Fix: Checkout SMS en devise boutique (XAF) — pas CAD ×100.
+    const billingCurrency = normalizeStripeCurrencyCode(
+      store.currency || charge.currency || 'CAD',
+    );
+    const chargeAmt = resolveVendorBillingStripeCheckoutAmount({
+      amountMajor: Number(charge.smsTotalCad) || 0,
+      currency: billingCurrency,
+    });
+    if (!chargeAmt.meetsMinimum) {
       await this.chargeModel.updateOne(
         { _id: charge._id },
         { $set: { status: VendorNotificationChargeStatusEnum.WAIVED } },
@@ -166,29 +174,29 @@ export class VendorNotificationStripeBillingService {
     }
 
     const stripe = this.stripe();
-    const currency = String(charge.currency ?? 'CAD').trim().toLowerCase() || 'cad';
     const meta: Record<string, string> = {
       kind: VENDOR_SMS_BILLING_CHECKOUT_KIND,
       storeId,
       billingMonth: charge.billingMonth,
       chargeId: cid,
       ownerId,
+      billingCurrency: chargeAmt.currencyUpper,
     };
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
-      currency,
+      currency: chargeAmt.currencyLower,
       client_reference_id: storeId,
       customer_email: ownerEmail || store.email || undefined,
       line_items: [
         {
           quantity: 1,
           price_data: {
-            currency,
-            unit_amount: unitAmount,
+            currency: chargeAmt.currencyLower,
+            unit_amount: chargeAmt.unitAmount,
             product_data: {
               name: `Wise Eat · Notifications SMS ${charge.billingMonth}`,
-              description: `${charge.smsCount} SMS · ${store.name ?? 'Boutique'}`,
+              description: `${charge.smsCount} SMS · ${store.name ?? 'Boutique'} · ${chargeAmt.amountMajor} ${chargeAmt.currencyUpper}`,
             },
           },
         },
@@ -219,7 +227,7 @@ export class VendorNotificationStripeBillingService {
           dueAt,
           stripeCheckoutSessionId: session.id,
           checkoutUrl: session.url,
-          currency: currency.toUpperCase(),
+          currency: chargeAmt.currencyUpper,
         },
       },
     );
@@ -231,7 +239,7 @@ export class VendorNotificationStripeBillingService {
         storeName: String(store.name ?? 'Boutique'),
         billingMonth: charge.billingMonth,
         smsCount: charge.smsCount,
-        amountCad,
+        amountCad: chargeAmt.amountMajor,
         paymentUrl: session.url,
         dueAt,
       });

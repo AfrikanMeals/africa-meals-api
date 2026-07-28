@@ -93,18 +93,26 @@ export class VendorNotificationBillingService {
     let stores = 0;
     for (const row of rows) {
       if (!row._id) continue;
+      // Devise + barème par boutique (région) — pas le pricing global CAD seul.
+      const storePricing = await this.dispatch.getPricingForStore(
+        String(row._id),
+      );
       const smsCount = Number(row.smsCount) || 0;
-      const smsTotalCad =
-        Number(row.smsTotalCad) ||
-        smsCount * pricing.smsUnitCostCad;
+      const unitCost = Number(storePricing.smsUnitCostCad) || 0;
+      // Total = count × barème région boutique (ignore somme agrégée au prix global).
+      const smsTotalCad = smsCount * unitCost;
       await this.chargeModel
         .findOneAndUpdate(
           { store: row._id, billingMonth },
           {
             $set: {
               smsCount,
-              smsUnitCostCad: pricing.smsUnitCostCad,
+              smsUnitCostCad: unitCost,
               smsTotalCad: Math.round(smsTotalCad * 100) / 100,
+              // Fix: currency boutique / région pour Checkout Stripe (XAF, pas CAD forcé).
+              currency: String(storePricing.currency ?? 'CAD')
+                .trim()
+                .toUpperCase(),
               pushCount: Number(row.pushCount) || 0,
               emailCount: Number(row.emailCount) || 0,
               status:
