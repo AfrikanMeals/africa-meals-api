@@ -102,7 +102,7 @@
     "mongoose": "^8.4.1",
     "mqtt": "^5.15.1",
     "neo4j-driver": "^6.2.0",
-    "nodemailer": "^8.0.3",
+    "nodemailer": "^9.0.3",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "pdfkit": "^0.18.0",
