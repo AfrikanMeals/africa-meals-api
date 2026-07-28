@@ -83,4 +83,19 @@ export const STORAGE_MEDIA_TARGETS: StorageMediaTarget[] = [
     collection: 'blog_articles',
     fields: [{ kind: 'scalar', field: 'featuredImageUrl' }],
   },
+  // Illustration des catégories catalogue (upload admin `catalog/categories`).
+  {
+    collection: 'product_categories',
+    fields: [{ kind: 'scalar', field: 'image' }],
+  },
+  // Suppléments produit (upload vendeur `stores/{id}/extras/{productId}`).
+  {
+    collection: 'product_extras',
+    fields: [{ kind: 'scalar', field: 'profile_image' }],
+  },
+  // Preuves photo de dépôt client absent (upload livreur `delivery-proof/`).
+  {
+    collection: 'pending_delivery_proofs',
+    fields: [{ kind: 'stringArray', field: 'proof_photo_urls' }],
+  },
 ];

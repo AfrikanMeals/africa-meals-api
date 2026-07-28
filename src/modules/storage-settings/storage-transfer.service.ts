@@ -357,6 +357,16 @@ export class StorageTransferService {
               sourceEngine,
               targetEngine,
             );
+          } else if (field.kind === 'stringArray') {
+            this.pushStringArrayItems(
+              out,
+              target.collection,
+              docId,
+              field,
+              doc,
+              sourceEngine,
+              targetEngine,
+            );
           } else {
             this.pushArrayItems(
               out,
