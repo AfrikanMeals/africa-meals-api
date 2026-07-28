@@ -34,7 +34,9 @@ import { StorageSettingsService } from './storage-settings.service';
 import {
   STORAGE_MEDIA_TARGETS,
   StorageMediaArrayField,
+  StorageMediaField,
   StorageMediaScalarField,
+  StorageMediaStringArrayField,
 } from './storage-media-inventory.constants';
 
 type TransferWorkItem = {
@@ -385,15 +387,38 @@ export class StorageTransferService {
     return out;
   }
 
-  private buildProjection(
-    fields: Array<StorageMediaScalarField | StorageMediaArrayField>,
-  ): Record<string, 1> {
+  private buildProjection(fields: StorageMediaField[]): Record<string, 1> {
     const projection: Record<string, 1> = { _id: 1 };
     for (const field of fields) {
-      if (field.kind === 'scalar') projection[field.field] = 1;
-      else projection[field.arrayField] = 1;
+      if (field.kind === 'array') projection[field.arrayField] = 1;
+      else projection[field.field] = 1;
     }
     return projection;
+  }
+
+  /** Tableau d'URLs brutes : l'index sert de chemin `$set` (`champ.0`). */
+  private pushStringArrayItems(
+    out: TransferWorkItem[],
+    collection: string,
+    docId: Types.ObjectId,
+    field: StorageMediaStringArrayField,
+    doc: Record<string, unknown>,
+    sourceEngine: StorageEngineId,
+    targetEngine: StorageEngineId,
+  ): void {
+    const rows = doc[field.field];
+    if (!Array.isArray(rows)) return;
+    rows.forEach((row, index) => {
+      const url = typeof row === 'string' ? row.trim() : '';
+      if (!this.isTransferableUrl(url, sourceEngine, targetEngine)) return;
+      out.push({
+        collection,
+        docId,
+        url,
+        objectPath: extractObjectPath(url),
+        setFields: (newUrl) => ({ [`${field.field}.${index}`]: newUrl }),
+      });
+    });
   }
 
   private pushScalarItem(
