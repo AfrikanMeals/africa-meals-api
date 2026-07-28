@@ -228,9 +228,33 @@ export class MediasService {
     return `https://storage.googleapis.com/${bucket}/${encoded}`;
   }
 
-  private async isMediaProxyEnabled(): Promise<boolean> {
+  /**
+   * Le moteur peut-il encore servir une URL bucket **directe** à un client anonyme ?
+   * `false` = bucket privé sans CDN (GCS PAP, S3 « Block all public access »).
+   */
+  private canServeDirectUrl(engine: StorageEngineId): boolean {
+    return isDirectPublicReadAvailable(engine, (key) =>
+      this.config.get<string>(key),
+    );
+  }
+
+  /**
+   * Proxy médias effectif : toggle admin **ou** bucket non lisible publiquement.
+   *
+   * Le repli automatique évite le piège principal de la bascule S3 en bucket privé :
+   * sans lui, cocher « Block all public access » côté AWS sans activer le toggle
+   * admin renverrait des URLs `bucket.s3.…` en 403 sur mobile, admin et web.
+   *
+   * Le moteur est déduit de l'URL source quand elle est connue : dans un pool mixte,
+   * un S3 privé ne doit pas forcer le proxy sur des médias MinIO restés publics.
+   */
+  private async isMediaProxyEnabled(
+    engine?: StorageEngineId | null,
+  ): Promise<boolean> {
     const settings = await this.storageSettings.getPublicSettings();
-    return settings.mediaProxyEnabled === true;
+    if (settings.mediaProxyEnabled === true) return true;
+    const target = engine ?? (await this.resolveDirectStorageEngine());
+    return !this.canServeDirectUrl(target);
   }
 
   /** Normalise les URLs médias selon le réglage admin (proxy ou direct GCS/S3). */
@@ -239,11 +263,7 @@ export class MediasService {
   ): Promise<string | undefined> {
     if (!url?.trim()) return undefined;
     const raw = url.trim();
-    // GCS privé (PAP) : toujours réécrire vers /medias/public/ même si proxy OFF.
-    if (this.isGcsDirectUrl(raw) && !this.isProxyUrl(raw)) {
-      return this.buildProxyPublicUrl(extractObjectPath(raw));
-    }
-    const useProxy = await this.isMediaProxyEnabled();
+    const useProxy = await this.isMediaProxyEnabled(detectEngineFromUrl(raw));
 
     if (useProxy) {
       if (this.isProxyUrl(raw)) return raw;
@@ -256,22 +276,27 @@ export class MediasService {
     if (this.isProxyUrl(raw)) {
       const objectPath = extractObjectPath(raw);
       const engine = await this.resolveDirectStorageEngine();
-      if (engine === 'gcs' || engine === 's3' || engine === 'minio' || engine === 'r2') {
-        // Ne jamais repasser une URL GCS en direct (bucket privé).
-        if (engine === 'gcs') {
-          return this.buildProxyPublicUrl(objectPath);
-        }
+      // Ne dé-proxifier que vers un moteur encore lisible publiquement : sinon on
+      // transformerait une URL qui fonctionne en 403.
+      if (
+        (engine === 'gcs' ||
+          engine === 's3' ||
+          engine === 'minio' ||
+          engine === 'r2') &&
+        this.canServeDirectUrl(engine)
+      ) {
         return this.directUrlForObjectPath(objectPath, engine);
       }
+      return raw;
     }
 
     if (this.isLegacyFirebaseStorageUrl(raw)) {
       const engine = await this.resolveDirectStorageEngine();
-      if (engine === 'gcs') {
-        return this.buildProxyPublicUrl(extractObjectPath(raw));
-      }
       if (engine !== 'firebase') {
-        return this.directUrlForObjectPath(extractObjectPath(raw), engine);
+        const objectPath = extractObjectPath(raw);
+        return this.canServeDirectUrl(engine)
+          ? this.directUrlForObjectPath(objectPath, engine)
+          : this.buildProxyPublicUrl(objectPath);
       }
     }
 
@@ -281,14 +306,11 @@ export class MediasService {
   private async resolveUploadPublicUrl(
     result: StorageUploadResult,
   ): Promise<string> {
-    // Uploads GCS : toujours URL proxy (bucket privé / PAP).
-    if (result.engine === 'gcs') {
-      return this.buildProxyPublicUrl(result.path);
-    }
-    const useProxy = await this.isMediaProxyEnabled();
+    const useProxy = await this.isMediaProxyEnabled(result.engine);
     if (
       useProxy &&
-      (result.engine === 's3' ||
+      (result.engine === 'gcs' ||
+        result.engine === 's3' ||
         result.engine === 'minio' ||
         result.engine === 'r2')
     ) {

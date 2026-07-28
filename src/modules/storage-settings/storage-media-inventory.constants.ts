@@ -10,9 +10,20 @@ export type StorageMediaArrayField = {
   urlField: string;
 };
 
+/** Tableau d'URLs brutes (ex. `pending_delivery_proofs.proof_photo_urls`). */
+export type StorageMediaStringArrayField = {
+  kind: 'stringArray';
+  field: string;
+};
+
+export type StorageMediaField =
+  | StorageMediaScalarField
+  | StorageMediaArrayField
+  | StorageMediaStringArrayField;
+
 export type StorageMediaTarget = {
   collection: string;
-  fields: Array<StorageMediaScalarField | StorageMediaArrayField>;
+  fields: StorageMediaField[];
 };
 
 export const STORAGE_MEDIA_TARGETS: StorageMediaTarget[] = [
