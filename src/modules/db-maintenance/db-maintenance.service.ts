@@ -4651,6 +4651,16 @@ export class DbMaintenanceService {
           name: 'Cloudflare R2',
           configured: Boolean(r2Bucket && r2Key && r2Secret && r2Endpoint),
         },
+        {
+          name: 'Vercel Blob',
+          configured: Boolean(
+            String(
+              this.config.get<string>('BLOB_READ_WRITE_TOKEN') ??
+                this.config.get<string>('VERCEL_BLOB_READ_WRITE_TOKEN') ??
+                '',
+            ).trim(),
+          ),
+        },
       ];
       for (const entry of configOnlyEntries) {
         engines.push({
@@ -4865,6 +4875,39 @@ export class DbMaintenanceService {
     } else {
       engines.push({
         name: 'Cloudflare R2',
+        configured: false,
+        ok: false,
+        detail: 'non configuré',
+      });
+    }
+
+    // Probe live Vercel Blob : list() avec le token (store privé YUL1, etc.).
+    const blobToken = String(
+      this.config.get<string>('BLOB_READ_WRITE_TOKEN') ??
+        this.config.get<string>('VERCEL_BLOB_READ_WRITE_TOKEN') ??
+        '',
+    ).trim();
+    if (blobToken) {
+      try {
+        const { list } = await import('@vercel/blob');
+        await list({ limit: 1, token: blobToken });
+        engines.push({
+          name: 'Vercel Blob',
+          configured: true,
+          ok: true,
+          detail: 'joignable',
+        });
+      } catch (e) {
+        engines.push({
+          name: 'Vercel Blob',
+          configured: true,
+          ok: false,
+          detail: e instanceof Error ? e.message : String(e),
+        });
+      }
+    } else {
+      engines.push({
+        name: 'Vercel Blob',
         configured: false,
         ok: false,
         detail: 'non configuré',

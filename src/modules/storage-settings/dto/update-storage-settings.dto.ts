@@ -31,28 +31,28 @@ export class UpdateStorageSettingsDto {
     description:
       'Moteurs utilisés pour les uploads globaux (1 = fixe, plusieurs = tirage aléatoire)',
     type: [String],
-    enum: ['firebase', 'gcs', 's3', 'minio', 'r2'],
+    enum: ['firebase', 'gcs', 's3', 'minio', 'r2', 'vercelBlob'],
   })
   @IsArray()
   @ArrayMinSize(1)
-  @IsIn(['firebase', 'gcs', 's3', 'minio', 'r2'], { each: true })
+  @IsIn(['firebase', 'gcs', 's3', 'minio', 'r2', 'vercelBlob'], { each: true })
   storageEnginePool: StorageEngineId[];
 
   @ApiProperty({
     description:
       'Moteur de secours si l’écriture échoue sur le moteur principal (null = aucun)',
-    enum: ['firebase', 'gcs', 's3', 'minio', 'r2'],
+    enum: ['firebase', 'gcs', 's3', 'minio', 'r2', 'vercelBlob'],
     nullable: true,
     required: false,
   })
   @IsOptional()
   @ValidateIf((_, value) => value != null)
-  @IsIn(['firebase', 'gcs', 's3', 'minio', 'r2'])
+  @IsIn(['firebase', 'gcs', 's3', 'minio', 'r2', 'vercelBlob'])
   fallbackStorageEngine?: StorageEngineId | null;
 
   @ApiProperty({
     description:
-      'Proxy API pour lire les médias GCS/S3/R2/MinIO (GET /medias/public/…) au lieu des URLs directes',
+      'Proxy API pour lire les médias GCS/S3/R2/Vercel Blob/MinIO (GET /medias/public/…) au lieu des URLs directes',
   })
   @IsBoolean()
   mediaProxyEnabled: boolean;

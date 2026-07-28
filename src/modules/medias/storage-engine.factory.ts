@@ -7,12 +7,14 @@ import {
   IStorageEngine,
   StorageEngineId,
 } from './storage-engine.types';
+import { orderStorageEnginesForRead } from './storage-engine-read-order.util';
 import {
   FirebaseStorageEngine,
   GcsStorageEngine,
   MinioStorageEngine,
   R2StorageEngine,
   S3StorageEngine,
+  VercelBlobStorageEngine,
 } from './storage-engines';
 
 @Injectable()
@@ -32,6 +34,7 @@ export class StorageEngineFactory {
       new S3StorageEngine(config),
       new MinioStorageEngine(config),
       new R2StorageEngine(config),
+      new VercelBlobStorageEngine(config),
     ];
     if (!firebaseApp) {
       Logger.warn(
@@ -76,7 +79,14 @@ export class StorageEngineFactory {
     const candidateIds =
       pool?.length && pool.length > 0
         ? pool
-        : (['firebase', 'gcs', 's3', 'minio', 'r2'] as StorageEngineId[]);
+        : ([
+            'firebase',
+            'gcs',
+            's3',
+            'minio',
+            'r2',
+            'vercelBlob',
+          ] as StorageEngineId[]);
     const available = candidateIds
       .filter((id) => this.isEngineAllowed(id, enabled))
       .map((id) => this.byId(id))
@@ -154,28 +164,25 @@ export class StorageEngineFactory {
     return chain.length > 0 ? chain : [primary];
   }
 
-  /** Ordre de lecture proxy : moteur admin d’abord, puis les autres configurés et activés. */
+  /**
+   * Ordre de lecture proxy : primaire → pool → Firebase/GCS/S3/R2 → MinIO.
+   * Garantit que GCS / R2 / Firebase restent essayés même si MinIO est primaire.
+   */
   enginesToTryForRead(
     mode: StorageEngineMode,
     enabled?: StorageEnginesEnabled,
     pool?: StorageEngineId[],
   ): IStorageEngine[] {
     const primary = this.resolve(mode, enabled, pool);
-    const seen = new Set<StorageEngineId>();
-    const ordered: IStorageEngine[] = [];
-    for (const engine of [
-      primary,
-      ...this.engines.filter(
-        (e) =>
-          e.id !== primary.id &&
-          e.isConfigured() &&
-          this.isEngineAllowed(e.id, enabled),
-      ),
-    ]) {
-      if (seen.has(engine.id)) continue;
-      seen.add(engine.id);
-      ordered.push(engine);
-    }
-    return ordered;
+    const candidates = this.configuredAndAllowed(enabled);
+    const orderedIds = orderStorageEnginesForRead({
+      primaryId: primary.id,
+      pool,
+      candidateIds: candidates.map((e) => e.id),
+    });
+    const byId = new Map(candidates.map((e) => [e.id, e] as const));
+    return orderedIds
+      .map((id) => byId.get(id))
+      .filter((e): e is IStorageEngine => Boolean(e));
   }
 }

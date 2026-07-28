@@ -1,4 +1,10 @@
-export type StorageEngineId = 'firebase' | 'gcs' | 's3' | 'minio' | 'r2';
+export type StorageEngineId =
+  | 'firebase'
+  | 'gcs'
+  | 's3'
+  | 'minio'
+  | 'r2'
+  | 'vercelBlob';
 
 export type StorageEngineMode = StorageEngineId | 'auto';
 
@@ -42,6 +48,16 @@ export function looksLikeR2Url(url: string): boolean {
     return false;
   }
   return false;
+}
+
+/** URLs Vercel Blob (`*.private.blob.vercel-storage.com` / public). */
+export function looksLikeVercelBlobUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return /\.blob\.vercel-storage\.com$/i.test(u.hostname);
+  } catch {
+    return false;
+  }
 }
 
 export function looksLikeMinioUrl(url: string): boolean {
@@ -159,6 +175,17 @@ export function extractObjectPath(pathOrUrl: string): string {
       /* fall through */
     }
   }
+  if (looksLikeVercelBlobUrl(url)) {
+    try {
+      const u = new URL(url);
+      // Pathname = clé objet (pas de préfixe bucket dans l’URL Vercel).
+      return decodeURIComponent(
+        u.pathname.replace(/^\/+/, '').replace(/\+/g, ' '),
+      );
+    } catch {
+      /* fall through */
+    }
+  }
   if (looksLikeMinioUrl(url)) {
     try {
       const u = new URL(url);
@@ -182,12 +209,13 @@ export function detectEngineFromUrl(pathOrUrl: string): StorageEngineId | null {
   if (url.includes('/medias/public/')) return null;
   if (url.includes('.s3.') || url.includes('s3.amazonaws.com')) return 's3';
   if (looksLikeR2Url(url)) return 'r2';
+  if (looksLikeVercelBlobUrl(url)) return 'vercelBlob';
   if (looksLikeMinioUrl(url)) return 'minio';
   if (url.includes('storage.googleapis.com')) return 'gcs';
   return null;
 }
 
-/** Erreur « objet absent » (Firebase, GCS, S3). */
+/** Erreur « objet absent » (Firebase, GCS, S3 / AWS SDK v3). */
 export function isStorageObjectNotFoundError(err: unknown): boolean {
   if (!err || typeof err !== 'object') {
     const msg = String(err ?? '');
@@ -199,14 +227,31 @@ export function isStorageObjectNotFoundError(err: unknown): boolean {
       msg.includes('does not exist')
     );
   }
-  const o = err as { code?: number | string; message?: string; name?: string };
-  if (o.code === 404 || o.code === '404' || o.code === 'NotFound') return true;
+  const o = err as {
+    code?: number | string;
+    Code?: string;
+    message?: string;
+    name?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
+  // AWS SDK v3 : name/Code = NoSuchKey ; httpStatusCode 404.
+  if (
+    o.name === 'NoSuchKey' ||
+    o.name === 'NotFound' ||
+    o.Code === 'NoSuchKey' ||
+    o.code === 'NoSuchKey' ||
+    o.code === 404 ||
+    o.code === '404' ||
+    o.code === 'NotFound' ||
+    o.$metadata?.httpStatusCode === 404
+  ) {
+    return true;
+  }
   const msg = String(o.message ?? err ?? '').toLowerCase();
   return (
     msg.includes('nosuchkey') ||
     msg.includes('no such object') ||
     msg.includes('not found') ||
-    msg.includes('does not exist') ||
-    o.name === 'NotFound'
+    msg.includes('does not exist')
   );
 }

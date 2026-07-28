@@ -5,6 +5,7 @@ export type StorageModuleEngineSetting =
   | 's3'
   | 'minio'
   | 'r2'
+  | 'vercelBlob'
   | 'auto';
 
 export const STORAGE_MODULES = [
@@ -122,6 +123,7 @@ export function normalizeModuleStorageEngines(
     's3',
     'minio',
     'r2',
+    'vercelBlob',
     'auto',
   ];
   const result = { ...DEFAULT_MODULE_STORAGE_ENGINES };

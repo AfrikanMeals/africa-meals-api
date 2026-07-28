@@ -73,6 +73,7 @@
     "@nestjs/typeorm": "^10.0.2",
     "@types/memcached": "^2.2.10",
     "@types/pdfkit": "^0.17.6",
+    "@vercel/blob": "^2.3.0",
     "apollo-server-express": "^3.13.0",
     "axios": "^1.7.2",
     "bcrypt": "^5.1.1",

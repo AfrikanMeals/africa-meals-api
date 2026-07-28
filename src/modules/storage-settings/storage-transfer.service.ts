@@ -553,7 +553,8 @@ export class StorageTransferService {
       (result.engine === 'gcs' ||
         result.engine === 's3' ||
         result.engine === 'minio' ||
-        result.engine === 'r2')
+        result.engine === 'r2' ||
+        result.engine === 'vercelBlob')
     ) {
       return this.medias.buildProxyPublicUrl(result.path);
     }

@@ -33,7 +33,7 @@ describe('MediasService', () => {
               storageEnginePool: ['s3'],
               fallbackStorageEngine: null,
               mediaProxyEnabled: false,
-              enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true },
+              enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true, vercelBlob: true },
             }),
             getMaxFileSizeBytes: jest.fn().mockResolvedValue(5 * 1024 * 1024),
           },
@@ -104,7 +104,7 @@ describe('MediasService', () => {
       storageEnginePool: ['s3'],
       fallbackStorageEngine: null,
       mediaProxyEnabled: true,
-      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true },
+      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true, vercelBlob: true },
       moduleStorageEngines: {
         catalog: 'default',
         profile: 'default',
@@ -136,7 +136,7 @@ describe('MediasService', () => {
       storageEnginePool: ['minio'],
       fallbackStorageEngine: null,
       mediaProxyEnabled: false,
-      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true },
+      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true, vercelBlob: true },
       moduleStorageEngines: {
         catalog: 'default',
         profile: 'default',
@@ -170,7 +170,7 @@ describe('MediasService', () => {
       storageEnginePool: ['gcs'],
       fallbackStorageEngine: null,
       mediaProxyEnabled: false,
-      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true },
+      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true, vercelBlob: true },
       moduleStorageEngines: {
         catalog: 'default',
         profile: 'default',
@@ -196,7 +196,7 @@ describe('MediasService', () => {
       storageEnginePool: ['gcs'],
       fallbackStorageEngine: null,
       mediaProxyEnabled: true,
-      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true },
+      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true, vercelBlob: true },
       moduleStorageEngines: {
         catalog: 'default',
         profile: 'default',
@@ -213,6 +213,56 @@ describe('MediasService', () => {
     );
   });
 
+  it('rewrites Vercel Blob private URLs to proxy', async () => {
+    const url =
+      'https://wise-eat.private.blob.vercel-storage.com/stores/abc/profile/x.webp';
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(
+      'https://api.wise-eat.com/medias/public/stores/abc/profile/x.webp',
+    );
+  });
+
+  it('rewrites private R2 endpoint URLs to proxy', async () => {
+    // Sans R2_PUBLIC_BASE_URL l’endpoint n’est pas anonyme → proxy obligatoire.
+    delete env.R2_PUBLIC_BASE_URL;
+    env.R2_BUCKET = 'wise-eat';
+    env.R2_ACCOUNT_ID = 'acct';
+    const url =
+      'https://acct.r2.cloudflarestorage.com/wise-eat/stores/abc/profile/x.webp';
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(
+      'https://api.wise-eat.com/medias/public/stores/abc/profile/x.webp',
+    );
+  });
+
+  it('keeps R2 custom domain URLs when R2_PUBLIC_BASE_URL is set', async () => {
+    env.R2_PUBLIC_BASE_URL = 'https://media.wise-eat.com';
+    const url = 'https://media.wise-eat.com/stores/abc/profile/x.webp';
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(url);
+  });
+
+  it('keeps Firebase token URLs when media proxy is off and engine is firebase', async () => {
+    const storageSettings = service['storageSettings'] as StorageSettingsService;
+    jest.spyOn(storageSettings, 'getPublicSettings').mockResolvedValue({
+      compressionEnabled: false,
+      maxFileSizeMb: 5,
+      storageEngine: 'firebase',
+      storageEnginePool: ['firebase'],
+      fallbackStorageEngine: null,
+      mediaProxyEnabled: false,
+      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true, vercelBlob: true },
+      moduleStorageEngines: {
+        catalog: 'default',
+        profile: 'default',
+        marketing: 'default',
+        chat: 'default',
+        system: 'default',
+      },
+      updatedAt: null,
+    });
+    const url =
+      'https://firebasestorage.googleapis.com/v0/b/wise-eat-com/o/stores%2Fabc%2Fx.webp?alt=media&token=tok';
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(url);
+  });
+
   it('keeps files.wise-eat.com CDN URLs when media proxy is enabled', async () => {
     const storageSettings = service['storageSettings'] as StorageSettingsService;
     jest.spyOn(storageSettings, 'getPublicSettings').mockResolvedValue({
@@ -222,7 +272,7 @@ describe('MediasService', () => {
       storageEnginePool: ['minio'],
       fallbackStorageEngine: null,
       mediaProxyEnabled: true,
-      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true },
+      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true, vercelBlob: true },
       moduleStorageEngines: {
         catalog: 'default',
         profile: 'default',
@@ -247,7 +297,7 @@ describe('MediasService', () => {
       storageEnginePool: ['minio'],
       fallbackStorageEngine: null,
       mediaProxyEnabled: true,
-      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true },
+      enginesEnabled: { firebase: true, gcs: true, s3: true, minio: true, r2: true, vercelBlob: true },
       moduleStorageEngines: {
         catalog: 'default',
         profile: 'default',
@@ -260,9 +310,9 @@ describe('MediasService', () => {
     env.MINIO_PUBLIC_BASE_URL = 'https://files.wise-eat.com';
     const broken =
       'https://apis.wise-eat.com/medias/public/https%3A//files.wise-eat.com/stores/abc/products/x.jpg';
-    // Proxy activé → réécrit vers une clé objet propre sous /medias/public/ (servable).
+    // L’objet n’existe que sur le CDN files — restaurer l’URL directe (proxy SDK = 500).
     await expect(service.resolvePublicMediaUrl(broken)).resolves.toBe(
-      'https://api.wise-eat.com/medias/public/stores/abc/products/x.jpg',
+      'https://files.wise-eat.com/stores/abc/products/x.jpg',
     );
   });
 });

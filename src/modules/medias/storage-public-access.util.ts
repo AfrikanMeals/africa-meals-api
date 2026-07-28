@@ -114,8 +114,13 @@ export function isDirectPublicReadAvailable(
         !isExplicitlyDisabled(env('STORAGE_OBJECT_ACL')) &&
         !isExplicitlyDisabled(env('MINIO_PUBLIC_READ'))
       );
-    // R2 sans domaine public dédié : comportement inchangé (URL endpoint directe).
+    // R2 : l’endpoint `*.r2.cloudflarestorage.com` n’est pas anonyme.
+    // Sans `R2_PUBLIC_BASE_URL` (déjà géré via CDN_BASE_URL_ENV_KEYS) → proxy.
     case 'r2':
+      return false;
+    // Vercel Blob private store : URL `*.private.blob.vercel-storage.com` non anonyme.
+    case 'vercelBlob':
+      return false;
     default:
       return true;
   }

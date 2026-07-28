@@ -11,6 +11,7 @@ import {
   StorageUploadInput,
   StorageUploadResult,
 } from './storage-engine.types';
+// Vercel Blob chargé en lazy dans VercelBlobStorageEngine (évite coût au boot).
 import {
   buildMinioS3ClientConfig,
   normalizeMinioEndpoint,
@@ -866,6 +867,131 @@ export class R2StorageEngine implements IStorageEngine {
           Delete: { Objects: keys.map((Key) => ({ Key })) },
         }),
       );
+    } catch (err) {
+      this.logger.error('deleteFilesWithPrefixExcept', err);
+    }
+  }
+}
+
+/**
+ * Vercel Blob Storage **privé** — lecture uniquement via proxy API
+ * (`BLOB_READ_WRITE_TOKEN` + `get({ access: 'private' })`).
+ */
+@Injectable()
+export class VercelBlobStorageEngine implements IStorageEngine {
+  readonly id: StorageEngineId = 'vercelBlob';
+  private readonly logger = new Logger(VercelBlobStorageEngine.name);
+
+  constructor(private readonly config: ConfigService) {}
+
+  private token(): string {
+    return (
+      this.config.get<string>('BLOB_READ_WRITE_TOKEN')?.trim() ||
+      this.config.get<string>('VERCEL_BLOB_READ_WRITE_TOKEN')?.trim() ||
+      ''
+    );
+  }
+
+  isConfigured(): boolean {
+    return Boolean(this.token());
+  }
+
+  private opts() {
+    return { token: this.token(), access: 'private' as const };
+  }
+
+  async upload(input: StorageUploadInput): Promise<StorageUploadResult> {
+    const { put } = await import('@vercel/blob');
+    const blob = await put(input.path, input.buffer, {
+      ...this.opts(),
+      contentType: input.contentType,
+      // Même pathname → écrase (uploads profil / produits).
+      addRandomSuffix: false,
+    });
+    return {
+      url: blob.url,
+      path: blob.pathname || input.path,
+      engine: this.id,
+    };
+  }
+
+  async readObject(objectPath: string): Promise<StorageObjectStream> {
+    const { get, BlobNotFoundError } = await import('@vercel/blob');
+    try {
+      const result = await get(objectPath, {
+        ...this.opts(),
+        useCache: false,
+      });
+      if (!result?.stream) {
+        throw new Error(`No such object: vercel-blob/${objectPath}`);
+      }
+      const { Readable } = await import('stream');
+      return {
+        body: Readable.fromWeb(
+          result.stream as import('stream/web').ReadableStream,
+        ),
+        contentType:
+          result.statusCode === 200 ? result.blob.contentType : undefined,
+      };
+    } catch (err) {
+      if (err instanceof BlobNotFoundError) {
+        throw new Error(`No such object: vercel-blob/${objectPath}`);
+      }
+      throw err;
+    }
+  }
+
+  async delete(pathOrUrl: string): Promise<void> {
+    const { del } = await import('@vercel/blob');
+    await del(extractObjectPath(pathOrUrl), { token: this.token() });
+  }
+
+  async deleteFilesWithPrefix(prefix: string): Promise<void> {
+    const normalized = prefix.endsWith('/') ? prefix : `${prefix}/`;
+    try {
+      const { list, del } = await import('@vercel/blob');
+      let cursor: string | undefined;
+      do {
+        const page = await list({
+          prefix: normalized,
+          cursor,
+          token: this.token(),
+        });
+        const urls = page.blobs.map((b) => b.url).filter(Boolean);
+        if (urls.length) {
+          await del(urls, { token: this.token() });
+        }
+        cursor = page.hasMore ? page.cursor : undefined;
+      } while (cursor);
+    } catch (err) {
+      this.logger.error('deleteFilesWithPrefix', err);
+    }
+  }
+
+  async deleteFilesWithPrefixExcept(
+    prefix: string,
+    keepPathOrUrl: string,
+  ): Promise<void> {
+    const keepPath = extractObjectPath(keepPathOrUrl);
+    const normalized = prefix.endsWith('/') ? prefix : `${prefix}/`;
+    try {
+      const { list, del } = await import('@vercel/blob');
+      let cursor: string | undefined;
+      do {
+        const page = await list({
+          prefix: normalized,
+          cursor,
+          token: this.token(),
+        });
+        const urls = page.blobs
+          .filter((b) => b.pathname !== keepPath)
+          .map((b) => b.url)
+          .filter(Boolean);
+        if (urls.length) {
+          await del(urls, { token: this.token() });
+        }
+        cursor = page.hasMore ? page.cursor : undefined;
+      } while (cursor);
     } catch (err) {
       this.logger.error('deleteFilesWithPrefixExcept', err);
     }

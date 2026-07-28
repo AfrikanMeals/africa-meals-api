@@ -1,4 +1,7 @@
-import { extractObjectPath } from './storage-engine.types';
+import {
+  extractObjectPath,
+  isStorageObjectNotFoundError,
+} from './storage-engine.types';
 
 describe('extractObjectPath', () => {
   it('path-style GCS', () => {
@@ -52,5 +55,61 @@ describe('extractObjectPath', () => {
         'https://apis.wise-eat.com/medias/public/https%3A//files.wise-eat.com/stores/abc/products/x.jpg',
       ),
     ).toBe('stores/abc/products/x.jpg');
+  });
+
+  it('Firebase download URL (/o/…)', () => {
+    expect(
+      extractObjectPath(
+        'https://firebasestorage.googleapis.com/v0/b/wise-eat-com/o/stores%2Fabc%2Fprofile%2Fx.webp?alt=media&token=tok',
+      ),
+    ).toBe('stores/abc/profile/x.webp');
+  });
+
+  // Path-style R2 : /{bucket}/{key}
+  it('R2 cloudflarestorage path-style', () => {
+    expect(
+      extractObjectPath(
+        'https://acct.r2.cloudflarestorage.com/wise-eat/stores/abc/profile/x.webp',
+      ),
+    ).toBe('stores/abc/profile/x.webp');
+  });
+
+  it('R2 .r2.dev public bucket URL', () => {
+    expect(
+      extractObjectPath(
+        'https://pub-xxx.r2.dev/stores/abc/profile/x.webp',
+      ),
+    ).toBe('stores/abc/profile/x.webp');
+  });
+
+  it('Vercel Blob private URL', () => {
+    expect(
+      extractObjectPath(
+        'https://wise-eat.private.blob.vercel-storage.com/stores/abc/profile/x.webp',
+      ),
+    ).toBe('stores/abc/profile/x.webp');
+  });
+});
+
+describe('isStorageObjectNotFoundError', () => {
+  // AWS SDK v3 GetObject manquant — le proxy doit enchaîner MinIO/GCS/CDN.
+  it('detects AWS SDK NoSuchKey by name', () => {
+    expect(
+      isStorageObjectNotFoundError({
+        name: 'NoSuchKey',
+        message: 'UnknownError',
+        $metadata: { httpStatusCode: 404 },
+      }),
+    ).toBe(true);
+  });
+
+  it('does not treat AccessDenied as missing object', () => {
+    expect(
+      isStorageObjectNotFoundError({
+        name: 'AccessDenied',
+        message: 'Access Denied',
+        $metadata: { httpStatusCode: 403 },
+      }),
+    ).toBe(false);
   });
 });

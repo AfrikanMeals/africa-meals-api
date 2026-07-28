@@ -14,9 +14,22 @@ export {
   StorageModuleId,
 } from './storage-module.constants';
 
-export type StorageEngineMode = 'firebase' | 'gcs' | 's3' | 'minio' | 'r2' | 'auto';
+export type StorageEngineMode =
+  | 'firebase'
+  | 'gcs'
+  | 's3'
+  | 'minio'
+  | 'r2'
+  | 'vercelBlob'
+  | 'auto';
 
-export type StorageEngineId = 'firebase' | 'gcs' | 's3' | 'minio' | 'r2';
+export type StorageEngineId =
+  | 'firebase'
+  | 'gcs'
+  | 's3'
+  | 'minio'
+  | 'r2'
+  | 'vercelBlob';
 
 export const STORAGE_ENGINE_IDS: StorageEngineId[] = [
   'firebase',
@@ -24,6 +37,7 @@ export const STORAGE_ENGINE_IDS: StorageEngineId[] = [
   's3',
   'minio',
   'r2',
+  'vercelBlob',
 ];
 
 export type StorageEnginesEnabled = Record<StorageEngineId, boolean>;
@@ -34,7 +48,19 @@ export const DEFAULT_STORAGE_ENGINES_ENABLED: StorageEnginesEnabled = {
   s3: true,
   minio: true,
   r2: true,
+  vercelBlob: true,
 };
+
+const ENGINE_ENUM = [
+  'firebase',
+  'gcs',
+  's3',
+  'minio',
+  'r2',
+  'vercelBlob',
+] as const;
+
+const MODULE_ENGINE_ENUM = ['default', ...ENGINE_ENUM, 'auto'] as const;
 
 /** Paramètres stockage fichiers (singleton `key=default`), pilotés depuis l’admin. */
 @Schema({ timestamps: true, collection: 'storage_settings' })
@@ -50,7 +76,7 @@ export class StorageSettingsModel {
 
   @Prop({
     type: String,
-    enum: ['firebase', 'gcs', 's3', 'minio', 'r2', 'auto'],
+    enum: [...ENGINE_ENUM, 'auto'],
     default: 'firebase',
   })
   storageEngine: StorageEngineMode;
@@ -61,7 +87,7 @@ export class StorageSettingsModel {
    */
   @Prop({
     type: [String],
-    enum: ['firebase', 'gcs', 's3', 'minio', 'r2'],
+    enum: ENGINE_ENUM,
     default: ['firebase'],
   })
   storageEnginePool: StorageEngineId[];
@@ -71,13 +97,13 @@ export class StorageSettingsModel {
    */
   @Prop({
     type: String,
-    enum: ['firebase', 'gcs', 's3', 'minio', 'r2'],
+    enum: ENGINE_ENUM,
     default: null,
     required: false,
   })
   fallbackStorageEngine: StorageEngineId | null;
 
-  /** Si true, URLs GCS/S3 servies via GET /medias/public/… (bucket privé). */
+  /** Si true, URLs GCS/S3/R2/Vercel Blob servies via GET /medias/public/… (bucket privé). */
   @Prop({ type: Boolean, default: false })
   mediaProxyEnabled: boolean;
 
@@ -89,6 +115,7 @@ export class StorageSettingsModel {
       s3: { type: Boolean, default: true },
       minio: { type: Boolean, default: true },
       r2: { type: Boolean, default: true },
+      vercelBlob: { type: Boolean, default: true },
     },
     default: () => ({ ...DEFAULT_STORAGE_ENGINES_ENABLED }),
   })
@@ -99,27 +126,27 @@ export class StorageSettingsModel {
     type: {
       catalog: {
         type: String,
-        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'r2', 'auto'],
+        enum: MODULE_ENGINE_ENUM,
         default: 'default',
       },
       profile: {
         type: String,
-        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'r2', 'auto'],
+        enum: MODULE_ENGINE_ENUM,
         default: 'default',
       },
       marketing: {
         type: String,
-        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'r2', 'auto'],
+        enum: MODULE_ENGINE_ENUM,
         default: 'default',
       },
       chat: {
         type: String,
-        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'r2', 'auto'],
+        enum: MODULE_ENGINE_ENUM,
         default: 'default',
       },
       system: {
         type: String,
-        enum: ['default', 'firebase', 'gcs', 's3', 'minio', 'r2', 'auto'],
+        enum: MODULE_ENGINE_ENUM,
         default: 'default',
       },
     },
@@ -128,8 +155,6 @@ export class StorageSettingsModel {
   moduleStorageEngines: StorageModuleEngines;
 }
 
-export type StorageSettingsDocument =
-  HydratedDocument<StorageSettingsModel>;
-
+export type StorageSettingsDocument = HydratedDocument<StorageSettingsModel>;
 export const StorageSettingsSchema =
   SchemaFactory.createForClass(StorageSettingsModel);

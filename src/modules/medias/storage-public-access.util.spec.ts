@@ -88,5 +88,23 @@ describe('storage-public-access.util', () => {
         ),
       ).toBe(false);
     });
+
+    // Endpoint R2 S3-API n’est pas anonyme — proxy obligatoire sans custom domain.
+    it('treats R2 without public base as private (proxy required)', () => {
+      expect(isDirectPublicReadAvailable('r2', envOf({}))).toBe(false);
+    });
+
+    it('accepts R2 behind R2_PUBLIC_BASE_URL (custom domain / CDN)', () => {
+      expect(
+        isDirectPublicReadAvailable(
+          'r2',
+          envOf({ R2_PUBLIC_BASE_URL: 'https://media.wise-eat.com' }),
+        ),
+      ).toBe(true);
+    });
+
+    it('treats Vercel Blob private store as unreadable (proxy required)', () => {
+      expect(isDirectPublicReadAvailable('vercelBlob', envOf({}))).toBe(false);
+    });
   });
 });

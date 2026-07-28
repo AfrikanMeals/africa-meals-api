@@ -21,4 +21,8 @@ export class StorageEnginesEnabledDto {
   @ApiProperty({ description: 'Cloudflare R2 activé' })
   @IsBoolean()
   r2: boolean;
+
+  @ApiProperty({ description: 'Vercel Blob Storage (privé) activé' })
+  @IsBoolean()
+  vercelBlob: boolean;
 }

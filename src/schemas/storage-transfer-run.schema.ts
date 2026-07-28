@@ -34,14 +34,14 @@ export const StorageTransferStatsSchema = SchemaFactory.createForClass(
 export class StorageTransferRunModel {
   @Prop({
     type: String,
-    enum: ['firebase', 'gcs', 's3', 'minio', 'r2'],
+    enum: ['firebase', 'gcs', 's3', 'minio', 'r2', 'vercelBlob'],
     required: true,
   })
   sourceEngine: StorageEngineId;
 
   @Prop({
     type: String,
-    enum: ['firebase', 'gcs', 's3', 'minio', 'r2'],
+    enum: ['firebase', 'gcs', 's3', 'minio', 'r2', 'vercelBlob'],
     required: true,
   })
   targetEngine: StorageEngineId;

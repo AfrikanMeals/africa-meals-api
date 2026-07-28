@@ -2,7 +2,14 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { StorageEngineId } from '@schemas/storage-settings.schema';
 import { IsBoolean, IsIn, IsOptional } from 'class-validator';
 
-const ENGINES: StorageEngineId[] = ['firebase', 'gcs', 's3', 'minio', 'r2'];
+const ENGINES: StorageEngineId[] = [
+  'firebase',
+  'gcs',
+  's3',
+  'minio',
+  'r2',
+  'vercelBlob',
+];
 
 export class TriggerStorageTransferDto {
   @ApiProperty({ enum: ENGINES })

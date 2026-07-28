@@ -82,12 +82,14 @@ function normalizeEnginesEnabled(raw: unknown): StorageEnginesEnabled {
     s3: o.s3 !== false,
     minio: o.minio !== false,
     r2: o.r2 !== false,
+    // Nouveau moteur : absent du doc Mongo legacy → activé (isConfigured gate).
+    vercelBlob: o.vercelBlob !== false,
   };
 }
 
 function normalizeFallbackStorageEngine(raw: unknown): StorageEngineId | null {
-  const ids: StorageEngineId[] = ['firebase', 'gcs', 's3', 'minio', 'r2'];
-  return typeof raw === 'string' && ids.includes(raw as StorageEngineId)
+  return typeof raw === 'string' &&
+    STORAGE_ENGINE_IDS.includes(raw as StorageEngineId)
     ? (raw as StorageEngineId)
     : null;
 }

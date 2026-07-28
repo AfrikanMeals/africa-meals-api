@@ -13,6 +13,7 @@ const VALID_ENGINES: StorageEngineId[] = [
   's3',
   'minio',
   'r2',
+  'vercelBlob',
 ];
 
 const PROBE_BYTES = Buffer.from('wise-eat-storage-probe-v1', 'utf8');

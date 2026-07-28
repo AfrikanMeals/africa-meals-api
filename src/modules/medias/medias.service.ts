@@ -20,6 +20,7 @@ import {
   isStorageObjectNotFoundError,
   looksLikeMinioUrl,
   looksLikeR2Url,
+  looksLikeVercelBlobUrl,
   StorageEngineId,
   StorageObjectStream,
   StorageUploadResult,
@@ -98,6 +99,7 @@ export class MediasService {
       url.includes('.s3.') ||
       url.includes('s3.amazonaws.com') ||
       this.isDirectR2Url(url) ||
+      this.isDirectVercelBlobUrl(url) ||
       this.isDirectMinioUrl(url)
     );
   }
@@ -111,6 +113,11 @@ export class MediasService {
         engine = 's3';
       } else if (this.config.get<string>('R2_BUCKET')?.trim()) {
         engine = 'r2';
+      } else if (
+        this.config.get<string>('BLOB_READ_WRITE_TOKEN')?.trim() ||
+        this.config.get<string>('VERCEL_BLOB_READ_WRITE_TOKEN')?.trim()
+      ) {
+        engine = 'vercelBlob';
       } else if (this.config.get<string>('MINIO_BUCKET')?.trim()) {
         engine = 'minio';
       } else if (
@@ -131,6 +138,10 @@ export class MediasService {
       return true;
     }
     return looksLikeR2Url(url);
+  }
+
+  private isDirectVercelBlobUrl(url: string): boolean {
+    return looksLikeVercelBlobUrl(url);
   }
 
   private isDirectMinioUrl(url: string): boolean {
@@ -222,6 +233,11 @@ export class MediasService {
     if (engine === 'r2') {
       return this.r2PublicUrl(objectPath);
     }
+    // Vercel Blob privé : pas d’URL anonyme — le caller ne dé-proxifie que si
+    // canServeDirectUrl (toujours false pour vercelBlob).
+    if (engine === 'vercelBlob') {
+      return this.buildProxyPublicUrl(objectPath);
+    }
     const bucket =
       this.config.get<string>('GCS_BUCKET')?.trim() ||
       this.config.get<string>('GOOGLE_CLOUD_STORAGE_BUCKET')?.trim() ||
@@ -263,14 +279,8 @@ export class MediasService {
    * lisible sans passer par `/medias/public/`.
    */
   private isConfiguredPublicBaseUrl(url: string): boolean {
-    for (const key of [
-      'MINIO_PUBLIC_BASE_URL',
-      'AWS_S3_PUBLIC_BASE_URL',
-      'R2_PUBLIC_BASE_URL',
-    ] as const) {
-      const base = this.config.get<string>(key)?.trim();
-      if (!base) continue;
-      if (url.startsWith(base.replace(/\/+$/, ''))) return true;
+    for (const base of this.configuredPublicBasesFromEnv()) {
+      if (url.startsWith(base)) return true;
     }
     // Domaine CDN objet Wise Eat (même sans env aligné sur le pod).
     try {
@@ -278,6 +288,103 @@ export class MediasService {
     } catch {
       return false;
     }
+  }
+
+  /** Bases CDN déclarées en env (sans le fallback `files.` hardcodé). */
+  private configuredPublicBasesFromEnv(): string[] {
+    const out: string[] = [];
+    for (const key of [
+      'MINIO_PUBLIC_BASE_URL',
+      'AWS_S3_PUBLIC_BASE_URL',
+      'R2_PUBLIC_BASE_URL',
+    ] as const) {
+      const base = this.config.get<string>(key)?.trim();
+      if (!base) continue;
+      out.push(base.replace(/\/+$/, ''));
+    }
+    return out;
+  }
+
+  /**
+   * Bases HTTP autorisées pour servir un objet sans credentials SDK
+   * (fallback lecture proxy + restauration d’URL).
+   */
+  private publicObjectReadBases(): string[] {
+    const bases = this.configuredPublicBasesFromEnv();
+    // CDN historique objets catalogue — présent même si l’env MinIO pointe ailleurs.
+    if (!bases.some((b) => /files\.wise-eat\.com/i.test(b))) {
+      bases.push('https://files.wise-eat.com');
+    }
+    return bases;
+  }
+
+  /** Hosts autorisés pour le fallback HTTP (anti-SSRF). */
+  private isAllowedPublicReadHost(host: string): boolean {
+    const h = host.toLowerCase();
+    if (h === 'files.wise-eat.com' || h === 'storage.wise-eat.com') return true;
+    if (/^storage-[a-z0-9-]+\.wise-eat\.com$/i.test(h)) return true;
+    for (const base of this.configuredPublicBasesFromEnv()) {
+      try {
+        if (new URL(base).hostname.toLowerCase() === h) return true;
+      } catch {
+        /* ignore */
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Si l’URL proxy embarque encore `files.wise-eat.com`, restaurer le CDN
+   * (le proxy SDK renvoie 500 quand l’objet n’est que sur ce CDN).
+   */
+  private restoreFilesCdnUrlIfEmbedded(raw: string, objectPath: string): string | undefined {
+    if (!/files\.wise-eat\.com/i.test(raw)) return undefined;
+    const clean = objectPath.replace(/^\/+/, '');
+    if (!clean || clean.includes('..') || /^https?:\/\//i.test(clean)) {
+      return undefined;
+    }
+    return `https://files.wise-eat.com/${this.encodeObjectPath(clean)}`;
+  }
+
+  /**
+   * GET public sur les bases CDN configurées — dernier recours du proxy
+   * quand MinIO/S3/GCS n’ont pas l’objet (ou SDK en erreur).
+   */
+  private async tryStreamFromPublicBases(
+    objectPath: string,
+  ): Promise<StorageObjectStream | null> {
+    const encoded = this.encodeObjectPath(objectPath);
+    for (const base of this.publicObjectReadBases()) {
+      let url: string;
+      try {
+        const u = new URL(base);
+        if (!this.isAllowedPublicReadHost(u.hostname)) continue;
+        url = `${base.replace(/\/+$/, '')}/${encoded}`;
+      } catch {
+        continue;
+      }
+      try {
+        const res = await fetch(url, {
+          method: 'GET',
+          redirect: 'follow',
+        });
+        if (!res.ok || !res.body) continue;
+        const { Readable } = await import('stream');
+        return {
+          body: Readable.fromWeb(
+            res.body as import('stream/web').ReadableStream,
+          ),
+          contentType: res.headers.get('content-type') ?? undefined,
+        };
+      } catch (err) {
+        this.logger.debug(
+          `CDN fallback Get ${url}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    return null;
   }
 
   /** Normalise les URLs médias selon le réglage admin (proxy ou direct GCS/S3). */
@@ -295,9 +402,11 @@ export class MediasService {
         if (/^https?:\/\//i.test(objectPath) || objectPath.includes('://')) {
           return this.resolvePublicMediaUrl(objectPath);
         }
-        // Rebuild pour coller l’encodage canonique (segments).
         const clean = objectPath.replace(/^\/+/, '');
         if (!clean || clean.includes('..')) return raw;
+        // Fix: double-proxy files.wise-eat.com → CDN direct (proxy SDK = 500).
+        const filesCdn = this.restoreFilesCdnUrlIfEmbedded(raw, clean);
+        if (filesCdn) return filesCdn;
         return this.buildProxyPublicUrl(clean);
       }
       // Base CDN publique : ne pas re-proxifier (sinon double-proxy cassé).
@@ -324,7 +433,8 @@ export class MediasService {
         (engine === 'gcs' ||
           engine === 's3' ||
           engine === 'minio' ||
-          engine === 'r2') &&
+          engine === 'r2' ||
+          engine === 'vercelBlob') &&
         this.canServeDirectUrl(engine)
       ) {
         return this.directUrlForObjectPath(objectPath, engine);
@@ -348,13 +458,19 @@ export class MediasService {
   private async resolveUploadPublicUrl(
     result: StorageUploadResult,
   ): Promise<string> {
+    // Firebase (URL à token) / R2+CDN / MinIO public : garder l’URL moteur.
+    if (this.canServeDirectUrl(result.engine)) {
+      return result.url;
+    }
+    // GCS PAP · S3 privé · R2 sans domaine public · MinIO private → proxy API.
     const useProxy = await this.isMediaProxyEnabled(result.engine);
     if (
       useProxy &&
       (result.engine === 'gcs' ||
         result.engine === 's3' ||
         result.engine === 'minio' ||
-        result.engine === 'r2')
+        result.engine === 'r2' ||
+        result.engine === 'vercelBlob')
     ) {
       return this.buildProxyPublicUrl(result.path);
     }
@@ -386,17 +502,32 @@ export class MediasService {
       settings.storageEnginePool,
     );
 
+    let lastError: unknown;
+    let sawOnlyNotFound = true;
     for (const engine of engines) {
       try {
         return await engine.readObject(normalized);
       } catch (err) {
-        if (isStorageObjectNotFoundError(err)) {
-          continue;
+        lastError = err;
+        // Fix: ne pas court-circuiter le pool sur AccessDenied/ECONNREFUSED du
+        // premier moteur — enchaîner + fallback CDN `files.wise-eat.com`.
+        if (!isStorageObjectNotFoundError(err)) {
+          sawOnlyNotFound = false;
+          this.logger.warn(
+            `Proxy media ${engine.id} failed for ${normalized}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
         }
-        throw err;
       }
     }
 
+    const fromCdn = await this.tryStreamFromPublicBases(normalized);
+    if (fromCdn) return fromCdn;
+
+    if (!sawOnlyNotFound && lastError) {
+      throw lastError;
+    }
     throw new NotFoundException('media_not_found');
   }
 

@@ -3,8 +3,12 @@
  * Isolé pour tests sans Nest.
  */
 
-/** Moteurs dont le bucket est privé en production → proxy `/medias/public/…` obligatoire. */
-const PRIVATE_POOL_ENGINES = new Set(['gcs', 's3']);
+/**
+ * Moteurs dont la lecture anonyme est interdite en prod → proxy `/medias/public/…`
+ * obligatoire dès qu’ils sont dans le pool d’upload.
+ * R2 endpoint S3-compatible n’est pas public sans `R2_PUBLIC_BASE_URL`.
+ */
+const PRIVATE_POOL_ENGINES = new Set(['gcs', 's3', 'r2', 'vercelBlob']);
 
 /** Vrai si le pool d’upload inclut GCS ou S3 (lecture anonyme interdite). */
 export function storagePoolRequiresMediaProxy(

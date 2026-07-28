@@ -9,6 +9,7 @@ const MODULE_ENGINE_VALUES = [
   's3',
   'minio',
   'r2',
+  'vercelBlob',
   'auto',
 ] as const;
 
