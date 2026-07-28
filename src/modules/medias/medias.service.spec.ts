@@ -80,6 +80,14 @@ describe('MediasService', () => {
     );
   });
 
+  it('forces proxy on S3 URLs that carry a client cache-buster query', async () => {
+    const url =
+      'https://wise-eat.s3.amazonaws.com/stores/6a501e8400ad78d30fcaac89/profile/c49a5c9d-3dc7-4e49-8173-dd1f04b7b78b.webp?_ae=6a501e8400ad78d30fcaac89';
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(
+      'https://api.wise-eat.com/medias/public/stores/6a501e8400ad78d30fcaac89/profile/c49a5c9d-3dc7-4e49-8173-dd1f04b7b78b.webp',
+    );
+  });
+
   it('keeps direct S3 URLs behind a CDN even when the bucket is private', async () => {
     env.AWS_S3_PUBLIC_BASE_URL = 'https://cdn.wise-eat.com';
     const url = 'https://cdn.wise-eat.com/stores/abc/profile/x.png';

@@ -461,20 +461,13 @@ export class MediasService {
   private async resolveUploadPublicUrl(
     result: StorageUploadResult,
   ): Promise<string> {
-    // Firebase (URL à token) / R2+CDN / MinIO public : garder l’URL moteur.
-    if (this.canServeDirectUrl(result.engine)) {
+    // Firebase : URL à token déjà lisible anonymement — jamais de proxy.
+    if (result.engine === 'firebase') {
       return result.url;
     }
-    // GCS PAP · S3 privé · R2 sans domaine public · MinIO private → proxy API.
+    // Moteur privé (GCS/S3/R2/Vercel Blob…) ou proxy admin ON → /medias/public/{path}.
     const useProxy = await this.isMediaProxyEnabled(result.engine);
-    if (
-      useProxy &&
-      (result.engine === 'gcs' ||
-        result.engine === 's3' ||
-        result.engine === 'minio' ||
-        result.engine === 'r2' ||
-        result.engine === 'vercelBlob')
-    ) {
+    if (!this.canServeDirectUrl(result.engine) || useProxy) {
       return this.buildProxyPublicUrl(result.path);
     }
     return result.url;
