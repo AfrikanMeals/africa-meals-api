@@ -98,7 +98,7 @@
     "mailersend": "^2.2.0",
     "memcached": "^2.2.2",
     "mercurius": "^10.5.1",
-    "mongodb": "^6.6.2",
+    "mongodb": "^7.5.0",
     "mongoose": "^8.4.1",
     "mqtt": "^5.15.1",
     "neo4j-driver": "^6.2.0",
