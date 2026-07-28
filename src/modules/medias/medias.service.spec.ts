@@ -7,8 +7,19 @@ import { MediasService } from './medias.service';
 
 describe('MediasService', () => {
   let service: MediasService;
+  // Env mutable par test : la bascule « Block all public access » se pilote par
+  // AWS_S3_PUBLIC_READ / AWS_S3_PUBLIC_BASE_URL.
+  let env: Record<string, string | undefined>;
 
   beforeEach(async () => {
+    env = {
+      AWS_S3_BUCKET: 'wise-eat',
+      AWS_REGION: 'us-east-1',
+      GCS_BUCKET: 'wise-eat-com',
+      API_PUBLIC_BASE_URL: 'https://api.wise-eat.com',
+      MINIO_PUBLIC_BASE_URL: 'https://storage.wise-eat.com/wise-eat',
+      MINIO_ENDPOINT: 'https://storage.wise-eat.com',
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MediasService,
@@ -41,17 +52,7 @@ describe('MediasService', () => {
         {
           provide: ConfigService,
           useValue: {
-            get: jest.fn((key: string) => {
-              if (key === 'AWS_S3_BUCKET') return 'wise-eat';
-              if (key === 'AWS_REGION') return 'us-east-1';
-              if (key === 'GCS_BUCKET') return 'wise-eat-com';
-              if (key === 'API_PUBLIC_BASE_URL') return 'https://api.wise-eat.com';
-              if (key === 'MINIO_PUBLIC_BASE_URL') {
-                return 'https://storage.wise-eat.com/wise-eat';
-              }
-              if (key === 'MINIO_ENDPOINT') return 'https://storage.wise-eat.com';
-              return undefined;
-            }),
+            get: jest.fn((key: string) => env[key]),
           },
         },
       ],
@@ -64,9 +65,33 @@ describe('MediasService', () => {
     expect(service).toBeDefined();
   });
 
-  it('keeps direct S3 URLs when proxy disabled', async () => {
+  it('keeps direct S3 URLs when the bucket stays public', async () => {
+    env.AWS_S3_PUBLIC_READ = 'true';
+    const url = 'https://wise-eat.s3.amazonaws.com/stores/abc/profile/x.png';
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(url);
+  });
+
+  it('forces proxy on S3 URLs when public access is blocked', async () => {
+    // AWS_S3_PUBLIC_READ absent = « Block all public access » : une URL directe
+    // renverrait 403, elle doit repartir par /medias/public/ sans toggle admin.
+    const url = 'https://wise-eat.s3.amazonaws.com/stores/abc/profile/x.png';
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(
+      'https://api.wise-eat.com/medias/public/stores/abc/profile/x.png',
+    );
+  });
+
+  it('keeps direct S3 URLs behind a CDN even when the bucket is private', async () => {
+    env.AWS_S3_PUBLIC_BASE_URL = 'https://cdn.wise-eat.com';
+    const url = 'https://cdn.wise-eat.com/stores/abc/profile/x.png';
+    await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(url);
+  });
+
+  it('does not proxy MinIO URLs just because S3 is private (pool mixte)', async () => {
+    // Sans MINIO_PUBLIC_BASE_URL : la décision passe par MINIO_PUBLIC_READ, qui
+    // reste ouvert. Un S3 privé ne doit pas entraîner les médias MinIO avec lui.
+    delete env.MINIO_PUBLIC_BASE_URL;
     const url =
-      'https://wise-eat.s3.amazonaws.com/stores/abc/profile/x.png';
+      'https://storage.wise-eat.com/wise-eat/catalog/categories/abc.webp';
     await expect(service.resolvePublicMediaUrl(url)).resolves.toBe(url);
   });
 

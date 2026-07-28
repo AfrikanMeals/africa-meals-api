@@ -49,6 +49,21 @@ describe('storage-object-acl.util', () => {
       ).toBe(true);
     });
 
+    it('detects S3 Object Ownership bucket-owner-enforced', () => {
+      expect(
+        isObjectAclUnsupportedError(
+          new Error(
+            'AccessControlListNotSupported: The bucket does not allow ACLs',
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        isObjectAclUnsupportedError(
+          new Error('InvalidBucketAclWithObjectOwnership'),
+        ),
+      ).toBe(true);
+    });
+
     it('returns false for unrelated errors', () => {
       expect(isObjectAclUnsupportedError(new Error('network timeout'))).toBe(
         false,
@@ -80,9 +95,24 @@ describe('storage-object-acl.util', () => {
       ).toBe(false);
     });
 
-    it('defaults to enabled when unset for S3/MinIO', () => {
+    it('defaults to enabled when unset for MinIO', () => {
       expect(
         storageObjectAclEnabled(config({}), 'MINIO_PUBLIC_READ'),
+      ).toBe(true);
+    });
+
+    it('defaults to disabled for S3 (Block all public access)', () => {
+      expect(storageObjectAclEnabled(config({}), 'AWS_S3_PUBLIC_READ')).toBe(
+        false,
+      );
+    });
+
+    it('enables the S3 ACL only when explicitly true', () => {
+      expect(
+        storageObjectAclEnabled(
+          config({ AWS_S3_PUBLIC_READ: 'true' }),
+          'AWS_S3_PUBLIC_READ',
+        ),
       ).toBe(true);
     });
 

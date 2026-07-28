@@ -11,6 +11,7 @@ import {
   StorageTransferRunModel,
   StorageTransferRunSchema,
 } from '@schemas/storage-transfer-run.schema';
+import { MediaUrlNormalizeService } from './media-url-normalize.service';
 import { StorageSettingsController } from './storage-settings.controller';
 import { StorageSettingsService } from './storage-settings.service';
 import { StorageTransferService } from './storage-transfer.service';
@@ -26,7 +27,11 @@ import { StorageTransferService } from './storage-transfer.service';
     StoreAccessModule,
   ],
   controllers: [StorageSettingsController],
-  providers: [StorageSettingsService, StorageTransferService],
-  exports: [StorageSettingsService],
+  providers: [
+    StorageSettingsService,
+    StorageTransferService,
+    MediaUrlNormalizeService,
+  ],
+  exports: [StorageSettingsService, MediaUrlNormalizeService],
 })
 export class StorageSettingsModule {}
