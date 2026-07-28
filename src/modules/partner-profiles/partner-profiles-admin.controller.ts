@@ -53,7 +53,8 @@ export class PartnerProfilesAdminController {
   @Post('profiles/:profileId/approve')
   @UseGuards(JwtGuard)
   @ApiOperation({
-    summary: 'Admin — approuver une fiche soumise (reste type PARTNER).',
+    summary:
+      'Admin — approuver une fiche soumise (candidats → type PARTNER).',
   })
   async approveProfileAdmin(
     @Req() req: Request,

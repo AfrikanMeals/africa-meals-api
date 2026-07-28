@@ -24,6 +24,7 @@ import {
   StorageObjectStream,
   StorageUploadResult,
 } from './storage-engine.types';
+import { isDirectPublicReadAvailable } from './storage-public-access.util';
 import { StorageEngineMode } from '@schemas/storage-settings.schema';
 import type { StorageSettingsResponse } from '@modules/storage-settings/storage-settings.service';
 import { inferStorageModuleFromBasePath } from '@schemas/storage-module.constants';

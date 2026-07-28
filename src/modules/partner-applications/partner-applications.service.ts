@@ -505,6 +505,53 @@ export class PartnerApplicationsService {
   }
 
   /**
+   * Sync Collaborations après approve fiche (candidat → PARTNER).
+   * Idempotent si déjà APPROVED ; ne touche pas SUSPENDED.
+   */
+  async syncApprovedFromProfileReview(args: {
+    userId: string;
+    previousUserType: string;
+  }): Promise<void> {
+    if (!Types.ObjectId.isValid(args.userId)) return;
+    const uid = new Types.ObjectId(args.userId);
+    const agentUser = await this._users.findById(uid).exec();
+    if (!agentUser) return;
+
+    let app = await this._applications.findOne({ user: uid }).exec();
+    // Fiche seule sans ligne Collaborations : créer APPROVED (lookup referral).
+    if (!app) {
+      await this._applications.create({
+        user: uid,
+        status: PartnerApplicationStatus.APPROVED,
+        onboardingStep: 2,
+        termsAccepted: true,
+        region: this.defaultRegionForUser(agentUser),
+        previousUserType: args.previousUserType,
+        submittedAt: new Date(),
+      });
+      this._logger.log(
+        `partner_application_created_from_profile_approve user=${args.userId}`,
+      );
+      return;
+    }
+    // Ne pas écraser une suspension Collaborations.
+    if (app.status === PartnerApplicationStatus.SUSPENDED) return;
+
+    if (!app.previousUserType) {
+      app.previousUserType = args.previousUserType;
+    }
+    app.status = PartnerApplicationStatus.APPROVED;
+    app.rejectionReason = undefined;
+    app.termsAccepted = true;
+    app.onboardingStep = Math.max(app.onboardingStep ?? 0, 2);
+    if (!app.submittedAt) app.submittedAt = new Date();
+    await app.save();
+    this._logger.log(
+      `partner_application_synced_approved_from_profile user=${args.userId}`,
+    );
+  }
+
+  /**
    * Admin — garantit ou définit un code referral pour un user Partner.
    * - `desiredCode` renseigné → valide format + unicité (hors ce user), puis assigne.
    * - sinon → alloue auto si absent (idempotent si déjà présent).
@@ -585,7 +632,18 @@ export class PartnerApplicationsService {
     const previous = normalizePartnerReferralCode(app.referralCode);
     const hadCode = Boolean(previous);
     const referralCode = await this.allocateReferralCodeIfNeeded(app);
-    if (!hadCode) {
+    // Fix: après approve fiche (type → PARTNER), aligner Collaborations APPROVED
+    // même sans nouveau code (sinon reste AWAITING_REVIEW).
+    let statusAligned = false;
+    if (
+      agentUser.type === UserTypeEnum.PARTNER &&
+      app.status !== PartnerApplicationStatus.APPROVED &&
+      app.status !== PartnerApplicationStatus.SUSPENDED
+    ) {
+      app.status = PartnerApplicationStatus.APPROVED;
+      statusAligned = true;
+    }
+    if (!hadCode || statusAligned) {
       await app.save();
     }
 

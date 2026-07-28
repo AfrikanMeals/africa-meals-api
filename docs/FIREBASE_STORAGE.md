@@ -100,6 +100,8 @@ APPLY=1 ENABLE_VERSIONING=1 ./scripts/harden-gcs-bucket.sh
 
 See also: `africa-meals-infra/docs/MONGODB_BACKUP.md` (GCS backups use authenticated SA — compatible with private buckets).
 
+For **Amazon S3** private buckets (Block Public Access, proxy only, no CloudFront), see [S3_STORAGE.md](./S3_STORAGE.md).
+
 ## 6. How the API uses Storage
 
 - **Upload**: `MediasService.upload(file, user, basePath)` uploads to `{basePath}/{uuid}.{ext}` and returns the download URL (via `getDownloadURL` for Firebase, or proxy URL for private GCS).

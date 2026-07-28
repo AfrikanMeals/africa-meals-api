@@ -20,11 +20,16 @@ import { PartnerApplicationsService } from '@modules/partner-applications/partne
 import { PartnerAffiliationEarningsService } from '@modules/partner-subscriptions/partner-affiliation-earnings.service';
 import { normalizePartnerDisplayCurrency } from '@modules/partner-subscriptions/partner-earning-list.util';
 import { PartnerSubscriptionPlansService } from '@modules/partner-subscriptions/partner-subscription-plans.service';
+import { PartnerSubscriptionsService } from '@modules/partner-subscriptions/partner-subscriptions.service';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import { PartnerOnboardingEmailService } from '@modules/vendor-emails/partner-onboarding-email.service';
 import { resolvePartnerSuspendRestoreType } from '@modules/partner-applications/partner-application-eligibility.util';
 import { PatchPartnerProfileDto } from './dto/partner-profile.dto';
 import { buildPartnerApplicationNotesFromProfile } from './partner-application-from-profile.util';
+import {
+  resolvePreviousUserTypeForPartnerProfileApprove,
+  shouldPromoteUserTypeOnPartnerProfileApprove,
+} from './partner-profile-approve-promote.util';
 import { canAccessPartnerProfileSelf } from './partner-profile-self-access.util';
 import {
   canApprovePartnerProfile,
@@ -107,6 +112,8 @@ export class PartnerProfilesService {
     private readonly _stripeConnect: StripeConnectService,
     private readonly _affiliation: PartnerAffiliationEarningsService,
     private readonly _plans: PartnerSubscriptionPlansService,
+    // Plan FREE par défaut à la promotion candidat → PARTNER (approve fiche).
+    private readonly _partnerSubscriptions: PartnerSubscriptionsService,
     private readonly _supportedCountries: SupportedCountriesService,
   ) {}
 
@@ -607,7 +614,11 @@ export class PartnerProfilesService {
     return { ...row, referralCode, newlyAllocated };
   }
 
-  /** Admin — fiche soumise → approuvée (compte déjà PARTNER). */
+  /**
+   * Admin — fiche soumise → approuvée.
+   * Fix: candidats USER/VENDOR/DELIVERY → type PARTNER (sinon mode Partner /
+   * settings web inaccessibles après « Fiche approuvée »).
+   */
   async approveProfileAdmin(admin: UserModel, profileId: string) {
     this.assertAdmin(admin);
     const profile = await this.loadProfileOrThrow(profileId);
@@ -617,12 +628,60 @@ export class PartnerProfilesService {
     if (!canApprovePartnerProfile(profile.status)) {
       throw new BadRequestException('partner_profile_not_pending');
     }
+
+    const agentUser = await this._users.findById(profile.user).exec();
+    if (!agentUser) {
+      throw new NotFoundException('user_not_found');
+    }
+
+    // 1. Candidat : mémoriser type d’origine + passer PARTNER (accès mode Partner).
+    const promote = shouldPromoteUserTypeOnPartnerProfileApprove(
+      agentUser.type,
+    );
+    const previousUserType = promote
+      ? resolvePreviousUserTypeForPartnerProfileApprove(agentUser.type)
+      : undefined;
+    if (promote && previousUserType) {
+      if (!profile.previousUserType) {
+        profile.previousUserType = previousUserType;
+      }
+      await this._users
+        .updateOne(
+          { _id: profile.user },
+          { $set: { type: UserTypeEnum.PARTNER } },
+        )
+        .exec();
+      // Sync Collaborations AWAITING_REVIEW → APPROVED (file créée au submit).
+      await this._partnerApplications
+        .syncApprovedFromProfileReview({
+          userId: String(profile.user),
+          previousUserType,
+        })
+        .catch((e) =>
+          this._logger.warn(
+            `partner application sync on profile approve: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          ),
+        );
+      // Plan FREE par défaut — aligné approve Collaborations historique.
+      await this._partnerSubscriptions
+        .ensurePartnerDefaultFreePlan(String(profile.user))
+        .catch((e) =>
+          this._logger.warn(
+            `partner default FREE after profile approve: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          ),
+        );
+    }
+
     profile.status = PartnerProfileStatus.APPROVED;
     profile.rejectionReason = undefined;
     profile.reviewedAt = new Date();
     await profile.save();
 
-    // 1. Allouer le code AVANT e-mail / inbox / push (sinon corps sans referral).
+    // 2. Allouer le code AVANT e-mail / inbox / push (sinon corps sans referral).
     let referralCode = '';
     try {
       const ensured =
@@ -639,19 +698,14 @@ export class PartnerProfilesService {
       );
     }
 
-    const agentUser = await this._users
-      .findById(profile.user)
-      .select('fullName email')
-      .lean()
-      .exec();
-    // 2. E-mail fire-and-forget — SMTP down ne bloque pas l’HTTP admin.
+    // 3. E-mail fire-and-forget — SMTP down ne bloque pas l’HTTP admin.
     if (referralCode) {
       void this._partnerOnboardingEmail
         .notifyPartnerProfileApproved({
-          email: String(agentUser?.email ?? ''),
+          email: String(agentUser.email ?? ''),
           name:
-            String(agentUser?.fullName ?? '').trim() ||
-            String(agentUser?.email ?? ''),
+            String(agentUser.fullName ?? '').trim() ||
+            String(agentUser.email ?? ''),
           referralCode,
         })
         .catch((e) =>
@@ -666,7 +720,7 @@ export class PartnerProfilesService {
         `partner_profile_approved_email_skipped_no_referral id=${profileId}`,
       );
     }
-    // 3. Inbox + FCM (onglet Notification mobile Partner) avec code si dispo.
+    // 4. Inbox + FCM (onglet Notification mobile Partner) avec code si dispo.
     this.queuePartnerProfileReviewNotification({
       recipientUserId: String(profile.user),
       profileId,
@@ -675,7 +729,7 @@ export class PartnerProfilesService {
     });
 
     this._logger.log(
-      `partner_profile_approved id=${profileId} referral=${referralCode || 'none'}`,
+      `partner_profile_approved id=${profileId} referral=${referralCode || 'none'} promoted=${promote}`,
     );
     return this.reloadAdminProfileRow(profileId);
   }
