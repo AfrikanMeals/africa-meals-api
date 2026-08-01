@@ -105,6 +105,7 @@ import { PlatformThemeSettingsModule } from './modules/platform-theme-settings/p
 import { StockManagerSettingsModule } from './modules/stock-manager-settings/stock-manager-settings.module';
 import { CheckoutDeliverySettingsModule } from './modules/checkout-delivery-settings/checkout-delivery-settings.module';
 import { PlatformFeatureModulesModule } from './modules/platform-feature-modules/platform-feature-modules.module';
+import { PlatformAnalyticsSettingsModule } from './modules/platform-analytics-settings/platform-analytics-settings.module';
 import { PosSettingsModule } from './modules/pos-settings/pos-settings.module';
 import { BusinessTypesModule } from './modules/business-types/business-types.module';
 import { AdsTargetingModule } from './modules/ads-targeting/ads-targeting.module';
@@ -393,6 +394,7 @@ async function readRedisManagerEnabledAtBootstrap(
     StockManagerSettingsModule,
     CheckoutDeliverySettingsModule,
     PlatformFeatureModulesModule,
+    PlatformAnalyticsSettingsModule,
     PosSettingsModule,
     BusinessTypesModule,
     AdsTargetingModule,
