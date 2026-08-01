@@ -44,10 +44,22 @@ import {
   graphRankById,
   prioritizeStoreIdsByZone,
 } from '@modules/graph/reco-score-blend.util';
+import {
+  BuyAgainCandidate,
+  BuyAgainInterestFlags,
+  rankBuyAgainCandidates,
+} from './buy-again-score.util';
+import { CartItemTypeEnum } from '@schemas/cart_item.schema';
 
 const PAID_LIKE_STATUSES: OrderStatusEnum[] = [
   OrderStatusEnum.PAIED,
   OrderStatusEnum.APPROVED,
+  OrderStatusEnum.SHIPPED,
+  OrderStatusEnum.COMPLETED,
+];
+
+/** Commandes considérées pour Buy Again (livrées / terminées). */
+const BUY_AGAIN_ORDER_STATUSES: OrderStatusEnum[] = [
   OrderStatusEnum.SHIPPED,
   OrderStatusEnum.COMPLETED,
 ];
@@ -221,6 +233,7 @@ export class RecommendationsService {
     stores: Record<string, unknown>[];
     drinks: Record<string, unknown>[];
     frequentlyBoughtTogether: Record<string, unknown>[];
+    buyAgain: Record<string, unknown>[];
   }> {
     const take = Math.min(48, Math.max(4, parseInt(takeRaw ?? '24', 10) || 24));
     const clientRegion =
@@ -257,6 +270,7 @@ export class RecommendationsService {
     stores: Record<string, unknown>[];
     drinks: Record<string, unknown>[];
     frequentlyBoughtTogether: Record<string, unknown>[];
+    buyAgain: Record<string, unknown>[];
   }> {
     const poolLimit = Math.min(120, Math.max(take * 4, 60));
 
@@ -551,6 +565,18 @@ export class RecommendationsService {
     }
 
     let frequentlyBoughtTogether: Record<string, unknown>[] = [];
+    // Buy Again en parallèle du FBT (même user / région).
+    const buyAgainPromise = userOid
+      ? this._resolveBuyAgainProducts({
+          userOid,
+          clientRegion,
+          limit: Math.min(12, take),
+          favProductIds,
+          viewedProductIds,
+          reviewedProductIds,
+        })
+      : Promise.resolve([] as Record<string, unknown>[]);
+
     if (userOid && this._recoFacade) {
       const fbtIds = await this._recoFacade.personalizedFbtProductIdsOrNull({
         userId: userOid.toHexString(),
@@ -576,7 +602,142 @@ export class RecommendationsService {
       }
     }
 
-    return { products, stores, drinks, frequentlyBoughtTogether };
+    const buyAgain = await buyAgainPromise;
+    return { products, stores, drinks, frequentlyBoughtTogether, buyAgain };
+  }
+
+  /**
+   * Buy Again : Neo4j `:ORDERED` (fail-open) → fallback agrégat Mongo commandes.
+   * Score précis via `rankBuyAgainCandidates` + hydratation Mongo région.
+   */
+  private async _resolveBuyAgainProducts(opts: {
+    userOid: Types.ObjectId;
+    clientRegion: string;
+    limit: number;
+    favProductIds: Set<string>;
+    viewedProductIds: Set<string>;
+    reviewedProductIds: Set<string>;
+  }): Promise<Record<string, unknown>[]> {
+    const take = Math.min(12, Math.max(1, opts.limit));
+    const uid = opts.userOid.toHexString();
+
+    // 1. Candidats graphe (null = Mongo)
+    let candidates: BuyAgainCandidate[] | null = null;
+    if (this._recoFacade) {
+      candidates = await this._recoFacade.buyAgainCandidatesOrNull({
+        userId: uid,
+        region: opts.clientRegion,
+        limit: 48,
+      });
+    }
+    if (candidates == null) {
+      candidates = await this._buyAgainCandidatesFromOrders(
+        opts.userOid,
+        48,
+      );
+    }
+    if (!candidates.length) return [];
+
+    // 2. Signaux d’intérêt déjà chargés pour le feed
+    const interestByProductId = new Map<string, BuyAgainInterestFlags>();
+    for (const c of candidates) {
+      const id = String(c.productId ?? '').trim();
+      if (!id) continue;
+      interestByProductId.set(id, {
+        favorite: opts.favProductIds.has(id),
+        viewed: opts.viewedProductIds.has(id),
+        rated: opts.reviewedProductIds.has(id),
+      });
+    }
+
+    // 3. Classement précis + hydrate actifs / région
+    const rankedIds = rankBuyAgainCandidates(
+      candidates,
+      interestByProductId,
+      take,
+    );
+    if (!rankedIds.length) return [];
+    return this._activeProductsByIds(rankedIds, opts.clientRegion);
+  }
+
+  /**
+   * Fallback Mongo : agrège les lignes produit des commandes shipped/completed.
+   */
+  private async _buyAgainCandidatesFromOrders(
+    userOid: Types.ObjectId,
+    limit: number,
+  ): Promise<BuyAgainCandidate[]> {
+    const take = Math.min(96, Math.max(1, Math.floor(limit) || 48));
+    try {
+      const rows = await this._orderModel
+        .aggregate<{
+          _id: Types.ObjectId;
+          orderCount: number;
+          lastAt: Date;
+          totalSpent: number;
+        }>([
+          {
+            $match: {
+              user: userOid,
+              status: { $in: BUY_AGAIN_ORDER_STATUSES },
+            },
+          },
+          { $unwind: '$items' },
+          // Clés Mongo snake_case (`item_type` / `entity_id`) — Prop `name` du schéma.
+          {
+            $match: {
+              'items.item_type': CartItemTypeEnum.PRODUCT,
+              'items.entity_id': { $exists: true, $nin: [null, ''] },
+            },
+          },
+          {
+            $group: {
+              _id: {
+                $cond: [
+                  {
+                    $eq: [{ $type: '$items.entity_id' }, 'objectId'],
+                  },
+                  '$items.entity_id',
+                  {
+                    $convert: {
+                      input: '$items.entity_id',
+                      to: 'objectId',
+                      onError: null,
+                      onNull: null,
+                    },
+                  },
+                ],
+              },
+              orderCount: { $sum: { $ifNull: ['$items.quantity', 1] } },
+              lastAt: { $max: '$updatedAt' },
+              totalSpent: {
+                $sum: {
+                  $multiply: [
+                    { $ifNull: ['$items.price', 0] },
+                    { $ifNull: ['$items.quantity', 1] },
+                  ],
+                },
+              },
+            },
+          },
+          { $match: { _id: { $ne: null } } },
+          { $sort: { lastAt: -1, orderCount: -1 } },
+          { $limit: take },
+        ])
+        .option({ allowDiskUse: true })
+        .exec();
+
+      return rows
+        .map((r) => ({
+          productId: String(r._id ?? '').trim(),
+          orderCount: Number(r.orderCount) || 0,
+          lastAt: r.lastAt ?? null,
+          totalSpent: Number(r.totalSpent) || 0,
+        }))
+        .filter((c) => c.productId && Types.ObjectId.isValid(c.productId));
+    } catch {
+      return [];
+    }
   }
 
   /**

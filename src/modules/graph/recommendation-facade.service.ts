@@ -192,6 +192,34 @@ export class RecommendationFacade {
     }
   }
 
+  /**
+   * Candidats Buy Again (stats `:ORDERED`) — null = fail-open Mongo.
+   */
+  async buyAgainCandidatesOrNull(opts: {
+    userId?: string | null;
+    region?: string;
+    limit?: number;
+  }): Promise<Array<{
+    productId: string;
+    orderCount: number;
+    lastAt: string | null;
+    totalSpent: number;
+  }> | null> {
+    const userId = String(opts.userId ?? '').trim();
+    if (!userId) return null;
+    const gate = await this._graphReady('buy_again_flag_off');
+    if (!gate.ok) return null;
+    return this._raceOrNull(
+      this.graphReco.buyAgainCandidates(
+        userId,
+        opts.region ?? '',
+        opts.limit ?? 48,
+      ),
+      gate.timeoutMs,
+      'buy_again_error',
+    );
+  }
+
   async knowledgeProductIdsOrNull(opts: {
     tag: string;
     region?: string;

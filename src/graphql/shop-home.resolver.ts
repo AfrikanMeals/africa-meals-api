@@ -65,6 +65,7 @@ export class ShopHomeResolver {
         stores: rec.stores,
         drinks: rec.drinks,
         frequentlyBoughtTogether: rec.frequentlyBoughtTogether ?? [],
+        buyAgain: rec.buyAgain ?? [],
       },
     };
   }

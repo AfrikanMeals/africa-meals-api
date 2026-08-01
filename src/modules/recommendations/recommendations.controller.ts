@@ -38,6 +38,7 @@ export class RecommendationsController {
     stores: Record<string, unknown>[];
     drinks: Record<string, unknown>[];
     frequentlyBoughtTogether: Record<string, unknown>[];
+    buyAgain: Record<string, unknown>[];
   }> {
     return this._svc.getFeed(
       req.user as UserModel | undefined,

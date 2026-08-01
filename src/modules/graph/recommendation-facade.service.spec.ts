@@ -16,6 +16,7 @@ describe('RecommendationFacade', () => {
     storeIdsDeliveringToZone?: jest.Mock;
     frequentlyBoughtWith?: jest.Mock;
     similarProductIds?: jest.Mock;
+    buyAgainCandidates?: jest.Mock;
   }) {
     return new RecommendationFacade(
       { ensureHealthy: opts.ensureHealthy } as unknown as Neo4jService,
@@ -33,6 +34,16 @@ describe('RecommendationFacade', () => {
         similarProductIds:
           opts.similarProductIds ??
           jest.fn().mockResolvedValue([{ productId: 's1', score: 1 }]),
+        buyAgainCandidates:
+          opts.buyAgainCandidates ??
+          jest.fn().mockResolvedValue([
+            {
+              productId: 'ba1',
+              orderCount: 2,
+              lastAt: '2026-07-01T00:00:00.000Z',
+              totalSpent: 20,
+            },
+          ]),
       } as unknown as GraphRecommendationService,
     );
   }
@@ -135,5 +146,40 @@ describe('RecommendationFacade', () => {
     await expect(
       facade.relatedProductIdsOrNull({ productId: 'p0', limit: 8 }),
     ).resolves.toEqual(['f1', 's1']);
+  });
+
+  it('buyAgainCandidatesOrNull retourne les stats ORDERED', async () => {
+    setGraphRuntimeFlagOverrides({
+      neo4jEnabled: true,
+      recoGraphEnabled: true,
+      graphSyncEnabled: true,
+    });
+    const buyAgainCandidates = jest.fn().mockResolvedValue([
+      {
+        productId: 'p-ba',
+        orderCount: 3,
+        lastAt: '2026-07-20T00:00:00.000Z',
+        totalSpent: 45,
+      },
+    ]);
+    const facade = makeFacade({
+      ensureHealthy: jest.fn().mockResolvedValue(true),
+      buyAgainCandidates,
+    });
+    await expect(
+      facade.buyAgainCandidatesOrNull({
+        userId: 'u1',
+        region: 'CM',
+        limit: 24,
+      }),
+    ).resolves.toEqual([
+      {
+        productId: 'p-ba',
+        orderCount: 3,
+        lastAt: '2026-07-20T00:00:00.000Z',
+        totalSpent: 45,
+      },
+    ]);
+    expect(buyAgainCandidates).toHaveBeenCalledWith('u1', 'CM', 24);
   });
 });

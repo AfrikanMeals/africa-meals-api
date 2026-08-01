@@ -2,6 +2,22 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Neo4jService } from '@modules/neo4j/neo4j.service';
 import { parseRecoGraphTimeoutMs } from '@modules/graphdb-settings/graph-config.util';
 
+/** Neo4j Integer / number → number JS. */
+function _neoNum(v: unknown): number {
+  if (v == null) return 0;
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (
+    typeof v === 'object' &&
+    v !== null &&
+    typeof (v as { toNumber?: () => number }).toNumber === 'function'
+  ) {
+    const n = (v as { toNumber: () => number }).toNumber();
+    return Number.isFinite(n) ? n : 0;
+  }
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
 @Injectable()
 export class GraphRecommendationService {
   private readonly logger = new Logger(GraphRecommendationService.name);
@@ -290,6 +306,69 @@ export class GraphRecommendationService {
     return rows
       .map((r) => String(r.productId ?? '').trim())
       .filter(Boolean);
+  }
+
+  /**
+   * Buy Again — candidats déjà commandés (`:ORDERED`) avec stats pour scoring TS.
+   * Filtre région boutique ; le classement précis (récence/intérêt) est côté service.
+   */
+  async buyAgainCandidates(
+    userId: string,
+    region: string,
+    limit = 48,
+  ): Promise<
+    Array<{
+      productId: string;
+      orderCount: number;
+      lastAt: string | null;
+      totalSpent: number;
+    }>
+  > {
+    const uid = String(userId ?? '').trim();
+    if (!uid) return [];
+    const regionCode = String(region ?? '').trim().toUpperCase();
+    // Pool large pour re-score intérêt côté RecommendationsService.
+    const take = Math.min(96, Math.max(1, Math.floor(limit) || 48));
+    const rows = await this.neo4j.runCypher<{
+      productId: string;
+      count: number | { toNumber?: () => number };
+      lastAt: unknown;
+      totalSpent: number | { toNumber?: () => number };
+    }>(
+      `
+      MATCH (u:User {userId: $userId})-[r:ORDERED]->(p:Product)
+      MATCH (p)-[:SERVED_BY]->(s:Store)
+      WHERE coalesce(p.status, 'ACTIVE') = 'ACTIVE'
+        AND coalesce(s.status, 'ACTIVE') = 'ACTIVE'
+        AND s.acceptsOrders <> false
+        AND ($region = '' OR s.region = $region OR s.region IS NULL)
+      RETURN p.productId AS productId,
+             r.count AS count,
+             r.lastAt AS lastAt,
+             coalesce(r.totalSpent, 0) AS totalSpent
+      ORDER BY r.lastAt DESC, r.count DESC
+      LIMIT $limit
+      `,
+      { userId: uid, region: regionCode, limit: take },
+      { timeoutMs: parseRecoGraphTimeoutMs(), op: 'buy_again' },
+    );
+
+    return rows
+      .map((r) => {
+        const productId = String(r.productId ?? '').trim();
+        const orderCount = _neoNum(r.count);
+        const totalSpent = _neoNum(r.totalSpent);
+        // Neo4j DateTime → string ISO-ish pour scoreBuyAgainCandidate.
+        const lastAt =
+          r.lastAt == null
+            ? null
+            : typeof (r.lastAt as { toString?: () => string }).toString ===
+                'function'
+              ? String((r.lastAt as { toString: () => string }).toString())
+              : String(r.lastAt);
+        return { productId, orderCount, lastAt, totalSpent };
+      })
+      .filter((r) => r.productId);
   }
 
   /** Phase 6 — boutiques qui desservent une zone (anneau). */

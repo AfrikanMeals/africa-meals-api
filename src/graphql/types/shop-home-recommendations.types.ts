@@ -18,4 +18,8 @@ export class ShopHomeRecommendationsGql {
   /** Phase 2 — Frequently Bought Together (Home). */
   @Field(() => [GraphQLJSONObject], { nullable: true })
   frequentlyBoughtTogether?: Record<string, unknown>[];
+
+  /** Produits déjà commandés, scorés (récence / fréquence / intérêt). */
+  @Field(() => [GraphQLJSONObject], { nullable: true })
+  buyAgain?: Record<string, unknown>[];
 }
