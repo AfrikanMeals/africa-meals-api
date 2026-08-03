@@ -67,16 +67,32 @@ describe('app-versioning.util', () => {
         android: {
           versionNumber: '2.4.1',
           buildId: '184',
-          whatsNewHtml: '<p>Hi</p>',
+          whatsNewHtmlFr: '<p>Bonjour</p>',
+          whatsNewHtmlEn: '<p>Hello</p>',
           required: true,
           updateBefore: '2026-09-01T00:00:00.000Z',
         },
       });
       expect(n.android.versionNumber).toBe('2.4.1');
       expect(n.android.buildId).toBe('184');
+      expect(n.android.whatsNewHtmlFr).toBe('<p>Bonjour</p>');
+      expect(n.android.whatsNewHtmlEn).toBe('<p>Hello</p>');
+      // Miroir legacy = FR prioritaire.
+      expect(n.android.whatsNewHtml).toBe('<p>Bonjour</p>');
       expect(n.android.required).toBe(true);
       expect(n.android.updateBefore).toBe('2026-09-01');
       expect(n.ios.required).toBe(false);
+    });
+
+    it('migre whatsNewHtml legacy vers FR+EN', () => {
+      const n = normalizeAppVersioning({
+        android: {
+          whatsNewHtml: '<p>Legacy</p>',
+        },
+      });
+      expect(n.android.whatsNewHtmlFr).toBe('<p>Legacy</p>');
+      expect(n.android.whatsNewHtmlEn).toBe('<p>Legacy</p>');
+      expect(n.android.whatsNewHtml).toBe('<p>Legacy</p>');
     });
   });
 });

@@ -10,8 +10,15 @@ export class AppPlatformVersionConfigModel {
   @Prop({ type: String, default: '' })
   buildId: string;
 
+  /** Legacy monolingue — miroir de FR||EN pour anciens clients. */
   @Prop({ type: String, default: '' })
   whatsNewHtml: string;
+
+  @Prop({ type: String, default: '' })
+  whatsNewHtmlFr: string;
+
+  @Prop({ type: String, default: '' })
+  whatsNewHtmlEn: string;
 
   @Prop({ type: Boolean, default: false })
   required: boolean;

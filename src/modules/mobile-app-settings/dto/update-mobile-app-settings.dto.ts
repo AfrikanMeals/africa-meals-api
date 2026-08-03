@@ -28,11 +28,25 @@ export class AppPlatformVersionConfigDto {
   @MaxLength(32)
   buildId?: string;
 
-  @ApiPropertyOptional({ description: 'HTML What’s new (TinyMCE)' })
+  @ApiPropertyOptional({
+    description: 'HTML What’s new legacy (miroir FR||EN)',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(100_000)
   whatsNewHtml?: string;
+
+  @ApiPropertyOptional({ description: 'HTML What’s new FR (TinyMCE)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100_000)
+  whatsNewHtmlFr?: string;
+
+  @ApiPropertyOptional({ description: 'HTML What’s new EN (TinyMCE)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100_000)
+  whatsNewHtmlEn?: string;
 
   @ApiPropertyOptional({ description: 'Force update si outdated' })
   @IsOptional()

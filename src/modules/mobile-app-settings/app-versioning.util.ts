@@ -43,7 +43,10 @@ export function remainingUpdateDays(
 export type AppPlatformVersionConfigNormalized = {
   versionNumber: string;
   buildId: string;
+  /** Miroir FR||EN pour clients legacy. */
   whatsNewHtml: string;
+  whatsNewHtmlFr: string;
+  whatsNewHtmlEn: string;
   required: boolean;
   updateBefore: string | null;
 };
@@ -58,6 +61,8 @@ export function emptyPlatformVersionConfig(): AppPlatformVersionConfigNormalized
     versionNumber: '',
     buildId: '',
     whatsNewHtml: '',
+    whatsNewHtmlFr: '',
+    whatsNewHtmlEn: '',
     required: false,
     updateBefore: null,
   };
@@ -70,6 +75,33 @@ export function emptyAppVersioning(): AppVersioningNormalized {
   };
 }
 
+/**
+ * Résout FR/EN + legacy monolingue.
+ * - Si FR/EN vides et legacy présent → remplit les deux locales (migration).
+ * - `whatsNewHtml` = FR || EN (compat anciens clients mobile).
+ */
+export function resolveWhatsNewHtmlFields(raw: {
+  whatsNewHtml?: unknown;
+  whatsNewHtmlFr?: unknown;
+  whatsNewHtmlEn?: unknown;
+}): {
+  whatsNewHtml: string;
+  whatsNewHtmlFr: string;
+  whatsNewHtmlEn: string;
+} {
+  const legacy = String(raw.whatsNewHtml ?? '').trim();
+  let fr = String(raw.whatsNewHtmlFr ?? '').trim();
+  let en = String(raw.whatsNewHtmlEn ?? '').trim();
+  // Migration docs/admin monolingues : un seul HTML → les deux locales.
+  if (!fr && !en && legacy) {
+    fr = legacy;
+    en = legacy;
+  }
+  // Miroir legacy pour clients qui ne lisent que whatsNewHtml.
+  const whatsNewHtml = fr || en || legacy;
+  return { whatsNewHtml, whatsNewHtmlFr: fr, whatsNewHtmlEn: en };
+}
+
 /** Normalise un slot plateforme depuis JSON / DTO. */
 export function normalizePlatformVersionConfig(
   raw: unknown,
@@ -78,7 +110,8 @@ export function normalizePlatformVersionConfig(
     raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
   const versionNumber = String(o.versionNumber ?? '').trim();
   const buildId = String(o.buildId ?? '').trim();
-  const whatsNewHtml = String(o.whatsNewHtml ?? '').trim();
+  const { whatsNewHtml, whatsNewHtmlFr, whatsNewHtmlEn } =
+    resolveWhatsNewHtmlFields(o);
   const required = o.required === true;
   let updateBefore: string | null = null;
   const ub = o.updateBefore;
@@ -90,6 +123,8 @@ export function normalizePlatformVersionConfig(
     versionNumber,
     buildId,
     whatsNewHtml,
+    whatsNewHtmlFr,
+    whatsNewHtmlEn,
     required,
     updateBefore,
   };
