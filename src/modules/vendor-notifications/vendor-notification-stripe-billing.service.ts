@@ -2,6 +2,11 @@ import { MailerService } from '@modules/mailer/mailer.service';
 import { EmailTemplateService } from '@modules/mailer/email-template.service';
 import { resolvePortalAppBaseUrl } from '@common/portal/portal-app-base-url.util';
 import {
+  buildMobileStripeCheckoutCancelUrl,
+  buildMobileStripeCheckoutSuccessUrl,
+  isMobileCheckoutClient,
+} from '@modules/billing/stripe/mobile-stripe-checkout-return.util';
+import {
   BadRequestException,
   Injectable,
   Logger,
@@ -17,6 +22,10 @@ import { StoreModel } from '@schemas/store.schema';
 import { UserModel } from '@schemas/user.schema';
 import { Model, Types } from 'mongoose';
 import { resolveVendorBillingStripeCheckoutAmount } from '@utils/vendor-billing-stripe-checkout.util';
+import {
+  isVendorSmsBillingPaymentIntentKind,
+  VENDOR_SMS_BILLING_PAYMENT_INTENT_KIND,
+} from '@modules/billing/stripe/vendor-billing-payment-intent.util';
 import { normalizeStripeCurrencyCode } from '@utils/stripe-currency-amount.util';
 import Stripe = require('stripe');
 import { VendorNotificationPreferencesService } from './vendor-notification-preferences.service';
@@ -55,7 +64,24 @@ export class VendorNotificationStripeBillingService {
     return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 7;
   }
 
-  private successUrl(): string {
+  private serverBase(): string {
+    return (
+      this.config.get<string>('SERVER_URL')?.replace(/\/$/, '') ??
+      'http://localhost:9000'
+    );
+  }
+
+  /**
+   * Success Checkout SMS.
+   * `client=mobile` → pont deep-link ; sinon portail admin `/settings/notifications`.
+   */
+  private successUrl(client?: string): string {
+    if (isMobileCheckoutClient(client)) {
+      return buildMobileStripeCheckoutSuccessUrl({
+        serverUrl: this.serverBase(),
+        kind: 'sms_billing',
+      });
+    }
     const portalBase = resolvePortalAppBaseUrl({
       getEnv: (key) => this.config.get<string>(key),
       audience: 'business',
@@ -68,7 +94,10 @@ export class VendorNotificationStripeBillingService {
     return `${portalBase}/settings/notifications?sms_billing=success&session_id={CHECKOUT_SESSION_ID}`;
   }
 
-  private cancelUrl(): string {
+  private cancelUrl(client?: string): string {
+    if (isMobileCheckoutClient(client)) {
+      return buildMobileStripeCheckoutCancelUrl(this.serverBase());
+    }
     const configured = this.config
       .get<string>('VENDOR_SMS_BILLING_CANCEL_URL')
       ?.trim();
@@ -112,7 +141,15 @@ export class VendorNotificationStripeBillingService {
     return { issued, skipped };
   }
 
-  async issueCheckoutForCharge(chargeId: string): Promise<boolean> {
+  /**
+   * Émet (ou régénère) une session Checkout pour une charge SMS.
+   * @param options.client `mobile` → URLs pont app ; sinon admin.
+   * @param options.skipEmail si true (pay-link mobile) — pas de re-mail facture.
+   */
+  async issueCheckoutForCharge(
+    chargeId: string,
+    options?: { client?: string; skipEmail?: boolean },
+  ): Promise<boolean> {
     const cid = chargeId.trim();
     if (!Types.ObjectId.isValid(cid)) return false;
     const charge = await this.chargeModel.findById(cid).exec();
@@ -174,6 +211,7 @@ export class VendorNotificationStripeBillingService {
     }
 
     const stripe = this.stripe();
+    const client = options?.client;
     const meta: Record<string, string> = {
       kind: VENDOR_SMS_BILLING_CHECKOUT_KIND,
       storeId,
@@ -201,8 +239,8 @@ export class VendorNotificationStripeBillingService {
           },
         },
       ],
-      success_url: this.successUrl(),
-      cancel_url: this.cancelUrl(),
+      success_url: this.successUrl(client),
+      cancel_url: this.cancelUrl(client),
       metadata: meta,
       payment_intent_data: {
         description: `Notifications SMS ${charge.billingMonth}`,
@@ -232,7 +270,8 @@ export class VendorNotificationStripeBillingService {
       },
     );
 
-    if (ownerEmail) {
+    // Cron / facture e-mail : garder le mail. Pay-link mobile : skipEmail.
+    if (ownerEmail && !options?.skipEmail) {
       await this.sendInvoiceEmail({
         to: ownerEmail,
         toName: ownerName,
@@ -337,9 +376,14 @@ export class VendorNotificationStripeBillingService {
     return { suspended };
   }
 
+  /**
+   * Lien Checkout pour payer une facture SMS.
+   * Mobile : toujours nouvelle session (success_url pont app) — ne pas réutiliser l’URL admin.
+   */
   async getPayLinkForStore(
     storeId: string,
     billingMonth?: string,
+    options?: { client?: string },
   ): Promise<{ url: string; billingMonth: string; amountCad: number }> {
     const sid = storeId.trim();
     if (!Types.ObjectId.isValid(sid)) {
@@ -367,7 +411,10 @@ export class VendorNotificationStripeBillingService {
       throw new NotFoundException('sms_billing_charge_not_found');
     }
 
+    const mobile = isMobileCheckoutClient(options?.client);
+    // Admin : réutiliser l’URL existante. Mobile : régénérer avec pont deep-link.
     if (
+      !mobile &&
       charge.checkoutUrl &&
       (charge.status === VendorNotificationChargeStatusEnum.INVOICED ||
         charge.status === VendorNotificationChargeStatusEnum.OVERDUE)
@@ -379,7 +426,10 @@ export class VendorNotificationStripeBillingService {
       };
     }
 
-    await this.issueCheckoutForCharge(String(charge._id));
+    await this.issueCheckoutForCharge(String(charge._id), {
+      client: options?.client,
+      skipEmail: mobile,
+    });
     const refreshed = await this.chargeModel.findById(charge._id).lean().exec();
     if (!refreshed?.checkoutUrl) {
       throw new BadRequestException('sms_billing_checkout_unavailable');
@@ -389,6 +439,208 @@ export class VendorNotificationStripeBillingService {
       billingMonth: refreshed.billingMonth,
       amountCad: refreshed.smsTotalCad,
     };
+  }
+
+  /**
+   * PaymentIntent SMS pour Payment Sheet mobile (admin garde Checkout web).
+   */
+  async createPaymentIntentForStore(
+    storeId: string,
+    userId: string,
+    billingMonth?: string,
+  ): Promise<{
+    clientSecret: string;
+    paymentIntentId: string;
+    billingMonth: string;
+    amountCad: number;
+    currency: string;
+  }> {
+    const sid = storeId.trim();
+    if (!Types.ObjectId.isValid(sid)) {
+      throw new BadRequestException('invalid_store_id');
+    }
+    const filter: Record<string, unknown> = {
+      store: new Types.ObjectId(sid),
+      smsTotalCad: { $gt: 0 },
+      status: {
+        $in: [
+          VendorNotificationChargeStatusEnum.PENDING,
+          VendorNotificationChargeStatusEnum.INVOICED,
+          VendorNotificationChargeStatusEnum.OVERDUE,
+        ],
+      },
+    };
+    if (billingMonth?.trim()) {
+      filter.billingMonth = billingMonth.trim();
+    }
+    const charge = await this.chargeModel
+      .findOne(filter)
+      .sort({ billingMonth: -1 })
+      .exec();
+    if (!charge) {
+      throw new NotFoundException('sms_billing_charge_not_found');
+    }
+
+    const store = await this.storeModel
+      .findById(sid)
+      .select('name owner email currency region')
+      .populate('owner', 'email')
+      .lean()
+      .exec();
+    if (!store) {
+      throw new NotFoundException('sms_billing_charge_not_found');
+    }
+    const owner = store.owner as unknown as
+      | { _id?: Types.ObjectId; email?: string }
+      | Types.ObjectId
+      | null;
+    const ownerId =
+      owner && typeof owner === 'object' && '_id' in owner
+        ? String(owner._id)
+        : String(owner ?? '');
+    if (ownerId && ownerId !== String(userId)) {
+      throw new BadRequestException('checkout_user_mismatch');
+    }
+    const ownerEmail =
+      owner && typeof owner === 'object' && 'email' in owner
+        ? String(owner.email ?? '').trim()
+        : '';
+
+    const billingCurrency = normalizeStripeCurrencyCode(
+      store.currency || charge.currency || 'CAD',
+    );
+    const chargeAmt = resolveVendorBillingStripeCheckoutAmount({
+      amountMajor: Number(charge.smsTotalCad) || 0,
+      currency: billingCurrency,
+    });
+    if (!chargeAmt.meetsMinimum) {
+      throw new BadRequestException('amount_below_stripe_minimum');
+    }
+
+    const meta: Record<string, string> = {
+      kind: VENDOR_SMS_BILLING_PAYMENT_INTENT_KIND,
+      storeId: sid,
+      billingMonth: charge.billingMonth,
+      chargeId: String(charge._id),
+      ownerId: ownerId || String(userId),
+      billingCurrency: chargeAmt.currencyUpper,
+    };
+    const stripe = this.stripe();
+    const pi = await stripe.paymentIntents.create({
+      amount: chargeAmt.unitAmount,
+      currency: chargeAmt.currencyLower,
+      automatic_payment_methods: { enabled: true },
+      metadata: meta,
+      receipt_email: ownerEmail || store.email || undefined,
+      description: `Wise Eat · Notifications SMS ${charge.billingMonth}`,
+    });
+    if (!pi.client_secret) {
+      throw new BadRequestException('stripe_missing_client_secret');
+    }
+
+    await this.chargeModel.updateOne(
+      { _id: charge._id },
+      {
+        $set: {
+          status: VendorNotificationChargeStatusEnum.INVOICED,
+          stripePaymentIntentId: pi.id,
+          currency: chargeAmt.currencyUpper,
+        },
+      },
+    );
+
+    return {
+      clientSecret: pi.client_secret,
+      paymentIntentId: pi.id,
+      billingMonth: charge.billingMonth,
+      amountCad: chargeAmt.amountMajor,
+      currency: chargeAmt.currencyUpper,
+    };
+  }
+
+  /** Sync après Payment Sheet SMS réussie. */
+  async syncPaymentIntent(
+    userId: string,
+    paymentIntentId: string,
+  ): Promise<{ ok: true; billingMonth: string; amountCad: number }> {
+    const id = String(paymentIntentId ?? '').trim();
+    if (!id.startsWith('pi_')) {
+      throw new BadRequestException('invalid_payment_intent_id');
+    }
+    const stripe = this.stripe();
+    const pi = await stripe.paymentIntents.retrieve(id);
+    if (pi.status !== 'succeeded') {
+      throw new BadRequestException({
+        message: 'payment_intent_not_succeeded',
+        status: pi.status,
+      });
+    }
+    if (!isVendorSmsBillingPaymentIntentKind(pi.metadata?.kind)) {
+      throw new BadRequestException('invalid_checkout_kind');
+    }
+    const ownerId = String(pi.metadata?.ownerId ?? '').trim();
+    if (ownerId && ownerId !== String(userId)) {
+      throw new BadRequestException('checkout_user_mismatch');
+    }
+    await this.fulfillFromPaymentIntent(pi);
+    const chargeId = String(pi.metadata?.chargeId ?? '').trim();
+    const charge = chargeId && Types.ObjectId.isValid(chargeId)
+      ? await this.chargeModel.findById(chargeId).lean().exec()
+      : await this.chargeModel
+          .findOne({ stripePaymentIntentId: pi.id })
+          .lean()
+          .exec();
+    return {
+      ok: true,
+      billingMonth: charge?.billingMonth ?? '',
+      amountCad: Number(charge?.smsTotalCad ?? 0),
+    };
+  }
+
+  /** Marque la charge SMS payée depuis un PaymentIntent (Payment Sheet). */
+  async fulfillFromPaymentIntent(pi: {
+    id: string;
+    metadata?: Record<string, string | null | undefined> | null;
+    status?: string | null;
+  }): Promise<boolean> {
+    if (!isVendorSmsBillingPaymentIntentKind(pi.metadata?.kind)) {
+      return false;
+    }
+    if (pi.status != null && pi.status !== 'succeeded') {
+      return false;
+    }
+    const chargeId = String(pi.metadata?.chargeId ?? '').trim();
+    const storeId = String(pi.metadata?.storeId ?? '').trim();
+    const filter =
+      chargeId && Types.ObjectId.isValid(chargeId)
+        ? { _id: new Types.ObjectId(chargeId) }
+        : { stripePaymentIntentId: pi.id };
+    const charge = await this.chargeModel.findOne(filter).exec();
+    if (!charge) {
+      this.logger.warn(`SMS billing PI: charge not found pi=${pi.id}`);
+      return true;
+    }
+    if (charge.status === VendorNotificationChargeStatusEnum.PAID) {
+      return true;
+    }
+    await this.chargeModel.updateOne(
+      { _id: charge._id },
+      {
+        $set: {
+          status: VendorNotificationChargeStatusEnum.PAID,
+          paidAt: new Date(),
+          stripePaymentIntentId: pi.id,
+        },
+      },
+    );
+    const sid = storeId || String(charge.store);
+    if (Types.ObjectId.isValid(sid)) {
+      await this.prefs.resumeSmsBilling(sid);
+    }
+    this.logger.log(
+      `SMS billing paid (PI) store=${sid} month=${charge.billingMonth} pi=${pi.id}`,
+    );
+    return true;
   }
 
   async confirmCheckoutSession(

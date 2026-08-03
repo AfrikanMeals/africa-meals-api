@@ -30,6 +30,11 @@ import {
 } from '@modules/billing/stripe/stripe-connect-visibility';
 import { detectCatalogImageStorageKind } from '@common/media/detect-storage-engine.util';
 import { resolvePortalAppBaseUrl } from '@common/portal/portal-app-base-url.util';
+import {
+  buildMobileStripeCheckoutCancelUrl,
+  buildMobileStripeCheckoutSuccessUrl,
+  isMobileCheckoutClient,
+} from '@modules/billing/stripe/mobile-stripe-checkout-return.util';
 import { MediasService } from '@modules/medias/medias.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
 import { storePermissionGranted } from '../../common/permissions/store-permissions';
@@ -131,6 +136,11 @@ import {
   majorAmountFromStripeCheckoutTotal,
   resolveVendorBillingStripeCheckoutAmount,
 } from '@utils/vendor-billing-stripe-checkout.util';
+import {
+  AD_CREDIT_PAYMENT_INTENT_KIND,
+  adCreditPaymentKeyFromPaymentIntentId,
+  isAdCreditPaymentIntentKind,
+} from '@modules/billing/stripe/vendor-billing-payment-intent.util';
 import { normalizeStripeCurrencyCode } from '@utils/stripe-currency-amount.util';
 import Stripe = require('stripe');
 
@@ -1034,7 +1044,26 @@ export class AdsService implements OnModuleInit {
     });
   }
 
-  private adCreditSuccessUrl(): string {
+  private adCreditServerBase(): string {
+    return (
+      this._config.get<string>('SERVER_URL')?.replace(/\/$/, '') ??
+      'http://localhost:9000'
+    );
+  }
+
+  /**
+   * Success Checkout Ad Credit.
+   * `client=mobile` → pont API → `wise-eat://stripe-return?kind=ad_credit` ;
+   * sinon URLs portail admin inchangées (invariant APP-TRACK).
+   */
+  private adCreditSuccessUrl(client?: string): string {
+    // 1. Branche mobile additive — ne pas toucher aux URLs admin.
+    if (isMobileCheckoutClient(client)) {
+      return buildMobileStripeCheckoutSuccessUrl({
+        serverUrl: this.adCreditServerBase(),
+        kind: 'ad_credit',
+      });
+    }
     const configured = this._config
       .get<string>('STRIPE_AD_CREDIT_SUCCESS_URL')
       ?.trim();
@@ -1049,7 +1078,10 @@ export class AdsService implements OnModuleInit {
     return `${adminBase}/ad-credit-return?ad_credit_session_id={CHECKOUT_SESSION_ID}`;
   }
 
-  private adCreditCancelUrl(): string {
+  private adCreditCancelUrl(client?: string): string {
+    if (isMobileCheckoutClient(client)) {
+      return buildMobileStripeCheckoutCancelUrl(this.adCreditServerBase());
+    }
     const configured = this._config
       .get<string>('STRIPE_AD_CREDIT_CANCEL_URL')
       ?.trim();
@@ -4420,8 +4452,13 @@ export class AdsService implements OnModuleInit {
     return normalizeStripeCurrencyCode(args.fallbackCurrency);
   }
 
+  /**
+   * Crée une session Stripe Checkout pour le solde Ad Credit.
+   * @param client `mobile` → success/cancel pont deep-link ; sinon portail admin.
+   */
   async createAdCreditCheckoutSession(
     user: UserModel,
+    options?: { client?: string },
   ): Promise<{ url: string; sessionId: string; amountCad: number }> {
     if (user.type !== UserTypeEnum.VENDOR) {
       throw new ForbiddenException('vendor_only');
@@ -4446,6 +4483,7 @@ export class AdsService implements OnModuleInit {
 
     const ownerId = String(user._id);
     const stripe = this.stripe();
+    const client = options?.client;
     const meta: Record<string, string> = {
       kind: AD_CREDIT_CHECKOUT_METADATA_KIND,
       uid: ownerId,
@@ -4470,8 +4508,8 @@ export class AdsService implements OnModuleInit {
           },
         },
       ],
-      success_url: this.adCreditSuccessUrl(),
-      cancel_url: this.adCreditCancelUrl(),
+      success_url: this.adCreditSuccessUrl(client),
+      cancel_url: this.adCreditCancelUrl(client),
       metadata: meta,
       payment_intent_data: {
         description: 'Wise Eat · Paiement crédit Ads',
@@ -4503,6 +4541,122 @@ export class AdsService implements OnModuleInit {
       throw e;
     }
     return { available: true };
+  }
+
+  /**
+   * PaymentIntent Ad Credit pour Payment Sheet mobile (pas de Checkout web).
+   * Admin continue d’utiliser `createAdCreditCheckoutSession`.
+   */
+  async createAdCreditPaymentIntent(user: UserModel): Promise<{
+    clientSecret: string;
+    paymentIntentId: string;
+    amountCad: number;
+    currency: string;
+  }> {
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_only');
+    }
+    const credit = await this.getMyAdCredit(user);
+    const outstanding = Number(credit.totalDue ?? 0);
+    if (outstanding <= 0) {
+      throw new BadRequestException('ad_credit_already_settled');
+    }
+    const currency = await this._resolveAdCreditCheckoutCurrency({
+      stores: credit.stores,
+      fallbackCurrency: credit.currency,
+    });
+    const charge = resolveVendorBillingStripeCheckoutAmount({
+      amountMajor: outstanding,
+      currency,
+    });
+    if (!charge.meetsMinimum) {
+      throw new BadRequestException('amount_below_stripe_minimum');
+    }
+
+    const ownerId = String(user._id);
+    const meta: Record<string, string> = {
+      kind: AD_CREDIT_PAYMENT_INTENT_KIND,
+      uid: ownerId,
+      outstandingDueCad: String(charge.amountMajor),
+      billingCurrency: charge.currencyUpper,
+    };
+    const stripe = this.stripe();
+    const pi = await stripe.paymentIntents.create({
+      amount: charge.unitAmount,
+      currency: charge.currencyLower,
+      automatic_payment_methods: { enabled: true },
+      metadata: meta,
+      receipt_email: user.email || undefined,
+      description: 'Wise Eat · Paiement crédit Ads',
+    });
+    if (!pi.client_secret) {
+      throw new BadRequestException('stripe_missing_client_secret');
+    }
+    return {
+      clientSecret: pi.client_secret,
+      paymentIntentId: pi.id,
+      amountCad: charge.amountMajor,
+      currency: charge.currencyUpper,
+    };
+  }
+
+  /** Sync après Payment Sheet réussie — enregistre le paiement Ad Credit. */
+  async syncAdCreditPaymentIntent(
+    user: UserModel,
+    paymentIntentId: string,
+  ): Promise<{ ok: true; amountPaidCad: number; paymentIntentId: string }> {
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_only');
+    }
+    const id = String(paymentIntentId ?? '').trim();
+    if (!id.startsWith('pi_')) {
+      throw new BadRequestException('invalid_payment_intent_id');
+    }
+    const stripe = this.stripe();
+    const pi = await stripe.paymentIntents.retrieve(id);
+    if (pi.status !== 'succeeded') {
+      throw new BadRequestException({
+        message: 'payment_intent_not_succeeded',
+        status: pi.status,
+      });
+    }
+    if (!isAdCreditPaymentIntentKind(pi.metadata?.kind)) {
+      throw new BadRequestException('not_ad_credit_payment_intent');
+    }
+    if (String(pi.metadata?.uid ?? '') !== String(user._id)) {
+      throw new ForbiddenException('ad_credit_checkout_user_mismatch');
+    }
+    const currency = normalizeStripeCurrencyCode(pi.currency);
+    const amountPaidCad = majorAmountFromStripeCheckoutTotal(
+      pi.amount_received ?? pi.amount,
+      currency,
+    );
+    if (!Number.isFinite(amountPaidCad) || amountPaidCad <= 0) {
+      throw new BadRequestException('ad_credit_checkout_invalid_amount');
+    }
+    const ownerOid = new Types.ObjectId(String(user._id));
+    const sessionKey = adCreditPaymentKeyFromPaymentIntentId(pi.id);
+    await this._adCreditPaymentModel
+      .updateOne(
+        { stripeCheckoutSessionId: sessionKey },
+        {
+          $set: {
+            owner: ownerOid,
+            amountPaidCad,
+            currency,
+            status: AdCreditPaymentStatusEnum.PAID,
+            stripePaymentIntentId: pi.id,
+            paidAt: new Date(),
+          },
+          $setOnInsert: {
+            stripeCheckoutSessionId: sessionKey,
+          },
+        },
+        { upsert: true },
+      )
+      .exec();
+    await this._syncAdCreditPaymentsFromStripe(ownerOid);
+    return { ok: true, amountPaidCad, paymentIntentId: pi.id };
   }
 
   async confirmAdCreditCheckout(

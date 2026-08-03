@@ -547,7 +547,11 @@ export class CartService {
       if (!drink) {
         throw new NotFoundException('drink_not_found');
       }
-      priceForLine = drink.priceCad;
+      // Promo drink : même règle Food (0 < discount < priceCad).
+      const drinkPrice = Number(drink.priceCad) || 0;
+      const drinkPromo = Number(drink.discountPrice ?? 0);
+      priceForLine =
+        drinkPromo > 0 && drinkPromo < drinkPrice ? drinkPromo : drinkPrice;
       const newTotalQty = (item?.quantity ?? 0) + qtyReq;
       const maxOrder = maxDrinkOrderQuantity(drink.quantite);
       if (newTotalQty > maxOrder) {

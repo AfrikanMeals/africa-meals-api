@@ -89,6 +89,17 @@ export function scoreBuyAgainCandidate(
 }
 
 /**
+ * Quand basculer Buy Again vers l’agrégat Mongo.
+ * Fix: Neo4j healthy + `[]` (pas d’arêtes `:ORDERED` / sync incomplet) bloquait
+ * le fallback — section Home absente malgré des commandes Mongo.
+ */
+export function shouldUseMongoBuyAgainFallback(
+  neoCandidates: BuyAgainCandidate[] | null | undefined,
+): boolean {
+  return neoCandidates == null || neoCandidates.length === 0
+}
+
+/**
  * Trie les candidats par score DESC, tie-break lastAt DESC, déduplique, borne `limit`.
  */
 export function rankBuyAgainCandidates(

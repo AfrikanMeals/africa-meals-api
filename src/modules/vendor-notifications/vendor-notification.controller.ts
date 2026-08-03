@@ -50,6 +50,37 @@ export class VendorNotificationController {
     );
   }
 
+  /** Payment Sheet mobile — PaymentIntent facture SMS. */
+  @Post(':storeId/notification-sms-billing/payment-intent')
+  @UseGuards(JwtGuard)
+  async createSmsBillingPaymentIntent(
+    @Req() req: Request,
+    @Param('storeId') storeId: string,
+    @Body('billingMonth') billingMonth?: string,
+  ) {
+    const user = req.user as UserModel;
+    await this.prefs.getForStoreAsVendor(user, storeId);
+    return this.stripeBilling.createPaymentIntentForStore(
+      storeId,
+      String(user.id ?? user._id),
+      billingMonth,
+    );
+  }
+
+  /** Sync après Payment Sheet SMS réussie. */
+  @Post('notification-sms-billing/payment-intent/sync')
+  @UseGuards(JwtGuard)
+  syncSmsBillingPaymentIntent(
+    @Req() req: Request,
+    @Body('paymentIntentId') paymentIntentId: string,
+  ) {
+    const user = req.user as UserModel;
+    return this.stripeBilling.syncPaymentIntent(
+      String(user.id ?? user._id),
+      paymentIntentId,
+    );
+  }
+
   @Get(':storeId/notification-preferences')
   @UseGuards(JwtGuard)
   async getPreferences(
@@ -81,9 +112,13 @@ export class VendorNotificationController {
     @Req() req: Request,
     @Param('storeId') storeId: string,
     @Query('billingMonth') billingMonth?: string,
+    @Query('client') client?: string,
   ) {
     await this.prefs.getForStoreAsVendor(req.user as UserModel, storeId);
-    return this.stripeBilling.getPayLinkForStore(storeId, billingMonth);
+    // client=mobile → success_url pont wise-eat://kind=sms_billing
+    return this.stripeBilling.getPayLinkForStore(storeId, billingMonth, {
+      client,
+    });
   }
 
   @Get(':storeId/notification-sms-history')

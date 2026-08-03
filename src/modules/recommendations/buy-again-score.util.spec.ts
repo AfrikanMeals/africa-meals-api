@@ -2,6 +2,7 @@ import {
   BUY_AGAIN_RECENCY_HALF_LIFE_DAYS,
   rankBuyAgainCandidates,
   scoreBuyAgainCandidate,
+  shouldUseMongoBuyAgainFallback,
 } from './buy-again-score.util'
 
 describe('buy-again-score.util', () => {
@@ -132,5 +133,21 @@ describe('buy-again-score.util', () => {
 
   it('demi-vie documentée > 0', () => {
     expect(BUY_AGAIN_RECENCY_HALF_LIFE_DAYS).toBe(45)
+  })
+
+  // Fix Home Buy Again : Neo4j [] ne doit pas masquer l’historique Mongo.
+  it('shouldUseMongoBuyAgainFallback si null ou vide', () => {
+    expect(shouldUseMongoBuyAgainFallback(null)).toBe(true)
+    expect(shouldUseMongoBuyAgainFallback(undefined)).toBe(true)
+    expect(shouldUseMongoBuyAgainFallback([])).toBe(true)
+    expect(
+      shouldUseMongoBuyAgainFallback([
+        {
+          productId: 'p1',
+          orderCount: 1,
+          lastAt: '2026-08-01T00:00:00.000Z',
+        },
+      ]),
+    ).toBe(false)
   })
 })

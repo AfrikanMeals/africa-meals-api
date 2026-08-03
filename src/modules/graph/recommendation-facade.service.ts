@@ -193,7 +193,9 @@ export class RecommendationFacade {
   }
 
   /**
-   * Candidats Buy Again (stats `:ORDERED`) — null = fail-open Mongo.
+   * Candidats Buy Again (stats `:ORDERED`).
+   * null = fail-open (flag OFF / Neo4j unhealthy / timeout / erreur).
+   * `[]` = graphe OK sans arêtes — le service feed bascule aussi sur Mongo.
    */
   async buyAgainCandidatesOrNull(opts: {
     userId?: string | null;

@@ -26,6 +26,7 @@ import {
   FilterOrdersDto,
   PatchCustomerOrderNoteDto,
   PatchPreOrderCustomerNoteDto,
+  PreviewPickupCodeDto,
   RejectOrderDto,
   VendorCourierLocationDto,
 } from './dto/orders.dto';
@@ -269,6 +270,26 @@ export class OrdersController {
     return this._ordersService.regeneratePickupCodeForClient(
       id,
       req.user as UserModel,
+    );
+  }
+
+  /**
+   * Scanner FAB vendeur : aperçu d’une commande retrait par code (avant confirm).
+   * Route littérale avant `:id/*` pour éviter toute collision param.
+   */
+  @Post('preview-pickup-code')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Aperçu commande retrait par code (VENDOR, scanner FAB)',
+  })
+  async previewPickupCode(
+    @Req() req: Request,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: PreviewPickupCodeDto,
+  ) {
+    return this._ordersService.previewPickupByCode(
+      req.user as UserModel,
+      body,
     );
   }
 

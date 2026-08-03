@@ -14,7 +14,9 @@ import {
   resolveStoreIdsVisibleOnMobileApp,
 } from '@modules/billing/stripe/stripe-connect-visibility';
 import { MediasService } from '@modules/medias/medias.service';
+import { DrinkDiscountScheduleService } from '@modules/drinks/drink-discount-schedule.service';
 import { ProductCategoryService } from '@modules/products/product-category.service';
+import { schedulesForDiscountResponse } from '@modules/products/discount-schedule.util';
 import { SubscriptionsService } from '@modules/subscriptions/subscriptions.service';
 import { SubscriptionPlanOrderCommissionService } from '@modules/subscriptions/subscription-plan-order-commission.service';
 import { StoreAccessService } from '@modules/teams/store-access.service';
@@ -73,11 +75,14 @@ function mapDrinkCatalogListRow(doc: Record<string, unknown>) {
       : '';
   const imageUrl =
     img.startsWith('http://') || img.startsWith('https://') ? img : undefined;
+  const priceCad = Number(doc.priceCad ?? doc.price_cad ?? 0);
+  const discountPrice = Number(doc.discountPrice ?? doc.discount_price ?? 0);
   return {
     id: String(doc._id),
     name: String(doc.name ?? ''),
     description: doc.description != null ? String(doc.description) : '',
-    priceCad: Number(doc.priceCad ?? doc.price_cad ?? 0),
+    priceCad,
+    discountPrice,
     quantite: Number(doc.quantite ?? 0),
     seuil: Number(doc.seuil ?? 0),
     statut: String(doc.statut ?? DrinkStatutEnum.OK),
@@ -105,13 +110,29 @@ function mapDrinkDoc(doc: Record<string, unknown>) {
   } else if (rawCat != null) {
     categoryId = String(rawCat);
   }
+  const priceCad = Number(doc.priceCad ?? doc.price_cad ?? 0);
+  const discountPrice = Number(doc.discountPrice ?? doc.discount_price ?? 0);
+  const listPriceRaw = doc.listPrice ?? doc.list_price;
+  const listDiscountRaw = doc.listDiscountPrice ?? doc.list_discount_price;
   return {
     id: String(doc._id),
     name: String(doc.name ?? ''),
     description: doc.description != null ? String(doc.description) : '',
     quantite: Number(doc.quantite ?? 0),
     seuil: Number(doc.seuil ?? 0),
-    priceCad: Number(doc.priceCad ?? doc.price_cad ?? 0),
+    priceCad,
+    discountPrice,
+    listPrice:
+      listPriceRaw != null && Number.isFinite(Number(listPriceRaw))
+        ? Number(listPriceRaw)
+        : priceCad,
+    listDiscountPrice:
+      listDiscountRaw != null && Number.isFinite(Number(listDiscountRaw))
+        ? Number(listDiscountRaw)
+        : discountPrice,
+    discountSchedules: schedulesForDiscountResponse(
+      doc.discountSchedules ?? doc.discount_schedules,
+    ),
     statut: String(doc.statut ?? DrinkStatutEnum.OK) as DrinkStatutEnum,
     commissionRetrieveStrategy:
       doc.commissionRetrieveStrategy === 'add_to_price' ||
@@ -183,6 +204,9 @@ export class DrinksService {
 
   @Inject(SubscriptionPlanOrderCommissionService)
   private readonly _planOrderCommission: SubscriptionPlanOrderCommissionService;
+
+  @Inject(DrinkDiscountScheduleService)
+  private readonly _discountSchedules: DrinkDiscountScheduleService;
 
   private async _bustStoreCatalogCaches(storeId: string): Promise<void> {
     const sid = String(storeId ?? '').trim();
@@ -975,7 +999,17 @@ export class DrinksService {
     }
     const quantite = Number(dto.quantite);
     const seuil = Number(dto.seuil);
-    const priceCad = Number(dto.priceCad);
+    // Baselines list* + fenêtres : priceCad effectif appliqué juste après create.
+    const listPrice = Number(
+      dto.listPrice != null ? dto.listPrice : dto.priceCad,
+    );
+    const listDiscountPrice = Number(
+      dto.listDiscountPrice != null
+        ? dto.listDiscountPrice
+        : dto.discountPrice ?? 0,
+    );
+    const discountSchedules =
+      this._discountSchedules.normalizeSchedulesFromDto(dto.discountSchedules);
     const statut = computeStatut(quantite, seuil);
     let imageUrl: string | undefined;
     if (file?.buffer?.length) {
@@ -991,7 +1025,11 @@ export class DrinksService {
       description: dto.description?.trim() || undefined,
       quantite,
       seuil,
-      priceCad,
+      priceCad: listPrice,
+      discountPrice: listDiscountPrice,
+      listPrice,
+      listDiscountPrice,
+      discountSchedules,
       statut,
       store: new Types.ObjectId(storeId),
       ...(dto.commissionRetrieveStrategy === 'add_to_price' ||
@@ -1001,6 +1039,12 @@ export class DrinksService {
       ...(categoryOid ? { category: categoryOid } : {}),
       ...(imageUrl ? { imageUrl } : {}),
     });
+    // Applique immédiatement la fenêtre active (sinon le cron attend jusqu’à 5 min).
+    const fresh = await this._drinkModel.findById(doc._id).exec();
+    if (fresh) {
+      this._discountSchedules.applyToDocument(fresh);
+      await fresh.save();
+    }
     const populated = await this._drinkModel
       .findById(doc._id)
       .populate('category', 'title kind isEnabled')
@@ -1038,8 +1082,6 @@ export class DrinksService {
     const quantite =
       dto.quantite !== undefined ? Number(dto.quantite) : found.quantite;
     const seuil = dto.seuil !== undefined ? Number(dto.seuil) : found.seuil;
-    const priceCad =
-      dto.priceCad !== undefined ? Number(dto.priceCad) : found.priceCad;
     const name = dto.name != null ? dto.name.trim() : found.name;
     const description =
       dto.description !== undefined
@@ -1050,8 +1092,66 @@ export class DrinksService {
     found.description = description;
     found.quantite = quantite;
     found.seuil = seuil;
-    found.priceCad = priceCad;
     found.statut = statut;
+
+    // Baselines + schedules (miroir products.updateForVendor).
+    if (dto.listPrice !== undefined) {
+      found.listPrice = Number(dto.listPrice);
+    }
+    if (dto.listDiscountPrice !== undefined) {
+      found.listDiscountPrice = Number(dto.listDiscountPrice);
+    }
+    if (dto.discountSchedules !== undefined) {
+      const normalized = this._discountSchedules.normalizeSchedulesFromDto(
+        dto.discountSchedules,
+      );
+      found.set('discountSchedules', normalized);
+      found.markModified('discountSchedules');
+    }
+    // priceCad / discountPrice directs : n’écrasent pas une fenêtre active.
+    if (dto.priceCad !== undefined || dto.discountPrice !== undefined) {
+      const price =
+        dto.priceCad !== undefined
+          ? Number(dto.priceCad)
+          : Number(found.priceCad);
+      const discount =
+        dto.discountPrice !== undefined
+          ? Number(dto.discountPrice)
+          : Number(found.discountPrice ?? 0);
+      const active = this._discountSchedules.pickActiveSchedule(
+        this._discountSchedules.normalizeSchedules(found.discountSchedules),
+      );
+      if (!active) {
+        found.priceCad = price;
+        found.discountPrice = discount;
+        if (dto.priceCad !== undefined && dto.listPrice === undefined) {
+          found.listPrice = price;
+        }
+        if (
+          dto.discountPrice !== undefined &&
+          dto.listDiscountPrice === undefined
+        ) {
+          found.listDiscountPrice = discount;
+        }
+      } else if (dto.listPrice === undefined && dto.priceCad !== undefined) {
+        // Pendant une fenêtre : le prix saisi met à jour la baseline list*.
+        found.listPrice = price;
+      } else if (
+        dto.listDiscountPrice === undefined &&
+        dto.discountPrice !== undefined
+      ) {
+        found.listDiscountPrice = discount;
+      }
+    }
+    // Initialise list* si absents (docs legacy).
+    if (found.listPrice == null) {
+      found.listPrice = this._discountSchedules.resolveListPrice(found);
+    }
+    if (found.listDiscountPrice == null) {
+      found.listDiscountPrice =
+        this._discountSchedules.resolveListDiscountPrice(found);
+    }
+    this._discountSchedules.applyToDocument(found);
     let unsetCommissionStrategy = false;
     if (dto.commissionRetrieveStrategy !== undefined) {
       if (

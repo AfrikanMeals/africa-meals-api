@@ -2128,12 +2128,12 @@ export class DeliveryAgentService {
       order as unknown as Record<string, unknown>,
     );
     const isDelivery = order.shouldShip === true;
+    // Echo du code saisi/scanné uniquement (pas lecture DB) — le livreur
+    // ne reçoit jamais le secret avant validation réussie.
+    const echoed = normalizePickupCodeInput(rawCode);
     return {
       ...mapped,
-      pickupCode:
-        String(order.pickupCode ?? '')
-          .trim()
-          .toUpperCase() || null,
+      pickupCode: echoed || null,
       shouldShip: isDelivery,
       handoffType: isDelivery ? 'delivery' : 'pickup',
     };
@@ -3763,10 +3763,8 @@ export class DeliveryAgentService {
         return name || null;
       })(),
       eta: distanceKm != null ? this.etaLabelFromKm(distanceKm) : null,
-      pickupCode:
-        String(row.pickupCode ?? row.pickup_code ?? '')
-          .trim()
-          .toUpperCase() || null,
+      // Invariant : jamais exposer le code retrait/livraison au livreur.
+      pickupCode: null,
       shouldShip: row.shouldShip === true,
       status:
         String(row.status ?? '')

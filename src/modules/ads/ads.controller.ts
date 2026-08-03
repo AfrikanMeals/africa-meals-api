@@ -4,6 +4,7 @@ import {
   PatchAdManagementDto,
 } from '@modules/ads/dto/ad-management.dto';
 import { ConfirmAdCreditCheckoutDto } from '@modules/ads/dto/confirm-ad-credit-checkout.dto';
+import { SyncAdCreditPaymentIntentDto } from '@modules/ads/dto/sync-ad-credit-payment-intent.dto';
 import { PayWithAdCashDto } from '@modules/ads/dto/pay-with-ad-cash.dto';
 import {
   CreateAdCampaignDto,
@@ -203,32 +204,59 @@ export class AdsController {
   @Post('my-credit/checkout-session')
   @UseGuards(JwtGuard)
   @ApiBearerAuth('bearer')
-  async createAdCreditCheckoutSession(@Req() req: Request) {
-    return this.adsService.createAdCreditCheckoutSession(req.user as UserModel);
+  async createAdCreditCheckoutSession(
+    @Req() req: Request,
+    @Query('client') clientQuery?: string,
+    @Body('client') clientBody?: string,
+  ) {
+    // client=mobile (query ou body) → pont deep-link ; admin inchangé.
+    return this.adsService.createAdCreditCheckoutSession(
+      req.user as UserModel,
+      { client: clientBody ?? clientQuery },
+    );
   }
 
   /** Compat legacy: certains clients appellent encore GET /checkout-session. */
   @Get('my-credit/checkout-session')
   @UseGuards(JwtGuard)
   @ApiBearerAuth('bearer')
-  async createAdCreditCheckoutSessionGet(@Req() req: Request) {
-    return this.adsService.createAdCreditCheckoutSession(req.user as UserModel);
+  async createAdCreditCheckoutSessionGet(
+    @Req() req: Request,
+    @Query('client') client?: string,
+  ) {
+    return this.adsService.createAdCreditCheckoutSession(
+      req.user as UserModel,
+      { client },
+    );
   }
 
   /** Compat legacy: alias historique /checkout. */
   @Post('my-credit/checkout')
   @UseGuards(JwtGuard)
   @ApiBearerAuth('bearer')
-  async createAdCreditCheckoutAlias(@Req() req: Request) {
-    return this.adsService.createAdCreditCheckoutSession(req.user as UserModel);
+  async createAdCreditCheckoutAlias(
+    @Req() req: Request,
+    @Query('client') clientQuery?: string,
+    @Body('client') clientBody?: string,
+  ) {
+    return this.adsService.createAdCreditCheckoutSession(
+      req.user as UserModel,
+      { client: clientBody ?? clientQuery },
+    );
   }
 
   /** Compat legacy: alias historique /checkout en GET. */
   @Get('my-credit/checkout')
   @UseGuards(JwtGuard)
   @ApiBearerAuth('bearer')
-  async createAdCreditCheckoutAliasGet(@Req() req: Request) {
-    return this.adsService.createAdCreditCheckoutSession(req.user as UserModel);
+  async createAdCreditCheckoutAliasGet(
+    @Req() req: Request,
+    @Query('client') client?: string,
+  ) {
+    return this.adsService.createAdCreditCheckoutSession(
+      req.user as UserModel,
+      { client },
+    );
   }
 
   @Get('my-credit/checkout-health')
@@ -249,6 +277,29 @@ export class AdsController {
     return this.adsService.confirmAdCreditCheckout(
       req.user as UserModel,
       body.sessionId,
+    );
+  }
+
+  /** Payment Sheet mobile — crée un PaymentIntent Ad Credit (pas de Checkout web). */
+  @Post('my-credit/payment-intent')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  async createAdCreditPaymentIntent(@Req() req: Request) {
+    return this.adsService.createAdCreditPaymentIntent(req.user as UserModel);
+  }
+
+  /** Sync après Payment Sheet Ad Credit réussie. */
+  @Post('my-credit/payment-intent/sync')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async syncAdCreditPaymentIntent(
+    @Req() req: Request,
+    @Body() body: SyncAdCreditPaymentIntentDto,
+  ) {
+    return this.adsService.syncAdCreditPaymentIntent(
+      req.user as UserModel,
+      body.paymentIntentId,
     );
   }
 

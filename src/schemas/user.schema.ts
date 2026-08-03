@@ -303,6 +303,17 @@ export class UserModel extends BaseSchema {
   stripeConnectRequirementsPastDue?: string[];
 
   /**
+   * Dernier numéro d’affichage payout Connect alloué (« Payout #N »).
+   * `$inc` à chaque request-payout ; `$max` après backfill legacy.
+   */
+  @Prop({
+    required: false,
+    name: 'stripe_connect_next_payout_number',
+    default: 0,
+  })
+  stripeConnectNextPayoutNumber?: number;
+
+  /**
    * Affiliation : Partner qui a référé ce compte (client / vendeur / livreur).
    * Renseigné via code referral ou attach.
    */

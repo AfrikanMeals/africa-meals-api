@@ -80,10 +80,7 @@ export function buildVendorOrderPaidInboxMessage(
   for (const item of args.items) {
     lines.push(`• ${formatLineItem(item)}`);
   }
-  const code = args.pickupCode?.trim();
-  if (code) {
-    lines.push(`Code retrait : ${code.toUpperCase()}`);
-  }
+  // Invariant : jamais le code retrait dans les notifs vendeur (client/admin only).
   return lines.join('\n').slice(0, 4000);
 }
 
@@ -103,10 +100,7 @@ export function buildVendorPreOrderDDayInboxMessage(
   for (const item of args.items) {
     lines.push(`• ${formatLineItem(item)}`);
   }
-  const code = args.pickupCode?.trim();
-  if (code) {
-    lines.push(`Code retrait : ${code.toUpperCase()}`);
-  }
+  // Invariant : jamais le code retrait dans les notifs vendeur.
   return lines.join('\n').slice(0, 4000);
 }
 
@@ -150,10 +144,7 @@ export function buildVendorOrderPayOnPickupInboxMessage(
   for (const item of args.items) {
     lines.push(`• ${formatLineItem(item)}`);
   }
-  const code = args.pickupCode?.trim();
-  if (code) {
-    lines.push(`Code retrait : ${code.toUpperCase()}`);
-  }
+  // Invariant : jamais le code retrait dans les notifs vendeur.
   return lines.join('\n').slice(0, 4000);
 }
 
@@ -223,10 +214,7 @@ export function buildVendorOrderStatusInboxMessage(
   if (note) {
     lines.push(note);
   }
-  const code = args.pickupCode?.trim();
-  if (code) {
-    lines.push(`Code retrait : ${code.toUpperCase()}`);
-  }
+  // Invariant : jamais le code retrait dans les notifs vendeur.
   return lines.join('\n').slice(0, 4000);
 }
 
@@ -349,12 +337,8 @@ export function buildVendorOrderPaidPushBody(
   const firstLine = args.items[0] ? formatLineItem(args.items[0]) : '';
   const more = args.items.length > 1 ? ` (+${args.items.length - 1})` : '';
   const detail = firstLine ? ` — ${firstLine}${more}` : '';
-  const code = args.pickupCode?.trim();
-  const pickup = code ? ` · Code ${code.toUpperCase()}` : '';
-  return `${store} : commande #${ref} payée (${total})${detail}${pickup}`.slice(
-    0,
-    240,
-  );
+  // Invariant : push vendeur sans code retrait.
+  return `${store} : commande #${ref} payée (${total})${detail}`.slice(0, 240);
 }
 
 /** Corps court push vendeur — pré-commande du jour. */
@@ -399,9 +383,8 @@ export function buildVendorOrderPayOnPickupPushBody(
   const firstLine = args.items[0] ? formatLineItem(args.items[0]) : '';
   const more = args.items.length > 1 ? ` (+${args.items.length - 1})` : '';
   const detail = firstLine ? ` — ${firstLine}${more}` : '';
-  const code = args.pickupCode?.trim();
-  const pickup = code ? ` · Code ${code.toUpperCase()}` : '';
-  return `${store} : commande #${ref} à payer au retrait (${total})${detail}${pickup}`.slice(
+  // Invariant : push vendeur sans code retrait.
+  return `${store} : commande #${ref} à payer au retrait (${total})${detail}`.slice(
     0,
     240,
   );

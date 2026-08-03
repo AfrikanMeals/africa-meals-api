@@ -114,6 +114,11 @@ export class WsOrderNotifyHandler {
       const id = uid.trim();
       if (id) targets.push(id);
     }
-    this.wsOrderNotify.notifyOrderPartiesBatch(tracking, targets);
+    // Seul le client reçoit pickupCode ; vendeur / livreur / équipe boutique non.
+    this.wsOrderNotify.notifyOrderPartiesBatch(
+      tracking,
+      targets,
+      customerId ? [customerId] : [],
+    );
   }
 }

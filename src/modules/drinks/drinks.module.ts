@@ -13,6 +13,8 @@ import {
 import { ProductModel, ProductSchema } from '@schemas/product.schema';
 import { StoreModel, StoreSchema } from '@schemas/store.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
+import { DrinkDiscountScheduleCron } from './drink-discount-schedule.cron';
+import { DrinkDiscountScheduleService } from './drink-discount-schedule.service';
 import { DrinksService } from './drinks.service';
 
 @Module({
@@ -30,7 +32,11 @@ import { DrinksService } from './drinks.service';
       { name: UserModel.name, schema: UserSchema },
     ]),
   ],
-  providers: [DrinksService],
-  exports: [DrinksService],
+  providers: [
+    DrinksService,
+    DrinkDiscountScheduleService,
+    DrinkDiscountScheduleCron,
+  ],
+  exports: [DrinksService, DrinkDiscountScheduleService],
 })
 export class DrinksModule {}

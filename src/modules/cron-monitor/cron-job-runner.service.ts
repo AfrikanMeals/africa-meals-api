@@ -6,6 +6,7 @@ import { AuthService } from '@modules/auth/auth.service';
 import { CronMonitorService } from '@modules/cron-monitor/cron-monitor.service';
 import { getCronJobDefinition } from '@modules/cron-monitor/cron-jobs.registry';
 import { DailyMenuReminderService } from '@modules/store/daily-menu-reminder.service';
+import { DrinkDiscountScheduleService } from '@modules/drinks/drink-discount-schedule.service';
 import { ProductDiscountScheduleService } from '@modules/products/product-discount-schedule.service';
 import { RecommendationTrainingService } from '@modules/recommendations/recommendation-training.service';
 import { RefundProcessingService } from '@modules/refunds/refund-processing.service';
@@ -89,6 +90,11 @@ export class CronJobRunnerService {
       case 'product_discount_schedule':
         return async () => {
           const result = await this.resolve(ProductDiscountScheduleService).runPass();
+          return `updated=${result.updated}/${result.scanned}`;
+        };
+      case 'drink_discount_schedule':
+        return async () => {
+          const result = await this.resolve(DrinkDiscountScheduleService).runPass();
           return `updated=${result.updated}/${result.scanned}`;
         };
       case 'ads_targeting_retention':

@@ -91,8 +91,13 @@ import {
   ConfirmPickupDto,
   CreateRefundRequestDto,
   FilterOrdersDto,
+  PreviewPickupCodeDto,
   RejectOrderDto,
 } from './dto/orders.dto';
+import {
+  isVendorPickupConfirmableStatus,
+  vendorPickupOrderRef,
+} from './vendor-pickup-preview.util';
 import {
   assertOrderCancelReasonPayload,
   resolveOrderCancelReasonDisplay,
@@ -1925,18 +1930,16 @@ export class OrdersService {
     const totalPrice = Number(order.totalPrice) || 0;
     const currency =
       typeof order.currency === 'string' ? order.currency : undefined;
-    const pickupCode =
-      typeof order.pickupCode === 'string' ? order.pickupCode : undefined;
     const itemCount = items.reduce(
       (s, i) => s + Math.max(1, Math.round(Number(i.quantity) || 1)),
       0,
     );
+    // Pas de pickupCode : notifs vendeur ne doivent jamais contenir le code.
     const msgArgs = {
       orderId: orderIdStr,
       items,
       totalPrice,
       currency,
-      pickupCode,
       storeName,
     };
     const statusLabel = vendorOrderStatusLabelFr(
@@ -2796,13 +2799,12 @@ export class OrdersService {
       storeId,
       typeof order.currency === 'string' ? order.currency : undefined,
     );
+    // Pas de pickupCode dans les notifs vendeur (client / admin only).
     const paidMsgArgs = {
       orderId: oid,
       items: (order.items ?? []) as OrdeLineItem[],
       totalPrice: Number(order.totalPrice) || 0,
       currency: paidCurrency,
-      pickupCode:
-        typeof order.pickupCode === 'string' ? order.pickupCode : undefined,
       storeName,
     };
 
@@ -2891,13 +2893,12 @@ export class OrdersService {
       storeId,
       typeof order.currency === 'string' ? order.currency : undefined,
     );
+    // Pas de pickupCode dans les notifs vendeur (client / admin only).
     const msgArgs = {
       orderId: oid,
       items: (order.items ?? []) as OrdeLineItem[],
       totalPrice: Number(order.totalPrice) || 0,
       currency: pickupCurrency,
-      pickupCode:
-        typeof order.pickupCode === 'string' ? order.pickupCode : undefined,
       storeName,
     };
 
@@ -4634,6 +4635,172 @@ export class OrdersService {
   /**
    * Vendeur / admin : valide le code retrait → statut `completed` + horodatage.
    */
+  /**
+   * Aperçu commande retrait pour le scanner FAB vendeur.
+   * Echo du code saisi uniquement — jamais le secret DB dans la réponse.
+   */
+  async previewPickupByCode(
+    user: UserModel,
+    dto: PreviewPickupCodeDto,
+  ): Promise<{
+    id: string;
+    orderRef: string;
+    status: string;
+    shouldShip: false;
+    totalPrice: number;
+    currency: string;
+    payOnPickup: boolean;
+    customerName: string | null;
+    storeName: string | null;
+    pickupCode: string;
+  }> {
+    if (user.type !== UserTypeEnum.VENDOR) {
+      throw new ForbiddenException('vendor_only');
+    }
+    const provided = normalizePickupCodeInput(dto.code);
+    if (!provided) {
+      throw new BadRequestException('pickup_code_invalid');
+    }
+
+    // 1. Résoudre la commande (id QR ou scan parmi boutiques accessibles).
+    const order = await this.findVendorPickupOrderByCode(
+      user,
+      provided,
+      dto.orderId,
+    );
+    if (!order) {
+      throw new NotFoundException('pickup_code_not_found');
+    }
+
+    // 2. Permission boutique avant tout détail métier.
+    await this.assertUserCanManageOrderStore(user, order);
+
+    if (!this.isPickupOrder(order)) {
+      throw new BadRequestException('pickup_not_applicable_delivery_order');
+    }
+    if (!isVendorPickupConfirmableStatus(String(order.status ?? ''))) {
+      throw new BadRequestException('pickup_confirm_invalid_status');
+    }
+
+    const oid = String(order._id);
+    const storePop = order.store as
+      | { name?: string; currency?: string }
+      | string
+      | null
+      | undefined;
+    const storeCurrency =
+      storePop && typeof storePop === 'object' && typeof storePop.currency === 'string'
+        ? storePop.currency
+        : undefined;
+    const currency = resolveOrderDisplayCurrency({
+      orderCurrency:
+        typeof order.currency === 'string' ? order.currency : undefined,
+      storeCurrency,
+    });
+
+    const userPop = order.user as
+      | { fullName?: string }
+      | string
+      | null
+      | undefined;
+    const customerName =
+      userPop && typeof userPop === 'object' && typeof userPop.fullName === 'string'
+        ? userPop.fullName.trim() || null
+        : null;
+
+    return {
+      id: oid,
+      orderRef: vendorPickupOrderRef(oid),
+      status: String(order.status ?? ''),
+      shouldShip: false,
+      totalPrice: Math.max(0, Number(order.totalPrice) || 0),
+      currency,
+      payOnPickup:
+        readOrderPayOnPickup(order as unknown as Record<string, unknown>) ===
+        true,
+      customerName,
+      storeName: this.storeNameFromPopulated(order.store) ?? null,
+      // Echo saisie/scan uniquement (invariant code masqué vendeur).
+      pickupCode: provided,
+    };
+  }
+
+  /**
+   * Recherche une commande retrait éligible dont le code matche.
+   * Ne révèle pas si l’id existe mais le code est faux → null.
+   */
+  private async findVendorPickupOrderByCode(
+    user: UserModel,
+    providedCode: string,
+    orderId?: string,
+  ): Promise<OrderModel | null> {
+    const populateUser = {
+      path: 'user' as const,
+      select: 'fullName',
+    };
+    const storeSelect = 'name currency';
+
+    const oid = orderId?.trim();
+    if (oid && Types.ObjectId.isValid(oid)) {
+      const row = await this._orderModel
+        .findById(new Types.ObjectId(oid))
+        .populate('store', storeSelect)
+        .populate(populateUser)
+        .exec();
+      if (!row) return null;
+      if (!this.isPickupOrder(row)) return null;
+      if (!isVendorPickupConfirmableStatus(String(row.status ?? ''))) {
+        return null;
+      }
+      await this.ensurePickupCodeForOrderDoc(row);
+      const expected = normalizePickupCodeInput(String(row.pickupCode ?? ''));
+      return expected && expected === providedCode ? row : null;
+    }
+
+    const storeIds = await this._storeAccess.accessibleStoreIds(user);
+    if (storeIds.length === 0) return null;
+
+    // Fenêtre récente : éviter de charger tout l’historique boutique.
+    const rows = await this._orderModel
+      .find({
+        store: { $in: storeIds },
+        status: {
+          $in: [
+            OrderStatusEnum.APPROVED,
+            OrderStatusEnum.PAIED,
+            OrderStatusEnum.AWAITING_CASH,
+          ],
+        },
+        $or: [
+          { shouldShip: false },
+          {
+            shouldShip: { $exists: false },
+            $or: [
+              { shippingPrice: { $exists: false } },
+              { shippingPrice: null },
+              { shippingPrice: 0 },
+            ],
+          },
+        ],
+      })
+      .sort({ updatedAt: -1 })
+      .limit(50)
+      .populate('store', storeSelect)
+      .populate(populateUser)
+      .exec();
+
+    for (const row of rows) {
+      if (!this.isPickupOrder(row)) continue;
+      if (!isVendorPickupConfirmableStatus(String(row.status ?? ''))) continue;
+      await this.ensurePickupCodeForOrderDoc(row);
+      const expected = normalizePickupCodeInput(String(row.pickupCode ?? ''));
+      if (expected && expected === providedCode) {
+        return row;
+      }
+    }
+    return null;
+  }
+
   async confirmPickupByCode(
     orderId: string,
     user: UserModel,

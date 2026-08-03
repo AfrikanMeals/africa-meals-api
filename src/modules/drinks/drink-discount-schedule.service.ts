@@ -1,25 +1,27 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ProductDiscountScheduleDto } from '@modules/products/dto/products.dto';
-import { ProductModel } from '@schemas/product.schema';
-import { Model } from 'mongoose';
 import {
   NormalizedDiscountSchedule,
   normalizeDiscountSchedules,
   pickActiveDiscountSchedule,
   resolveEffectiveDiscountPricing,
   schedulesForDiscountResponse,
-} from './discount-schedule.util';
+} from '@modules/products/discount-schedule.util';
+import { DrinkModel } from '@schemas/drink.schema';
+import { Model } from 'mongoose';
 
-export type { NormalizedDiscountSchedule };
-
+/**
+ * Fenêtres promo boissons : mutent `priceCad` / `discountPrice`
+ * (équivalent Food `price` / `discountPrice`).
+ */
 @Injectable()
-export class ProductDiscountScheduleService {
-  private readonly logger = new Logger(ProductDiscountScheduleService.name);
+export class DrinkDiscountScheduleService {
+  private readonly logger = new Logger(DrinkDiscountScheduleService.name);
 
   constructor(
-    @InjectModel(ProductModel.name)
-    private readonly productModel: Model<ProductModel>,
+    @InjectModel(DrinkModel.name)
+    private readonly drinkModel: Model<DrinkModel>,
   ) {}
 
   normalizeSchedules(raw: unknown): NormalizedDiscountSchedule[] {
@@ -41,13 +43,7 @@ export class ProductDiscountScheduleService {
     );
   }
 
-  schedulesForResponse(raw: unknown): Array<{
-    label: string;
-    startAt: string;
-    endAt: string;
-    price: number;
-    discountPrice: number;
-  }> {
+  schedulesForResponse(raw: unknown) {
     return schedulesForDiscountResponse(raw);
   }
 
@@ -58,33 +54,15 @@ export class ProductDiscountScheduleService {
     return pickActiveDiscountSchedule(schedules, now);
   }
 
-  /** Applique prix / promo actifs sur le document (sans sauvegarder). */
-  applyToDocument(doc: ProductModel, now: Date = new Date()): boolean {
-    const listPrice = this.resolveListPrice(doc);
-    const listDiscountPrice = this.resolveListDiscountPrice(doc);
-    const next = resolveEffectiveDiscountPricing({
-      listPrice,
-      listDiscountPrice,
-      schedulesRaw: doc.discountSchedules,
-      now,
-    });
-
-    const changed =
-      doc.price !== next.price || (doc.discountPrice ?? 0) !== next.discountPrice;
-    doc.price = next.price;
-    doc.discountPrice = next.discountPrice;
-    return changed;
-  }
-
-  resolveListPrice(doc: ProductModel): number {
+  resolveListPrice(doc: DrinkModel): number {
     const raw = doc.listPrice;
     if (raw != null && Number.isFinite(Number(raw)) && Number(raw) >= 0) {
       return Number(raw);
     }
-    return Number(doc.price ?? 0);
+    return Number(doc.priceCad ?? 0);
   }
 
-  resolveListDiscountPrice(doc: ProductModel): number {
+  resolveListDiscountPrice(doc: DrinkModel): number {
     const raw = doc.listDiscountPrice;
     if (raw != null && Number.isFinite(Number(raw)) && Number(raw) >= 0) {
       return Number(raw);
@@ -92,13 +70,29 @@ export class ProductDiscountScheduleService {
     return Number(doc.discountPrice ?? 0);
   }
 
+  /** Applique prix / promo actifs sur `priceCad` (sans sauvegarder). */
+  applyToDocument(doc: DrinkModel, now: Date = new Date()): boolean {
+    const next = resolveEffectiveDiscountPricing({
+      listPrice: this.resolveListPrice(doc),
+      listDiscountPrice: this.resolveListDiscountPrice(doc),
+      schedulesRaw: doc.discountSchedules,
+      now,
+    });
+    const changed =
+      Number(doc.priceCad) !== next.price ||
+      Number(doc.discountPrice ?? 0) !== next.discountPrice;
+    doc.priceCad = next.price;
+    doc.discountPrice = next.discountPrice;
+    return changed;
+  }
+
   async runPass(): Promise<{ scanned: number; updated: number }> {
-    const docs = await this.productModel
+    const docs = await this.drinkModel
       .find({
         discountSchedules: { $exists: true, $not: { $size: 0 } },
       })
       .select(
-        'price discountPrice listPrice listDiscountPrice discountSchedules',
+        'priceCad discountPrice listPrice listDiscountPrice discountSchedules',
       )
       .exec();
 
@@ -111,7 +105,7 @@ export class ProductDiscountScheduleService {
         }
       } catch (e) {
         this.logger.warn(
-          `Discount schedule apply failed for product ${doc.id}: ${
+          `Discount schedule apply failed for drink ${doc.id}: ${
             e instanceof Error ? e.message : String(e)
           }`,
         );

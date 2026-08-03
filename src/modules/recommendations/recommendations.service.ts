@@ -48,7 +48,9 @@ import {
   BuyAgainCandidate,
   BuyAgainInterestFlags,
   rankBuyAgainCandidates,
+  shouldUseMongoBuyAgainFallback,
 } from './buy-again-score.util';
+import { mapRecoFeedDrink } from './map-reco-feed-drink.util';
 import { CartItemTypeEnum } from '@schemas/cart_item.schema';
 
 const PAID_LIKE_STATUSES: OrderStatusEnum[] = [
@@ -607,7 +609,8 @@ export class RecommendationsService {
   }
 
   /**
-   * Buy Again : Neo4j `:ORDERED` (fail-open) → fallback agrégat Mongo commandes.
+   * Buy Again : Neo4j `:ORDERED` → fallback Mongo si null **ou** liste vide
+   * (graphe up sans sync historique ; fail-open erreur déjà null côté facade).
    * Score précis via `rankBuyAgainCandidates` + hydratation Mongo région.
    */
   private async _resolveBuyAgainProducts(opts: {
@@ -621,7 +624,7 @@ export class RecommendationsService {
     const take = Math.min(12, Math.max(1, opts.limit));
     const uid = opts.userOid.toHexString();
 
-    // 1. Candidats graphe (null = Mongo)
+    // 1. Candidats graphe ; Mongo si graphe OFF / erreur / aucune arête ORDERED.
     let candidates: BuyAgainCandidate[] | null = null;
     if (this._recoFacade) {
       candidates = await this._recoFacade.buyAgainCandidatesOrNull({
@@ -630,7 +633,7 @@ export class RecommendationsService {
         limit: 48,
       });
     }
-    if (candidates == null) {
+    if (shouldUseMongoBuyAgainFallback(candidates)) {
       candidates = await this._buyAgainCandidatesFromOrders(
         opts.userOid,
         48,
@@ -1121,14 +1124,12 @@ export class RecommendationsService {
       }
     }
 
-    return drinks.map((d) => ({
-      id: d.id,
-      name: d.name,
-      priceCad: d.priceCad,
-      imageUrl: d.imageUrl ?? '',
-      storeId: d.storeId,
-      storeName: storeNameById.get(d.storeId) ?? '',
-      quantite: d.quantite,
-    }));
+    // discountPrice requis pour Home Boissons (barré) — priceCad reste le catalogue.
+    return drinks.map((d) =>
+      mapRecoFeedDrink({
+        drink: d,
+        storeName: storeNameById.get(d.storeId) ?? '',
+      }),
+    );
   }
 }

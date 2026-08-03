@@ -103,6 +103,15 @@ export const CRON_JOBS_REGISTRY: CronJobDefinition[] = [
     disableEnvKey: 'DISABLE_PRODUCT_DISCOUNT_SCHEDULE_CRON',
   },
   {
+    key: 'drink_discount_schedule',
+    label: 'Promotions boissons planifiées',
+    description:
+      'Applique ou retire automatiquement priceCad et promos selon les plages définies sur les boissons.',
+    defaultSchedule: '0/5 * * * *',
+    scheduleEnvKey: 'DRINK_DISCOUNT_SCHEDULE_CRON',
+    disableEnvKey: 'DISABLE_DRINK_DISCOUNT_SCHEDULE_CRON',
+  },
+  {
     key: 'ads_targeting_retention',
     label: 'Purge ciblage Ads',
     description: 'Purge des événements et logs de ciblage publicitaire obsolètes.',

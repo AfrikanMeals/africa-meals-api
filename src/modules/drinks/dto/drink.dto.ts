@@ -1,8 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ProductDiscountScheduleDto } from '@modules/products/dto/products.dto';
 import { Trim } from 'class-sanitizer';
 import { Transform, Type } from 'class-transformer';
 import { PartialType } from '@nestjs/mapped-types';
 import {
+  IsArray,
   IsBoolean,
   IsIn,
   IsMongoId,
@@ -13,6 +15,7 @@ import {
   MaxLength,
   Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 
 export class CreateDrinkDto {
@@ -68,6 +71,46 @@ export class CreateDrinkDto {
   @IsOptional()
   @IsMongoId()
   categoryId?: string;
+
+  @ApiPropertyOptional({
+    type: Number,
+    description: 'Promo effective (0 = aucune). Miroir Food discountPrice.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  discountPrice?: number;
+
+  @ApiPropertyOptional({
+    type: Number,
+    description: 'Prix catalogue baseline hors fenêtre planifiée.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  listPrice?: number;
+
+  @ApiPropertyOptional({
+    type: Number,
+    description: 'Promo catalogue baseline hors fenêtre planifiée.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  listDiscountPrice?: number;
+
+  @ApiPropertyOptional({
+    type: [ProductDiscountScheduleDto],
+    description: 'Fenêtres promo planifiées (miroir Food).',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductDiscountScheduleDto)
+  discountSchedules?: ProductDiscountScheduleDto[];
 }
 
 /** Création boisson : JSON + image base64 optionnelle (évite multipart tronqué). */
@@ -144,6 +187,34 @@ export class PatchDrinkDto {
   @IsOptional()
   @IsMongoId()
   categoryId?: string;
+
+  @ApiPropertyOptional({ type: Number })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  discountPrice?: number;
+
+  @ApiPropertyOptional({ type: Number })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  listPrice?: number;
+
+  @ApiPropertyOptional({ type: Number })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  listDiscountPrice?: number;
+
+  @ApiPropertyOptional({ type: [ProductDiscountScheduleDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductDiscountScheduleDto)
+  discountSchedules?: ProductDiscountScheduleDto[];
 }
 
 /** Mise à jour boisson : JSON partiel + image base64 optionnelle. */

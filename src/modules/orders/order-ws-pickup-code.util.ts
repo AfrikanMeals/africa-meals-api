@@ -13,3 +13,23 @@ export function readOrderPickupCodeForWs(
   ).trim();
   return raw.length >= 4 ? raw.toUpperCase() : undefined;
 }
+
+/**
+ * Retire le code retrait/livraison d’un payload WS.
+ * Invariant : vendeur / livreur ne doivent jamais recevoir `pickupCode`
+ * (seul client + admin support).
+ */
+export function stripPickupCodeFromWsPayload<T extends Record<string, unknown>>(
+  payload: T,
+): T {
+  if (
+    !Object.prototype.hasOwnProperty.call(payload, 'pickupCode') &&
+    !Object.prototype.hasOwnProperty.call(payload, 'pickup_code')
+  ) {
+    return payload;
+  }
+  const next = { ...payload };
+  delete next.pickupCode;
+  delete next.pickup_code;
+  return next;
+}

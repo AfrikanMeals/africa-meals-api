@@ -67,6 +67,11 @@ import {
   isStripeConnectRecipientType,
 } from '@modules/billing/stripe/stripe-connect-recipient.util';
 import { canSettleDeliveryConnectPayout } from '@modules/billing/stripe/stripe-connect-dual-role.util';
+import {
+  parsePlatformPayoutNumber,
+  planMissingPayoutNumberAssignments,
+  PLATFORM_PAYOUT_NUMBER_META_KEY,
+} from '@modules/billing/stripe/stripe-connect-payout-number.util';
 import Stripe = require('stripe');
 
 type StripeClient = InstanceType<typeof Stripe>;
@@ -143,6 +148,8 @@ export type StripeConnectStatus = {
 
 export type StripeConnectPayoutRow = {
   id: string;
+  /** Numéro d’affichage plateforme (1, 2, 3…) — libellé UI « Payout #N ». */
+  number: number | null;
   amount: number;
   currency: string;
   status: string;
@@ -1839,6 +1846,158 @@ export class StripeConnectService {
     }
   }
 
+  /**
+   * Mappe un payout Stripe → DTO API (inclut `number` d’affichage).
+   * `numberById` permet d’injecter un numéro après backfill metadata.
+   * Fix: typage structurel — `Stripe.Payout` n’est pas exposé via `import Stripe = require`.
+   */
+  private mapStripePayoutRow(
+    p: {
+      id: string;
+      amount?: number | null;
+      currency?: string | null;
+      status: string;
+      arrival_date?: number | null;
+      created?: number | null;
+      method?: string | null;
+      description?: string | null;
+      metadata?: Record<string, string> | null;
+    },
+    numberById?: Map<string, number>,
+  ): StripeConnectPayoutRow {
+    const fromMeta = parsePlatformPayoutNumber(
+      (p.metadata ?? undefined) as Record<string, string> | undefined,
+    );
+    const number = numberById?.get(p.id) ?? fromMeta;
+    return {
+      id: p.id,
+      number,
+      amount: (p.amount ?? 0) / 100,
+      currency: String(p.currency ?? 'cad').toUpperCase(),
+      status: p.status,
+      arrivalDate: p.arrival_date
+        ? new Date(p.arrival_date * 1000).toISOString()
+        : null,
+      createdAt: new Date((p.created ?? 0) * 1000).toISOString(),
+      method: p.method ?? 'standard',
+      description: p.description ?? null,
+    };
+  }
+
+  /**
+   * Alloue le prochain « Payout #N » (incrément atomique).
+   * Le champ user stocke le **dernier** numéro alloué (0 = aucun).
+   */
+  private async allocateNextPayoutNumber(
+    uid: Types.ObjectId,
+  ): Promise<number> {
+    const updated = await this.userModel
+      .findByIdAndUpdate(
+        uid,
+        { $inc: { stripeConnectNextPayoutNumber: 1 } },
+        { new: true },
+      )
+      .select('stripeConnectNextPayoutNumber')
+      .lean()
+      .exec();
+    return Math.max(1, Number(updated?.stripeConnectNextPayoutNumber ?? 1));
+  }
+
+  /**
+   * Backfill metadata `platformPayoutNumber` pour les payouts legacy sans numéro.
+   * Plus ancien = plus petit numéro libre ; ne renumérote jamais un existant.
+   */
+  private async ensurePayoutNumbersForAccount(
+    accountId: string,
+    uid: Types.ObjectId,
+  ): Promise<Map<string, number>> {
+    const numberById = new Map<string, number>();
+    const seeds: Array<{
+      id: string;
+      created: number;
+      number: number | null;
+    }> = [];
+    // 1. Paginer tout l’historique Connect (pages de 100).
+    let startingAfter: string | undefined;
+    for (let page = 0; page < 50; page += 1) {
+      const listParams: { limit: number; starting_after?: string } = {
+        limit: 100,
+      };
+      if (startingAfter) listParams.starting_after = startingAfter;
+      // Fix: éviter Stripe.ApiList / Stripe.Payout (namespace require).
+      let list: {
+        data: Array<{
+          id: string;
+          created?: number | null;
+          metadata?: Record<string, string> | null;
+        }>;
+        has_more: boolean;
+      };
+      try {
+        list = await this.stripe().payouts.list(listParams, {
+          stripeAccount: accountId,
+        });
+      } catch (e) {
+        this.logger.warn(
+          `ensurePayoutNumbers list failed for ${accountId}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+        break;
+      }
+      for (const p of list.data) {
+        const n = parsePlatformPayoutNumber(
+          (p.metadata ?? undefined) as Record<string, string> | undefined,
+        );
+        seeds.push({
+          id: p.id,
+          created: p.created ?? 0,
+          number: n,
+        });
+        if (n != null) numberById.set(p.id, n);
+      }
+      if (!list.has_more || list.data.length === 0) break;
+      startingAfter = list.data[list.data.length - 1]?.id;
+      if (!startingAfter) break;
+    }
+
+    const plan = planMissingPayoutNumberAssignments(seeds);
+    // 2. Exposer le numéro dans la réponse même si l’update metadata Stripe échoue
+    // (sinon l’UI retombe sur po_… alors que le plan #N est déjà stable).
+    for (const a of plan.assignments) {
+      numberById.set(a.id, a.number);
+      try {
+        await this.stripe().payouts.update(
+          a.id,
+          {
+            metadata: {
+              [PLATFORM_PAYOUT_NUMBER_META_KEY]: String(a.number),
+            },
+          },
+          { stripeAccount: accountId },
+        );
+      } catch (e) {
+        this.logger.warn(
+          `ensurePayoutNumbers update ${a.id} failed: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+    }
+
+    // 3. Aligner le dernier numéro alloué (ne jamais baisser via $max).
+    const maxUsed = Math.max(0, plan.nextNumber - 1);
+    if (maxUsed > 0) {
+      await this.userModel
+        .updateOne(
+          { _id: uid },
+          { $max: { stripeConnectNextPayoutNumber: maxUsed } },
+        )
+        .exec();
+    }
+    return numberById;
+  }
+
   async listPayouts(
     user: UserModel,
     limit = 25,
@@ -1874,18 +2033,25 @@ export class StripeConnectService {
       }
       return { payouts: [], hasMore: false };
     }
-    const payouts: StripeConnectPayoutRow[] = list.data.map((p) => ({
-      id: p.id,
-      amount: (p.amount ?? 0) / 100,
-      currency: String(p.currency ?? 'cad').toUpperCase(),
-      status: p.status,
-      arrivalDate: p.arrival_date
-        ? new Date(p.arrival_date * 1000).toISOString()
-        : null,
-      createdAt: new Date((p.created ?? 0) * 1000).toISOString(),
-      method: p.method ?? 'standard',
-      description: p.description ?? null,
-    }));
+
+    // Backfill lazy : seulement si un payout de la page n’a pas encore de numéro.
+    const pageNeedsBackfill = list.data.some(
+      (p) =>
+        parsePlatformPayoutNumber(
+          (p.metadata ?? undefined) as Record<string, string> | undefined,
+        ) == null,
+    );
+    let numberById: Map<string, number> | undefined;
+    if (pageNeedsBackfill) {
+      numberById = await this.ensurePayoutNumbersForAccount(
+        status.accountId,
+        uid,
+      );
+    }
+
+    const payouts: StripeConnectPayoutRow[] = list.data.map((p) =>
+      this.mapStripePayoutRow(p, numberById),
+    );
     return { payouts, hasMore: list.has_more };
   }
 
@@ -2211,6 +2377,10 @@ export class StripeConnectService {
         : (badge?.payoutDelayDays ?? 7);
     const useInstantPayout = forceInstant || effectiveDelayDays === 0;
 
+    // Numéro d’affichage stable : backfill legacy puis allouer #N.
+    await this.ensurePayoutNumbersForAccount(accountId, uid);
+    const payoutNumber = await this.allocateNextPayoutNumber(uid);
+
     const payoutBase = {
       amount: payoutCents,
       currency: payoutCurrency,
@@ -2232,6 +2402,7 @@ export class StripeConnectService {
         partnerBadgePayoutDelayDays: String(badge?.payoutDelayDays ?? 7),
         partnerPlanPayoutDelayDays: String(effectiveDelayDays),
         adminForceInstant: forceInstant ? 'true' : 'false',
+        [PLATFORM_PAYOUT_NUMBER_META_KEY]: String(payoutNumber),
       },
     };
 
@@ -2275,6 +2446,10 @@ export class StripeConnectService {
       );
       const row: StripeConnectPayoutRow = {
         id: payout.id,
+        number:
+          parsePlatformPayoutNumber(
+            (payout.metadata ?? undefined) as Record<string, string> | undefined,
+          ) ?? payoutNumber,
         amount: (payout.amount ?? payoutCents) / 100,
         currency: String(payout.currency ?? currency).toUpperCase(),
         status: payout.status ?? 'pending',

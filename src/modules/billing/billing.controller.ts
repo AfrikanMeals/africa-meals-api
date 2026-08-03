@@ -32,6 +32,10 @@ import { StripeConnectService } from './stripe/stripe-connect.service';
 import { SubscriptionsStripeCheckoutService } from '@modules/subscriptions/subscriptions-stripe-checkout.service';
 import { StripeGroupedCheckoutService } from './stripe/stripe-grouped-checkout.service';
 import { subscriptionCheckoutReturnHtml } from './stripe/subscription-checkout-return.html';
+import {
+  mobileStripeCheckoutReturnHtml,
+  parseMobileStripeReturnKind,
+} from './stripe/mobile-stripe-checkout-return.util';
 import { BillingStripePaymentIntentRateLimitGuard } from './guards/billing-stripe-payment-intent-rate-limit.guard';
 
 @ApiTags('billing')
@@ -431,6 +435,27 @@ export class BillingController {
       }
     }
     return subscriptionCheckoutReturnHtml(sid);
+  }
+
+  /**
+   * Pont HTTPS générique → deep link mobile (Ad Credit / SMS billing).
+   * Confirm métier idempotent côté app (`confirm-checkout`).
+   */
+  @Get('stripe/mobile-return')
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  @ApiOperation({
+    summary: 'Pont HTTPS → app après Checkout Ad Credit / SMS',
+  })
+  stripeMobileReturnPage(
+    @Query('kind') kindRaw?: string,
+    @Query('session_id') sessionId?: string,
+  ): string {
+    const kind = parseMobileStripeReturnKind(kindRaw) ?? 'ad_credit';
+    // Confirm reste dans l’app — ici uniquement le pont deep-link.
+    return mobileStripeCheckoutReturnHtml({
+      sessionId: sessionId?.trim() ?? '',
+      kind,
+    });
   }
 
   @Get('stripe/payment-cancel')

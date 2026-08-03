@@ -168,6 +168,28 @@ export class ConfirmPickupDto {
   collectedAmount?: number;
 }
 
+/** Aperçu commande retrait pour scanner vendeur (FAB onglet Commandes). */
+export class PreviewPickupCodeDto {
+  @ApiProperty({
+    description: 'Code retrait scanné ou saisi.',
+    example: 'A1B0C2',
+    minLength: 4,
+    maxLength: 12,
+  })
+  @IsString()
+  @MinLength(4)
+  @MaxLength(12)
+  code!: string;
+
+  @ApiPropertyOptional({
+    description: 'Id commande extrait du QR (`oid`). Accélère la recherche.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  orderId?: string;
+}
+
 export class PatchPreOrderCustomerNoteDto {
   @ApiProperty({ maxLength: 2000 })
   @IsString()

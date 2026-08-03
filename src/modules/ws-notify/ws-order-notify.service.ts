@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { stripPickupCodeFromWsPayload } from '@modules/orders/order-ws-pickup-code.util';
 import { WsNotifyDispatchQueueService } from './ws-notify-dispatch-queue.service';
 
 export type OrderWsTrackingPayload = {
@@ -102,19 +103,36 @@ export class WsOrderNotifyService {
     this.postInternalStaff('order/staff-broadcast', payload);
   }
 
-  /** GRPC-112 — un RPC batch pour toutes les parties + staff. */
+  /**
+   * GRPC-112 — un RPC batch pour toutes les parties + staff.
+   * `pickupCodeAudienceUserIds` : seuls ces userIds reçoivent `pickupCode`
+   * (client). Vendeur / livreur / staff boutique → payload sans code.
+   * Staff admin (`orders:admin`) garde le code pour le support.
+   */
   notifyOrderPartiesBatch(
     tracking: OrderWsTrackingPayload,
     userIds: string[],
+    pickupCodeAudienceUserIds: string[] = [],
   ): void {
     const orderId = tracking.orderId?.trim();
     if (!orderId) return;
     const uniqueIds = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))];
+    const codeAudience = new Set(
+      pickupCodeAudienceUserIds.map((id) => id.trim()).filter(Boolean),
+    );
+    const stripped = stripPickupCodeFromWsPayload(
+      tracking as unknown as Record<string, unknown>,
+    ) as unknown as OrderWsTrackingPayload;
     const items: Array<{ pathSuffix: string; payload: Record<string, unknown> }> =
-      uniqueIds.map((userId) => ({
-        pathSuffix: 'order/changed',
-        payload: { userId, ...tracking },
-      }));
+      uniqueIds.map((userId) => {
+        // Client seul : code retrait ; vendeur/livreur : jamais.
+        const payload = codeAudience.has(userId) ? tracking : stripped;
+        return {
+          pathSuffix: 'order/changed',
+          payload: { userId, ...payload },
+        };
+      });
+    // Admin support : conserve le code (salon orders:admin).
     items.push({
       pathSuffix: 'order/staff-broadcast',
       payload: tracking as unknown as Record<string, unknown>,

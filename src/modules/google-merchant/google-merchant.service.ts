@@ -482,6 +482,10 @@ export class GoogleMerchantService {
     const productType = this.buildProductType(store.name, categoryTitle);
     const currency = store.currency || 'CAD';
     const priceCad = Number(drink.priceCad ?? drink.price_cad ?? 0);
+    // Promo effective si présente (miroir plats).
+    const drinkDiscount = Number(
+      drink.discountPrice ?? drink.discount_price ?? 0,
+    );
     const quantite = Number(drink.quantite ?? 0);
     const drinkLink = resolveDrinkPublicUrl(
       publicWebUrl,
@@ -496,6 +500,11 @@ export class GoogleMerchantService {
         ? drink.image_url
         : '';
     const imageLink = this.isProductImageUrl(imageUrl) ? imageUrl : undefined;
+    const pricing = resolveGoogleMerchantPricePair(
+      priceCad,
+      drinkDiscount,
+      currency,
+    );
 
     return this.buildFeedItem({
       id: feedId,
@@ -508,7 +517,8 @@ export class GoogleMerchantService {
         quantite > 0
           ? GOOGLE_MERCHANT_AVAILABILITY_IN_STOCK
           : GOOGLE_MERCHANT_AVAILABILITY_OUT_OF_STOCK,
-      price: resolveGoogleMerchantPricePair(priceCad, 0, currency).price,
+      price: pricing.price,
+      salePrice: pricing.salePrice,
       condition: GOOGLE_MERCHANT_CONDITION_NEW,
       brand: store.name,
       identifierExists: GOOGLE_MERCHANT_IDENTIFIER_EXISTS_NO,
