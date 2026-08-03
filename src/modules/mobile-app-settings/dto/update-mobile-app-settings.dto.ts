@@ -1,12 +1,68 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEmail,
   IsOptional,
   IsString,
   IsUrl,
   MaxLength,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+
+/** Config version d’une plateforme (Android ou iOS). */
+export class AppPlatformVersionConfigDto {
+  @ApiPropertyOptional({ example: '2.4.1' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  versionNumber?: string;
+
+  @ApiPropertyOptional({
+    description: 'Build number entier (critère de gate)',
+    example: '184',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  buildId?: string;
+
+  @ApiPropertyOptional({ description: 'HTML What’s new (TinyMCE)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100_000)
+  whatsNewHtml?: string;
+
+  @ApiPropertyOptional({ description: 'Force update si outdated' })
+  @IsOptional()
+  @IsBoolean()
+  required?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Date limite YYYY-MM-DD (countdown soft)',
+    example: '2026-09-01',
+  })
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && String(v).trim().length > 0)
+  @IsString()
+  @MaxLength(32)
+  updateBefore?: string | null;
+}
+
+export class AppVersioningDto {
+  @ApiPropertyOptional({ type: AppPlatformVersionConfigDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AppPlatformVersionConfigDto)
+  android?: AppPlatformVersionConfigDto;
+
+  @ApiPropertyOptional({ type: AppPlatformVersionConfigDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AppPlatformVersionConfigDto)
+  ios?: AppPlatformVersionConfigDto;
+}
 
 export class UpdateMobileAppSettingsDto {
   @ApiPropertyOptional({
@@ -158,4 +214,10 @@ export class UpdateMobileAppSettingsDto {
   @IsString()
   @MaxLength(64)
   whatsappNumber?: string;
+
+  @ApiPropertyOptional({ type: AppVersioningDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AppVersioningDto)
+  appVersioning?: AppVersioningDto;
 }

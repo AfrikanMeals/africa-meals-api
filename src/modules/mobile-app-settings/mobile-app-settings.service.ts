@@ -6,6 +6,10 @@ import {
 } from '@schemas/mobile-app-settings.schema';
 import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import { Model } from 'mongoose';
+import {
+  emptyAppVersioning,
+  normalizeAppVersioning,
+} from './app-versioning.util';
 import { UpdateMobileAppSettingsDto } from './dto/update-mobile-app-settings.dto';
 
 const SETTINGS_KEY = 'default';
@@ -44,6 +48,8 @@ export class MobileAppSettingsService {
       contactPhone: this._normalizeText(doc.contactPhone),
       mainEmail: this._normalizeText(doc.mainEmail),
       whatsappNumber: this._normalizeText(doc.whatsappNumber),
+      // Bloc versioning normalisé (jamais undefined côté clients).
+      appVersioning: normalizeAppVersioning(doc.appVersioning),
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
   }
@@ -69,6 +75,7 @@ export class MobileAppSettingsService {
             contactPhone: '',
             mainEmail: '',
             whatsappNumber: '',
+            appVersioning: emptyAppVersioning(),
           },
         },
         { upsert: true, new: true, lean: true, setDefaultsOnInsert: true },
@@ -79,6 +86,18 @@ export class MobileAppSettingsService {
 
   async updateSettings(user: UserModel, dto: UpdateMobileAppSettingsDto) {
     assertAdmin(user);
+    // Merge versioning : si absent du DTO, conserver l’existant en base.
+    const existing = await this._settings
+      .findOne({ key: SETTINGS_KEY })
+      .lean()
+      .exec();
+    const nextVersioning =
+      dto.appVersioning !== undefined
+        ? normalizeAppVersioning(dto.appVersioning)
+        : normalizeAppVersioning(
+            (existing as { appVersioning?: unknown } | null)?.appVersioning,
+          );
+
     const updated = await this._settings
       .findOneAndUpdate(
         { key: SETTINGS_KEY },
@@ -98,6 +117,7 @@ export class MobileAppSettingsService {
             contactPhone: this._normalizeText(dto.contactPhone),
             mainEmail: this._normalizeText(dto.mainEmail),
             whatsappNumber: this._normalizeText(dto.whatsappNumber),
+            appVersioning: nextVersioning,
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },
