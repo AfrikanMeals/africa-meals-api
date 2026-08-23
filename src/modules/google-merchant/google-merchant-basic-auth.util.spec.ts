@@ -2,9 +2,11 @@ import {
   readGoogleMerchantBasicAuthCredentials,
   verifyGoogleMerchantBasicAuthHeader,
   checkGoogleMerchantBasicAuth,
+  assertGoogleMerchantBasicAuth,
 } from './google-merchant-basic-auth.util';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
+import type { NestHttpResponse } from '@common/http/http-response.util';
 
 describe('google-merchant-basic-auth.util', () => {
   const config = {
@@ -67,5 +69,51 @@ describe('google-merchant-basic-auth.util', () => {
       ok: true,
       user: 'merchant',
     });
+  });
+
+  it('sends 401 + WWW-Authenticate on FastifyReply without setHeader', () => {
+    const headers: Record<string, string> = {};
+    const reply = {
+      sent: false,
+      raw: { headersSent: false },
+      statusCode: 200,
+      payload: undefined as unknown,
+      contentType: undefined as string | undefined,
+      header(name: string, value: string) {
+        headers[name.toLowerCase()] = value;
+        return reply;
+      },
+      code(status: number) {
+        reply.statusCode = status;
+        return reply;
+      },
+      status(status: number) {
+        reply.statusCode = status;
+        return reply;
+      },
+      type(contentType: string) {
+        reply.contentType = contentType;
+        headers['content-type'] = contentType;
+        return reply;
+      },
+      send(payload: unknown) {
+        reply.payload = payload;
+        reply.sent = true;
+        reply.raw.headersSent = true;
+        return reply;
+      },
+    };
+    const req = { headers: {} } as Request;
+    // Fastify n’expose pas setHeader : le 401 crawler ne doit plus devenir un 500.
+    const ok = assertGoogleMerchantBasicAuth(
+      req,
+      reply as unknown as NestHttpResponse,
+      config,
+    );
+    expect(ok).toBe(false);
+    expect(reply.statusCode).toBe(401);
+    expect(headers['www-authenticate']).toContain('Basic realm=');
+    expect(reply.payload).toBe('Unauthorized');
+    expect(reply.sent).toBe(true);
   });
 });

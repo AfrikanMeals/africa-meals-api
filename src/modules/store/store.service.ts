@@ -98,6 +98,10 @@ import {
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { AdminPatchVendorStoreDto } from './dto/admin-vendor-store.dto';
 import {
+  buildLocatorIframeHtml,
+  parseLocatorEmbedSrc,
+} from './store-locator-embed.util';
+import {
   DrinksService,
   maxDrinkOrderQuantity,
 } from '@modules/drinks/drinks.service';
@@ -857,7 +861,7 @@ export class StoreService {
     const doc = await this._storeModel
       .findById(storeOid)
       .select(
-        'bio profileImage name status email phoneNumber currency region supportsShipping acceptsOrders acceptsMealPreOrders acceptsPickupPayOnDelivery defaultPickupPayOnPickup mealPreOrderCatalogScope timezone workingHours',
+        'bio profileImage name status email phoneNumber currency region supportsShipping acceptsOrders acceptsMealPreOrders acceptsPickupPayOnDelivery defaultPickupPayOnPickup mealPreOrderCatalogScope timezone workingHours locatorEmbedSrc',
       )
       .populate({
         path: 'address',
@@ -1192,6 +1196,10 @@ export class StoreService {
       ),
       commissionRetrieveStrategy: normalizeCommissionRetrieveStrategy(
         doc.commissionRetrieveStrategy,
+      ),
+      locatorEmbedSrc: String(doc.locatorEmbedSrc ?? '').trim() || undefined,
+      locatorEmbedHtml: buildLocatorIframeHtml(
+        String(doc.locatorEmbedSrc ?? '').trim(),
       ),
     };
 
@@ -4565,6 +4573,10 @@ export class StoreService {
         longitude: Number(coords[0] ?? 0),
       },
       status: String(doc.status ?? ''),
+      locatorEmbedSrc: String(doc.locatorEmbedSrc ?? '').trim(),
+      locatorEmbedHtml: buildLocatorIframeHtml(
+        String(doc.locatorEmbedSrc ?? '').trim(),
+      ),
     };
   }
 
@@ -4765,10 +4777,26 @@ export class StoreService {
       deliveryAssignmentMode: deliveryDriverSettings.deliveryAssignmentMode,
     };
     const updateDoc: Record<string, unknown> = { $set: setFields };
+    const unsetFields: Record<string, 1> = {};
     if (args.businessType) {
       setFields.businessType = args.businessType;
     } else {
-      updateDoc.$unset = { businessType: 1 };
+      unsetFields.businessType = 1;
+    }
+    // Locator public : extraire la src allowlistée ; snippet invalide → 400 (pas de HTML brut).
+    if (args.locatorEmbedHtml !== undefined) {
+      const parsedSrc = parseLocatorEmbedSrc(args.locatorEmbedHtml);
+      if (parsedSrc === undefined) {
+        throw new BadRequestException('invalid_locator_embed');
+      }
+      if (parsedSrc) {
+        setFields.locatorEmbedSrc = parsedSrc;
+      } else {
+        unsetFields.locatorEmbedSrc = 1;
+      }
+    }
+    if (Object.keys(unsetFields).length) {
+      updateDoc.$unset = unsetFields;
     }
     await this._storeModel.updateOne({ _id: store._id }, updateDoc);
     const adminNote = args.adminNote?.trim();

@@ -17,11 +17,13 @@ import {
 } from '@nestjs/swagger';
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import { UserModel } from '@schemas/user.schema';
-import { Request, Response } from 'express';
+import type { NestHttpResponse } from '@common/http/http-response.util';
+import { Request } from 'express';
 import {
   assertGoogleMerchantBasicAuth,
   checkGoogleMerchantBasicAuth,
 } from './google-merchant-basic-auth.util';
+import { sendGoogleMerchantExport } from './google-merchant-http.util';
 import { GoogleMerchantService } from './google-merchant.service';
 
 @ApiTags('google-merchant')
@@ -60,7 +62,7 @@ export class GoogleMerchantAdminController {
   async preview(
     @Req() req: Request,
     @Query('format') format: string | undefined,
-    @Res() res: Response,
+    @Res() res: NestHttpResponse,
   ): Promise<void> {
     const startedAt = Date.now();
     const user = req.user as UserModel;
@@ -73,13 +75,8 @@ export class GoogleMerchantAdminController {
         user,
         format,
       );
-      res.setHeader('Content-Type', result.contentType);
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="${result.filename}"`,
-      );
-      res.setHeader('Cache-Control', 'no-store');
-      res.send(result.body);
+      // FastifyReply n’a pas setHeader Express — envoi via helper GMC.
+      sendGoogleMerchantExport(res, result, { asAttachment: true });
       this.logger.log(
         `preview ok format=${JSON.stringify(format)} filename=${result.filename} contentType=${result.contentType} durationMs=${Date.now() - startedAt}`,
       );
@@ -108,7 +105,7 @@ export class GoogleMerchantAdminController {
   async exportAllStores(
     @Req() req: Request,
     @Query('format') format: string | undefined,
-    @Res() res: Response,
+    @Res() res: NestHttpResponse,
   ): Promise<void> {
     const startedAt = Date.now();
     this.logger.log(
@@ -120,15 +117,15 @@ export class GoogleMerchantAdminController {
       this.logger.warn(
         `export auth rejected reason=${authCheck.reason} status=${authCheck.status} format=${JSON.stringify(format)} ${this.describeRequest(req)}`,
       );
+      // 401 Fastify : WWW-Authenticate sans setHeader Express (sinon 500 crawler).
       assertGoogleMerchantBasicAuth(req, res, this._config);
       return;
     }
 
     try {
       const result = await this._googleMerchant.exportAllStoresFeed(format);
-      res.setHeader('Content-Type', result.contentType);
-      res.setHeader('Cache-Control', 'no-store');
-      res.send(result.body);
+      // Inline XML pour google-xrawler ; pas de Content-Disposition.
+      sendGoogleMerchantExport(res, result);
       this.logger.log(
         `export ok user=${authCheck.user} format=${JSON.stringify(format)} contentType=${result.contentType} durationMs=${Date.now() - startedAt}`,
       );

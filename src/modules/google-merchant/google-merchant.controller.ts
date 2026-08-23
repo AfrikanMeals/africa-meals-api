@@ -7,7 +7,9 @@ import {
   Res,
 } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { Request, Response } from 'express';
+import type { NestHttpResponse } from '@common/http/http-response.util';
+import { Request } from 'express';
+import { sendGoogleMerchantExport } from './google-merchant-http.util';
 import { GoogleMerchantService } from './google-merchant.service';
 
 @ApiTags('google-merchant')
@@ -37,7 +39,7 @@ export class GoogleMerchantController {
     @Req() req: Request,
     @Query('format') format: string | undefined,
     @Query('store') store: string | undefined,
-    @Res() res: Response,
+    @Res() res: NestHttpResponse,
   ): Promise<void> {
     const startedAt = Date.now();
     this.logger.log(
@@ -46,12 +48,8 @@ export class GoogleMerchantController {
 
     try {
       const result = await this._googleMerchant.exportStoreFeed(format, store);
-      res.setHeader('Content-Type', result.contentType);
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="${result.filename}"`,
-      );
-      res.send(result.body);
+      // FastifyReply n’a pas setHeader Express — pièce jointe via helper GMC.
+      sendGoogleMerchantExport(res, result, { asAttachment: true });
       this.logger.log(
         `store export ok store=${JSON.stringify(store)} format=${JSON.stringify(format)} filename=${result.filename} durationMs=${Date.now() - startedAt}`,
       );

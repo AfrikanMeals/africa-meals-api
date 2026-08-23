@@ -1,6 +1,11 @@
+import {
+  sendNestHttpText,
+  setNestHttpHeader,
+  type NestHttpResponse,
+} from '@common/http/http-response.util';
 import { ConfigService } from '@nestjs/config';
 import { timingSafeEqual } from 'crypto';
-import type { Request, Response } from 'express';
+import type { Request } from 'express';
 
 const BASIC_REALM = 'Google Merchant Feed';
 
@@ -103,13 +108,18 @@ export function checkGoogleMerchantBasicAuth(
 /** Returns false after sending HTTP 401/503 (for Google Merchant Center credential prompt). */
 export function assertGoogleMerchantBasicAuth(
   req: Request,
-  res: Response,
+  res: NestHttpResponse,
   config: ConfigService,
 ): boolean {
   const check = checkGoogleMerchantBasicAuth(req, config);
   if (check.ok === false) {
-    res.setHeader('WWW-Authenticate', `Basic realm="${BASIC_REALM}"`);
-    res.status(check.status).type('text/plain').send(check.body);
+    // FastifyReply n’a pas setHeader : WWW-Authenticate via helper Nest/Fastify.
+    setNestHttpHeader(
+      res,
+      'WWW-Authenticate',
+      `Basic realm="${BASIC_REALM}"`,
+    );
+    sendNestHttpText(res, check.status, check.body, 'text/plain');
     return false;
   }
 

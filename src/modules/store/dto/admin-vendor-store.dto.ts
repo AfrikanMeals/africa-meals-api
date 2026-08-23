@@ -12,6 +12,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { CreateStoreDto } from './store.dto';
+import { LOCATOR_EMBED_MAX_CHARS } from '../store-locator-embed.util';
 
 /** Changement de statut boutique par un administrateur (approbation / suspension). */
 export class AdminVendorStoreStatusDto {
@@ -56,6 +57,17 @@ export class AdminPatchVendorStoreDto extends CreateStoreDto {
   @IsOptional()
   @IsBoolean()
   acceptsOrders?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Snippet iframe Google Maps Locator Plus (ou URL https). Vide = retirer le locator public.',
+    example:
+      '<iframe src="https://storage.googleapis.com/maps-solutions-xxx/locator-plus/abc/locator-plus.html" width="100%" height="100%" style="border:0;" loading="lazy"></iframe>',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(LOCATOR_EMBED_MAX_CHARS)
+  locatorEmbedHtml?: string;
 }
 
 /** Demande de corrections sur le dossier vendeur (statut REVISION). */

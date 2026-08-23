@@ -30,7 +30,8 @@ export function middlewareHeadersSent(res: MiddlewareResponse): boolean {
 
 export function nestHttpHeadersSent(res: NestHttpResponse): boolean {
   if (isFastifyReply(res)) {
-    return Boolean(res.sent || res.raw.headersSent);
+    // FastifyReply.raw peut être absent dans les mocks ; optional chaining évite un throw.
+    return Boolean(res.sent || res.raw?.headersSent);
   }
   return middlewareHeadersSent(res);
 }
@@ -100,8 +101,23 @@ export function sendNestHttpText(
   body: string,
   contentType: string,
 ): void {
+  // Délègue au chemin Fastify/Express unique (évite un 2e `setHeader` Express).
+  sendNestHttpBody(res, statusCode, body, contentType);
+}
+
+/**
+ * Envoie un corps texte ou binaire (XML GMC, XLSX).
+ * FastifyReply n’a pas `setHeader` Express — d’où le 500 Google Merchant en prod.
+ */
+export function sendNestHttpBody(
+  res: NestHttpResponse,
+  statusCode: number,
+  body: string | Buffer,
+  contentType: string,
+): void {
   if (nestHttpHeadersSent(res)) return;
   if (isFastifyReply(res)) {
+    // Fastify : type() + send() ; pas de res.setHeader / res.send Express.
     void withFastifyStatus(res, statusCode).type(contentType).send(body);
     return;
   }
@@ -121,8 +137,23 @@ export function setNestHttpHeader(
   value: string,
 ): void {
   if (isFastifyReply(res)) {
-    res.header(name, value);
+    // Fastify : `reply.header()`, pas `res.setHeader` (API Node/Express).
+    if (typeof res.header === 'function') {
+      res.header(name, value);
+      return;
+    }
+    // Repli si Reply est partiellement mocké : ServerResponse Node sous `raw`.
+    res.raw?.setHeader?.(name, value);
     return;
   }
-  res.setHeader?.(name, value);
+  if (typeof res.setHeader === 'function') {
+    res.setHeader(name, value);
+    return;
+  }
+  // Fastify mal typé (send/status absents) : header() existe quand même sur Reply.
+  const maybeHeader = (res as unknown as { header?: (n: string, v: string) => unknown })
+    .header;
+  if (typeof maybeHeader === 'function') {
+    maybeHeader(name, value);
+  }
 }

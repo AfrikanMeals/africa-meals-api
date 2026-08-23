@@ -394,6 +394,18 @@ export class StoreModel extends BaseSchema {
     }>;
   };
 
+  /**
+   * URL `src` du locator Google Maps (Locator Plus) collé en admin.
+   * Jamais de HTML brut : la fiche web reconstruit l’iframe à partir de cette URL.
+   */
+  @Prop({
+    required: false,
+    name: 'locator_embed_src',
+    trim: true,
+    type: String,
+  })
+  locatorEmbedSrc?: string;
+
   /** Badge partenaire (Silver / Gold / Diamond) — délai de versement Stripe. */
   @Prop({
     required: false,
