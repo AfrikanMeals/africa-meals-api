@@ -12,6 +12,7 @@ describe('canAccessDeliveryConnectPayments', () => {
   });
 
   it('autorise PARTNER / VENDOR dual-role si candidature APPROVED', () => {
+    // Même porte pour présence / stats / courses (assertDeliveryAgent).
     expect(
       canAccessDeliveryConnectPayments({
         userType: UserTypeEnum.PARTNER,

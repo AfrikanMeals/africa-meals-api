@@ -1064,10 +1064,28 @@ export class DeliveryAgentService {
     }
   }
 
-  private assertDeliveryAgent(user: UserModel) {
-    if (user.type !== UserTypeEnum.DELIVERY) {
-      throw new ForbiddenException('delivery_agent_only');
+  /**
+   * Ops livreur (présence, stats, courses) : même porte dual-role que Connect.
+   * Fix: PARTNER/VENDOR + candidature APPROVED restait 403 (`type===DELIVERY` seul)
+   * → spinner carte / stats « — » après approve Collaborations.
+   */
+  private async assertDeliveryAgent(user: UserModel): Promise<void> {
+    if (user.type === UserTypeEnum.DELIVERY) return;
+    const uid = user._id ?? user.id;
+    const app = await this._applications
+      .findOne({ user: uid })
+      .select('status')
+      .lean()
+      .exec();
+    if (
+      canAccessDeliveryConnectPayments({
+        userType: user.type,
+        deliveryApplicationStatus: app?.status,
+      })
+    ) {
+      return;
     }
+    throw new ForbiddenException('delivery_agent_only');
   }
 
   /**
@@ -1098,7 +1116,7 @@ export class DeliveryAgentService {
   }
 
   async listStorePartners(user: UserModel) {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     const userId = String(user._id ?? user.id);
     return this._storeDeliveryDrivers.listActivePartnersForDriver(userId);
   }
@@ -1112,7 +1130,7 @@ export class DeliveryAgentService {
   }
 
   async leaveStorePartner(user: UserModel, membershipId: string) {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     return this._storeDeliveryDrivers.leaveActivePartner(user, membershipId);
   }
 
@@ -1120,7 +1138,7 @@ export class DeliveryAgentService {
   async getDailyPerformanceStats(
     user: UserModel,
   ): Promise<DeliveryAgentDailyPerformancePayload> {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     const agentId = new Types.ObjectId(String(user._id ?? user.id));
     const dayKey = deliveryAgentPerformanceDayKey();
 
@@ -1163,7 +1181,7 @@ export class DeliveryAgentService {
 
   /** Compteurs lifetime : acceptance, refus, durée moyenne, score perf. */
   async getPerformanceStats(user: UserModel) {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     const agentId = String(user._id ?? user.id);
     if (!this._courierPerf) {
       return {
@@ -1222,7 +1240,7 @@ export class DeliveryAgentService {
     user: UserModel,
     dto: SyncDeliveryAgentDailyPerformanceDto,
   ): Promise<DeliveryAgentDailyPerformancePayload> {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     const agentId = new Types.ObjectId(String(user._id ?? user.id));
     const dayKey = deliveryAgentPerformanceDayKey();
     const live = await this._computeLiveDailyPerformance(agentId);
@@ -1343,7 +1361,7 @@ export class DeliveryAgentService {
   }
 
   async listPendingOrders(user: UserModel) {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     const agentId = new Types.ObjectId(String(user._id ?? user.id));
     const app = await this._applications
       .findOne({
@@ -1506,7 +1524,7 @@ export class DeliveryAgentService {
 
   /** Commandes expédiées assignées au livreur connecté (carte + suivi). */
   async getActiveOrder(user: UserModel) {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     const agentId = new Types.ObjectId(String(user._id ?? user.id));
     const app = await this._applications
       .findOne({
@@ -1633,7 +1651,7 @@ export class DeliveryAgentService {
   }
 
   async getPresence(user: UserModel) {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     const agentId = new Types.ObjectId(String(user._id ?? user.id));
     const [app, activeCount] = await Promise.all([
       this._applications
@@ -1666,7 +1684,7 @@ export class DeliveryAgentService {
   }
 
   async setPresence(user: UserModel, dto: PatchDeliveryAgentPresenceDto) {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     const agentId = new Types.ObjectId(String(user._id ?? user.id));
     const [app, activeCount] = await Promise.all([
       this.assertAgentApprovedApplication(agentId),
@@ -1923,7 +1941,7 @@ export class DeliveryAgentService {
 
   /** Met à jour la position GPS et notifie le suivi temps réel de la course active. */
   async reportLocation(user: UserModel, dto: DeliveryAgentLocationDto) {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     const lat = Number(dto.latitude);
     const lng = Number(dto.longitude);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
@@ -2029,7 +2047,7 @@ export class DeliveryAgentService {
     orderId: string,
     dto: DeliveryAgentRouteSnapshotDto,
   ) {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     if (!Types.ObjectId.isValid(orderId)) {
       throw new BadRequestException('invalid_order_id');
     }
@@ -2115,7 +2133,7 @@ export class DeliveryAgentService {
     rawCode: string,
     orderId?: string,
   ) {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     const order = await this.findAssignedOrderByHandoffCode(
       user,
       rawCode,
@@ -2144,7 +2162,7 @@ export class DeliveryAgentService {
     orderId: string,
     rawCode: string,
   ) {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     return this._ordersService.confirmHandoffByDeliveryAgent(orderId, user, {
       code: rawCode,
     });
@@ -2228,7 +2246,7 @@ export class DeliveryAgentService {
     orderId: string,
     opts?: { bypassAssignmentModeGate?: boolean },
   ) {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     if (!Types.ObjectId.isValid(orderId)) {
       throw new BadRequestException('invalid_order_id');
     }
@@ -2726,7 +2744,7 @@ export class DeliveryAgentService {
    * `approved`, notification vendeur uniquement (pas de push client), pas de gain.
    */
   async abandonOrderDelivery(user: UserModel, orderId: string) {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     if (!Types.ObjectId.isValid(orderId)) {
       throw new BadRequestException('invalid_order_id');
     }
@@ -2918,7 +2936,7 @@ export class DeliveryAgentService {
   }
 
   async listShippingPaymentHistory(user: UserModel) {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     const { items, totals } = await this.loadAgentDeliveryHistory(user, {
       limit: 50,
     });
@@ -2934,7 +2952,7 @@ export class DeliveryAgentService {
     user: UserModel,
     query?: { status?: string; page?: string; take?: string },
   ) {
-    this.assertDeliveryAgent(user);
+    await this.assertDeliveryAgent(user);
     const page = parseDeliveryHistoryPage(query?.page);
     const take = parseDeliveryHistoryTake(query?.take, 20);
     const statusKey = (query?.status ?? '').trim().toLowerCase();
