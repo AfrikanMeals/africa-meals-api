@@ -98,8 +98,10 @@ import {
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
 import { AdminPatchVendorStoreDto } from './dto/admin-vendor-store.dto';
 import {
-  buildLocatorIframeHtml,
-  parseLocatorEmbedSrc,
+  buildLocatorAdminHtml,
+  parseLocatorEmbed,
+  sanitizeLocatorPlusConfig,
+  type LocatorPlusConfig,
 } from './store-locator-embed.util';
 import {
   DrinksService,
@@ -131,6 +133,21 @@ import { BusinessTypesService } from '@modules/business-types/business-types.ser
 import { DashboardAuditService } from '@modules/dashboard-audit/dashboard-audit.service';
 import { SitemapDispatchService } from '@modules/public-seo/sitemap-dispatch.service';
 import { StoreLaunchNotifierService } from './store-launch-notifier.service';
+
+/** Config Locator Plus sanitizée depuis un document boutique (ou undefined). */
+function locatorPlusConfigFromDoc(
+  doc: Record<string, unknown>,
+): LocatorPlusConfig | undefined {
+  return sanitizeLocatorPlusConfig(doc.locatorEmbedConfig);
+}
+
+/** HTML admin reconstruit (iframe ou page Locator Plus) — jamais le collage brut. */
+function locatorAdminHtmlFromDoc(doc: Record<string, unknown>): string {
+  return buildLocatorAdminHtml(
+    String(doc.locatorEmbedSrc ?? '').trim(),
+    locatorPlusConfigFromDoc(doc) ?? null,
+  );
+}
 
 @Injectable()
 export class StoreService {
@@ -861,7 +878,7 @@ export class StoreService {
     const doc = await this._storeModel
       .findById(storeOid)
       .select(
-        'bio profileImage name status email phoneNumber currency region supportsShipping acceptsOrders acceptsMealPreOrders acceptsPickupPayOnDelivery defaultPickupPayOnPickup mealPreOrderCatalogScope timezone workingHours locatorEmbedSrc',
+        'bio profileImage name status email phoneNumber currency region supportsShipping acceptsOrders acceptsMealPreOrders acceptsPickupPayOnDelivery defaultPickupPayOnPickup mealPreOrderCatalogScope timezone workingHours locatorEmbedSrc locatorEmbedConfig',
       )
       .populate({
         path: 'address',
@@ -1198,9 +1215,8 @@ export class StoreService {
         doc.commissionRetrieveStrategy,
       ),
       locatorEmbedSrc: String(doc.locatorEmbedSrc ?? '').trim() || undefined,
-      locatorEmbedHtml: buildLocatorIframeHtml(
-        String(doc.locatorEmbedSrc ?? '').trim(),
-      ),
+      locatorEmbedConfig: locatorPlusConfigFromDoc(doc),
+      locatorEmbedHtml: locatorAdminHtmlFromDoc(doc),
     };
 
     const profileImage = await this._mediasService.resolvePublicMediaUrl(
@@ -4574,9 +4590,8 @@ export class StoreService {
       },
       status: String(doc.status ?? ''),
       locatorEmbedSrc: String(doc.locatorEmbedSrc ?? '').trim(),
-      locatorEmbedHtml: buildLocatorIframeHtml(
-        String(doc.locatorEmbedSrc ?? '').trim(),
-      ),
+      locatorEmbedConfig: locatorPlusConfigFromDoc(doc),
+      locatorEmbedHtml: locatorAdminHtmlFromDoc(doc),
     };
   }
 
@@ -4783,15 +4798,20 @@ export class StoreService {
     } else {
       unsetFields.businessType = 1;
     }
-    // Locator public : extraire la src allowlistée ; snippet invalide → 400 (pas de HTML brut).
+    // Locator public : iframe GCS ou HTML Locator Plus sanitizé (jamais de HTML brut).
     if (args.locatorEmbedHtml !== undefined) {
-      const parsedSrc = parseLocatorEmbedSrc(args.locatorEmbedHtml);
-      if (parsedSrc === undefined) {
+      const parsed = parseLocatorEmbed(args.locatorEmbedHtml);
+      if (parsed === undefined) {
         throw new BadRequestException('invalid_locator_embed');
       }
-      if (parsedSrc) {
-        setFields.locatorEmbedSrc = parsedSrc;
+      if (parsed === null) {
+        unsetFields.locatorEmbedSrc = 1;
+        unsetFields.locatorEmbedConfig = 1;
+      } else if (parsed.kind === 'iframe') {
+        setFields.locatorEmbedSrc = parsed.src;
+        unsetFields.locatorEmbedConfig = 1;
       } else {
+        setFields.locatorEmbedConfig = parsed.config;
         unsetFields.locatorEmbedSrc = 1;
       }
     }

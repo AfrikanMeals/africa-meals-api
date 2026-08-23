@@ -60,7 +60,7 @@ export class AdminPatchVendorStoreDto extends CreateStoreDto {
 
   @ApiPropertyOptional({
     description:
-      'Snippet iframe Google Maps Locator Plus (ou URL https). Vide = retirer le locator public.',
+      'Code Locator Plus Quick Builder (page HTML CONFIGURATION) ou iframe GCS / URL https. Vide = retirer le locator public.',
     example:
       '<iframe src="https://storage.googleapis.com/maps-solutions-xxx/locator-plus/abc/locator-plus.html" width="100%" height="100%" style="border:0;" loading="lazy"></iframe>',
   })

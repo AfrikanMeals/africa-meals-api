@@ -395,7 +395,7 @@ export class StoreModel extends BaseSchema {
   };
 
   /**
-   * URL `src` du locator Google Maps (Locator Plus) collé en admin.
+   * URL `src` du locator Google Maps (iframe Quick Builder) collé en admin.
    * Jamais de HTML brut : la fiche web reconstruit l’iframe à partir de cette URL.
    */
   @Prop({
@@ -405,6 +405,17 @@ export class StoreModel extends BaseSchema {
     type: String,
   })
   locatorEmbedSrc?: string;
+
+  /**
+   * Config Locator Plus (page HTML Quick Builder) : CONFIGURATION sanitizée.
+   * Mutuellement exclusive avec locatorEmbedSrc. Jamais de HTML brut.
+   */
+  @Prop({
+    required: false,
+    name: 'locator_embed_config',
+    type: MongooseSchema.Types.Mixed,
+  })
+  locatorEmbedConfig?: Record<string, unknown>;
 
   /** Badge partenaire (Silver / Gold / Diamond) — délai de versement Stripe. */
   @Prop({
