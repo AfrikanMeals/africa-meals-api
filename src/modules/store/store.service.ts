@@ -4638,7 +4638,13 @@ export class StoreService {
     const row = doc as Record<string, unknown>;
     const addr = row.address as Record<string, unknown> | undefined;
     const profileSnapshot = this._adminVendorProfileSnapshot(row, addr);
-    const { status: _status, ...profile } = profileSnapshot;
+    // Formulaire admin : seulement locatorEmbedHtml. Src/config echo → 400 PATCH forbidNonWhitelisted.
+    const {
+      status: _status,
+      locatorEmbedSrc: _locatorEmbedSrc,
+      locatorEmbedConfig: _locatorEmbedConfig,
+      ...profile
+    } = profileSnapshot;
     const rawMessages =
       (row.vendorMessages as Record<string, unknown>[]) ?? [];
     const messages = [...rawMessages]
