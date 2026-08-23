@@ -45,11 +45,17 @@ export function normalizeOrderLineItemForApi(
   if (it.pictureUrl == null && it.picture_url != null) {
     it.pictureUrl = it.picture_url;
   }
-  if (it.bundleGroupId == null && it.bundle_group_id != null) {
-    it.bundleGroupId = it.bundle_group_id;
+  // Combo : schéma `bundleGroupId` + checkout Mixed `bundleGroupId` + snake lean.
+  const bundleGroupId =
+    it.bundleGroupId ?? it.bundleGroupId ?? it.bundle_group_id;
+  if (bundleGroupId != null && String(bundleGroupId).trim() !== '') {
+    it.bundleGroupId = bundleGroupId;
+    it.bundleGroupId = bundleGroupId;
   }
-  if (it.bundleTitle == null && it.bundle_title != null) {
-    it.bundleTitle = it.bundle_title;
+  const bundleTitle = it.bundleTitle ?? it.bundleTitle ?? it.bundle_title;
+  if (bundleTitle != null && String(bundleTitle).trim() !== '') {
+    it.bundleTitle = bundleTitle;
+    it.bundleTitle = bundleTitle;
   }
   if (it.itemType == null && it.item_type != null) {
     it.itemType = it.item_type;

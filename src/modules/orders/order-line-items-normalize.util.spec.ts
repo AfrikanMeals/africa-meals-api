@@ -27,6 +27,21 @@ describe('order-line-items-normalize.util', () => {
     expect(out.selected_complements).toBeUndefined();
   });
 
+  it('normalise compléments avec title catalogue', () => {
+    const out = normalizeOrderLineItemForApi({
+      label: 'Burger',
+      selected_complements: [
+        { title: 'Pain', options: [{ label: 'Complet', price_delta: 0 }] },
+      ],
+    });
+    expect(out.selectedComplements).toEqual([
+      {
+        groupTitle: 'Pain',
+        options: [{ label: 'Complet', priceDelta: 0 }],
+      },
+    ]);
+  });
+
   it('normalise items sur une commande', () => {
     const row = normalizeOrderItemsOnOrderRow({
       _id: 'o1',

@@ -11,6 +11,7 @@ import {
   normalizeSelectedVariantLabel,
 } from '@modules/cart/cart-customization.util';
 import {
+  normalizeOrderLineItemForApi,
   normalizeOrderItemsOnOrderRow,
   normalizeOrderItemsOnOrderRows,
 } from './order-line-items-normalize.util';
@@ -1147,16 +1148,22 @@ export class OrdersService {
     }
 
     const items = (order.items ?? []).map((it) => {
-      const row = it as OrdeLineItem & {
-        pictureUrl?: string;
-        picture_url?: string;
-      };
+      const row = normalizeOrderLineItemForApi(it);
+      const variant =
+        typeof row.selectedVariantLabel === 'string'
+          ? row.selectedVariantLabel.trim()
+          : '';
       return {
         label: String(row.label ?? '').trim() || 'Article',
         quantity: Math.max(0, Number(row.quantity) || 0),
         price: Math.max(0, Number(row.price) || 0),
         pictureUrl:
-          String(row.pictureUrl ?? row.picture_url ?? '').trim() || undefined,
+          String(row.pictureUrl ?? '').trim() || undefined,
+        itemType:
+          String(row.itemType ?? '').trim() || undefined,
+        selectedComplements: row.selectedComplements,
+        selectedSupplements: row.selectedSupplements,
+        ...(variant ? { selectedVariantLabel: variant } : {}),
       };
     });
 

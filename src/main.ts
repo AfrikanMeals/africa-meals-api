@@ -16,6 +16,12 @@ import { RateLimitService } from './common/rate-limit/rate-limit.service';
 import { httpDryRunMiddleware } from './common/http/dry-run.middleware';
 import { registerFastifyBodyParsing } from './register-fastify-body-parsing';
 import { configureHttpAdapterForRuntime } from './http-adapter.util';
+import { xRobotsTagMiddleware } from './common/http/x-robots-tag.middleware';
+import {
+  API_X_ROBOTS_TAG_HEADER,
+  API_X_ROBOTS_TAG_VALUE,
+} from './common/http/x-robots-tag.util';
+import { setNestHttpHeader } from '@common/http/http-response.util';
 
 /**
  * Démarre le serveur long-running Fastify/Mercurius.
@@ -39,7 +45,10 @@ async function bootstrap() {
   app.use(httpRateLimitMiddleware(app.get(RateLimitService)));
   app.use(compressionMiddleware({ threshold: 1024 }));
   app.use(httpDryRunMiddleware());
+  // API JSON : jamais une surface d’indexation (complète robots.txt Disallow:/).
+  app.use(xRobotsTagMiddleware());
   app.use('/robots.txt', (_req, res) => {
+    setNestHttpHeader(res, API_X_ROBOTS_TAG_HEADER, API_X_ROBOTS_TAG_VALUE);
     sendNestHttpText(res, 200, 'User-agent: *\nDisallow: /\n', 'text/plain');
   });
   await configureApplication(app);

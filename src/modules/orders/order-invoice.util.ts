@@ -6,7 +6,9 @@ import {
   normalizeSelectedComplements,
   normalizeSelectedSupplements,
 } from '@modules/cart/cart-customization.util';
+import { CartItemTypeEnum } from '@schemas/cart_item.schema';
 import type { OrdeLineItem } from '@schemas/order.schema';
+import { normalizeOrderLineItemForApi } from './order-line-items-normalize.util';
 import { haversineDistance } from '@utils/helpers';
 import {
   formatEmailMoney,
@@ -939,16 +941,26 @@ export function buildParcelDeliveryEmailJsonLd(
   return payload;
 }
 
+/** Libellé ligne : préfixe Extra pour les extras produit (lignes séparées). */
+export function orderLineDisplayLabel(item: OrdeLineItem): string {
+  const row = normalizeOrderLineItemForApi(item);
+  const label = String(row.label ?? '').trim() || 'Article';
+  const itemType = String(row.itemType ?? '').toLowerCase();
+  if (itemType === CartItemTypeEnum.PRODUCT_EXTRA) {
+    return `Extra : ${label}`;
+  }
+  return label;
+}
+
 export function lineCustomizationText(item: OrdeLineItem): string {
-  const row = item as OrdeLineItem & {
-    selectedComplements?: unknown;
-    selectedSupplements?: unknown;
-    selectedVariantLabel?: string;
-  };
+  // Lean Mongo : snake_case — normalize avant lecture camel.
+  const row = normalizeOrderLineItemForApi(item);
   return customizationSummaryLabel(
     normalizeSelectedComplements(row.selectedComplements),
     normalizeSelectedSupplements(row.selectedSupplements),
-    row.selectedVariantLabel,
+    typeof row.selectedVariantLabel === 'string'
+      ? row.selectedVariantLabel
+      : undefined,
   );
 }
 
@@ -979,12 +991,13 @@ export function groupOrderLinesForDisplay(
 
   for (let i = 0; i < items.length; i++) {
     const it = items[i]!;
+    const row = normalizeOrderLineItemForApi(it);
     const groupId = String(
-      (it as { bundleGroupId?: string }).bundleGroupId ?? '',
+      row.bundleGroupId ?? row.bundleGroupId ?? row.bundle_group_id ?? '',
     ).trim();
 
     if (!groupId) {
-      const label = String(it.label ?? '').trim() || 'Article';
+      const label = orderLineDisplayLabel(it);
       const qty = Math.max(1, Math.floor(Number(it.quantity) || 1));
       const unit = Math.max(0, Number(it.price) || 0);
       const extras = lineCustomizationText(it);
@@ -993,7 +1006,7 @@ export function groupOrderLinesForDisplay(
         label,
         quantity: qty,
         unitPrice: unit,
-        pictureUrl: String(it.pictureUrl ?? '').trim() || undefined,
+        pictureUrl: String(row.pictureUrl ?? '').trim() || undefined,
         subLabels: extras ? [extras] : [],
         sourceLines: [it],
       });
@@ -1004,14 +1017,19 @@ export function groupOrderLinesForDisplay(
     seenGroups.add(groupId);
 
     // Toutes les lignes du même combo (ordre d’apparition conservé).
-    const group = items.filter(
-      (row) =>
-        String((row as { bundleGroupId?: string }).bundleGroupId ?? '').trim() ===
-        groupId,
-    );
+    const group = items.filter((g) => {
+      const n = normalizeOrderLineItemForApi(g);
+      return (
+        String(
+          n.bundleGroupId ?? n.bundleGroupId ?? n.bundle_group_id ?? '',
+        ).trim() === groupId
+      );
+    });
+    const head = normalizeOrderLineItemForApi(group[0]!);
     const title =
-      String((group[0] as { bundleTitle?: string }).bundleTitle ?? '').trim() ||
-      'Combo';
+      String(
+        head.bundleTitle ?? head.bundleTitle ?? head.bundle_title ?? '',
+      ).trim() || 'Combo';
     // Qty groupe = min des quantités (1 combo = mêmes qty sur chaque composante).
     const qty = Math.max(
       1,
@@ -1027,11 +1045,13 @@ export function groupOrderLinesForDisplay(
     const unitPrice = Math.round((groupTotal / qty) * 100) / 100;
     const pictureUrl =
       group
-        .map((g) => String(g.pictureUrl ?? '').trim())
+        .map((g) =>
+          String(normalizeOrderLineItemForApi(g).pictureUrl ?? '').trim(),
+        )
         .find((u) => Boolean(u)) || undefined;
 
     const subLabels = group.map((g) => {
-      const name = String(g.label ?? '').trim() || 'Article';
+      const name = orderLineDisplayLabel(g);
       const extras = lineCustomizationText(g);
       return extras ? `${name} (${extras})` : name;
     });

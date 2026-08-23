@@ -11,8 +11,9 @@ export function normalizeSelectedComplements(
   const out: NormalizedLineComplementGroup[] = [];
   for (const g of raw) {
     const row = (g ?? {}) as Record<string, unknown>;
+    // Catalogue / payloads partiels : `title` au lieu de groupTitle.
     const groupTitle = String(
-      row.groupTitle ?? row.group_title ?? '',
+      row.groupTitle ?? row.group_title ?? row.title ?? '',
     ).trim();
     if (!groupTitle) continue;
     const rawOpts = Array.isArray(row.options) ? row.options : [];

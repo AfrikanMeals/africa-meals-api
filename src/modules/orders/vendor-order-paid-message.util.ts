@@ -3,8 +3,10 @@ import {
   normalizeSelectedComplements,
   normalizeSelectedSupplements,
 } from '@modules/cart/cart-customization.util';
+import { CartItemTypeEnum } from '@schemas/cart_item.schema';
 import type { OrdeLineItem } from '@schemas/order.schema';
 import { formatEmailMoney } from '@utils/email-order-currency.util';
+import { normalizeOrderLineItemForApi } from './order-line-items-normalize.util';
 
 export type VendorOrderNotifyMessageArgs = {
   orderId: string;
@@ -33,13 +35,20 @@ function orderRef(orderId: string): string {
 }
 
 function formatLineItem(item: OrdeLineItem): string {
-  const qty = Math.max(1, Math.round(Number(item.quantity) || 1));
-  const label = String(item.label ?? 'Article').trim() || 'Article';
-  const row = item as OrdeLineItem & { selectedVariantLabel?: string };
+  const row = normalizeOrderLineItemForApi(item);
+  const qty = Math.max(1, Math.round(Number(row.quantity) || 1));
+  const rawLabel = String(row.label ?? 'Article').trim() || 'Article';
+  const itemType = String(row.itemType ?? '').toLowerCase();
+  const label =
+    itemType === CartItemTypeEnum.PRODUCT_EXTRA
+      ? `Extra : ${rawLabel}`
+      : rawLabel;
   const extras = customizationSummaryLabel(
-    normalizeSelectedComplements(item.selectedComplements),
-    normalizeSelectedSupplements(item.selectedSupplements),
-    row.selectedVariantLabel,
+    normalizeSelectedComplements(row.selectedComplements),
+    normalizeSelectedSupplements(row.selectedSupplements),
+    typeof row.selectedVariantLabel === 'string'
+      ? row.selectedVariantLabel
+      : undefined,
   );
   const base = qty > 1 ? `${label} ×${qty}` : label;
   return extras ? `${base} — ${extras}` : base;

@@ -20,6 +20,7 @@ import {
 } from '@utils/email-order-currency.util';
 import { Model, Types } from 'mongoose';
 import { OrderInvoicePdfService } from './order-invoice-pdf.service';
+import { normalizeOrderItemsOnOrderRow } from './order-line-items-normalize.util';
 import { buildOrderReceiptEmailBodyHtml } from './order-receipt-email-html.util';
 import {
   buildOrderEmailJsonLd,
@@ -404,7 +405,10 @@ export class OrderPaidInvoiceEmailService {
       clientEmail: email,
       deliveryLine,
       deliveryAddressSnapshot: snap,
-      items: order.items ?? [],
+      // Lean snake_case → camel perso (compléments / suppléments / variante).
+      items: (normalizeOrderItemsOnOrderRow({
+        items: order.items ?? [],
+      }).items ?? []) as OrderInvoiceSnapshot['items'],
     };
 
     return { snapshot, email };

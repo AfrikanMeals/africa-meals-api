@@ -42,6 +42,28 @@ describe('vendor order messages — pas de code retrait', () => {
     expect(msg).not.toMatch(/Code retrait|AB12CD/i);
   });
 
+  it('inbox payée inclut compléments snake_case', () => {
+    const msg = buildVendorOrderPaidInboxMessage({
+      ...base,
+      items: [
+        {
+          label: 'Burger',
+          quantity: 1,
+          price: 10,
+          selected_complements: [
+            { title: 'Sauce', options: [{ label: 'Piment' }] },
+          ],
+          selected_supplements: [{ name: 'Bacon', price: 2 }],
+          selected_variant_label: 'Large',
+        } as never,
+      ],
+    })
+    expect(msg).toContain('Burger')
+    expect(msg).toContain('Large')
+    expect(msg).toContain('Piment')
+    expect(msg).toContain('Bacon')
+  })
+
   it('inbox statut n’inclut pas le code', () => {
     const msg = buildVendorOrderStatusInboxMessage({
       ...base,

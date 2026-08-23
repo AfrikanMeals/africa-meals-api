@@ -43,6 +43,22 @@ describe('cart-customization.util', () => {
     expect(normalizeSelectedVariantLabel(null)).toBe('');
   });
 
+  it('accepte title catalogue comme groupTitle', () => {
+    expect(
+      normalizeSelectedComplements([
+        {
+          title: 'Sauce',
+          options: [{ label: 'Piment', priceDelta: 1 }],
+        },
+      ]),
+    ).toEqual([
+      {
+        groupTitle: 'Sauce',
+        options: [{ label: 'Piment', priceDelta: 1 }],
+      },
+    ]);
+  });
+
   it('customizationSummaryLabel inclut la variante', () => {
     const label = customizationSummaryLabel(
       [{ groupTitle: 'Accomp.', options: [{ label: 'Riz', priceDelta: 0 }] }],

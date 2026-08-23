@@ -1,4 +1,5 @@
 import { acmeChallengeMiddleware } from './common/http/acme-challenge.middleware';
+import { xRobotsTagMiddleware } from './common/http/x-robots-tag.middleware';
 import { fieldSelectionMiddleware } from './common/field-selection/field-selection.middleware';
 import { buildApiCorsOptions } from './common/cors/cors-options';
 import { wiseEatCorsEarlyMiddleware } from './common/cors/wise-eat-cors.middleware';
@@ -111,6 +112,8 @@ export async function configureApplication(
   );
 
   app.use(acmeChallengeMiddleware());
+  // Cloud Functions / Express : même noindex que le bootstrap Fastify (main.ts).
+  app.use(xRobotsTagMiddleware());
   app.use(httpRequestLogMiddleware());
 
   const prefix = options?.globalPrefix ?? 'api';
