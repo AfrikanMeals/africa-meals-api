@@ -292,7 +292,7 @@ export class DeliveryAgentController {
   @UseGuards(JwtGuard)
   @ApiOperation({
     summary:
-      'Confirme la prise au restaurant (storeCollectedAt) — pas de nouveau statut, bloque ensuite l’abandon.',
+      'Confirme la prise au restaurant (storeCollectedAt) — pas de nouveau statut. L’abandon reste possible avec pénalités/score après collect.',
   })
   confirmStoreCollected(
     @Req() req: Request,
@@ -308,7 +308,7 @@ export class DeliveryAgentController {
   @UseGuards(JwtGuard)
   @ApiOperation({
     summary:
-      'Le livreur abandonne une course en cours (retrait assignation, notification vendeur, pas de gain).',
+      'Le livreur abandonne une course (retrait assignation, notif vendeur, pas de gain). Après prise restaurant : autorisé ; score dégradé ; pénalités/frais peuvent s’appliquer.',
   })
   abandonOrderDelivery(@Req() req: Request, @Param('orderId') orderId: string) {
     return this._deliveryAgent.abandonOrderDelivery(

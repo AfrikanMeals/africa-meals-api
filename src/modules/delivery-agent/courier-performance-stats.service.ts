@@ -25,6 +25,7 @@ type IncFields = Partial<
     | 'marketplaceClaims'
     | 'marketplaceMissed'
     | 'unassignByCourier'
+    | 'unassignAfterStoreCollect'
     | 'unassignByOther'
     | 'completedDeliveries'
     | 'totalDeliveryDurationSec'
@@ -146,8 +147,16 @@ export class CourierPerformanceStatsService {
     );
   }
 
-  async recordUnassignByCourier(agentUserId: string): Promise<void> {
-    await this.increment(agentUserId, { unassignByCourier: 1 });
+  async recordUnassignByCourier(
+    agentUserId: string,
+    opts?: { afterStoreCollect?: boolean },
+  ): Promise<void> {
+    const fields: IncFields = { unassignByCourier: 1 };
+    // Post-collect : compteur dédié → +10 pts score en plus du *5 abandon.
+    if (opts?.afterStoreCollect) {
+      fields.unassignAfterStoreCollect = 1;
+    }
+    await this.increment(agentUserId, fields);
   }
 
   async recordUnassignByOther(agentUserId: string): Promise<void> {
@@ -191,6 +200,7 @@ export class CourierPerformanceStatsService {
       marketplaceClaims: Number(c.marketplaceClaims ?? 0),
       marketplaceMissed: Number(c.marketplaceMissed ?? 0),
       unassignByCourier: Number(c.unassignByCourier ?? 0),
+      unassignAfterStoreCollect: Number(c.unassignAfterStoreCollect ?? 0),
       unassignByOther: Number(c.unassignByOther ?? 0),
       completedDeliveries: Number(c.completedDeliveries ?? 0),
       totalDeliveryDurationSec: Number(c.totalDeliveryDurationSec ?? 0),

@@ -4,6 +4,7 @@ import {
   computeCourierPerformanceLevel,
   computeCourierPerformanceScore,
   computeCourierRejectionRate,
+  courierAbandonPenaltyPoints,
   deriveCourierPerformance,
   performanceDispatchPenalty,
 } from './courier-performance.util';
@@ -68,6 +69,28 @@ describe('courier-performance.util', () => {
       unassignByCourier: 5,
     });
     expect(bad).toBeLessThan(good);
+  });
+
+  it('post-collect abandon pèse plus lourd que l’abandon pré-collect', () => {
+    const base = {
+      offersAccepted: 5,
+      offersRejected: 0,
+      completedDeliveries: 5,
+      unassignByCourier: 1,
+    };
+    const pre = computeCourierPerformanceScore(base);
+    const post = computeCourierPerformanceScore({
+      ...base,
+      unassignAfterStoreCollect: 1,
+    });
+    expect(post).toBeLessThan(pre);
+    expect(courierAbandonPenaltyPoints(base)).toBe(5);
+    expect(
+      courierAbandonPenaltyPoints({
+        ...base,
+        unassignAfterStoreCollect: 1,
+      }),
+    ).toBe(15);
   });
 
   it('deriveCourierPerformance averages duration and distance', () => {

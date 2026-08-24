@@ -124,6 +124,9 @@ export class CourierStatusPerformanceService {
       marketplaceClaims: Number(perfPayload?.marketplaceClaims ?? 0),
       marketplaceMissed: Number(perfPayload?.marketplaceMissed ?? 0),
       unassignByCourier: Number(perfPayload?.unassignByCourier ?? 0),
+      unassignAfterStoreCollect: Number(
+        perfPayload?.unassignAfterStoreCollect ?? 0,
+      ),
       unassignByOther: Number(perfPayload?.unassignByOther ?? 0),
       completedDeliveries: Number(perfPayload?.completedDeliveries ?? 0),
       totalDeliveryDurationSec: Number(

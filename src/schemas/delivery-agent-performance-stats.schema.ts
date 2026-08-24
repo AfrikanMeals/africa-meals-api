@@ -50,6 +50,10 @@ export class DeliveryAgentPerformanceStatsModel extends BaseSchema {
   @Prop({ required: true, min: 0, default: 0 })
   unassignByCourier: number;
 
+  /** Abandons après `storeCollectedAt` (sous-ensemble ; score + pénalités). */
+  @Prop({ required: true, min: 0, default: 0 })
+  unassignAfterStoreCollect: number;
+
   /** Retraits admin / vendeur. */
   @Prop({ required: true, min: 0, default: 0 })
   unassignByOther: number;

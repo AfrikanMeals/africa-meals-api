@@ -43,9 +43,9 @@ describe('delivery-agent-store-collected.util', () => {
     ).toBe(false);
   });
 
-  it('isOrderAbandonableAfterStoreCollect — bloqué après collect', () => {
+  it('isOrderAbandonableAfterStoreCollect — autorisé avant et après collect', () => {
     expect(isOrderAbandonableAfterStoreCollect(null)).toBe(true);
-    expect(isOrderAbandonableAfterStoreCollect(new Date())).toBe(false);
+    expect(isOrderAbandonableAfterStoreCollect(new Date())).toBe(true);
   });
 
   it('storeCollectedAtIso', () => {

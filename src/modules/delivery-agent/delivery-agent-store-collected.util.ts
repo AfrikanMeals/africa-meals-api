@@ -1,6 +1,6 @@
 /**
  * Règles « pris au restaurant » (champ horodaté, pas de nouveau OrderStatus).
- * Isolées pour tests anti-régression (idempotence / abandon bloqué).
+ * Isolées pour tests anti-régression (idempotence / abandon post-collect).
  */
 
 export type StoreCollectedOrderSnapshot = {
@@ -43,13 +43,14 @@ export function canConfirmStoreCollected(
 }
 
 /**
- * Après collecte boutique, abandon livreur interdit
- * (commande déjà en route client).
+ * Abandon livreur toujours autorisé (y compris après collect).
+ * Après collect : pénalités / score / frais peuvent s’appliquer
+ * (`courierAbandonConsequences`). Conservé pour callers existants.
  */
 export function isOrderAbandonableAfterStoreCollect(
-  storeCollectedAt: Date | string | null | undefined,
+  _storeCollectedAt?: Date | string | null,
 ): boolean {
-  return parseStoreCollectedAt(storeCollectedAt) == null;
+  return true;
 }
 
 /** Payload WS / mapping agent — ISO ou null. */

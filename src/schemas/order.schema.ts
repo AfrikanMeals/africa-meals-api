@@ -253,6 +253,17 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'courier_abandon_no_payout', default: false })
   courierAbandonNoPayout?: boolean;
 
+  /**
+   * Abandon après prise restaurant — score dégradé ;
+   * pénalités / frais admin peuvent s’appliquer.
+   */
+  @Prop({
+    required: false,
+    name: 'courier_abandon_after_store_collect',
+    default: false,
+  })
+  courierAbandonAfterStoreCollect?: boolean;
+
   /** Code à présenter en boutique (commandes retrait, généré au paiement). */
   @Prop({ required: false, name: 'pickup_code', trim: true, uppercase: true })
   pickupCode?: string;

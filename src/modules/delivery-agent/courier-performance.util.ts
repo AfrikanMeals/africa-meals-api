@@ -11,6 +11,8 @@ export type CourierPerformanceCounters = {
   marketplaceClaims?: number;
   marketplaceMissed?: number;
   unassignByCourier?: number;
+  /** Abandons après prise restaurant (sous-ensemble de unassignByCourier). */
+  unassignAfterStoreCollect?: number;
   unassignByOther?: number;
   completedDeliveries?: number;
   totalDeliveryDurationSec?: number;
@@ -78,6 +80,17 @@ export function computeCourierAvgDistanceKm(
 }
 
 /**
+ * Points de pénalité score (0–25) : 5 / abandon + 10 extra si post-collect.
+ */
+export function courierAbandonPenaltyPoints(
+  c: CourierPerformanceCounters,
+): number {
+  const unassignCourier = n(c.unassignByCourier);
+  const unassignAfterCollect = n(c.unassignAfterStoreCollect);
+  return Math.min(25, unassignCourier * 5 + unassignAfterCollect * 10);
+}
+
+/**
  * Score 0–100 : acceptance (55) + faible abandon (25) + volume completed (20).
  * Nouveau livreur (pas d’échantillon) → 70 (neutre-positif).
  */
@@ -85,7 +98,6 @@ export function computeCourierPerformanceScore(
   c: CourierPerformanceCounters,
 ): number {
   const acceptance = computeCourierAcceptanceRate(c);
-  const unassignCourier = n(c.unassignByCourier);
   const completed = n(c.completedDeliveries);
 
   // Une offre seulement présentée/notifiée n’est pas encore une décision :
@@ -95,7 +107,8 @@ export function computeCourierPerformanceScore(
   }
 
   const acceptPart = (acceptance ?? 0.7) * 55;
-  const abandonPenalty = Math.min(25, unassignCourier * 5);
+  // Post-collect : +10 pts en plus du *5 déjà compté dans unassignByCourier.
+  const abandonPenalty = courierAbandonPenaltyPoints(c);
   const abandonPart = 25 - abandonPenalty;
   const volumePart = Math.min(20, completed * 2);
 

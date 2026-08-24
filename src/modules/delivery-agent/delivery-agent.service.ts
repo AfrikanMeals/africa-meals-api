@@ -93,9 +93,9 @@ import {
 } from './delivery-agent-capacity.util';
 import {
   canConfirmStoreCollected,
-  isOrderAbandonableAfterStoreCollect,
   storeCollectedAtIso,
 } from './delivery-agent-store-collected.util';
+import { courierAbandonConsequences } from './delivery-agent-abandon.util';
 import { courierTrackingExtraFromApplication } from '@modules/dashboard/dashboard-fleet-seed.util';
 import { PatchDeliveryAgentPresenceDto } from './dto/patch-delivery-agent-presence.dto';
 import {
@@ -1207,6 +1207,7 @@ export class DeliveryAgentService {
         marketplaceClaims: 0,
         marketplaceMissed: 0,
         unassignByCourier: 0,
+        unassignAfterStoreCollect: 0,
         unassignByOther: 0,
         completedDeliveries: 0,
         totalDeliveryDurationSec: 0,
@@ -2914,7 +2915,8 @@ export class DeliveryAgentService {
 
   /**
    * Le livreur abandonne une course en cours : retrait assignation, repasse en
-   * `approved`, notification vendeur uniquement (pas de push client), pas de gain.
+   * `approved`, pas de gain. Après collect boutique : autorisé, score plus lourd,
+   * pénalités/frais admin possibles, notif client + vendeur renforcée.
    */
   async abandonOrderDelivery(user: UserModel, orderId: string) {
     await this.assertDeliveryAgent(user);
@@ -2946,17 +2948,15 @@ export class DeliveryAgentService {
     if (!assignee || assignee !== String(agentId)) {
       throw new ForbiddenException('order_not_assigned_to_agent');
     }
-    // Fix: après collecte boutique, abandon interdit (commande déjà en route client).
-    if (
-      !isOrderAbandonableAfterStoreCollect(
-        (orderDoc as { storeCollectedAt?: Date | null }).storeCollectedAt,
-      )
-    ) {
-      throw new BadRequestException('order_not_abandonable_after_store_collect');
-    }
+
+    const abandonFx = courierAbandonConsequences(
+      (orderDoc as { storeCollectedAt?: Date | null }).storeCollectedAt,
+    );
+    const afterStoreCollect = abandonFx.afterStoreCollect;
 
     const orderStoreId = this.storeIdFromPopulatedOrder(orderDoc);
     const prevAssignee = assignee;
+    const agentName = user.fullName?.trim() || 'Livreur';
 
     orderDoc.set('assignedDeliveryUser', undefined);
     orderDoc.status = OrderStatusEnum.APPROVED;
@@ -2965,6 +2965,15 @@ export class DeliveryAgentService {
     orderDoc.set('deliveryUnassignedFromUser', agentId);
     orderDoc.set('deliveryUnassignedByUser', agentId);
     orderDoc.courierAbandonNoPayout = true;
+    // Flag audit : admin peut appliquer pénalité / frais (pas de débit Stripe auto).
+    if (afterStoreCollect) {
+      orderDoc.courierAbandonAfterStoreCollect = true;
+    }
+    // Reset collect : le prochain livreur doit pouvoir reconfirmer la prise.
+    if (abandonFx.clearStoreCollected) {
+      orderDoc.set('storeCollectedAt', null);
+      orderDoc.set('storeCollectedByUserId', undefined);
+    }
     orderDoc.set('courierRoutePolyline', undefined);
     orderDoc.set('courierRouteFormat', undefined);
     orderDoc.set('courierRouteLeg', undefined);
@@ -2977,10 +2986,15 @@ export class DeliveryAgentService {
     await orderDoc.save();
 
     if (this._courierPerf) {
-      void this._courierPerf.recordUnassignByCourier(String(agentId));
+      void this._courierPerf.recordUnassignByCourier(String(agentId), {
+        afterStoreCollect,
+      });
     }
 
     const customerId = this.customerUserIdFromOrder(orderDoc);
+    const abandonNote = afterStoreCollect
+      ? 'Course abandonnée après prise restaurant (pénalités/frais possibles)'
+      : 'Course abandonnée par le livreur';
     await this._ordersService.recordOrderStatusChangeIfLegacy({
       orderId: orderDoc._id.toString(),
       storeId: orderStoreId ?? undefined,
@@ -2989,27 +3003,57 @@ export class DeliveryAgentService {
       toStatus: OrderStatusEnum.APPROVED,
       source: OrderStatusChangeSourceEnum.DELIVERY_AGENT,
       actorUserId: String(agentId),
-      note: 'Course abandonnée par le livreur',
+      note: abandonNote,
     });
 
     this._ordersService.notifyOrderPartiesRealtime(
       orderDoc,
       OrderStatusEnum.APPROVED,
-      { assignedDeliveryUserId: null, routePolylineEncoded: null },
+      {
+        assignedDeliveryUserId: null,
+        routePolylineEncoded: null,
+        storeCollectedAt: null,
+      },
       { additionalPartyUserIds: [prevAssignee] },
     );
 
     if (orderStoreId) {
       const sname = this.storeNameFromPopulatedOrder(orderDoc);
-      const agentName = user.fullName?.trim() || 'Livreur';
+      const vendorNote = afterStoreCollect
+        ? `Course abandonnée par ${agentName} après prise restaurant. Vérifiez le colis ; une nouvelle préparation peut être nécessaire.`
+        : `Course abandonnée par ${agentName}`;
+      const vendorPush = afterStoreCollect
+        ? `${sname ?? 'Boutique'} : ${agentName} a abandonné après avoir pris la commande — à réassigner (colis peut avoir quitté le restaurant).`
+        : `${sname ?? 'Boutique'} : ${agentName} a abandonné la course — à réassigner.`;
       this._ordersService.notifyStoreVendorsForOrderStatusChange(orderDoc, {
         reason: 'courier_abandoned',
         status: OrderStatusEnum.APPROVED,
-        note: `Course abandonnée par ${agentName}`,
-        pushBodyOverride: `${
-          sname ?? 'Boutique'
-        } : ${agentName} a abandonné la course — à réassigner.`,
+        note: vendorNote,
+        pushBodyOverride: vendorPush,
       });
+    }
+
+    // Client déjà informé de la collect : il doit savoir que le relais change.
+    if (afterStoreCollect && customerId) {
+      const storeName = this.storeNameFromPopulatedOrder(orderDoc);
+      void this._notifications
+        .notifyCustomerDeliveryLifecycle({
+          userId: customerId,
+          orderId: orderDoc._id.toString(),
+          storeName,
+          storeId: orderStoreId ?? undefined,
+          reason: 'courier_abandoned_after_collect',
+          title: 'Livreur retiré',
+          body: 'Le livreur a abandonné la course après avoir récupéré la commande. Un autre livreur va être assigné.',
+          status: OrderStatusEnum.APPROVED,
+        })
+        .catch((err) => {
+          this._logger.warn(
+            `abandon after collect customer notify: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
     }
 
     if (this._marketplaceDispatch) {
@@ -3040,6 +3084,9 @@ export class DeliveryAgentService {
       status: OrderStatusEnum.APPROVED,
       abandoned: true,
       noPayout: true,
+      afterStoreCollect,
+      scoreImpact: true,
+      penaltyMayApply: afterStoreCollect,
     };
   }
 

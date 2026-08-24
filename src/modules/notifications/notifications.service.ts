@@ -50,7 +50,9 @@ export type CustomerDeliveryLifecycleReason =
   | 'courier_near'
   | 'customer_absent_drop'
   /** Livreur a récupéré la commande au restaurant (champ storeCollectedAt). */
-  | 'store_collected';
+  | 'store_collected'
+  /** Abandon livreur après prise restaurant — client déjà informé de la collect. */
+  | 'courier_abandoned_after_collect';
 
 export interface InboxNotificationRow {
   id: string;
