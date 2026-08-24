@@ -48,7 +48,9 @@ const MAX_TOKENS_PER_USER = 20;
 /** Raisons alertes livraison client (type FCM `delivery_update` → catégorie Livraison). */
 export type CustomerDeliveryLifecycleReason =
   | 'courier_near'
-  | 'customer_absent_drop';
+  | 'customer_absent_drop'
+  /** Livreur a récupéré la commande au restaurant (champ storeCollectedAt). */
+  | 'store_collected';
 
 export interface InboxNotificationRow {
   id: string;
@@ -1692,6 +1694,8 @@ export class NotificationsService implements OnModuleInit {
     storeName?: string;
     reason: string;
     status?: string;
+    /** `admin` = fan-out plateforme (indépendant du toggle Push boutique). */
+    audience?: 'vendor' | 'admin';
   }): Promise<void> {
     const ids = [...new Set(args.vendorUserIds)].filter((id) =>
       Types.ObjectId.isValid(id),
@@ -1708,7 +1712,7 @@ export class NotificationsService implements OnModuleInit {
         body: args.body,
         data: {
           type: 'order_update',
-          audience: 'vendor',
+          audience: args.audience === 'admin' ? 'admin' : 'vendor',
           reason: args.reason,
           orderId: args.orderId,
           storeId: args.storeId,

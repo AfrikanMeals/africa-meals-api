@@ -287,6 +287,23 @@ export class DeliveryAgentController {
     );
   }
 
+
+  @Post('orders/:orderId/confirm-store-collected')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary:
+      'Confirme la prise au restaurant (storeCollectedAt) — pas de nouveau statut, bloque ensuite l’abandon.',
+  })
+  confirmStoreCollected(
+    @Req() req: Request,
+    @Param('orderId') orderId: string,
+  ) {
+    return this._deliveryAgent.confirmStoreCollected(
+      req.user as UserModel,
+      orderId,
+    );
+  }
+
   @Post('orders/:orderId/abandon')
   @UseGuards(JwtGuard)
   @ApiOperation({

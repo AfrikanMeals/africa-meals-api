@@ -3853,7 +3853,27 @@ export class OrdersService {
       ...(vendorAcceptedAt ? { vendorAcceptedAt } : {}),
       ...(pickupCode ? { pickupCode } : {}),
       ...this.courierRouteFieldsFromOrder(order as Record<string, unknown>),
+      ...this.storeCollectedFieldsFromOrder(order as Record<string, unknown>),
     };
+  }
+
+  /** Champ « pris au restaurant » — sync cartes client/vendeur/admin. */
+  private storeCollectedFieldsFromOrder(
+    order: Record<string, unknown>,
+  ): Partial<OrderWsTrackingPayload> {
+    const raw =
+      order.storeCollectedAt ?? order.store_collected_at ?? null;
+    if (raw == null) return {};
+    if (raw instanceof Date && Number.isFinite(raw.getTime())) {
+      return { storeCollectedAt: raw.toISOString() };
+    }
+    if (typeof raw === 'string' && raw.trim()) {
+      const d = new Date(raw.trim());
+      if (Number.isFinite(d.getTime())) {
+        return { storeCollectedAt: d.toISOString() };
+      }
+    }
+    return {};
   }
 
   /** Polyline publiée par le livreur (si présente sur le doc commande). */

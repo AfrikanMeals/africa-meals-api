@@ -166,7 +166,9 @@ export type VendorOrderNotifyReason =
   | 'order_cancelled'
   | 'order_completed'
   | 'pre_order_d_day'
-  | 'courier_abandoned';
+  | 'courier_abandoned'
+  /** Collecte boutique confirmée par le livreur (pas un nouveau statut). */
+  | 'store_collected';
 
 export function vendorOrderStatusLabelFr(
   status: string,
@@ -248,6 +250,7 @@ export function buildVendorOrderStatusPush(args: {
       order_completed: 'Commande terminée',
       pre_order_d_day: 'Pré-commande du jour',
       courier_abandoned: 'Course abandonnée',
+      store_collected: 'Prise en charge restaurant',
     };
     return {
       title: titles[args.reason],
@@ -318,6 +321,22 @@ export function buildVendorOrderStatusPush(args: {
         title: 'Pré-commande du jour',
         body: `${store} : pré-commande #${ref} du jour${totalPart} — à approuver ou refuser.`,
         reason: 'pre_order_d_day',
+      };
+    case 'courier_abandoned':
+      return {
+        title: 'Course abandonnée',
+        body: args.note?.trim()
+          ? `${store} : commande #${ref} — ${args.note.trim()}`
+          : `${store} : course abandonnée (#${ref}).`,
+        reason: 'courier_abandoned',
+      };
+    case 'store_collected':
+      return {
+        title: 'Prise en charge restaurant',
+        body: args.note?.trim()
+          ? `${store} : commande #${ref} — ${args.note.trim()}`
+          : `${store} : le livreur a récupéré la commande #${ref} au restaurant.`,
+        reason: 'store_collected',
       };
   }
 }

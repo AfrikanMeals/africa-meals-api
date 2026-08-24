@@ -91,6 +91,11 @@ import {
   filterCourierActiveShippedRows,
   maxConcurrentOrdersFromApplication,
 } from './delivery-agent-capacity.util';
+import {
+  canConfirmStoreCollected,
+  isOrderAbandonableAfterStoreCollect,
+  storeCollectedAtIso,
+} from './delivery-agent-store-collected.util';
 import { courierTrackingExtraFromApplication } from '@modules/dashboard/dashboard-fleet-seed.util';
 import { PatchDeliveryAgentPresenceDto } from './dto/patch-delivery-agent-presence.dto';
 import {
@@ -2739,6 +2744,174 @@ export class DeliveryAgentService {
     return { ok: true, stopCount: tour.stops.length };
   }
 
+
+  /**
+   * Confirme « pris au restaurant » : horodatage + leg to_customer + notifs
+   * multi-canaux. Idempotent si déjà collecté. Pas de nouveau OrderStatus.
+   */
+  async confirmStoreCollected(user: UserModel, orderId: string) {
+    await this.assertDeliveryAgent(user);
+    if (!Types.ObjectId.isValid(orderId)) {
+      throw new BadRequestException('invalid_order_id');
+    }
+    const agentId = new Types.ObjectId(String(user._id ?? user.id));
+    const oid = new Types.ObjectId(orderId);
+
+    await this.assertAgentApprovedApplication(agentId);
+
+    const existing = await this._orders
+      .findById(oid)
+      .populate('store', 'name owner')
+      .populate({ path: 'user', select: 'fullName' })
+      .exec();
+    if (!existing) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const assignee = existing.assignedDeliveryUser
+      ? String(existing.assignedDeliveryUser)
+      : '';
+    // Déjà collecté → 200 no-op (idempotent).
+    const alreadyIso = storeCollectedAtIso(
+      (existing as { storeCollectedAt?: Date | null }).storeCollectedAt,
+    );
+    if (alreadyIso) {
+      if (!assignee || assignee !== String(agentId)) {
+        throw new ForbiddenException('order_not_assigned_to_agent');
+      }
+      return {
+        ok: true,
+        alreadyCollected: true,
+        orderId: existing._id.toString(),
+        storeCollectedAt: alreadyIso,
+        courierRouteLeg: (existing as { courierRouteLeg?: string }).courierRouteLeg ?? 'to_customer',
+      };
+    }
+
+    if (
+      !canConfirmStoreCollected(
+        {
+          shouldShip: existing.shouldShip === true,
+          status: String(existing.status ?? ''),
+          assignedDeliveryUserId: assignee,
+          storeCollectedAt: null,
+        },
+        String(agentId),
+      )
+    ) {
+      if (!existing.shouldShip) {
+        throw new BadRequestException('order_not_shippable');
+      }
+      if ((existing.status as OrderStatusEnum) !== OrderStatusEnum.SHIPPED) {
+        throw new BadRequestException('order_not_shipped');
+      }
+      if (!assignee || assignee !== String(agentId)) {
+        throw new ForbiddenException('order_not_assigned_to_agent');
+      }
+      throw new BadRequestException('order_not_collectable');
+    }
+
+    const now = new Date();
+    // Claim atomique : évite double notif si deux taps concurrent.
+    const claimed = await this._orders
+      .findOneAndUpdate(
+        {
+          _id: oid,
+          assignedDeliveryUser: agentId,
+          status: OrderStatusEnum.SHIPPED,
+          shouldShip: true,
+          $or: [
+            { storeCollectedAt: null },
+            { storeCollectedAt: { $exists: false } },
+          ],
+        },
+        {
+          $set: {
+            storeCollectedAt: now,
+            storeCollectedByUserId: agentId,
+            courierRouteLeg: 'to_customer',
+          },
+        },
+        { new: true },
+      )
+      .populate('store', 'name owner')
+      .populate({ path: 'user', select: 'fullName' })
+      .exec();
+
+    const orderDoc = claimed ?? existing;
+    // Course entre-temps collectée ailleurs → relire l’horodatage.
+    if (!claimed) {
+      const refreshed = await this._orders.findById(oid).exec();
+      const iso = storeCollectedAtIso(
+        (refreshed as { storeCollectedAt?: Date | null } | null)?.storeCollectedAt,
+      );
+      if (iso) {
+        return {
+          ok: true,
+          alreadyCollected: true,
+          orderId: oid.toString(),
+          storeCollectedAt: iso,
+          courierRouteLeg: 'to_customer',
+        };
+      }
+      throw new BadRequestException('order_not_collectable');
+    }
+
+    const storeCollectedIso = now.toISOString();
+    const orderStoreId = this.storeIdFromPopulatedOrder(orderDoc);
+    const customerId = this.customerUserIdFromOrder(orderDoc);
+    const storeName = this.storeNameFromPopulatedOrder(orderDoc);
+
+    this._ordersService.notifyOrderPartiesRealtime(
+      orderDoc,
+      OrderStatusEnum.SHIPPED,
+      {
+        storeCollectedAt: storeCollectedIso,
+        routeLeg: 'to_customer',
+        assignedDeliveryUserId: String(agentId),
+      },
+    );
+
+    if (customerId) {
+      void this._notifications
+        .notifyCustomerDeliveryLifecycle({
+          userId: customerId,
+          orderId: orderDoc._id.toString(),
+          storeName,
+          storeId: orderStoreId ?? undefined,
+          reason: 'store_collected',
+          title: 'Commande récupérée',
+          body: 'Le livreur a récupéré votre commande au restaurant et se dirige vers vous.',
+          status: OrderStatusEnum.SHIPPED,
+        })
+        .catch((err) => {
+          this._logger.warn(
+            `store_collected customer notify: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
+    }
+
+    if (orderStoreId) {
+      const agentName = user.fullName?.trim() || 'Livreur';
+      this._ordersService.notifyStoreVendorsForOrderStatusChange(orderDoc, {
+        reason: 'store_collected',
+        status: OrderStatusEnum.SHIPPED,
+        note: `${agentName} a récupéré la commande au restaurant`,
+        pushBodyOverride: `${storeName} : ${agentName} a pris la commande au restaurant.`,
+      });
+    }
+
+    return {
+      ok: true,
+      alreadyCollected: false,
+      orderId: orderDoc._id.toString(),
+      storeCollectedAt: storeCollectedIso,
+      courierRouteLeg: 'to_customer',
+    };
+  }
+
   /**
    * Le livreur abandonne une course en cours : retrait assignation, repasse en
    * `approved`, notification vendeur uniquement (pas de push client), pas de gain.
@@ -2772,6 +2945,14 @@ export class DeliveryAgentService {
       : '';
     if (!assignee || assignee !== String(agentId)) {
       throw new ForbiddenException('order_not_assigned_to_agent');
+    }
+    // Fix: après collecte boutique, abandon interdit (commande déjà en route client).
+    if (
+      !isOrderAbandonableAfterStoreCollect(
+        (orderDoc as { storeCollectedAt?: Date | null }).storeCollectedAt,
+      )
+    ) {
+      throw new BadRequestException('order_not_abandonable_after_store_collect');
     }
 
     const orderStoreId = this.storeIdFromPopulatedOrder(orderDoc);
@@ -3784,6 +3965,24 @@ export class DeliveryAgentService {
       // Invariant : jamais exposer le code retrait/livraison au livreur.
       pickupCode: null,
       shouldShip: row.shouldShip === true,
+      // Collecte boutique (champ horodaté — pas un statut).
+      storeCollectedAt: storeCollectedAtIso(
+        (row.storeCollectedAt ?? row.store_collected_at) as
+          | Date
+          | string
+          | null
+          | undefined,
+      ),
+      courierRouteLeg: (() => {
+        const leg = String(
+          row.courierRouteLeg ?? row.courier_route_leg ?? '',
+        ).trim();
+        return leg === 'to_store' ||
+          leg === 'to_customer' ||
+          leg === 'full'
+          ? leg
+          : null;
+      })(),
       status:
         String(row.status ?? '')
           .trim()

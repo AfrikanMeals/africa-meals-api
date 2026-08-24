@@ -30,6 +30,7 @@ import {
   previousBillingMonthKey,
   VendorNotificationBillingCyclePeriodEnum,
 } from './vendor-notification-billing-period.util';
+import { resolveStoreOrderNotifyPushFanout } from './vendor-notification-dispatch-recipients.util';
 
 export type VendorStoreNotifyPush = {
   title: string;
@@ -85,13 +86,11 @@ export class VendorNotificationDispatchService {
     const sid = args.storeId?.trim();
     if (!sid || !Types.ObjectId.isValid(sid)) return;
 
-    const allVendorIds =
-      await this.storeAccess.listStorePushRecipientUserIds(sid);
+    const storeTeamIds =
+      await this.storeAccess.listStoreTeamRecipientUserIds(sid);
+    const platformAdminIds =
+      await this.storeAccess.listPlatformOrderPushRecipientUserIds();
     const customerId = args.customerUserId?.trim() ?? '';
-    const pushIds =
-      customerId && Types.ObjectId.isValid(customerId)
-        ? allVendorIds.filter((id) => id !== customerId)
-        : allVendorIds;
 
     const pushEnabled = await this.prefs.isChannelEnabled(
       sid,
@@ -99,15 +98,17 @@ export class VendorNotificationDispatchService {
       'push',
     );
 
-    /** Fil inbox admin + refresh WS — même préférence « Push » que FCM (catégorie Commandes, etc.). */
-    if (args.onInbox && pushEnabled) {
-      const inboxNotifyIds =
-        allVendorIds.length > 0
-          ? allVendorIds
-          : customerId && Types.ObjectId.isValid(customerId)
-            ? [customerId]
-            : [];
-      void args.onInbox(inboxNotifyIds).catch((err) =>
+    // Fix: Push boutique OFF ne coupe plus les admins ; admins toujours audience=admin.
+    const fanout = resolveStoreOrderNotifyPushFanout({
+      storeTeamIds,
+      platformAdminIds,
+      customerUserId: customerId,
+      storePushEnabled: pushEnabled,
+    });
+
+    /** Inbox équipe si canal ON ; admins toujours (même si la boutique a coupé Push). */
+    if (args.onInbox && fanout.inboxUserIds.length > 0) {
+      void args.onInbox(fanout.inboxUserIds).catch((err) =>
         this.logger.warn(
           `${args.logTag} inbox: ${
             err instanceof Error ? err.message : String(err)
@@ -115,60 +116,80 @@ export class VendorNotificationDispatchService {
         ),
       );
     }
-    if (args.push && pushEnabled && pushIds.length > 0) {
-      void this.notifications
-        .pushVendorOrderNotify({
-          vendorUserIds: pushIds,
-          title: args.push.title,
-          body: args.push.body,
-          orderId: args.push.orderId ?? '',
-          storeId: sid,
-          storeName: args.push.storeName,
-          reason: args.push.reason ?? args.category,
-          status: args.push.status ?? '',
-        })
-        .then(async () => {
-          for (const userId of pushIds) {
+
+    // Dual FCM : équipe (vendor) si Push ON + admins (admin) toujours.
+    if (args.push) {
+      const pushPayload = args.push;
+      const sendBatch = async (
+        userIds: string[],
+        audience: 'vendor' | 'admin',
+      ): Promise<void> => {
+        if (userIds.length === 0) return;
+        try {
+          await this.notifications.pushVendorOrderNotify({
+            vendorUserIds: userIds,
+            title: pushPayload.title,
+            body: pushPayload.body,
+            orderId: pushPayload.orderId ?? '',
+            storeId: sid,
+            storeName: pushPayload.storeName,
+            reason: pushPayload.reason ?? args.category,
+            status: pushPayload.status ?? '',
+            audience,
+          });
+          for (const userId of userIds) {
             await this.recordDelivery({
               storeId: sid,
               recipientUserId: userId,
               category: args.category,
               channel: 'push',
               status: VendorNotificationDeliveryStatusEnum.SENT,
-              title: args.push!.title,
-              body: args.push!.body,
+              title: pushPayload.title,
+              body: pushPayload.body,
               metadata: args.metadata,
             });
           }
-        })
-        .catch(async (err) => {
+        } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          for (const userId of pushIds) {
+          for (const userId of userIds) {
             await this.recordDelivery({
               storeId: sid,
               recipientUserId: userId,
               category: args.category,
               channel: 'push',
               status: VendorNotificationDeliveryStatusEnum.FAILED,
-              title: args.push!.title,
-              body: args.push!.body,
+              title: pushPayload.title,
+              body: pushPayload.body,
               errorMessage: msg,
               metadata: args.metadata,
             });
           }
-          this.logger.warn(`FCM vendor ${args.logTag}: ${msg}`);
+          this.logger.warn(`FCM ${audience} ${args.logTag}: ${msg}`);
+        }
+      };
+
+      void (async () => {
+        await sendBatch(fanout.vendorFcmUserIds, 'vendor');
+        await sendBatch(fanout.adminFcmUserIds, 'admin');
+      })();
+
+      // Push boutique OFF et aucun admin : journaliser le skip équipe.
+      if (
+        !pushEnabled &&
+        fanout.vendorFcmUserIds.length === 0 &&
+        fanout.adminFcmUserIds.length === 0
+      ) {
+        await this.recordDelivery({
+          storeId: sid,
+          category: args.category,
+          channel: 'push',
+          status: VendorNotificationDeliveryStatusEnum.SKIPPED,
+          title: pushPayload.title,
+          body: pushPayload.body,
+          skipReason: 'channel_disabled',
+          metadata: args.metadata,
         });
-    } else if (args.push && !pushEnabled) {
-      await this.recordDelivery({
-        storeId: sid,
-        category: args.category,
-        channel: 'push',
-        status: VendorNotificationDeliveryStatusEnum.SKIPPED,
-        title: args.push.title,
-        body: args.push.body,
-        skipReason: 'channel_disabled',
-        metadata: args.metadata,
-      });
+      }
     }
 
     const emailEnabled = await this.prefs.isChannelEnabled(

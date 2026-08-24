@@ -292,6 +292,27 @@ export class OrderModel extends BaseSchema {
   courierNearCustomerNotifiedAt?: Date | null;
 
   /**
+   * Livreur a confirmé « pris au restaurant » (manuel).
+   * Pas un OrderStatus — reste `shipped` jusqu’au handoff client (`pickedUpAt`).
+   */
+  @Prop({
+    required: false,
+    name: 'store_collected_at',
+    type: Date,
+    default: null,
+  })
+  storeCollectedAt?: Date | null;
+
+  /** UserId livreur ayant confirmé la collecte boutique (audit). */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserModel',
+    required: false,
+    name: 'store_collected_by_user_id',
+  })
+  storeCollectedByUserId?: MongooseSchema.Types.ObjectId;
+
+  /**
    * Polyline itinéraire calculée par le livreur (source de vérité cartes admin/client).
    * Format Google Encoded Polyline (précision 5) sauf indication contraire.
    */

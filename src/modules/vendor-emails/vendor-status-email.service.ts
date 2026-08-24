@@ -44,7 +44,8 @@ export type VendorOrderEmailEvent =
   | 'order_completed'
   | 'pre_order_d_day'
   | 'pre_order_reminder'
-  | 'courier_abandoned';
+  | 'courier_abandoned'
+  | 'store_collected';
 
 @Injectable()
 export class VendorStatusEmailService {
@@ -888,6 +889,13 @@ export class VendorStatusEmailService {
           heading: 'Course abandonnée',
           body: `Le livreur a abandonné la commande ${args.orderRef} pour ${args.storeName}. La commande est de nouveau en attente d'assignation.${notePart}`,
           statusLabel: args.statusLabel ?? 'En attente de livreur',
+        };
+      case 'store_collected':
+        return {
+          subject: 'Commande récupérée au restaurant',
+          heading: 'Prise en charge restaurant',
+          body: `Le livreur a récupéré la commande ${args.orderRef} pour ${args.storeName} au restaurant et part vers le client.${notePart}`,
+          statusLabel: args.statusLabel ?? 'En livraison',
         };
     }
   }
