@@ -39,6 +39,16 @@ describe('CourierGpsThrottle', () => {
       throttle.shouldPublish('agent1', 'order2', 48.8566, 2.3522),
     ).toBe(true);
   });
+
+  it('setThrottleMs shortens the window to match admin active ping', () => {
+    const throttle = new CourierGpsThrottle({
+      throttleMs: 5000,
+      coordPrecision: 4,
+    });
+    expect(throttle.shouldPublish('a', 'o', 1, 2)).toBe(true);
+    throttle.setThrottleMs(1000);
+    expect(throttle.throttleMs()).toBe(1000);
+  });
 });
 
 describe('roundCourierCoordinate', () => {

@@ -141,6 +141,24 @@ export class MapSettingsModel {
     routeRefreshDebounceMs: number;
   };
 
+  /**
+   * Ping GPS temps réel livreur (POST location → GEO + WS).
+   * Frère de routingCache — raisons de changer distinctes (fréquence vs cache Directions).
+   */
+  @Prop({
+    type: Object,
+    default: {
+      enabled: true,
+      intervalActiveMs: 2000,
+      intervalIdleMs: 20000,
+    },
+  })
+  courierGpsPing: {
+    enabled: boolean;
+    intervalActiveMs: number;
+    intervalIdleMs: number;
+  };
+
   /** Overrides moteurs carte / géocodage par région active (ISO2). */
   @Prop({ type: Object, default: {} })
   settingsByRegion: Record<string, Record<string, unknown>>;

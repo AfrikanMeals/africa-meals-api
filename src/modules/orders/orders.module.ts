@@ -56,6 +56,7 @@ import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain
 import { RatingsModule } from '@modules/ratings/ratings.module';
 import { PendingDeliveryModule } from '@modules/pending-delivery/pending-delivery.module';
 import { GraphModule } from '@modules/graph/graph.module';
+import { MapSettingsModule } from '@modules/map-settings/map-settings.module';
 
 @Module({
   controllers: [OrdersController],
@@ -97,6 +98,7 @@ import { GraphModule } from '@modules/graph/graph.module';
     forwardRef(() => DomainEventHandlersModule),
     RatingsModule,
     GraphModule,
+    MapSettingsModule,
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       {

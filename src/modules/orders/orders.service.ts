@@ -158,6 +158,8 @@ import {
   CourierGpsThrottle,
   readCourierGpsThrottleConfig,
 } from './courier-gps-throttle';
+import { resolveCourierGpsWsThrottleMs } from '@common/courier-gps-ping-settings.util';
+import { MapSettingsService } from '@modules/map-settings/map-settings.service';
 import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import { domainEventIdFromCourierTracking } from '../../common/domain-events/domain-event-id.util';
 import { GraphSyncQueueService } from '@modules/graph/graph-sync-queue.service';
@@ -172,6 +174,8 @@ dayjs.extend(utc);
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
+  private readonly courierGpsEnvThrottleMs =
+    readCourierGpsThrottleConfig().throttleMs;
   private readonly courierGpsThrottle = new CourierGpsThrottle(
     readCourierGpsThrottleConfig(),
   );
@@ -281,6 +285,11 @@ export class OrdersService {
   @Inject(forwardRef(() => CourierPerformanceStatsService))
   @Optional()
   private readonly _courierPerfStats?: CourierPerformanceStatsService;
+
+  /** Paramètres carte — throttle GPS aligné sur `courierGpsPing.intervalActiveMs`. */
+  @Inject(MapSettingsService)
+  @Optional()
+  private readonly _mapSettings?: MapSettingsService;
 
   /** Rayon « livreur proche » (Admin → Paramètres de livraison). */
   @Inject(CheckoutDeliverySettingsService)
@@ -4558,6 +4567,17 @@ export class OrdersService {
     courierLng: number,
     telemetry?: CourierLiveTelemetry | null,
   ): Promise<string[]> {
+    // Aligner le throttle order:tracking sur l’intervalle actif admin (pas 3 s figés).
+    if (this._mapSettings) {
+      try {
+        const ping = await this._mapSettings.getCourierGpsPing();
+        this.courierGpsThrottle.setThrottleMs(
+          resolveCourierGpsWsThrottleMs(ping, this.courierGpsEnvThrottleMs),
+        );
+      } catch {
+        /* fail-open : garder le throttle env */
+      }
+    }
     const orders = await this.findShippedOrdersForCourierTracking(agentUserId);
     const orderIds: string[] = [];
     for (const order of orders) {

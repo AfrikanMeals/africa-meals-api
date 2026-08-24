@@ -15,6 +15,7 @@ import { GeocodingEnginePoolEntryDto } from './geocoding-engine-pool-entry.dto';
 import { RoutingEnginePoolEntryDto } from './routing-engine-pool-entry.dto';
 import { TrafficEnginePoolEntryDto } from './traffic-engine-pool-entry.dto';
 import { RoutingCacheSettingsDto } from './routing-cache-settings.dto';
+import { CourierGpsPingSettingsDto } from './courier-gps-ping-settings.dto';
 
 const VENDOR_ENGINES = ['mapbox', 'google', 'osm'] as const;
 const MOBILE_ENGINES = ['mapbox', 'google', 'osm'] as const;
@@ -191,4 +192,10 @@ export class UpdateMapSettingsDto {
   @ValidateNested()
   @Type(() => RoutingCacheSettingsDto)
   routingCache?: RoutingCacheSettingsDto;
+
+  @ApiPropertyOptional({ type: CourierGpsPingSettingsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CourierGpsPingSettingsDto)
+  courierGpsPing?: CourierGpsPingSettingsDto;
 }

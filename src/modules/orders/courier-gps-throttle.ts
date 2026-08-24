@@ -21,11 +21,21 @@ export function roundCourierCoordinate(value: number, precision: number): number
 
 /**
  * Max 1 publication GPS / (agent, commande) par fenêtre throttleMs (OPT-002).
+ * `setThrottleMs` aligne la fenêtre sur Paramètres → Carte (`courierGpsPing`).
  */
 export class CourierGpsThrottle {
   private readonly lastEmitAtMs = new Map<string, number>();
+  private throttleMsValue: number;
 
-  constructor(private readonly config: CourierGpsThrottleConfig) {}
+  constructor(private readonly config: CourierGpsThrottleConfig) {
+    this.throttleMsValue = config.throttleMs;
+  }
+
+  /** Met à jour le throttle runtime (plancher 1000 ms). */
+  setThrottleMs(ms: number): void {
+    const n = Math.floor(Number(ms));
+    this.throttleMsValue = Number.isFinite(n) ? Math.max(1_000, n) : 1_000;
+  }
 
   shouldPublish(
     agentUserId: string,
@@ -43,7 +53,7 @@ export class CourierGpsThrottle {
     const key = `${agentId}:${oid}`;
     const now = Date.now();
     const prev = this.lastEmitAtMs.get(key);
-    if (prev != null && now - prev < this.config.throttleMs) {
+    if (prev != null && now - prev < this.throttleMsValue) {
       return false;
     }
     this.lastEmitAtMs.set(key, now);
@@ -55,6 +65,6 @@ export class CourierGpsThrottle {
   }
 
   throttleMs(): number {
-    return this.config.throttleMs;
+    return this.throttleMsValue;
   }
 }

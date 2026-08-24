@@ -16,6 +16,7 @@ import { TrafficModule } from '@modules/traffic/traffic.module';
 import { RouteOptimizationModule } from '@modules/route-optimization/route-optimization.module';
 import { GraphModule } from '@modules/graph/graph.module';
 import { MapEngineCacheModule } from '@modules/map-engine-cache/map-engine-cache.module';
+import { MapSettingsModule } from '@modules/map-settings/map-settings.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
@@ -59,6 +60,7 @@ import { CourierPerformanceModule } from './courier-performance.module';
     RouteOptimizationModule,
     GraphModule,
     MapEngineCacheModule,
+    MapSettingsModule,
     // Module sans dépendance boutique : évite le cycle DI avec StoreDeliveryDriversModule.
     CourierPerformanceModule,
     MongooseModule.forFeature([

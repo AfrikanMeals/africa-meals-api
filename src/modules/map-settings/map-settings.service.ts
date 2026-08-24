@@ -47,6 +47,11 @@ import {
   DEFAULT_ROUTING_CACHE_SETTINGS,
   normalizeRoutingCacheSettings,
 } from '@common/routing-cache-settings.util';
+import {
+  DEFAULT_COURIER_GPS_PING_SETTINGS,
+  normalizeCourierGpsPingSettings,
+  type CourierGpsPingSettings,
+} from '@common/courier-gps-ping-settings.util';
 import { UpdateMapSettingsDto } from './dto/update-map-settings.dto';
 import {
   geocodingEnginePoolForGroup,
@@ -163,6 +168,12 @@ function assertDefaultEngineEnabled(
 
 @Injectable()
 export class MapSettingsService {
+  /** Évite un find Mongo à chaque tip GPS (~2 s) — TTL mémoire court. */
+  private _courierGpsPingCache: {
+    atMs: number;
+    value: CourierGpsPingSettings;
+  } | null = null;
+
   constructor(
     @InjectModel(MapSettingsModel.name)
     private readonly _settings: Model<MapSettingsDocument>,
@@ -236,6 +247,8 @@ export class MapSettingsService {
         storeAvailability: this._geocodeCacheAvailability(),
       },
       routingCache: normalizeRoutingCacheSettings(doc.routingCache),
+      // Bloc public : mobile sans JWT admin consomme le même contrat.
+      courierGpsPing: normalizeCourierGpsPingSettings(doc.courierGpsPing),
       traffic: {
         engine: normalizeTrafficEnginePrimary(doc.trafficEngine),
         enginePool: resolveTrafficPool(
@@ -245,6 +258,26 @@ export class MapSettingsService {
       },
       updatedAt: typed.updatedAt?.toISOString?.() ?? null,
     };
+  }
+
+  /**
+   * Lecture ping GPS (cache 5 s) pour reportLocation / throttle WS.
+   * Fail-open si doc absent ou champs manquants.
+   */
+  async getCourierGpsPing(): Promise<CourierGpsPingSettings> {
+    const now = Date.now();
+    const cached = this._courierGpsPingCache;
+    if (cached && now - cached.atMs < 5_000) {
+      return cached.value;
+    }
+    const doc = await this.getSettingsDocument();
+    const value = normalizeCourierGpsPingSettings(doc.courierGpsPing);
+    this._courierGpsPingCache = { atMs: now, value };
+    return value;
+  }
+
+  private _invalidateCourierGpsPingCache(): void {
+    this._courierGpsPingCache = null;
   }
 
   async getSettingsDocument(): Promise<MapSettingsModel> {
@@ -282,6 +315,7 @@ export class MapSettingsService {
             trafficEnginePool: [],
             geocodeCacheStorePriority: [...DEFAULT_GEOCODE_CACHE_STORE_PRIORITY],
             routingCache: { ...DEFAULT_ROUTING_CACHE_SETTINGS },
+            courierGpsPing: { ...DEFAULT_COURIER_GPS_PING_SETTINGS },
             settingsByRegion: {},
           },
         },
@@ -475,6 +509,14 @@ export class MapSettingsService {
       ...(dto.routingCache ?? {}),
     });
 
+    // Merge partiel : PUT sans courierGpsPing conserve l’existant (fail-open défaut).
+    const courierGpsPing = normalizeCourierGpsPingSettings({
+      ...normalizeCourierGpsPingSettings(
+        (existing as MapSettingsModel | null)?.courierGpsPing,
+      ),
+      ...(dto.courierGpsPing ?? {}),
+    });
+
     assertDefaultEngineEnabled(
       vendorDefault,
       dto.vendorMapboxEnabled,
@@ -600,11 +642,14 @@ export class MapSettingsService {
             trafficEnginePool,
             geocodeCacheStorePriority,
             routingCache,
+            courierGpsPing,
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true },
       )
       .exec();
+    // Admin vient de changer les intervalles → invalider le cache mémoire tip GPS.
+    this._invalidateCourierGpsPingCache();
     return this._toResponse(updated);
   }
 

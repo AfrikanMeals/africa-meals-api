@@ -131,6 +131,12 @@ import {
   resolveDeliveryAgentPresence,
 } from './delivery-agent-domain.util';
 import {
+  DEFAULT_COURIER_GPS_PING_SETTINGS,
+  resolveCourierGpsWsThrottleMs,
+  shouldSkipCourierGpsHttpReport,
+} from '@common/courier-gps-ping-settings.util';
+import { MapSettingsService } from '@modules/map-settings/map-settings.service';
+import {
   buildDeliveryCancelledHistoryMongoFilter,
   buildDeliveryPendingOrdersMongoFilter,
 } from './delivery-pending-orders-query.util';
@@ -233,6 +239,8 @@ export class DeliveryAgentService {
     private readonly _graphSync?: GraphSyncQueueService,
     @Optional()
     private readonly _mapHistory?: MapEngineHistoryService,
+    @Optional()
+    private readonly _mapSettings?: MapSettingsService,
   ) {}
 
   private async publishAgentDomainEvent<T extends DomainEventType>(
@@ -1850,7 +1858,20 @@ export class DeliveryAgentService {
     if (!agentUserId) return;
     const now = Date.now();
     const last = this.locationEmitLastMs.get(agentUserId) ?? 0;
-    if (now - last < AGENT_LOCATION_EMIT_THROTTLE_MS) return;
+    // Throttle flotte : suit intervalle actif admin (plancher 1 s), sinon défaut 3 s.
+    let throttleMs = AGENT_LOCATION_EMIT_THROTTLE_MS;
+    if (this._mapSettings) {
+      try {
+        const ping = await this._mapSettings.getCourierGpsPing();
+        throttleMs = resolveCourierGpsWsThrottleMs(
+          ping,
+          AGENT_LOCATION_EMIT_THROTTLE_MS,
+        );
+      } catch {
+        /* fail-open */
+      }
+    }
+    if (now - last < throttleMs) return;
     this.locationEmitLastMs.set(agentUserId, now);
 
     this._fleet.pushAgentUpdate({
@@ -1953,6 +1974,15 @@ export class DeliveryAgentService {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       throw new BadRequestException('invalid_coordinates');
     }
+
+    // Défense : admin OFF → 200 skipped sans Mongo/GEO/WS (apps non à jour).
+    const ping =
+      (await this._mapSettings?.getCourierGpsPing().catch(() => null)) ??
+      DEFAULT_COURIER_GPS_PING_SETTINGS;
+    if (shouldSkipCourierGpsHttpReport(ping)) {
+      return { ok: true, skipped: true as const };
+    }
+
     const agentId = new Types.ObjectId(String(user._id ?? user.id));
     const agentUserId = String(agentId);
 
