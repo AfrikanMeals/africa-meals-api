@@ -33,6 +33,7 @@ export class DrivingDistanceService {
 
   constructor(
     private readonly _matrix: RoutingMatrixService,
+    // Cache OD 15 min — évite de re-payer Google à chaque preview checkout.
     @Optional() private readonly _mapCache?: MapEngineCacheService,
   ) {}
 
@@ -40,6 +41,7 @@ export class DrivingDistanceService {
     origin: { lat: number; lon: number };
     dest: { lat: number; lon: number };
   }): Promise<BillableDistanceResult> {
+    // Plancher + repli si aucun moteur ne répond.
     const haversineKm = haversineDistanceKm(
       args.origin.lat,
       args.origin.lon,
@@ -62,6 +64,7 @@ export class DrivingDistanceService {
       }
     }
 
+    // Google d’abord (aligné Gmaps), puis cascade ; un seul essai Google.
     const tryOrder = billableDistanceEngineTryOrder((engine) =>
       this._matrix.isMatrixProviderConfigured(engine),
     );
@@ -74,6 +77,7 @@ export class DrivingDistanceService {
           engine,
         );
         if (meters == null) continue;
+        // Convertit mètres → km puis applique le plancher Haversine.
         const routeKm = meters / 1000;
         const result: BillableDistanceResult = {
           distanceKm: pickBillableDistanceKm(haversineKm, routeKm),
