@@ -75,4 +75,22 @@ describe('computeCartSimulatorCourierBreakdown', () => {
     expect(out.netAfterStripe).toBeLessThan(out.driverNetFromShipping);
     expect(out.totalEstimated).toBe(out.netAfterStripe);
   });
+
+  it('XAF (amountFactor 1) : retenue % sans *100 CAD', () => {
+    const out = computeCartSimulatorCourierBreakdown({
+      fulfillmentIsDelivery: true,
+      deliverable: true,
+      shippingDisplay: 2000,
+      tipDisplay: 500,
+      withheldMode: 'percent',
+      withheldFixed: 0,
+      withheldPercent: 10,
+      amountFactor: 1,
+      chargeCents: 0,
+      stripeFeeTotalCents: 0,
+    });
+    expect(out.platformWithheld).toBe(200);
+    expect(out.driverNetFromShipping).toBe(1800);
+    expect(out.totalEstimated).toBe(2300);
+  });
 });

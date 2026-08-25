@@ -1,5 +1,6 @@
 import {
   computePlatformShippingFeeFromDistance,
+  pickBillableDistanceKm,
   resolvePlatformRangePricing,
 } from './shipping-quote.util';
 
@@ -41,6 +42,12 @@ describe('shipping-quote.util range basePrice', () => {
     expect(result.perKmRateEffective).toBe(95);
     expect(result.perKmComponent).toBe(1140);
     expect(result.total).toBe(1640);
+  });
+
+  it('pickBillableDistanceKm prefers driving route over haversine (Gmaps gap)', () => {
+    expect(pickBillableDistanceKm(2.853, 4.6)).toBe(4.6);
+    expect(pickBillableDistanceKm(2.853, null)).toBe(2.853);
+    expect(pickBillableDistanceKm(2.853, 2.8)).toBe(2.853);
   });
 
   it('resolvePlatformRangePricing returns global km rate outside tranches', () => {

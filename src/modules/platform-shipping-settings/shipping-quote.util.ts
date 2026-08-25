@@ -12,6 +12,7 @@ export function pickBillableDistanceKm(
   haversineKm: number,
   routeKm: number | null | undefined,
 ): number {
+  // Plancher Haversine : un snap réseau trop court ne doit pas sous-facturer.
   if (routeKm != null && Number.isFinite(routeKm) && routeKm > 0) {
     return roundBillableDistanceKm(Math.max(routeKm, haversineKm));
   }

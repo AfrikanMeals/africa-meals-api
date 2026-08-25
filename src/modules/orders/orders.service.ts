@@ -293,6 +293,7 @@ export class OrdersService {
 
   @Inject(DrivingDistanceService)
   @Optional()
+  // SoT distance routière — zones boutique legacy (calculateShippingPrice).
   private readonly _drivingDistance?: DrivingDistanceService;
 
   /** Rayon « livreur proche » (Admin → Paramètres de livraison). */

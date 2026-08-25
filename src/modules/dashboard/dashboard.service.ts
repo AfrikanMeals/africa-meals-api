@@ -680,6 +680,7 @@ export class DashboardService {
     private readonly storeDeliveryDrivers: StoreDeliveryDriversService,
     private readonly subscriptionsService: SubscriptionsService,
     private readonly platformShippingSettings: PlatformShippingSettingsService,
+    // Même SoT routier que le quote checkout (évite Haversine admin).
     private readonly drivingDistance: DrivingDistanceService,
   ) {}
 
@@ -3992,6 +3993,7 @@ export class DashboardService {
       };
     }
 
+    // Nouvelle adresse : même distance routière que le quote client.
     const estimatedDistanceKm = (
       await this.drivingDistance.resolveBillableDistanceKm({
         origin,

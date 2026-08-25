@@ -1,6 +1,7 @@
 import {
   FOOD_DELIVERY_DEFAULT_ROUTING_POOL,
   KNOWN_ROUTING_ENGINES,
+  billableDistanceEngineTryOrder,
   normalizeRoutingEngineId,
   normalizeRoutingEnginePool,
   pickPrimaryRoutingEngine,
@@ -92,5 +93,13 @@ describe('routing-engine-pool.util', () => {
       'osrm',
       'google_routes',
     ]);
+  });
+
+  it('billable try order prefers Google once then Mapbox/OSRM', () => {
+    const order = billableDistanceEngineTryOrder(
+      (e) => e === 'google_routes' || e === 'osrm' || e === 'mapbox',
+    );
+    expect(order[0]).toBe('google_routes');
+    expect(order).toEqual(['google_routes', 'mapbox', 'osrm']);
   });
 });

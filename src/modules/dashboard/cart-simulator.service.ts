@@ -137,6 +137,7 @@ export class CartSimulatorService {
     private readonly platformFees: PlatformFeesService,
     private readonly planOrderCommission: SubscriptionPlanOrderCommissionService,
     private readonly coupons: CouponsService,
+    // SoT distance routière — même moteur que le quote checkout.
     private readonly drivingDistance: DrivingDistanceService,
   ) {}
 

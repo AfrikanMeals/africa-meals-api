@@ -135,6 +135,7 @@ export class RoutingMatrixService {
       [dest.lon, dest.lat],
     ];
     const matrix = await this.fetchDurationMatrix(coordinates, engine);
+    // 0 = cellule vide / échec provider — ne pas facturer 0 km par erreur.
     const meters = matrix?.distances?.[0]?.[1];
     if (typeof meters !== 'number' || !Number.isFinite(meters) || meters <= 0) {
       return null;

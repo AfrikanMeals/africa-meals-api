@@ -1,21 +1,21 @@
 import { allocateStripeProcessingFeeShareCents } from '@modules/billing/stripe/stripe-processing-fee.util';
 
 export type CartSimulatorCourierBreakdown = {
-  applicable: boolean
-  shippingGross: number
-  platformWithheld: number
-  withheldMode: string
-  withheldPercent: number
-  withheldFixed: number
+  applicable: boolean;
+  shippingGross: number;
+  platformWithheld: number;
+  withheldMode: string;
+  withheldPercent: number;
+  withheldFixed: number;
   /** Part livreur sur les frais livraison (100 − retenue %) ; null si retenue fixe. */
-  courierSharePercent: number | null
-  driverNetFromShipping: number
-  deliveryTip: number
-  stripeProcessingFeeEstimate: number
-  netAfterStripe: number
+  courierSharePercent: number | null;
+  driverNetFromShipping: number;
+  deliveryTip: number;
+  stripeProcessingFeeEstimate: number;
+  netAfterStripe: number;
   /** Net livraison après Stripe + pourboire (100 % livreur). */
-  totalEstimated: number
-}
+  totalEstimated: number;
+};
 
 function displayToMinor(display: number, amountFactor: number): number {
   return Math.max(0, Math.round(display * amountFactor + Number.EPSILON));
