@@ -1,3 +1,23 @@
+/** Arrondi facturable : millième de km (~1 m). */
+export function roundBillableDistanceKm(distanceKm: number): number {
+  if (!Number.isFinite(distanceKm)) return distanceKm;
+  return Math.round(distanceKm * 1000) / 1000;
+}
+
+/**
+ * Distance facturable : itinéraire routier prioritaire, Haversine en plancher
+ * (un moteur ne doit jamais facturer moins que le vol d’oiseau).
+ */
+export function pickBillableDistanceKm(
+  haversineKm: number,
+  routeKm: number | null | undefined,
+): number {
+  if (routeKm != null && Number.isFinite(routeKm) && routeKm > 0) {
+    return roundBillableDistanceKm(Math.max(routeKm, haversineKm));
+  }
+  return roundBillableDistanceKm(haversineKm);
+}
+
 /** Grande distance terrestre approximative (km) via formule de Haversine. */
 export function haversineDistanceKm(
   lat1: number,

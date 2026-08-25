@@ -121,6 +121,27 @@ export class RoutingMatrixService {
     };
   }
 
+  /**
+   * Distance routière OD (mètres) pour un seul couple origine→destination.
+   * Réutilise la matrice 2×2 déjà câblée (Google Distance Matrix, OSRM table…).
+   */
+  async fetchOdDrivingDistanceMeters(
+    origin: { lat: number; lon: number },
+    dest: { lat: number; lon: number },
+    engine: RoutingEngineId,
+  ): Promise<number | null> {
+    const coordinates: LngLat[] = [
+      [origin.lon, origin.lat],
+      [dest.lon, dest.lat],
+    ];
+    const matrix = await this.fetchDurationMatrix(coordinates, engine);
+    const meters = matrix?.distances?.[0]?.[1];
+    if (typeof meters !== 'number' || !Number.isFinite(meters) || meters <= 0) {
+      return null;
+    }
+    return meters;
+  }
+
   async fetchDurationMatrix(
     coordinates: LngLat[],
     engine: RoutingEngineId,

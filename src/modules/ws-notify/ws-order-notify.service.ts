@@ -57,6 +57,8 @@ export type OrderWsTrackingPayload = {
   routeUpdatedAt?: string;
   /** Horodatage confirmation « pris au restaurant » (ISO), null si non collecté. */
   storeCollectedAt?: string | null;
+  /** Restaurant a confirmé la remise au livreur (ISO), null si en attente. */
+  storeCollectedConfirmedAt?: string | null;
   /** Tournée multi-commandes (VROOM) — séquence pickup/delivery. */
   courierTourStops?: Array<{
     orderId: string;

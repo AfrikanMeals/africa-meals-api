@@ -188,6 +188,22 @@ export class OrdersController {
     return this._ordersService.markOrderReady(id, req.user as UserModel);
   }
 
+  /** Confirme la remise de la commande au livreur au restaurant (VENDOR / ADMIN). */
+  @Post(':id/confirm-courier-store-pickup')
+  @UseGuards(JwtGuard)
+  @ApiOperation({
+    summary: 'Confirmer remise au livreur au restaurant (VENDOR / ADMIN)',
+  })
+  async confirmCourierStorePickup(
+    @Req() req: Request,
+    @Param('id') id: string,
+  ) {
+    return this._ordersService.confirmCourierStorePickupByVendor(
+      id,
+      req.user as UserModel,
+    );
+  }
+
   /** Vendeur : s’assigne la livraison puis passe la commande en `shipped`. */
   @Post(':id/assign-self-delivery')
   @UseGuards(JwtGuard)

@@ -47,6 +47,7 @@ import {
   normalizeSelectedSupplements,
   repriceCustomizationFromProductCatalog,
 } from '@modules/cart/cart-customization.util';
+import { computeCartSimulatorCourierBreakdown } from './cart-simulator-courier.util';
 import {
   cartSimulatorCouponFactor,
   normalizeCartSimulatorItems,
@@ -313,7 +314,13 @@ export class CartSimulatorService {
       distanceKm: number | null;
       maxDeliveryRadiusKm: number;
       reason?: string;
+      storeLatitude?: number | null;
+      storeLongitude?: number | null;
     } | null = null;
+    // Retenue livraison : défauts alignés plateforme ; écrasés si settings région chargés.
+    let withheldMode = 'percent';
+    let withheldFixed = 0;
+    let withheldPercent = 0;
 
     if (
       mode === CartSimulatorFulfillmentMode.DELIVERY &&
@@ -345,6 +352,9 @@ export class CartSimulatorService {
       ]);
       const settings =
         await this.platformShippingSettings.getPublicSettings(regionCode);
+      withheldMode = settings.deliveryWithheldFeeMode;
+      withheldFixed = settings.deliveryWithheldFeeFixed;
+      withheldPercent = settings.deliveryWithheldFeePercent;
 
       const origin = extractLatLonFromGeoPoint(shopAddr?.location);
       if (!origin) {
@@ -353,6 +363,8 @@ export class CartSimulatorService {
           distanceKm: null,
           maxDeliveryRadiusKm: settings.maxDeliveryRadiusKm,
           reason: 'store_address_missing_coordinates',
+          storeLatitude: null,
+          storeLongitude: null,
         };
       } else {
         const distanceKm = haversineDistanceKm(
@@ -370,6 +382,8 @@ export class CartSimulatorService {
           deliverable: computed.deliverable,
           distanceKm: Math.round(distanceKm * 1000) / 1000,
           maxDeliveryRadiusKm: settings.maxDeliveryRadiusKm,
+          storeLatitude: origin.lat,
+          storeLongitude: origin.lon,
           ...(computed.deliverable
             ? {}
             : { reason: 'outside_delivery_radius' }),
@@ -520,6 +534,20 @@ export class CartSimulatorService {
     const commissionSettings =
       await this.planOrderCommission.resolveOrderCommissionForStore(storeId);
 
+    // Gains livreur : hors cartes client/vendeur ; pickup ou hors zone → applicable false.
+    const courier = computeCartSimulatorCourierBreakdown({
+      fulfillmentIsDelivery: mode === CartSimulatorFulfillmentMode.DELIVERY,
+      deliverable: shippingMeta?.deliverable === true,
+      shippingDisplay,
+      tipDisplay,
+      withheldMode,
+      withheldFixed,
+      withheldPercent,
+      amountFactor,
+      chargeCents,
+      stripeFeeTotalCents,
+    });
+
     return {
       storeId,
       storeName: String(store.name ?? ''),
@@ -596,6 +624,7 @@ export class CartSimulatorService {
             ? 'La livraison et le pourboire sont payés par le client mais ne sont pas versés au vendeur. Frais Stripe processing + payout Wise Eat = estimations.'
             : 'Frais Stripe processing + payout Wise Eat (Stripe Connect) = estimations ; hors code cadeau.',
       },
+      courier,
       disclaimer:
         'Simulation indicative — taxes région, coupon, frais Stripe processing et frais payout Wise Eat (Stripe Connect) inclus ; hors code cadeau.',
     };

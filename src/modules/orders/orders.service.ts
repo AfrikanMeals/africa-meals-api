@@ -88,13 +88,12 @@ import {
   isOrderStatusCancellablePayOnPickup,
   isOrderStatusPaidForVendorWorkflow,
 } from './order-status-workflow.util';
+import { parseStoreCollectedAt, storeCollectedAtIso } from '@modules/delivery-agent/delivery-agent-store-collected.util';
 import {
-  ConfirmPickupDto,
-  CreateRefundRequestDto,
-  FilterOrdersDto,
-  PreviewPickupCodeDto,
-  RejectOrderDto,
-} from './dto/orders.dto';
+  canVendorConfirmCourierStorePickup,
+  shouldSkipVendorStorePickupAlert,
+  storeCollectedConfirmedAtIso,
+} from './vendor-courier-store-pickup.util';
 import {
   isVendorPickupConfirmableStatus,
   vendorPickupOrderRef,
@@ -3196,6 +3195,90 @@ export class OrdersService {
   }
 
   /**
+   * Vendeur / admin : confirme que le livreur a bien pris la commande au restaurant.
+   * Non bloquant pour le livreur — audit / litige uniquement.
+   */
+  async confirmCourierStorePickupByVendor(
+    orderId: string,
+    user: UserModel,
+  ): Promise<{
+    orderId: string;
+    storeCollectedConfirmedAt: string;
+    alreadyConfirmed: boolean;
+  }> {
+    const oid = orderId.trim();
+    if (!Types.ObjectId.isValid(oid)) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    const order = await this._orderModel
+      .findById(new Types.ObjectId(oid))
+      .populate('store', 'name owner address')
+      .populate(OrdersService.orderUserWithAddressesPopulate)
+      .exec();
+    if (!order) {
+      throw new NotFoundException('order_not_found');
+    }
+
+    await this.assertUserCanManageOrderStore(user, order);
+
+    const storeOwnerUserId =
+      this.storeOwnerUserIdFromLean(order.store) ?? undefined;
+    const assignee = this.assignedDeliveryUserIdFromOrderDoc(order);
+    const snapshot = {
+      shouldShip: order.shouldShip === true,
+      isPickup: this.isPickupOrder(order),
+      status: String(order.status ?? ''),
+      storeCollectedAt: order.storeCollectedAt ?? null,
+      storeCollectedConfirmedAt: order.storeCollectedConfirmedAt ?? null,
+      assignedDeliveryUserId: assignee,
+      storeOwnerUserId,
+      assigneeIsStoreVendor: false,
+    };
+
+    const existingConfirmed = storeCollectedConfirmedAtIso(
+      order.storeCollectedConfirmedAt,
+    );
+    if (existingConfirmed) {
+      return {
+        orderId: oid,
+        storeCollectedConfirmedAt: existingConfirmed,
+        alreadyConfirmed: true,
+      };
+    }
+
+    if (!canVendorConfirmCourierStorePickup(snapshot)) {
+      if (parseStoreCollectedAt(order.storeCollectedAt) == null) {
+        throw new BadRequestException('courier_store_pickup_not_declared');
+      }
+      if (shouldSkipVendorStorePickupAlert(snapshot)) {
+        throw new BadRequestException('courier_store_pickup_auto_confirmed');
+      }
+      throw new BadRequestException('courier_store_pickup_not_confirmable');
+    }
+
+    const confirmedAt = new Date();
+    const vendorUserId = new Types.ObjectId(String(user._id ?? user.id));
+    order.storeCollectedConfirmedAt = confirmedAt;
+    order.storeCollectedConfirmedByUserId = vendorUserId;
+    await order.save();
+
+    const confirmedIso = confirmedAt.toISOString();
+    this.notifyOrderPartiesRealtime(order, OrderStatusEnum.SHIPPED, {
+      storeCollectedAt: storeCollectedAtIso(order.storeCollectedAt),
+      storeCollectedConfirmedAt: confirmedIso,
+      routeLeg: 'to_customer',
+      assignedDeliveryUserId: assignee ?? undefined,
+    });
+
+    return {
+      orderId: oid,
+      storeCollectedConfirmedAt: confirmedIso,
+      alreadyConfirmed: false,
+    };
+  }
+
+  /**
    * Vendeur / admin : commande payée → `approved` (prête livraison ou retrait).
    */
   async markOrderReady(
@@ -3870,19 +3953,30 @@ export class OrdersService {
   private storeCollectedFieldsFromOrder(
     order: Record<string, unknown>,
   ): Partial<OrderWsTrackingPayload> {
+    const out: Partial<OrderWsTrackingPayload> = {};
     const raw =
       order.storeCollectedAt ?? order.store_collected_at ?? null;
-    if (raw == null) return {};
-    if (raw instanceof Date && Number.isFinite(raw.getTime())) {
-      return { storeCollectedAt: raw.toISOString() };
-    }
-    if (typeof raw === 'string' && raw.trim()) {
-      const d = new Date(raw.trim());
-      if (Number.isFinite(d.getTime())) {
-        return { storeCollectedAt: d.toISOString() };
+    if (raw != null) {
+      if (raw instanceof Date && Number.isFinite(raw.getTime())) {
+        out.storeCollectedAt = raw.toISOString();
+      } else if (typeof raw === 'string' && raw.trim()) {
+        const d = new Date(raw.trim());
+        if (Number.isFinite(d.getTime())) {
+          out.storeCollectedAt = d.toISOString();
+        }
       }
     }
-    return {};
+    const confirmedRaw =
+      order.storeCollectedConfirmedAt ??
+      order.store_collected_confirmed_at ??
+      null;
+    const confirmedIso = storeCollectedConfirmedAtIso(
+      confirmedRaw as Date | string | null | undefined,
+    );
+    if (confirmedIso) {
+      out.storeCollectedConfirmedAt = confirmedIso;
+    }
+    return out;
   }
 
   /** Polyline publiée par le livreur (si présente sur le doc commande). */

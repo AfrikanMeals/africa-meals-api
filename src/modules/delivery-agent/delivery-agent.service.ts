@@ -95,6 +95,7 @@ import {
   canConfirmStoreCollected,
   storeCollectedAtIso,
 } from './delivery-agent-store-collected.util';
+import { shouldSkipVendorStorePickupAlert } from '@modules/orders/vendor-courier-store-pickup.util';
 import { courierAbandonConsequences } from './delivery-agent-abandon.util';
 import { courierTrackingExtraFromApplication } from '@modules/dashboard/dashboard-fleet-seed.util';
 import { PatchDeliveryAgentPresenceDto } from './dto/patch-delivery-agent-presence.dto';
@@ -2843,6 +2844,24 @@ export class DeliveryAgentService {
     }
 
     const now = new Date();
+    // Self-delivery : pas d’alerte vendeur — confirmation restaurant auto.
+    const storeOwnerUserId = this.storeOwnerUserIdFromPopulatedOrder(existing);
+    const skipVendorPickupAlert = shouldSkipVendorStorePickupAlert({
+      shouldShip: existing.shouldShip === true,
+      isPickup: existing.shouldShip !== true,
+      assignedDeliveryUserId: String(agentId),
+      storeOwnerUserId: storeOwnerUserId ?? undefined,
+      assigneeIsStoreVendor: user.type === UserTypeEnum.VENDOR,
+    });
+    const collectSet: Record<string, unknown> = {
+      storeCollectedAt: now,
+      storeCollectedByUserId: agentId,
+      courierRouteLeg: 'to_customer',
+    };
+    if (skipVendorPickupAlert) {
+      collectSet.storeCollectedConfirmedAt = now;
+      collectSet.storeCollectedConfirmedByUserId = agentId;
+    }
     // Claim atomique : évite double notif si deux taps concurrent.
     const claimed = await this._orders
       .findOneAndUpdate(
@@ -2857,11 +2876,7 @@ export class DeliveryAgentService {
           ],
         },
         {
-          $set: {
-            storeCollectedAt: now,
-            storeCollectedByUserId: agentId,
-            courierRouteLeg: 'to_customer',
-          },
+          $set: collectSet,
         },
         { new: true },
       )
@@ -2892,12 +2907,14 @@ export class DeliveryAgentService {
     const orderStoreId = this.storeIdFromPopulatedOrder(orderDoc);
     const customerId = this.customerUserIdFromOrder(orderDoc);
     const storeName = this.storeNameFromPopulatedOrder(orderDoc);
+    const confirmedIso = skipVendorPickupAlert ? storeCollectedIso : undefined;
 
     this._ordersService.notifyOrderPartiesRealtime(
       orderDoc,
       OrderStatusEnum.SHIPPED,
       {
         storeCollectedAt: storeCollectedIso,
+        ...(confirmedIso ? { storeCollectedConfirmedAt: confirmedIso } : {}),
         routeLeg: 'to_customer',
         assignedDeliveryUserId: String(agentId),
       },
@@ -2924,7 +2941,7 @@ export class DeliveryAgentService {
         });
     }
 
-    if (orderStoreId) {
+    if (orderStoreId && !skipVendorPickupAlert) {
       const agentName = user.fullName?.trim() || 'Livreur';
       this._ordersService.notifyStoreVendorsForOrderStatusChange(orderDoc, {
         reason: 'store_collected',
@@ -3135,6 +3152,22 @@ export class DeliveryAgentService {
       if (name) return name;
     }
     return 'Boutique';
+  }
+
+  /** Owner boutique peuplé — auto-confirm self-delivery au collect restaurant. */
+  private storeOwnerUserIdFromPopulatedOrder(
+    orderDoc: OrderModel,
+  ): string | null {
+    const store = orderDoc.store;
+    if (!store || typeof store !== 'object' || !('owner' in store)) {
+      return null;
+    }
+    const o = (store as { owner?: unknown }).owner;
+    if (o == null) return null;
+    if (typeof o === 'object' && o !== null && '_id' in o) {
+      return String((o as { _id: unknown })._id);
+    }
+    return String(o);
   }
 
   private customerUserIdFromOrder(orderDoc: OrderModel): string | null {

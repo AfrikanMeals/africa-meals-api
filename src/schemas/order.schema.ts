@@ -324,6 +324,26 @@ export class OrderModel extends BaseSchema {
   storeCollectedByUserId?: MongooseSchema.Types.ObjectId;
 
   /**
+   * Restaurant a confirmé la remise au livreur (audit — n’empêche pas le départ livreur).
+   */
+  @Prop({
+    required: false,
+    name: 'store_collected_confirmed_at',
+    type: Date,
+    default: null,
+  })
+  storeCollectedConfirmedAt?: Date | null;
+
+  /** Membre boutique ayant confirmé la remise livreur (audit). */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'UserModel',
+    required: false,
+    name: 'store_collected_confirmed_by_user_id',
+  })
+  storeCollectedConfirmedByUserId?: MongooseSchema.Types.ObjectId;
+
+  /**
    * Polyline itinéraire calculée par le livreur (source de vérité cartes admin/client).
    * Format Google Encoded Polyline (précision 5) sauf indication contraire.
    */

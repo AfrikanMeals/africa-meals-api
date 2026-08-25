@@ -34,6 +34,21 @@ export const ROUTING_ENGINE_FALLBACK_ORDER: RoutingEngineId[] = [
 ];
 
 /**
+ * Facturation livraison : Google d’abord (aligné Maps / Distance Matrix),
+ * puis Mapbox / HERE / TomTom, OSRM en dernier. Pas OSRM-first (coût/latence
+ * navigation) — ici on veut la distance routière la plus proche de Gmaps.
+ */
+export const BILLABLE_DISTANCE_ENGINE_ORDER: RoutingEngineId[] = [
+  'google_directions',
+  'google_routes',
+  'mapbox',
+  'here',
+  'tomtom',
+  'osrm',
+  'valhalla',
+];
+
+/**
  * Pool par défaut mode livreur quand `routingEnginePool` est vide.
  * OSRM dominant ; payants en file d’attente.
  */
@@ -181,6 +196,35 @@ export function pickWeightedRoutingEngine(
     if (roll <= 0) return entry.engine;
   }
   return eligible[eligible.length - 1]!.engine;
+}
+
+/**
+ * Ordre d’essai facturation : Google d’abord, sans doubler Routes/Directions
+ * (même Distance Matrix). Filtre `isEligible` (clés / URL présentes).
+ */
+export function billableDistanceEngineTryOrder(
+  isEligible: (engine: RoutingEngineId) => boolean,
+): RoutingEngineId[] {
+  const out: RoutingEngineId[] = [];
+  let googleTried = false;
+  for (const engine of BILLABLE_DISTANCE_ENGINE_ORDER) {
+    const isGoogle =
+      engine === 'google_directions' || engine === 'google_routes';
+    if (isGoogle) {
+      if (googleTried) continue;
+      if (!isEligible('google_directions') && !isEligible('google_routes')) {
+        continue;
+      }
+      googleTried = true;
+      // Distance Matrix est câblée sur les deux ids — on n’en tente qu’un.
+      out.push(
+        isEligible('google_directions') ? 'google_directions' : 'google_routes',
+      );
+      continue;
+    }
+    if (isEligible(engine)) out.push(engine);
+  }
+  return out;
 }
 
 /** Ordre d’essai : préféré puis cascade OSRM-first. */
