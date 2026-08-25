@@ -76,6 +76,7 @@ export class DrivingDistanceService {
           args.dest,
           engine,
         );
+        // Moteur sans distance (quota, 0 m, timeout) → essai suivant.
         if (meters == null) continue;
         // Convertit mètres → km puis applique le plancher Haversine.
         const routeKm = meters / 1000;

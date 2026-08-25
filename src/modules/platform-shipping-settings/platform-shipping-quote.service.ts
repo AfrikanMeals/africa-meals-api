@@ -29,6 +29,7 @@ export class PlatformShippingQuoteService {
     @InjectModel(AddressModel.name)
     private readonly _addressModel: Model<AddressModel>,
     private readonly _settingsService: PlatformShippingSettingsService,
+    // SoT distance routière (Google Distance Matrix prioritaire).
     private readonly _drivingDistance: DrivingDistanceService,
   ) {}
 
@@ -126,6 +127,7 @@ export class PlatformShippingQuoteService {
       storeId: dto.storeId,
       addressId: dto.addressId,
       distanceKm,
+      // Champs additifs : debug / QA (clients existants ignorent).
       distanceSource: billed.source,
       routingEngine: billed.engine,
       maxDeliveryRadiusKm: settings.maxDeliveryRadiusKm,
