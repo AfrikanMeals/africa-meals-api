@@ -34,5 +34,15 @@ describe('normalize-geocode-query.util', () => {
       bbox: '-141,41,-52,83',
     });
     expect(a).toBe(b);
+    expect(a).toContain('|pin2');
+  });
+
+  it('reverse : pas de suffixe pin2', () => {
+    const key = buildGeocodeCacheKey({
+      kind: 'reverse',
+      query: '4.05,9.76',
+      countryCode: 'CM',
+    });
+    expect(key).not.toContain('|pin2');
   });
 });
