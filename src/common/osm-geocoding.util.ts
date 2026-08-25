@@ -1,4 +1,8 @@
 import { GEOCODE_MIN_QUERY_LENGTH } from '@common/normalize-geocode-query.util';
+import {
+  nominatimPrecisionScore,
+  sortByScoreDesc,
+} from '@common/geocode-precision.util';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 
@@ -13,6 +17,12 @@ export type OsmGeocodeResult = {
   zipCode: string;
   latitude: number;
   longitude: number;
+  /** Google `geometry.location_type` (ROOFTOP…). */
+  locationType?: string;
+  osmClass?: string;
+  osmType?: string;
+  hasHouseNumber?: boolean;
+  mapboxAccuracy?: string;
 };
 
 function nominatimBase(config?: ConfigService): string {
@@ -69,6 +79,8 @@ export function parseNominatimItem(item: Record<string, unknown>): OsmGeocodeRes
   const zipCode = pickAddressField(addr, ['postcode']);
   const country = pickAddressField(addr, ['country']);
   const countryCode = pickAddressField(addr, ['country_code']).toUpperCase();
+  const osmClass = String(item.class ?? '').trim();
+  const osmType = String(item.type ?? item.addresstype ?? '').trim();
   return {
     address: line,
     country,
@@ -77,6 +89,9 @@ export function parseNominatimItem(item: Record<string, unknown>): OsmGeocodeRes
     zipCode,
     latitude: lat,
     longitude: lon,
+    osmClass,
+    osmType,
+    hasHouseNumber: Boolean(house),
   };
 }
 
@@ -89,11 +104,13 @@ export async function osmForwardGeocode(
   const q = query.trim();
   if (q.length < GEOCODE_MIN_QUERY_LENGTH) return [];
   const base = nominatimBase(config);
+  const limit = options?.limit ?? 6;
   const params: Record<string, string> = {
     q,
     format: 'json',
     addressdetails: '1',
-    limit: String(options?.limit ?? 6),
+    // Sur-échantillonner pour que le tri bâtiment survive au slice.
+    limit: String(Math.min(Math.max(limit, 10), 20)),
   };
   const cc = options?.countryCode?.trim().toUpperCase();
   if (cc) params.countrycodes = cc.toLowerCase();
@@ -103,9 +120,17 @@ export async function osmForwardGeocode(
     timeout: 14_000,
   });
   if (!Array.isArray(data)) return [];
-  return data
+  const parsed = data
     .map((row) => parseNominatimItem(row))
     .filter((row): row is OsmGeocodeResult => row != null);
+  // Fix: Nominatim trie par importance OSM, pas par précision bâtiment.
+  return sortByScoreDesc(parsed, (row) =>
+    nominatimPrecisionScore({
+      class: row.osmClass,
+      type: row.osmType,
+      hasHouseNumber: row.hasHouseNumber,
+    }),
+  ).slice(0, limit);
 }
 
 /** Géocodage inverse Nominatim. */

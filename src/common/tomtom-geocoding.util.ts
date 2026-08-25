@@ -77,6 +77,7 @@ function parseTomTomResult(
     zipCode,
     latitude: lat,
     longitude: lon,
+    hasHouseNumber: Boolean(streetNumber),
   };
 }
 

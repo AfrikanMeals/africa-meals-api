@@ -4,10 +4,17 @@ import {
   nominatimToFeature,
   structuredSearchToFeature,
 } from '@common/geocode-feature.util';
+import { countryMapboxBboxParam } from '@common/geocode-region.util';
 import {
-  countryMapboxBboxParam,
-  geocodeProximityForCountry,
-} from '@common/geocode-region.util';
+  formatGeocodeProximityParam,
+  looksLikeStreetAddress,
+  mapboxAccuracyScore,
+  mapboxForwardTypesForQuery,
+  mergeGeocodeFeaturesPreferringPrecision,
+  osmResultPrecisionScore,
+  sortByScoreDesc,
+  sortGeocodeFeaturesByPrecision,
+} from '@common/geocode-precision.util';
 import {
   normalizeCountryCode,
   normalizeGeocodeQuery,
@@ -177,7 +184,20 @@ export class GeocodeService {
         proximityLat: args.proximityLat,
         autocomplete: args.autocomplete ?? true,
       });
-      return { features };
+      // Fix: OSM/Mapbox posent souvent le centroïde de rue — snap Google rooftop si clé dispo.
+      const refined = await this.refineForwardWithGoogle(
+        engine,
+        features,
+        {
+          query,
+          countryCode,
+          limit,
+          proximityLng: args.proximityLng,
+          proximityLat: args.proximityLat,
+          autocomplete: args.autocomplete ?? true,
+        },
+      );
+      return { features: refined };
     });
 
     await this.cache.store({
@@ -317,15 +337,44 @@ export class GeocodeService {
   private formatProximity(
     lng?: number,
     lat?: number,
-    countryCode?: string,
+    _countryCode?: string,
   ): string {
-    if (Number.isFinite(lng) && Number.isFinite(lat)) {
-      return `${Number(lng).toFixed(4)},${Number(lat).toFixed(4)}`;
+    // Fix: ne plus biaiser vers Yaoundé/Toronto (centroïde pays ≠ pin Gmaps).
+    return formatGeocodeProximityParam(lng, lat);
+  }
+
+  /**
+   * Si le moteur n’est pas Google, fusionne un rooftop Google pour coller à Gmaps.
+   * Ignoré pour une requête « ville seule » (Douala) — pas de pin bâtiment.
+   */
+  private async refineForwardWithGoogle(
+    engine: GeocodeEngine,
+    features: GeocodeFeature[],
+    args: ForwardArgs & { autocomplete: boolean },
+  ): Promise<GeocodeFeature[]> {
+    const limit = args.limit ?? 5;
+    if (engine === 'google') {
+      return sortGeocodeFeaturesByPrecision(features).slice(0, limit);
     }
-    // Sans pays (worldwide) : pas de proximité forcée Montréal/CA.
-    if (!normalizeCountryCode(countryCode)) return '';
-    const center = geocodeProximityForCountry(countryCode);
-    return `${center.lng.toFixed(4)},${center.lat.toFixed(4)}`;
+    if (!looksLikeStreetAddress(args.query)) {
+      return sortGeocodeFeaturesByPrecision(features).slice(0, limit);
+    }
+    const apiKey = await resolveGoogleGeocodingApiKey(
+      this.secrets,
+      this.config,
+    );
+    if (!apiKey) {
+      return sortGeocodeFeaturesByPrecision(features).slice(0, limit);
+    }
+    const googleFeatures = await this.fetchForward('google', args);
+    if (!googleFeatures.length) {
+      return sortGeocodeFeaturesByPrecision(features).slice(0, limit);
+    }
+    return mergeGeocodeFeaturesPreferringPrecision(
+      googleFeatures,
+      features,
+      limit,
+    );
   }
 
   private async resolveEngine(
@@ -444,7 +493,8 @@ export class GeocodeService {
     rows: OsmGeocodeResult[],
     idPrefix: string,
   ): GeocodeFeature[] {
-    return rows.map((row) => {
+    const ranked = sortByScoreDesc(rows, (row) => osmResultPrecisionScore(row));
+    return ranked.map((row) => {
       const location: [number, number] = [row.longitude, row.latitude];
       const display = [row.address, row.city, row.zipCode, row.country]
         .map((s) => String(s ?? '').trim())
@@ -470,6 +520,13 @@ export class GeocodeService {
               ]
             : []),
         ],
+        properties: {
+          ...(row.locationType ? { locationType: row.locationType } : {}),
+          ...(row.osmClass ? { osmClass: row.osmClass } : {}),
+          ...(row.osmType ? { osmType: row.osmType } : {}),
+          ...(row.hasHouseNumber ? { hasHouseNumber: true } : {}),
+          ...(row.mapboxAccuracy ? { accuracy: row.mapboxAccuracy } : {}),
+        },
         geometry: { type: 'Point', coordinates: location },
       } satisfies GeocodeFeature;
     });
@@ -583,7 +640,7 @@ export class GeocodeService {
       limit: String(args.limit ?? 5),
       language: 'fr',
       autocomplete: args.autocomplete ? 'true' : 'false',
-      types: 'address,place,locality,neighborhood,district,postcode',
+      types: mapboxForwardTypesForQuery(args.query),
     });
     // Worldwide / sans pays : ne pas envoyer country= (sinon Mapbox refuse ou filtre mal).
     if (cc) params.set('country', cc);
@@ -604,7 +661,12 @@ export class GeocodeService {
         : [];
     return features
       .map((row: Record<string, unknown>) => mapboxV6ToFeature(row))
-      .filter((row): row is GeocodeFeature => row != null);
+      .filter((row): row is GeocodeFeature => row != null)
+      .sort(
+        (a, b) =>
+          mapboxAccuracyScore(String(b.properties?.accuracy ?? '')) -
+          mapboxAccuracyScore(String(a.properties?.accuracy ?? '')),
+      );
   }
 
   private async fetchReverse(

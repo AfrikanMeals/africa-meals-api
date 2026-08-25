@@ -341,7 +341,8 @@ export class OrderModel extends BaseSchema {
     required: false,
     name: 'store_collected_confirmed_by_user_id',
   })
-  storeCollectedConfirmedByUserId?: MongooseSchema.Types.ObjectId;
+  // Types.ObjectId (instance) — pas MongooseSchema.Types.ObjectId (classe schéma TS).
+  storeCollectedConfirmedByUserId?: Types.ObjectId;
 
   /**
    * Polyline itinéraire calculée par le livreur (source de vérité cartes admin/client).

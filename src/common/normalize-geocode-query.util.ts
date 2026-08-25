@@ -74,7 +74,9 @@ export function buildGeocodeCacheKey(args: {
   const limit = Number.isFinite(args.limit) ? Math.trunc(args.limit!) : 5;
   const prox = String(args.proximity ?? '').trim();
   const bbox = String(args.bbox ?? '').trim();
-  return `${args.kind}|${norm}|${cc}|${limit}|${prox}|${bbox}`;
+  // pin2 : invalide le cache des centroïdes de rue (précision rooftop 2026-08-26).
+  const pin = args.kind === 'forward' ? '|pin2' : '';
+  return `${args.kind}|${norm}|${cc}|${limit}|${prox}|${bbox}${pin}`;
 }
 
 export function normalizePostalCode(raw?: string | null): string {

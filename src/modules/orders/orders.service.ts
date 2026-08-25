@@ -21,6 +21,13 @@ import { NotificationsService } from '@modules/notifications/notifications.servi
 import { ProductsService } from '@modules/products/products.service';
 import { RatingsService } from '@modules/ratings/ratings.service';
 import type { CreateCourierOrderRatingDto } from '@modules/ratings/dto/courier-order-rating.dto';
+import type {
+  ConfirmPickupDto,
+  CreateRefundRequestDto,
+  FilterOrdersDto,
+  PreviewPickupCodeDto,
+  RejectOrderDto,
+} from './dto/orders.dto';
 import { CheckoutDeliverySettingsService } from '@modules/checkout-delivery-settings/checkout-delivery-settings.service';
 import {
   courierNearThresholdKm,
@@ -3270,6 +3277,7 @@ export class OrdersService {
     }
 
     const confirmedAt = new Date();
+    // Audit : qui a confirmé la remise (ObjectId instance, aligné schéma).
     const vendorUserId = new Types.ObjectId(String(user._id ?? user.id));
     order.storeCollectedConfirmedAt = confirmedAt;
     order.storeCollectedConfirmedByUserId = vendorUserId;

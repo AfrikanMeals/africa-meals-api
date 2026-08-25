@@ -1,4 +1,8 @@
 import { GEOCODE_MIN_QUERY_LENGTH } from '@common/normalize-geocode-query.util';
+import {
+  googleLocationTypeScore,
+  sortByScoreDesc,
+} from '@common/geocode-precision.util';
 import type { OsmGeocodeResult } from '@common/osm-geocoding.util';
 import { resolveGoogleMapsApiKey } from '@common/google-maps-api-key.util';
 import type { SecretManagerService } from '@modules/secret-manager/secret-manager.service';
@@ -17,7 +21,10 @@ type GoogleAddressComponent = {
 
 type GoogleGeocodeResult = {
   formatted_address?: string;
-  geometry?: { location?: { lat?: number; lng?: number } };
+  geometry?: {
+    location?: { lat?: number; lng?: number };
+    location_type?: string;
+  };
   address_components?: GoogleAddressComponent[];
 };
 
@@ -53,6 +60,7 @@ function parseGoogleResult(
   const country = pickComponent(components, 'country');
   const countryCode = pickComponent(components, 'country', true).toUpperCase();
   const freeform = String(item.formatted_address ?? '').trim();
+  const locationType = String(item.geometry?.location_type ?? '').trim();
   return {
     address: line || freeform,
     country,
@@ -61,6 +69,8 @@ function parseGoogleResult(
     zipCode,
     latitude: lat,
     longitude: lon,
+    locationType,
+    hasHouseNumber: Boolean(streetNumber),
   };
 }
 
@@ -101,10 +111,13 @@ export async function googleForwardGeocode(
   if (cc) params.components = `country:${cc}`;
   const results = await googleGeocodeGet(params);
   const limit = options?.limit ?? 5;
-  return results
-    .slice(0, limit)
+  // Fix: Google peut renvoyer le centroïde de rue (GEOMETRIC_CENTER) avant le toit.
+  const parsed = results
     .map((row) => parseGoogleResult(row))
     .filter((row): row is OsmGeocodeResult => row != null);
+  return sortByScoreDesc(parsed, (row) =>
+    googleLocationTypeScore(row.locationType),
+  ).slice(0, limit);
 }
 
 export async function googleReverseGeocode(

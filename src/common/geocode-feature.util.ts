@@ -59,11 +59,28 @@ export function nominatimToFeature(item: Record<string, unknown>): GeocodeFeatur
 }
 
 export function mapboxV6ToFeature(item: Record<string, unknown>): GeocodeFeature | null {
-  const coords = item.coordinates as Record<string, unknown> | undefined;
-  const lng = Number(coords?.longitude ?? coords?.lng);
-  const lat = Number(coords?.latitude ?? coords?.lat);
-  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
   const props = (item.properties ?? {}) as Record<string, unknown>;
+  // v6 : coordinates dans properties ; parfois à la racine (Search Box).
+  const coords = (props.coordinates ?? item.coordinates) as
+    | Record<string, unknown>
+    | undefined;
+  const geom = item.geometry as { coordinates?: unknown } | undefined;
+  const geomPair = Array.isArray(geom?.coordinates) ? geom.coordinates : null;
+  const centerPair = Array.isArray(item.center) ? item.center : null;
+  const lng = Number(
+    coords?.longitude ??
+      coords?.lng ??
+      (geomPair ? geomPair[0] : undefined) ??
+      (centerPair ? centerPair[0] : undefined),
+  );
+  const lat = Number(
+    coords?.latitude ??
+      coords?.lat ??
+      (geomPair ? geomPair[1] : undefined) ??
+      (centerPair ? centerPair[1] : undefined),
+  );
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+  const coordsAccuracy = String(coords?.accuracy ?? props.accuracy ?? '').trim();
   const ctx = (props.context ?? {}) as Record<string, unknown>;
   const postcode = ctx.postcode as Record<string, unknown> | undefined;
   const place = ctx.place as Record<string, unknown> | undefined;
@@ -91,7 +108,11 @@ export function mapboxV6ToFeature(item: Record<string, unknown>): GeocodeFeature
     center: [lng, lat],
     text: String(props.name ?? fullAddress.split(',')[0] ?? '').trim(),
     context,
-    properties: props,
+    properties: {
+      ...props,
+      // Fix: conserver accuracy rooftop pour classer le pin (pas le centroïde de rue).
+      ...(coordsAccuracy ? { accuracy: coordsAccuracy } : {}),
+    },
     geometry: { type: 'Point', coordinates: [lng, lat] },
   };
 }
