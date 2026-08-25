@@ -98,8 +98,8 @@ import { resolvePlatformShippingRegionCode } from '@modules/platform-shipping-se
 import {
   computePlatformShippingFeeFromDistance,
   extractLatLonFromGeoPoint,
-  haversineDistanceKm,
 } from '@modules/platform-shipping-settings/shipping-quote.util';
+import { DrivingDistanceService } from '@modules/route-optimization/driving-distance.service';
 import { countryCodeFromStoreRegion } from '@modules/supported-countries/region-tax.util';
 import {
   buildDashboardAdPerformancePayload,
@@ -680,6 +680,7 @@ export class DashboardService {
     private readonly storeDeliveryDrivers: StoreDeliveryDriversService,
     private readonly subscriptionsService: SubscriptionsService,
     private readonly platformShippingSettings: PlatformShippingSettingsService,
+    private readonly drivingDistance: DrivingDistanceService,
   ) {}
 
   /** Boutiques visibles pour les agrégats dashboard (admin / vendeur + filtre région). */
@@ -3959,9 +3960,13 @@ export class DashboardService {
 
     let currentDistanceKm: number | null = null;
     if (origin && currentDest) {
-      currentDistanceKm =
-        Math.round(haversineDistanceKm(origin.lat, origin.lon, currentDest.lat, currentDest.lon) * 1000) /
-        1000;
+      // Aligné cotation : distance routière, pas Haversine.
+      currentDistanceKm = (
+        await this.drivingDistance.resolveBillableDistanceKm({
+          origin,
+          dest: currentDest,
+        })
+      ).distanceKm;
     }
 
     const currentShippingPrice = Math.max(0, Number(orderDoc.shippingPrice) || 0);
@@ -3987,8 +3992,12 @@ export class DashboardService {
       };
     }
 
-    const estimatedDistanceKm =
-      Math.round(haversineDistanceKm(origin.lat, origin.lon, lat, lng) * 1000) / 1000;
+    const estimatedDistanceKm = (
+      await this.drivingDistance.resolveBillableDistanceKm({
+        origin,
+        dest: { lat, lon: lng },
+      })
+    ).distanceKm;
     const computed = computePlatformShippingFeeFromDistance(
       settings,
       estimatedDistanceKm,

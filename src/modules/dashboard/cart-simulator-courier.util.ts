@@ -1,7 +1,4 @@
-import {
-  allocateStripeProcessingFeeShareCents,
-  computeDeliveryNetCentsBeforeStripe,
-} from '@modules/billing/stripe/stripe-processing-fee.util';
+import { allocateStripeProcessingFeeShareCents } from '@modules/billing/stripe/stripe-processing-fee.util';
 
 export type CartSimulatorCourierBreakdown = {
   applicable: boolean
@@ -45,9 +42,9 @@ const EMPTY: CartSimulatorCourierBreakdown = {
 };
 
 /**
- * Estimation gains livreur — même formule que le payout Connect réel :
- * retenue plateforme sur les frais livraison, puis part Stripe sur la tranche ship,
- * pourboire 100 % livreur (hors retenue).
+ * Estimation gains livreur — même formule que l’historique payout livreur :
+ * retenue plateforme sur les frais livraison (affichage devise boutique),
+ * puis part Stripe sur la tranche ship (unités mineures), pourboire 100 % livreur.
  */
 export function computeCartSimulatorCourierBreakdown(args: {
   fulfillmentIsDelivery: boolean
@@ -73,15 +70,25 @@ export function computeCartSimulatorCourierBreakdown(args: {
   const withheldPercent = Math.max(0, Number(args.withheldPercent) || 0);
   const withheldFixed = Math.max(0, Number(args.withheldFixed) || 0);
 
-  const shipCents = displayToMinor(shippingGross, factor);
-  const driverNetBeforeStripeCents = computeDeliveryNetCentsBeforeStripe({
-    shipCents,
-    deliveryWithheldFeeMode: withheldMode,
-    deliveryWithheldFeeFixed: withheldFixed,
-    deliveryWithheldFeePercent: withheldPercent,
-  });
-  const withheldCents = Math.max(0, shipCents - driverNetBeforeStripeCents);
+  // Retenue en unités d’affichage (XAF inclus) — aligné `computeDriverEarningBreakdown`.
+  const withheldRaw =
+    withheldMode === 'percent'
+      ? (shippingGross * withheldPercent) / 100
+      : withheldFixed;
+  const platformWithheld = Math.min(
+    shippingGross,
+    Math.max(0, Math.round((withheldRaw + Number.EPSILON) * 100) / 100),
+  );
+  const driverNetFromShipping = Math.max(
+    0,
+    Math.round((shippingGross - platformWithheld + Number.EPSILON) * 100) / 100,
+  );
 
+  const shipCents = displayToMinor(shippingGross, factor);
+  const driverNetBeforeStripeCents = displayToMinor(
+    driverNetFromShipping,
+    factor,
+  );
   const stripeShareCents = allocateStripeProcessingFeeShareCents({
     totalStripeFeeCents: args.stripeFeeTotalCents,
     paymentAmountCents: args.chargeCents,
@@ -92,13 +99,7 @@ export function computeCartSimulatorCourierBreakdown(args: {
     0,
     driverNetBeforeStripeCents - stripeShareCents,
   );
-
-  const driverNetFromShipping = minorToDisplay(
-    driverNetBeforeStripeCents,
-    factor,
-  );
   const netAfterStripe = minorToDisplay(netAfterStripeCents, factor);
-  const platformWithheld = minorToDisplay(withheldCents, factor);
   const stripeProcessingFeeEstimate = minorToDisplay(stripeShareCents, factor);
 
   return {

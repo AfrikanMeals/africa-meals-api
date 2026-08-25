@@ -111,6 +111,7 @@ export class PlatformShippingQuoteService {
       });
     }
 
+    // Fix: Haversine (vol d’oiseau) sous-facturait vs Gmaps (~2,85 vs 4,6 km).
     const billed = await this._drivingDistance.resolveBillableDistanceKm({
       origin,
       dest,

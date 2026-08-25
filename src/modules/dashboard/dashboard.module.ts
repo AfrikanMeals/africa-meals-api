@@ -93,6 +93,7 @@ import { SubscriptionsModule } from '@modules/subscriptions/subscriptions.module
 import { PlatformShippingSettingsModule } from '@modules/platform-shipping-settings/platform-shipping-settings.module';
 import { DomainEventHandlersModule } from '@modules/domain-event-handlers/domain-event-handlers.module';
 import { CouponsModule } from '@modules/coupons/coupons.module';
+import { RouteOptimizationModule } from '@modules/route-optimization/route-optimization.module';
 import { CartSimulatorService } from './cart-simulator.service';
 
 @Module({
@@ -108,6 +109,7 @@ import { CartSimulatorService } from './cart-simulator.service';
     SubscriptionsModule,
     CouponsModule,
     PlatformShippingSettingsModule,
+    RouteOptimizationModule,
     forwardRef(() => DeliveryAgentModule),
     PendingDeliveryModule,
     MongooseModule.forFeature([

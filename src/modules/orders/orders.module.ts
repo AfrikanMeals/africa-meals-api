@@ -57,6 +57,7 @@ import { RatingsModule } from '@modules/ratings/ratings.module';
 import { PendingDeliveryModule } from '@modules/pending-delivery/pending-delivery.module';
 import { GraphModule } from '@modules/graph/graph.module';
 import { MapSettingsModule } from '@modules/map-settings/map-settings.module';
+import { RouteOptimizationModule } from '@modules/route-optimization/route-optimization.module';
 
 @Module({
   controllers: [OrdersController],
@@ -99,6 +100,7 @@ import { MapSettingsModule } from '@modules/map-settings/map-settings.module';
     RatingsModule,
     GraphModule,
     MapSettingsModule,
+    RouteOptimizationModule,
     MongooseModule.forFeature([
       { name: OrderModel.name, schema: OrderSchema },
       {

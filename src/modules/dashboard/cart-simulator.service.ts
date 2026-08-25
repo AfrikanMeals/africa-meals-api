@@ -9,8 +9,8 @@ import { PlatformShippingSettingsService } from '@modules/platform-shipping-sett
 import {
   computePlatformShippingFeeFromDistance,
   extractLatLonFromGeoPoint,
-  haversineDistanceKm,
 } from '@modules/platform-shipping-settings/shipping-quote.util';
+import { DrivingDistanceService } from '@modules/route-optimization/driving-distance.service';
 import {
   computePayoutFeeSplit,
   PlatformFeesService,
@@ -137,6 +137,7 @@ export class CartSimulatorService {
     private readonly platformFees: PlatformFeesService,
     private readonly planOrderCommission: SubscriptionPlanOrderCommissionService,
     private readonly coupons: CouponsService,
+    private readonly drivingDistance: DrivingDistanceService,
   ) {}
 
   async preview(user: UserModel, dto: CartSimulatorPreviewDto) {
@@ -367,12 +368,12 @@ export class CartSimulatorService {
           storeLongitude: null,
         };
       } else {
-        const distanceKm = haversineDistanceKm(
-          origin.lat,
-          origin.lon,
-          lat,
-          lon,
-        );
+        // Fix: facturer l’itinéraire routier, pas le vol d’oiseau (perte vs Gmaps).
+        const billed = await this.drivingDistance.resolveBillableDistanceKm({
+          origin,
+          dest: { lat, lon },
+        });
+        const distanceKm = billed.distanceKm;
         const computed = computePlatformShippingFeeFromDistance(
           settings,
           distanceKm,
@@ -380,7 +381,7 @@ export class CartSimulatorService {
         shippingDisplay = computed.deliverable ? computed.total : 0;
         shippingMeta = {
           deliverable: computed.deliverable,
-          distanceKm: Math.round(distanceKm * 1000) / 1000,
+          distanceKm,
           maxDeliveryRadiusKm: settings.maxDeliveryRadiusKm,
           storeLatitude: origin.lat,
           storeLongitude: origin.lon,

@@ -159,6 +159,7 @@ import {
 } from './courier-gps-throttle';
 import { resolveCourierGpsWsThrottleMs } from '@common/courier-gps-ping-settings.util';
 import { MapSettingsService } from '@modules/map-settings/map-settings.service';
+import { DrivingDistanceService } from '@modules/route-optimization/driving-distance.service';
 import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
 import { domainEventIdFromCourierTracking } from '../../common/domain-events/domain-event-id.util';
 import { GraphSyncQueueService } from '@modules/graph/graph-sync-queue.service';
@@ -289,6 +290,10 @@ export class OrdersService {
   @Inject(MapSettingsService)
   @Optional()
   private readonly _mapSettings?: MapSettingsService;
+
+  @Inject(DrivingDistanceService)
+  @Optional()
+  private readonly _drivingDistance?: DrivingDistanceService;
 
   /** Rayon « livreur proche » (Admin → Paramètres de livraison). */
   @Inject(CheckoutDeliverySettingsService)
@@ -2992,11 +2997,17 @@ export class OrdersService {
       throw new NotFoundException('user_address_not_found');
     }
 
-    // Calculate distance between store and users address
-    const distance = +haversineDistance(
-      usersAddress.location.coordinates as [number, number],
-      store.address.location.coordinates as [number, number],
-    )?.toFixed(2);
+    // Fix: zones boutique aussi sur distance routière (même SoT que le quote).
+    const userCoords = usersAddress.location.coordinates as [number, number];
+    const storeCoords = store.address.location.coordinates as [number, number];
+    let distance = +haversineDistance(userCoords, storeCoords)?.toFixed(2);
+    if (this._drivingDistance) {
+      const billed = await this._drivingDistance.resolveBillableDistanceKm({
+        origin: { lat: storeCoords[1], lon: storeCoords[0] },
+        dest: { lat: userCoords[1], lon: userCoords[0] },
+      });
+      distance = billed.distanceKm;
+    }
 
     console.log(
       '🚀 ~ OrdersService ~ calculateShippingPrice ~ distance:',
