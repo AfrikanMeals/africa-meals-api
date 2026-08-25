@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MapSettingsModule } from '@modules/map-settings/map-settings.module';
 import { MapEngineCacheModule } from '@modules/map-engine-cache/map-engine-cache.module';
 import { RoutingMatrixService } from './routing-matrix.service';
+import { DrivingDistanceService } from './driving-distance.service';
 import { VroomClient } from './vroom.client';
 import { VroomDispatchService } from './vroom-dispatch.service';
 
@@ -11,7 +12,17 @@ import { VroomDispatchService } from './vroom-dispatch.service';
  */
 @Module({
   imports: [MapSettingsModule, MapEngineCacheModule],
-  providers: [VroomClient, RoutingMatrixService, VroomDispatchService],
-  exports: [VroomClient, RoutingMatrixService, VroomDispatchService],
+  providers: [
+    VroomClient,
+    RoutingMatrixService,
+    DrivingDistanceService,
+    VroomDispatchService,
+  ],
+  exports: [
+    VroomClient,
+    RoutingMatrixService,
+    DrivingDistanceService,
+    VroomDispatchService,
+  ],
 })
 export class RouteOptimizationModule {}

@@ -11,10 +11,12 @@ import { UserModel, UserSchema } from '@schemas/user.schema';
 import { PlatformShippingQuoteService } from './platform-shipping-quote.service';
 import { PlatformShippingSettingsController } from './platform-shipping-settings.controller';
 import { PlatformShippingSettingsService } from './platform-shipping-settings.service';
+import { RouteOptimizationModule } from '@modules/route-optimization/route-optimization.module';
 
 @Module({
   imports: [
     SupportedCountriesModule,
+    RouteOptimizationModule,
     MongooseModule.forFeature([
       {
         name: PlatformShippingSettingsModel.name,

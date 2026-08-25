@@ -45,8 +45,8 @@ export class PlatformShippingSettingsController {
   }
 
   /**
-   * Cotation livraison plateforme : distance Haversine boutique ↔ adresse client,
-   * puis barème (tranches + tarif/km + rayon max).
+   * Cotation livraison plateforme : distance routière boutique ↔ adresse
+   * (Google Distance Matrix prioritaire, Haversine en repli), puis barème.
    */
   @ApiBearerAuth('bearer')
   @Post('quote')

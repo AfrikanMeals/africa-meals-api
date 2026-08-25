@@ -14,10 +14,10 @@ import { PlatformShippingSettingsService } from './platform-shipping-settings.se
 import {
   computePlatformShippingFeeFromDistance,
   extractLatLonFromGeoPoint,
-  haversineDistanceKm,
 } from './shipping-quote.util';
 import { resolvePlatformShippingRegionCode } from './platform-shipping-region.util';
 import { countryCodeFromStoreRegion } from '@modules/supported-countries/region-tax.util';
+import { DrivingDistanceService } from '@modules/route-optimization/driving-distance.service';
 
 @Injectable()
 export class PlatformShippingQuoteService {
@@ -29,6 +29,7 @@ export class PlatformShippingQuoteService {
     @InjectModel(AddressModel.name)
     private readonly _addressModel: Model<AddressModel>,
     private readonly _settingsService: PlatformShippingSettingsService,
+    private readonly _drivingDistance: DrivingDistanceService,
   ) {}
 
   async quoteForUser(user: UserModel, dto: ShippingQuoteDto) {
@@ -110,23 +111,22 @@ export class PlatformShippingQuoteService {
       });
     }
 
-    const distanceKm = haversineDistanceKm(
-      origin.lat,
-      origin.lon,
-      dest.lat,
-      dest.lon,
-    );
+    const billed = await this._drivingDistance.resolveBillableDistanceKm({
+      origin,
+      dest,
+    });
+    const distanceKm = billed.distanceKm;
     const computed = computePlatformShippingFeeFromDistance(
       settings,
       distanceKm,
     );
 
-    const distanceRounded = Math.round(distanceKm * 1000) / 1000;
-
     return {
       storeId: dto.storeId,
       addressId: dto.addressId,
-      distanceKm: distanceRounded,
+      distanceKm,
+      distanceSource: billed.source,
+      routingEngine: billed.engine,
       maxDeliveryRadiusKm: settings.maxDeliveryRadiusKm,
       deliverable: computed.deliverable,
       fee: computed.deliverable ? computed.total : null,
@@ -156,6 +156,8 @@ export class PlatformShippingQuoteService {
       storeId: dto.storeId,
       addressId: dto.addressId,
       distanceKm: null,
+      distanceSource: null,
+      routingEngine: null,
       maxDeliveryRadiusKm: settings?.maxDeliveryRadiusKm ?? null,
       deliverable: false,
       fee: null,
