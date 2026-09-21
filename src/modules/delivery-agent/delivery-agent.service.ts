@@ -133,8 +133,12 @@ import {
 } from './delivery-agent-domain.util';
 import {
   DEFAULT_COURIER_GPS_PING_SETTINGS,
+  courierTrailWsFields,
+  normalizeCourierGpsTrail,
   resolveCourierGpsWsThrottleMs,
+  shouldSkipCourierGpsForAccuracy,
   shouldSkipCourierGpsHttpReport,
+  type CourierGpsRealtimeExtras,
 } from '@common/courier-gps-ping-settings.util';
 import { MapSettingsService } from '@modules/map-settings/map-settings.service';
 import {
@@ -1854,6 +1858,7 @@ export class DeliveryAgentService {
     speedMps?: number | null;
     batteryPercent?: number | null;
     recordedAt?: string | null;
+    realtime?: CourierGpsRealtimeExtras;
   }): Promise<void> {
     const agentUserId = params.agentUserId.trim();
     if (!agentUserId) return;
@@ -1875,6 +1880,11 @@ export class DeliveryAgentService {
     if (now - last < throttleMs) return;
     this.locationEmitLastMs.set(agentUserId, now);
 
+    const notifyStoreIds = await this._fleetAudience.resolveNotifyStoreIds(
+      agentUserId,
+    );
+    const realtime = params.realtime;
+    // Présence piggyback : un event GPS met à jour pin + état sans 2e WS presence.
     this._fleet.pushAgentUpdate({
       agentUserId,
       latitude: params.latitude,
@@ -1888,15 +1898,19 @@ export class DeliveryAgentService {
         ? { batteryPercent: params.batteryPercent }
         : {}),
       ...(params.recordedAt ? { recordedAt: params.recordedAt } : {}),
-      notifyStoreIds: await this._fleetAudience.resolveNotifyStoreIds(
-        agentUserId,
-      ),
+      ...(realtime?.presence ? { presence: realtime.presence } : {}),
+      ...(realtime?.availability ? { availability: realtime.availability } : {}),
+      ...(realtime?.activeOrderCount != null
+        ? { activeOrderCount: realtime.activeOrderCount }
+        : {}),
+      notifyStoreIds,
     });
 
     if (!isDomainEventsEnabled(this._config)) {
       return;
     }
 
+    const trailWs = courierTrailWsFields(realtime?.trail);
     await this.publishAgentDomainEvent({
       type: 'agent.location.updated',
       payload: {
@@ -1913,7 +1927,20 @@ export class DeliveryAgentService {
           : {}),
         ...(params.recordedAt ? { recordedAt: params.recordedAt } : {}),
       },
-      metadata: { source: 'delivery-agent' },
+      metadata: {
+        source: 'delivery-agent',
+        orderContext: {
+          storeIds: notifyStoreIds,
+          ...(realtime?.presence ? { presence: realtime.presence } : {}),
+          ...(realtime?.availability
+            ? { availability: realtime.availability }
+            : {}),
+          ...(realtime?.activeOrderCount != null
+            ? { activeOrderCount: realtime.activeOrderCount }
+            : {}),
+          ...(trailWs.length ? { courierTrail: trailWs } : {}),
+        },
+      },
     });
   }
 
@@ -1983,15 +2010,24 @@ export class DeliveryAgentService {
     if (shouldSkipCourierGpsHttpReport(ping)) {
       return { ok: true, skipped: true as const };
     }
+    // Filtre précision : sample trop bruité → pas de GEO/WS (pin local déjà à jour).
+    if (shouldSkipCourierGpsForAccuracy(ping, dto.accuracyMeters)) {
+      return { ok: true, skipped: true as const, reason: 'inaccurate' as const };
+    }
 
     const agentId = new Types.ObjectId(String(user._id ?? user.id));
     const agentUserId = String(agentId);
+
+    const trail = ping.streamCoordinates
+      ? normalizeCourierGpsTrail(dto.trail, ping.streamMaxPoints)
+      : [];
 
     const telemetry = normalizeCourierLiveTelemetry({
       headingDegrees: dto.headingDegrees,
       speedMps: dto.speedMps,
       batteryPercent: dto.batteryPercent,
       recordedAt: dto.recordedAt,
+      trail,
     });
 
     const appLean = await this._applications
@@ -2060,8 +2096,17 @@ export class DeliveryAgentService {
         lat,
         lng,
         telemetry,
+        ping.syncStatusAndState,
       );
     const primaryOrderId = activeOrderIds[0];
+    const availabilityRaw = (appLean as { dashboardAvailability?: string } | null)
+      ?.dashboardAvailability;
+    const availability =
+      availabilityRaw === 'hors_ligne' ? 'hors_ligne' : 'disponible';
+    const presence = resolveDeliveryAgentPresence(
+      availability,
+      activeOrderIds.length,
+    );
     await this.emitAgentLocationUpdated({
       agentUserId,
       latitude: lat,
@@ -2069,6 +2114,19 @@ export class DeliveryAgentService {
       orderId: primaryOrderId,
       headingDegrees: telemetry.headingDegrees,
       speedMps: telemetry.speedMps,
+      batteryPercent: telemetry.batteryPercent,
+      recordedAt: telemetry.recordedAt,
+      realtime: {
+        trail,
+        ...(ping.syncStatusAndState
+          ? {
+              presence,
+              availability,
+              activeOrderCount: activeOrderIds.length,
+            }
+          : {}),
+      },
+    });
       batteryPercent: telemetry.batteryPercent,
       recordedAt: telemetry.recordedAt,
     });

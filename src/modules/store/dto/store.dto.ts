@@ -7,6 +7,7 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsNumber,
@@ -347,6 +348,17 @@ export class PatchVendorWorkingHoursDto {
   @ValidateNested()
   @Type(() => StoreWorkingHoursDto)
   workingHours: StoreWorkingHoursDto;
+}
+
+/** Ouverture / fermeture manuelle (bypass horaires) — header vendeur. */
+export class PatchVendorTradingOverrideDto {
+  @ApiProperty({
+    description: 'Force ouvert ou fermé (ignore le calendrier d’horaires).',
+    enum: ['open', 'closed'],
+    example: 'open',
+  })
+  @IsIn(['open', 'closed'])
+  tradingOverride: 'open' | 'closed';
 }
 
 export class DailyMenuComplementAvailabilityDto {

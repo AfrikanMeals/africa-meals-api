@@ -144,6 +144,7 @@ export class MapSettingsModel {
   /**
    * Ping GPS temps réel livreur (POST location → GEO + WS).
    * Frère de routingCache — raisons de changer distinctes (fréquence vs cache Directions).
+   * Presets admin : performant / optimal / precise (stream + sync statut).
    */
   @Prop({
     type: Object,
@@ -151,12 +152,24 @@ export class MapSettingsModel {
       enabled: true,
       intervalActiveMs: 2000,
       intervalIdleMs: 20000,
+      profile: 'custom',
+      streamCoordinates: false,
+      streamSampleMs: 1000,
+      streamMaxPoints: 4,
+      maxAccuracyMeters: 0,
+      syncStatusAndState: false,
     },
   })
   courierGpsPing: {
     enabled: boolean;
     intervalActiveMs: number;
     intervalIdleMs: number;
+    profile?: string;
+    streamCoordinates?: boolean;
+    streamSampleMs?: number;
+    streamMaxPoints?: number;
+    maxAccuracyMeters?: number;
+    syncStatusAndState?: boolean;
   };
 
   /** Overrides moteurs carte / géocodage par région active (ISO2). */

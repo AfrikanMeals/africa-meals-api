@@ -83,6 +83,7 @@ import {
   PatchVendorCommissionStrategyDto,
   PatchVendorShippingZonesDto,
   PatchVendorWorkingHoursDto,
+  PatchVendorTradingOverrideDto,
   StoreProfileImageJsonDto,
 } from './dto/store.dto';
 import { VendorInvitationDto } from './dto/vendor-invitation.dto';
@@ -1136,6 +1137,22 @@ export class StoreController {
     @Query('storeId') storeId?: string,
   ) {
     return this._storeService.updateVendorWorkingHours(
+      req.user as UserModel,
+      body,
+      storeId,
+    );
+  }
+
+  /** Ouverture / fermeture manuelle (bypass horaires) — header vendeur. */
+  @Patch('vendor/trading-override')
+  @UseGuards(JwtGuard)
+  async patchVendorTradingOverride(
+    @Req() req: Request,
+    @Body(new ValidationPipe({ transform: true, whitelist: true }))
+    body: PatchVendorTradingOverrideDto,
+    @Query('storeId') storeId?: string,
+  ) {
+    return this._storeService.updateVendorTradingOverride(
       req.user as UserModel,
       body,
       storeId,

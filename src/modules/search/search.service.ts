@@ -896,6 +896,10 @@ export class SearchService {
             email: { $ifNull: ['$store.email', ''] },
             phoneNumber: { $ifNull: ['$store.phoneNumber', ''] },
             acceptsOrders: { $ifNull: ['$store.acceptsOrders', true] },
+            // Override manuel Ouvert/Fermé (bypass horaires).
+            tradingOverride: {
+              $ifNull: ['$store.tradingOverride', '$store.trading_override'],
+            },
             supportsShipping: { $ifNull: ['$store.supportsShipping', false] },
             currency: { $ifNull: ['$store.currency', 'CAD'] },
             profileImage: { $ifNull: ['$store.profileImage', ''] },
@@ -1868,6 +1872,15 @@ export class SearchService {
               status: String(st['status'] ?? ''),
               bio: String(st['bio'] ?? ''),
               acceptsOrders: st['acceptsOrders'] !== false,
+              // Override manuel Ouvert/Fermé (null = suivre horaires).
+              tradingOverride:
+                st['tradingOverride'] === 'open' ||
+                st['tradingOverride'] === 'closed'
+                  ? st['tradingOverride']
+                  : st['trading_override'] === 'open' ||
+                      st['trading_override'] === 'closed'
+                    ? st['trading_override']
+                    : null,
               supportsShipping: st['supportsShipping'] === true,
               acceptsMealPreOrders:
                 st['acceptsMealPreOrders'] === true ||
@@ -1918,6 +1931,7 @@ export class SearchService {
               status: 'INACTIVE',
               bio: '',
               acceptsOrders: false,
+              tradingOverride: null,
               supportsShipping: false,
               acceptsMealPreOrders: false,
               currency: 'CAD',
@@ -2143,6 +2157,10 @@ export class SearchService {
             email: { $ifNull: ['$store.email', ''] },
             phoneNumber: { $ifNull: ['$store.phoneNumber', ''] },
             acceptsOrders: { $ifNull: ['$store.acceptsOrders', true] },
+            // Override manuel Ouvert/Fermé (bypass horaires).
+            tradingOverride: {
+              $ifNull: ['$store.tradingOverride', '$store.trading_override'],
+            },
             supportsShipping: { $ifNull: ['$store.supportsShipping', false] },
             currency: { $ifNull: ['$store.currency', 'CAD'] },
             profileImage: { $ifNull: ['$store.profileImage', ''] },
@@ -2638,6 +2656,8 @@ export class SearchService {
                 profileImage: 1,
                 status: 1,
                 acceptsOrders: 1,
+                tradingOverride: 1,
+                trading_override: 1,
                 supportsShipping: 1,
                 canCreateProducts: 1,
                 shippingZones: 1,

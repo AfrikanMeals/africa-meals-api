@@ -1,3 +1,5 @@
+import type { CourierGpsTrailPoint } from './courier-gps-ping-settings.util';
+
 /**
  * Télémétrie live livreur propagée Redis GEO → order:tracking / fleet:location.
  */
@@ -7,6 +9,8 @@ export type CourierLiveTelemetry = {
   batteryPercent?: number | null;
   /** ISO-8601 appareil ; sinon horodatage serveur. */
   recordedAt?: string | null;
+  /** Trail streaming (compact WS) — optionnel, preset admin. */
+  trail?: CourierGpsTrailPoint[];
 };
 
 export function normalizeCourierLiveTelemetry(
@@ -32,6 +36,7 @@ export function normalizeCourierLiveTelemetry(
         ? Math.round(battery)
         : null,
     recordedAt,
+    ...(raw.trail?.length ? { trail: raw.trail } : {}),
   };
 }
 

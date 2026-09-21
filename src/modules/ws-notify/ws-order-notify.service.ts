@@ -24,6 +24,16 @@ export type OrderWsTrackingPayload = {
   courierBatteryPercent?: number;
   /** Horodatage GPS appareil (ISO-8601). */
   courierRecordedAt?: string;
+  /** Trail GPS compact (streaming coords admin). */
+  courierTrail?: Array<{
+    latitude: number;
+    longitude: number;
+    recordedAt?: string;
+  }>;
+  /** Présence livreur piggyback (sync statut/état). */
+  courierPresence?: string;
+  courierAvailability?: string;
+  courierActiveOrderCount?: number;
   remainingDistanceKm?: number;
   elapsedMinutes?: number;
   /** Livreur mobile assigné (`User` DELIVERY) — chat client ↔ livreur ; `null` = retrait explicite. */

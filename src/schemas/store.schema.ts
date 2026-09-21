@@ -104,6 +104,18 @@ export class StoreModel extends BaseSchema {
   @Prop({ default: false, name: 'accepts_orders' }) // TODO should be updated when activating the store
   acceptsOrders?: boolean;
 
+  /**
+   * Override manuel Ouvert/Fermé (header vendeur) — bypass horaires.
+   * `open` / `closed` ; absent / null = suivre horaires + acceptsOrders.
+   */
+  @Prop({
+    required: false,
+    name: 'trading_override',
+    type: String,
+    enum: ['open', 'closed'],
+  })
+  tradingOverride?: 'open' | 'closed' | null;
+
   @Prop({ default: false, name: 'can_create_products' }) // TODO should be updated when activating the store
   canCreateProducts?: boolean;
 

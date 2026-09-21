@@ -165,7 +165,7 @@ import {
   CourierGpsThrottle,
   readCourierGpsThrottleConfig,
 } from './courier-gps-throttle';
-import { resolveCourierGpsWsThrottleMs } from '@common/courier-gps-ping-settings.util';
+import { resolveCourierGpsWsThrottleMs, courierTrailWsFields } from '@common/courier-gps-ping-settings.util';
 import { MapSettingsService } from '@modules/map-settings/map-settings.service';
 import { DrivingDistanceService } from '@modules/route-optimization/driving-distance.service';
 import { ModuleCacheLayerService } from '@common/cache/module-cache-layer.service';
@@ -4716,6 +4716,7 @@ export class OrdersService {
     courierLat: number,
     courierLng: number,
     telemetry?: CourierLiveTelemetry | null,
+    syncStatusAndState = false,
   ): Promise<string[]> {
     // Aligner le throttle order:tracking sur l’intervalle actif admin (pas 3 s figés).
     if (this._mapSettings) {
@@ -4742,6 +4743,7 @@ export class OrdersService {
         courierLng,
         agentUserId,
         telemetry,
+        syncStatusAndState,
       );
     }
     return orderIds;
@@ -6578,6 +6580,7 @@ export class OrdersService {
     courierLng: number,
     agentUserId: string,
     telemetry?: CourierLiveTelemetry | null,
+    syncStatusAndState = false,
   ): void {
     const oid =
       (plain._id as Types.ObjectId | undefined)?.toString?.() ??
@@ -6604,6 +6607,7 @@ export class OrdersService {
       courierLng,
       status,
       telemetry,
+      syncStatusAndState,
     );
     if (!extra) return;
 
@@ -6722,6 +6726,7 @@ export class OrdersService {
     courierLng: number,
     status: OrderStatusEnum,
     telemetry?: CourierLiveTelemetry | null,
+    syncStatusAndState = false,
   ): Partial<OrderWsTrackingPayload> | null {
     const storeCoords = this.coordsFromAddressLike(
       plain.store &&
@@ -6752,6 +6757,8 @@ export class OrdersService {
 
     const tel = normalizeCourierLiveTelemetry(telemetry);
     const telFields = courierTelemetryWsFields(tel);
+    const trailWs = courierTrailWsFields(tel.trail);
+    const assignee = this.assignedDeliveryUserIdFromOrderDoc(plain);
 
     return {
       distanceKm: totalKm,
@@ -6760,6 +6767,11 @@ export class OrdersService {
       courierLatitude: courierLat,
       courierLongitude: courierLng,
       ...(telFields as Partial<OrderWsTrackingPayload>),
+      ...(trailWs.length ? { courierTrail: trailWs } : {}),
+      // Sync état : ré-émettre l’assigné + statut (déjà dans notify) pour rattraper un client stale.
+      ...(syncStatusAndState && assignee
+        ? { assignedDeliveryUserId: assignee }
+        : {}),
     };
   }
 

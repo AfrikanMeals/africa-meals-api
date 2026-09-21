@@ -2336,6 +2336,13 @@ export class ProductsService {
                           false,
                         ],
                       },
+                      // Override manuel Ouvert/Fermé (bypass horaires).
+                      tradingOverride: {
+                        $ifNull: [
+                          '$$st0.tradingOverride',
+                          '$$st0.trading_override',
+                        ],
+                      },
                       canCreateProducts: {
                         $ifNull: [
                           {

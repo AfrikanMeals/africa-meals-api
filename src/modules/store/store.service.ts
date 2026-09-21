@@ -72,6 +72,7 @@ import {
   AdjustVendorCommissionCatalogPricesDto,
   PatchVendorShippingZonesDto,
   PatchVendorWorkingHoursDto,
+  PatchVendorTradingOverrideDto,
 } from './dto/store.dto';
 import { DrinkModel } from '@schemas/drink.schema';
 import {
@@ -91,6 +92,10 @@ import {
   normalizeStoreWorkingHours,
   serializeStoreWorkingHoursForApi,
 } from './store-working-hours.util';
+import {
+  acceptsOrdersForTradingOverride,
+  normalizeTradingOverride,
+} from './store-trading-open.util';
 import {
   docDefaultPickupPayOnPickup,
   normalizeDefaultPickupPayOnPickupFlag,
@@ -878,7 +883,7 @@ export class StoreService {
     const doc = await this._storeModel
       .findById(storeOid)
       .select(
-        'bio profileImage name status email phoneNumber currency region supportsShipping acceptsOrders acceptsMealPreOrders acceptsPickupPayOnDelivery defaultPickupPayOnPickup mealPreOrderCatalogScope timezone workingHours locatorEmbedSrc locatorEmbedConfig',
+        'bio profileImage name status email phoneNumber currency region supportsShipping acceptsOrders tradingOverride acceptsMealPreOrders acceptsPickupPayOnDelivery defaultPickupPayOnPickup mealPreOrderCatalogScope timezone workingHours locatorEmbedSrc locatorEmbedConfig',
       )
       .populate({
         path: 'address',
@@ -1122,7 +1127,7 @@ export class StoreService {
         select: 'address city country zipCode countryCode location',
       })
       .select(
-        'name bio businessType email phoneNumber currency region status acceptsOrders canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders acceptsPickupPayOnDelivery defaultPickupPayOnPickup mealPreOrderCatalogScope partnerBadgeCode timezone workingHours commissionRetrieveStrategy',
+        'name bio businessType email phoneNumber currency region status acceptsOrders tradingOverride canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders acceptsPickupPayOnDelivery defaultPickupPayOnPickup mealPreOrderCatalogScope partnerBadgeCode timezone workingHours commissionRetrieveStrategy',
       )
       .lean()
       .exec();
@@ -1258,6 +1263,8 @@ export class StoreService {
         name: doc.name as string,
         status: doc.status as string,
         acceptsOrders: !!doc.acceptsOrders,
+        // Override header Ouvert/Fermé (null = suivre horaires).
+        tradingOverride: normalizeTradingOverride(doc.tradingOverride),
         canCreateProducts: !!doc.canCreateProducts,
         supportsShipping: !!doc.supportsShipping,
         acceptsMealPreOrders: this._docAcceptsMealPreOrders(
@@ -2623,6 +2630,66 @@ export class StoreService {
         $push: {
           vendorMessages: {
             message: 'Horaires d’ouverture enregistrés.',
+            from: 'SYSTEM',
+            createdAt: new Date(),
+          },
+        },
+      },
+    );
+    this._wsInboxNotify.notifyUserInboxRefresh(
+      (user._id as { toString(): string }).toString(),
+    );
+    await this._invalidatePublicCatalogCachesForStore(targetId);
+    return this.findMyStoreSummary(user, targetId);
+  }
+
+  /**
+   * Force Ouvert/Fermé (bypass horaires) + sync acceptsOrders pour le checkout.
+   * Refus d’ouvrir si boutique non ACTIVE.
+   */
+  async updateVendorTradingOverride(
+    user: UserModel,
+    args: PatchVendorTradingOverrideDto,
+    storeId?: string,
+  ) {
+    const { targetId, store } = await this._resolveVendorStoreTarget(
+      user,
+      storeId,
+    );
+    const override = normalizeTradingOverride(args.tradingOverride);
+    if (!override) {
+      throw new BadRequestException('invalid_trading_override');
+    }
+    // Ouvrir uniquement une boutique ACTIVE (pas PENDING / INACTIVE).
+    if (
+      override === 'open' &&
+      store.status !== StoreStatusEnum.ACTIVE
+    ) {
+      throw new ForbiddenException('store_not_active');
+    }
+    if (store.status === StoreStatusEnum.INACTIVE) {
+      throw new ForbiddenException('store_not_editable');
+    }
+
+    const acceptsOrders = acceptsOrdersForTradingOverride(override);
+    await this._storeModel.updateOne(
+      { _id: store._id },
+      {
+        $set: {
+          tradingOverride: override,
+          acceptsOrders,
+        },
+      },
+    );
+    await this._storeModel.updateOne(
+      { _id: store._id },
+      {
+        $push: {
+          vendorMessages: {
+            message:
+              override === 'open'
+                ? 'Restaurant ouvert (commande clients).'
+                : 'Restaurant fermé (commande clients).',
             from: 'SYSTEM',
             createdAt: new Date(),
           },
@@ -4558,6 +4625,9 @@ export class StoreService {
         .toUpperCase(),
       supportsShipping: !!doc.supportsShipping,
       acceptsOrders: doc.acceptsOrders !== false,
+      tradingOverride: normalizeTradingOverride(
+        doc.tradingOverride ?? doc.trading_override,
+      ),
       acceptsMealPreOrders: this._docAcceptsMealPreOrders(
         doc as Record<string, unknown>,
       ),
