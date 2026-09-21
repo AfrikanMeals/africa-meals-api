@@ -2127,9 +2127,6 @@ export class DeliveryAgentService {
           : {}),
       },
     });
-      batteryPercent: telemetry.batteryPercent,
-      recordedAt: telemetry.recordedAt,
-    });
     return { ok: true };
   }
 
