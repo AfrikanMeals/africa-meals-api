@@ -6,6 +6,7 @@ import { OrdersModule } from '@modules/orders/orders.module';
 import { RouteOptimizationModule } from '@modules/route-optimization/route-optimization.module';
 import { StoreDeliveryDriversModule } from '@modules/store-delivery-drivers/store-delivery-drivers.module';
 import { TrafficModule } from '@modules/traffic/traffic.module';
+import { PlatformShippingSettingsModule } from '@modules/platform-shipping-settings/platform-shipping-settings.module';
 import { WsNotifyModule } from '@modules/ws-notify/ws-notify.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -32,6 +33,7 @@ import { DeliveryOrderOfferService } from './delivery-order-offer.service';
     FleetModule,
     RouteOptimizationModule,
     TrafficModule,
+    PlatformShippingSettingsModule,
     forwardRef(() => OrdersModule),
     forwardRef(() => DeliveryAgentModule),
     MongooseModule.forFeature([

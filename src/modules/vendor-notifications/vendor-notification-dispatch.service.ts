@@ -252,6 +252,77 @@ export class VendorNotificationDispatchService {
     }
   }
 
+  /**
+   * Fan-out FCM call-like (ring|stop) vers équipe boutique (+ admins si Push ON / fanout).
+   * Respecte le toggle Push boutique pour l’équipe ; stop toujours envoyé à l’équipe.
+   */
+  async pushVendorOrderCallAlert(args: {
+    storeId: string;
+    orderId: string;
+    action: 'ring' | 'stop';
+    title: string;
+    body: string;
+    storeName?: string;
+    reason?: string;
+    customerUserId?: string | null;
+    logTag?: string;
+  }): Promise<void> {
+    const sid = args.storeId?.trim();
+    const oid = args.orderId?.trim();
+    if (!sid || !Types.ObjectId.isValid(sid) || !oid) return;
+
+    const storeTeamIds =
+      await this.storeAccess.listStoreTeamRecipientUserIds(sid);
+    const platformAdminIds =
+      await this.storeAccess.listPlatformOrderPushRecipientUserIds();
+    const customerId = args.customerUserId?.trim() ?? '';
+
+    // Stop : toujours joindre l’équipe pour couper la notif locale.
+    const pushEnabled =
+      args.action === 'stop'
+        ? true
+        : await this.prefs.isChannelEnabled(sid, 'order', 'push');
+
+    const fanout = resolveStoreOrderNotifyPushFanout({
+      storeTeamIds,
+      platformAdminIds,
+      customerUserId: customerId,
+      storePushEnabled: pushEnabled,
+    });
+
+    const targets = [
+      ...new Set([
+        ...fanout.vendorFcmUserIds,
+        ...(args.action === 'ring' ? fanout.adminFcmUserIds : []),
+      ]),
+    ];
+    if (targets.length === 0) {
+      this.logger.warn(
+        `${args.logTag ?? 'vendor_order_alert'}: aucun destinataire store=${sid}`,
+      );
+      return;
+    }
+
+    try {
+      await this.notifications.pushVendorOrderAlert({
+        vendorUserIds: targets,
+        title: args.title,
+        body: args.body,
+        orderId: oid,
+        storeId: sid,
+        storeName: args.storeName,
+        action: args.action,
+        reason: args.reason ?? 'order_paid',
+      });
+    } catch (err) {
+      this.logger.warn(
+        `pushVendorOrderCallAlert: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
   private async sendEmailsToStore(args: {
     storeId: string;
     category: VendorNotificationCategory;

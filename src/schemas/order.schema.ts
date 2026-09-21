@@ -272,6 +272,14 @@ export class OrderModel extends BaseSchema {
   @Prop({ required: false, name: 'vendor_paid_notified_at' })
   vendorPaidNotifiedAt?: Date;
 
+  /** Nombre de rappels FCM call-like (hors push initial ring). */
+  @Prop({ required: false, name: 'vendor_alert_remind_count', default: 0 })
+  vendorAlertRemindCount?: number;
+
+  /** Dernier ring / rappel call-like (throttle cron). */
+  @Prop({ required: false, name: 'vendor_alert_last_reminded_at', type: Date })
+  vendorAlertLastRemindedAt?: Date;
+
   /** Vendeur a accepté la commande et la prépare (statut reste `paied`). */
   @Prop({ required: false, name: 'vendor_accepted_at', type: Date })
   vendorAcceptedAt?: Date;

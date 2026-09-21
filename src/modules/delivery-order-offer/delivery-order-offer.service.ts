@@ -28,6 +28,8 @@ import {
   usesHardAutoAssign,
   usesOfferCascade,
 } from '@modules/store-delivery-drivers/store-delivery-assignment-mode.util';
+import { PlatformShippingSettingsService } from '@modules/platform-shipping-settings/platform-shipping-settings.service';
+import { resolvePlatformShippingRegionCode } from '@modules/platform-shipping-settings/platform-shipping-region.util';
 import { TrafficService } from '@modules/traffic/traffic.service';
 import { StoreModel } from '@schemas/store.schema';
 import {
@@ -46,6 +48,10 @@ import {
   applyDispatchEnrichment,
   loadRouteRemainingSecondsByAgent,
 } from './delivery-order-offer.dispatch-enrich';
+import {
+  buildDeliveryOfferDisplayFields,
+  type DeliveryOfferDisplayFields,
+} from './delivery-order-offer-display.util';
 import {
   parseOfferTimeoutSec,
   rankDeliveryOfferCandidates,
@@ -80,6 +86,7 @@ export class DeliveryOrderOfferService {
     private readonly _config: ConfigService,
     private readonly _courierGeo: CourierGeoService,
     private readonly _vroomDispatch: VroomDispatchService,
+    private readonly _platformShipping: PlatformShippingSettingsService,
     @Optional()
     private readonly _traffic: TrafficService | undefined,
     @Inject(forwardRef(() => DeliveryAgentService))
@@ -91,6 +98,46 @@ export class DeliveryOrderOfferService {
     @Optional()
     private readonly _marketplaceDispatch?: CourierMarketplaceDispatchService,
   ) {}
+
+  /** Gain + adresses sheet Uber — settings région boutique si dispo. */
+  private async resolveOfferDisplayFields(
+    order: Record<string, unknown>,
+    store: Record<string, unknown> | null | undefined,
+  ): Promise<DeliveryOfferDisplayFields> {
+    const regionRaw =
+      order.storeRegionCode ??
+      order.store_region_code ??
+      store?.region ??
+      store?.regionCode;
+    const regionCode = resolvePlatformShippingRegionCode([
+      typeof regionRaw === 'string' ? regionRaw : undefined,
+    ]);
+    let withheld: {
+      deliveryWithheldFeeMode: string;
+      deliveryWithheldFeeFixed: number;
+      deliveryWithheldFeePercent: number;
+    } | null = null;
+    try {
+      const settings = await this._platformShipping.getPublicSettings(
+        regionCode || undefined,
+      );
+      withheld = {
+        deliveryWithheldFeeMode: String(
+          settings.deliveryWithheldFeeMode ?? 'fixed',
+        ),
+        deliveryWithheldFeeFixed: Number(settings.deliveryWithheldFeeFixed) || 0,
+        deliveryWithheldFeePercent:
+          Number(settings.deliveryWithheldFeePercent) || 0,
+      };
+    } catch {
+      withheld = null;
+    }
+    return buildDeliveryOfferDisplayFields({
+      order,
+      store: store ?? null,
+      withheldSettings: withheld,
+    });
+  }
 
   offerTimeoutSec(): number {
     return parseOfferTimeoutSec(
@@ -538,14 +585,23 @@ export class DeliveryOrderOfferService {
       .findById(offer.orderId)
       .populate({
         path: 'store',
-        select: 'name address currency',
-        populate: { path: 'address', select: 'address city zipCode' },
+        select: 'name address currency region regionCode',
+        populate: { path: 'address', select: 'address city zipCode country countryCode' },
       })
       .lean()
       .exec();
     if (!order || order.status !== OrderStatusEnum.APPROVED) {
       return { offer: null };
     }
+
+    const storeObj =
+      order.store && typeof order.store === 'object'
+        ? (order.store as Record<string, unknown>)
+        : null;
+    const display = await this.resolveOfferDisplayFields(
+      order as Record<string, unknown>,
+      storeObj,
+    );
 
     return {
       offer: {
@@ -559,10 +615,15 @@ export class DeliveryOrderOfferService {
         expiresAt: offer.expiresAt?.toISOString?.() ?? null,
         orderRef: `#AE-${String(offer.orderId).slice(-6).toUpperCase()}`,
         storeName:
-          order.store && typeof order.store === 'object'
-            ? String((order.store as { name?: string }).name ?? '')
+          storeObj && typeof storeObj.name === 'string'
+            ? String(storeObj.name)
             : '',
         timeoutSec: this.offerTimeoutSec(),
+        currency: display.currency,
+        shippingPrice: display.shippingPrice,
+        driverEarning: display.driverEarning,
+        storeAddress: display.storeAddress,
+        dropoffAddress: display.dropoffAddress,
       },
     };
   }
@@ -759,8 +820,12 @@ export class DeliveryOrderOfferService {
       .findById(new Types.ObjectId(orderId))
       .populate({
         path: 'store',
-        select: 'name address currency vendorManagesDeliveryDrivers deliveryAssignmentMode',
-        populate: { path: 'address', select: 'address city zipCode location' },
+        select:
+          'name address currency region regionCode vendorManagesDeliveryDrivers deliveryAssignmentMode',
+        populate: {
+          path: 'address',
+          select: 'address city zipCode country countryCode location',
+        },
       })
       .lean()
       .exec();
@@ -867,6 +932,15 @@ export class DeliveryOrderOfferService {
           ? String((order.store as { name?: string }).name ?? '')
           : '';
       const orderRef = `#AE-${orderId.slice(-6).toUpperCase()}`;
+      const storeObj =
+        order.store && typeof order.store === 'object'
+          ? (order.store as Record<string, unknown>)
+          : null;
+      // Champs sheet Uber (gain + adresses) pour WS / FCM.
+      const display = await this.resolveOfferDisplayFields(
+        order as Record<string, unknown>,
+        storeObj,
+      );
       const offerPayload = {
         userId: agentUserId,
         orderId,
@@ -880,6 +954,11 @@ export class DeliveryOrderOfferService {
         offeredAt: offeredAt.toISOString(),
         timeoutSec,
         status: 'pending' as const,
+        currency: display.currency,
+        shippingPrice: display.shippingPrice,
+        driverEarning: display.driverEarning,
+        storeAddress: display.storeAddress,
+        dropoffAddress: display.dropoffAddress,
       };
 
       this._wsOffer.notifyOffer(offerPayload);
@@ -903,6 +982,12 @@ export class DeliveryOrderOfferService {
           storeId,
           expiresAt: expiresAt.toISOString(),
           timeoutSec,
+          currency: display.currency,
+          shippingPrice: display.shippingPrice,
+          driverEarning: display.driverEarning,
+          storeAddress: display.storeAddress,
+          dropoffAddress: display.dropoffAddress,
+          distanceMeters: dist,
         })
         .catch((err) =>
           this.logger.warn(

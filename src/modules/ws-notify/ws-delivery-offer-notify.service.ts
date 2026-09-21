@@ -14,6 +14,12 @@ export type DeliveryOfferWsPayload = {
   offeredAt?: string;
   timeoutSec?: number;
   status: 'pending' | 'expired' | 'cancelled' | 'accepted' | 'rejected';
+  /** Affichage sheet Uber / call-like. */
+  currency?: string;
+  shippingPrice?: number | null;
+  driverEarning?: number | null;
+  storeAddress?: string;
+  dropoffAddress?: string;
 };
 
 export type DeliveryOfferStaffSignal = {

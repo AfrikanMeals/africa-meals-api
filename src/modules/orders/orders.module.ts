@@ -34,6 +34,8 @@ import {
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import { PreOrderReminderCron } from './pre-order-reminder.cron';
 import { PreOrderReminderService } from './pre-order-reminder.service';
+import { VendorOrderAlertCron } from './vendor-order-alert.cron';
+import { VendorOrderAlertService } from './vendor-order-alert.service';
 import { ProductRatingsDemoSeedService } from './product-ratings-demo-seed.service';
 import { OrdersDemoSeedService } from './orders-demo-seed.service';
 import { OrderStatusEventsService } from './order-status-events.service';
@@ -70,11 +72,14 @@ import { RouteOptimizationModule } from '@modules/route-optimization/route-optim
     OrderPaidInvoiceEmailService,
     PreOrderReminderService,
     PreOrderReminderCron,
+    VendorOrderAlertService,
+    VendorOrderAlertCron,
   ],
   exports: [
     OrdersService,
     OrderStatusEventsService,
     OrderPaidInvoiceEmailService,
+    VendorOrderAlertService,
   ],
   imports: [
     NotificationsModule,

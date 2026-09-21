@@ -49,3 +49,25 @@ export function giftOrderStripeMetadataChunk(args: {
     paid_by_user_id: paidBy,
   };
 }
+
+/**
+ * Clause Mongo liste client (`asCustomer`).
+ * - giftedByMe : cadeaux offerts par moi (`paidBy = me`, `user ≠ me`).
+ * - sinon (Toutes) : destinataire **ou** offreur — aligné ACL détail.
+ */
+export function buildCustomerOrdersListPartyFilter(args: {
+  meOid: unknown;
+  giftedByMe: boolean;
+}): Record<string, unknown> {
+  const me = args.meOid;
+  if (args.giftedByMe) {
+    return {
+      paidBy: me,
+      user: { $ne: me },
+    };
+  }
+  // Toutes : mes commandes + cadeaux que j’ai payés pour quelqu’un d’autre.
+  return {
+    $or: [{ user: me }, { paidBy: me }],
+  };
+}

@@ -15,7 +15,7 @@ import {
   normalizeOrderItemsOnOrderRow,
   normalizeOrderItemsOnOrderRows,
 } from './order-line-items-normalize.util';
-import { resolveGiftOrderParties } from './gift-order.util';
+import { buildCustomerOrdersListPartyFilter, resolveGiftOrderParties } from './gift-order.util';
 import { readOrderPickupCodeForWs } from './order-ws-pickup-code.util';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { ProductsService } from '@modules/products/products.service';
@@ -153,6 +153,7 @@ import {
   type VendorOrderEmailEvent,
 } from '@modules/vendor-emails/vendor-status-email.service';
 import { VendorNotificationDispatchService } from '@modules/vendor-notifications/vendor-notification-dispatch.service';
+import { VendorOrderAlertService } from './vendor-order-alert.service';
 import { vendorOrderReasonToCategory } from '@modules/vendor-notifications/vendor-notification.constants';
 import { SupportedCountriesService } from '@modules/supported-countries/supported-countries.service';
 import type { RegionTaxLineResult } from '@modules/supported-countries/region-tax.constants';
@@ -263,6 +264,9 @@ export class OrdersService {
 
   @Inject(VendorNotificationDispatchService)
   private readonly _vendorNotificationDispatch: VendorNotificationDispatchService;
+
+  @Inject(VendorOrderAlertService)
+  private readonly _vendorOrderAlert: VendorOrderAlertService;
 
   @Inject(ModuleCacheLayerService)
   private readonly _cacheLayer: ModuleCacheLayerService;
@@ -530,15 +534,12 @@ export class OrdersService {
     // Filtre « Cadeaux » : commandes que j’ai payées pour un autre.
     const giftedByMe = Boolean(args.giftedByMe) && asCustomerScope;
 
-    if (giftedByMe) {
-      filter['paidBy'] = meOid;
-      // Exclut edge cases où paidBy == user (ne devrait pas arriver).
-      filter['user'] = { $ne: meOid };
-      if (args.storeId) {
-        filter['store'] = { _id: args.storeId };
-      }
-    } else if (asCustomerScope) {
-      filter['user'] = meOid;
+    if (asCustomerScope) {
+      // Toutes = destinataire OU offreur ; Cadeaux = paidBy seulement.
+      Object.assign(
+        filter,
+        buildCustomerOrdersListPartyFilter({ meOid, giftedByMe }),
+      );
       if (args.storeId) {
         filter['store'] = { _id: args.storeId };
       }
@@ -2873,6 +2874,15 @@ export class OrdersService {
         { $set: { vendorPaidNotifiedAt: new Date() } },
       )
       .exec();
+
+    // Call-like : ring jusqu’à Accept/Reject (rappels via cron).
+    void this._vendorOrderAlert.ringForPaidOrder(oid).catch((err) =>
+      this.logger.warn(
+        `vendor_order_alert ring: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
+    );
   }
 
   /**
@@ -2971,6 +2981,14 @@ export class OrdersService {
         { $set: { vendorPaidNotifiedAt: new Date() } },
       )
       .exec();
+
+    void this._vendorOrderAlert.ringForPaidOrder(oid).catch((err) =>
+      this.logger.warn(
+        `vendor_order_alert ring (pay_on_pickup): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
+    );
   }
 
   async calculateShippingPrice(orderId: string, user: UserModel) {
@@ -3205,6 +3223,15 @@ export class OrdersService {
       status: OrderStatusEnum.PAIED,
       note: 'Prise en charge — en préparation',
     });
+
+    // Stop call-like dès Accept.
+    void this._vendorOrderAlert.stopForOrder(oid).catch((err) =>
+      this.logger.warn(
+        `vendor_order_alert stop (accept): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
+    );
 
     return {
       orderId: oid,
@@ -3910,6 +3937,15 @@ export class OrdersService {
       status: OrderStatusEnum.CANCELLED,
       note: resolved.details,
     });
+
+    // Stop call-like dès Reject / annulation vendeur.
+    void this._vendorOrderAlert.stopForOrder(oid).catch((err) =>
+      this.logger.warn(
+        `vendor_order_alert stop (reject): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      ),
+    );
 
     return {
       orderId: oid,

@@ -1,4 +1,5 @@
 import {
+  buildCustomerOrdersListPartyFilter,
   giftOrderStripeMetadataChunk,
   resolveGiftOrderParties,
 } from './gift-order.util';
@@ -55,5 +56,22 @@ describe('gift-order.util', () => {
     expect(
       giftOrderStripeMetadataChunk({ giftRecipientUserId: recipient }),
     ).toEqual({});
+  });
+
+  it('liste client Toutes → $or user|paidBy (offreur voit ses cadeaux)', () => {
+    expect(
+      buildCustomerOrdersListPartyFilter({ meOid: payer, giftedByMe: false }),
+    ).toEqual({
+      $or: [{ user: payer }, { paidBy: payer }],
+    });
+  });
+
+  it('liste client Cadeaux → paidBy = me et user ≠ me', () => {
+    expect(
+      buildCustomerOrdersListPartyFilter({ meOid: payer, giftedByMe: true }),
+    ).toEqual({
+      paidBy: payer,
+      user: { $ne: payer },
+    });
   });
 });

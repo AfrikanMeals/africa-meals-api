@@ -402,6 +402,9 @@ export class NotificationsService implements OnModuleInit {
     sendPush?: boolean;
     /** Canal Android (ex. `african_meals_courier_orders`). */
     androidChannelId?: string;
+    /** Call-like : Android data-only + alerte iOS (notif locale CATEGORY_CALL). */
+    callLikeWake?: boolean;
+    androidCollapseKey?: string;
   }): Promise<{ id: string }> {
     if (!Types.ObjectId.isValid(args.recipientUserId)) {
       throw new NotFoundException('user_not_found');
@@ -434,6 +437,8 @@ export class NotificationsService implements OnModuleInit {
           notificationId: doc._id.toString(),
         }),
         androidChannelId: args.androidChannelId,
+        callLikeWake: args.callLikeWake,
+        androidCollapseKey: args.androidCollapseKey,
       });
     }
 
@@ -508,6 +513,13 @@ export class NotificationsService implements OnModuleInit {
     androidChannelId?: string;
     /** FCM data-only (sans bannière système) — utile pour déclencher l’UI in-app au premier plan. */
     dataOnly?: boolean;
+    /**
+     * Call-like : Android data-only (BG handler → notif locale CATEGORY_CALL),
+     * iOS conserve une alerte APNS. title/body sont aussi dans `data`.
+     */
+    callLikeWake?: boolean;
+    /** Regroupe / remplace les pushes call-like par commande. */
+    androidCollapseKey?: string;
   }): Promise<{ sent: number; failures: number; deviceCount: number }> {
     if (!this.firebaseApp) {
       return { sent: 0, failures: 0, deviceCount: 0 };
@@ -547,18 +559,33 @@ export class NotificationsService implements OnModuleInit {
     }
 
     const messaging = getMessaging(this.firebaseApp);
-    const data = { ...args.data };
+    // Call-like : title/body dans data pour le handler BG (affichage local).
+    const data: Record<string, string> = {
+      ...args.data,
+      ...(args.callLikeWake
+        ? {
+            title: args.title,
+            body: args.body,
+          }
+        : {}),
+    };
 
     const androidChannelId = args.androidChannelId?.trim();
-    const androidCfg = androidChannelId
-      ? {
-          priority: 'high' as const,
-          notification: {
-            channelId: androidChannelId,
-            sound: 'default' as const,
-          },
-        }
-      : { priority: 'high' as const };
+    const collapseKey = args.androidCollapseKey?.trim();
+    const omitSystemBanner = Boolean(args.dataOnly || args.callLikeWake);
+    const androidCfg = {
+      priority: 'high' as const,
+      ...(collapseKey ? { collapseKey } : {}),
+      // Bannière système Android seulement si pas call-like (sinon pas de CATEGORY_CALL).
+      ...(!omitSystemBanner && androidChannelId
+        ? {
+            notification: {
+              channelId: androidChannelId,
+              sound: 'default' as const,
+            },
+          }
+        : {}),
+    };
 
     const messages = tokenRows.map((row) => {
       const base = {
@@ -566,17 +593,31 @@ export class NotificationsService implements OnModuleInit {
         data,
         android: androidCfg,
         apns: {
+          headers: {
+            'apns-priority': '10',
+          },
           payload: {
+            // Call-like / dataOnly : iOS garde une alerte si callLikeWake, sinon silent.
             aps: args.dataOnly
               ? { contentAvailable: true }
-              : {
-                  sound: 'default',
-                  contentAvailable: true,
-                },
+              : args.callLikeWake
+                ? {
+                    alert: {
+                      title: args.title,
+                      body: args.body,
+                    },
+                    sound: 'default',
+                    contentAvailable: true,
+                  }
+                : {
+                    sound: 'default',
+                    contentAvailable: true,
+                  },
           },
         },
       };
-      if (args.dataOnly) {
+      // Pas de `notification` top-level : Android reste data-only (BG handler).
+      if (omitSystemBanner) {
         return base;
       }
       return {
@@ -1597,6 +1638,12 @@ export class NotificationsService implements OnModuleInit {
     storeId?: string;
     expiresAt: string;
     timeoutSec: number;
+    currency?: string;
+    shippingPrice?: number | null;
+    driverEarning?: number | null;
+    storeAddress?: string;
+    dropoffAddress?: string;
+    distanceMeters?: number | null;
   }): Promise<void> {
     // Inbox + push FCM — offre course exclusive flotte boutique.
     if (!Types.ObjectId.isValid(args.recipientUserId)) {
@@ -1628,6 +1675,23 @@ export class NotificationsService implements OnModuleInit {
     if (storeId) {
       data.storeId = storeId;
     }
+    // Champs sheet / notif call-like (sérialisés string pour FCM data).
+    if (args.currency?.trim()) data.currency = args.currency.trim();
+    if (args.shippingPrice != null) {
+      data.shippingPrice = String(args.shippingPrice);
+    }
+    if (args.driverEarning != null) {
+      data.driverEarning = String(args.driverEarning);
+    }
+    if (args.storeAddress?.trim()) {
+      data.storeAddress = args.storeAddress.trim();
+    }
+    if (args.dropoffAddress?.trim()) {
+      data.dropoffAddress = args.dropoffAddress.trim();
+    }
+    if (args.distanceMeters != null) {
+      data.distanceMeters = String(args.distanceMeters);
+    }
 
     try {
       await this.createUserScopedNotification({
@@ -1637,7 +1701,10 @@ export class NotificationsService implements OnModuleInit {
         type: 'courier_delivery_offer',
         data,
         sendPush: true,
-        androidChannelId: 'african_meals_courier_orders',
+        androidChannelId: 'african_meals_courier_order_calls',
+        // Android data-only → BG handler affiche CATEGORY_CALL + actions.
+        callLikeWake: true,
+        androidCollapseKey: `courier-offer-${offerId}`,
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1734,6 +1801,63 @@ export class NotificationsService implements OnModuleInit {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(`pushVendorOrderNotify: ${msg}`);
+    }
+  }
+
+  /**
+   * Push call-like vendeur — ring jusqu’à Accept/Reject (`action=stop`).
+   * Canal dédié max-importance côté mobile ; collapseKey = une notif / commande.
+   */
+  async pushVendorOrderAlert(args: {
+    vendorUserIds: string[];
+    title: string;
+    body: string;
+    orderId: string;
+    storeId?: string;
+    storeName?: string;
+    action: 'ring' | 'stop';
+    reason?: string;
+  }): Promise<void> {
+    const ids = [...new Set(args.vendorUserIds)].filter((id) =>
+      Types.ObjectId.isValid(id),
+    );
+    if (ids.length === 0) {
+      return;
+    }
+    const oid = String(args.orderId ?? '').trim();
+    if (!oid) return;
+    const store = (args.storeName ?? '').trim() || 'Restaurant';
+    const action = args.action === 'stop' ? 'stop' : 'ring';
+    const isStop = action === 'stop';
+    try {
+      const res = await this.sendMulticastNotification({
+        recipientUserIds: ids,
+        title: args.title,
+        body: args.body,
+        data: {
+          type: 'vendor_order_alert',
+          action,
+          audience: 'vendor',
+          reason: (args.reason ?? 'order_paid').trim() || 'order_paid',
+          orderId: oid,
+          storeId: (args.storeId ?? '').trim(),
+          storeName: store,
+          url: '/commandes',
+        },
+        // Stop : silencieux. Ring : Android data-only + alerte iOS (callLikeWake).
+        dataOnly: isStop,
+        callLikeWake: !isStop,
+        androidChannelId: 'african_meals_vendor_order_calls',
+        androidCollapseKey: `vendor-alert-${oid}`,
+      });
+      if (res.deviceCount === 0) {
+        this.logger.warn(
+          `pushVendorOrderAlert: aucun jeton FCM pour order=${oid}`,
+        );
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`pushVendorOrderAlert: ${msg}`);
     }
   }
 
