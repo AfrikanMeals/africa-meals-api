@@ -2,6 +2,7 @@ import {
   acceptsOrdersForTradingOverride,
   normalizeTradingOverride,
   resolveStoreTradingOpen,
+  storeNotTradingClosedMatch,
 } from './store-trading-open.util';
 
 describe('store-trading-open.util', () => {
@@ -19,18 +20,18 @@ describe('store-trading-open.util', () => {
   });
 
   describe('resolveStoreTradingOpen', () => {
-    it('force ouvert même hors horaires', () => {
+    it('défaut ouvert même si acceptsOrders false et hors horaires', () => {
       expect(
         resolveStoreTradingOpen({
           status: 'ACTIVE',
           acceptsOrders: false,
-          tradingOverride: 'open',
+          tradingOverride: null,
           hoursClosed: true,
         }),
       ).toBe(true);
     });
 
-    it('force fermé même dans les horaires', () => {
+    it('force fermé uniquement via override closed', () => {
       expect(
         resolveStoreTradingOpen({
           status: 'ACTIVE',
@@ -41,31 +42,15 @@ describe('store-trading-open.util', () => {
       ).toBe(false);
     });
 
-    it('sans override : respecte acceptsOrders + horaires', () => {
-      expect(
-        resolveStoreTradingOpen({
-          status: 'ACTIVE',
-          acceptsOrders: true,
-          tradingOverride: null,
-          hoursClosed: true,
-        }),
-      ).toBe(false);
-      expect(
-        resolveStoreTradingOpen({
-          status: 'ACTIVE',
-          acceptsOrders: true,
-          tradingOverride: null,
-          hoursClosed: false,
-        }),
-      ).toBe(true);
+    it('override open → ouvert', () => {
       expect(
         resolveStoreTradingOpen({
           status: 'ACTIVE',
           acceptsOrders: false,
-          tradingOverride: null,
-          hoursClosed: false,
+          tradingOverride: 'open',
+          hoursClosed: true,
         }),
-      ).toBe(false);
+      ).toBe(true);
     });
 
     it('INACTIVE reste fermé même avec override open', () => {
@@ -77,6 +62,17 @@ describe('store-trading-open.util', () => {
           hoursClosed: false,
         }),
       ).toBe(false);
+    });
+  });
+
+  describe('storeNotTradingClosedMatch', () => {
+    it('exclut closed en camel + snake', () => {
+      expect(storeNotTradingClosedMatch('store')).toEqual({
+        $and: [
+          { 'store.tradingOverride': { $ne: 'closed' } },
+          { 'store.trading_override': { $ne: 'closed' } },
+        ],
+      });
     });
   });
 

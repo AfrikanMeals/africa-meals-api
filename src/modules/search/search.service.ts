@@ -49,6 +49,7 @@ import {
   resolveEffectiveTimezone,
 } from '@modules/supported-countries/region-timezone.util';
 import { serializeStoreWorkingHoursForApi } from '@modules/store/store-working-hours.util';
+import { storeNotTradingClosedMatch } from '@modules/store/store-trading-open.util';
 import { mapInChunks } from '@utils/map-in-chunks';
 import {
   productDailyMenuEnrichmentPipelineStages,
@@ -1423,9 +1424,8 @@ export class SearchService {
         $match: {
           $and: [
             { status: ProductStatusEnum.ACTIVE },
-            {
-              'store.acceptsOrders': true,
-            },
+            // Défaut ouvert : exclure seulement tradingOverride=closed.
+            storeNotTradingClosedMatch('store'),
             args.categoryId && {
               category: { $eq: new Types.ObjectId(args.categoryId) },
             },
@@ -2033,7 +2033,8 @@ export class SearchService {
         $match: {
           $and: [
             { status: ProductStatusEnum.ACTIVE },
-            { 'store.acceptsOrders': true },
+            // Défaut ouvert : exclure seulement tradingOverride=closed.
+            storeNotTradingClosedMatch('store'),
             {
               $or: [
                 { title: { $regex: '', $options: 'i' } },
@@ -2500,7 +2501,8 @@ export class SearchService {
                 { status: ProductStatusEnum.ACTIVE },
               ].filter(Boolean),
             },
-            { 'store.acceptsOrders': true },
+            // Défaut ouvert : exclure seulement tradingOverride=closed.
+            storeNotTradingClosedMatch('store'),
             { 'store._id': storeOid },
             { 'store.status': StoreStatusEnum.ACTIVE },
             textClause,
@@ -2557,10 +2559,10 @@ export class SearchService {
     const pipelineArgs =
       discoveryPass || !geoActive ? this._searchArgsWithoutGeo(args) : args;
     const q = args.query?.trim();
-    /** Catalogue client : ACTIVE + commandes + Stripe Connect + au moins un article commandable. */
+    /** Catalogue client : ACTIVE + pas explicitement fermé + Stripe Connect + article. */
     const andParts: Record<string, unknown>[] = [
       { status: StoreStatusEnum.ACTIVE },
-      { acceptsOrders: { $ne: false } },
+      storeNotTradingClosedMatch(),
       storeDirectRegionMatch(region),
     ];
     const storeDistanceStages = await this._storeDistanceAndMenuStages(

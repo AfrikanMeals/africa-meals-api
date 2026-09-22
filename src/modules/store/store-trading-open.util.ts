@@ -5,13 +5,13 @@ export type ResolveStoreTradingOpenInput = {
   status?: string | null;
   acceptsOrders?: boolean | null;
   tradingOverride?: string | null;
-  /** true si les horaires indiquent fermé (ignoré si override posé). */
+  /** Conservé pour compat tests ; ignoré (défaut = ouvert hors closed). */
   hoursClosed?: boolean;
 };
 
 /**
  * Normalise le champ API/Mongo (`open` | `closed` | null).
- * Valeurs inconnues → null (suivre horaires + acceptsOrders).
+ * Valeurs inconnues → null (= ouvert par défaut).
  */
 export function normalizeTradingOverride(
   value: unknown,
@@ -25,8 +25,10 @@ export function normalizeTradingOverride(
 }
 
 /**
- * Ouverture effective pour catalogue / cartes client.
- * Override force l’état ; sinon plateforme (ACTIVE + acceptsOrders) puis horaires.
+ * Ouverture effective catalogue / checkout.
+ * Défaut = ouvert (ACTIVE) ; seul `tradingOverride=closed` ferme.
+ * Bypass horaires ; `acceptsOrders` legacy ignoré sauf si on veut rester fermé
+ * uniquement via override closed (sync API pose acceptsOrders=false).
  */
 export function resolveStoreTradingOpen(
   input: ResolveStoreTradingOpenInput,
@@ -40,16 +42,30 @@ export function resolveStoreTradingOpen(
   }
 
   const override = normalizeTradingOverride(input.tradingOverride);
-  if (override === 'open') return true;
+  // Seul l’override fermé bloque ; open / null = ouvert (défaut).
   if (override === 'closed') return false;
-
-  // Legacy : pas d’override → acceptsOrders + horaires.
-  if (input.acceptsOrders === false) return false;
-  if (input.hoursClosed === true) return false;
   return true;
 }
 
-/** Sync checkout : open → true, closed → false. */
+/**
+ * Mongo/aggregation : exclure uniquement les boutiques explicitement fermées.
+ * Couvre camelCase + snake_case.
+ */
+export function storeNotTradingClosedMatch(
+  storePrefix = '',
+): Record<string, unknown> {
+  const camel = storePrefix
+    ? `${storePrefix}.tradingOverride`
+    : 'tradingOverride';
+  const snake = storePrefix
+    ? `${storePrefix}.trading_override`
+    : 'trading_override';
+  return {
+    $and: [{ [camel]: { $ne: 'closed' } }, { [snake]: { $ne: 'closed' } }],
+  };
+}
+
+/** Sync checkout / DB : open → true, closed → false. */
 export function acceptsOrdersForTradingOverride(
   override: StoreTradingOverride,
 ): boolean {

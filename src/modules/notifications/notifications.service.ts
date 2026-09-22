@@ -520,6 +520,11 @@ export class NotificationsService implements OnModuleInit {
     callLikeWake?: boolean;
     /** Regroupe / remplace les pushes call-like par commande. */
     androidCollapseKey?: string;
+    /**
+     * Image rich FCM (campagnes Marketing) — `android.notification.imageUrl`
+     * + `apns.fcmOptions.image` ; ignorée en dataOnly / callLikeWake.
+     */
+    imageUrl?: string;
   }): Promise<{ sent: number; failures: number; deviceCount: number }> {
     if (!this.firebaseApp) {
       return { sent: 0, failures: 0, deviceCount: 0 };
@@ -572,6 +577,8 @@ export class NotificationsService implements OnModuleInit {
 
     const androidChannelId = args.androidChannelId?.trim();
     const collapseKey = args.androidCollapseKey?.trim();
+    // Image rich : URL publique HTTPS ; ignorée si data-only / call-like (pas de bannière).
+    const imageUrl = args.imageUrl?.trim() || undefined;
     const omitSystemBanner = Boolean(args.dataOnly || args.callLikeWake);
     const androidCfg = {
       priority: 'high' as const,
@@ -582,6 +589,8 @@ export class NotificationsService implements OnModuleInit {
             notification: {
               channelId: androidChannelId,
               sound: 'default' as const,
+              // Rich image Android (Firebase Admin → imageUrl).
+              ...(imageUrl ? { imageUrl } : {}),
             },
           }
         : {}),
@@ -596,6 +605,10 @@ export class NotificationsService implements OnModuleInit {
           headers: {
             'apns-priority': '10',
           },
+          // Image iOS via FCM options (mutable-content côté client si extension).
+          ...(imageUrl && !omitSystemBanner
+            ? { fcmOptions: { image: imageUrl } }
+            : {}),
           payload: {
             // Call-like / dataOnly : iOS garde une alerte si callLikeWake, sinon silent.
             aps: args.dataOnly
@@ -612,6 +625,8 @@ export class NotificationsService implements OnModuleInit {
                 : {
                     sound: 'default',
                     contentAvailable: true,
+                    // Requis pour téléchargement image Notification Service Extension.
+                    ...(imageUrl ? { mutableContent: true } : {}),
                   },
           },
         },
@@ -625,6 +640,8 @@ export class NotificationsService implements OnModuleInit {
         notification: {
           title: args.title,
           body: args.body,
+          // Champ FCM cross-platform pour l’image tray.
+          ...(imageUrl ? { imageUrl } : {}),
         },
       };
     });

@@ -162,7 +162,9 @@ export class ProductsService {
       {
         $match: {
           'store.status': StoreStatusEnum.ACTIVE,
-          'store.acceptsOrders': { $ne: false },
+          // Défaut ouvert : seul tradingOverride=closed exclut.
+          'store.tradingOverride': { $ne: 'closed' },
+          'store.trading_override': { $ne: 'closed' },
         },
       },
       ...productEmbeddedStoreOwnerStripeOnboardedStages(),

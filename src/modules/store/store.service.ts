@@ -95,6 +95,7 @@ import {
 import {
   acceptsOrdersForTradingOverride,
   normalizeTradingOverride,
+  resolveStoreTradingOpen,
 } from './store-trading-open.util';
 import {
   docDefaultPickupPayOnPickup,
@@ -3962,7 +3963,15 @@ export class StoreService {
       throw new NotFoundException('store_not_found');
     }
 
-    if (!store.acceptsOrders) {
+    // Fermé uniquement si tradingOverride=closed (défaut = ouvert).
+    if (
+      !resolveStoreTradingOpen({
+        status: store.status,
+        acceptsOrders: store.acceptsOrders,
+        tradingOverride: (store as { tradingOverride?: string | null })
+          .tradingOverride,
+      })
+    ) {
       throw new ForbiddenException('store_does_not_accept_orders');
     }
 

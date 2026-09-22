@@ -93,7 +93,8 @@ export function pipelineActiveStoresWithStripeOnboarded(
 ): PipelineStage[] {
   const match: Record<string, unknown> = {
     status: StoreStatusEnum.ACTIVE,
-    acceptsOrders: { $ne: false },
+    // Défaut ouvert : seul tradingOverride=closed exclut.
+    tradingOverride: { $ne: 'closed' },
   };
   if (storeIds?.length) {
     match._id = { $in: storeIds };

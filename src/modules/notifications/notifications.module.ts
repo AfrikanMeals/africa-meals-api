@@ -13,6 +13,10 @@ import {
   NotificationReadReceiptModel,
   NotificationReadReceiptSchema,
 } from '@schemas/notification-read-receipt.schema';
+import {
+  PlatformPushCampaignModel,
+  PlatformPushCampaignSchema,
+} from '@schemas/platform-push-campaign.schema';
 import { UserModel, UserSchema } from '@schemas/user.schema';
 import {
   VendorNotificationPreferencesModel,
@@ -22,6 +26,7 @@ import { AppInboxNotificationsController } from './app-inbox-notifications.contr
 import { InternalNotificationsController } from './internal-notifications.controller';
 import { InternalSecretGuard } from './guards/internal-secret.guard';
 import { NotificationsService } from './notifications.service';
+import { PlatformPushCampaignsService } from './platform-push-campaigns.service';
 
 /**
  * Pas d’import de VendorNotificationModule ici : il importe déjà NotificationsModule
@@ -48,13 +53,22 @@ import { NotificationsService } from './notifications.service';
         name: VendorNotificationPreferencesModel.name,
         schema: VendorNotificationPreferencesSchema,
       },
+      // Historique campagnes push Marketing (admin → FCM multi-audiences).
+      {
+        name: PlatformPushCampaignModel.name,
+        schema: PlatformPushCampaignSchema,
+      },
     ]),
   ],
   controllers: [
     InternalNotificationsController,
     AppInboxNotificationsController,
   ],
-  providers: [NotificationsService, InternalSecretGuard],
-  exports: [NotificationsService],
+  providers: [
+    NotificationsService,
+    PlatformPushCampaignsService,
+    InternalSecretGuard,
+  ],
+  exports: [NotificationsService, PlatformPushCampaignsService],
 })
 export class NotificationsModule {}
