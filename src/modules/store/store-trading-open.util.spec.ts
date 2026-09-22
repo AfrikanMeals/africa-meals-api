@@ -2,6 +2,7 @@ import {
   acceptsOrdersForTradingOverride,
   normalizeTradingOverride,
   resolveStoreTradingOpen,
+  resolveTradingFieldsForAdminPatch,
   storeNotTradingClosedMatch,
 } from './store-trading-open.util';
 
@@ -80,6 +81,30 @@ describe('store-trading-open.util', () => {
     it('sync checkout', () => {
       expect(acceptsOrdersForTradingOverride('open')).toBe(true);
       expect(acceptsOrdersForTradingOverride('closed')).toBe(false);
+    });
+  });
+
+  describe('resolveTradingFieldsForAdminPatch', () => {
+    it('tradingOverride closed prime sur acceptsOrders true', () => {
+      expect(
+        resolveTradingFieldsForAdminPatch({
+          tradingOverride: 'closed',
+          acceptsOrders: true,
+        }),
+      ).toEqual({ tradingOverride: 'closed', acceptsOrders: false });
+    });
+
+    it('sans override : acceptsOrders false → closed', () => {
+      expect(
+        resolveTradingFieldsForAdminPatch({ acceptsOrders: false }),
+      ).toEqual({ tradingOverride: 'closed', acceptsOrders: false });
+    });
+
+    it('sans override : défaut ouvert', () => {
+      expect(resolveTradingFieldsForAdminPatch({})).toEqual({
+        tradingOverride: 'open',
+        acceptsOrders: true,
+      });
     });
   });
 });

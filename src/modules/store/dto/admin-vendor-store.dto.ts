@@ -58,6 +58,20 @@ export class AdminPatchVendorStoreDto extends CreateStoreDto {
   @IsBoolean()
   acceptsOrders?: boolean;
 
+  /**
+   * Force Ouvert/Fermé catalogue (bypass horaires) — sync `acceptsOrders`.
+   * `open` | `closed` ; absent → dérivé de `acceptsOrders`.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Override Ouvert/Fermé (catalogue client). Sync acceptsOrders. Absent → dérivé de acceptsOrders.',
+    enum: ['open', 'closed'],
+    example: 'open',
+  })
+  @IsOptional()
+  @IsIn(['open', 'closed'])
+  tradingOverride?: 'open' | 'closed';
+
   @ApiPropertyOptional({
     description:
       'Code Locator Plus Quick Builder (page HTML CONFIGURATION) ou iframe GCS / URL https. Vide = retirer le locator public.',

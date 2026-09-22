@@ -71,3 +71,27 @@ export function acceptsOrdersForTradingOverride(
 ): boolean {
   return override === 'open';
 }
+
+/**
+ * Admin PATCH fiche vendeur : `tradingOverride` prime ; sinon dérive de `acceptsOrders`.
+ * Évite le désync catalogue (override=closed + acceptsOrders=true → boutique invisible).
+ */
+export function resolveTradingFieldsForAdminPatch(args: {
+  tradingOverride?: unknown;
+  acceptsOrders?: boolean | null;
+}): { tradingOverride: StoreTradingOverride; acceptsOrders: boolean } {
+  const override = normalizeTradingOverride(args.tradingOverride);
+  // 1. Override explicite open|closed → sync acceptsOrders.
+  if (override) {
+    return {
+      tradingOverride: override,
+      acceptsOrders: acceptsOrdersForTradingOverride(override),
+    };
+  }
+  // 2. Legacy checkbox seule → dérive open/closed (défaut ouvert).
+  const acceptsOrders = args.acceptsOrders !== false;
+  return {
+    tradingOverride: acceptsOrders ? 'open' : 'closed',
+    acceptsOrders,
+  };
+}

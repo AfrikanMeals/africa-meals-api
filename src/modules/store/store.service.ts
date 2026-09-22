@@ -96,6 +96,7 @@ import {
   acceptsOrdersForTradingOverride,
   normalizeTradingOverride,
   resolveStoreTradingOpen,
+  resolveTradingFieldsForAdminPatch,
 } from './store-trading-open.util';
 import {
   docDefaultPickupPayOnPickup,
@@ -4465,10 +4466,13 @@ export class StoreService {
     };
     doc.status = status;
     if (status === StoreStatusEnum.INACTIVE) {
+      // Fix: sync tradingOverride sinon catalogue reste fermé/ouvert hors sync status.
       doc.acceptsOrders = false;
+      doc.tradingOverride = 'closed';
       doc.canCreateProducts = false;
     } else {
       doc.acceptsOrders = true;
+      doc.tradingOverride = 'open';
       doc.canCreateProducts = true;
       if (!String(doc.partnerBadgeCode ?? '').trim()) {
         doc.partnerBadgeCode = PartnerBadgeCode.SILVER;
@@ -4853,6 +4857,11 @@ export class StoreService {
       (store._id as { toString(): string }).toString(),
       wantsPickupPayOnDelivery,
     );
+    // Catalogue : tradingOverride prime ; sync acceptsOrders (évite closed + acceptsOrders true).
+    const tradingFields = resolveTradingFieldsForAdminPatch({
+      tradingOverride: args.tradingOverride,
+      acceptsOrders: args.acceptsOrders,
+    });
     const setFields: Record<string, unknown> = {
       name: args.name,
       bio: args.bio,
@@ -4861,7 +4870,8 @@ export class StoreService {
       region: storeRegion,
       currency: storeCurrency,
       supportsShipping: args.supportsShipping,
-      acceptsOrders: args.acceptsOrders !== false,
+      acceptsOrders: tradingFields.acceptsOrders,
+      tradingOverride: tradingFields.tradingOverride,
       shippingZones,
       acceptsMealPreOrders: wantsPreOrders,
       acceptsPickupPayOnDelivery: wantsPickupPayOnDelivery,
