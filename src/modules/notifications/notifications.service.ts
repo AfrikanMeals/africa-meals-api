@@ -605,9 +605,9 @@ export class NotificationsService implements OnModuleInit {
           headers: {
             'apns-priority': '10',
           },
-          // Image iOS via FCM options (mutable-content côté client si extension).
+          // Image iOS : ApnsFcmOptions.imageUrl (pas `image` — TS Firebase Admin).
           ...(imageUrl && !omitSystemBanner
-            ? { fcmOptions: { image: imageUrl } }
+            ? { fcmOptions: { imageUrl } }
             : {}),
           payload: {
             // Call-like / dataOnly : iOS garde une alerte si callLikeWake, sinon silent.
