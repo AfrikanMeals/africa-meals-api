@@ -802,9 +802,6 @@ export class DrinksService {
       {
         $match: {
           'store.status': StoreStatusEnum.ACTIVE,
-          // Défaut ouvert : seul tradingOverride=closed exclut.
-          'store.tradingOverride': { $ne: 'closed' },
-          'store.trading_override': { $ne: 'closed' },
           ...(clientRegion ? embeddedStoreRegionMatch(clientRegion) : {}),
         },
       },

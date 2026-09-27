@@ -350,15 +350,25 @@ export class PatchVendorWorkingHoursDto {
   workingHours: StoreWorkingHoursDto;
 }
 
-/** Ouverture / fermeture manuelle (bypass horaires) — header vendeur. */
+/** Ouverture / fermeture manuelle — exception du jour ou mode sans horaires. */
 export class PatchVendorTradingOverrideDto {
-  @ApiProperty({
-    description: 'Force ouvert ou fermé (ignore le calendrier d’horaires).',
+  @ApiPropertyOptional({
+    description:
+      'Force ouvert ou fermé. Ignoré si reset=true (retour aux horaires ou défaut ouvert).',
     enum: ['open', 'closed'],
     example: 'open',
   })
+  @ValidateIf((o: { reset?: boolean }) => o.reset !== true)
   @IsIn(['open', 'closed'])
-  tradingOverride: 'open' | 'closed';
+  tradingOverride?: 'open' | 'closed';
+
+  @ApiPropertyOptional({
+    description:
+      'Efface l’exception (tradingOverride + until) pour suivre les horaires, ou le défaut ouvert sans planning.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  reset?: boolean;
 }
 
 export class DailyMenuComplementAvailabilityDto {

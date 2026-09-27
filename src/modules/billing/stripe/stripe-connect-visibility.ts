@@ -85,16 +85,14 @@ export function isStripeConnectOnboardingCompleteUser(
 }
 
 /**
- * Agrégation `stores` : ACTIVE + accepte commandes + vendeur Stripe Connect opérationnel.
- * Optionnellement limité à une liste d’ids (pubs, boissons multi-boutiques, etc.).
+ * Agrégation `stores` : ACTIVE + vendeur Stripe Connect opérationnel.
+ * Ouvert/fermé (horaires, exception du jour) ne retire pas la boutique du catalogue.
  */
 export function pipelineActiveStoresWithStripeOnboarded(
   storeIds?: Types.ObjectId[],
 ): PipelineStage[] {
   const match: Record<string, unknown> = {
     status: StoreStatusEnum.ACTIVE,
-    // Défaut ouvert : seul tradingOverride=closed exclut.
-    tradingOverride: { $ne: 'closed' },
   };
   if (storeIds?.length) {
     match._id = { $in: storeIds };

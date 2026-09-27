@@ -49,7 +49,6 @@ import {
   resolveEffectiveTimezone,
 } from '@modules/supported-countries/region-timezone.util';
 import { serializeStoreWorkingHoursForApi } from '@modules/store/store-working-hours.util';
-import { storeNotTradingClosedMatch } from '@modules/store/store-trading-open.util';
 import { mapInChunks } from '@utils/map-in-chunks';
 import {
   productDailyMenuEnrichmentPipelineStages,
@@ -897,10 +896,17 @@ export class SearchService {
             email: { $ifNull: ['$store.email', ''] },
             phoneNumber: { $ifNull: ['$store.phoneNumber', ''] },
             acceptsOrders: { $ifNull: ['$store.acceptsOrders', true] },
-            // Override manuel Ouvert/Fermé (bypass horaires).
             tradingOverride: {
               $ifNull: ['$store.tradingOverride', '$store.trading_override'],
             },
+            tradingOverrideUntil: {
+              $ifNull: [
+                '$store.tradingOverrideUntil',
+                '$store.trading_override_until',
+              ],
+            },
+            timezone: { $ifNull: ['$store.timezone', ''] },
+            workingHours: { $ifNull: ['$store.workingHours', '$store.working_hours'] },
             supportsShipping: { $ifNull: ['$store.supportsShipping', false] },
             currency: { $ifNull: ['$store.currency', 'CAD'] },
             profileImage: { $ifNull: ['$store.profileImage', ''] },
@@ -1424,8 +1430,6 @@ export class SearchService {
         $match: {
           $and: [
             { status: ProductStatusEnum.ACTIVE },
-            // Défaut ouvert : exclure seulement tradingOverride=closed.
-            storeNotTradingClosedMatch('store'),
             args.categoryId && {
               category: { $eq: new Types.ObjectId(args.categoryId) },
             },
@@ -1881,6 +1885,12 @@ export class SearchService {
                       st['trading_override'] === 'closed'
                     ? st['trading_override']
                     : null,
+              tradingOverrideUntil: (() => {
+                const raw = st['tradingOverrideUntil'] ?? st['trading_override_until'];
+                if (raw instanceof Date) return raw.toISOString();
+                if (typeof raw === 'string' && raw.trim()) return raw.trim();
+                return null;
+              })(),
               supportsShipping: st['supportsShipping'] === true,
               acceptsMealPreOrders:
                 st['acceptsMealPreOrders'] === true ||
@@ -2033,8 +2043,6 @@ export class SearchService {
         $match: {
           $and: [
             { status: ProductStatusEnum.ACTIVE },
-            // Défaut ouvert : exclure seulement tradingOverride=closed.
-            storeNotTradingClosedMatch('store'),
             {
               $or: [
                 { title: { $regex: '', $options: 'i' } },
@@ -2158,10 +2166,17 @@ export class SearchService {
             email: { $ifNull: ['$store.email', ''] },
             phoneNumber: { $ifNull: ['$store.phoneNumber', ''] },
             acceptsOrders: { $ifNull: ['$store.acceptsOrders', true] },
-            // Override manuel Ouvert/Fermé (bypass horaires).
             tradingOverride: {
               $ifNull: ['$store.tradingOverride', '$store.trading_override'],
             },
+            tradingOverrideUntil: {
+              $ifNull: [
+                '$store.tradingOverrideUntil',
+                '$store.trading_override_until',
+              ],
+            },
+            timezone: { $ifNull: ['$store.timezone', ''] },
+            workingHours: { $ifNull: ['$store.workingHours', '$store.working_hours'] },
             supportsShipping: { $ifNull: ['$store.supportsShipping', false] },
             currency: { $ifNull: ['$store.currency', 'CAD'] },
             profileImage: { $ifNull: ['$store.profileImage', ''] },
@@ -2501,8 +2516,7 @@ export class SearchService {
                 { status: ProductStatusEnum.ACTIVE },
               ].filter(Boolean),
             },
-            // Défaut ouvert : exclure seulement tradingOverride=closed.
-            storeNotTradingClosedMatch('store'),
+            // Boutique fermée (horaires / exception du jour) reste listée — badge + checkout.
             { 'store._id': storeOid },
             { 'store.status': StoreStatusEnum.ACTIVE },
             textClause,
@@ -2559,10 +2573,9 @@ export class SearchService {
     const pipelineArgs =
       discoveryPass || !geoActive ? this._searchArgsWithoutGeo(args) : args;
     const q = args.query?.trim();
-    /** Catalogue client : ACTIVE + pas explicitement fermé + Stripe Connect + article. */
+    /** Catalogue client : ACTIVE + Stripe Connect. Fermé = badge, pas une exclusion. */
     const andParts: Record<string, unknown>[] = [
       { status: StoreStatusEnum.ACTIVE },
-      storeNotTradingClosedMatch(),
       storeDirectRegionMatch(region),
     ];
     const storeDistanceStages = await this._storeDistanceAndMenuStages(
@@ -2660,6 +2673,8 @@ export class SearchService {
                 acceptsOrders: 1,
                 tradingOverride: 1,
                 trading_override: 1,
+                tradingOverrideUntil: 1,
+                trading_override_until: 1,
                 supportsShipping: 1,
                 canCreateProducts: 1,
                 shippingZones: 1,

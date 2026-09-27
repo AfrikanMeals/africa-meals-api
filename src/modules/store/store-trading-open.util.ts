@@ -1,17 +1,23 @@
-/** Override manuel Ouvert/Fermé (bypass horaires). */
+/** Override manuel Ouvert/Fermé. */
 export type StoreTradingOverride = 'open' | 'closed';
 
 export type ResolveStoreTradingOpenInput = {
   status?: string | null;
+  /** Verrou admin durable. `false` ferme même pendant un créneau. */
   acceptsOrders?: boolean | null;
   tradingOverride?: string | null;
-  /** Conservé pour compat tests ; ignoré (défaut = ouvert hors closed). */
-  hoursClosed?: boolean;
+  /** Fin d’exception du jour (mode horaires). Absent = override persistant (mode manuel). */
+  tradingOverrideUntil?: Date | string | null;
+  /** Planning actif avec au moins un jour commandable. */
+  hasFixedHours?: boolean;
+  /** Créneau courant ouvert. Ignoré sans horaires fixes. */
+  hoursOpen?: boolean;
+  now?: Date;
 };
 
 /**
  * Normalise le champ API/Mongo (`open` | `closed` | null).
- * Valeurs inconnues → null (= ouvert par défaut).
+ * Valeurs inconnues → null (suivre horaires, ou ouvert en mode manuel).
  */
 export function normalizeTradingOverride(
   value: unknown,
@@ -24,11 +30,17 @@ export function normalizeTradingOverride(
   return null;
 }
 
+function parseUntil(value: Date | string | null | undefined): Date | null {
+  if (value == null || value === '') return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
 /**
- * Ouverture effective catalogue / checkout.
- * Défaut = ouvert (ACTIVE) ; seul `tradingOverride=closed` ferme.
- * Bypass horaires ; `acceptsOrders` legacy ignoré sauf si on veut rester fermé
- * uniquement via override closed (sync API pose acceptsOrders=false).
+ * Ouverture effective (badge + checkout immédiat).
+ * Horaires fixes : créneau, sauf exception encore valide (`now < until`).
+ * Sans horaires : `closed` persiste ; sinon ouvert.
  */
 export function resolveStoreTradingOpen(
   input: ResolveStoreTradingOpenInput,
@@ -36,36 +48,28 @@ export function resolveStoreTradingOpen(
   const status = String(input.status ?? '')
     .trim()
     .toUpperCase();
-  // Boutique non ACTIVE : jamais « ouverte » côté client.
-  if (status && status !== 'ACTIVE') {
-    return false;
-  }
+  if (status && status !== 'ACTIVE') return false;
+  // Verrou admin : distinct du switch du jour.
+  if (input.acceptsOrders === false) return false;
 
+  const now = input.now ?? new Date();
   const override = normalizeTradingOverride(input.tradingOverride);
-  // Seul l’override fermé bloque ; open / null = ouvert (défaut).
+  const until = parseUntil(input.tradingOverrideUntil);
+  // Exception du jour : ignorée dès minuit local (until dépassé ou absent).
+  const dayOverride =
+    input.hasFixedHours === true &&
+    override != null &&
+    until != null &&
+    now.getTime() < until.getTime();
+  if (dayOverride) return override === 'open';
+
+  if (input.hasFixedHours) return input.hoursOpen === true;
+
   if (override === 'closed') return false;
   return true;
 }
 
-/**
- * Mongo/aggregation : exclure uniquement les boutiques explicitement fermées.
- * Couvre camelCase + snake_case.
- */
-export function storeNotTradingClosedMatch(
-  storePrefix = '',
-): Record<string, unknown> {
-  const camel = storePrefix
-    ? `${storePrefix}.tradingOverride`
-    : 'tradingOverride';
-  const snake = storePrefix
-    ? `${storePrefix}.trading_override`
-    : 'trading_override';
-  return {
-    $and: [{ [camel]: { $ne: 'closed' } }, { [snake]: { $ne: 'closed' } }],
-  };
-}
-
-/** Sync checkout / DB : open → true, closed → false. */
+/** Sync checkout / DB historique : open → true, closed → false. */
 export function acceptsOrdersForTradingOverride(
   override: StoreTradingOverride,
 ): boolean {
@@ -73,25 +77,15 @@ export function acceptsOrdersForTradingOverride(
 }
 
 /**
- * Admin PATCH fiche vendeur : `tradingOverride` prime ; sinon dérive de `acceptsOrders`.
- * Évite le désync catalogue (override=closed + acceptsOrders=true → boutique invisible).
+ * Admin PATCH : `acceptsOrders` (verrou) et `tradingOverride` sont indépendants.
+ * Ne dérive plus un `open` permanent depuis la checkbox (cassait les horaires).
  */
 export function resolveTradingFieldsForAdminPatch(args: {
   tradingOverride?: unknown;
   acceptsOrders?: boolean | null;
-}): { tradingOverride: StoreTradingOverride; acceptsOrders: boolean } {
-  const override = normalizeTradingOverride(args.tradingOverride);
-  // 1. Override explicite open|closed → sync acceptsOrders.
-  if (override) {
-    return {
-      tradingOverride: override,
-      acceptsOrders: acceptsOrdersForTradingOverride(override),
-    };
-  }
-  // 2. Legacy checkbox seule → dérive open/closed (défaut ouvert).
-  const acceptsOrders = args.acceptsOrders !== false;
+}): { tradingOverride: StoreTradingOverride | null; acceptsOrders: boolean } {
   return {
-    tradingOverride: acceptsOrders ? 'open' : 'closed',
-    acceptsOrders,
+    tradingOverride: normalizeTradingOverride(args.tradingOverride),
+    acceptsOrders: args.acceptsOrders !== false,
   };
 }

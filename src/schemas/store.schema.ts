@@ -105,17 +105,21 @@ export class StoreModel extends BaseSchema {
   acceptsOrders?: boolean;
 
   /**
-   * Override manuel Ouvert/Fermé (header vendeur) — bypass horaires.
-   * Défaut `open` : catalogue visible ; `closed` = fermé.
+   * Override manuel Ouvert/Fermé.
+   * Avec horaires : exception jusqu’à `tradingOverrideUntil` (fin du jour local).
+   * Sans horaires : persiste jusqu’au prochain switch. Absent = pas d’exception.
    */
   @Prop({
     required: false,
     name: 'trading_override',
     type: String,
     enum: ['open', 'closed'],
-    default: 'open',
   })
   tradingOverride?: 'open' | 'closed' | null;
+
+  /** Fin d’exception du jour (UTC). Absent = override persistant (mode manuel). */
+  @Prop({ required: false, name: 'trading_override_until', type: Date })
+  tradingOverrideUntil?: Date | null;
 
   @Prop({ default: false, name: 'can_create_products' }) // TODO should be updated when activating the store
   canCreateProducts?: boolean;

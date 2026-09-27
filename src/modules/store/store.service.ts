@@ -88,12 +88,14 @@ import {
   reverseCommissionMarkup,
 } from '@modules/platform-fees/platform-order-commission.util';
 import {
+  endOfStoreLocalDayUtc,
+  isWithinStoreWorkingHours,
   normalizeStoreTimezone,
   normalizeStoreWorkingHours,
   serializeStoreWorkingHoursForApi,
+  storeHasFixedWorkingHours,
 } from './store-working-hours.util';
 import {
-  acceptsOrdersForTradingOverride,
   normalizeTradingOverride,
   resolveStoreTradingOpen,
   resolveTradingFieldsForAdminPatch,
@@ -885,7 +887,7 @@ export class StoreService {
     const doc = await this._storeModel
       .findById(storeOid)
       .select(
-        'bio profileImage name status email phoneNumber currency region supportsShipping acceptsOrders tradingOverride acceptsMealPreOrders acceptsPickupPayOnDelivery defaultPickupPayOnPickup mealPreOrderCatalogScope timezone workingHours locatorEmbedSrc locatorEmbedConfig',
+        'bio profileImage name status email phoneNumber currency region supportsShipping acceptsOrders tradingOverride tradingOverrideUntil acceptsMealPreOrders acceptsPickupPayOnDelivery defaultPickupPayOnPickup mealPreOrderCatalogScope timezone workingHours locatorEmbedSrc locatorEmbedConfig',
       )
       .populate({
         path: 'address',
@@ -1129,7 +1131,7 @@ export class StoreService {
         select: 'address city country zipCode countryCode location',
       })
       .select(
-        'name bio businessType email phoneNumber currency region status acceptsOrders tradingOverride canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders acceptsPickupPayOnDelivery defaultPickupPayOnPickup mealPreOrderCatalogScope partnerBadgeCode timezone workingHours commissionRetrieveStrategy',
+        'name bio businessType email phoneNumber currency region status acceptsOrders tradingOverride tradingOverrideUntil canCreateProducts createdAt updatedAt supportsShipping shippingZones vendorManagesDeliveryDrivers deliveryAssignmentMode address profileImage dailyMenuByWeekday owner acceptsMealPreOrders acceptsPickupPayOnDelivery defaultPickupPayOnPickup mealPreOrderCatalogScope partnerBadgeCode timezone workingHours commissionRetrieveStrategy',
       )
       .lean()
       .exec();
@@ -1265,8 +1267,11 @@ export class StoreService {
         name: doc.name as string,
         status: doc.status as string,
         acceptsOrders: !!doc.acceptsOrders,
-        // Override header Ouvert/Fermé (null = suivre horaires).
+        // Switch vendeur : null = suivre horaires (ou ouvert si pas d’horaires).
         tradingOverride: normalizeTradingOverride(doc.tradingOverride),
+        tradingOverrideUntil: doc.tradingOverrideUntil
+          ? new Date(doc.tradingOverrideUntil as string | Date).toISOString()
+          : null,
         canCreateProducts: !!doc.canCreateProducts,
         supportsShipping: !!doc.supportsShipping,
         acceptsMealPreOrders: this._docAcceptsMealPreOrders(
@@ -2615,13 +2620,19 @@ export class StoreService {
     const updateDoc: Record<string, unknown> = {
       $set: { workingHours: normalizedWorkingHours },
     };
+    // Horaires vidés → mode manuel : l’override actuel persiste (sans date de fin).
+    if (!storeHasFixedWorkingHours(normalizedWorkingHours)) {
+      updateDoc.$unset = { tradingOverrideUntil: 1 };
+    }
     if (args.timezone !== undefined) {
       const normalizedTimezone = normalizeStoreTimezone(args.timezone);
       if (normalizedTimezone !== undefined) {
         (updateDoc.$set as Record<string, unknown>).timezone =
           normalizedTimezone;
       } else {
-        updateDoc.$unset = { timezone: 1 };
+        const unset = (updateDoc.$unset as Record<string, 1> | undefined) ?? {};
+        unset.timezone = 1;
+        updateDoc.$unset = unset;
       }
     }
 
@@ -2646,8 +2657,8 @@ export class StoreService {
   }
 
   /**
-   * Force Ouvert/Fermé (bypass horaires) + sync acceptsOrders pour le checkout.
-   * Refus d’ouvrir si boutique non ACTIVE.
+   * Switch vendeur : horaires → exception jusqu’à minuit local ;
+   * sans horaires → état persistant. Ne touche pas le verrou `acceptsOrders`.
    */
   async updateVendorTradingOverride(
     user: UserModel,
@@ -2659,6 +2670,31 @@ export class StoreService {
       storeId,
     );
     const override = normalizeTradingOverride(args.tradingOverride);
+    // Reset : plus d’exception. Horaires reprennent, ou ouvert par défaut sans planning.
+    if (args.reset === true) {
+      await this._storeModel.updateOne(
+        { _id: store._id },
+        { $unset: { tradingOverride: 1, tradingOverrideUntil: 1 } },
+      );
+      await this._storeModel.updateOne(
+        { _id: store._id },
+        {
+          $push: {
+            vendorMessages: {
+              message:
+                'Ouverture réinitialisée (horaires ou défaut, sans exception).',
+              from: 'SYSTEM',
+              createdAt: new Date(),
+            },
+          },
+        },
+      );
+      this._wsInboxNotify.notifyUserInboxRefresh(
+        (user._id as { toString(): string }).toString(),
+      );
+      await this._invalidatePublicCatalogCachesForStore(targetId);
+      return this.findMyStoreSummary(user, targetId);
+    }
     if (!override) {
       throw new BadRequestException('invalid_trading_override');
     }
@@ -2673,25 +2709,35 @@ export class StoreService {
       throw new ForbiddenException('store_not_editable');
     }
 
-    const acceptsOrders = acceptsOrdersForTradingOverride(override);
-    await this._storeModel.updateOne(
-      { _id: store._id },
-      {
-        $set: {
-          tradingOverride: override,
-          acceptsOrders,
-        },
-      },
+    const hours = serializeStoreWorkingHoursForApi(
+      store.workingHours as unknown as Record<string, unknown> | undefined,
     );
+    const hasFixedHours = storeHasFixedWorkingHours(hours);
+    const setFields: Record<string, unknown> = { tradingOverride: override };
+    const unsetFields: Record<string, 1> = {};
+    if (hasFixedHours) {
+      setFields.tradingOverrideUntil = endOfStoreLocalDayUtc(
+        new Date(),
+        store.timezone,
+      );
+    } else {
+      unsetFields.tradingOverrideUntil = 1;
+    }
+    const updateDoc: Record<string, unknown> = { $set: setFields };
+    if (Object.keys(unsetFields).length) updateDoc.$unset = unsetFields;
+    await this._storeModel.updateOne({ _id: store._id }, updateDoc);
     await this._storeModel.updateOne(
       { _id: store._id },
       {
         $push: {
           vendorMessages: {
-            message:
-              override === 'open'
-                ? 'Restaurant ouvert (commande clients).'
-                : 'Restaurant fermé (commande clients).',
+            message: hasFixedHours
+              ? override === 'open'
+                ? 'Restaurant ouvert pour aujourd’hui (exception horaires).'
+                : 'Restaurant fermé pour aujourd’hui (exception horaires).'
+              : override === 'open'
+                ? 'Restaurant ouvert (jusqu’à changement manuel).'
+                : 'Restaurant fermé (jusqu’à changement manuel).',
             from: 'SYSTEM',
             createdAt: new Date(),
           },
@@ -3964,15 +4010,28 @@ export class StoreService {
       throw new NotFoundException('store_not_found');
     }
 
-    // Fermé uniquement si tradingOverride=closed (défaut = ouvert).
-    if (
-      !resolveStoreTradingOpen({
-        status: store.status,
-        acceptsOrders: store.acceptsOrders,
-        tradingOverride: (store as { tradingOverride?: string | null })
-          .tradingOverride,
-      })
-    ) {
+    // Checkout immédiat : horaires ou exception du jour. La pré-commande
+    // garde son propre contrôle de date (un resto fermé ce soir peut réserver demain).
+    const now = new Date();
+    const hours = serializeStoreWorkingHoursForApi(
+      (store as { workingHours?: Record<string, unknown> }).workingHours,
+    );
+    const hasFixedHours = storeHasFixedWorkingHours(hours);
+    const openNow = resolveStoreTradingOpen({
+      status: store.status,
+      acceptsOrders: store.acceptsOrders,
+      tradingOverride: (store as { tradingOverride?: string | null })
+        .tradingOverride,
+      tradingOverrideUntil: (
+        store as { tradingOverrideUntil?: Date | null }
+      ).tradingOverrideUntil,
+      hasFixedHours,
+      hoursOpen: isWithinStoreWorkingHours(hours, now, store.timezone),
+      now,
+    });
+    const adminLocked =
+      store.status !== StoreStatusEnum.ACTIVE || store.acceptsOrders === false;
+    if (!openNow && (adminLocked || !options?.isPreOrder)) {
       throw new ForbiddenException('store_does_not_accept_orders');
     }
 
@@ -4466,13 +4525,11 @@ export class StoreService {
     };
     doc.status = status;
     if (status === StoreStatusEnum.INACTIVE) {
-      // Fix: sync tradingOverride sinon catalogue reste fermé/ouvert hors sync status.
+      // Verrou commandes. Ne force pas tradingOverride (sinon les horaires restent cassés à la réactivation).
       doc.acceptsOrders = false;
-      doc.tradingOverride = 'closed';
       doc.canCreateProducts = false;
     } else {
       doc.acceptsOrders = true;
-      doc.tradingOverride = 'open';
       doc.canCreateProducts = true;
       if (!String(doc.partnerBadgeCode ?? '').trim()) {
         doc.partnerBadgeCode = PartnerBadgeCode.SILVER;
@@ -4857,11 +4914,15 @@ export class StoreService {
       (store._id as { toString(): string }).toString(),
       wantsPickupPayOnDelivery,
     );
-    // Catalogue : tradingOverride prime ; sync acceptsOrders (évite closed + acceptsOrders true).
+    // Verrou admin et exception du jour sont indépendants.
     const tradingFields = resolveTradingFieldsForAdminPatch({
       tradingOverride: args.tradingOverride,
       acceptsOrders: args.acceptsOrders,
     });
+    const adminHours = serializeStoreWorkingHoursForApi(
+      store.workingHours as unknown as Record<string, unknown> | undefined,
+    );
+    const adminHasFixedHours = storeHasFixedWorkingHours(adminHours);
     const setFields: Record<string, unknown> = {
       name: args.name,
       bio: args.bio,
@@ -4871,7 +4932,6 @@ export class StoreService {
       currency: storeCurrency,
       supportsShipping: args.supportsShipping,
       acceptsOrders: tradingFields.acceptsOrders,
-      tradingOverride: tradingFields.tradingOverride,
       shippingZones,
       acceptsMealPreOrders: wantsPreOrders,
       acceptsPickupPayOnDelivery: wantsPickupPayOnDelivery,
@@ -4888,6 +4948,17 @@ export class StoreService {
     };
     const updateDoc: Record<string, unknown> = { $set: setFields };
     const unsetFields: Record<string, 1> = {};
+    if (tradingFields.tradingOverride) {
+      setFields.tradingOverride = tradingFields.tradingOverride;
+      if (adminHasFixedHours) {
+        setFields.tradingOverrideUntil = endOfStoreLocalDayUtc(
+          new Date(),
+          store.timezone,
+        );
+      } else {
+        unsetFields.tradingOverrideUntil = 1;
+      }
+    }
     if (args.businessType) {
       setFields.businessType = args.businessType;
     } else {

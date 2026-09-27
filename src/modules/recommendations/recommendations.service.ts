@@ -889,8 +889,6 @@ export class RecommendationsService {
     const query: Record<string, unknown> = {
       _id: { $in: ordered.map((id) => new Types.ObjectId(id)) },
       status: StoreStatusEnum.ACTIVE,
-      // Défaut ouvert : seul closed exclut.
-      tradingOverride: { $ne: 'closed' },
     };
     if (clientRegion) {
       Object.assign(query, storeDirectRegionMatch(clientRegion));
@@ -943,9 +941,6 @@ export class RecommendationsService {
         {
           $match: {
             status: StoreStatusEnum.ACTIVE,
-            // Défaut ouvert : seul closed exclut (camel + snake).
-            tradingOverride: { $ne: 'closed' },
-            trading_override: { $ne: 'closed' },
             ...(clientRegion ? storeDirectRegionMatch(clientRegion) : {}),
           },
         },

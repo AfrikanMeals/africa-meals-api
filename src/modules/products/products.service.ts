@@ -162,9 +162,6 @@ export class ProductsService {
       {
         $match: {
           'store.status': StoreStatusEnum.ACTIVE,
-          // Défaut ouvert : seul tradingOverride=closed exclut.
-          'store.tradingOverride': { $ne: 'closed' },
-          'store.trading_override': { $ne: 'closed' },
         },
       },
       ...productEmbeddedStoreOwnerStripeOnboardedStages(),
@@ -2338,11 +2335,16 @@ export class ProductsService {
                           false,
                         ],
                       },
-                      // Override manuel Ouvert/Fermé (bypass horaires).
                       tradingOverride: {
                         $ifNull: [
                           '$$st0.tradingOverride',
                           '$$st0.trading_override',
+                        ],
+                      },
+                      tradingOverrideUntil: {
+                        $ifNull: [
+                          '$$st0.tradingOverrideUntil',
+                          '$$st0.trading_override_until',
                         ],
                       },
                       canCreateProducts: {

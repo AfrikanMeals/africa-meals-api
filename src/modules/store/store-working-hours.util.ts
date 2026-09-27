@@ -145,6 +145,103 @@ export function normalizeStoreWorkingHours(
   return { enabled, schedule };
 }
 
+/**
+ * Horaires fixes : planning actif avec au moins un jour commandable
+ * (24h ou créneau). Désactivé / vide = mode manuel (switch persistant).
+ */
+export function storeHasFixedWorkingHours(
+  hours: NormalizedStoreWorkingHours | null | undefined,
+): boolean {
+  if (!hours?.enabled) return false;
+  return hours.schedule.some((day) => {
+    if (day.closed) return false;
+    if (day.open24h) return true;
+    return day.slots.length > 0;
+  });
+}
+
+/** Jour (0 = dimanche) et minutes locales dans le fuseau boutique. */
+export function zonedClock(
+  at: Date,
+  timezone?: string | null,
+): { dayOfWeek: number; minutes: number } {
+  const tz =
+    timezone && isValidIanaTimezone(timezone) ? timezone.trim() : 'UTC';
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  });
+  const parts = fmt.formatToParts(at);
+  const weekday = parts.find((p) => p.type === 'weekday')?.value ?? 'Sun';
+  const dayMap: Record<string, number> = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+  };
+  let hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
+  // Certains runtimes rendent minuit en « 24 ».
+  if (hour === 24) hour = 0;
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+  return {
+    dayOfWeek: dayMap[weekday] ?? 0,
+    minutes: hour * 60 + minute,
+  };
+}
+
+/** Créneau courant ouvert. Faux si pas d’horaires fixes. */
+export function isWithinStoreWorkingHours(
+  hours: NormalizedStoreWorkingHours | null | undefined,
+  at: Date,
+  timezone?: string | null,
+): boolean {
+  if (!storeHasFixedWorkingHours(hours) || !hours) return false;
+  const { dayOfWeek, minutes } = zonedClock(at, timezone);
+  const day = hours.schedule.find((row) => row.dayOfWeek === dayOfWeek);
+  if (!day || day.closed) return false;
+  if (day.open24h) return true;
+  for (const slot of day.slots) {
+    const openMin = parseMinutes(slot.open);
+    const closeMin = parseMinutes(slot.close);
+    if (openMin < 0 || closeMin < 0) continue;
+    if (minutes >= openMin && minutes < closeMin) return true;
+  }
+  return false;
+}
+
+/**
+ * Premier instant du jour civil suivant (fuseau boutique), en UTC.
+ * Exception Ouvert/Fermé : valable tant que `now <` cette date.
+ */
+export function endOfStoreLocalDayUtc(
+  at: Date,
+  timezone?: string | null,
+): Date {
+  const tz =
+    timezone && isValidIanaTimezone(timezone) ? timezone.trim() : 'UTC';
+  const dateFmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const localDate = dateFmt.format(at);
+  const { minutes } = zonedClock(at, tz);
+  const remainingMin = 24 * 60 - minutes;
+  let cursor = new Date(at.getTime() + remainingMin * 60_000);
+  // DST : avancer jusqu’au premier instant dont la date locale a changé.
+  while (dateFmt.format(cursor) === localDate) {
+    cursor = new Date(cursor.getTime() + 60_000);
+  }
+  return cursor;
+}
+
 export function serializeStoreWorkingHoursForApi(
   doc: Record<string, unknown> | undefined | null,
 ): NormalizedStoreWorkingHours | undefined {
