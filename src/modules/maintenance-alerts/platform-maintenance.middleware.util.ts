@@ -5,6 +5,9 @@ import type { PublicPlatformMaintenanceResponse } from './platform-maintenance.u
 
 const WHITELIST_PREFIXES = [
   '/platform/maintenance-mode',
+  // L’écran maintenance mobile lit téléphone / WhatsApp ici. Un 503 fait
+  // retomber l’app sur le numéro codé en dur (+237) et masque WhatsApp.
+  '/platform/mobile-app-settings',
   '/sse/public/platform-maintenance',
   '/auth/',
   '/health',
