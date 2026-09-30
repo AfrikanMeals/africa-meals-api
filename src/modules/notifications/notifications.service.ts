@@ -563,7 +563,7 @@ export class NotificationsService implements OnModuleInit {
       .project({ _id: 1, fcm_tokens: 1, fcmTokens: 1 })
       .toArray();
 
-    const tokenRows: { userId: string; token: string }[] = [];
+    const tokenRows: { userId: string; token: string; platform: string }[] = [];
     for (const u of mongoUsers) {
       const raw = u as Record<string, unknown>;
       const id = raw._id;
@@ -575,7 +575,11 @@ export class NotificationsService implements OnModuleInit {
           : String(id);
       const merged = this.mergeFcmTokenRows(raw.fcm_tokens, raw.fcmTokens);
       for (const row of merged) {
-        tokenRows.push({ userId: uid, token: row.token });
+        tokenRows.push({
+          userId: uid,
+          token: row.token,
+          platform: row.platform,
+        });
       }
     }
 

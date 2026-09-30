@@ -322,7 +322,8 @@ export class PlatformPushCampaignsService {
     }
     const doc = await this.campaignModel.findById(campaignId).lean().exec();
     if (!doc) throw new NotFoundException('campaign_not_found');
-    return doc as Record<string, unknown> & {
+    // lean() ne type pas _id en ObjectId : passage par unknown.
+    return doc as unknown as Record<string, unknown> & {
       _id: Types.ObjectId;
       status?: string;
       audiences?: string[];
@@ -401,7 +402,8 @@ export class PlatformPushCampaignsService {
       typeof raw.imageUrl === 'string' && raw.imageUrl.trim()
         ? raw.imageUrl.trim()
         : undefined;
-    const plat = statsRaw.byPlatform ?? {};
+    const plat: Partial<PlatformPushCampaignStats['byPlatform']> =
+      statsRaw.byPlatform ?? {};
 
     return {
       id,
