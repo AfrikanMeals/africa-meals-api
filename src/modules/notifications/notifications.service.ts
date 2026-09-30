@@ -534,12 +534,21 @@ export class NotificationsService implements OnModuleInit {
      * Image rich FCM (campagnes Marketing) — `android.notification.imageUrl`
      * + `apns.fcmOptions.image` ; ignorée en dataOnly / callLikeWake.
      */
+    /** Détail par jeton (test admin). Désactivé sur les envois de masse. */
+    probe?: boolean;
     imageUrl?: string;
   }): Promise<{
     sent: number;
     failures: number;
     deviceCount: number;
     byPlatform: FcmPlatformCounts;
+    devices?: Array<{
+      platform: string;
+      tokenSuffix: string;
+      ok: boolean;
+      errorCode?: string;
+      errorMessage?: string;
+    }>;
   }> {
     const empty = {
       sent: 0,
@@ -651,8 +660,6 @@ export class NotificationsService implements OnModuleInit {
         notification: {
           title: args.title,
           body: args.body,
-          // Champ FCM cross-platform pour l’image tray.
-          ...(imageUrl ? { imageUrl } : {}),
         },
       };
     });
@@ -660,6 +667,15 @@ export class NotificationsService implements OnModuleInit {
     let sent = 0;
     let failures = 0;
     const invalidTokens = new Set<string>();
+    const devices = args.probe
+      ? ([] as Array<{
+          platform: string;
+          tokenSuffix: string;
+          ok: boolean;
+          errorCode?: string;
+          errorMessage?: string;
+        }>)
+      : undefined;
 
     const chunkSize = 400;
     for (let i = 0; i < messages.length; i += chunkSize) {
@@ -670,9 +686,21 @@ export class NotificationsService implements OnModuleInit {
         const tok = tokenRows[globalIdx]?.token;
         if (resp.success) {
           sent++;
+          devices?.push({
+            platform: tokenRows[globalIdx]?.platform ?? 'other',
+            tokenSuffix: (tok ?? '').slice(-6),
+            ok: true,
+          });
         } else {
           failures++;
           const code = resp.error?.code ?? '';
+          devices?.push({
+            platform: tokenRows[globalIdx]?.platform ?? 'other',
+            tokenSuffix: (tok ?? '').slice(-6),
+            ok: false,
+            errorCode: code,
+            errorMessage: resp.error?.message ?? '',
+          });
           if (
             code.includes('invalid-registration-token') ||
             code.includes('registration-token-not-registered') ||
@@ -703,7 +731,7 @@ export class NotificationsService implements OnModuleInit {
       } as Record<string, unknown>);
     }
 
-    return { sent, failures, deviceCount, byPlatform };
+    return { sent, failures, deviceCount, byPlatform, ...(devices ? { devices } : {}) };
   }
 
   private static orderStatusLabelFr(status: string): string {

@@ -27,6 +27,8 @@ export function bucketFcmPlatform(raw: unknown): FcmPlatformBucket {
  * Payload APNs pour `sendMulticastNotification`.
  * Bannière : `aps.alert` obligatoire — un `aps` custom sans alert + contentAvailable
  * est un push silencieux et iOS n’affiche rien (Android a `android.notification`).
+ * L’image n’est pas mise sur APNs : sans Notification Service Extension, `mutable-content`
+ * peut faire disparaître toute la bannière iOS. L’image reste sur `android.notification`.
  */
 export function buildFcmApnsOptions(args: {
   mode: FcmApnsMode;
@@ -56,19 +58,18 @@ export function buildFcmApnsOptions(args: {
       },
     };
   }
-  const imageUrl = args.imageUrl?.trim() || undefined;
+  // Image volontairement absente du payload APNs (voir JSDoc).
+  void args.imageUrl;
   return {
     headers: {
       'apns-priority': '10',
       // iOS 13+ : sans ce type, un payload mixte peut être rejeté ou silencieux.
       'apns-push-type': 'alert',
     },
-    ...(imageUrl ? { fcmOptions: { imageUrl } } : {}),
     payload: {
       aps: {
         alert: { title: args.title, body: args.body },
         sound: 'default',
-        ...(imageUrl ? { mutableContent: true } : {}),
       },
     },
   };

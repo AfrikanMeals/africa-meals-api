@@ -16,17 +16,16 @@ describe('buildFcmApnsOptions', () => {
     expect(apns.fcmOptions).toBeUndefined();
   });
 
-  it('bannière avec image : mutableContent, pas sans image', () => {
+  it('bannière : pas d’image APNs (mutable-content sans extension iOS masque la notif)', () => {
     const withImg = buildFcmApnsOptions({
       mode: 'banner',
       title: 'T',
       body: 'B',
       imageUrl: 'https://cdn.example/a.png',
     });
-    expect(withImg.payload.aps.mutableContent).toBe(true);
-    expect(withImg.fcmOptions?.imageUrl).toContain('https://');
-    const plain = buildFcmApnsOptions({ mode: 'banner', title: 'T', body: 'B' });
-    expect(plain.payload.aps.mutableContent).toBeUndefined();
+    expect(withImg.payload.aps.alert).toEqual({ title: 'T', body: 'B' });
+    expect(withImg.payload.aps.mutableContent).toBeUndefined();
+    expect(withImg.fcmOptions).toBeUndefined();
   });
 
   it('dataOnly reste silencieux sans alert', () => {

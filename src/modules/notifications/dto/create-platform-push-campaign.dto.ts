@@ -46,3 +46,33 @@ export class CreatePlatformPushCampaignDto {
   @MaxLength(2000)
   imageUrl?: string;
 }
+
+/** POST /notifications/campaigns/test — un utilisateur, résultat par jeton. */
+export class TestPlatformPushCampaignDto {
+  @ApiProperty({
+    description: 'E-mail ou id Mongo de l’utilisateur cible',
+    example: 'user@example.com',
+  })
+  @IsString()
+  @MinLength(3)
+  @MaxLength(200)
+  target: string;
+
+  @ApiProperty({ example: 'Test iOS' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  title: string;
+
+  @ApiProperty({ example: 'Message de test campagne' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(500)
+  body: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  imageUrl?: string;
+}

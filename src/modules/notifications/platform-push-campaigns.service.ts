@@ -142,6 +142,81 @@ export class PlatformPushCampaignsService {
     return this.toRow((fresh ?? created.toObject()) as Record<string, unknown>);
   }
 
+  /**
+   * Envoi immédiat au jeton(s) d’un seul user. Ne crée pas d’historique.
+   * Retourne l’erreur FCM par appareil (ios / android) pour diagnostiquer iOS.
+   */
+  async sendTestToUser(
+    user: UserModel,
+    args: { target: string; title: string; body: string; imageUrl?: string },
+  ): Promise<{
+    userId: string;
+    email: string;
+    name: string;
+    devices: Array<{
+      platform: string;
+      tokenSuffix: string;
+      ok: boolean;
+      errorCode?: string;
+      errorMessage?: string;
+    }>;
+  }> {
+    await this.storeAccess.assertAdminPermission(user, 'admin.marketing');
+    const title = args.title.trim();
+    const body = args.body.trim();
+    if (!title || !body) {
+      throw new BadRequestException('title_body_required');
+    }
+    const target = args.target.trim();
+    const targetUser = await this.findTargetUser(target);
+    if (!targetUser) {
+      throw new NotFoundException('user_not_found');
+    }
+    const userId = String(targetUser._id);
+    const imageUrl = (args.imageUrl ?? '').trim() || undefined;
+    const result = await this.notifications.sendMulticastNotification({
+      recipientUserIds: [userId],
+      title,
+      body,
+      imageUrl,
+      androidChannelId: PLATFORM_PUSH_CAMPAIGN_ANDROID_CHANNEL,
+      probe: true,
+      data: {
+        type: PLATFORM_PUSH_CAMPAIGN_FCM_TYPE,
+        audience: 'customer',
+        title,
+        body,
+        ...(imageUrl ? { imageUrl } : {}),
+      },
+    });
+    return {
+      userId,
+      email: String(targetUser.email ?? ''),
+      name: String(targetUser.fullName ?? targetUser.full_name ?? ''),
+      devices: result.devices ?? [],
+    };
+  }
+
+  private async findTargetUser(
+    target: string,
+  ): Promise<Record<string, unknown> | null> {
+    const email = target.toLowerCase();
+    const byId =
+      Types.ObjectId.isValid(target) && target.length === 24
+        ? await this.userModel.collection.findOne(
+            { _id: new Types.ObjectId(target) },
+            { projection: { email: 1, fullName: 1, full_name: 1 } },
+          )
+        : null;
+    if (byId) return byId as Record<string, unknown>;
+    const escaped = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const byEmail = await this.userModel.collection.findOne(
+      { email: { $regex: `^${escaped}$`, $options: 'i' } },
+      { projection: { email: 1, fullName: 1, full_name: 1 } },
+    );
+    return (byEmail as Record<string, unknown> | null) ?? null;
+  }
+
   /** Stoppe les lots suivants. Le lot déjà parti se termine. */
   async pauseCampaign(
     user: UserModel,

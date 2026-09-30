@@ -1,6 +1,6 @@
 import { JwtGuard } from '@modules/auth/guards/jwt.guard';
 import { CreateBroadcastNotificationDto } from '@modules/notifications/dto/create-broadcast-notification.dto';
-import { CreatePlatformPushCampaignDto } from '@modules/notifications/dto/create-platform-push-campaign.dto';
+import { CreatePlatformPushCampaignDto, TestPlatformPushCampaignDto } from '@modules/notifications/dto/create-platform-push-campaign.dto';
 import { ListPlatformPushCampaignsQueryDto } from '@modules/notifications/dto/list-platform-push-campaigns-query.dto';
 import { MarkNotificationsReadDto } from '@modules/notifications/dto/mark-notifications-read.dto';
 import { NotificationInboxQueryDto } from '@modules/notifications/dto/notification-inbox-query.dto';
@@ -154,6 +154,25 @@ export class AppInboxNotificationsController {
   ) {
     return this.platformPushCampaigns.createAndSend(req.user as UserModel, {
       audiences: body.audiences,
+      title: body.title,
+      body: body.body,
+      imageUrl: body.imageUrl,
+    });
+  }
+
+  @Post('campaigns/test')
+  @UseGuards(JwtGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    summary: 'Test FCM campagne vers un utilisateur (email ou id)',
+  })
+  sendCampaignTest(
+    @Req() req: Request,
+    @Body() body: TestPlatformPushCampaignDto,
+  ) {
+    return this.platformPushCampaigns.sendTestToUser(req.user as UserModel, {
+      target: body.target,
       title: body.title,
       body: body.body,
       imageUrl: body.imageUrl,
