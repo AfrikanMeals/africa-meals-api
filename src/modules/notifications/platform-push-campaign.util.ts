@@ -70,3 +70,56 @@ export const PLATFORM_PUSH_CAMPAIGN_ANDROID_CHANNEL =
 
 /** Type FCM data — tap = ouvrir l’app (pas de deep link métier v1). */
 export const PLATFORM_PUSH_CAMPAIGN_FCM_TYPE = 'platform_campaign';
+
+export const PLATFORM_PUSH_CAMPAIGN_STATUSES = [
+  'queued',
+  'running',
+  'paused',
+  'completed',
+  'failed',
+  'cancelled',
+] as const;
+
+export type PlatformPushCampaignStatus =
+  (typeof PLATFORM_PUSH_CAMPAIGN_STATUSES)[number];
+
+export type PlatformPushCampaignCursor = {
+  audienceIndex: number;
+  lastUserId?: string;
+};
+
+/** Le worker n’envoie un lot que si la campagne est en file ou en cours. */
+export function campaignJobShouldSend(
+  status: string | null | undefined,
+): boolean {
+  return status === 'queued' || status === 'running';
+}
+
+/**
+ * Avance le curseur après un lot.
+ * Lot vide ou incomplet → audience suivante. Lot plein → même audience, après le dernier id.
+ */
+export function advanceCampaignCursor(args: {
+  audienceCount: number;
+  audienceIndex: number;
+  batchIds: string[];
+  batchLimit: number;
+}): { done: boolean; cursor: PlatformPushCampaignCursor } {
+  const last =
+    args.batchIds.length > 0
+      ? args.batchIds[args.batchIds.length - 1]
+      : undefined;
+  const audienceExhausted =
+    args.batchIds.length === 0 || args.batchIds.length < args.batchLimit;
+  if (!audienceExhausted && last) {
+    return {
+      done: false,
+      cursor: { audienceIndex: args.audienceIndex, lastUserId: last },
+    };
+  }
+  const nextIndex = args.audienceIndex + 1;
+  if (nextIndex >= args.audienceCount) {
+    return { done: true, cursor: { audienceIndex: nextIndex } };
+  }
+  return { done: false, cursor: { audienceIndex: nextIndex } };
+}

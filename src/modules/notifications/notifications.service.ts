@@ -21,6 +21,12 @@ import {
 } from '@modules/mailer/email-template.service';
 import { WsInboxNotifyService } from '@modules/ws-notify/ws-inbox-notify.service';
 import {
+  bucketFcmPlatform,
+  buildFcmApnsOptions,
+  emptyFcmPlatformCounts,
+  type FcmPlatformCounts,
+} from './fcm-apns-payload.util';
+import {
   Inject,
   Injectable,
   Logger,
@@ -120,24 +126,28 @@ export class NotificationsService implements OnModuleInit {
    * Les jetons sont stockés en base sous `fcm_tokens` (pipeline d’upsert) ;
    * certains documents ont aussi `fcmTokens` (vide ou legacy). On fusionne et déduplique.
    */
-  private mergeFcmTokenRows(...arrays: unknown[]): { token: string }[] {
+  private mergeFcmTokenRows(
+    ...arrays: unknown[]
+  ): { token: string; platform: string }[] {
     const seen = new Set<string>();
-    const out: { token: string }[] = [];
-    const pushToken = (raw: string) => {
+    const out: { token: string; platform: string }[] = [];
+    // Premier jeton gagne en cas de doublon (camel + snake sur le même user).
+    const pushToken = (raw: string, platform: string) => {
       const token = raw.trim();
       if (!token || seen.has(token)) return;
       seen.add(token);
-      out.push({ token });
+      out.push({ token, platform: platform.trim() || 'other' });
     };
     for (const arr of arrays) {
       if (!Array.isArray(arr)) continue;
       for (const row of arr) {
         if (typeof row === 'string') {
-          pushToken(row);
+          pushToken(row, 'other');
           continue;
         }
         if (!row || typeof row !== 'object') continue;
-        pushToken(String((row as { token?: unknown }).token ?? ''));
+        const rec = row as { token?: unknown; platform?: unknown };
+        pushToken(String(rec.token ?? ''), String(rec.platform ?? 'other'));
       }
     }
     return out;
@@ -525,16 +535,27 @@ export class NotificationsService implements OnModuleInit {
      * + `apns.fcmOptions.image` ; ignorée en dataOnly / callLikeWake.
      */
     imageUrl?: string;
-  }): Promise<{ sent: number; failures: number; deviceCount: number }> {
+  }): Promise<{
+    sent: number;
+    failures: number;
+    deviceCount: number;
+    byPlatform: FcmPlatformCounts;
+  }> {
+    const empty = {
+      sent: 0,
+      failures: 0,
+      deviceCount: 0,
+      byPlatform: emptyFcmPlatformCounts(),
+    };
     if (!this.firebaseApp) {
-      return { sent: 0, failures: 0, deviceCount: 0 };
+      return empty;
     }
 
     const oids = args.recipientUserIds
       .filter((id) => Types.ObjectId.isValid(id))
       .map((id) => new Types.ObjectId(id));
     if (oids.length === 0) {
-      return { sent: 0, failures: 0, deviceCount: 0 };
+      return empty;
     }
 
     const mongoUsers = await this.userModel.collection
@@ -559,8 +580,12 @@ export class NotificationsService implements OnModuleInit {
     }
 
     const deviceCount = tokenRows.length;
+    const byPlatform = emptyFcmPlatformCounts();
+    for (const row of tokenRows) {
+      byPlatform[bucketFcmPlatform(row.platform)] += 1;
+    }
     if (deviceCount === 0) {
-      return { sent: 0, failures: 0, deviceCount: 0 };
+      return { ...empty, byPlatform };
     }
 
     const messaging = getMessaging(this.firebaseApp);
@@ -601,35 +626,17 @@ export class NotificationsService implements OnModuleInit {
         token: row.token,
         data,
         android: androidCfg,
-        apns: {
-          headers: {
-            'apns-priority': '10',
-          },
-          // Image iOS : ApnsFcmOptions.imageUrl (pas `image` — TS Firebase Admin).
-          ...(imageUrl && !omitSystemBanner
-            ? { fcmOptions: { imageUrl } }
-            : {}),
-          payload: {
-            // Call-like / dataOnly : iOS garde une alerte si callLikeWake, sinon silent.
-            aps: args.dataOnly
-              ? { contentAvailable: true }
-              : args.callLikeWake
-                ? {
-                    alert: {
-                      title: args.title,
-                      body: args.body,
-                    },
-                    sound: 'default',
-                    contentAvailable: true,
-                  }
-                : {
-                    sound: 'default',
-                    contentAvailable: true,
-                    // Requis pour téléchargement image Notification Service Extension.
-                    ...(imageUrl ? { mutableContent: true } : {}),
-                  },
-          },
-        },
+        // Bannière : alert APNs (sinon iOS silencieux). dataOnly / call-like inchangés.
+        apns: buildFcmApnsOptions({
+          mode: args.dataOnly
+            ? 'silent'
+            : args.callLikeWake
+              ? 'callLike'
+              : 'banner',
+          title: args.title,
+          body: args.body,
+          imageUrl: imageUrl && !omitSystemBanner ? imageUrl : undefined,
+        }),
       };
       // Pas de `notification` top-level : Android reste data-only (BG handler).
       if (omitSystemBanner) {
@@ -692,7 +699,7 @@ export class NotificationsService implements OnModuleInit {
       } as Record<string, unknown>);
     }
 
-    return { sent, failures, deviceCount };
+    return { sent, failures, deviceCount, byPlatform };
   }
 
   private static orderStatusLabelFr(status: string): string {

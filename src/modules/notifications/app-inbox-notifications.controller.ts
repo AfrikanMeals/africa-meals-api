@@ -8,9 +8,11 @@ import { UserModel, UserTypeEnum } from '@schemas/user.schema';
 import {
   Body,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
   HttpCode,
+  Param,
   Post,
   Query,
   Req,
@@ -113,8 +115,7 @@ export class AppInboxNotificationsController {
   }
 
   /**
-   * Campagnes push Marketing (admin.marketing) — distinct Ads Panel Campagnes.
-   * Envoi immédiat FCM multi-audiences (CUSTOMER / VENDOR / COURIER).
+   * Campagnes push Marketing (admin.marketing) — file FCM, pause / reprise.
    */
   @Get('campaigns')
   @UseGuards(JwtGuard)
@@ -143,7 +144,7 @@ export class AppInboxNotificationsController {
   @ApiOperation({
     summary: 'Créer et envoyer une campagne push Marketing',
     description:
-      'Envoi immédiat FCM (titre / corps / image optionnelle) aux audiences sélectionnées. ' +
+      'Met la campagne en file (titre / corps / image optionnelle). ' +
       'data.type = platform_campaign ; tap ouvre l’app.',
   })
   @ApiResponse({ status: 403, description: 'Sans admin.marketing' })
@@ -157,5 +158,37 @@ export class AppInboxNotificationsController {
       body: body.body,
       imageUrl: body.imageUrl,
     });
+  }
+
+  @Get('campaigns/:id')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Détail stats d’une campagne push Marketing' })
+  getCampaign(@Req() req: Request, @Param('id') id: string) {
+    return this.platformPushCampaigns.getCampaign(req.user as UserModel, id);
+  }
+
+  @Post('campaigns/:id/pause')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Pause une campagne en file' })
+  pauseCampaign(@Req() req: Request, @Param('id') id: string) {
+    return this.platformPushCampaigns.pauseCampaign(req.user as UserModel, id);
+  }
+
+  @Post('campaigns/:id/resume')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Reprend une campagne en pause' })
+  resumeCampaign(@Req() req: Request, @Param('id') id: string) {
+    return this.platformPushCampaigns.resumeCampaign(req.user as UserModel, id);
+  }
+
+  @Delete('campaigns/:id')
+  @UseGuards(JwtGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({ summary: 'Annule et supprime une campagne' })
+  deleteCampaign(@Req() req: Request, @Param('id') id: string) {
+    return this.platformPushCampaigns.deleteCampaign(req.user as UserModel, id);
   }
 }

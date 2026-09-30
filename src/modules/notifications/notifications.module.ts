@@ -26,6 +26,7 @@ import { AppInboxNotificationsController } from './app-inbox-notifications.contr
 import { InternalNotificationsController } from './internal-notifications.controller';
 import { InternalSecretGuard } from './guards/internal-secret.guard';
 import { NotificationsService } from './notifications.service';
+import { PlatformPushCampaignQueueService } from './platform-push-campaign-queue.service';
 import { PlatformPushCampaignsService } from './platform-push-campaigns.service';
 
 /**
@@ -67,6 +68,7 @@ import { PlatformPushCampaignsService } from './platform-push-campaigns.service'
   providers: [
     NotificationsService,
     PlatformPushCampaignsService,
+    PlatformPushCampaignQueueService,
     InternalSecretGuard,
   ],
   exports: [NotificationsService, PlatformPushCampaignsService],
